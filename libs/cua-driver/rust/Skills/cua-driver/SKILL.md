@@ -157,6 +157,13 @@ If you reach for a command that says "activate", "foreground",
 "raise", or "make key", stop and translate to the cua-driver tool
 that does the same intent without focus-stealing.
 
+`delivery_mode:"foreground"` is a user-visible takeover boundary, not an
+automatic retry. Use it only when the user already authorized foreground
+control for this workflow or after asking for approval. It may change focus,
+workspace, and the compositor cursor while the action runs; restoration is
+best-effort. If background delivery is unavailable and foreground control is
+not authorized, stop with the driver's refusal instead of silently escalating.
+
 A strict `desktop` session is an explicit user choice to operate the visible
 desktop and therefore uses foreground/system input. An `auto` session may enter
 that phase only after the complete window ladder below has been attempted and
@@ -175,7 +182,7 @@ Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
 when MCP is requested.
 
-### Claude Code computer-use compatibility mode
+### Claude Code computer-use compatibility flag
 
 For normal Claude Code use, keep the default CLI or `cua-driver` MCP
 server path above. If the user explicitly wants Claude Code's
@@ -185,20 +192,10 @@ vision/computer-use-style flow, they can register:
 cua-driver mcp-config --client claude   # then paste + run the printed line
 ```
 
-Observation: Claude Code vision flows appear to treat a screenshot
-MCP tool as the image-grounding anchor. This compatibility mode keeps
-the normal CuaDriver tools and changes only `screenshot`. The
-compatibility `screenshot` requires `pid` and `window_id`, captures
-only that target window, and returns the window-local pixel
-coordinate frame. Start with `launch_app` or `list_windows`, then
-call `screenshot({pid, window_id})`; do not assume desktop
-coordinates or a full-screen capture.
-
-Use MCP for this Claude Code vision/computer-use-style path. Do not
-shell out to `cua-driver screenshot` as a substitute: CLI screenshots
-still work as CuaDriver calls, but they do not expose the
-`mcp__cua-computer-use__screenshot` tool name that Claude Code
-appears to use as the image-grounding cue.
+The compatibility flag is retained for old setup snippets, but the standalone
+`screenshot` tool was removed. It does not add or replace tools. Use
+`get_window_state({pid, window_id})` for a window-local accessibility snapshot
+and PNG, or `get_desktop_state()` for an explicitly authorized desktop capture.
 
 ## Using cua-driver from the shell
 
@@ -253,6 +250,15 @@ recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
 `end_handle`, `arc_size`, `arc_flow`, `spring` — tuneable at runtime,
 persisted to config.
+
+**Agent-control safety.** Keep this overlay enabled whenever the agent is
+controlling pointer or keyboard input. Cursor-bearing and keyboard actions
+automatically re-show their session cursor, even if it was hidden while idle.
+On Linux, ordinary `move_cursor({x,y})` moves only this synthetic cursor.
+`move_cursor({x,y,scope:"desktop"})` is the explicit escape hatch that moves
+the user's compositor cursor and must not be used unless the user asked for
+desktop-pointer control. Raw Wayland input that requires
+`delivery_mode:"foreground"` crosses the same user-visible takeover boundary.
 
 Delivery and target context is shown as host-owned chips inside the session
 badge. Themes own the twelve action animations only. The session name and
@@ -568,6 +574,8 @@ if resp.effect == "suspected_noop"
 # Route 4 — background delivery was dropped (insert/click never arrived)
 if resp.escalation.target == "foreground"
    or the px action still did nothing:
+    require existing user authorization for visible foreground control
+    otherwise stop and ask; do not retry automatically
     re-call the same action with delivery_mode:"foreground"
     # on Wayland this is the ONLY escalation — px-bg can't target an
     # unfocused window there; see LINUX.md
@@ -706,10 +714,10 @@ The response carries:
 
 ```bash
 # write to file — stdout stays readable (AX/UIA tree / summary only, no base64)
-cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
+cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.png"}'
 
 # CLI --screenshot-out-file flag is equivalent
-cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.jpg
+cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.png
 ```
 
 Pass `screenshot_out_file` when using `get_window_state` via CLI or
@@ -830,12 +838,14 @@ Two consequences for callers:
   `scroll`, `type_text`, `press_key`, `hotkey` — uniformly. The
   `foreground` rung briefly fronts the target, acts, then restores the
   prior frontmost: the explicit last resort when a background attempt
-  didn't land. **`foreground` is a reaction, never a prediction.** Always
+  didn't land. **`foreground` is a reaction and a user-authorization gate,
+  never a prediction.** Always
   fire the `background` default first and let the driver tell you it
   can't (a `background_unavailable` error with
   `escalation.recommended == "foreground"`, or a successful action result
   with `escalation.target == "foreground"`) — or observe a confirmed no-op —
-  _before_ you escalate.
+  _before_ you consider escalation. Then use it only when the user already
+  authorized visible foreground control or after asking for approval.
   Do **not** reason "it's a GTK/Chromium/Electron app, so background will
   drop, so I'll front up-front": the toolkit lists in the tool schemas
   are the _driver's_ internal detectors, not a checklist for you to front

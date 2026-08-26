@@ -1986,9 +1986,12 @@ fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) 
 }
 
 async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
-    if !crate::overlay::is_enabled_for(cursor_id) {
-        return;
-    }
+    // Input always revives its agent cursor. Hiding it is useful while idle,
+    // but a hidden cursor must not make pointer or keyboard control invisible.
+    crate::overlay::send_command_for(
+        cursor_id.to_owned(),
+        cursor_overlay::OverlayCommand::SetEnabled(true),
+    );
     // Wayland (Mutter/KDE, no layer-shell): glide the agent cursor via the
     // WinRects shell extension. It eases to the target itself, so send the
     // destination once here rather than the interpolated stream the X11 render
@@ -2015,9 +2018,10 @@ async fn track_overlay_drag_for(
     duration_ms: u64,
     steps: usize,
 ) {
-    if !crate::overlay::is_enabled_for(&cursor_id) {
-        return;
-    }
+    crate::overlay::send_command_for(
+        cursor_id.clone(),
+        cursor_overlay::OverlayCommand::SetEnabled(true),
+    );
     crate::overlay::send_command_for(
         cursor_id.clone(),
         cursor_overlay::OverlayCommand::SetPressed(true),
@@ -6458,12 +6462,44 @@ pub struct MoveCursorTool {
 
 static MCURSOR_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CursorControlScope {
+    Agent,
+    Desktop,
+}
+
+fn cursor_control_scope(args: &Value) -> CursorControlScope {
+    match args.get("scope").and_then(Value::as_str) {
+        Some("desktop") => CursorControlScope::Desktop,
+        _ => CursorControlScope::Agent,
+    }
+}
+
+#[cfg(test)]
+mod cursor_control_scope_tests {
+    use super::{cursor_control_scope, CursorControlScope};
+    use serde_json::json;
+
+    #[test]
+    fn real_pointer_control_requires_explicit_desktop_scope() {
+        assert_eq!(cursor_control_scope(&json!({})), CursorControlScope::Agent);
+        assert_eq!(
+            cursor_control_scope(&json!({"scope": "window"})),
+            CursorControlScope::Agent
+        );
+        assert_eq!(
+            cursor_control_scope(&json!({"scope": "desktop"})),
+            CursorControlScope::Desktop
+        );
+    }
+}
+
 #[async_trait]
 impl Tool for MoveCursorTool {
     fn def(&self) -> &ToolDef {
         MCURSOR_DEF.get_or_init(|| ToolDef {
             name: "move_cursor".into(),
-            description: "Move the agent cursor overlay, or with scope=desktop move the real OS pointer in get_desktop_state coordinates.".into(),
+            description: "Move the synthetic agent cursor without changing the user's pointer. Only an explicit scope=desktop request moves the real OS pointer in get_desktop_state coordinates.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
                 "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"scope":{"type":"string","enum":["window","desktop"],"default":"window"}
             },"additionalProperties":false}),
@@ -6472,7 +6508,7 @@ impl Tool for MoveCursorTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.opt_str("scope").as_deref() == Some("desktop") {
+        if cursor_control_scope(&args) == CursorControlScope::Desktop {
             let input = match parse_typed_projection::<MoveCursorInput>("move_cursor", &args) {
                 Ok(input) => input,
                 Err(result) => return result,
@@ -6508,9 +6544,13 @@ impl Tool for MoveCursorTool {
         }
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        let window_id = args.get("window_id").and_then(|v| v.as_u64());
         let cursor_id = resolve_cursor_key(&args);
+        self.state.cursor_registry.set_enabled(&cursor_id, true);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetEnabled(true),
+        );
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
@@ -6522,26 +6562,8 @@ impl Tool for MoveCursorTool {
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
             },
         );
-        // Native Wayland: also warp the real cursor via zwlr_virtual_pointer.
-        // Off-thread because the wayland-client roundtrip is blocking. Best-effort
-        // — overlay update + registry write already succeeded; surface a warning
-        // only if the warp itself failed.
-        let real_warp_note = if crate::wayland::wayland_input_enabled() {
-            let xi = x.round() as i32;
-            let yi = y.round() as i32;
-            match tokio::task::spawn_blocking(move || {
-                crate::wayland::move_cursor_absolute(window_id, xi, yi)
-            })
-            .await
-            {
-                Ok(Ok(())) => " (real cursor warped via virtual-pointer)",
-                Ok(Err(_)) | Err(_) => " (overlay updated; real-cursor warp failed)",
-            }
-        } else {
-            ""
-        };
         ToolResult::text(format!(
-            "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}).{real_warp_note}"
+            "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}); the user pointer was unchanged."
         ))
     }
 }

@@ -105,7 +105,11 @@ lume run omarchy-arm64 \
   --display vnc
 ```
 
-Wait for networking, then open a root shell in Archboot.
+Wait for networking, then open a root shell in Archboot. When the boot
+messages offer `Hit ENTER for login routine or CTRL-C for bash prompt.`, press
+Ctrl-C to open a root shell. The `setup` wizard is optional for this guide:
+DHCP comes up by itself, and everything the installer needs is already in the
+live environment.
 
 ## Install Arch Linux ARM
 
@@ -140,6 +144,17 @@ Boot the VM without the ISO, then sign in as `omarchy` on the text console:
 ```bash
 lume run omarchy-arm64 --display vnc
 ```
+
+The base system enables SSH and password authentication, so headless operation
+works without the display:
+
+```bash
+lume ssh omarchy-arm64 --user omarchy --password <password> "command"
+```
+
+Scripted console input should keep one persistent VNC connection. Opening and
+closing many short-lived connections in bursts can crash the VNC server and
+take the VM down with it.
 
 ## Install the pinned Omarchy source
 

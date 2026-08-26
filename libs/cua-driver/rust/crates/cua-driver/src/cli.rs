@@ -650,7 +650,10 @@ pub fn parse_command() -> Command {
         println!(
             "                              group the cards; no claim/release API is involved."
         );
-        println!("                              macOS only today; Win/Linux print a notice.");
+        println!(
+            "                              Native presentation is available on macOS, Windows,"
+        );
+        println!("                              and Linux (X11/XWayland).");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");

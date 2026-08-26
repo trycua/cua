@@ -8077,7 +8077,7 @@ impl Tool for SetConfigTool {
                   `get_window_state` always returns both the UIA tree and a screenshot. Still \
                   accepted/persisted for back-compat but has no effect.\n\
                 - `max_image_dimension` (integer)\n\
-                - `agent_view` (boolean; enables the multi-target Agent View after restart — Windows backend stubbed today, see issue #1729)\n\
+                - `agent_view` (boolean; enables the multi-target Agent View after restart)\n\
                 - `agent_view_geometry` (Agent View size as `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: json!({"type":"object","properties":{

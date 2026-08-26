@@ -766,7 +766,7 @@ unsafe fn install_wallpaper(
     let glass_frame = rounded_view(
         bounds,
         CONTAINER_RADIUS,
-        color(0.26, 0.29, 0.34, 0.35),
+        color(0.26, 0.29, 0.34, 0.62),
         true,
     );
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
@@ -780,8 +780,8 @@ unsafe fn install_wallpaper(
     let body = gradient_view(
         objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), bounds.size),
         CONTAINER_RADIUS,
-        color(0.58, 0.61, 0.66, 0.72),
-        color(0.19, 0.22, 0.27, 0.82),
+        color(0.58, 0.61, 0.66, 0.88),
+        color(0.19, 0.22, 0.27, 0.92),
     );
     let _: () = msg_send![body, setAutoresizingMask: 18u64];
     let body_layer: *mut AnyObject = msg_send![body, layer];

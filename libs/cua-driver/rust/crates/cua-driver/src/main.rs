@@ -222,9 +222,6 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-/// On Windows / Linux
-/// the factory returns "not yet implemented" — we log and continue
-/// without a window so the rest of the daemon keeps working.
 fn maybe_init_pip() {
     let cfg = match pip_preview::default_config_path() {
         Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
@@ -288,10 +285,7 @@ fn maybe_init_pip() {
                     }
                 }
             });
-            eprintln!(
-                "⚗️  Agent View enabled (macOS only today; \
-                 see https://github.com/trycua/cua/issues for follow-up)"
-            );
+            eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
         }
         Err(e) => {
             eprintln!("⚗️  Agent View requested but unavailable: {e}");

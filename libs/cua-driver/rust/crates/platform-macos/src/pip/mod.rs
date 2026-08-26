@@ -758,15 +758,13 @@ unsafe fn install_wallpaper(
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    // Outer container chrome. A deterministic layer keeps the rim free of the
-    // saturated wallpaper cast an NSVisualEffectView material picks up at this
-    // scale. This base is a low-alpha graphite tint; the gradient body below
-    // supplies the lit-to-dark falloff, so the bright outer rim reads as a
-    // highlight on a translucent glass body rather than as the whole frame.
+    // The shell clips a real behind-window visual effect. The miniature
+    // desktop covers its centre, leaving the blurred host desktop or app
+    // visible only through the top, side, and bottom rails.
     let glass_frame = rounded_view(
         bounds,
         CONTAINER_RADIUS,
-        color(0.26, 0.29, 0.34, 0.62),
+        color(0.18, 0.21, 0.25, 0.16),
         true,
     );
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
@@ -775,13 +773,30 @@ unsafe fn install_wallpaper(
     set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.50));
     let _: () = msg_send![content_view, addSubview: glass_frame];
 
-    // Vertical falloff across the chrome body. Lit at the top, graphite at the
-    // bottom, translucent enough to pick up depth from whatever sits behind.
+    let backdrop: *mut AnyObject = {
+        let allocated: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
+        msg_send![
+            allocated,
+            initWithFrame: objc2_foundation::NSRect::new(
+                objc2_foundation::NSPoint::new(0.0, 0.0),
+                bounds.size,
+            )
+        ]
+    };
+    let _: () = msg_send![backdrop, setAutoresizingMask: 18u64];
+    let _: () = msg_send![backdrop, setMaterial: 13i64]; // HUD window material.
+    let _: () = msg_send![backdrop, setBlendingMode: 0i64]; // Behind the Agent View window.
+    let _: () = msg_send![backdrop, setState: 1i64]; // Keep the blur active while non-key.
+    let _: () = msg_send![backdrop, setEmphasized: true];
+    let _: () = msg_send![glass_frame, addSubview: backdrop];
+
+    // A restrained silver-to-graphite tint keeps the blurred backdrop legible
+    // as a shell instead of exposing raw, high-contrast shapes behind it.
     let body = gradient_view(
         objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), bounds.size),
         CONTAINER_RADIUS,
-        color(0.58, 0.61, 0.66, 0.88),
-        color(0.19, 0.22, 0.27, 0.92),
+        color(0.68, 0.71, 0.76, 0.34),
+        color(0.15, 0.18, 0.22, 0.52),
     );
     let _: () = msg_send![body, setAutoresizingMask: 18u64];
     let body_layer: *mut AnyObject = msg_send![body, layer];

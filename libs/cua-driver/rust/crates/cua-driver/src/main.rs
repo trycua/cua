@@ -270,8 +270,15 @@ fn maybe_init_pip() {
                                         workspace_id: frame.target.workspace_id,
                                         workspace_label: frame.target.workspace_label,
                                         target_id: frame.target.target_id,
+                                        identity_key: frame.target.identity_key,
                                         target_kind,
                                         target_label: frame.target.target_label,
+                                        native_container: frame.target.native_container.map(
+                                            |container| pip_preview::PipNativeContainer {
+                                                pid: container.pid,
+                                                window_id: container.window_id,
+                                            },
+                                        ),
                                     },
                                     png_bytes: frame.png_bytes,
                                     action_label: frame.action_label,
@@ -281,9 +288,16 @@ fn maybe_init_pip() {
                             cua_driver_core::pip_hook::PipHookEvent::RemoveWorkspace {
                                 workspace_id,
                             } => b.remove_workspace(&workspace_id),
+                            cua_driver_core::pip_hook::PipHookEvent::RemoveTarget {
+                                workspace_id,
+                                identity_key,
+                            } => b.remove_target(&workspace_id, &identity_key),
                         }
                     }
                 }
+            });
+            cua_driver_core::session::register_session_end_hook(|workspace_id| {
+                cua_driver_core::pip_hook::remove_pip_workspace(workspace_id);
             });
             eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
         }

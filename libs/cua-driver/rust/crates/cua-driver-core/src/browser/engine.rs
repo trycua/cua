@@ -414,6 +414,9 @@ pub(crate) struct BrowserTabPreview {
     pub screenshot: BrowserTabScreenshot,
     pub title: String,
     pub url: String,
+    pub cdp_target_id: String,
+    pub pid: i64,
+    pub window_id: u64,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -2044,6 +2047,9 @@ impl BrowserEngine {
             screenshot,
             title: tab.title,
             url: tab.url,
+            cdp_target_id: tab.cdp_target_id,
+            pid: record.pid,
+            window_id: record.window_id,
         })
     }
 

@@ -13,7 +13,7 @@ use std::time::Duration;
 use image::imageops::FilterType;
 use pip_preview::{
     layout_desktop, png_dimensions, LayoutRect, PipBackend, PipBackendFactory, PipConfig, PipFrame,
-    PipTargetKind, PipViewModel, TargetSize,
+    PipTargetKind, PipViewModel, PipWorkspaceSummary, TargetSize,
 };
 
 const MIN_WIDTH: u16 = 360;
@@ -21,6 +21,7 @@ const MIN_HEIGHT: u16 = 260;
 
 enum UiMessage {
     Frame(PipFrame),
+    RemoveTarget(String, String),
     RemoveWorkspace(String),
     Shutdown,
 }
@@ -43,6 +44,13 @@ impl PipBackend for LinuxPipBackend {
         let _ = self
             .tx
             .send(UiMessage::RemoveWorkspace(workspace_id.to_owned()));
+    }
+
+    fn remove_target(&self, workspace_id: &str, identity_key: &str) {
+        let _ = self.tx.send(UiMessage::RemoveTarget(
+            workspace_id.to_owned(),
+            identity_key.to_owned(),
+        ));
     }
 
     fn shutdown(self: Box<Self>) {
@@ -118,7 +126,10 @@ fn run_x11_window(
                 .background_pixel(0x1820_27)
                 .border_pixel(0)
                 .event_mask(
-                    EventMask::EXPOSURE | EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE,
+                    EventMask::EXPOSURE
+                        | EventMask::STRUCTURE_NOTIFY
+                        | EventMask::PROPERTY_CHANGE
+                        | EventMask::BUTTON_PRESS,
                 ),
         )?
         .check()?;
@@ -229,6 +240,18 @@ fn run_x11_window(
                         dirty = true;
                     }
                 }
+                Ok(Some(Event::ButtonPress(event))) => {
+                    let workspaces = model.workspaces();
+                    if let Some(index) = session_selector_hit_test(
+                        width,
+                        height,
+                        workspaces.len(),
+                        f64::from(event.event_x),
+                        f64::from(event.event_y),
+                    ) {
+                        dirty |= model.select_workspace(&workspaces[index].workspace_id);
+                    }
+                }
                 Ok(Some(Event::ClientMessage(event)))
                     if is_delete_message(&event, wm_protocols, wm_delete) =>
                 {
@@ -245,8 +268,15 @@ fn run_x11_window(
         }
 
         if dirty && running {
-            let frames = model.ordered_frames();
-            let pixels = render_agent_view(width, height, &frames);
+            let frames = model.selected_frames();
+            let workspaces = model.workspaces();
+            let pixels = render_agent_view(
+                width,
+                height,
+                &frames,
+                &workspaces,
+                model.selected_workspace_id(),
+            );
             if let Err(error) = upload_image(&conn, window, gc, depth, width, height, &pixels) {
                 tracing::warn!(target: "pip", "Agent View X11 paint failed: {error}");
                 running = false;
@@ -321,9 +351,11 @@ fn handle_message(
             model.upsert(frame);
             *dirty = true;
         }
+        UiMessage::RemoveTarget(workspace_id, identity_key) => {
+            *dirty |= model.remove_target(&workspace_id, &identity_key);
+        }
         UiMessage::RemoveWorkspace(workspace_id) => {
-            model.remove_workspace(&workspace_id);
-            *dirty = true;
+            *dirty |= !model.remove_workspace(&workspace_id).is_empty();
         }
         UiMessage::Shutdown => *running = false,
     }
@@ -353,7 +385,13 @@ fn clamp_i16(value: i32) -> i16 {
     value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
-fn render_agent_view(width: u16, height: u16, frames: &[&PipFrame]) -> Vec<u8> {
+fn render_agent_view(
+    width: u16,
+    height: u16,
+    frames: &[&PipFrame],
+    workspaces: &[PipWorkspaceSummary],
+    selected_workspace_id: Option<&str>,
+) -> Vec<u8> {
     let mut canvas = Canvas::new(width, height);
     canvas.vertical_gradient(Color::rgb(45, 57, 66), Color::rgb(24, 29, 34));
     canvas.radial_glow(
@@ -389,7 +427,13 @@ fn render_agent_view(width: u16, height: u16, frames: &[&PipFrame]) -> Vec<u8> {
             })
         })
         .collect::<Vec<_>>();
-    let layout = layout_desktop(width.into(), height.into(), &sizes);
+    let selector_height = if workspaces.len() > 1 { 34.0 } else { 0.0 };
+    let mut layout = layout_desktop(
+        width.into(),
+        (f64::from(height) - selector_height).max(1.0),
+        &sizes,
+    );
+    offset_layout_y(&mut layout, selector_height);
     if frames.is_empty() {
         render_waiting_state(&mut canvas, layout.desktop);
     } else {
@@ -398,6 +442,13 @@ fn render_agent_view(width: u16, height: u16, frames: &[&PipFrame]) -> Vec<u8> {
         }
         render_dash(&mut canvas, frames, &layout.dock, &layout.dock_icons);
     }
+    render_session_selector(
+        &mut canvas,
+        width,
+        height,
+        workspaces,
+        selected_workspace_id,
+    );
     render_resize_affordance(&mut canvas, width, height);
     canvas.into_bgrx()
 }
@@ -451,13 +502,122 @@ fn draw_frame_image(canvas: &mut Canvas, frame: &PipFrame, rect: Rect) -> bool {
     let Ok(image) = image::load_from_memory(&frame.png_bytes) else {
         return false;
     };
-    canvas.draw_image_cover(&image.to_rgba8(), rect, 6.5);
+    canvas.draw_image_contain(&image.to_rgba8(), rect, 6.5);
     true
 }
 
 #[cfg(not(target_os = "linux"))]
 fn draw_frame_image(_canvas: &mut Canvas, _frame: &PipFrame, _rect: Rect) -> bool {
     false
+}
+
+fn session_selector_layout(width: u16, height: u16, count: usize) -> Option<(Rect, Vec<Rect>)> {
+    if count <= 1 {
+        return None;
+    }
+    let visible = count;
+    let icon = 22.0;
+    let gap = 5.0;
+    let padding = 6.0;
+    let selector_width = padding * 2.0 + visible as f64 * icon + (visible - 1) as f64 * gap;
+    let selector = Rect::new(
+        (f64::from(width) - selector_width) / 2.0,
+        4.0_f64.min(f64::from(height).max(0.0)),
+        selector_width,
+        28.0,
+    );
+    let icons = (0..visible)
+        .map(|index| {
+            Rect::new(
+                selector.x + padding + index as f64 * (icon + gap),
+                selector.y + 3.0,
+                icon,
+                icon,
+            )
+        })
+        .collect();
+    Some((selector, icons))
+}
+
+fn session_selector_hit_test(
+    width: u16,
+    height: u16,
+    count: usize,
+    x: f64,
+    y: f64,
+) -> Option<usize> {
+    let (_, icons) = session_selector_layout(width, height, count)?;
+    icons.iter().position(|icon| icon.contains(x, y))
+}
+
+fn render_session_selector(
+    canvas: &mut Canvas,
+    width: u16,
+    height: u16,
+    workspaces: &[PipWorkspaceSummary],
+    selected_workspace_id: Option<&str>,
+) {
+    let Some((dock, icons)) = session_selector_layout(width, height, workspaces.len()) else {
+        return;
+    };
+    canvas.shadow(dock, 12.0, 5.0, Color::rgba(0, 0, 0, 100));
+    canvas.rounded_rect(dock, dock.height * 0.27, Color::rgba(67, 70, 72, 195));
+    canvas.stroke_rounded_rect(
+        dock,
+        dock.height * 0.27,
+        1.0,
+        Color::rgba(231, 235, 236, 66),
+    );
+    for (workspace, icon) in workspaces.iter().zip(icons) {
+        let selected = selected_workspace_id == Some(workspace.workspace_id.as_str());
+        let accent = workspace_accent(&workspace.workspace_id);
+        if selected {
+            canvas.rounded_rect(
+                icon.expand(2.0),
+                icon.width * 0.27,
+                Color::rgba(245, 248, 249, 220),
+            );
+        }
+        canvas.rounded_rect(icon, icon.width * 0.23, accent);
+        let glyph = icon.inset(icon.width * 0.23);
+        canvas.circle(
+            glyph.x + glyph.width / 2.0,
+            glyph.y + glyph.height * 0.36,
+            glyph.width * 0.22,
+            Color::rgba(250, 252, 253, 235),
+        );
+        canvas.rounded_rect(
+            Rect::new(
+                glyph.x + glyph.width * 0.16,
+                glyph.y + glyph.height * 0.62,
+                glyph.width * 0.68,
+                glyph.height * 0.28,
+            ),
+            glyph.width * 0.14,
+            Color::rgba(250, 252, 253, 225),
+        );
+        let indicators = workspace.target_count.min(3);
+        for index in 0..indicators {
+            canvas.circle(
+                icon.x + icon.width / 2.0 + (index as f64 - (indicators - 1) as f64 / 2.0) * 5.0,
+                dock.y + dock.height - 4.0,
+                1.4,
+                Color::rgba(242, 245, 246, if selected { 245 } else { 145 }),
+            );
+        }
+    }
+}
+
+fn offset_layout_y(layout: &mut pip_preview::DesktopLayout, offset: f64) {
+    layout.desktop.y += offset;
+    layout.dock.y += offset;
+    for icon in &mut layout.dock_icons {
+        icon.y += offset;
+    }
+    for target in &mut layout.targets {
+        target.window.y += offset;
+        target.content.y += offset;
+    }
 }
 
 fn render_dash(canvas: &mut Canvas, frames: &[&PipFrame], dock: &LayoutRect, icons: &[LayoutRect]) {
@@ -515,6 +675,20 @@ fn render_dash(canvas: &mut Canvas, frames: &[&PipFrame], dock: &LayoutRect, ico
     }
 }
 
+fn workspace_accent(workspace_id: &str) -> Color {
+    let hash = workspace_id.bytes().fold(0u32, |hash, byte| {
+        hash.wrapping_mul(31).wrapping_add(u32::from(byte))
+    });
+    const COLORS: [Color; 5] = [
+        Color::rgb(53, 154, 220),
+        Color::rgb(239, 112, 54),
+        Color::rgb(72, 178, 123),
+        Color::rgb(214, 151, 48),
+        Color::rgb(104, 136, 196),
+    ];
+    COLORS[hash as usize % COLORS.len()]
+}
+
 fn render_resize_affordance(canvas: &mut Canvas, width: u16, height: u16) {
     let x = f64::from(width) - 15.0;
     let y = f64::from(height) - 8.0;
@@ -568,6 +742,10 @@ impl Rect {
             self.width + amount * 2.0,
             self.height + amount * 2.0,
         )
+    }
+
+    fn contains(self, x: f64, y: f64) -> bool {
+        x >= self.x && y >= self.y && x < self.x + self.width && y < self.y + self.height
     }
 }
 
@@ -765,18 +943,22 @@ impl Canvas {
     }
 
     #[cfg(target_os = "linux")]
-    fn draw_image_cover(&mut self, image: &image::RgbaImage, rect: Rect, radius: f64) {
+    fn draw_image_contain(&mut self, image: &image::RgbaImage, rect: Rect, radius: f64) {
         let target_width = rect.width.ceil().max(1.0) as u32;
         let target_height = rect.height.ceil().max(1.0) as u32;
         let scale = (target_width as f64 / image.width() as f64)
-            .max(target_height as f64 / image.height() as f64);
-        let scaled_width = (image.width() as f64 * scale).ceil().max(1.0) as u32;
-        let scaled_height = (image.height() as f64 * scale).ceil().max(1.0) as u32;
+            .min(target_height as f64 / image.height() as f64);
+        let scaled_width = (image.width() as f64 * scale).floor().max(1.0) as u32;
+        let scaled_height = (image.height() as f64 * scale).floor().max(1.0) as u32;
         let scaled =
             image::imageops::resize(image, scaled_width, scaled_height, FilterType::Triangle);
-        let crop_x = scaled_width.saturating_sub(target_width) / 2;
-        let crop_y = scaled_height.saturating_sub(target_height) / 2;
-        let (x0, y0, x1, y1) = self.bounds(rect);
+        let image_rect = Rect::new(
+            rect.x + (rect.width - f64::from(scaled_width)) / 2.0,
+            rect.y + (rect.height - f64::from(scaled_height)) / 2.0,
+            f64::from(scaled_width),
+            f64::from(scaled_height),
+        );
+        let (x0, y0, x1, y1) = self.bounds(image_rect);
         for y in y0..y1 {
             for x in x0..x1 {
                 let px = f64::from(x) + 0.5;
@@ -784,8 +966,8 @@ impl Canvas {
                 if !rounded_contains(rect, radius, px, py) {
                     continue;
                 }
-                let source_x = (x - x0) as u32 + crop_x;
-                let source_y = (y - y0) as u32 + crop_y;
+                let source_x = (f64::from(x) + 0.5 - image_rect.x).floor().max(0.0) as u32;
+                let source_y = (f64::from(y) + 0.5 - image_rect.y).floor().max(0.0) as u32;
                 if source_x < scaled.width() && source_y < scaled.height() {
                     let pixel = scaled.get_pixel(source_x, source_y);
                     self.blend(x, y, Color::rgba(pixel[0], pixel[1], pixel[2], pixel[3]));
@@ -809,8 +991,10 @@ fn rounded_contains(rect: Rect, radius: f64, x: f64, y: f64) -> bool {
         return false;
     }
     let radius = radius.min(rect.width / 2.0).min(rect.height / 2.0).max(0.0);
-    let nearest_x = x.clamp(rect.x + radius, rect.x + rect.width - radius);
-    let nearest_y = y.clamp(rect.y + radius, rect.y + rect.height - radius);
+    // Equivalent half-width bounds can differ by a sub-ULP after arithmetic;
+    // max/min preserves the rounded geometry without f64::clamp panicking.
+    let nearest_x = x.max(rect.x + radius).min(rect.x + rect.width - radius);
+    let nearest_y = y.max(rect.y + radius).min(rect.y + rect.height - radius);
     (x - nearest_x).powi(2) + (y - nearest_y).powi(2) <= radius * radius
 }
 
@@ -830,9 +1014,36 @@ mod tests {
 
     #[test]
     fn renderer_emits_x11_bgrx_at_the_requested_size() {
-        let rendered = render_agent_view(360, 260, &[]);
+        let rendered = render_agent_view(360, 260, &[], &[], None);
         assert_eq!(rendered.len(), 360 * 260 * 4);
         assert!(rendered.chunks_exact(4).all(|pixel| pixel[3] == 0));
+    }
+
+    #[test]
+    fn session_selector_is_hidden_for_zero_or_one_workspace() {
+        assert!(session_selector_layout(720, 520, 0).is_none());
+        assert!(session_selector_layout(720, 520, 1).is_none());
+        assert!(session_selector_layout(720, 520, 2).is_some());
+    }
+
+    #[test]
+    fn session_selector_hit_testing_only_accepts_session_icons() {
+        let (dock, icons) = session_selector_layout(720, 520, 3).unwrap();
+        let first = icons[0];
+        assert_eq!(
+            session_selector_hit_test(
+                720,
+                520,
+                3,
+                first.x + first.width / 2.0,
+                first.y + first.height / 2.0,
+            ),
+            Some(0)
+        );
+        assert_eq!(
+            session_selector_hit_test(720, 520, 3, dock.x + 2.0, dock.y + 2.0),
+            None
+        );
     }
 
     #[test]
@@ -896,21 +1107,52 @@ mod tests {
             title: "Cua Agent View Linux visual smoke".to_owned(),
         };
         let backend = LinuxPipBackendFactory.start(&config).unwrap();
-        for (index, (width, height, base, kind)) in [
-            (1280, 760, [20, 72, 92], PipTargetKind::BrowserTab),
-            (840, 1060, [47, 58, 65], PipTargetKind::NativeWindow),
-            (760, 760, [91, 59, 34], PipTargetKind::NativeWindow),
+        for (index, (workspace_id, workspace_label, width, height, base, kind)) in [
+            (
+                "linux-browser",
+                "Browser session",
+                1280,
+                760,
+                [20, 72, 92],
+                PipTargetKind::BrowserTab,
+            ),
+            (
+                "linux-browser",
+                "Browser session",
+                760,
+                760,
+                [25, 91, 67],
+                PipTargetKind::BrowserTab,
+            ),
+            (
+                "linux-native",
+                "Native session",
+                840,
+                1060,
+                [47, 58, 65],
+                PipTargetKind::NativeWindow,
+            ),
+            (
+                "linux-native",
+                "Native session",
+                1440,
+                800,
+                [91, 59, 34],
+                PipTargetKind::NativeWindow,
+            ),
         ]
         .into_iter()
         .enumerate()
         {
             backend.push_frame(PipFrame {
                 target: PipTarget {
-                    workspace_id: "linux-smoke".to_owned(),
-                    workspace_label: "Linux smoke".to_owned(),
+                    workspace_id: workspace_id.to_owned(),
+                    workspace_label: workspace_label.to_owned(),
                     target_id: format!("target-{index}"),
+                    identity_key: format!("target-{index}"),
                     target_kind: kind,
                     target_label: format!("Target {index}"),
+                    native_container: None,
                 },
                 png_bytes: png(width, height, base),
                 action_label: "observe".to_owned(),

@@ -29,8 +29,16 @@ pub struct PipHookTarget {
     pub workspace_id: String,
     pub workspace_label: String,
     pub target_id: String,
+    pub identity_key: String,
     pub target_kind: PipHookTargetKind,
     pub target_label: String,
+    pub native_container: Option<PipHookNativeContainer>,
+}
+
+#[derive(Clone, Copy)]
+pub struct PipHookNativeContainer {
+    pub pid: i64,
+    pub window_id: u64,
 }
 
 pub struct PipHookFrame {
@@ -42,7 +50,13 @@ pub struct PipHookFrame {
 
 pub enum PipHookEvent {
     Upsert(PipHookFrame),
-    RemoveWorkspace { workspace_id: String },
+    RemoveTarget {
+        workspace_id: String,
+        identity_key: String,
+    },
+    RemoveWorkspace {
+        workspace_id: String,
+    },
 }
 
 type PipEventFnBox = Box<dyn Fn(PipHookEvent) + Send + Sync>;
@@ -65,6 +79,16 @@ pub fn pip_enabled() -> bool {
 pub fn push_pip_frame(frame: PipHookFrame) {
     if let Some(f) = PIP_EVENT_FN.get() {
         f(PipHookEvent::Upsert(frame));
+    }
+}
+
+/// Remove one exact target card. Presentation only; never closes the target.
+pub fn remove_pip_target(workspace_id: impl Into<String>, identity_key: impl Into<String>) {
+    if let Some(f) = PIP_EVENT_FN.get() {
+        f(PipHookEvent::RemoveTarget {
+            workspace_id: workspace_id.into(),
+            identity_key: identity_key.into(),
+        });
     }
 }
 

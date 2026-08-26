@@ -23,16 +23,16 @@ mod native {
     use image::imageops::FilterType;
     use pip_preview::{
         layout_desktop, png_dimensions, LayoutRect, PipBackend, PipBackendFactory, PipConfig,
-        PipFrame, PipTargetKind, PipViewModel, TargetSize,
+        PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary, TargetSize,
     };
     use windows::core::PCWSTR;
-    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, RECT, WPARAM};
+    use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
     use windows::Win32::Graphics::Dwm::{
         DwmSetWindowAttribute, DWMWA_SYSTEMBACKDROP_TYPE, DWMWA_WINDOW_CORNER_PREFERENCE,
     };
     use windows::Win32::Graphics::Gdi::{
-        BeginPaint, EndPaint, InvalidateRect, StretchDIBits, UpdateWindow, BITMAPINFO,
-        BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, PAINTSTRUCT, SRCCOPY,
+        BeginPaint, EndPaint, InvalidateRect, ScreenToClient, StretchDIBits, UpdateWindow,
+        BITMAPINFO, BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, PAINTSTRUCT, SRCCOPY,
     };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
     use windows::Win32::UI::WindowsAndMessaging::{
@@ -41,10 +41,10 @@ mod native {
         PostQuitMessage, RegisterClassExW, SetWindowLongPtrW, ShowWindow, TranslateMessage,
         CREATESTRUCTW, CS_HREDRAW, CS_VREDRAW, GWLP_USERDATA, HTBOTTOM, HTBOTTOMLEFT,
         HTBOTTOMRIGHT, HTCAPTION, HTCLIENT, HTLEFT, HTRIGHT, HTTOP, HTTOPLEFT, HTTOPRIGHT,
-        IDC_ARROW, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, WM_APP, WM_CLOSE, WM_DESTROY,
-        WM_ERASEBKGND, WM_NCCREATE, WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_SIZE, WNDCLASSEXW,
-        WS_CLIPCHILDREN, WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP,
-        WS_THICKFRAME,
+        IDC_ARROW, MA_NOACTIVATE, MSG, SM_CXSCREEN, SM_CYSCREEN, SW_SHOWNOACTIVATE, WM_APP,
+        WM_CLOSE, WM_DESTROY, WM_ERASEBKGND, WM_LBUTTONUP, WM_MOUSEACTIVATE, WM_NCCREATE,
+        WM_NCDESTROY, WM_NCHITTEST, WM_PAINT, WM_SIZE, WNDCLASSEXW, WS_CLIPCHILDREN,
+        WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_EX_TOPMOST, WS_POPUP, WS_THICKFRAME,
     };
 
     use super::WindowsPipBackendFactory;
@@ -83,6 +83,15 @@ mod native {
                 .lock()
                 .unwrap()
                 .remove_workspace(workspace_id);
+            self.state.post(REDRAW);
+        }
+
+        fn remove_target(&self, workspace_id: &str, identity_key: &str) {
+            self.state
+                .model
+                .lock()
+                .unwrap()
+                .remove_target(workspace_id, identity_key);
             self.state.post(REDRAW);
         }
 
@@ -229,6 +238,24 @@ mod native {
                 LRESULT(0)
             }
             WM_ERASEBKGND => LRESULT(1),
+            WM_MOUSEACTIVATE => LRESULT(MA_NOACTIVATE as isize),
+            WM_LBUTTONUP => {
+                if !state_ptr.is_null() {
+                    let x = lparam.0 as i16 as i32;
+                    let y = (lparam.0 >> 16) as i16 as i32;
+                    let mut client = RECT::default();
+                    if GetClientRect(hwnd, &mut client).is_ok()
+                        && contains(switcher_rect(client.right - client.left), x, y)
+                    {
+                        let state = &*state_ptr;
+                        let changed = state.model.lock().unwrap().select_next_workspace();
+                        if changed {
+                            let _ = InvalidateRect(hwnd, None, false);
+                        }
+                    }
+                }
+                LRESULT(0)
+            }
             WM_NCHITTEST => {
                 let hit = DefWindowProcW(hwnd, message, wparam, lparam);
                 if hit.0 == HTCLIENT as isize {
@@ -254,6 +281,27 @@ mod native {
                         };
                         if let Some(resize_hit) = resize_hit {
                             return LRESULT(resize_hit as isize);
+                        }
+                        let mut client_point = POINT {
+                            x: screen_x,
+                            y: screen_y,
+                        };
+                        let mut client = RECT::default();
+                        let has_switcher = if state_ptr.is_null() {
+                            false
+                        } else {
+                            (&*state_ptr).model.lock().unwrap().workspaces().len() > 1
+                        };
+                        if has_switcher
+                            && ScreenToClient(hwnd, &mut client_point).as_bool()
+                            && GetClientRect(hwnd, &mut client).is_ok()
+                            && contains(
+                                switcher_rect(client.right - client.left),
+                                client_point.x,
+                                client_point.y,
+                            )
+                        {
+                            return LRESULT(HTCLIENT as isize);
                         }
                         if screen_y - window.top < 28 {
                             return LRESULT(HTCAPTION as isize);
@@ -291,15 +339,25 @@ mod native {
         }
         let width = (rect.right - rect.left).max(1) as u32;
         let height = (rect.bottom - rect.top).max(1) as u32;
-        let frames = state
-            .model
-            .lock()
-            .unwrap()
-            .ordered_frames()
-            .into_iter()
-            .cloned()
-            .collect::<Vec<_>>();
-        let pixels = render_view(width, height, &frames);
+        let (frames, workspaces, selected_workspace_id) = {
+            let model = state.model.lock().unwrap();
+            (
+                model
+                    .selected_frames()
+                    .into_iter()
+                    .cloned()
+                    .collect::<Vec<_>>(),
+                model.workspaces(),
+                model.selected_workspace_id().map(str::to_owned),
+            )
+        };
+        let pixels = render_view(
+            width,
+            height,
+            &frames,
+            &workspaces,
+            selected_workspace_id.as_deref(),
+        );
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
                 biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
@@ -331,10 +389,17 @@ mod native {
         let _ = EndPaint(hwnd, &ps);
     }
 
-    fn render_view(width: u32, height: u32, frames: &[PipFrame]) -> Vec<u8> {
+    fn render_view(
+        width: u32,
+        height: u32,
+        frames: &[PipFrame],
+        workspaces: &[PipWorkspaceSummary],
+        selected_workspace_id: Option<&str>,
+    ) -> Vec<u8> {
         let mut canvas = Canvas::new(width, height);
         canvas.smoked_shell();
-        let desktop = desktop_rect(width, height);
+        let show_switcher = workspaces.len() > 1;
+        let desktop = desktop_rect(width, height, show_switcher);
         canvas.wallpaper(desktop);
         let sizes = frames
             .iter()
@@ -358,6 +423,13 @@ mod native {
             [108, 82, 57, 105],
         );
         canvas.border(desktop, 10, [181, 151, 122, 138]);
+        if show_switcher {
+            canvas.switcher(
+                switcher_rect(width as i32),
+                workspaces,
+                selected_workspace_id,
+            );
+        }
         for (frame, target) in frames.iter().zip(&layout.targets) {
             let rect = offset_pixels(target.content, desktop.0, desktop.1);
             canvas.shadow(rect);
@@ -384,16 +456,24 @@ mod native {
         canvas.data
     }
 
-    fn desktop_rect(width: u32, height: u32) -> (i32, i32, i32, i32) {
+    fn desktop_rect(width: u32, height: u32, show_switcher: bool) -> (i32, i32, i32, i32) {
         const SIDE_INSET: i32 = 8;
-        const TOP_INSET: i32 = 14;
         const BOTTOM_INSET: i32 = 9;
+        let top_inset = if show_switcher { 36 } else { 14 };
         (
             SIDE_INSET,
-            TOP_INSET,
+            top_inset,
             (width as i32 - SIDE_INSET * 2).max(1),
-            (height as i32 - TOP_INSET - BOTTOM_INSET).max(1),
+            (height as i32 - top_inset - BOTTOM_INSET).max(1),
         )
+    }
+
+    fn switcher_rect(width: i32) -> (i32, i32, i32, i32) {
+        ((width - 58).max(8), 8, 50, 22)
+    }
+
+    fn contains(rect: (i32, i32, i32, i32), x: i32, y: i32) -> bool {
+        x >= rect.0 && y >= rect.1 && x < rect.0 + rect.2 && y < rect.1 + rect.3
     }
 
     fn pixels(rect: LayoutRect) -> (i32, i32, i32, i32) {
@@ -475,6 +555,41 @@ mod native {
                 for x in ((y & 7)..width.saturating_sub(8)).step_by(8) {
                     self.blend(x, y, [205, 181, 155, 7]);
                 }
+            }
+        }
+
+        fn switcher(
+            &mut self,
+            rect: (i32, i32, i32, i32),
+            workspaces: &[PipWorkspaceSummary],
+            selected_workspace_id: Option<&str>,
+        ) {
+            self.shadow(rect);
+            self.fill(rect, 11, [42, 31, 24, 235]);
+            self.border(rect, 11, [205, 177, 148, 128]);
+
+            let visible = workspaces.len().min(4);
+            let selected = workspaces
+                .iter()
+                .position(|workspace| {
+                    Some(workspace.workspace_id.as_str()) == selected_workspace_id
+                })
+                .unwrap_or(0)
+                .min(visible.saturating_sub(1));
+            for index in 0..visible {
+                let color = if index == selected {
+                    [230, 158, 73, 255]
+                } else {
+                    [104, 92, 78, 255]
+                };
+                self.fill((rect.0 + 8 + index as i32 * 8, rect.1 + 8, 6, 6), 3, color);
+            }
+
+            let chevron_x = rect.0 + rect.2 - 10;
+            let chevron_y = rect.1 + rect.3 / 2;
+            for step in 0..4 {
+                self.set(chevron_x + step, chevron_y - 3 + step, [224, 210, 190, 255]);
+                self.set(chevron_x + step, chevron_y + 3 - step, [224, 210, 190, 255]);
             }
         }
 
@@ -619,27 +734,62 @@ mod native {
             data[offset..offset + 4].try_into().unwrap()
         }
 
-        #[test]
-        fn renderer_tracks_each_target_and_requested_size() {
-            let frame = |id: &str, kind| PipFrame {
+        fn frame(
+            workspace: &str,
+            id: &str,
+            kind: PipTargetKind,
+            png_bytes: Vec<u8>,
+            timestamp_ms: u64,
+        ) -> PipFrame {
+            PipFrame {
                 target: PipTarget {
-                    workspace_id: "workspace".to_owned(),
-                    workspace_label: "Agent".to_owned(),
+                    workspace_id: workspace.to_owned(),
+                    workspace_label: workspace.to_owned(),
                     target_id: id.to_owned(),
+                    identity_key: id.to_owned(),
                     target_kind: kind,
                     target_label: id.to_owned(),
+                    native_container: None,
                 },
-                png_bytes: Vec::new(),
+                png_bytes,
                 action_label: "click".to_owned(),
-                timestamp_ms: 1,
-            };
+                timestamp_ms,
+            }
+        }
+
+        fn workspace(id: &str, target_count: usize, updated_ms: u64) -> PipWorkspaceSummary {
+            PipWorkspaceSummary {
+                workspace_id: id.to_owned(),
+                workspace_label: id.to_owned(),
+                target_count,
+                updated_ms,
+            }
+        }
+
+        #[test]
+        fn renderer_tracks_each_target_and_requested_size() {
+            let workspaces = [workspace("workspace", 2, 1)];
             let data = render_view(
                 480,
                 320,
                 &[
-                    frame("edge", PipTargetKind::BrowserTab),
-                    frame("notes", PipTargetKind::NativeWindow),
+                    frame(
+                        "workspace",
+                        "edge",
+                        PipTargetKind::BrowserTab,
+                        Vec::new(),
+                        1,
+                    ),
+                    frame(
+                        "workspace",
+                        "notes",
+                        PipTargetKind::NativeWindow,
+                        Vec::new(),
+                        1,
+                    ),
                 ],
+                &workspaces,
+                Some("workspace"),
             );
             assert_eq!(data.len(), 480 * 320 * 4);
             assert!(data.chunks_exact(4).all(|pixel| pixel[3] == 255));
@@ -647,34 +797,27 @@ mod native {
 
         #[test]
         fn renderer_preserves_target_pixels_across_mixed_form_factors() {
-            let frame = |id: &str, kind, png_bytes| PipFrame {
-                target: PipTarget {
-                    workspace_id: "workspace".to_owned(),
-                    workspace_label: "Agent".to_owned(),
-                    target_id: id.to_owned(),
-                    target_kind: kind,
-                    target_label: id.to_owned(),
-                },
-                png_bytes,
-                action_label: "click".to_owned(),
-                timestamp_ms: 1,
-            };
             let frames = [
                 frame(
+                    "workspace",
                     "wide",
                     PipTargetKind::BrowserTab,
                     solid_png(80, 32, [220, 30, 20, 255]),
+                    1,
                 ),
                 frame(
+                    "workspace",
                     "tall",
                     PipTargetKind::NativeWindow,
                     solid_png(24, 72, [20, 90, 230, 255]),
+                    1,
                 ),
             ];
             let width = 520;
             let height = 360;
-            let data = render_view(width, height, &frames);
-            let desktop = desktop_rect(width, height);
+            let workspaces = [workspace("workspace", 2, 1)];
+            let data = render_view(width, height, &frames, &workspaces, Some("workspace"));
+            let desktop = desktop_rect(width, height, false);
             let layout = layout_desktop(
                 desktop.2 as f64,
                 desktop.3 as f64,
@@ -720,7 +863,7 @@ mod native {
         #[test]
         fn renderer_separates_dark_shell_from_inset_desktop() {
             let width = 360;
-            let data = render_view(width, 240, &[]);
+            let data = render_view(width, 240, &[], &[], None);
             let shell = pixel(&data, width, 4, 100);
             let desktop = pixel(&data, width, 180, 100);
             let highlight = pixel(&data, width, 180, 1);
@@ -731,6 +874,77 @@ mod native {
             assert!(shell[0] > shell[1] && shell[1] > shell[2]);
             assert!(brightness(highlight) > brightness(shell));
             assert!(highlight[0] > highlight[1] && highlight[1] > highlight[2]);
+        }
+
+        #[test]
+        fn switcher_is_hidden_for_one_workspace_and_cycles_without_target_activation() {
+            let width = 420;
+            let one = [workspace("agent-a", 1, 1)];
+            let two = [workspace("agent-b", 1, 2), workspace("agent-a", 1, 1)];
+            let single = render_view(width, 280, &[], &one, Some("agent-a"));
+            let multiple = render_view(width, 280, &[], &two, Some("agent-a"));
+            let switcher = switcher_rect(width as i32);
+            let sample_x = (switcher.0 + switcher.2 / 2) as u32;
+            let sample_y = (switcher.1 + switcher.3 / 2) as u32;
+
+            assert_eq!(desktop_rect(width, 280, false).1, 14);
+            assert_eq!(desktop_rect(width, 280, true).1, 36);
+            assert_ne!(
+                pixel(&single, width, sample_x, sample_y),
+                pixel(&multiple, width, sample_x, sample_y)
+            );
+
+            let mut model = PipViewModel::new(4);
+            model.upsert(frame(
+                "agent-a",
+                "window-a",
+                PipTargetKind::NativeWindow,
+                Vec::new(),
+                1,
+            ));
+            model.upsert(frame(
+                "agent-b",
+                "window-b",
+                PipTargetKind::NativeWindow,
+                Vec::new(),
+                2,
+            ));
+            assert!(model.select_workspace("agent-a"));
+            assert_eq!(model.selected_frames()[0].target.workspace_id, "agent-a");
+            assert!(model.select_next_workspace());
+            assert_eq!(model.selected_frames()[0].target.workspace_id, "agent-b");
+        }
+
+        #[test]
+        fn exact_target_removal_and_workspace_cleanup_redraw_the_selected_session() {
+            let mut model = PipViewModel::new(6);
+            model.upsert(frame(
+                "agent-a",
+                "wide",
+                PipTargetKind::BrowserTab,
+                Vec::new(),
+                1,
+            ));
+            model.upsert(frame(
+                "agent-a",
+                "tall",
+                PipTargetKind::NativeWindow,
+                Vec::new(),
+                2,
+            ));
+            model.upsert(frame(
+                "agent-b",
+                "other",
+                PipTargetKind::NativeWindow,
+                Vec::new(),
+                3,
+            ));
+            assert!(model.select_workspace("agent-a"));
+            assert!(model.remove_target("agent-a", "wide"));
+            assert_eq!(model.selected_frames().len(), 1);
+            assert_eq!(model.selected_frames()[0].target.identity_key, "tall");
+            assert_eq!(model.remove_workspace("agent-a").len(), 1);
+            assert_eq!(model.selected_workspace_id(), Some("agent-b"));
         }
     }
 }

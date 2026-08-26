@@ -10,7 +10,7 @@ use std::sync::{Mutex, OnceLock};
 
 use pip_preview::{
     layout_desktop, png_dimensions, PipBackend, PipBackendFactory, PipConfig, PipFrame,
-    PipTargetKind, PipViewModel, TargetSize,
+    PipTargetKind, PipViewModel, PipWorkspaceSummary, TargetSize,
 };
 
 #[repr(C)]
@@ -39,6 +39,7 @@ const CONTAINER_RADIUS: f64 = 15.0;
 const SHELL_SIDE_INSET: f64 = 9.0;
 const SHELL_TOP_INSET: f64 = 20.0;
 const SHELL_BOTTOM_INSET: f64 = 10.0;
+const SESSION_SELECTOR_HEIGHT: f64 = 34.0;
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
 static VIEW_MODEL: Mutex<Option<PipViewModel>> = Mutex::new(None);
@@ -75,6 +76,13 @@ impl PipBackend for MacosPipBackend {
         dispatch_to_main(workspace_id.to_owned(), remove_workspace_cb);
     }
 
+    fn remove_target(&self, workspace_id: &str, identity_key: &str) {
+        dispatch_to_main(
+            (workspace_id.to_owned(), identity_key.to_owned()),
+            remove_target_cb,
+        );
+    }
+
     fn shutdown(self: Box<Self>) {
         dispatch_to_main((), shutdown_cb);
     }
@@ -82,41 +90,63 @@ impl PipBackend for MacosPipBackend {
 
 unsafe extern "C" fn push_frame_cb(ctx: *mut c_void) {
     let frame: PipFrame = *Box::from_raw(ctx as *mut PipFrame);
-    let frames = {
+    let snapshot = {
         let mut model = VIEW_MODEL.lock().unwrap();
         let model = model.get_or_insert_with(|| PipViewModel::new(12));
         model.upsert(frame);
-        clone_ordered_frames(model)
+        clone_snapshot(model)
     };
-    render_frames(&frames);
+    render_snapshot(&snapshot);
 }
 
 unsafe extern "C" fn remove_workspace_cb(ctx: *mut c_void) {
     let workspace_id: String = *Box::from_raw(ctx as *mut String);
-    let frames = {
+    let snapshot = {
         let mut model = VIEW_MODEL.lock().unwrap();
         let model = model.get_or_insert_with(|| PipViewModel::new(12));
         model.remove_workspace(&workspace_id);
-        clone_ordered_frames(model)
+        clone_snapshot(model)
     };
-    render_frames(&frames);
+    render_snapshot(&snapshot);
 }
 
-fn clone_ordered_frames(model: &PipViewModel) -> Vec<PipFrame> {
-    model
-        .ordered_frames()
-        .into_iter()
-        .cloned()
-        .collect::<Vec<_>>()
+unsafe extern "C" fn remove_target_cb(ctx: *mut c_void) {
+    let (workspace_id, identity_key): (String, String) =
+        *Box::from_raw(ctx as *mut (String, String));
+    let snapshot = {
+        let mut model = VIEW_MODEL.lock().unwrap();
+        let model = model.get_or_insert_with(|| PipViewModel::new(12));
+        model.remove_target(&workspace_id, &identity_key);
+        clone_snapshot(model)
+    };
+    render_snapshot(&snapshot);
 }
 
-fn current_frames() -> Vec<PipFrame> {
+struct ViewSnapshot {
+    frames: Vec<PipFrame>,
+    workspaces: Vec<PipWorkspaceSummary>,
+    selected_workspace_id: Option<String>,
+}
+
+fn clone_snapshot(model: &PipViewModel) -> ViewSnapshot {
+    ViewSnapshot {
+        frames: model.selected_frames().into_iter().cloned().collect(),
+        workspaces: model.workspaces(),
+        selected_workspace_id: model.selected_workspace_id().map(str::to_owned),
+    }
+}
+
+fn current_snapshot() -> ViewSnapshot {
     VIEW_MODEL
         .lock()
         .unwrap()
         .as_ref()
-        .map(clone_ordered_frames)
-        .unwrap_or_default()
+        .map(clone_snapshot)
+        .unwrap_or_else(|| ViewSnapshot {
+            frames: Vec::new(),
+            workspaces: Vec::new(),
+            selected_workspace_id: None,
+        })
 }
 
 unsafe fn ns_string(value: &str) -> *mut objc2::runtime::AnyObject {
@@ -557,6 +587,124 @@ unsafe fn render_dock(
     let _: () = msg_send![canvas, addSubview: dock];
 }
 
+fn session_selector_layout(
+    width: f64,
+    height: f64,
+    count: usize,
+) -> Option<(objc2_foundation::NSRect, Vec<objc2_foundation::NSRect>)> {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    if count <= 1 {
+        return None;
+    }
+    let visible = count;
+    let icon = 22.0;
+    let gap = 5.0;
+    let padding = 6.0;
+    let selector_width = padding * 2.0 + visible as f64 * icon + (visible - 1) as f64 * gap;
+    let selector = NSRect::new(
+        NSPoint::new((width - selector_width) / 2.0, height - 29.0),
+        NSSize::new(selector_width, 28.0),
+    );
+    let icons = (0..visible)
+        .map(|index| {
+            NSRect::new(
+                NSPoint::new(padding + index as f64 * (icon + gap), 3.0),
+                NSSize::new(icon, icon),
+            )
+        })
+        .collect();
+    Some((selector, icons))
+}
+
+fn workspace_accent(workspace_id: &str) -> (f64, f64, f64) {
+    let hash = workspace_id.bytes().fold(2_166_136_261u32, |value, byte| {
+        (value ^ u32::from(byte)).wrapping_mul(16_777_619)
+    });
+    let palette = [
+        (0.29, 0.64, 0.96),
+        (0.30, 0.78, 0.56),
+        (0.96, 0.58, 0.27),
+        (0.91, 0.39, 0.49),
+        (0.46, 0.72, 0.86),
+    ];
+    palette[hash as usize % palette.len()]
+}
+
+unsafe fn render_session_selector(
+    canvas: *mut objc2::runtime::AnyObject,
+    bounds: objc2_foundation::NSRect,
+    workspaces: &[PipWorkspaceSummary],
+    selected_workspace_id: Option<&str>,
+) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    let Some((selector_frame, icons)) =
+        session_selector_layout(bounds.size.width, bounds.size.height, workspaces.len())
+    else {
+        return;
+    };
+    let selector = visual_effect_view(selector_frame, 14.0, 6, 1, true);
+    let selector_layer: *mut AnyObject = msg_send![selector, layer];
+    set_layer_background(selector_layer, color(0.10, 0.12, 0.15, 0.30));
+    set_layer_border(selector_layer, 0.6, color(1.0, 1.0, 1.0, 0.26));
+
+    let delegate = HANDLES
+        .lock()
+        .unwrap()
+        .as_ref()
+        .map(|handles| handles.delegate as *mut AnyObject)
+        .unwrap_or(std::ptr::null_mut());
+    for (index, (workspace, icon_frame)) in workspaces.iter().zip(icons).enumerate() {
+        let selected = selected_workspace_id == Some(workspace.workspace_id.as_str());
+        let (red, green, blue) = workspace_accent(&workspace.workspace_id);
+        let button: *mut AnyObject = {
+            let allocated: *mut AnyObject = msg_send![class!(NSButton), alloc];
+            msg_send![allocated, initWithFrame: icon_frame]
+        };
+        let _: () = msg_send![button, setBordered: false];
+        let _: () = msg_send![button, setRefusesFirstResponder: true];
+        let _: () = msg_send![button, setWantsLayer: true];
+        let layer: *mut AnyObject = msg_send![button, layer];
+        let _: () = msg_send![layer, setCornerRadius: 11.0_f64];
+        set_continuous_corners(layer);
+        set_layer_background(
+            layer,
+            color(red, green, blue, if selected { 0.96 } else { 0.62 }),
+        );
+        set_layer_border(
+            layer,
+            if selected { 1.4 } else { 0.5 },
+            color(1.0, 1.0, 1.0, if selected { 0.94 } else { 0.38 }),
+        );
+        let initial = workspace
+            .workspace_label
+            .chars()
+            .find(|character| character.is_alphanumeric())
+            .unwrap_or('A')
+            .to_uppercase()
+            .collect::<String>();
+        let title = ns_string(&initial);
+        let tooltip = ns_string(&workspace.workspace_label);
+        if !title.is_null() {
+            let _: () = msg_send![button, setTitle: title];
+        }
+        if !tooltip.is_null() {
+            let _: () = msg_send![button, setToolTip: tooltip];
+        }
+        let font: *mut AnyObject = msg_send![class!(NSFont), boldSystemFontOfSize: 10.0_f64];
+        let _: () = msg_send![button, setFont: font];
+        let _: () = msg_send![button, setTag: index as isize];
+        if !delegate.is_null() {
+            let _: () = msg_send![button, setTarget: delegate];
+            let _: () = msg_send![button, setAction: objc2::sel!(selectWorkspace:)];
+        }
+        let _: () = msg_send![selector, addSubview: button];
+    }
+    let _: () = msg_send![canvas, addSubview: selector];
+}
+
 fn desktop_frame(bounds: objc2_foundation::NSRect) -> objc2_foundation::NSRect {
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
@@ -618,7 +766,7 @@ unsafe fn install_shell_details(
     }
 }
 
-unsafe fn render_frames(frames: &[PipFrame]) {
+unsafe fn render_snapshot(snapshot: &ViewSnapshot) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
     use objc2_foundation::{NSPoint, NSRect, NSSize};
@@ -634,7 +782,14 @@ unsafe fn render_frames(frames: &[PipFrame]) {
     let _: () = msg_send![canvas, setSubviews: empty];
 
     let bounds: NSRect = msg_send![canvas, bounds];
-    let target_sizes = frames
+    let selector_height = if snapshot.workspaces.len() > 1 {
+        SESSION_SELECTOR_HEIGHT
+    } else {
+        0.0
+    };
+    let content_height = (bounds.size.height - selector_height).max(1.0);
+    let target_sizes = snapshot
+        .frames
         .iter()
         .map(|frame| {
             png_dimensions(&frame.png_bytes).unwrap_or(TargetSize {
@@ -643,9 +798,9 @@ unsafe fn render_frames(frames: &[PipFrame]) {
             })
         })
         .collect::<Vec<_>>();
-    let layout = layout_desktop(bounds.size.width, bounds.size.height, &target_sizes);
-    if frames.is_empty() {
-        let waiting = appkit_rect(layout.desktop, bounds.size.height);
+    let layout = layout_desktop(bounds.size.width, content_height, &target_sizes);
+    if snapshot.frames.is_empty() {
+        let waiting = appkit_rect(layout.desktop, content_height);
         add_text_label(
             canvas,
             NSRect::new(
@@ -662,11 +817,17 @@ unsafe fn render_frames(frames: &[PipFrame]) {
             1,
         );
     } else {
-        for (frame, target_layout) in frames.iter().zip(layout.targets.iter().copied()) {
-            render_target_window(canvas, frame, target_layout, bounds.size.height);
+        for (frame, target_layout) in snapshot.frames.iter().zip(layout.targets.iter().copied()) {
+            render_target_window(canvas, frame, target_layout, content_height);
         }
-        render_dock(canvas, frames, &layout, bounds.size.height);
+        render_dock(canvas, &snapshot.frames, &layout, content_height);
     }
+    render_session_selector(
+        canvas,
+        bounds,
+        &snapshot.workspaces,
+        snapshot.selected_workspace_id.as_deref(),
+    );
 }
 
 unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
@@ -698,6 +859,10 @@ fn agent_view_delegate_class() -> &'static objc2::runtime::AnyClass {
                 objc2::sel!(windowDidResize:),
                 on_window_did_resize as extern "C" fn(_, _, _),
             );
+            builder.add_method(
+                objc2::sel!(selectWorkspace:),
+                on_select_workspace as extern "C" fn(_, _, _),
+            );
         }
         builder.register()
     })
@@ -717,11 +882,39 @@ extern "C" fn on_window_did_resize(
     _selector: objc2::runtime::Sel,
     _notification: *mut objc2::runtime::AnyObject,
 ) {
-    let frames = current_frames();
+    let snapshot = current_snapshot();
     unsafe {
         update_wallpaper_frame();
-        render_frames(&frames);
+        render_snapshot(&snapshot);
     };
+}
+
+extern "C" fn on_select_workspace(
+    _delegate: *mut objc2::runtime::AnyObject,
+    _selector: objc2::runtime::Sel,
+    sender: *mut objc2::runtime::AnyObject,
+) {
+    if sender.is_null() {
+        return;
+    }
+    let index: isize = unsafe { objc2::msg_send![sender, tag] };
+    if index < 0 {
+        return;
+    }
+    let snapshot = {
+        let mut model = VIEW_MODEL.lock().unwrap();
+        let Some(model) = model.as_mut() else {
+            return;
+        };
+        let workspaces = model.workspaces();
+        let Some(workspace) = workspaces.get(index as usize) else {
+            return;
+        };
+        let workspace_id = workspace.workspace_id.clone();
+        model.select_workspace(&workspace_id);
+        clone_snapshot(model)
+    };
+    unsafe { render_snapshot(&snapshot) };
 }
 
 /// Park the main thread in `NSApplication.run()` for the main-queue AppKit
@@ -1075,7 +1268,11 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     });
     *VIEW_MODEL.lock().unwrap() = Some(PipViewModel::new(12));
     update_wallpaper_frame();
-    render_frames(&[]);
+    render_snapshot(&ViewSnapshot {
+        frames: Vec::new(),
+        workspaces: Vec::new(),
+        selected_workspace_id: None,
+    });
     let _: () = msg_send![window, orderFrontRegardless];
 
     tracing::info!(
@@ -1135,5 +1332,20 @@ mod tests {
         assert_eq!(inner.origin, NSPoint::new(9.0, 10.0));
         assert_eq!(inner.size, NSSize::new(602.0, 390.0));
         assert_eq!(outer.size.height - inner.origin.y - inner.size.height, 20.0);
+    }
+
+    #[test]
+    fn session_selector_is_local_compact_and_hidden_for_one_session() {
+        assert!(session_selector_layout(602.0, 390.0, 1).is_none());
+        let (selector, icons) = session_selector_layout(602.0, 390.0, 3).unwrap();
+        assert_eq!(icons.len(), 3);
+        assert!(selector.origin.x > 0.0);
+        assert!(selector.origin.y + selector.size.height <= 390.0);
+        assert!(icons.iter().all(|icon| {
+            icon.origin.x >= 0.0
+                && icon.origin.y >= 0.0
+                && icon.origin.x + icon.size.width <= selector.size.width
+                && icon.origin.y + icon.size.height <= selector.size.height
+        }));
     }
 }

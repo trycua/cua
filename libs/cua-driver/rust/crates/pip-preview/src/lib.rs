@@ -276,14 +276,33 @@ pub struct PipTarget {
     pub workspace_label: String,
     /// Stable exact-target key within the workspace.
     pub target_id: String,
+    /// Process-local identity used to de-duplicate equivalent bindings. This
+    /// may be more stable than the public target reference (for example a CDP
+    /// page target across repeated browser-window binds).
+    pub identity_key: String,
     pub target_kind: PipTargetKind,
     pub target_label: String,
+    /// Native window containing this target, when proven. Browser tabs use it
+    /// to avoid a duplicate native Chrome/Edge window card.
+    pub native_container: Option<PipNativeContainer>,
 }
 
 impl PipTarget {
     pub fn view_id(&self) -> String {
-        format!("{}:{}", self.workspace_id, self.target_id)
+        view_id(&self.workspace_id, &self.identity_key)
     }
+}
+
+fn view_id(workspace_id: &str, identity_key: &str) -> String {
+    // Both identities may contain `:`. Prefixing the workspace byte length
+    // prevents cross-session concatenation aliases.
+    format!("{}:{workspace_id}{identity_key}", workspace_id.len())
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PipNativeContainer {
+    pub pid: i64,
+    pub window_id: u64,
 }
 
 /// A single exact-target frame pushed into the Agent View after a tool call.
@@ -312,6 +331,16 @@ pub struct PipFrame {
 pub struct PipViewModel {
     max_targets: usize,
     frames: HashMap<String, PipFrame>,
+    selected_workspace_id: Option<String>,
+    selection_pinned: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PipWorkspaceSummary {
+    pub workspace_id: String,
+    pub workspace_label: String,
+    pub target_count: usize,
+    pub updated_ms: u64,
 }
 
 impl PipViewModel {
@@ -319,25 +348,98 @@ impl PipViewModel {
         Self {
             max_targets: max_targets.max(1),
             frames: HashMap::new(),
+            selected_workspace_id: None,
+            selection_pinned: false,
         }
     }
 
     pub fn upsert(&mut self, frame: PipFrame) -> Option<String> {
+        let workspace_id = frame.target.workspace_id.clone();
+        if frame.target.target_kind == PipTargetKind::NativeWindow
+            && frame.target.native_container.is_some_and(|container| {
+                self.frames.values().any(|existing| {
+                    existing.target.workspace_id == workspace_id
+                        && existing.target.target_kind == PipTargetKind::BrowserTab
+                        && existing.target.native_container == Some(container)
+                })
+            })
+        {
+            return None;
+        }
+        if frame.target.target_kind == PipTargetKind::BrowserTab {
+            if let Some(container) = frame.target.native_container {
+                self.frames.retain(|_, existing| {
+                    existing.target.workspace_id != workspace_id
+                        || existing.target.target_kind != PipTargetKind::NativeWindow
+                        || existing.target.native_container != Some(container)
+                });
+            }
+        }
         let view_id = frame.target.view_id();
         self.frames.insert(view_id.clone(), frame);
+        if self.selected_workspace_id.is_none() || !self.selection_pinned {
+            self.selected_workspace_id = Some(workspace_id.clone());
+        }
         if self.frames.len() <= self.max_targets {
             return None;
         }
+        let counts = self
+            .frames
+            .values()
+            .fold(HashMap::new(), |mut counts, frame| {
+                *counts
+                    .entry(frame.target.workspace_id.as_str())
+                    .or_insert(0usize) += 1;
+                counts
+            });
+        let largest_workspace = counts
+            .iter()
+            .max_by(|(left_id, left_count), (right_id, right_count)| {
+                left_count
+                    .cmp(right_count)
+                    .then_with(|| right_id.cmp(left_id))
+            })
+            .map(|(id, _)| *id);
         let evicted = self
             .frames
             .iter()
             .filter(|(id, _)| *id != &view_id)
-            .min_by_key(|(_, frame)| frame.timestamp_ms)
+            .min_by_key(|(_, candidate)| {
+                (
+                    candidate.target.workspace_id.as_str() != largest_workspace.unwrap_or(""),
+                    candidate.timestamp_ms,
+                )
+            })
             .map(|(id, _)| id.clone());
         if let Some(id) = evicted.as_ref() {
             self.frames.remove(id);
         }
+        self.reconcile_selection();
         evicted
+    }
+
+    pub fn remove_target(&mut self, workspace_id: &str, identity_key: &str) -> bool {
+        let direct = view_id(workspace_id, identity_key);
+        let view_id = self
+            .frames
+            .contains_key(&direct)
+            .then_some(direct)
+            .or_else(|| {
+                self.frames
+                    .iter()
+                    .find(|(_, frame)| {
+                        frame.target.workspace_id == workspace_id
+                            && frame.target.target_id == identity_key
+                    })
+                    .map(|(id, _)| id.clone())
+            });
+        let removed = view_id
+            .as_ref()
+            .is_some_and(|view_id| self.frames.remove(view_id).is_some());
+        if removed {
+            self.reconcile_selection();
+        }
+        removed
     }
 
     pub fn remove_workspace(&mut self, workspace_id: &str) -> Vec<String> {
@@ -350,6 +452,10 @@ impl PipViewModel {
         for id in &removed {
             self.frames.remove(id);
         }
+        if self.selected_workspace_id.as_deref() == Some(workspace_id) {
+            self.selection_pinned = false;
+        }
+        self.reconcile_selection();
         removed
     }
 
@@ -365,6 +471,101 @@ impl PipViewModel {
         frames
     }
 
+    pub fn selected_workspace_id(&self) -> Option<&str> {
+        self.selected_workspace_id.as_deref()
+    }
+
+    pub fn selected_frames(&self) -> Vec<&PipFrame> {
+        let Some(selected) = self.selected_workspace_id() else {
+            return Vec::new();
+        };
+        let mut frames = self
+            .frames
+            .values()
+            .filter(|frame| frame.target.workspace_id == selected)
+            .collect::<Vec<_>>();
+        frames.sort_by(|a, b| {
+            b.timestamp_ms
+                .cmp(&a.timestamp_ms)
+                .then_with(|| a.target.identity_key.cmp(&b.target.identity_key))
+        });
+        frames
+    }
+
+    pub fn workspaces(&self) -> Vec<PipWorkspaceSummary> {
+        let mut summaries = HashMap::<&str, PipWorkspaceSummary>::new();
+        for frame in self.frames.values() {
+            let entry = summaries
+                .entry(&frame.target.workspace_id)
+                .or_insert_with(|| PipWorkspaceSummary {
+                    workspace_id: frame.target.workspace_id.clone(),
+                    workspace_label: sanitize_label(&frame.target.workspace_label, 48),
+                    target_count: 0,
+                    updated_ms: 0,
+                });
+            entry.target_count += 1;
+            entry.updated_ms = entry.updated_ms.max(frame.timestamp_ms);
+        }
+        let mut summaries = summaries.into_values().collect::<Vec<_>>();
+        summaries.sort_by(|a, b| {
+            b.updated_ms
+                .cmp(&a.updated_ms)
+                .then_with(|| a.workspace_label.cmp(&b.workspace_label))
+                .then_with(|| a.workspace_id.cmp(&b.workspace_id))
+        });
+        summaries
+    }
+
+    pub fn select_workspace(&mut self, workspace_id: &str) -> bool {
+        if !self
+            .frames
+            .values()
+            .any(|frame| frame.target.workspace_id == workspace_id)
+        {
+            return false;
+        }
+        self.selected_workspace_id = Some(workspace_id.to_owned());
+        self.selection_pinned = true;
+        true
+    }
+
+    pub fn select_next_workspace(&mut self) -> bool {
+        let workspaces = self.workspaces();
+        if workspaces.len() <= 1 {
+            return false;
+        }
+        let selected = self.selected_workspace_id();
+        let index = workspaces
+            .iter()
+            .position(|workspace| Some(workspace.workspace_id.as_str()) == selected)
+            .unwrap_or(0);
+        self.select_workspace(&workspaces[(index + 1) % workspaces.len()].workspace_id)
+    }
+
+    pub fn selection_is_pinned(&self) -> bool {
+        self.selection_pinned
+    }
+
+    fn reconcile_selection(&mut self) {
+        let selected_exists = self
+            .selected_workspace_id
+            .as_deref()
+            .is_some_and(|selected| {
+                self.frames
+                    .values()
+                    .any(|frame| frame.target.workspace_id == selected)
+            });
+        if selected_exists {
+            return;
+        }
+        self.selection_pinned = false;
+        self.selected_workspace_id = self
+            .frames
+            .values()
+            .max_by_key(|frame| frame.timestamp_ms)
+            .map(|frame| frame.target.workspace_id.clone());
+    }
+
     pub fn len(&self) -> usize {
         self.frames.len()
     }
@@ -372,6 +573,18 @@ impl PipViewModel {
     pub fn is_empty(&self) -> bool {
         self.frames.is_empty()
     }
+}
+
+fn sanitize_label(value: &str, max_chars: usize) -> String {
+    let mut label = value
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(max_chars)
+        .collect::<String>();
+    if label.trim().is_empty() {
+        label = "Agent".to_owned();
+    }
+    label
 }
 
 /// A live PiP window. Owned by `main.rs` for the lifetime of the
@@ -386,6 +599,10 @@ pub trait PipBackend: Send + Sync {
     /// Remove every card associated with an ended session/workspace. This
     /// changes only Agent View presentation; it does not close applications.
     fn remove_workspace(&self, workspace_id: &str);
+
+    /// Remove one exact target from presentation. This never closes or
+    /// otherwise mutates the underlying native window or browser tab.
+    fn remove_target(&self, _workspace_id: &str, _identity_key: &str) {}
 
     /// Close the window and release native resources. Called from
     /// `main.rs` on shutdown.
@@ -428,13 +645,49 @@ mod tests {
                 workspace_id: workspace.to_owned(),
                 workspace_label: workspace.to_owned(),
                 target_id: target.to_owned(),
+                identity_key: target.to_owned(),
                 target_kind: PipTargetKind::NativeWindow,
                 target_label: target.to_owned(),
+                native_container: None,
             },
             png_bytes: vec![1],
             action_label: "click".to_owned(),
             timestamp_ms,
         }
+    }
+
+    fn browser_frame(
+        workspace: &str,
+        target: &str,
+        identity: &str,
+        container: PipNativeContainer,
+        timestamp_ms: u64,
+    ) -> PipFrame {
+        PipFrame {
+            target: PipTarget {
+                workspace_id: workspace.to_owned(),
+                workspace_label: workspace.to_owned(),
+                target_id: target.to_owned(),
+                identity_key: identity.to_owned(),
+                target_kind: PipTargetKind::BrowserTab,
+                target_label: target.to_owned(),
+                native_container: Some(container),
+            },
+            png_bytes: vec![1],
+            action_label: "get_browser_state".to_owned(),
+            timestamp_ms,
+        }
+    }
+
+    fn native_frame(
+        workspace: &str,
+        target: &str,
+        container: PipNativeContainer,
+        timestamp_ms: u64,
+    ) -> PipFrame {
+        let mut frame = frame(workspace, target, timestamp_ms);
+        frame.target.native_container = Some(container);
+        frame
     }
 
     #[test]
@@ -472,9 +725,151 @@ mod tests {
         model.upsert(frame("agent-a", "newer", 2));
         assert_eq!(
             model.upsert(frame("agent-b", "newest", 3)),
-            Some("agent-a:old".to_owned())
+            Some(view_id("agent-a", "old"))
         );
         assert_eq!(model.len(), 2);
+    }
+
+    #[test]
+    fn follows_recent_activity_until_the_user_pins_a_workspace() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "a", 1));
+        model.upsert(frame("agent-b", "b", 2));
+        assert_eq!(model.selected_workspace_id(), Some("agent-b"));
+
+        assert!(model.select_workspace("agent-a"));
+        model.upsert(frame("agent-b", "b", 3));
+        assert_eq!(model.selected_workspace_id(), Some("agent-a"));
+        assert!(model.selection_is_pinned());
+        assert_eq!(model.selected_frames().len(), 1);
+    }
+
+    #[test]
+    fn removing_the_selected_workspace_falls_back_to_the_most_recent() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "a", 1));
+        model.upsert(frame("agent-b", "b", 2));
+        assert!(model.select_workspace("agent-a"));
+        model.remove_workspace("agent-a");
+        assert_eq!(model.selected_workspace_id(), Some("agent-b"));
+        assert!(!model.selection_is_pinned());
+    }
+
+    #[test]
+    fn exact_target_removal_uses_the_internal_identity_key() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "window:1:2", 1));
+        assert!(model.remove_target("agent-a", "window:1:2"));
+        assert!(model.is_empty());
+        assert_eq!(model.selected_workspace_id(), None);
+    }
+
+    #[test]
+    fn equal_public_labels_do_not_merge_private_workspaces() {
+        let mut model = PipViewModel::new(4);
+        let mut first = frame("private-a", "one", 1);
+        first.target.workspace_label = "research".to_owned();
+        let mut second = frame("private-b", "two", 2);
+        second.target.workspace_label = "research".to_owned();
+        model.upsert(first);
+        model.upsert(second);
+
+        let workspaces = model.workspaces();
+        assert_eq!(workspaces.len(), 2);
+        assert!(workspaces
+            .iter()
+            .all(|workspace| workspace.workspace_label == "research"));
+        assert_eq!(model.selected_workspace_id(), Some("private-b"));
+    }
+
+    #[test]
+    fn stable_browser_identity_updates_across_repeated_bindings() {
+        let mut model = PipViewModel::new(4);
+        let container = PipNativeContainer {
+            pid: 42,
+            window_id: 7,
+        };
+        model.upsert(browser_frame(
+            "agent-a",
+            "browser:first:tab-a",
+            "browser-cdp:page-1",
+            container,
+            1,
+        ));
+        model.upsert(browser_frame(
+            "agent-a",
+            "browser:second:tab-b",
+            "browser-cdp:page-1",
+            container,
+            2,
+        ));
+
+        assert_eq!(model.len(), 1);
+        assert_eq!(
+            model.selected_frames()[0].target.target_id,
+            "browser:second:tab-b"
+        );
+        assert_eq!(model.selected_frames()[0].timestamp_ms, 2);
+    }
+
+    #[test]
+    fn browser_tabs_replace_and_suppress_their_native_container_card() {
+        let mut model = PipViewModel::new(6);
+        let container = PipNativeContainer {
+            pid: 42,
+            window_id: 7,
+        };
+        model.upsert(native_frame("agent-a", "window:42:7", container, 1));
+        model.upsert(browser_frame(
+            "agent-a",
+            "browser:binding:tab-a",
+            "browser-cdp:page-a",
+            container,
+            2,
+        ));
+        model.upsert(browser_frame(
+            "agent-a",
+            "browser:binding:tab-b",
+            "browser-cdp:page-b",
+            container,
+            3,
+        ));
+        model.upsert(native_frame("agent-a", "window:42:7", container, 4));
+
+        let frames = model.selected_frames();
+        assert_eq!(frames.len(), 2);
+        assert!(frames
+            .iter()
+            .all(|frame| frame.target.target_kind == PipTargetKind::BrowserTab));
+    }
+
+    #[test]
+    fn private_session_and_target_delimiters_cannot_alias() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("private:a", "b", 1));
+        model.upsert(frame("private", "a:b", 2));
+
+        assert_eq!(model.len(), 2);
+        assert!(model.select_workspace("private:a"));
+        assert_eq!(model.selected_frames()[0].target.target_id, "b");
+        assert!(model.select_workspace("private"));
+        assert_eq!(model.selected_frames()[0].target.target_id, "a:b");
+    }
+
+    #[test]
+    fn eviction_prefers_the_most_populated_workspace() {
+        let mut model = PipViewModel::new(3);
+        model.upsert(frame("agent-a", "old-a", 1));
+        model.upsert(frame("agent-a", "new-a", 2));
+        model.upsert(frame("agent-b", "only-b", 3));
+        assert_eq!(
+            model.upsert(frame("agent-c", "only-c", 4)),
+            Some(view_id("agent-a", "old-a"))
+        );
+        assert!(model
+            .ordered_frames()
+            .iter()
+            .any(|frame| frame.target.workspace_id == "agent-b"));
     }
 
     #[test]

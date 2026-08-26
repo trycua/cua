@@ -641,14 +641,22 @@ pub fn parse_command() -> Command {
         );
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
+        println!("  --agent-view                Show an always-on-top miniature desktop for the");
+        println!("                              selected agent session. Exact native windows and");
         println!(
-            "  --agent-view                Show the always-on-top Agent View with one card per"
+            "                              Chrome tabs traversed through Cua Driver become cards."
         );
         println!(
-            "                              exact native window or Chrome tab. Existing sessions"
+            "                              Recent activity is followed until you locally select"
         );
         println!(
-            "                              group the cards; no claim/release API is involved."
+            "                              another session in Agent View; sessions never mix."
+        );
+        println!(
+            "                              Closed targets and ended sessions are removed. This is"
+        );
+        println!(
+            "                              presentation only; no claim/release API is involved."
         );
         println!(
             "                              Native presentation is available on macOS, Windows,"

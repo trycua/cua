@@ -1658,6 +1658,17 @@ impl ToolRegistry {
         // so a user can inspect several targets before any mutation occurs.
         if pip_hook::pip_enabled()
             && !private_consent_turn
+            && result.is_error == Some(true)
+            && pip_result_proves_target_absent(&result)
+        {
+            if let (Some(workspace_id), Some(target)) =
+                (runtime_session.as_deref(), pip_capture_target(&args))
+            {
+                pip_hook::remove_pip_target(workspace_id, pip_target_public_key(&target));
+            }
+        }
+        if pip_hook::pip_enabled()
+            && !private_consent_turn
             && (should_record || is_exact_visual_snapshot(name, &args))
         {
             if let Some(frame) = self
@@ -1667,14 +1678,6 @@ impl ToolRegistry {
                 pip_hook::push_pip_frame(frame);
             }
         }
-        if pip_hook::pip_enabled()
-            && result.is_error != Some(true)
-            && name == "end_session"
-            && runtime_session.is_some()
-        {
-            pip_hook::remove_pip_workspace(runtime_session.as_deref().unwrap_or_default());
-        }
-
         result
     }
 
@@ -1697,10 +1700,27 @@ impl ToolRegistry {
                 .get("session")
                 .and_then(Value::as_str)
                 .or(runtime_session)?;
-            let preview = engine
+            let preview = match engine
                 .capture_tab_preview(browser_session, &target_id, &tab_id)
                 .await
-                .ok()?;
+            {
+                Ok(preview) => preview,
+                Err(error)
+                    if matches!(
+                        error.code,
+                        crate::browser::refusal::BrowserRefusalCode::BrowserTabNotFound
+                            | crate::browser::refusal::BrowserRefusalCode::BrowserBindingStale
+                            | crate::browser::refusal::BrowserRefusalCode::BrowserWrongTargetRefused
+                    ) =>
+                {
+                    pip_hook::remove_pip_target(
+                        &workspace_id,
+                        format!("browser:{target_id}:{tab_id}"),
+                    );
+                    return None;
+                }
+                Err(_) => return None,
+            };
             let png_bytes = BASE64.decode(preview.screenshot.data_base64).ok()?;
             let target_label = if preview.title.trim().is_empty() {
                 preview.url
@@ -1712,8 +1732,13 @@ impl ToolRegistry {
                     workspace_id,
                     workspace_label,
                     target_id: format!("browser:{target_id}:{tab_id}"),
+                    identity_key: format!("browser-cdp:{}", preview.cdp_target_id),
                     target_kind: pip_hook::PipHookTargetKind::BrowserTab,
                     target_label,
+                    native_container: Some(pip_hook::PipHookNativeContainer {
+                        pid: preview.pid,
+                        window_id: preview.window_id,
+                    }),
                 },
                 png_bytes,
                 action_label,
@@ -1730,8 +1755,10 @@ impl ToolRegistry {
                 workspace_id,
                 workspace_label,
                 target_id: format!("window:{pid}:{window_id}"),
+                identity_key: format!("window:{pid}:{window_id}"),
                 target_kind: pip_hook::PipHookTargetKind::NativeWindow,
                 target_label: format!("Window {window_id}"),
+                native_container: Some(pip_hook::PipHookNativeContainer { pid, window_id }),
             },
             png_bytes,
             action_label,
@@ -4824,6 +4851,33 @@ fn pip_capture_target(args: &Value) -> Option<PipCaptureTarget> {
     })
 }
 
+fn pip_target_public_key(target: &PipCaptureTarget) -> String {
+    match target {
+        PipCaptureTarget::NativeWindow { pid, window_id } => format!("window:{pid}:{window_id}"),
+        PipCaptureTarget::Browser { target_id, tab_id } => {
+            format!("browser:{target_id}:{tab_id}")
+        }
+    }
+}
+
+fn pip_result_proves_target_absent(result: &ToolResult) -> bool {
+    let code = result
+        .structured_content
+        .as_ref()
+        .and_then(|payload| payload.get("code"))
+        .and_then(Value::as_str);
+    matches!(
+        code,
+        Some(
+            "window_target_not_found"
+                | "window_not_found"
+                | "browser_tab_not_found"
+                | "browser_binding_stale"
+                | "browser_wrong_target_refused"
+        )
+    )
+}
+
 fn is_exact_visual_snapshot(tool_name: &str, args: &Value) -> bool {
     matches!(
         (tool_name, pip_capture_target(args)),
@@ -4971,6 +5025,26 @@ mod pip_routing_tests {
             pip_workspace_label(&serde_json::json!({}), "__cua_runtime_x:agent-123456"),
             "Agent 123456"
         );
+    }
+
+    #[test]
+    fn proven_absent_results_remove_only_the_exact_public_target() {
+        let absent = ToolResult::error("gone").with_structured(serde_json::json!({
+            "code": "window_target_not_found"
+        }));
+        assert!(pip_result_proves_target_absent(&absent));
+        assert_eq!(
+            pip_target_public_key(&PipCaptureTarget::NativeWindow {
+                pid: 42,
+                window_id: 7,
+            }),
+            "window:42:7"
+        );
+
+        let permission = ToolResult::error("denied").with_structured(serde_json::json!({
+            "code": "permission_denied"
+        }));
+        assert!(!pip_result_proves_target_absent(&permission));
     }
 }
 

@@ -35,8 +35,8 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Optional pid filter. When set, only this pid's windows are \
 returned, and every CGWindow layer is admitted -- a caller that already named the process is not \
-at risk of being swamped. Space attribution (space_ids, on_current_space, current_space_id) is not \
-resolved for that enumeration and comes back null."
+at risk of being swamped. All per-record fields, Space attribution included, are reported the \
+same as in the layer-0 listing."
                 },
                 "on_screen_only": {
                     "type": "boolean",
@@ -63,26 +63,19 @@ impl Tool for ListWindowsTool {
         let pid_filter: Option<i32> = args.opt_i64("pid").map(|v| v as i32);
         let on_screen_only = args.bool_or("on_screen_only", false);
 
-        // Con pid, todas las capas. Es la semantica que el issue #1451 pidio y
-        // el PR #1452 dejo en el backend Swift; la reescritura a Rust la
-        // perdio, y con ella la unica via de alcanzar una app cuya UI entera
-        // vive en una capa accesoria. El motivo del filtro -- no inundar al
-        // llamante con tooltips, popovers, menus y el Dock -- solo aplica al
-        // listado del escritorio entero, que sigue igual.
-        let enumeration = match (on_screen_only, pid_filter.is_some()) {
-            (true, false) => crate::windows::visible_windows_with_space_snapshot(),
-            (false, false) => crate::windows::all_windows_with_space_snapshot(),
-            (true, true) => crate::windows::visible_windows_any_layer_with_space_snapshot(),
-            (false, true) => crate::windows::all_windows_any_layer_with_space_snapshot(),
+        let query = match pid_filter {
+            Some(pid) => crate::windows::WindowQuery::for_pid(pid),
+            None => crate::windows::WindowQuery::desktop(),
         };
+        let query = if on_screen_only {
+            query.on_screen_only()
+        } else {
+            query
+        };
+        let enumeration = crate::windows::enumerate_windows(query);
         let current_space_id = enumeration.current_space_id;
-        let mut windows = enumeration.windows;
 
-        if let Some(pid) = pid_filter {
-            windows.retain(|w| w.pid == pid);
-        }
-
-        let windows_json: Vec<Value> = windows.iter().map(window_record_json).collect();
+        let windows_json: Vec<Value> = enumeration.windows.iter().map(window_record_json).collect();
 
         ToolResult::text(format!("Found {} window(s).", windows_json.len())).with_structured(
             serde_json::json!({
@@ -118,9 +111,9 @@ pub(super) fn window_record_json(w: &crate::windows::WindowInfo) -> Value {
 mod tests {
     use super::*;
 
-    /// Sin pid el listado sigue siendo de capa 0: nadie que pregunte por el
-    /// escritorio entero debe recibir el Dock, un tooltip ni cada NSMenu
-    /// abierto. Con pid, el llamante ya nombro el proceso y no hay tal riesgo.
+    /// The schema is the contract agents read: a pid query admits every
+    /// layer, a desktop query stays layer-0. The behavior itself is covered
+    /// in `crate::windows::tests`.
     #[test]
     fn pid_filter_documents_that_it_admits_every_layer() {
         let described = def().input_schema["properties"]["pid"]["description"]
@@ -128,11 +121,11 @@ mod tests {
             .unwrap_or_default();
         assert!(
             described.contains("every CGWindow layer"),
-            "el contrato de capas tiene que estar en el esquema, no solo en el codigo: {described}"
+            "the layer contract must be in the schema, not just the code: {described}"
         );
         assert!(
             def().description.contains("layer-0 only"),
-            "y el listado sin pid debe seguir anunciandose como capa 0"
+            "the no-pid listing must keep advertising itself as layer-0"
         );
     }
 

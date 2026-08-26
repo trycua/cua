@@ -517,15 +517,21 @@ fn protected_host_launch_refusal() -> ToolResult {
 
 // ── Blocking helpers ──────────────────────────────────────────────────────────
 
-/// Poll for the pid's layer-0 windows, retrying up to 5x100ms to absorb
+/// Poll for the pid's windows, retrying up to 5x100ms to absorb
 /// LaunchServices → WindowServer latency (mirrors the Swift reference).
+/// Every layer is enumerated so an accessory-only app still comes up
+/// window-ready; layer-0 windows win whenever the process has one.
 fn resolve_windows_for_pid(pid: i32) -> Vec<crate::windows::WindowInfo> {
     for attempt in 0..5 {
-        let found: Vec<_> = crate::windows::all_windows()
+        let found = crate::windows::prefer_layer0(
+            crate::windows::enumerate_windows(
+                crate::windows::WindowQuery::for_pid(pid).skip_spaces(),
+            )
+            .windows
             .into_iter()
-            .filter(|w| w.pid == pid && w.layer == 0)
             .filter(|w| w.bounds.width > 1.0 && w.bounds.height > 1.0)
-            .collect();
+            .collect(),
+        );
         if !found.is_empty() {
             return found;
         }

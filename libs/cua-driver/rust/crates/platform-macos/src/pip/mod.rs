@@ -652,9 +652,15 @@ unsafe fn install_wallpaper(
 
     let glass_frame = visual_effect_view(bounds, 12.5, 13, 0, true);
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
+    let appearance_name = ns_string("NSAppearanceNameVibrantDark");
+    let dark_appearance: *mut AnyObject =
+        msg_send![class!(NSAppearance), appearanceNamed: appearance_name];
+    if !dark_appearance.is_null() {
+        let _: () = msg_send![glass_frame, setAppearance: dark_appearance];
+    }
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
-    set_layer_background(glass_layer, color(0.20, 0.24, 0.27, 0.20));
-    set_layer_border(glass_layer, 0.9, color(1.0, 1.0, 1.0, 0.30));
+    set_layer_background(glass_layer, color(0.06, 0.09, 0.12, 0.30));
+    set_layer_border(glass_layer, 0.7, color(1.0, 1.0, 1.0, 0.28));
     let _: () = msg_send![content_view, addSubview: glass_frame];
 
     let inset = 6.0;

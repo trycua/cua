@@ -3,12 +3,16 @@
 // Keycloak before the React tree mounts; this component only renders
 // children once we have a valid session.
 
-import { useEffect, useState } from "react"
+import { useEffect, useLayoutEffect, useState } from "react"
 import { initKc } from "./keycloak"
 import { isLocalVisualPreview } from "../local-visual-preview"
 
 interface Props {
   children: React.ReactNode
+}
+
+function removeBootSurface() {
+  document.getElementById("cua-boot")?.remove()
 }
 
 export function AuthProvider({ children }: Props) {
@@ -29,19 +33,28 @@ export function AuthProvider({ children }: Props) {
       .catch(e => setError(String(e)))
   }, [visualPreview])
 
+  useLayoutEffect(() => {
+    if (ready || error) removeBootSurface()
+  }, [error, ready])
+
   if (error) {
     return (
-      <div style={{ padding: 24, fontFamily: "monospace" }}>
-        Auth error: {error}
-      </div>
+      <main className="cua-auth-error">
+        <div className="cua-auth-error__panel">
+          <p className="cua-auth-error__brand">Cua</p>
+          <h1>We couldn&apos;t sign you in</h1>
+          <p>
+            Your session didn&apos;t complete. Try again, or contact Cua support
+            if this keeps happening.
+          </p>
+          <code>{error}</code>
+          <button type="button" onClick={() => window.location.reload()}>
+            Try again
+          </button>
+        </div>
+      </main>
     )
   }
-  if (!ready) {
-    return (
-      <div style={{ padding: 24, fontFamily: "monospace" }}>
-        Signing in&hellip;
-      </div>
-    )
-  }
+  if (!ready) return null
   return <>{children}</>
 }

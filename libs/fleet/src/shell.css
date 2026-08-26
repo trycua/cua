@@ -6,6 +6,77 @@ body,
   background: var(--cua-dashboard-background, #000000);
 }
 
+.cua-auth-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 32px;
+  background:
+    radial-gradient(ellipse 90% 70% at 6% 104%, #173249 0%, #111d2a 38%, #07080a 74%),
+    #07080a;
+  color: var(--cua-dashboard-text, #f6f8fb);
+  font-family: var(--cua-dashboard-font-body, "Urbanist", sans-serif);
+}
+
+.cua-auth-error__panel {
+  width: min(100%, 420px);
+}
+
+.cua-auth-error__brand {
+  margin: 0 0 32px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.cua-auth-error h1 {
+  margin: 0;
+  font-family: var(--cua-dashboard-font-display, "Instrument Serif", serif);
+  font-size: clamp(38px, 8vw, 52px);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.cua-auth-error p:not(.cua-auth-error__brand) {
+  margin: 18px 0 0;
+  color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.72));
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.cua-auth-error code {
+  display: block;
+  margin-top: 20px;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--cua-color-line-soft, rgba(255, 255, 255, 0.12));
+  border-radius: var(--cua-radius-control, 10px);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--cua-color-text-body, rgba(224, 230, 238, 0.84));
+  font-family: var(--cua-dashboard-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cua-auth-error button {
+  min-height: 48px;
+  margin-top: 24px;
+  padding: 0 22px;
+  border: 1px solid var(--cua-color-brand-primary, #9fd7ff);
+  border-radius: var(--cua-radius-control, 10px);
+  background: var(--cua-action-primary-background, #9fd7ff);
+  color: var(--cua-action-primary-foreground, #07131e);
+  cursor: pointer;
+  font: 600 14px/1 var(--cua-dashboard-font-body, "Urbanist", sans-serif);
+}
+
+.cua-auth-error button:focus-visible {
+  outline: 3px solid var(--cua-color-brand-primary, #9fd7ff);
+  outline-offset: 3px;
+}
+
 .cua-shell {
   color: var(--cua-dashboard-text);
   font-family: var(--cua-dashboard-font-body);

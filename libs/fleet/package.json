@@ -14,7 +14,7 @@
     "lint:fix": "biome check --write",
     "test:e2e": "npm run sdk:browser && playwright test",
     "test:e2e:ui": "npm run sdk:browser && playwright test --ui",
-    "test:auth-contract": "tsx --test tests/auth-redirects.test.ts",
+    "test:auth-contract": "tsx --test tests/auth-redirects.test.ts && node --test tests/auth-first-paint.test.mjs",
     "test:design-boundary": "node --test tests/design-package-boundary.test.mjs",
     "test:favicon": "node --test tests/favicon.test.mjs",
     "test:sdk-models": "rm -rf target/sdk-model-tests && tsc -p tsconfig.sdk-models.json && node target/sdk-model-tests/e2e/sdk-models.unit.js",

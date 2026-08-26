@@ -233,6 +233,30 @@ unsafe fn rounded_view(
     view
 }
 
+unsafe fn visual_effect_view(
+    frame: objc2_foundation::NSRect,
+    radius: f64,
+    material: isize,
+    blending_mode: isize,
+    clips: bool,
+) -> *mut objc2::runtime::AnyObject {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    let view: *mut AnyObject = {
+        let alloc: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
+        msg_send![alloc, initWithFrame: frame]
+    };
+    let _: () = msg_send![view, setMaterial: material];
+    let _: () = msg_send![view, setBlendingMode: blending_mode];
+    let _: () = msg_send![view, setState: 1isize];
+    let _: () = msg_send![view, setWantsLayer: true];
+    let layer: *mut AnyObject = msg_send![view, layer];
+    let _: () = msg_send![layer, setCornerRadius: radius];
+    let _: () = msg_send![layer, setMasksToBounds: clips];
+    view
+}
+
 unsafe fn add_circle(
     parent: *mut objc2::runtime::AnyObject,
     x: f64,
@@ -344,7 +368,7 @@ unsafe fn render_target_window(
 
     let window_frame = appkit_rect(layout.window, bounds_height);
     let radius = (window_frame.size.width.min(window_frame.size.height) * 0.035).clamp(5.0, 9.0);
-    let shadow = rounded_view(window_frame, radius, color(0.96, 0.96, 0.97, 1.0), false);
+    let shadow = rounded_view(window_frame, radius, color(0.0, 0.0, 0.0, 0.0), false);
     let shadow_layer: *mut AnyObject = msg_send![shadow, layer];
     let _: () = msg_send![shadow_layer, setShadowOpacity: 0.30_f32];
     let _: () = msg_send![shadow_layer, setShadowRadius: 16.0_f64];
@@ -359,11 +383,11 @@ unsafe fn render_target_window(
             NSSize::new(window_frame.size.width, window_frame.size.height),
         ),
         radius,
-        color(0.96, 0.96, 0.97, 1.0),
+        color(0.0, 0.0, 0.0, 0.0),
         true,
     );
     let window_layer: *mut AnyObject = msg_send![window, layer];
-    set_layer_border(window_layer, 0.6, color(1.0, 1.0, 1.0, 0.24));
+    set_layer_border(window_layer, 0.55, color(0.0, 0.0, 0.0, 0.22));
     let image_view: *mut AnyObject = {
         let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
         msg_send![
@@ -395,17 +419,13 @@ unsafe fn render_dock(
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     let dock_frame = appkit_rect(layout.dock, bounds_height);
-    let dock = rounded_view(
-        dock_frame,
-        dock_frame.size.height * 0.28,
-        color(0.82, 0.84, 0.87, 0.62),
-        false,
-    );
+    let dock = visual_effect_view(dock_frame, dock_frame.size.height * 0.30, 6, 1, false);
     let dock_layer: *mut AnyObject = msg_send![dock, layer];
-    set_layer_border(dock_layer, 0.6, color(1.0, 1.0, 1.0, 0.36));
-    let _: () = msg_send![dock_layer, setShadowOpacity: 0.22_f32];
-    let _: () = msg_send![dock_layer, setShadowRadius: 10.0_f64];
-    let _: () = msg_send![dock_layer, setShadowOffset: NSSize::new(0.0, -4.0)];
+    set_layer_background(dock_layer, color(0.72, 0.74, 0.77, 0.16));
+    set_layer_border(dock_layer, 0.65, color(1.0, 1.0, 1.0, 0.34));
+    let _: () = msg_send![dock_layer, setShadowOpacity: 0.26_f32];
+    let _: () = msg_send![dock_layer, setShadowRadius: 12.0_f64];
+    let _: () = msg_send![dock_layer, setShadowOffset: NSSize::new(0.0, -5.0)];
     let dock_shadow = color(0.0, 0.0, 0.0, 0.75);
     let dock_shadow_cg: *mut CGColor = msg_send![dock_shadow, CGColor];
     let _: () = msg_send![dock_layer, setShadowColor: dock_shadow_cg];
@@ -630,7 +650,14 @@ unsafe fn install_wallpaper(
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    let inset = 3.0;
+    let glass_frame = visual_effect_view(bounds, 12.5, 13, 0, true);
+    let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
+    let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
+    set_layer_background(glass_layer, color(0.20, 0.24, 0.27, 0.20));
+    set_layer_border(glass_layer, 0.9, color(1.0, 1.0, 1.0, 0.30));
+    let _: () = msg_send![content_view, addSubview: glass_frame];
+
+    let inset = 6.0;
     let container_frame = objc2_foundation::NSRect::new(
         objc2_foundation::NSPoint::new(inset, inset),
         objc2_foundation::NSSize::new(
@@ -639,10 +666,10 @@ unsafe fn install_wallpaper(
         ),
     );
     let wallpaper_container =
-        rounded_view(container_frame, 9.5, color(0.02, 0.03, 0.04, 1.0), true);
+        rounded_view(container_frame, 8.5, color(0.02, 0.03, 0.04, 0.72), true);
     let _: () = msg_send![wallpaper_container, setAutoresizingMask: 18u64];
     let container_layer: *mut AnyObject = msg_send![wallpaper_container, layer];
-    set_layer_border(container_layer, 0.5, color(1.0, 1.0, 1.0, 0.12));
+    set_layer_border(container_layer, 0.65, color(1.0, 1.0, 1.0, 0.18));
     let container_bounds: objc2_foundation::NSRect = msg_send![wallpaper_container, bounds];
     let wallpaper_view: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];
@@ -774,10 +801,9 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let content_view: *mut AnyObject = msg_send![window, contentView];
     let _: () = msg_send![content_view, setWantsLayer: true];
     let content_layer: *mut AnyObject = msg_send![content_view, layer];
-    let _: () = msg_send![content_layer, setCornerRadius: 11.5_f64];
+    let _: () = msg_send![content_layer, setCornerRadius: 12.5_f64];
     let _: () = msg_send![content_layer, setMasksToBounds: true];
-    set_layer_background(content_layer, color(0.08, 0.09, 0.11, 0.94));
-    set_layer_border(content_layer, 1.0, color(1.0, 1.0, 1.0, 0.18));
+    set_layer_background(content_layer, color(0.0, 0.0, 0.0, 0.0));
     let bounds: NSRect = msg_send![content_view, bounds];
     let (wallpaper_container, wallpaper_view) = install_wallpaper(content_view, screen, bounds);
 

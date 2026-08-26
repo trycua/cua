@@ -61,7 +61,8 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
     let short_edge = width.min(height);
     let outer_gap = (short_edge * 0.018).clamp(5.0, 11.0);
     let dock_height = (height * 0.10).clamp(30.0, 50.0).min(height * 0.22);
-    let dock_y = (height - dock_height - outer_gap * 0.7).max(outer_gap);
+    let dock_bottom_margin = (height * 0.028).clamp(10.0, 16.0);
+    let dock_y = (height - dock_height - dock_bottom_margin).max(outer_gap);
     let desktop_y = outer_gap;
     let desktop_height = (dock_y - outer_gap - desktop_y).max(1.0);
     let desktop = LayoutRect {
@@ -324,7 +325,7 @@ mod tests {
             .map(|target| target.window.bottom())
             .fold(0.0, f64::max);
         assert!(layout.dock.y >= lowest_target);
-        assert!(layout.dock.bottom() <= height);
+        assert!(layout.dock.bottom() <= height - 10.0);
     }
 
     #[test]

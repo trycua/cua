@@ -177,8 +177,9 @@ daemon_process_identity() {
         identity="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
         identity="${identity% (deleted)}"
     fi
-    if [[ -z "$identity" ]] && command -v ps >/dev/null 2>&1; then
-        identity="$(ps -ww -o command= -p "$pid" 2>/dev/null || true)"
+    if [[ -z "$identity" ]]; then
+        command -v ps >/dev/null 2>&1 || return 2
+        identity="$(ps -ww -o command= -p "$pid" 2>/dev/null)" || return 2
     fi
     identity="${identity#"${identity%%[![:space:]]*}"}"
     identity="${identity%"${identity##*[![:space:]]}"}"
@@ -203,8 +204,8 @@ daemon_identity_matches_install() {
 
 daemon_pid_is_release() {
     local identity
-    identity="$(daemon_process_identity "$1" 2>/dev/null || true)"
-    [[ -n "$identity" ]] && daemon_identity_matches_install "$identity"
+    identity="$(daemon_process_identity "$1" 2>/dev/null)" || return 2
+    daemon_identity_matches_install "$identity"
 }
 
 # Missing/stale PID files never trigger a signal. This check only decides
@@ -212,21 +213,32 @@ daemon_pid_is_release() {
 release_daemon_fallback_pids() {
     command -v pgrep >/dev/null 2>&1 || return 2
     command -v ps >/dev/null 2>&1 || return 2
-    local uid pid identity
+    local uid pid identity candidates="" pgrep_status=0
     uid="$(id -u 2>/dev/null || true)"
     [[ "$uid" =~ ^[0-9]+$ ]] || return 2
-    while read -r pid; do
-        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || continue
-        identity="$(daemon_process_identity "$pid" 2>/dev/null || true)"
-        [[ -n "$identity" ]] && daemon_identity_matches_install "$identity" && printf '%s\n' "$pid"
-    done < <(pgrep -U "$uid" -f '(^|[[:space:]/])cua-driver([[:space:]]|$)' 2>/dev/null || true)
+
+    candidates="$(pgrep -U "$uid" -f '(^|[[:space:]/])cua-driver([[:space:]]|$)' 2>/dev/null)" || pgrep_status=$?
+    case "$pgrep_status" in
+        0) ;;
+        1) return 0 ;;
+        *) return 2 ;;
+    esac
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 2
+        identity="$(daemon_process_identity "$pid" 2>/dev/null)" || return 2
+        if daemon_identity_matches_install "$identity"; then
+            printf '%s\n' "$pid"
+        fi
+    done <<< "$candidates"
 }
 
 verify_release_daemon_absent() {
     local pids="" status=0
     pids="$(release_daemon_fallback_pids 2>/dev/null)" || status=$?
-    if [[ "$status" == "2" ]]; then
-        printf 'daemon_stop_incomplete: pgrep and ps are required to verify release daemon shutdown.\n' >&2
+    if [[ "$status" != "0" ]]; then
+        printf 'daemon_stop_incomplete: process inspection failed while verifying release daemon shutdown.\n' >&2
         return 1
     fi
     if [[ -n "$pids" ]]; then
@@ -237,28 +249,37 @@ verify_release_daemon_absent() {
 
 stop_release_daemon() {
     DAEMON_STOP_RESULT=none
-    local pid="" helper="${DAEMON_STOP_HELPER:-}" pid_file="${DAEMON_PID_FILE:-}"
+    local pid="" helper="${DAEMON_STOP_HELPER:-}" pid_file="${DAEMON_PID_FILE:-}" pid_identity_status=0
 
     if [[ -n "$pid_file" ]] && pid="$(read_daemon_pid "$pid_file" 2>/dev/null)" \
-        && daemon_pid_alive "$pid" && daemon_pid_is_release "$pid"; then
-        if [[ -z "$helper" || ! -x "$helper" ]]; then
-            printf 'daemon_stop_incomplete: trusted installed cua-driver stop helper is unavailable for pid %s.\n' "$pid" >&2
-            DAEMON_STOP_RESULT=failed
-            return 1
-        fi
-        "$helper" stop >/dev/null 2>&1 || true
-        if ! daemon_wait_for_exit "$pid"; then
-            kill -TERM "$pid" 2>/dev/null || true
+        && daemon_pid_alive "$pid"; then
+        if daemon_pid_is_release "$pid"; then
+            if [[ -z "$helper" || ! -x "$helper" ]]; then
+                printf 'daemon_stop_incomplete: trusted installed cua-driver stop helper is unavailable for pid %s.\n' "$pid" >&2
+                DAEMON_STOP_RESULT=failed
+                return 1
+            fi
+            "$helper" stop >/dev/null 2>&1 || true
             if ! daemon_wait_for_exit "$pid"; then
-                kill -KILL "$pid" 2>/dev/null || true
+                kill -TERM "$pid" 2>/dev/null || true
                 if ! daemon_wait_for_exit "$pid"; then
-                    printf 'daemon_stop_incomplete: validated release daemon pid %s is still running.\n' "$pid" >&2
-                    DAEMON_STOP_RESULT=failed
-                    return 1
+                    kill -KILL "$pid" 2>/dev/null || true
+                    if ! daemon_wait_for_exit "$pid"; then
+                        printf 'daemon_stop_incomplete: validated release daemon pid %s is still running.\n' "$pid" >&2
+                        DAEMON_STOP_RESULT=failed
+                        return 1
+                    fi
                 fi
             fi
+            DAEMON_STOP_RESULT=stopped
+        else
+            pid_identity_status=$?
+            if [[ "$pid_identity_status" == "2" ]]; then
+                printf 'daemon_stop_incomplete: failed to identify live daemon pid %s safely.\n' "$pid" >&2
+                DAEMON_STOP_RESULT=failed
+                return 1
+            fi
         fi
-        DAEMON_STOP_RESULT=stopped
     fi
 
     # A stale/missing/foreign PID file reaches only this inspection path. The

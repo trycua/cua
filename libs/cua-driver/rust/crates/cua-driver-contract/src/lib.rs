@@ -96,6 +96,14 @@ pub fn is_action_result_tool(name: &str) -> bool {
     ACTION_RESULT_TOOLS.contains(&name)
 }
 
+/// Whether an action uses the native desktop interaction lane.
+///
+/// Browser actions own their scheduling inside the browser engine; every other
+/// action-result tool runs against native desktop state.
+pub fn is_desktop_action_result_tool(name: &str) -> bool {
+    is_action_result_tool(name) && !name.starts_with("browser_")
+}
+
 #[derive(
     Debug,
     Clone,

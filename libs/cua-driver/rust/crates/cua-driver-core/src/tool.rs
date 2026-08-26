@@ -1,8 +1,8 @@
 //! Tool trait and registry.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -14,6 +14,7 @@ thread_local! {
 }
 
 use crate::{
+    native_action_scheduler::{global as native_action_scheduler, NativeActionResource},
     pip_hook,
     protocol::{Content, ToolResult},
     recording::{now_ms, screenshot_for, RecordingSession},
@@ -71,54 +72,57 @@ pub fn with_runtime_scope<T>(scope: String, action: impl FnOnce() -> T) -> T {
     action()
 }
 
-fn desktop_action_coordinator() -> &'static tokio::sync::Mutex<()> {
-    static COORDINATOR: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
-    COORDINATOR.get_or_init(|| tokio::sync::Mutex::new(()))
-}
-
-fn active_text_input_pids() -> &'static Mutex<HashSet<i64>> {
-    static ACTIVE: OnceLock<Mutex<HashSet<i64>>> = OnceLock::new();
-    ACTIVE.get_or_init(|| Mutex::new(HashSet::new()))
-}
-
 #[derive(Debug)]
-struct TextInputAdmission {
-    pid: i64,
+struct ActionLeasePlan {
+    serialize_desktop: bool,
+    text_input_pid: Option<i64>,
 }
 
-impl Drop for TextInputAdmission {
-    fn drop(&mut self) {
-        active_text_input_pids()
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(&self.pid);
+impl ActionLeasePlan {
+    fn for_call(tool_name: &str, args: &Value) -> Self {
+        let pid = args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0);
+        Self {
+            serialize_desktop: cua_driver_contract::is_desktop_action_result_tool(tool_name)
+                || tool_name == "bring_to_front",
+            text_input_pid: if matches!(tool_name, "type_text" | "type_text_chars") {
+                pid
+            } else {
+                None
+            },
+        }
     }
-}
 
-fn try_admit_text_input(
-    tool_name: &str,
-    args: &Value,
-) -> Result<Option<TextInputAdmission>, ToolResult> {
-    if tool_name != "type_text" {
-        return Ok(None);
+    fn try_admit_text(&self) -> Result<Option<tokio::sync::OwnedMutexGuard<()>>, ToolResult> {
+        let Some(pid) = self.text_input_pid else {
+            return Ok(None);
+        };
+        native_action_scheduler()
+            .try_lock(NativeActionResource::TextInputProcess(pid))
+            .map(Some)
+            .ok_or_else(|| {
+                protected_refusal(
+                    "input_busy",
+                    &format!("text input is already active for pid {pid}"),
+                )
+            })
     }
-    let Some(pid) = args
-        .get("pid")
-        .and_then(Value::as_i64)
-        .filter(|pid| *pid > 0)
-    else {
-        // Desktop-scoped input has no stable process identity. It continues to
-        // use the process-wide physical action coordinator below.
-        return Ok(None);
-    };
-    let mut active = active_text_input_pids()
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if !active.insert(pid) {
-        let message = format!("text input is already active for pid {pid}");
-        return Err(protected_refusal("input_busy", &message));
+
+    async fn acquire_desktop(&self) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+        if !self.serialize_desktop {
+            return None;
+        }
+        let scheduler = native_action_scheduler();
+        let resource = NativeActionResource::PhysicalDesktop;
+        // Avoid a dispatch yield between fresh target proof and native input
+        // when the process-wide resource is uncontended.
+        match scheduler.try_lock(resource) {
+            Some(admission) => Some(admission),
+            None => Some(scheduler.lock(resource).await),
+        }
     }
-    Ok(Some(TextInputAdmission { pid }))
 }
 
 pub use cua_driver_contract::{CAPABILITY_VERSION, TOOLS_LIST_SCHEMA_VERSION};
@@ -1136,14 +1140,13 @@ impl ToolRegistry {
             return result;
         }
 
-        // A queued text mutation can become stale while another agent is
-        // typing into the same process. Refuse that overlap before consent,
-        // cursor, recording, or platform focus behavior can begin. The guard
-        // is process-global so independent registries cannot interleave text
-        // through separate platform workers, and RAII releases it on task
-        // cancellation as well as normal completion.
-        let _text_input_admission = match try_admit_text_input(resolved_name, &public_args) {
-            Ok(admission) => admission,
+        // Build one immutable lease plan from normalized public arguments.
+        // Fail-fast text admission happens before consent or platform behavior;
+        // the desktop lease starts immediately before evidence capture and is
+        // held through the complete decorated invocation.
+        let action_lease_plan = ActionLeasePlan::for_call(resolved_name, &public_args);
+        let _text_input_lease = match action_lease_plan.try_admit_text() {
+            Ok(admissions) => admissions,
             Err(mut refusal) => {
                 restore_public_runtime_result(&mut refusal, &runtime_prefix);
                 return refusal;
@@ -1496,20 +1499,7 @@ impl ToolRegistry {
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
-        let _desktop_action = if is_physical_desktop_action(resolved_name) {
-            let coordinator = desktop_action_coordinator();
-            // Avoid yielding the dispatch task when the process-wide input
-            // lane is uncontended. On Windows, that yield creates a window in
-            // which the foreground target can lose keyboard eligibility
-            // between the fixture's focus proof and SendInput. Contended
-            // runtimes still wait and serialize through the same mutex.
-            Some(match coordinator.try_lock() {
-                Ok(guard) => guard,
-                Err(_) => coordinator.lock().await,
-            })
-        } else {
-            None
-        };
+        let _desktop_action_lease = action_lease_plan.acquire_desktop().await;
         let pending_turn = should_record
             .then(|| {
                 if private_consent_turn {
@@ -1525,9 +1515,8 @@ impl ToolRegistry {
         let mut result = tool.invoke(args.clone()).await;
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
-        // pid may now start even while result projection and evidence capture
-        // finish for the completed call.
-        drop(_text_input_admission);
+        // pid may start while result projection finishes.
+        drop(_text_input_lease);
         if result.action_record.is_none() {
             if let Some(structured) = result.structured_content.as_ref() {
                 result.action_record = crate::action_record::ActionExecutionRecord::from_legacy(
@@ -1573,7 +1562,7 @@ impl ToolRegistry {
         // capture or result shaping. Keeping the global desktop lock through
         // recording/PiP screenshots would unnecessarily block an unrelated
         // runtime after the input side effect has already completed.
-        drop(_desktop_action);
+        drop(_desktop_action_lease);
         restore_public_runtime_result(&mut result, &runtime_prefix);
         // Preserve the producer's private summary for recording/replay before
         // the public ActionResult projection deliberately replaces legacy
@@ -2544,28 +2533,6 @@ fn canonical_proposed_path(raw: &str) -> Result<String, ToolResult> {
     Ok(canonical.to_string_lossy().into_owned())
 }
 
-fn is_physical_desktop_action(tool: &str) -> bool {
-    matches!(
-        tool,
-        "click"
-            | "double_click"
-            | "right_click"
-            | "scroll"
-            | "drag"
-            | "mouse_drag"
-            | "parallel_mouse_drag"
-            | "move_cursor"
-            | "mouse_button_down"
-            | "mouse_button_up"
-            | "type_text"
-            | "press_key"
-            | "hotkey"
-            | "set_value"
-            | "bring_to_front"
-            | "set_window_frame"
-    )
-}
-
 /// Bucket that owns the processes a call is allowed to terminate.
 ///
 /// A call that declares a session keys its launches to that session, so
@@ -2760,9 +2727,9 @@ fn restore_public_runtime_value(value: &mut Value, runtime_prefix: &str) -> bool
 #[cfg(test)]
 mod runtime_isolation_tests {
     use super::{
-        canonical_proposed_path, desktop_action_coordinator, namespace_runtime_args,
-        publish_action_result, restore_public_runtime_result, try_admit_text_input,
-        TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
+        canonical_proposed_path, namespace_runtime_args, native_action_scheduler,
+        publish_action_result, restore_public_runtime_result, ActionLeasePlan,
+        NativeActionResource, TrustedInvocationEvidence, DISPATCH_RUNTIME_SCOPE,
     };
     use crate::{
         authorization::PermissionMode,
@@ -4477,8 +4444,31 @@ resources:
         assert_eq!(owner.unwrap(), (44, 0));
     }
 
+    #[test]
+    fn one_lease_plan_covers_native_actions_text_and_browser_exclusion() {
+        let click = ActionLeasePlan::for_call("click", &serde_json::json!({"pid": 42}));
+        assert!(click.serialize_desktop);
+        assert_eq!(click.text_input_pid, None);
+
+        let menu = ActionLeasePlan::for_call("invoke_menu", &serde_json::json!({"pid": 42}));
+        assert!(menu.serialize_desktop);
+        assert_eq!(menu.text_input_pid, None);
+
+        let text = ActionLeasePlan::for_call("type_text_chars", &serde_json::json!({"pid": 42}));
+        assert!(text.serialize_desktop);
+        assert_eq!(text.text_input_pid, Some(42));
+
+        let browser = ActionLeasePlan::for_call("browser_click", &serde_json::json!({}));
+        assert!(!browser.serialize_desktop);
+        assert_eq!(browser.text_input_pid, None);
+
+        let read = ActionLeasePlan::for_call("get_window_state", &serde_json::json!({"pid": 42}));
+        assert!(!read.serialize_desktop);
+        assert_eq!(read.text_input_pid, None);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn physical_desktop_actions_are_admitted_one_at_a_time() {
+    async fn desktop_actions_are_admitted_one_at_a_time() {
         let active = Arc::new(AtomicUsize::new(0));
         let max_active = Arc::new(AtomicUsize::new(0));
         let mut tasks = Vec::new();
@@ -4486,7 +4476,9 @@ resources:
             let active = active.clone();
             let max_active = max_active.clone();
             tasks.push(tokio::spawn(async move {
-                let _admission = desktop_action_coordinator().lock().await;
+                let _admission = native_action_scheduler()
+                    .lock(NativeActionResource::PhysicalDesktop)
+                    .await;
                 let now = active.fetch_add(1, Ordering::SeqCst) + 1;
                 max_active.fetch_max(now, Ordering::SeqCst);
                 tokio::task::yield_now().await;
@@ -4502,11 +4494,13 @@ resources:
     #[test]
     fn overlapping_text_input_for_one_pid_fails_fast_and_releases_after_completion() {
         let pid = 8_675_410;
-        let first = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-            .expect("first text operation should be admitted")
-            .expect("pid-scoped text operation should receive a guard");
+        let first_plan = ActionLeasePlan::for_call("type_text", &serde_json::json!({"pid": pid}));
+        let first = first_plan
+            .try_admit_text()
+            .expect("first text operation should be admitted");
 
-        let refusal = try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
+        let refusal = first_plan
+            .try_admit_text()
             .expect_err("overlapping text operation should fail fast");
         assert_eq!(refusal.is_error, Some(true));
         assert_eq!(
@@ -4518,17 +4512,18 @@ resources:
             Some("input_busy")
         );
 
-        let other_pid = try_admit_text_input("type_text", &serde_json::json!({"pid": pid + 1}))
-            .expect("a different pid should have an independent input lane")
-            .expect("pid-scoped text operation should receive a guard");
+        let other_plan =
+            ActionLeasePlan::for_call("type_text", &serde_json::json!({"pid": pid + 1}));
+        let other_pid = other_plan
+            .try_admit_text()
+            .expect("a different pid should have an independent input lane");
         drop(other_pid);
         drop(first);
 
-        assert!(
-            try_admit_text_input("type_text", &serde_json::json!({"pid": pid}))
-                .expect("completed text operation should release its pid")
-                .is_some()
-        );
+        assert!(first_plan
+            .try_admit_text()
+            .expect("completed text operation should release its pid")
+            .is_some());
     }
 
     #[test]

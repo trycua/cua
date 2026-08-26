@@ -660,7 +660,7 @@ func validateReportingBoundary(ctx context.Context, transaction pgx.Tx) error {
 			return fmt.Errorf("reporting relation %s has kind %s, want view", relationName, relationKind)
 		}
 		if viewOwner != "k8s_reporting_owner" {
-			return fmt.Errorf("reporting view %s owner is %s, want k8s_reporting_owner", relationName, viewOwner)
+			return fmt.Errorf("reporting view owner for %s is %s, want k8s_reporting_owner", relationName, viewOwner)
 		}
 	}
 	return nil

@@ -89,9 +89,8 @@ struct InputPassthroughRequest {
 
 impl PipBackend for MacosPipBackend {
     fn push_frame(&self, frame: PipFrame) {
-        if HANDLES.lock().unwrap().is_none() {
-            return;
-        }
+        // init_cb was queued first on the serial main queue, so retaining the
+        // frame here avoids dropping exact activity during daemon startup.
         dispatch_to_main(frame, push_frame_cb);
     }
 

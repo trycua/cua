@@ -180,7 +180,7 @@ unsafe fn add_text_label(
     font_size: f64,
     bold: bool,
     tone: LabelTone,
-    alignment: u64,
+    alignment: isize,
 ) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};

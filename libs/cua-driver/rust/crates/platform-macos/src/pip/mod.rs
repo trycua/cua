@@ -26,6 +26,8 @@ unsafe impl objc2::RefEncode for CGColor {
 struct NativeHandles {
     window: usize,
     canvas_view: usize,
+    shell_wallpaper_container: usize,
+    shell_wallpaper_view: usize,
     wallpaper_container: usize,
     wallpaper_view: usize,
     delegate: usize,
@@ -754,13 +756,14 @@ unsafe fn install_wallpaper(
 ) -> (
     *mut objc2::runtime::AnyObject,
     *mut objc2::runtime::AnyObject,
+    *mut objc2::runtime::AnyObject,
+    *mut objc2::runtime::AnyObject,
 ) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    // The shell clips a real behind-window visual effect. The miniature
-    // desktop covers its centre, leaving the blurred host desktop or app
-    // visible only through the top, side, and bottom rails.
+    // The same wallpaper continues beneath the shell rails. The centre is
+    // covered by a sharp inset copy while the outer copy is blurred and tinted.
     let glass_frame = rounded_view(
         bounds,
         CONTAINER_RADIUS,
@@ -772,6 +775,14 @@ unsafe fn install_wallpaper(
     set_continuous_corners(glass_layer);
     set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.50));
     let _: () = msg_send![content_view, addSubview: glass_frame];
+
+    let glass_bounds: objc2_foundation::NSRect = msg_send![glass_frame, bounds];
+    let shell_wallpaper_view: *mut AnyObject = {
+        let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];
+        msg_send![allocated, initWithFrame: glass_bounds]
+    };
+    let _: () = msg_send![shell_wallpaper_view, setImageScaling: 2u64];
+    let _: () = msg_send![glass_frame, addSubview: shell_wallpaper_view];
 
     let backdrop: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
@@ -785,7 +796,7 @@ unsafe fn install_wallpaper(
     };
     let _: () = msg_send![backdrop, setAutoresizingMask: 18u64];
     let _: () = msg_send![backdrop, setMaterial: 13i64]; // HUD window material.
-    let _: () = msg_send![backdrop, setBlendingMode: 0i64]; // Behind the Agent View window.
+    let _: () = msg_send![backdrop, setBlendingMode: 1i64]; // Blur the wallpaper within the shell.
     let _: () = msg_send![backdrop, setState: 1i64]; // Keep the blur active while non-key.
     let _: () = msg_send![backdrop, setEmphasized: true];
     let _: () = msg_send![glass_frame, addSubview: backdrop];
@@ -893,13 +904,19 @@ unsafe fn install_wallpaper(
         let allocated: *mut AnyObject = msg_send![class!(NSImage), alloc];
         let wallpaper: *mut AnyObject = msg_send![allocated, initWithContentsOfURL: url];
         if !wallpaper.is_null() {
+            let _: () = msg_send![shell_wallpaper_view, setImage: wallpaper];
             let _: () = msg_send![wallpaper_view, setImage: wallpaper];
         }
     }
     let _: () = msg_send![wallpaper_container, addSubview: wallpaper_view];
     let _: () = msg_send![content_view, addSubview: wallpaper_container];
 
-    (wallpaper_container, wallpaper_view)
+    (
+        glass_frame,
+        shell_wallpaper_view,
+        wallpaper_container,
+        wallpaper_view,
+    )
 }
 
 fn aspect_fill_frame(
@@ -928,25 +945,32 @@ unsafe fn update_wallpaper_frame() {
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSRect, NSSize};
 
-    let (wallpaper_container, wallpaper_view) = {
+    let (shell_container, shell_view, wallpaper_container, wallpaper_view) = {
         let guard = HANDLES.lock().unwrap();
         let Some(handles) = guard.as_ref() else {
             return;
         };
         (
+            handles.shell_wallpaper_container as *mut AnyObject,
+            handles.shell_wallpaper_view as *mut AnyObject,
             handles.wallpaper_container as *mut AnyObject,
             handles.wallpaper_view as *mut AnyObject,
         )
     };
-    let bounds: NSRect = msg_send![wallpaper_container, bounds];
-    let image: *mut AnyObject = msg_send![wallpaper_view, image];
-    let image_size = if image.is_null() {
-        NSSize::new(0.0, 0.0)
-    } else {
-        msg_send![image, size]
-    };
-    let frame = aspect_fill_frame(bounds, image_size);
-    let _: () = msg_send![wallpaper_view, setFrame: frame];
+    for (container, view) in [
+        (shell_container, shell_view),
+        (wallpaper_container, wallpaper_view),
+    ] {
+        let bounds: NSRect = msg_send![container, bounds];
+        let image: *mut AnyObject = msg_send![view, image];
+        let image_size = if image.is_null() {
+            NSSize::new(0.0, 0.0)
+        } else {
+            msg_send![image, size]
+        };
+        let frame = aspect_fill_frame(bounds, image_size);
+        let _: () = msg_send![view, setFrame: frame];
+    }
 }
 
 unsafe extern "C" fn init_cb(ctx: *mut c_void) {
@@ -1019,7 +1043,8 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let _: () = msg_send![content_layer, setMasksToBounds: false];
     set_layer_background(content_layer, color(0.0, 0.0, 0.0, 0.0));
     let bounds: NSRect = msg_send![content_view, bounds];
-    let (wallpaper_container, wallpaper_view) = install_wallpaper(content_view, screen, bounds);
+    let (shell_wallpaper_container, shell_wallpaper_view, wallpaper_container, wallpaper_view) =
+        install_wallpaper(content_view, screen, bounds);
     let inner_frame = desktop_frame(bounds);
 
     let canvas: *mut AnyObject = {
@@ -1042,6 +1067,8 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     *HANDLES.lock().unwrap() = Some(NativeHandles {
         window: window as usize,
         canvas_view: canvas as usize,
+        shell_wallpaper_container: shell_wallpaper_container as usize,
+        shell_wallpaper_view: shell_wallpaper_view as usize,
         wallpaper_container: wallpaper_container as usize,
         wallpaper_view: wallpaper_view as usize,
         delegate: delegate as usize,

@@ -333,7 +333,9 @@ mod native {
 
     fn render_view(width: u32, height: u32, frames: &[PipFrame]) -> Vec<u8> {
         let mut canvas = Canvas::new(width, height);
-        canvas.wallpaper();
+        canvas.smoked_shell();
+        let desktop = desktop_rect(width, height);
+        canvas.wallpaper(desktop);
         let sizes = frames
             .iter()
             .map(|frame| {
@@ -343,14 +345,21 @@ mod native {
                 })
             })
             .collect::<Vec<_>>();
-        let layout = layout_desktop(width as f64, height as f64, &sizes);
+        let layout = layout_desktop(desktop.2 as f64, desktop.3 as f64, &sizes);
+        canvas.border((0, 0, width as i32, height as i32), 14, [19, 12, 7, 225]);
         canvas.border(
             (1, 1, width as i32 - 2, height as i32 - 2),
-            14,
-            [224, 239, 250, 118],
+            13,
+            [211, 184, 151, 118],
         );
+        canvas.border(
+            (2, 2, width as i32 - 4, height as i32 - 4),
+            12,
+            [108, 82, 57, 105],
+        );
+        canvas.border(desktop, 10, [181, 151, 122, 138]);
         for (frame, target) in frames.iter().zip(&layout.targets) {
-            let rect = pixels(target.content);
+            let rect = offset_pixels(target.content, desktop.0, desktop.1);
             canvas.shadow(rect);
             canvas.fill(rect, 7, [244, 247, 251, 255]);
             if let Ok(image) = image::load_from_memory(&frame.png_bytes) {
@@ -361,13 +370,30 @@ mod native {
             }
             canvas.border(rect, 7, [40, 52, 72, 76]);
         }
-        let dock = pixels(layout.dock);
-        canvas.fill(dock, 11, [41, 79, 137, 198]);
-        canvas.border(dock, 11, [225, 239, 255, 150]);
+        let dock = offset_pixels(layout.dock, desktop.0, desktop.1);
+        canvas.shadow(dock);
+        canvas.fill(dock, 11, [40, 30, 23, 218]);
+        canvas.border(dock, 11, [204, 176, 145, 118]);
         for (index, icon) in layout.dock_icons.iter().enumerate() {
-            canvas.icon(pixels(*icon), frames[index].target.target_kind, index);
+            canvas.icon(
+                offset_pixels(*icon, desktop.0, desktop.1),
+                frames[index].target.target_kind,
+                index,
+            );
         }
         canvas.data
+    }
+
+    fn desktop_rect(width: u32, height: u32) -> (i32, i32, i32, i32) {
+        const SIDE_INSET: i32 = 8;
+        const TOP_INSET: i32 = 14;
+        const BOTTOM_INSET: i32 = 9;
+        (
+            SIDE_INSET,
+            TOP_INSET,
+            (width as i32 - SIDE_INSET * 2).max(1),
+            (height as i32 - TOP_INSET - BOTTOM_INSET).max(1),
+        )
     }
 
     fn pixels(rect: LayoutRect) -> (i32, i32, i32, i32) {
@@ -377,6 +403,11 @@ mod native {
             rect.width.round().max(1.0) as i32,
             rect.height.round().max(1.0) as i32,
         )
+    }
+
+    fn offset_pixels(rect: LayoutRect, x: i32, y: i32) -> (i32, i32, i32, i32) {
+        let rect = pixels(rect);
+        (rect.0 + x, rect.1 + y, rect.2, rect.3)
     }
 
     struct Canvas {
@@ -394,25 +425,55 @@ mod native {
             }
         }
 
-        fn wallpaper(&mut self) {
-            let w = self.width.max(1) as f32;
-            let h = self.height.max(1) as f32;
-            for y in 0..self.height {
-                for x in 0..self.width {
+        fn wallpaper(&mut self, rect: (i32, i32, i32, i32)) {
+            let w = rect.2.max(1) as f32;
+            let h = rect.3.max(1) as f32;
+            for y in 0..rect.3 {
+                for x in 0..rect.2 {
+                    if !Self::inside(x, y, rect.2, rect.3, 10) {
+                        continue;
+                    }
                     let nx = x as f32 / w;
                     let ny = y as f32 / h;
-                    let glow = ((nx - 0.78).powi(2) + (ny - 0.15).powi(2)).sqrt();
-                    let wave = ((ny - 0.72 + 0.22 * (nx * 4.2).sin()).abs() * 7.0).min(1.0);
+                    let upper_glow =
+                        (1.0 - (((nx - 0.72).powi(2) + (ny - 0.08).powi(2)).sqrt() * 1.5)).max(0.0);
+                    let lower_glow =
+                        (1.0 - (((nx - 0.18).powi(2) + (ny - 0.88).powi(2)).sqrt() * 1.8)).max(0.0);
+                    let ribbon =
+                        (1.0 - ((ny - 0.64 + 0.08 * (nx * 5.4).sin()).abs() * 6.5)).max(0.0);
                     self.set(
-                        x as i32,
-                        y as i32,
+                        rect.0 + x,
+                        rect.1 + y,
                         [
-                            (139.0 + 87.0 * (1.0 - glow).max(0.0) + 25.0 * wave) as u8,
-                            (69.0 + 95.0 * (1.0 - glow).max(0.0) + 19.0 * wave) as u8,
-                            (22.0 + 72.0 * (1.0 - glow).max(0.0) + 5.0 * wave) as u8,
+                            (35.0 + 45.0 * upper_glow + 25.0 * lower_glow + 19.0 * ribbon) as u8,
+                            (25.0 + 36.0 * upper_glow + 17.0 * lower_glow + 11.0 * ribbon) as u8,
+                            (18.0 + 22.0 * upper_glow + 10.0 * lower_glow + 5.0 * ribbon) as u8,
                             255,
                         ],
                     );
+                }
+            }
+        }
+
+        fn smoked_shell(&mut self) {
+            let width = self.width as i32;
+            let height = self.height as i32;
+            self.fill((0, 0, width, height), 0, [15, 10, 7, 255]);
+            self.fill((0, 0, width, height), 14, [24, 16, 10, 255]);
+
+            let header_height = (height / 12).clamp(24, 42);
+            self.fill(
+                (2, 2, width.saturating_sub(4), header_height),
+                12,
+                [66, 50, 36, 92],
+            );
+            self.fill((16, 3, width.saturating_sub(32), 1), 0, [235, 211, 181, 92]);
+
+            // Fine, low-contrast grain keeps the painted fallback from looking
+            // flat when the system backdrop is unavailable (for example RDP).
+            for y in (8..height.saturating_sub(8)).step_by(4) {
+                for x in ((y & 7)..width.saturating_sub(8)).step_by(8) {
+                    self.blend(x, y, [205, 181, 155, 7]);
                 }
             }
         }
@@ -540,8 +601,23 @@ mod native {
 
     #[cfg(test)]
     mod tests {
+        use std::io::Cursor;
+
         use super::*;
+        use image::{ImageFormat, Rgba, RgbaImage};
         use pip_preview::PipTarget;
+
+        fn solid_png(width: u32, height: u32, color: [u8; 4]) -> Vec<u8> {
+            let image = RgbaImage::from_pixel(width, height, Rgba(color));
+            let mut bytes = Cursor::new(Vec::new());
+            image.write_to(&mut bytes, ImageFormat::Png).unwrap();
+            bytes.into_inner()
+        }
+
+        fn pixel(data: &[u8], width: u32, x: u32, y: u32) -> [u8; 4] {
+            let offset = ((y * width + x) * 4) as usize;
+            data[offset..offset + 4].try_into().unwrap()
+        }
 
         #[test]
         fn renderer_tracks_each_target_and_requested_size() {
@@ -567,6 +643,94 @@ mod native {
             );
             assert_eq!(data.len(), 480 * 320 * 4);
             assert!(data.chunks_exact(4).all(|pixel| pixel[3] == 255));
+        }
+
+        #[test]
+        fn renderer_preserves_target_pixels_across_mixed_form_factors() {
+            let frame = |id: &str, kind, png_bytes| PipFrame {
+                target: PipTarget {
+                    workspace_id: "workspace".to_owned(),
+                    workspace_label: "Agent".to_owned(),
+                    target_id: id.to_owned(),
+                    target_kind: kind,
+                    target_label: id.to_owned(),
+                },
+                png_bytes,
+                action_label: "click".to_owned(),
+                timestamp_ms: 1,
+            };
+            let frames = [
+                frame(
+                    "wide",
+                    PipTargetKind::BrowserTab,
+                    solid_png(80, 32, [220, 30, 20, 255]),
+                ),
+                frame(
+                    "tall",
+                    PipTargetKind::NativeWindow,
+                    solid_png(24, 72, [20, 90, 230, 255]),
+                ),
+            ];
+            let width = 520;
+            let height = 360;
+            let data = render_view(width, height, &frames);
+            let desktop = desktop_rect(width, height);
+            let layout = layout_desktop(
+                desktop.2 as f64,
+                desktop.3 as f64,
+                &[
+                    TargetSize {
+                        width: 80,
+                        height: 32,
+                    },
+                    TargetSize {
+                        width: 24,
+                        height: 72,
+                    },
+                ],
+            );
+
+            let wide = offset_pixels(layout.targets[0].content, desktop.0, desktop.1);
+            let tall = offset_pixels(layout.targets[1].content, desktop.0, desktop.1);
+            assert_eq!(
+                pixel(
+                    &data,
+                    width,
+                    (wide.0 + wide.2 / 2) as u32,
+                    (wide.1 + wide.3 / 2) as u32,
+                ),
+                [20, 30, 220, 255]
+            );
+            assert_eq!(
+                pixel(
+                    &data,
+                    width,
+                    (tall.0 + tall.2 / 2) as u32,
+                    (tall.1 + tall.3 / 2) as u32,
+                ),
+                [230, 90, 20, 255]
+            );
+            assert!(wide.2 > wide.3);
+            assert!(tall.3 > tall.2);
+            assert!(wide.0 >= desktop.0 && wide.1 >= desktop.1);
+            assert!(tall.0 + tall.2 <= desktop.0 + desktop.2);
+            assert!(tall.1 + tall.3 <= desktop.1 + desktop.3);
+        }
+
+        #[test]
+        fn renderer_separates_dark_shell_from_inset_desktop() {
+            let width = 360;
+            let data = render_view(width, 240, &[]);
+            let shell = pixel(&data, width, 4, 100);
+            let desktop = pixel(&data, width, 180, 100);
+            let highlight = pixel(&data, width, 180, 1);
+            let brightness = |color: [u8; 4]| color[0] as u16 + color[1] as u16 + color[2] as u16;
+
+            assert_ne!(shell, desktop);
+            assert!(brightness(shell) < brightness(desktop));
+            assert!(shell[0] > shell[1] && shell[1] > shell[2]);
+            assert!(brightness(highlight) > brightness(shell));
+            assert!(highlight[0] > highlight[1] && highlight[1] > highlight[2]);
         }
     }
 }

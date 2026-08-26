@@ -59,7 +59,9 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
     let width = width.max(1.0);
     let height = height.max(1.0);
     let short_edge = width.min(height);
-    let outer_gap = (short_edge * 0.018).clamp(5.0, 11.0);
+    // Keep target shadows and rounded corners visibly separated from the
+    // miniature desktop frame, including at the minimum supported panel size.
+    let outer_gap = (short_edge * 0.045).clamp(16.0, 26.0);
     let dock_height = (height * 0.12).clamp(38.0, 58.0).min(height * 0.22);
     let dock_bottom_margin = (height * 0.028).clamp(10.0, 16.0);
     let dock_y = (height - dock_height - dock_bottom_margin).max(outer_gap);
@@ -305,10 +307,19 @@ mod tests {
     }
 
     #[test]
-    fn layout_reserves_no_menu_or_target_title_bars() {
+    fn layout_reserves_padding_but_no_menu_or_target_title_bars() {
         let layout = layout_desktop(720.0, 520.0, &[size(1600, 900)]);
-        assert!(layout.desktop.y < 10.0);
+        assert!((16.0..=26.0).contains(&layout.desktop.y));
         assert_eq!(layout.targets[0].window, layout.targets[0].content);
+    }
+
+    #[test]
+    fn minimum_panel_keeps_targets_away_from_the_frame() {
+        let layout = layout_desktop(360.0, 260.0, &[size(900, 700)]);
+        let target = layout.targets[0].window;
+        assert!(target.x >= 16.0);
+        assert!(target.y >= 16.0);
+        assert!(target.right() <= 344.0);
     }
 
     #[test]

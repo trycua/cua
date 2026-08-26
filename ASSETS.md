@@ -63,3 +63,6 @@ does not. That is why assets are minted here rather than in the destination page
 | `gpu-capability-ladder.png` | [`55b9d614…`](https://github.com/user-attachments/assets/55b9d614-f94b-4840-b97c-ea5d51e595b5) | `blog/gpu-passthrough-macos-vms.md` |
 | `metal-kernel-path.png` | [`34f15072…`](https://github.com/user-attachments/assets/34f15072-f18b-4747-9a98-6397601cbffc) | `blog/gpu-passthrough-macos-vms.md` |
 | `metal-kernel-path-mobile.png` | [`6c7e1a9e…`](https://github.com/user-attachments/assets/6c7e1a9e-bb01-4eba-887b-ff362bac340b) | `blog/gpu-passthrough-macos-vms.md` |
+| `omarchy-apple-silicon-hero.png` | [`811018be…`](https://github.com/user-attachments/assets/811018be-6ed8-4b94-b719-4d147affdde3) | `blog/omarchy-arm64-on-lume-x-thread.md` |
+| `omarchy-arm64-architecture.png` | [`352315ab…`](https://github.com/user-attachments/assets/352315ab-87d8-4b6c-acfa-dfc2be79b025) | `blog/omarchy-arm64-on-lume-x-thread.md` |
+| `omarchy-arm64-capability-matrix.png` | [`629c9343…`](https://github.com/user-attachments/assets/629c9343-5a27-4749-beca-3099ac3af313) | `blog/omarchy-arm64-on-lume-x-thread.md` |

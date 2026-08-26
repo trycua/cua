@@ -43,6 +43,10 @@ const SHELL_BOTTOM_INSET: f64 = 10.0;
 const SESSION_SELECTOR_HEIGHT: f64 = 34.0;
 const RESIZE_HIT_INSET: f64 = 7.0;
 
+// Keep the PiP shell visually clean for now; invisible hit zones still provide
+// dragging and resizing without exposing a native or custom frame.
+const SHOW_SHELL_BORDER: bool = false;
+
 const RESIZE_LEFT: isize = 1;
 const RESIZE_RIGHT: isize = 2;
 const RESIZE_BOTTOM: isize = 4;
@@ -541,7 +545,9 @@ unsafe fn render_target_window(
         true,
     );
     let window_layer: *mut AnyObject = msg_send![window, layer];
-    set_layer_border(window_layer, 0.55, color(0.0, 0.0, 0.0, 0.22));
+    if SHOW_SHELL_BORDER {
+        set_layer_border(window_layer, 0.55, color(0.0, 0.0, 0.0, 0.22));
+    }
     let image_view: *mut AnyObject = {
         let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
         msg_send![
@@ -1271,7 +1277,9 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
     set_continuous_corners(glass_layer);
-    set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.50));
+    if SHOW_SHELL_BORDER {
+        set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.50));
+    }
     let _: () = msg_send![content_view, addSubview: glass_frame];
 
     let glass_bounds: objc2_foundation::NSRect = msg_send![glass_frame, bounds];
@@ -1331,7 +1339,9 @@ unsafe fn install_wallpaper(
         true,
     );
     let _: () = msg_send![highlight, setAutoresizingMask: 10u64];
-    let _: () = msg_send![glass_frame, addSubview: highlight];
+    if SHOW_SHELL_BORDER {
+        let _: () = msg_send![glass_frame, addSubview: highlight];
+    }
 
     let container_frame = desktop_frame(bounds);
     let container_radius = 8.5;
@@ -1351,7 +1361,9 @@ unsafe fn install_wallpaper(
     let shadow_color = color(0.0, 0.0, 0.0, 0.85);
     let shadow_cg: *mut CGColor = msg_send![shadow_color, CGColor];
     let _: () = msg_send![shadow_layer, setShadowColor: shadow_cg];
-    let _: () = msg_send![content_view, addSubview: wallpaper_shadow];
+    if SHOW_SHELL_BORDER {
+        let _: () = msg_send![content_view, addSubview: wallpaper_shadow];
+    }
 
     // Machined inner edge. It hugs the seam from the chrome side, so the
     // miniature desktop stays separated from the graphite body whether the
@@ -1375,7 +1387,9 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![seam, setAutoresizingMask: 18u64];
     let seam_layer: *mut AnyObject = msg_send![seam, layer];
     set_continuous_corners(seam_layer);
-    set_layer_border(seam_layer, seam_outset, color(1.0, 1.0, 1.0, 0.20));
+    if SHOW_SHELL_BORDER {
+        set_layer_border(seam_layer, seam_outset, color(1.0, 1.0, 1.0, 0.20));
+    }
     let _: () = msg_send![content_view, addSubview: seam];
 
     let wallpaper_container = rounded_view(
@@ -1389,7 +1403,9 @@ unsafe fn install_wallpaper(
     set_continuous_corners(container_layer);
     // Dark hairline where the miniature desktop meets the chrome. Softer than
     // the flat-outline pass, because the graphite body now carries the seam.
-    set_layer_border(container_layer, 0.8, color(0.0, 0.0, 0.0, 0.30));
+    if SHOW_SHELL_BORDER {
+        set_layer_border(container_layer, 0.8, color(0.0, 0.0, 0.0, 0.30));
+    }
     let container_bounds: objc2_foundation::NSRect = msg_send![wallpaper_container, bounds];
     let wallpaper_view: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];

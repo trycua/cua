@@ -800,6 +800,10 @@ unsafe fn render_session_selector(
 fn desktop_frame(bounds: objc2_foundation::NSRect) -> objc2_foundation::NSRect {
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
+    if !SHOW_SHELL_BORDER {
+        return bounds;
+    }
+
     NSRect::new(
         NSPoint::new(SHELL_SIDE_INSET, SHELL_BOTTOM_INSET),
         NSSize::new(
@@ -815,6 +819,10 @@ unsafe fn install_shell_details(
 ) {
     use objc2::msg_send;
     use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    if !SHOW_SHELL_BORDER {
+        return;
+    }
 
     let grip_width = 24.0;
     let grip = rounded_view(
@@ -1288,7 +1296,9 @@ unsafe fn install_wallpaper(
         msg_send![allocated, initWithFrame: glass_bounds]
     };
     let _: () = msg_send![shell_wallpaper_view, setImageScaling: 2u64];
-    let _: () = msg_send![glass_frame, addSubview: shell_wallpaper_view];
+    if SHOW_SHELL_BORDER {
+        let _: () = msg_send![glass_frame, addSubview: shell_wallpaper_view];
+    }
 
     let backdrop: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSVisualEffectView), alloc];
@@ -1305,7 +1315,9 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![backdrop, setBlendingMode: 1i64]; // Blur the wallpaper within the shell.
     let _: () = msg_send![backdrop, setState: 1i64]; // Keep the blur active while non-key.
     let _: () = msg_send![backdrop, setEmphasized: true];
-    let _: () = msg_send![glass_frame, addSubview: backdrop];
+    if SHOW_SHELL_BORDER {
+        let _: () = msg_send![glass_frame, addSubview: backdrop];
+    }
 
     // A restrained silver-to-graphite tint keeps the blurred backdrop legible
     // as a shell instead of exposing raw, high-contrast shapes behind it.
@@ -1323,7 +1335,9 @@ unsafe fn install_wallpaper(
         // hairlines are sub-point.
         let _: () = msg_send![body_layer, setContentsScale: scale];
     }
-    let _: () = msg_send![glass_frame, addSubview: body];
+    if SHOW_SHELL_BORDER {
+        let _: () = msg_send![glass_frame, addSubview: body];
+    }
 
     // Light-from-above specular along the top edge of the chrome.
     let highlight = rounded_view(
@@ -1395,7 +1409,7 @@ unsafe fn install_wallpaper(
     let wallpaper_container = rounded_view(
         container_frame,
         container_radius,
-        color(0.02, 0.03, 0.04, 0.68),
+        color(0.02, 0.03, 0.04, if SHOW_SHELL_BORDER { 0.68 } else { 0.0 }),
         true,
     );
     let _: () = msg_send![wallpaper_container, setAutoresizingMask: 18u64];

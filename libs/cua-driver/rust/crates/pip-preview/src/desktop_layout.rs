@@ -41,21 +41,69 @@ pub struct TargetLayout {
     pub content: LayoutRect,
 }
 
+/// Shell chrome idiom for the miniature desktop.
+///
+/// Only the dock band differs between styles. Target geometry is identical
+/// under every style, so a session's cards never move when the host platform
+/// swaps its shell.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ShellStyle {
+    /// Centered dock floating clear of every edge (macOS and Linux).
+    #[default]
+    FloatingDock,
+    /// Full-width bar flush with the bottom screen edge (Windows).
+    EdgeTaskbar,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesktopLayout {
     pub desktop: LayoutRect,
     pub dock: LayoutRect,
     pub dock_icons: Vec<LayoutRect>,
     pub targets: Vec<TargetLayout>,
+    pub shell: ShellStyle,
+    /// Leading launcher slot. `EdgeTaskbar` only.
+    pub start_button: Option<LayoutRect>,
+    /// Trailing status band reserved for a clock and tray glyphs.
+    /// `EdgeTaskbar` only.
+    pub tray: Option<LayoutRect>,
+    /// Running-app marks, one per dock icon in the same order.
+    /// `EdgeTaskbar` only.
+    pub indicators: Vec<LayoutRect>,
 }
 
-/// Lay out a miniature desktop in top-left-origin coordinates.
+#[derive(Debug, Clone, PartialEq)]
+struct ShellChrome {
+    dock: LayoutRect,
+    dock_icons: Vec<LayoutRect>,
+    start_button: Option<LayoutRect>,
+    tray: Option<LayoutRect>,
+    indicators: Vec<LayoutRect>,
+}
+
+const DOCK_ICON_GAP: f64 = 8.0;
+
+/// Lay out a miniature desktop with the floating dock shell.
 ///
 /// Targets keep a stable row-major order. Columns receive widths based on the
 /// average aspect ratio of their targets, which gives landscape windows more
 /// room while keeping portrait and square windows compact. Narrow containers
 /// collapse to one column instead of shrinking previews beyond usefulness.
 pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> DesktopLayout {
+    layout_desktop_with_shell(width, height, targets, ShellStyle::FloatingDock)
+}
+
+/// Lay out a miniature desktop for one platform shell idiom.
+///
+/// The desktop band, and therefore every `TargetLayout`, is derived from the
+/// dock's top edge alone. Both shells compute that edge identically, so the
+/// shell only decides how the dock band itself is drawn.
+pub fn layout_desktop_with_shell(
+    width: f64,
+    height: f64,
+    targets: &[TargetSize],
+    shell: ShellStyle,
+) -> DesktopLayout {
     let width = width.max(1.0);
     let height = height.max(1.0);
     let short_edge = width.min(height);
@@ -74,40 +122,15 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
         height: desktop_height,
     };
 
-    let dock_gap = 8.0;
-    let icon_count = targets.len().max(1);
-    let max_icon_width = ((width - 4.0 * outer_gap - dock_gap * (icon_count - 1) as f64)
-        / icon_count as f64)
-        .max(16.0);
-    let icon_size = (dock_height - 16.0).min(max_icon_width).clamp(20.0, 42.0);
-    let dock_width = (icon_count as f64 * icon_size + (icon_count - 1) as f64 * dock_gap + 28.0)
-        .min(width - 2.0 * outer_gap)
-        .max(icon_size + 20.0);
-    let dock = LayoutRect {
-        x: (width - dock_width) / 2.0,
-        y: dock_y,
-        width: dock_width,
-        height: dock_height,
+    let chrome = match shell {
+        ShellStyle::FloatingDock => {
+            floating_dock_chrome(width, outer_gap, dock_y, dock_height, targets.len())
+        }
+        ShellStyle::EdgeTaskbar => edge_taskbar_chrome(width, height, dock_y, targets.len()),
     };
-    let icons_width = icon_count as f64 * icon_size + (icon_count - 1) as f64 * dock_gap;
-    let icon_x = dock.x + (dock.width - icons_width) / 2.0;
-    let icon_y = dock.y + (dock.height - icon_size) / 2.0 - 1.0;
-    let dock_icons = (0..targets.len())
-        .map(|index| LayoutRect {
-            x: icon_x + index as f64 * (icon_size + dock_gap),
-            y: icon_y,
-            width: icon_size,
-            height: icon_size,
-        })
-        .collect::<Vec<_>>();
 
     if targets.is_empty() {
-        return DesktopLayout {
-            desktop,
-            dock,
-            dock_icons,
-            targets: Vec::new(),
-        };
+        return DesktopLayout::assemble(desktop, shell, chrome, Vec::new());
     }
 
     let columns = if targets.len() == 1 || desktop.width < 430.0 {
@@ -191,11 +214,139 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
         })
         .collect::<Vec<_>>();
 
-    DesktopLayout {
-        desktop,
+    DesktopLayout::assemble(desktop, shell, chrome, target_layouts)
+}
+
+impl DesktopLayout {
+    fn assemble(
+        desktop: LayoutRect,
+        shell: ShellStyle,
+        chrome: ShellChrome,
+        targets: Vec<TargetLayout>,
+    ) -> Self {
+        Self {
+            desktop,
+            dock: chrome.dock,
+            dock_icons: chrome.dock_icons,
+            targets,
+            shell,
+            start_button: chrome.start_button,
+            tray: chrome.tray,
+            indicators: chrome.indicators,
+        }
+    }
+}
+
+fn floating_dock_chrome(
+    width: f64,
+    outer_gap: f64,
+    dock_y: f64,
+    dock_height: f64,
+    target_count: usize,
+) -> ShellChrome {
+    let icon_count = target_count.max(1);
+    let max_icon_width = ((width - 4.0 * outer_gap - DOCK_ICON_GAP * (icon_count - 1) as f64)
+        / icon_count as f64)
+        .max(16.0);
+    let icon_size = (dock_height - 16.0).min(max_icon_width).clamp(20.0, 42.0);
+    let dock_width =
+        (icon_count as f64 * icon_size + (icon_count - 1) as f64 * DOCK_ICON_GAP + 28.0)
+            .min(width - 2.0 * outer_gap)
+            .max(icon_size + 20.0);
+    let dock = LayoutRect {
+        x: (width - dock_width) / 2.0,
+        y: dock_y,
+        width: dock_width,
+        height: dock_height,
+    };
+    let icons_width = icon_count as f64 * icon_size + (icon_count - 1) as f64 * DOCK_ICON_GAP;
+    let icon_x = dock.x + (dock.width - icons_width) / 2.0;
+    let icon_y = dock.y + (dock.height - icon_size) / 2.0 - 1.0;
+    let dock_icons = (0..target_count)
+        .map(|index| LayoutRect {
+            x: icon_x + index as f64 * (icon_size + DOCK_ICON_GAP),
+            y: icon_y,
+            width: icon_size,
+            height: icon_size,
+        })
+        .collect::<Vec<_>>();
+    ShellChrome {
         dock,
         dock_icons,
-        targets: target_layouts,
+        start_button: None,
+        tray: None,
+        indicators: Vec::new(),
+    }
+}
+
+/// Windows 11-style bar: full width, flush with the bottom edge, with the
+/// launcher and app icons centered as one group and the tray trailing.
+///
+/// The bar takes its top edge from the shared `dock_y` and reaches the bottom
+/// by absorbing the floating dock's bottom margin, so it gains height without
+/// moving the desktop band above it.
+fn edge_taskbar_chrome(width: f64, height: f64, dock_y: f64, target_count: usize) -> ShellChrome {
+    let dock = LayoutRect {
+        x: 0.0,
+        y: dock_y,
+        width,
+        height: (height - dock_y).max(1.0),
+    };
+    let tray_width = (width * 0.16).clamp(56.0, 104.0).min(width * 0.34);
+    let tray = LayoutRect {
+        x: (width - tray_width).max(0.0),
+        y: dock.y,
+        width: tray_width,
+        height: dock.height,
+    };
+
+    // Reserve the tray band on both sides so the icon group stays centered on
+    // the whole bar rather than on the space left of the clock, and let icons
+    // shrink instead of sliding under the tray on a very narrow panel.
+    let slots = target_count + 1;
+    let slot_span =
+        (width - 2.0 * (tray_width + 6.0) - DOCK_ICON_GAP * (slots - 1) as f64) / slots as f64;
+    let icon_size = (dock.height * 0.55).min(slot_span).clamp(8.0, 32.0);
+    let group_width = slots as f64 * icon_size + (slots - 1) as f64 * DOCK_ICON_GAP;
+    let group_x = ((width - group_width) / 2.0).max(4.0);
+    // Sit the icons slightly high in the band to leave room for the marks.
+    let icon_y = dock.y + (dock.height - icon_size) / 2.0 - 2.0;
+    let slot_x = |index: usize| group_x + index as f64 * (icon_size + DOCK_ICON_GAP);
+
+    let start_button = LayoutRect {
+        x: slot_x(0),
+        y: icon_y,
+        width: icon_size,
+        height: icon_size,
+    };
+    let dock_icons = (0..target_count)
+        .map(|index| LayoutRect {
+            x: slot_x(index + 1),
+            y: icon_y,
+            width: icon_size,
+            height: icon_size,
+        })
+        .collect::<Vec<_>>();
+
+    let indicator_height = (icon_size * 0.1).clamp(2.0, 3.0);
+    let indicator_width = (icon_size * 0.42).max(4.0);
+    let indicator_y = (icon_y + icon_size + 3.0).min(dock.y + dock.height - indicator_height - 1.0);
+    let indicators = dock_icons
+        .iter()
+        .map(|icon| LayoutRect {
+            x: icon.x + (icon.width - indicator_width) / 2.0,
+            y: indicator_y,
+            width: indicator_width,
+            height: indicator_height,
+        })
+        .collect::<Vec<_>>();
+
+    ShellChrome {
+        dock,
+        dock_icons,
+        start_button: Some(start_button),
+        tray: Some(tray),
+        indicators,
     }
 }
 
@@ -337,6 +488,115 @@ mod tests {
             .fold(0.0, f64::max);
         assert!(layout.dock.y >= lowest_target);
         assert!(layout.dock.bottom() <= height - 10.0);
+    }
+
+    #[test]
+    fn floating_dock_is_the_default_shell_and_carries_no_taskbar_metadata() {
+        let layout = layout_desktop(720.0, 520.0, &[size(1600, 900), size(900, 900)]);
+        assert_eq!(layout.shell, ShellStyle::FloatingDock);
+        assert_eq!(layout.shell, ShellStyle::default());
+        assert!(layout.start_button.is_none());
+        assert!(layout.tray.is_none());
+        assert!(layout.indicators.is_empty());
+        assert!(layout.dock.x > 0.0);
+        assert!(layout.dock.bottom() < 520.0);
+        assert_eq!(layout.dock_icons.len(), 2);
+    }
+
+    #[test]
+    fn edge_taskbar_spans_the_full_width_and_reaches_the_bottom_edge() {
+        let width = 720.0;
+        let height = 520.0;
+        let targets = [size(1600, 900), size(900, 900), size(700, 1200)];
+        let floating = layout_desktop(width, height, &targets);
+        let taskbar = layout_desktop_with_shell(width, height, &targets, ShellStyle::EdgeTaskbar);
+
+        assert_eq!(taskbar.shell, ShellStyle::EdgeTaskbar);
+        assert_eq!(taskbar.dock.x, 0.0);
+        assert_eq!(taskbar.dock.width, width);
+        assert_eq!(taskbar.dock.bottom(), height);
+        // The bar keeps the floating dock's top edge and only absorbs the
+        // margin that used to sit below it.
+        assert_eq!(taskbar.dock.y, floating.dock.y);
+        assert!(taskbar.dock.height > floating.dock.height);
+        assert!(taskbar.dock.height - floating.dock.height <= 16.0 + f64::EPSILON);
+    }
+
+    #[test]
+    fn edge_taskbar_preserves_every_floating_dock_target_layout() {
+        let targets = [
+            size(1600, 900),
+            size(700, 1200),
+            size(1400, 900),
+            size(900, 900),
+            size(1000, 700),
+        ];
+        for (width, height) in [(720.0, 520.0), (380.0, 620.0), (360.0, 260.0)] {
+            let floating = layout_desktop(width, height, &targets);
+            let taskbar =
+                layout_desktop_with_shell(width, height, &targets, ShellStyle::EdgeTaskbar);
+            assert_eq!(floating.desktop, taskbar.desktop);
+            assert_eq!(floating.targets, taskbar.targets);
+        }
+    }
+
+    #[test]
+    fn edge_taskbar_centers_the_start_slot_with_the_app_icons() {
+        let width = 720.0;
+        let targets = [size(1600, 900), size(900, 900)];
+        let layout = layout_desktop_with_shell(width, 520.0, &targets, ShellStyle::EdgeTaskbar);
+        let start = layout.start_button.unwrap();
+        let tray = layout.tray.unwrap();
+
+        assert_eq!(layout.dock_icons.len(), targets.len());
+        assert!(start.x < layout.dock_icons[0].x);
+        assert_eq!(start.y, layout.dock_icons[0].y);
+        assert_eq!(start.width, layout.dock_icons[0].width);
+
+        let group_left = start.x;
+        let group_right = layout.dock_icons.last().unwrap().right();
+        assert!(((group_left + group_right) / 2.0 - width / 2.0).abs() < 1.0);
+        assert!(group_right <= tray.x);
+        assert_eq!(tray.right(), width);
+        assert_eq!(tray.y, layout.dock.y);
+        assert_eq!(tray.height, layout.dock.height);
+    }
+
+    #[test]
+    fn edge_taskbar_marks_every_running_icon_inside_the_bar() {
+        let targets = [size(1600, 900), size(900, 900), size(700, 1200)];
+        let layout = layout_desktop_with_shell(720.0, 520.0, &targets, ShellStyle::EdgeTaskbar);
+        assert_eq!(layout.indicators.len(), layout.dock_icons.len());
+        for (indicator, icon) in layout.indicators.iter().zip(&layout.dock_icons) {
+            assert!(indicator.width < icon.width);
+            assert!(indicator.y >= icon.bottom());
+            assert!(indicator.bottom() <= layout.dock.bottom());
+            assert!(
+                ((indicator.x + indicator.width / 2.0) - (icon.x + icon.width / 2.0)).abs() < 1.0
+            );
+        }
+    }
+
+    #[test]
+    fn edge_taskbar_keeps_the_start_slot_when_no_target_has_a_card() {
+        let layout = layout_desktop_with_shell(640.0, 420.0, &[], ShellStyle::EdgeTaskbar);
+        assert!(layout.start_button.is_some());
+        assert!(layout.tray.is_some());
+        assert!(layout.dock_icons.is_empty());
+        assert!(layout.indicators.is_empty());
+        assert!(layout.targets.is_empty());
+    }
+
+    #[test]
+    fn crowded_narrow_taskbar_shrinks_icons_instead_of_sliding_under_the_tray() {
+        let targets = vec![size(1200, 800); 12];
+        let layout = layout_desktop_with_shell(320.0, 260.0, &targets, ShellStyle::EdgeTaskbar);
+        let tray = layout.tray.unwrap();
+        assert!(layout.start_button.unwrap().x >= 0.0);
+        assert!(layout.dock_icons.last().unwrap().right() <= tray.x);
+        for icon in &layout.dock_icons {
+            assert!(icon.width >= 8.0);
+        }
     }
 
     #[test]

@@ -15,7 +15,8 @@ use std::collections::HashMap;
 mod desktop_layout;
 
 pub use desktop_layout::{
-    layout_desktop, png_dimensions, DesktopLayout, LayoutRect, TargetLayout, TargetSize,
+    layout_desktop, layout_desktop_with_shell, png_dimensions, DesktopLayout, LayoutRect,
+    ShellStyle, TargetLayout, TargetSize,
 };
 
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform

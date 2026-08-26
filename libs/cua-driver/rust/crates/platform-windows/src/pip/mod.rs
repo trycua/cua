@@ -20,10 +20,12 @@ mod native {
     use std::sync::atomic::{AtomicBool, AtomicIsize, Ordering};
     use std::sync::{mpsc, Arc, Mutex};
 
+    use cursor_overlay::{rasterize_inter_text, TextRaster};
     use image::imageops::FilterType;
     use pip_preview::{
-        layout_desktop, png_dimensions, LayoutRect, PipBackend, PipBackendFactory, PipConfig,
-        PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary, TargetSize,
+        layout_desktop_with_shell, png_dimensions, LayoutRect, PipBackend, PipBackendFactory,
+        PipConfig, PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary, ShellStyle,
+        TargetSize,
     };
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -456,7 +458,12 @@ mod native {
                 })
             })
             .collect::<Vec<_>>();
-        let layout = layout_desktop(desktop.2 as f64, desktop.3 as f64, &sizes);
+        let layout = layout_desktop_with_shell(
+            desktop.2 as f64,
+            desktop.3 as f64,
+            &sizes,
+            ShellStyle::EdgeTaskbar,
+        );
         canvas.border((0, 0, width as i32, height as i32), 14, [19, 12, 7, 225]);
         canvas.border(
             (1, 1, width as i32 - 2, height as i32 - 2),
@@ -488,10 +495,15 @@ mod native {
             }
             canvas.border(rect, 7, [40, 52, 72, 76]);
         }
-        let dock = offset_pixels(layout.dock, desktop.0, desktop.1);
-        canvas.shadow(dock);
-        canvas.fill(dock, 11, [40, 30, 23, 218]);
-        canvas.border(dock, 11, [204, 176, 145, 118]);
+        // Windows shells anchor their bar to the bottom screen edge instead of
+        // floating it, so the band is painted as a material over the desktop
+        // that is already composited beneath it rather than as a card on top.
+        let taskbar = offset_pixels(layout.dock, desktop.0, desktop.1);
+        canvas.taskbar_material(taskbar, desktop);
+        if let Some(start) = layout.start_button {
+            canvas.start_glyph(offset_pixels(start, desktop.0, desktop.1));
+        }
+        let active = active_target_index(frames);
         for (index, icon) in layout.dock_icons.iter().enumerate() {
             canvas.icon(
                 offset_pixels(*icon, desktop.0, desktop.1),
@@ -499,7 +511,83 @@ mod native {
                 index,
             );
         }
+        for (index, indicator) in layout.indicators.iter().enumerate() {
+            canvas.running_indicator(
+                offset_pixels(*indicator, desktop.0, desktop.1),
+                Some(index) == active,
+            );
+        }
+        if let Some(tray) = layout.tray {
+            canvas.tray(
+                offset_pixels(tray, desktop.0, desktop.1),
+                active.map(|index| frames[index].timestamp_ms),
+            );
+        }
+        // The bar reaches the desktop's bottom edge, so restore the rounded
+        // frame it just painted over.
+        canvas.border(desktop, 10, [181, 151, 122, 138]);
         canvas.data
+    }
+
+    /// Index of the card whose capture is newest, which the taskbar marks as
+    /// the foreground app.
+    ///
+    /// Ties resolve to the earliest card so one repaint never reorders the
+    /// highlight for an unchanged set of frames.
+    fn active_target_index(frames: &[PipFrame]) -> Option<usize> {
+        frames
+            .iter()
+            .enumerate()
+            .max_by_key(|(index, frame)| (frame.timestamp_ms, std::cmp::Reverse(*index)))
+            .map(|(index, _)| index)
+    }
+
+    /// `HH:MM` for one epoch-millisecond capture stamp, in UTC.
+    ///
+    /// The clock reads the newest card's capture time rather than the wall
+    /// clock so a rendered frame stays reproducible from its inputs alone.
+    fn clock_label(timestamp_ms: u64) -> String {
+        let minutes = timestamp_ms / 60_000;
+        format!("{:02}:{:02}", minutes / 60 % 24, minutes % 60)
+    }
+
+    /// Separable box blur over a tightly packed 3-channel buffer.
+    fn box_blur(source: &[u8], width: usize, height: usize, radius: usize) -> Vec<u8> {
+        let mut pass = source.to_vec();
+        let mut out = vec![0u8; source.len()];
+        for vertical in [false, true] {
+            let (major, minor) = if vertical {
+                (width, height)
+            } else {
+                (height, width)
+            };
+            for outer in 0..major {
+                for inner in 0..minor {
+                    let low = inner.saturating_sub(radius);
+                    let high = (inner + radius).min(minor - 1);
+                    let taps = (high - low + 1) as u32;
+                    for channel in 0..3 {
+                        let mut sum = 0u32;
+                        for tap in low..=high {
+                            let at = if vertical {
+                                tap * width + outer
+                            } else {
+                                outer * width + tap
+                            };
+                            sum += pass[at * 3 + channel] as u32;
+                        }
+                        let at = if vertical {
+                            inner * width + outer
+                        } else {
+                            outer * width + inner
+                        };
+                        out[at * 3 + channel] = (sum / taps) as u8;
+                    }
+                }
+            }
+            std::mem::swap(&mut pass, &mut out);
+        }
+        pass
     }
 
     fn desktop_rect(width: u32, height: u32, show_switcher: bool) -> (i32, i32, i32, i32) {
@@ -761,11 +849,173 @@ mod native {
                 3,
                 colors.1,
             );
+        }
+
+        /// Acrylic-like backdrop for the edge-anchored taskbar band.
+        ///
+        /// The band is a material, not a card: it blurs whatever Agent View
+        /// already composited beneath it, tints the result, and adds fine
+        /// noise, which is why it runs after the wallpaper and the target
+        /// cards. Painting is clipped to the miniature desktop so the bar
+        /// keeps the desktop's rounded bottom corners.
+        fn taskbar_material(&mut self, rect: (i32, i32, i32, i32), clip: (i32, i32, i32, i32)) {
+            const BLUR_RADIUS: usize = 5;
+            /// Tint strength out of 255. Leaving some backdrop through is what
+            /// separates acrylic from a flat fill.
+            const TINT_ALPHA: u32 = 196;
+            const TINT: [u32; 3] = [44, 34, 27];
+
+            let width = rect.2.max(0) as usize;
+            let height = rect.3.max(0) as usize;
+            if width == 0 || height == 0 {
+                return;
+            }
+            // Sample with clamped coordinates so the blur never smears the
+            // surrounding shell frame into the band.
+            let mut backdrop = vec![0u8; width * height * 3];
+            for y in 0..height {
+                for x in 0..width {
+                    let sx = (rect.0 + x as i32).clamp(0, self.width as i32 - 1);
+                    let sy = (rect.1 + y as i32).clamp(0, self.height as i32 - 1);
+                    let from = (sy as usize * self.width as usize + sx as usize) * 4;
+                    let to = (y * width + x) * 3;
+                    backdrop[to..to + 3].copy_from_slice(&self.data[from..from + 3]);
+                }
+            }
+            let blurred = box_blur(&backdrop, width, height, BLUR_RADIUS);
+
+            for y in 0..height {
+                for x in 0..width {
+                    let px = rect.0 + x as i32;
+                    let py = rect.1 + y as i32;
+                    if !Self::inside(px - clip.0, py - clip.1, clip.2, clip.3, 10) {
+                        continue;
+                    }
+                    let sample = (y * width + x) * 3;
+                    let mut color = [0u8; 4];
+                    for channel in 0..3 {
+                        color[channel] = ((blurred[sample + channel] as u32 * (255 - TINT_ALPHA)
+                            + TINT[channel] * TINT_ALPHA)
+                            / 255) as u8;
+                    }
+                    color[3] = 255;
+                    self.set(px, py, color);
+                    // Deterministic grain, the visual signature of acrylic.
+                    if (x ^ y) & 3 == 0 {
+                        self.blend(px, py, [188, 170, 150, 6]);
+                    }
+                }
+            }
+
+            // A single bright hairline along the top edge reads as the lit
+            // lip of the bar and keeps it separated from the wallpaper.
+            for x in 0..rect.2 {
+                let px = rect.0 + x;
+                if Self::inside(px - clip.0, rect.1 - clip.1, clip.2, clip.3, 10) {
+                    self.blend(px, rect.1, [214, 190, 162, 96]);
+                }
+            }
+        }
+
+        /// Four-pane launcher glyph anchored at the head of the icon cluster.
+        fn start_glyph(&mut self, rect: (i32, i32, i32, i32)) {
+            let gap = (rect.2 / 9).max(1);
+            let pane_width = ((rect.2 - gap) / 2).max(1);
+            let pane_height = ((rect.3 - gap) / 2).max(1);
+            // Center the glyph inside its slot, which is sized like an app icon.
+            let x = rect.0 + (rect.2 - (pane_width * 2 + gap)) / 2;
+            let y = rect.1 + (rect.3 - (pane_height * 2 + gap)) / 2;
+            for row in 0..2 {
+                for column in 0..2 {
+                    self.fill(
+                        (
+                            x + column * (pane_width + gap),
+                            y + row * (pane_height + gap),
+                            pane_width,
+                            pane_height,
+                        ),
+                        1,
+                        [230, 158, 73, 235],
+                    );
+                }
+            }
+        }
+
+        /// Running-app mark beneath one taskbar icon.
+        ///
+        /// The foreground card gets the full accent pill; the rest get a
+        /// shorter, dimmer mark, matching how a Windows taskbar distinguishes
+        /// the active window from other running ones.
+        fn running_indicator(&mut self, rect: (i32, i32, i32, i32), active: bool) {
+            let (width, color) = if active {
+                (rect.2, [230, 158, 73, 255])
+            } else {
+                ((rect.2 / 2).max(2), [176, 158, 138, 190])
+            };
             self.fill(
-                (rect.0 + rect.2 / 5, rect.1 + rect.3 + 4, rect.2 * 3 / 5, 3),
-                1,
-                [245, 248, 255, 235],
+                (rect.0 + (rect.2 - width) / 2, rect.1, width, rect.3),
+                rect.3 / 2,
+                color,
             );
+        }
+
+        /// Trailing status band: a chevron, a battery mark, and the clock.
+        ///
+        /// Every element is dropped rather than crowded when the band is too
+        /// narrow, so a small Agent View degrades instead of overlapping the
+        /// centered icon cluster.
+        fn tray(&mut self, rect: (i32, i32, i32, i32), timestamp_ms: Option<u64>) {
+            const INK: [u8; 4] = [224, 210, 190, 235];
+            let padding = 8;
+            let mut right = rect.0 + rect.2 - padding;
+
+            let font_size = (rect.3 as f32 * 0.2).clamp(8.0, 13.0);
+            let clock = timestamp_ms
+                .map(clock_label)
+                .and_then(|label| rasterize_inter_text(&label, font_size));
+            if let Some(raster) = clock {
+                if raster.width as i32 + padding * 2 <= rect.2 {
+                    right -= raster.width as i32;
+                    let y = rect.1 + (rect.3 - raster.height as i32) / 2;
+                    self.text(&raster, right, y, INK);
+                }
+            }
+
+            let center_y = rect.1 + rect.3 / 2;
+            // Battery: an outline pill with a nub, drawn only when it fits
+            // clear of the clock.
+            let battery_width = 14;
+            if right - (battery_width + 10) >= rect.0 + padding {
+                right -= battery_width + 10;
+                self.border((right, center_y - 4, battery_width, 8), 2, INK);
+                self.fill((right + battery_width, center_y - 2, 2, 4), 1, INK);
+            }
+            // Chevron: the "show hidden icons" affordance.
+            if right - 12 >= rect.0 + padding {
+                right -= 12;
+                for step in 0..4 {
+                    self.blend(right + step, center_y + 1 - step, INK);
+                    self.blend(right + 6 - step, center_y + 1 - step, INK);
+                }
+            }
+        }
+
+        /// Composite one rasterized text mask in the buffer's channel order.
+        fn text(&mut self, raster: &TextRaster, x: i32, y: i32, color: [u8; 4]) {
+            for row in 0..raster.height {
+                for column in 0..raster.width {
+                    let coverage = raster.coverage[(row * raster.width + column) as usize];
+                    if coverage == 0 {
+                        continue;
+                    }
+                    let alpha = (color[3] as u16 * coverage as u16 / 255) as u8;
+                    self.blend(
+                        x + column as i32,
+                        y + row as i32,
+                        [color[0], color[1], color[2], alpha],
+                    );
+                }
+            }
         }
     }
 
@@ -874,7 +1124,7 @@ mod native {
             let workspaces = [workspace("workspace", 2, 1)];
             let data = render_view(width, height, &frames, &workspaces, Some("workspace"));
             let desktop = desktop_rect(width, height, false);
-            let layout = layout_desktop(
+            let layout = layout_desktop_with_shell(
                 desktop.2 as f64,
                 desktop.3 as f64,
                 &[
@@ -887,6 +1137,7 @@ mod native {
                         height: 72,
                     },
                 ],
+                ShellStyle::EdgeTaskbar,
             );
 
             let wide = offset_pixels(layout.targets[0].content, desktop.0, desktop.1);
@@ -1001,6 +1252,220 @@ mod native {
             assert_eq!(model.selected_frames()[0].target.identity_key, "tall");
             assert_eq!(model.remove_workspace("agent-a").len(), 1);
             assert_eq!(model.selected_workspace_id(), Some("agent-b"));
+        }
+
+        fn taskbar_layout(width: u32, height: u32, targets: usize) -> pip_preview::DesktopLayout {
+            let desktop = desktop_rect(width, height, false);
+            let sizes = vec![
+                TargetSize {
+                    width: 16,
+                    height: 10,
+                };
+                targets
+            ];
+            layout_desktop_with_shell(
+                desktop.2 as f64,
+                desktop.3 as f64,
+                &sizes,
+                ShellStyle::EdgeTaskbar,
+            )
+        }
+
+        /// Mean of one channel over a small window, which averages out the
+        /// material's deterministic grain.
+        fn mean_channel(data: &[u8], width: u32, x: u32, y: u32, channel: usize) -> f32 {
+            let mut sum = 0u32;
+            for dy in 0..4 {
+                for dx in 0..4 {
+                    sum += pixel(data, width, x + dx, y + dy)[channel] as u32;
+                }
+            }
+            sum as f32 / 16.0
+        }
+
+        #[test]
+        fn taskbar_is_edge_anchored_and_spans_the_miniature_desktop() {
+            let (width, height) = (520u32, 360u32);
+            let desktop = desktop_rect(width, height, false);
+            let layout = taskbar_layout(width, height, 2);
+
+            assert_eq!(layout.shell, ShellStyle::EdgeTaskbar);
+            let bar = offset_pixels(layout.dock, desktop.0, desktop.1);
+            assert_eq!(bar.0, desktop.0);
+            assert_eq!(bar.2, desktop.2);
+            assert!(((bar.1 + bar.3) - (desktop.1 + desktop.3)).abs() <= 1);
+
+            // The band is a distinct material, so the wallpaper just above the
+            // bar's top edge never matches the pixels just inside it.
+            let data = render_view(
+                width,
+                height,
+                &[
+                    frame("w", "a", PipTargetKind::BrowserTab, Vec::new(), 1),
+                    frame("w", "b", PipTargetKind::NativeWindow, Vec::new(), 2),
+                ],
+                &[workspace("w", 2, 2)],
+                Some("w"),
+            );
+            let center_x = (desktop.0 + desktop.2 / 2) as u32;
+            let above = pixel(&data, width, center_x, (bar.1 - 6) as u32);
+            let inside = pixel(&data, width, center_x, (bar.1 + 6) as u32);
+            assert_ne!(above, inside);
+        }
+
+        #[test]
+        fn taskbar_material_carries_the_blurred_backdrop_instead_of_a_flat_fill() {
+            let (width, height) = (520u32, 360u32);
+            let desktop = desktop_rect(width, height, false);
+            let layout = taskbar_layout(width, height, 1);
+            let bar = offset_pixels(layout.dock, desktop.0, desktop.1);
+            let data = render_view(
+                width,
+                height,
+                &[frame("w", "a", PipTargetKind::BrowserTab, Vec::new(), 1)],
+                &[workspace("w", 1, 1)],
+                Some("w"),
+            );
+
+            // The wallpaper's lower glow sits left of center, so a material
+            // that samples what it covers stays brighter on the left. A flat
+            // fill would make these identical.
+            let sample_y = (bar.1 + bar.3 / 3) as u32;
+            let left = mean_channel(&data, width, (desktop.0 + 80) as u32, sample_y, 0);
+            let right = mean_channel(
+                &data,
+                width,
+                (desktop.0 + desktop.2 - 90) as u32,
+                sample_y,
+                0,
+            );
+            assert!(
+                left - right >= 3.0,
+                "expected a blurred backdrop gradient, got {left} vs {right}"
+            );
+            // It is still a heavy tint, not a window into the wallpaper.
+            assert!(left < 90.0);
+        }
+
+        #[test]
+        fn taskbar_marks_the_newest_card_more_strongly_than_the_others() {
+            let (width, height) = (560u32, 380u32);
+            let desktop = desktop_rect(width, height, false);
+            let layout = taskbar_layout(width, height, 2);
+            let data = render_view(
+                width,
+                height,
+                &[
+                    frame("w", "a", PipTargetKind::BrowserTab, Vec::new(), 1),
+                    frame("w", "b", PipTargetKind::NativeWindow, Vec::new(), 9),
+                ],
+                &[workspace("w", 2, 9)],
+                Some("w"),
+            );
+            assert_eq!(layout.indicators.len(), 2);
+            let brightness = |index: usize| {
+                let mark = offset_pixels(layout.indicators[index], desktop.0, desktop.1);
+                let color = pixel(
+                    &data,
+                    width,
+                    (mark.0 + mark.2 / 2) as u32,
+                    (mark.1 + mark.3 / 2) as u32,
+                );
+                color[0] as i32 + color[1] as i32 + color[2] as i32
+            };
+            // Index 1 is newest, so it wears the accent pill.
+            assert!(brightness(1) != brightness(0));
+            let active = offset_pixels(layout.indicators[1], desktop.0, desktop.1);
+            let accent = pixel(
+                &data,
+                width,
+                (active.0 + active.2 / 2) as u32,
+                (active.1 + active.3 / 2) as u32,
+            );
+            assert!(accent[0] > accent[1] && accent[1] > accent[2]);
+        }
+
+        #[test]
+        fn start_slot_and_tray_paint_inside_the_bar() {
+            let (width, height) = (560u32, 380u32);
+            let desktop = desktop_rect(width, height, false);
+            let layout = taskbar_layout(width, height, 2);
+            let bar = offset_pixels(layout.dock, desktop.0, desktop.1);
+            let start = offset_pixels(layout.start_button.unwrap(), desktop.0, desktop.1);
+            let tray = offset_pixels(layout.tray.unwrap(), desktop.0, desktop.1);
+            assert!(start.1 >= bar.1 && start.1 + start.3 <= bar.1 + bar.3);
+            assert_eq!(tray.0 + tray.2, bar.0 + bar.2);
+
+            let data = render_view(
+                width,
+                height,
+                &[
+                    frame("w", "a", PipTargetKind::BrowserTab, Vec::new(), 42 * 60_000),
+                    frame("w", "b", PipTargetKind::NativeWindow, Vec::new(), 1),
+                ],
+                &[workspace("w", 2, 42 * 60_000)],
+                Some("w"),
+            );
+            let empty = render_view(width, height, &[], &[workspace("w", 0, 1)], Some("w"));
+            let glyph_region = |data: &[u8], rect: (i32, i32, i32, i32)| {
+                let mut ink = 0u32;
+                for y in rect.1..rect.1 + rect.3 {
+                    for x in rect.0..rect.0 + rect.2 {
+                        ink += pixel(data, width, x as u32, y as u32)[0] as u32;
+                    }
+                }
+                ink
+            };
+            // Both the launcher glyph and the tray band paint measurably
+            // brighter than the bare material behind them.
+            assert!(glyph_region(&data, start) > glyph_region(&empty, start));
+            assert!(glyph_region(&data, tray) > glyph_region(&empty, tray));
+        }
+
+        #[test]
+        fn clock_and_foreground_selection_are_derived_only_from_frame_inputs() {
+            assert_eq!(clock_label(0), "00:00");
+            assert_eq!(clock_label(9 * 3_600_000 + 5 * 60_000), "09:05");
+            assert_eq!(clock_label(23 * 3_600_000 + 59 * 60_000), "23:59");
+            // Wrapping past a day keeps a valid time rather than overflowing.
+            assert_eq!(clock_label(25 * 3_600_000), "01:00");
+
+            let make = |stamps: [u64; 3]| {
+                stamps
+                    .iter()
+                    .enumerate()
+                    .map(|(index, stamp)| {
+                        frame(
+                            "w",
+                            &index.to_string(),
+                            PipTargetKind::NativeWindow,
+                            Vec::new(),
+                            *stamp,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            };
+            assert_eq!(active_target_index(&[]), None);
+            assert_eq!(active_target_index(&make([1, 7, 3])), Some(1));
+            // Ties resolve to the earliest card so repaints stay stable.
+            assert_eq!(active_target_index(&make([7, 7, 7])), Some(0));
+        }
+
+        #[test]
+        fn box_blur_flattens_an_impulse_without_changing_a_uniform_field() {
+            let uniform = vec![120u8; 9 * 9 * 3];
+            assert_eq!(box_blur(&uniform, 9, 9, 2), uniform);
+
+            let mut impulse = vec![0u8; 9 * 9 * 3];
+            let center = (4 * 9 + 4) * 3;
+            impulse[center..center + 3].copy_from_slice(&[255, 255, 255]);
+            let blurred = box_blur(&impulse, 9, 9, 2);
+            assert!(blurred[center] < 255);
+            // Energy spreads to the neighbours the impulse never touched.
+            assert!(blurred[((4 * 9 + 6) * 3)] > 0);
+            assert!(blurred[((2 * 9 + 4) * 3)] > 0);
+            // ...but not past the kernel radius.
+            assert_eq!(blurred[((4 * 9 + 8) * 3)], 0);
         }
 
         #[test]

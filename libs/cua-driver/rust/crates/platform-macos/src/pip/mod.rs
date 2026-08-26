@@ -255,6 +255,49 @@ unsafe fn rounded_view(
     view
 }
 
+/// A layer-hosting view whose backing layer is a vertical `CAGradientLayer`.
+///
+/// The chrome body needs a top-to-bottom falloff to read as a lit glass
+/// surface rather than as a flat outline. AppKit keeps a view-assigned layer
+/// sized to its view, so this survives live resize without a manual pass.
+/// Layer-hosting views must not take subviews; overlay strips go on the
+/// enclosing chrome view instead.
+unsafe fn gradient_view(
+    frame: objc2_foundation::NSRect,
+    radius: f64,
+    top: *mut objc2::runtime::AnyObject,
+    bottom: *mut objc2::runtime::AnyObject,
+) -> *mut objc2::runtime::AnyObject {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    let view: *mut AnyObject = {
+        let alloc: *mut AnyObject = msg_send![class!(NSView), alloc];
+        msg_send![alloc, initWithFrame: frame]
+    };
+    let layer: *mut AnyObject = {
+        let alloc: *mut AnyObject = msg_send![class!(CAGradientLayer), alloc];
+        msg_send![alloc, init]
+    };
+    let top_cg: *mut CGColor = msg_send![top, CGColor];
+    let bottom_cg: *mut CGColor = msg_send![bottom, CGColor];
+    let stops: [*mut CGColor; 2] = [top_cg, bottom_cg];
+    let colors: *mut AnyObject = msg_send![
+        class!(NSArray),
+        arrayWithObjects: stops.as_ptr() as *const *mut AnyObject
+        count: 2usize
+    ];
+    let _: () = msg_send![layer, setColors: colors];
+    let _: () = msg_send![layer, setStartPoint: objc2_foundation::NSPoint::new(0.5, 1.0)];
+    let _: () = msg_send![layer, setEndPoint: objc2_foundation::NSPoint::new(0.5, 0.0)];
+    let _: () = msg_send![layer, setCornerRadius: radius];
+    let _: () = msg_send![layer, setMasksToBounds: true];
+    set_continuous_corners(layer);
+    let _: () = msg_send![view, setLayer: layer];
+    let _: () = msg_send![view, setWantsLayer: true];
+    view
+}
+
 unsafe fn visual_effect_view(
     frame: objc2_foundation::NSRect,
     radius: f64,
@@ -677,21 +720,40 @@ unsafe fn install_wallpaper(
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    // Outer container chrome. A deterministic neutral layer keeps the rim free
-    // of the saturated wallpaper cast an NSVisualEffectView material picks up at
-    // this scale; the bright outer rim, the top specular, the dark inner
-    // hairline and a tight inset shadow supply the dimensionality instead.
+    // Outer container chrome. A deterministic layer keeps the rim free of the
+    // saturated wallpaper cast an NSVisualEffectView material picks up at this
+    // scale. This base is a low-alpha graphite tint; the gradient body below
+    // supplies the lit-to-dark falloff, so the bright outer rim reads as a
+    // highlight on a translucent glass body rather than as the whole frame.
     let glass_frame = rounded_view(
         bounds,
         CONTAINER_RADIUS,
-        color(0.58, 0.60, 0.64, 0.82),
+        color(0.26, 0.29, 0.34, 0.35),
         true,
     );
     let _: () = msg_send![glass_frame, setAutoresizingMask: 18u64];
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
     set_continuous_corners(glass_layer);
-    set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.52));
+    set_layer_border(glass_layer, 0.8, color(1.0, 1.0, 1.0, 0.50));
     let _: () = msg_send![content_view, addSubview: glass_frame];
+
+    // Vertical falloff across the chrome body. Lit at the top, graphite at the
+    // bottom, translucent enough to pick up depth from whatever sits behind.
+    let body = gradient_view(
+        objc2_foundation::NSRect::new(objc2_foundation::NSPoint::new(0.0, 0.0), bounds.size),
+        CONTAINER_RADIUS,
+        color(0.58, 0.61, 0.66, 0.72),
+        color(0.19, 0.22, 0.27, 0.82),
+    );
+    let _: () = msg_send![body, setAutoresizingMask: 18u64];
+    let body_layer: *mut AnyObject = msg_send![body, layer];
+    let scale: f64 = msg_send![screen, backingScaleFactor];
+    if scale > 0.0 {
+        // Layer-hosting views do not inherit the backing scale, and the chrome
+        // hairlines are sub-point.
+        let _: () = msg_send![body_layer, setContentsScale: scale];
+    }
+    let _: () = msg_send![glass_frame, addSubview: body];
 
     // Light-from-above specular along the top edge of the chrome.
     let highlight = rounded_view(
@@ -703,7 +765,7 @@ unsafe fn install_wallpaper(
             ),
         ),
         0.5,
-        color(1.0, 1.0, 1.0, 0.32),
+        color(1.0, 1.0, 1.0, 0.38),
         true,
     );
     let _: () = msg_send![highlight, setAutoresizingMask: 10u64];
@@ -737,6 +799,28 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![shadow_layer, setShadowColor: shadow_cg];
     let _: () = msg_send![content_view, addSubview: wallpaper_shadow];
 
+    // Machined inner edge. It hugs the seam from the chrome side, so the
+    // miniature desktop stays separated from the graphite body whether the
+    // content under it is a bright wallpaper or a dark window.
+    let seam_outset = 0.75;
+    let seam = rounded_view(
+        objc2_foundation::NSRect::new(
+            objc2_foundation::NSPoint::new(inset - seam_outset, inset - seam_outset),
+            objc2_foundation::NSSize::new(
+                container_frame.size.width + 2.0 * seam_outset,
+                container_frame.size.height + 2.0 * seam_outset,
+            ),
+        ),
+        container_radius + seam_outset,
+        color(0.0, 0.0, 0.0, 0.0),
+        false,
+    );
+    let _: () = msg_send![seam, setAutoresizingMask: 18u64];
+    let seam_layer: *mut AnyObject = msg_send![seam, layer];
+    set_continuous_corners(seam_layer);
+    set_layer_border(seam_layer, seam_outset, color(1.0, 1.0, 1.0, 0.20));
+    let _: () = msg_send![content_view, addSubview: seam];
+
     let wallpaper_container = rounded_view(
         container_frame,
         container_radius,
@@ -746,8 +830,9 @@ unsafe fn install_wallpaper(
     let _: () = msg_send![wallpaper_container, setAutoresizingMask: 18u64];
     let container_layer: *mut AnyObject = msg_send![wallpaper_container, layer];
     set_continuous_corners(container_layer);
-    // Dark hairline where the miniature desktop meets the chrome.
-    set_layer_border(container_layer, 0.8, color(0.0, 0.0, 0.0, 0.42));
+    // Dark hairline where the miniature desktop meets the chrome. Softer than
+    // the flat-outline pass, because the graphite body now carries the seam.
+    set_layer_border(container_layer, 0.8, color(0.0, 0.0, 0.0, 0.30));
     let container_bounds: objc2_foundation::NSRect = msg_send![wallpaper_container, bounds];
     let wallpaper_view: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];

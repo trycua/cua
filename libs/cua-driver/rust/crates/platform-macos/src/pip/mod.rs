@@ -665,8 +665,10 @@ unsafe fn install_wallpaper(
         let _: () = msg_send![glass_frame, setAppearance: dark_appearance];
     }
     let glass_layer: *mut AnyObject = msg_send![glass_frame, layer];
-    set_layer_background(glass_layer, color(0.015, 0.03, 0.045, 0.78));
-    set_layer_border(glass_layer, 0.65, color(0.78, 0.90, 0.96, 0.10));
+    // Keep the rim neutral even over a saturated wallpaper. The material still
+    // supplies depth, while the graphite wash prevents a bright cyan halo.
+    set_layer_background(glass_layer, color(0.012, 0.016, 0.020, 0.92));
+    set_layer_border(glass_layer, 0.7, color(0.90, 0.93, 0.95, 0.16));
     let _: () = msg_send![content_view, addSubview: glass_frame];
 
     let inset = 7.0;

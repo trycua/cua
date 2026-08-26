@@ -39,12 +39,10 @@ impl TargetSize {
 pub struct TargetLayout {
     pub window: LayoutRect,
     pub content: LayoutRect,
-    pub title_bar_height: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct DesktopLayout {
-    pub menu_bar: LayoutRect,
     pub desktop: LayoutRect,
     pub dock: LayoutRect,
     pub dock_icons: Vec<LayoutRect>,
@@ -62,10 +60,9 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
     let height = height.max(1.0);
     let short_edge = width.min(height);
     let outer_gap = (short_edge * 0.018).clamp(5.0, 11.0);
-    let menu_height = (height * 0.052).clamp(18.0, 26.0).min(height * 0.16);
-    let dock_height = (height * 0.13).clamp(36.0, 60.0).min(height * 0.24);
-    let dock_y = (height - dock_height - outer_gap).max(menu_height + outer_gap);
-    let desktop_y = menu_height + outer_gap;
+    let dock_height = (height * 0.10).clamp(30.0, 50.0).min(height * 0.22);
+    let dock_y = (height - dock_height - outer_gap * 0.7).max(outer_gap);
+    let desktop_y = outer_gap;
     let desktop_height = (dock_y - outer_gap - desktop_y).max(1.0);
     let desktop = LayoutRect {
         x: outer_gap,
@@ -74,15 +71,15 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
         height: desktop_height,
     };
 
-    let dock_gap = 6.0;
+    let dock_gap = 8.0;
     let icon_count = targets.len().max(1);
     let max_icon_width = ((width - 4.0 * outer_gap - dock_gap * (icon_count - 1) as f64)
         / icon_count as f64)
         .max(16.0);
-    let icon_size = (dock_height - 12.0).min(max_icon_width).clamp(18.0, 46.0);
-    let dock_width = (icon_count as f64 * icon_size + (icon_count - 1) as f64 * dock_gap + 18.0)
+    let icon_size = (dock_height - 10.0).min(max_icon_width).clamp(18.0, 40.0);
+    let dock_width = (icon_count as f64 * icon_size + (icon_count - 1) as f64 * dock_gap + 20.0)
         .min(width - 2.0 * outer_gap)
-        .max(icon_size + 18.0);
+        .max(icon_size + 20.0);
     let dock = LayoutRect {
         x: (width - dock_width) / 2.0,
         y: dock_y,
@@ -103,12 +100,6 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
 
     if targets.is_empty() {
         return DesktopLayout {
-            menu_bar: LayoutRect {
-                x: 0.0,
-                y: 0.0,
-                width,
-                height: menu_height,
-            },
             desktop,
             dock,
             dock_icons,
@@ -155,7 +146,7 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
             let Some(target) = targets.get(index) else {
                 continue;
             };
-            desired_height = desired_height.max(column_width / target.aspect() + 22.0);
+            desired_height = desired_height.max(column_width / target.aspect());
         }
         *row_weight = desired_height;
     }
@@ -198,12 +189,6 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
         .collect::<Vec<_>>();
 
     DesktopLayout {
-        menu_bar: LayoutRect {
-            x: 0.0,
-            y: 0.0,
-            width,
-            height: menu_height,
-        },
         desktop,
         dock,
         dock_icons,
@@ -213,15 +198,12 @@ pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> Deskto
 
 fn fit_target(cell: LayoutRect, aspect: f64) -> TargetLayout {
     let inset = 1.0;
-    let title_bar_height = (cell.height * 0.1)
-        .clamp(17.0, 23.0)
-        .min(cell.height * 0.28);
     let available_width = (cell.width - 2.0 * inset).max(1.0);
-    let available_content_height = (cell.height - title_bar_height - 2.0 * inset).max(1.0);
+    let available_content_height = (cell.height - 2.0 * inset).max(1.0);
     let content_width = available_width.min(available_content_height * aspect);
     let content_height = (content_width / aspect).min(available_content_height);
     let window_width = content_width;
-    let window_height = content_height + title_bar_height;
+    let window_height = content_height;
     let window = LayoutRect {
         x: cell.x + (cell.width - window_width) / 2.0,
         y: cell.y + (cell.height - window_height) / 2.0,
@@ -230,15 +212,11 @@ fn fit_target(cell: LayoutRect, aspect: f64) -> TargetLayout {
     };
     let content = LayoutRect {
         x: window.x,
-        y: window.y + title_bar_height,
+        y: window.y,
         width: content_width,
         height: content_height,
     };
-    TargetLayout {
-        window,
-        content,
-        title_bar_height,
-    }
+    TargetLayout { window, content }
 }
 
 pub fn png_dimensions(bytes: &[u8]) -> Option<TargetSize> {
@@ -321,7 +299,32 @@ mod tests {
         for (target, source) in layout.targets.iter().zip(targets) {
             let rendered_aspect = target.content.width / target.content.height;
             assert!((rendered_aspect - source.aspect()).abs() < 0.001);
+            assert_eq!(target.window, target.content);
         }
+    }
+
+    #[test]
+    fn layout_reserves_no_menu_or_target_title_bars() {
+        let layout = layout_desktop(720.0, 520.0, &[size(1600, 900)]);
+        assert!(layout.desktop.y < 10.0);
+        assert_eq!(layout.targets[0].window, layout.targets[0].content);
+    }
+
+    #[test]
+    fn dock_stays_below_targets_and_inside_the_panel() {
+        let height = 520.0;
+        let layout = layout_desktop(
+            720.0,
+            height,
+            &[size(1600, 900), size(700, 1200), size(900, 900)],
+        );
+        let lowest_target = layout
+            .targets
+            .iter()
+            .map(|target| target.window.bottom())
+            .fold(0.0, f64::max);
+        assert!(layout.dock.y >= lowest_target);
+        assert!(layout.dock.bottom() <= height);
     }
 
     #[test]

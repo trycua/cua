@@ -26,6 +26,7 @@ unsafe impl objc2::RefEncode for CGColor {
 struct NativeHandles {
     window: usize,
     canvas_view: usize,
+    wallpaper_container: usize,
     wallpaper_view: usize,
     delegate: usize,
 }
@@ -134,7 +135,6 @@ unsafe fn rust_string(value: *mut objc2::runtime::AnyObject) -> Option<String> {
 
 #[derive(Clone, Copy)]
 enum LabelTone {
-    Light,
     Muted,
     Dark,
 }
@@ -161,6 +161,18 @@ unsafe fn set_layer_background(
     let _: () = msg_send![layer, setBackgroundColor: cg_color];
 }
 
+unsafe fn set_layer_border(
+    layer: *mut objc2::runtime::AnyObject,
+    width: f64,
+    border: *mut objc2::runtime::AnyObject,
+) {
+    use objc2::msg_send;
+
+    let cg_color: *mut CGColor = msg_send![border, CGColor];
+    let _: () = msg_send![layer, setBorderWidth: width];
+    let _: () = msg_send![layer, setBorderColor: cg_color];
+}
+
 unsafe fn add_text_label(
     parent: *mut objc2::runtime::AnyObject,
     frame: objc2_foundation::NSRect,
@@ -183,7 +195,6 @@ unsafe fn add_text_label(
     let _: () = msg_send![label, setSelectable: false];
     let _: () = msg_send![label, setAlignment: alignment];
     let text_color = match tone {
-        LabelTone::Light => color(1.0, 1.0, 1.0, 0.95),
         LabelTone::Muted => color(1.0, 1.0, 1.0, 0.66),
         LabelTone::Dark => color(0.12, 0.13, 0.15, 0.94),
     };
@@ -321,53 +332,6 @@ unsafe fn image_from_png(bytes: &[u8]) -> *mut objc2::runtime::AnyObject {
     msg_send![alloc, initWithData: data]
 }
 
-fn current_time_label() -> String {
-    unsafe {
-        let timestamp = libc::time(std::ptr::null_mut());
-        let mut local: libc::tm = std::mem::zeroed();
-        if libc::localtime_r(&timestamp, &mut local).is_null() {
-            return "--:--".to_owned();
-        }
-        format!("{:02}:{:02}", local.tm_hour, local.tm_min)
-    }
-}
-
-unsafe fn render_menu_bar(canvas: *mut objc2::runtime::AnyObject, frame: objc2_foundation::NSRect) {
-    use objc2::msg_send;
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-    let bar = rounded_view(frame, 0.0, color(0.03, 0.05, 0.08, 0.68), false);
-    let text_height = frame.size.height.min(22.0);
-    add_text_label(
-        bar,
-        NSRect::new(
-            NSPoint::new(10.0, (frame.size.height - text_height) / 2.0 - 1.0),
-            NSSize::new((frame.size.width - 90.0).max(20.0), text_height),
-        ),
-        "Cua   File   View   Window",
-        9.5,
-        true,
-        LabelTone::Light,
-        0,
-    );
-    add_text_label(
-        bar,
-        NSRect::new(
-            NSPoint::new(
-                (frame.size.width - 68.0).max(0.0),
-                (frame.size.height - text_height) / 2.0 - 1.0,
-            ),
-            NSSize::new(58.0, text_height),
-        ),
-        &current_time_label(),
-        9.5,
-        false,
-        LabelTone::Light,
-        2,
-    );
-    let _: () = msg_send![canvas, addSubview: bar];
-}
-
 unsafe fn render_target_window(
     canvas: *mut objc2::runtime::AnyObject,
     frame: &PipFrame,
@@ -379,16 +343,13 @@ unsafe fn render_target_window(
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
     let window_frame = appkit_rect(layout.window, bounds_height);
-    let shadow: *mut AnyObject = {
-        let alloc: *mut AnyObject = msg_send![class!(NSView), alloc];
-        msg_send![alloc, initWithFrame: window_frame]
-    };
-    let _: () = msg_send![shadow, setWantsLayer: true];
+    let radius = (window_frame.size.width.min(window_frame.size.height) * 0.035).clamp(5.0, 9.0);
+    let shadow = rounded_view(window_frame, radius, color(0.96, 0.96, 0.97, 1.0), false);
     let shadow_layer: *mut AnyObject = msg_send![shadow, layer];
-    let _: () = msg_send![shadow_layer, setShadowOpacity: 0.34_f32];
-    let _: () = msg_send![shadow_layer, setShadowRadius: 8.0_f64];
-    let _: () = msg_send![shadow_layer, setShadowOffset: NSSize::new(0.0, -3.0)];
-    let black = color(0.0, 0.0, 0.0, 0.75);
+    let _: () = msg_send![shadow_layer, setShadowOpacity: 0.30_f32];
+    let _: () = msg_send![shadow_layer, setShadowRadius: 16.0_f64];
+    let _: () = msg_send![shadow_layer, setShadowOffset: NSSize::new(0.0, -6.0)];
+    let black = color(0.0, 0.0, 0.0, 0.90);
     let black_cg: *mut CGColor = msg_send![black, CGColor];
     let _: () = msg_send![shadow_layer, setShadowColor: black_cg];
 
@@ -397,70 +358,19 @@ unsafe fn render_target_window(
             NSPoint::new(0.0, 0.0),
             NSSize::new(window_frame.size.width, window_frame.size.height),
         ),
-        7.0,
+        radius,
         color(0.96, 0.96, 0.97, 1.0),
         true,
     );
-    let title_height = layout.title_bar_height.min(window_frame.size.height);
-    let title_bar = rounded_view(
-        NSRect::new(
-            NSPoint::new(0.0, window_frame.size.height - title_height),
-            NSSize::new(window_frame.size.width, title_height),
-        ),
-        0.0,
-        color(0.94, 0.94, 0.95, 0.98),
-        false,
-    );
-    let separator = rounded_view(
-        NSRect::new(
-            NSPoint::new(0.0, window_frame.size.height - title_height),
-            NSSize::new(window_frame.size.width, 0.7),
-        ),
-        0.0,
-        color(1.0, 1.0, 1.0, 0.18),
-        false,
-    );
-    let traffic_size = title_height.clamp(5.5, 8.5) * 0.72;
-    let traffic_y = (title_height - traffic_size) / 2.0;
-    for (index, fill) in [
-        color(1.0, 0.32, 0.28, 1.0),
-        color(1.0, 0.72, 0.18, 1.0),
-        color(0.18, 0.76, 0.31, 1.0),
-    ]
-    .into_iter()
-    .enumerate()
-    {
-        add_circle(
-            title_bar,
-            8.0 + index as f64 * (traffic_size + 4.0),
-            traffic_y,
-            traffic_size,
-            fill,
-        );
-    }
-
-    let (title, _, _) = target_identity(frame);
-    add_text_label(
-        title_bar,
-        NSRect::new(
-            NSPoint::new(38.0, (title_height - 16.0) / 2.0 - 1.0),
-            NSSize::new((window_frame.size.width - 76.0).max(20.0), 16.0),
-        ),
-        &title,
-        title_height.clamp(8.0, 11.0) * 0.88,
-        false,
-        LabelTone::Dark,
-        1,
-    );
-
-    let content_height = (window_frame.size.height - title_height).max(1.0);
+    let window_layer: *mut AnyObject = msg_send![window, layer];
+    set_layer_border(window_layer, 0.6, color(1.0, 1.0, 1.0, 0.24));
     let image_view: *mut AnyObject = {
         let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
         msg_send![
             alloc,
             initWithFrame: NSRect::new(
                 NSPoint::new(0.0, 0.0),
-                NSSize::new(window_frame.size.width, content_height),
+                NSSize::new(window_frame.size.width, window_frame.size.height),
             )
         ]
     };
@@ -470,8 +380,6 @@ unsafe fn render_target_window(
         let _: () = msg_send![image_view, setImage: image];
     }
     let _: () = msg_send![window, addSubview: image_view];
-    let _: () = msg_send![window, addSubview: title_bar];
-    let _: () = msg_send![window, addSubview: separator];
     let _: () = msg_send![shadow, addSubview: window];
     let _: () = msg_send![canvas, addSubview: shadow];
 }
@@ -489,10 +397,18 @@ unsafe fn render_dock(
     let dock_frame = appkit_rect(layout.dock, bounds_height);
     let dock = rounded_view(
         dock_frame,
-        dock_frame.size.height * 0.24,
-        color(0.04, 0.06, 0.08, 0.66),
-        true,
+        dock_frame.size.height * 0.28,
+        color(0.82, 0.84, 0.87, 0.62),
+        false,
     );
+    let dock_layer: *mut AnyObject = msg_send![dock, layer];
+    set_layer_border(dock_layer, 0.6, color(1.0, 1.0, 1.0, 0.36));
+    let _: () = msg_send![dock_layer, setShadowOpacity: 0.22_f32];
+    let _: () = msg_send![dock_layer, setShadowRadius: 10.0_f64];
+    let _: () = msg_send![dock_layer, setShadowOffset: NSSize::new(0.0, -4.0)];
+    let dock_shadow = color(0.0, 0.0, 0.0, 0.75);
+    let dock_shadow_cg: *mut CGColor = msg_send![dock_shadow, CGColor];
+    let _: () = msg_send![dock_layer, setShadowColor: dock_shadow_cg];
 
     for (frame, icon_layout) in frames.iter().zip(layout.dock_icons.iter()) {
         let icon_global = appkit_rect(*icon_layout, bounds_height);
@@ -503,14 +419,14 @@ unsafe fn render_dock(
             ),
             icon_global.size,
         );
-        let tile = rounded_view(
-            icon_frame,
-            icon_frame.size.width * 0.22,
-            color(0.98, 0.98, 0.99, 0.92),
-            true,
-        );
         let (_, icon, fallback) = target_identity(frame);
         if icon.is_null() {
+            let tile = rounded_view(
+                icon_frame,
+                icon_frame.size.width * 0.22,
+                color(0.98, 0.98, 0.99, 0.86),
+                true,
+            );
             add_text_label(
                 tile,
                 NSRect::new(
@@ -523,30 +439,27 @@ unsafe fn render_dock(
                 LabelTone::Dark,
                 1,
             );
+            let _: () = msg_send![dock, addSubview: tile];
         } else {
             let image_view: *mut AnyObject = {
                 let alloc: *mut AnyObject = msg_send![class!(NSImageView), alloc];
                 msg_send![
                     alloc,
                     initWithFrame: NSRect::new(
-                        NSPoint::new(3.0, 3.0),
-                        NSSize::new(
-                            (icon_frame.size.width - 6.0).max(1.0),
-                            (icon_frame.size.height - 6.0).max(1.0),
-                        ),
+                        icon_frame.origin,
+                        icon_frame.size,
                     )
                 ]
             };
             let _: () = msg_send![image_view, setImageScaling: 3u64];
             let _: () = msg_send![image_view, setImage: icon];
-            let _: () = msg_send![tile, addSubview: image_view];
+            let _: () = msg_send![dock, addSubview: image_view];
         }
-        let _: () = msg_send![dock, addSubview: tile];
 
-        let dot_size = 4.0_f64.min(icon_frame.size.width * 0.12);
+        let dot_size = 3.2_f64.min(icon_frame.size.width * 0.10);
         let dot_x =
             icon_frame.origin.x - dock_frame.origin.x + (icon_frame.size.width - dot_size) / 2.0;
-        add_circle(dock, dot_x, 2.0, dot_size, color(0.20, 0.87, 0.42, 1.0));
+        add_circle(dock, dot_x, 2.2, dot_size, color(0.20, 0.72, 0.38, 0.92));
     }
     let _: () = msg_send![canvas, addSubview: dock];
 }
@@ -555,27 +468,23 @@ unsafe fn render_resize_affordance(canvas: *mut objc2::runtime::AnyObject, width
     use objc2::msg_send;
     use objc2_foundation::{NSPoint, NSRect, NSSize};
 
-    let marker = color(1.0, 1.0, 1.0, 0.55);
-    let horizontal = rounded_view(
-        NSRect::new(
-            NSPoint::new((width - 14.0).max(0.0), 4.0),
-            NSSize::new(9.0, 1.5),
-        ),
-        0.75,
-        marker,
-        false,
-    );
-    let vertical = rounded_view(
-        NSRect::new(
-            NSPoint::new((width - 5.5).max(0.0), 4.0),
-            NSSize::new(1.5, 9.0),
-        ),
-        0.75,
-        marker,
-        false,
-    );
-    let _: () = msg_send![canvas, addSubview: horizontal];
-    let _: () = msg_send![canvas, addSubview: vertical];
+    let marker = color(1.0, 1.0, 1.0, 0.48);
+    for (index, length) in [10.0_f64, 6.0].into_iter().enumerate() {
+        let bar = rounded_view(
+            NSRect::new(
+                NSPoint::new(
+                    (width - 15.0 + index as f64 * 4.0).max(0.0),
+                    6.0 + index as f64 * 2.0,
+                ),
+                NSSize::new(length, 1.2),
+            ),
+            0.6,
+            marker,
+            false,
+        );
+        let _: () = msg_send![bar, setFrameCenterRotation: -45.0_f64];
+        let _: () = msg_send![canvas, addSubview: bar];
+    }
 }
 
 unsafe fn render_frames(frames: &[PipFrame]) {
@@ -604,8 +513,6 @@ unsafe fn render_frames(frames: &[PipFrame]) {
         })
         .collect::<Vec<_>>();
     let layout = layout_desktop(bounds.size.width, bounds.size.height, &target_sizes);
-    render_menu_bar(canvas, appkit_rect(layout.menu_bar, bounds.size.height));
-
     if frames.is_empty() {
         let waiting = appkit_rect(layout.desktop, bounds.size.height);
         add_text_label(
@@ -716,13 +623,30 @@ unsafe fn install_wallpaper(
     content_view: *mut objc2::runtime::AnyObject,
     screen: *mut objc2::runtime::AnyObject,
     bounds: objc2_foundation::NSRect,
-) -> *mut objc2::runtime::AnyObject {
+) -> (
+    *mut objc2::runtime::AnyObject,
+    *mut objc2::runtime::AnyObject,
+) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
+    let inset = 3.0;
+    let container_frame = objc2_foundation::NSRect::new(
+        objc2_foundation::NSPoint::new(inset, inset),
+        objc2_foundation::NSSize::new(
+            (bounds.size.width - 2.0 * inset).max(1.0),
+            (bounds.size.height - 2.0 * inset).max(1.0),
+        ),
+    );
+    let wallpaper_container =
+        rounded_view(container_frame, 9.5, color(0.02, 0.03, 0.04, 1.0), true);
+    let _: () = msg_send![wallpaper_container, setAutoresizingMask: 18u64];
+    let container_layer: *mut AnyObject = msg_send![wallpaper_container, layer];
+    set_layer_border(container_layer, 0.5, color(1.0, 1.0, 1.0, 0.12));
+    let container_bounds: objc2_foundation::NSRect = msg_send![wallpaper_container, bounds];
     let wallpaper_view: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSImageView), alloc];
-        msg_send![allocated, initWithFrame: bounds]
+        msg_send![allocated, initWithFrame: container_bounds]
     };
     let _: () = msg_send![wallpaper_view, setImageScaling: 2u64];
     let workspace: *mut AnyObject = msg_send![class!(NSWorkspace), sharedWorkspace];
@@ -734,13 +658,10 @@ unsafe fn install_wallpaper(
             let _: () = msg_send![wallpaper_view, setImage: wallpaper];
         }
     }
-    let _: () = msg_send![content_view, addSubview: wallpaper_view];
+    let _: () = msg_send![wallpaper_container, addSubview: wallpaper_view];
+    let _: () = msg_send![content_view, addSubview: wallpaper_container];
 
-    let tint = rounded_view(bounds, 0.0, color(0.01, 0.03, 0.05, 0.10), false);
-    let _: () = msg_send![tint, setAutoresizingMask: 18u64];
-    let _: () = msg_send![content_view, addSubview: tint];
-
-    wallpaper_view
+    (wallpaper_container, wallpaper_view)
 }
 
 fn aspect_fill_frame(
@@ -769,17 +690,17 @@ unsafe fn update_wallpaper_frame() {
     use objc2::runtime::AnyObject;
     use objc2_foundation::{NSRect, NSSize};
 
-    let (canvas, wallpaper_view) = {
+    let (wallpaper_container, wallpaper_view) = {
         let guard = HANDLES.lock().unwrap();
         let Some(handles) = guard.as_ref() else {
             return;
         };
         (
-            handles.canvas_view as *mut AnyObject,
+            handles.wallpaper_container as *mut AnyObject,
             handles.wallpaper_view as *mut AnyObject,
         )
     };
-    let bounds: NSRect = msg_send![canvas, bounds];
+    let bounds: NSRect = msg_send![wallpaper_container, bounds];
     let image: *mut AnyObject = msg_send![wallpaper_view, image];
     let image_size = if image.is_null() {
         NSSize::new(0.0, 0.0)
@@ -853,11 +774,12 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     let content_view: *mut AnyObject = msg_send![window, contentView];
     let _: () = msg_send![content_view, setWantsLayer: true];
     let content_layer: *mut AnyObject = msg_send![content_view, layer];
-    let _: () = msg_send![content_layer, setCornerRadius: 13.0_f64];
+    let _: () = msg_send![content_layer, setCornerRadius: 11.5_f64];
     let _: () = msg_send![content_layer, setMasksToBounds: true];
-    set_layer_background(content_layer, color(0.02, 0.04, 0.06, 1.0));
+    set_layer_background(content_layer, color(0.08, 0.09, 0.11, 0.94));
+    set_layer_border(content_layer, 1.0, color(1.0, 1.0, 1.0, 0.18));
     let bounds: NSRect = msg_send![content_view, bounds];
-    let wallpaper_view = install_wallpaper(content_view, screen, bounds);
+    let (wallpaper_container, wallpaper_view) = install_wallpaper(content_view, screen, bounds);
 
     let canvas: *mut AnyObject = {
         let allocated: *mut AnyObject = msg_send![class!(NSView), alloc];
@@ -871,6 +793,7 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     *HANDLES.lock().unwrap() = Some(NativeHandles {
         window: window as usize,
         canvas_view: canvas as usize,
+        wallpaper_container: wallpaper_container as usize,
         wallpaper_view: wallpaper_view as usize,
         delegate: delegate as usize,
     });

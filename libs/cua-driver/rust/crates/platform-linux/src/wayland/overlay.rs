@@ -324,11 +324,10 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     }
                     // Seed: if the cursor is still at the off-screen sentinel
                     // `(-200, -200)` from `RenderStateCore::new`, snap to a
-                    // point near the MoveTo / SnapTo target so the spring
+                    // point near the MoveTo / SnapTo target so the glide
                     // animation starts on-screen. Mirrors X11 overlay.rs's
                     // `seed_start_if_sentinel` helper — without it, the
-                    // spring oscillates around the sentinel and the cursor
-                    // never reaches the screen.
+                    // path would start from the off-screen sentinel.
                     let seed_target = match &cmd {
                         OverlayCommand::MoveTo { x, y, .. }
                         | OverlayCommand::SnapTo { x, y, .. }
@@ -337,7 +336,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     };
                     if let Some((tx, ty)) = seed_target {
                         if state.core.pos.0 < -50.0 {
-                            const SEED_OFFSET: f64 = 16.0;
+                            const SEED_OFFSET: f64 = 140.0;
                             let sx = (tx - SEED_OFFSET).max(2.0);
                             let sy = (ty - SEED_OFFSET).max(2.0);
                             state.core.pos = (sx, sy);

@@ -2053,7 +2053,25 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     // loop uses (which is invisible on those compositors anyway). No-op if the
     // extension isn't installed.
     if crate::wayland::is_wayland() {
-        crate::wayland::shell_helper::move_cursor(sx as i32, sy as i32);
+        if crate::wayland::shell_helper::semantic_cursor_available() {
+            // The compositor helper owns the cursor on Mutter-style sessions
+            // and performs its own easing. Do not also enqueue a layer-shell
+            // command or the two renderers will fight over the position.
+            crate::wayland::shell_helper::move_cursor(sx as i32, sy as i32);
+        } else {
+            // Hyprland/wlroots uses the native layer-shell renderer. Unlike
+            // the X11 renderer it has no arrival channel, so enqueue the
+            // animated command and let its owner thread advance independently.
+            crate::overlay::send_command_for(
+                cursor_id.to_owned(),
+                cursor_overlay::OverlayCommand::MoveTo {
+                    x: sx,
+                    y: sy,
+                    end_heading_radians: std::f64::consts::FRAC_PI_4,
+                },
+            );
+        }
+        return;
     }
     let pos = crate::overlay::current_position_for(cursor_id);
     if pos.0 < 0.0 && pos.1 < 0.0 {

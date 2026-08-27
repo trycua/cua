@@ -26,7 +26,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crossbeam_channel::{bounded, Receiver, Sender};
-use cursor_overlay::{CursorConfig, OverlayCommand, OverlayMsg, RenderStateCore};
+use cursor_overlay::{CursorConfig, CursorKey, OverlayCommand, OverlayMsg, RenderStateCore};
 use wayland_client::{
     protocol::{
         wl_buffer::WlBuffer,
@@ -50,8 +50,8 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 /// SetPressed) are forwarded as-is so the layer-shell overlay matches the
 /// X11 visual: bloom + animated arrow + click pulse + press ring.
 enum WlOverlayCmd {
-    Cmd { cmd: OverlayCommand },
-    Remove,
+    Cmd { key: CursorKey, cmd: OverlayCommand },
+    Remove { key: CursorKey },
     Shutdown,
 }
 
@@ -98,8 +98,9 @@ pub fn forward(msg: &OverlayMsg) -> bool {
     if !should_forward(CONFIG_ENABLED.load(Ordering::Acquire), msg) {
         return false;
     }
-    // The native Wayland path owns one cursor and does not keep keyed session
-    // tombstones. Accept revival without starting the compositor thread.
+    // The native Wayland path renders one cursor at a time, but it still keeps
+    // the active session key so teardown of an unrelated transport session
+    // cannot hide the cursor that is currently on screen.
     if matches!(msg, OverlayMsg::Revive(_)) {
         return true;
     }
@@ -115,8 +116,7 @@ pub fn forward(msg: &OverlayMsg) -> bool {
     let Some(tx) = tx() else { return false };
     match msg {
         OverlayMsg::Remove(k) => {
-            let _ = k;
-            let _ = tx.try_send(WlOverlayCmd::Remove);
+            let _ = tx.try_send(WlOverlayCmd::Remove { key: k.clone() });
             true
         }
         OverlayMsg::Cmd(kc) => {
@@ -124,6 +124,7 @@ pub fn forward(msg: &OverlayMsg) -> bool {
                 return false;
             }
             let _ = tx.try_send(WlOverlayCmd::Cmd {
+                key: kc.key.clone(),
                 cmd: kc.cmd.clone(),
             });
             true
@@ -163,6 +164,8 @@ struct OverlayState {
     /// Cross-platform render core: position, animation, gradient arrow,
     /// bloom, click pulse, idle-fade. Shared verbatim with the X11 path.
     core: RenderStateCore,
+    /// Session currently represented by the single layer-shell cursor.
+    active_cursor_key: Option<CursorKey>,
     /// In-flight wl_shm buffers awaiting `wl_buffer.release` from the
     /// compositor. Keyed by `WlBuffer` object id; value is the
     /// `(mmap ptr, mmap size, memfd fd)` triple that must be unmapped +
@@ -193,6 +196,7 @@ impl Default for OverlayState {
             layer_surface: None,
             configured: false,
             core: RenderStateCore::new(CursorConfig::default()),
+            active_cursor_key: None,
             pending_buffers: HashMap::new(),
         }
     }
@@ -313,7 +317,11 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     shutdown = true;
                     break;
                 }
-                Ok(WlOverlayCmd::Cmd { cmd }) => {
+                Ok(WlOverlayCmd::Cmd { key, cmd }) => {
+                    if state.active_cursor_key.as_deref() != Some(key.as_str()) {
+                        state.active_cursor_key = Some(key);
+                        state.core.visible = true;
+                    }
                     // Seed: if the cursor is still at the off-screen sentinel
                     // `(-200, -200)` from `RenderStateCore::new`, snap to a
                     // point near the MoveTo / SnapTo target so the spring
@@ -344,13 +352,8 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         quiesce_hidden(&mut state.core);
                     }
                 }
-                Ok(WlOverlayCmd::Remove) => {
-                    // Single-cursor overlay: removing the active cursor
-                    // hides it. Multi-cursor wlroots support can layer on
-                    // top of this in a follow-up if needed.
-                    dirty |= state.core.visible || state.core.pos.0 >= -100.0;
-                    state.core.visible = false;
-                    quiesce_hidden(&mut state.core);
+                Ok(WlOverlayCmd::Remove { key }) => {
+                    dirty |= remove_cursor_if_active(&mut state, &key);
                 }
                 Err(crossbeam_channel::TryRecvError::Empty) => break,
                 Err(crossbeam_channel::TryRecvError::Disconnected) => {
@@ -470,6 +473,17 @@ fn quiesce_hidden(core: &mut RenderStateCore) {
     core.spring = None;
     core.spring_tgt = None;
     core.click_t = None;
+}
+
+fn remove_cursor_if_active(state: &mut OverlayState, key: &str) -> bool {
+    if state.active_cursor_key.as_deref() != Some(key) {
+        return false;
+    }
+    let dirty = state.core.visible || state.core.pos.0 >= -100.0;
+    state.active_cursor_key = None;
+    state.core.visible = false;
+    quiesce_hidden(&mut state.core);
+    dirty
 }
 
 /// Render one cursor frame into a fresh wl_shm ARGB8888 buffer and attach
@@ -845,11 +859,30 @@ mod tests {
     #[test]
     fn blocked_scheduler_wakes_on_command_arrival() {
         let (tx, rx) = bounded(1);
-        tx.send(WlOverlayCmd::Remove).unwrap();
+        tx.send(WlOverlayCmd::Remove {
+            key: "test".to_owned(),
+        })
+        .unwrap();
         assert!(matches!(
             wait_for_work(&rx, WlWait::Block),
-            WlWake::Command(WlOverlayCmd::Remove)
+            WlWake::Command(WlOverlayCmd::Remove { key }) if key == "test"
         ));
+    }
+
+    #[test]
+    fn unrelated_session_teardown_does_not_hide_active_cursor() {
+        let mut state = OverlayState::default();
+        state.active_cursor_key = Some("named-demo".to_owned());
+        state.core.pos = (300.0, 240.0);
+        state.core.visible = true;
+
+        assert!(!remove_cursor_if_active(&mut state, "implicit-cli-session"));
+        assert_eq!(state.active_cursor_key.as_deref(), Some("named-demo"));
+        assert!(state.core.visible);
+
+        assert!(remove_cursor_if_active(&mut state, "named-demo"));
+        assert!(state.active_cursor_key.is_none());
+        assert!(!state.core.visible);
     }
 
     #[test]

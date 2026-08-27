@@ -3513,6 +3513,62 @@ fn permissions_host_launch_arguments(
 }
 
 #[cfg(target_os = "macos")]
+fn verify_permission_host_source(
+    structured: &serde_json::Value,
+    expected_executable: &std::path::Path,
+    expected_bundle_id: &str,
+) -> Result<(), String> {
+    let source = structured
+        .get("source")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| {
+            "permission host response omitted source diagnostics; setup is not verified".to_owned()
+        })?;
+    let reported_executable = source
+        .get("executable")
+        .and_then(serde_json::Value::as_str)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| {
+            "permission host response omitted source.executable; setup is not verified".to_owned()
+        })?;
+    let expected_executable = std::fs::canonicalize(expected_executable).map_err(|error| {
+        format!(
+            "expected permission helper `{}` could not be resolved: {error}",
+            expected_executable.display()
+        )
+    })?;
+    let reported_executable = std::fs::canonicalize(reported_executable).map_err(|error| {
+        format!("reported permission helper `{reported_executable}` could not be resolved: {error}")
+    })?;
+    if reported_executable != expected_executable {
+        let resolution = if reported_executable.starts_with("/Applications")
+            && !expected_executable.starts_with("/Applications")
+        {
+            " LaunchServices resolved the request to the installed /Applications copy instead of the enclosing staged app."
+        } else {
+            ""
+        };
+        return Err(format!(
+            "permission host provenance mismatch: LaunchServices ran `{}` instead of the requested `{}`.{resolution} Setup is not verified.",
+            reported_executable.display(),
+            expected_executable.display()
+        ));
+    }
+    let reported_bundle_id = source
+        .get("bundle_id")
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| {
+            "permission host response omitted source.bundle_id; setup is not verified".to_owned()
+        })?;
+    if reported_bundle_id != expected_bundle_id {
+        return Err(format!(
+            "permission host reported bundle id `{reported_bundle_id}` instead of expected `{expected_bundle_id}`; setup is not verified"
+        ));
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
 fn request_permissions_via_launchservices(
     probe_direct_capture: bool,
 ) -> Result<serde_json::Value, String> {
@@ -3579,10 +3635,19 @@ fn request_permissions_via_launchservices(
     let payload = payload?;
     let result: serde_json::Value = serde_json::from_slice(&payload)
         .map_err(|error| format!("parse permission host result: {error}"))?;
-    result
+    let structured = result
         .get("structuredContent")
         .cloned()
-        .ok_or_else(|| "permission host returned no structured status".to_owned())
+        .ok_or_else(|| "permission host returned no structured status".to_owned())?;
+    let expected_executable = app_path
+        .join("Contents/MacOS")
+        .join(crate::bundle::cli_name());
+    verify_permission_host_source(
+        &structured,
+        &expected_executable,
+        crate::bundle::bundle_id(),
+    )?;
+    Ok(structured)
 }
 
 /// Launch CuaDriver via LaunchServices so the permission prompt attributes to
@@ -3707,11 +3772,17 @@ fn run_permissions_grant() {
              discards the pixels without writing a file."
         );
 
-        let direct_status = request_permissions_via_launchservices(true).ok();
-        if direct_status
-            .as_ref()
-            .is_some_and(permission_grant_is_ready)
-        {
+        let direct_status = match request_permissions_via_launchservices(true) {
+            Ok(status) => status,
+            Err(error) => {
+                eprintln!("\n❌ {app_name} permission setup could not be verified.");
+                eprintln!("{error}");
+                process::exit(1);
+            }
+        };
+        // LaunchServices response provenance was verified before this pure
+        // readiness check, so a different registered app cannot satisfy it.
+        if permission_grant_is_ready(&direct_status) {
             println!(
                 "\n✅ {app_name} has Accessibility and Screen Recording access, and a native \
                  ScreenCaptureKit frame completed without a fallback. The setup frame was \
@@ -3725,10 +3796,7 @@ fn run_permissions_grant() {
         }
 
         eprintln!("\n❌ {app_name} still cannot use direct ScreenCaptureKit capture.");
-        if direct_status
-            .as_ref()
-            .is_some_and(permission_grant_needs_direct_capture)
-        {
+        if permission_grant_needs_direct_capture(&direct_status) {
             eprintln!(
                 "Screen Recording is granted, but the private-window-picker bypass consent \
                  was denied or the native frame probe did not complete."
@@ -5113,6 +5181,134 @@ mod tests {
         });
 
         assert!(!permission_grant_is_ready(&incomplete));
+    }
+
+    #[cfg(target_os = "macos")]
+    fn create_packaged_permission_helper(
+        root: &std::path::Path,
+        app_name: &str,
+        cli_name: &str,
+    ) -> (std::path::PathBuf, std::path::PathBuf) {
+        let app_path = root.join(app_name);
+        let executable = app_path.join("Contents/MacOS").join(cli_name);
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(&executable, b"test helper").unwrap();
+        (app_path, executable)
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_host_source_accepts_the_exact_helper_and_channel_bundle_id() {
+        for (app_name, cli_name, bundle_id) in [
+            (
+                "CuaDriver.app",
+                crate::bundle::RELEASE_CLI_NAME,
+                crate::bundle::RELEASE_BUNDLE_ID,
+            ),
+            (
+                "CuaDriverLocal.app",
+                crate::bundle::LOCAL_CLI_NAME,
+                crate::bundle::LOCAL_BUNDLE_ID,
+            ),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            let (_, executable) =
+                create_packaged_permission_helper(temp.path(), app_name, cli_name);
+            let structured = serde_json::json!({
+                "source": {
+                    "executable": executable,
+                    "bundle_id": bundle_id,
+                }
+            });
+
+            assert_eq!(
+                verify_permission_host_source(&structured, &executable, bundle_id),
+                Ok(())
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_host_source_rejects_a_different_resolved_helper_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_, expected) = create_packaged_permission_helper(
+            &temp.path().join("staged"),
+            "CuaDriver.app",
+            crate::bundle::RELEASE_CLI_NAME,
+        );
+        let (_, reported) = create_packaged_permission_helper(
+            &temp.path().join("other"),
+            "CuaDriver.app",
+            crate::bundle::RELEASE_CLI_NAME,
+        );
+        let structured = serde_json::json!({
+            "source": {
+                "executable": reported,
+                "bundle_id": crate::bundle::RELEASE_BUNDLE_ID,
+            }
+        });
+
+        let error =
+            verify_permission_host_source(&structured, &expected, crate::bundle::RELEASE_BUNDLE_ID)
+                .unwrap_err();
+        assert!(error.contains("permission host provenance mismatch"));
+        assert!(error.contains("instead of the requested"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_host_source_rejects_missing_source_diagnostics() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_, expected) = create_packaged_permission_helper(
+            temp.path(),
+            "CuaDriver.app",
+            crate::bundle::RELEASE_CLI_NAME,
+        );
+
+        let missing_source = verify_permission_host_source(
+            &serde_json::json!({}),
+            &expected,
+            crate::bundle::RELEASE_BUNDLE_ID,
+        )
+        .unwrap_err();
+        assert!(missing_source.contains("omitted source diagnostics"));
+
+        let missing_executable = verify_permission_host_source(
+            &serde_json::json!({
+                "source": { "bundle_id": crate::bundle::RELEASE_BUNDLE_ID }
+            }),
+            &expected,
+            crate::bundle::RELEASE_BUNDLE_ID,
+        )
+        .unwrap_err();
+        assert!(missing_executable.contains("omitted source.executable"));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_host_source_rejects_the_wrong_channel_bundle_id() {
+        let temp = tempfile::tempdir().unwrap();
+        let (_, executable) = create_packaged_permission_helper(
+            temp.path(),
+            "CuaDriver.app",
+            crate::bundle::RELEASE_CLI_NAME,
+        );
+        let structured = serde_json::json!({
+            "source": {
+                "executable": executable,
+                "bundle_id": crate::bundle::LOCAL_BUNDLE_ID,
+            }
+        });
+
+        let error = verify_permission_host_source(
+            &structured,
+            &executable,
+            crate::bundle::RELEASE_BUNDLE_ID,
+        )
+        .unwrap_err();
+        assert!(error.contains("reported bundle id"));
+        assert!(error.contains(crate::bundle::RELEASE_BUNDLE_ID));
     }
 
     #[test]

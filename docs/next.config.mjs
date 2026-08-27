@@ -57,7 +57,12 @@ const config = {
       },
       {
         source: '/tutorials/your-first-cloud-sandbox',
-        destination: '/tutorials/your-first-local-sandbox',
+        destination: '/tutorials/your-first-cloud-fleet',
+        permanent: true,
+      },
+      {
+        source: '/tutorials/your-first-local-sandbox',
+        destination: '/tutorials/your-first-cloud-fleet',
         permanent: true,
       },
       {

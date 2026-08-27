@@ -3,6 +3,7 @@
   "pages": [
     "configure-pool-with-terraform",
     "create-pool-with-python",
+    "create-pool-with-typescript",
     "expire-pools-and-claims",
     "secrets",
     "scale-out",

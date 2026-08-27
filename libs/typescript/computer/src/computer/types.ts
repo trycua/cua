@@ -1,45 +1,37 @@
 import type { OSType, ScreenSize } from '../types';
 
-/**
- * Display configuration for the computer.
- */
+/** Display configuration for the computer. */
 export interface Display extends ScreenSize {
   scale_factor?: number;
 }
 
-/**
- * Computer configuration model.
- */
 export interface BaseComputerConfig {
-  /**
-   * The VM name
-   * @default ""
-   */
   name: string;
-
-  /**
-   * The operating system type ('macos', 'windows', or 'linux')
-   * @default "macos"
-   */
   osType: OSType;
-
-  /**
-   * The VM provider type
-   */
   vmProvider?: VMProviderType;
 }
 
 export interface CloudComputerConfig extends BaseComputerConfig {
-  /**
-   * Optional API key for cloud providers
-   */
   apiKey: string;
+}
+
+export interface FleetComputerConfig extends BaseComputerConfig {
+  accessToken: string;
+  poolName: string;
+  namespace?: string;
+  fleetBaseUrl?: string;
+  serviceName?: string;
+  poolPollIntervalMs?: bigint;
+  poolPollLimit?: number;
+  claimPollIntervalMs?: bigint;
+  claimPollLimit?: number;
 }
 
 export enum VMProviderType {
   DOCKER = 'docker',
   LUME = 'lume',
   CLOUD = 'cloud',
+  FLEET = 'fleet',
   QEMU = 'qemu',
   WINDOWS_SANDBOX = 'windows-sandbox',
   HOST = 'host',

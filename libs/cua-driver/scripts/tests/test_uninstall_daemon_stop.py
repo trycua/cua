@@ -173,6 +173,28 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         daemon.wait(timeout=5)
         self.assertIsNone(foreign.poll())
 
+    def test_refused_handshake_is_reported_before_the_signal_fallback(self) -> None:
+        daemon, identity = self.spawn("sleep")
+        foreign, _ = self.spawn("tail")
+        pid_file = self.home / "cua-driver.pid"
+        pid_file.write_text(str(daemon.pid), encoding="utf-8")
+        refusing = self.home / "refusing-cua-driver"
+        executable(
+            refusing,
+            "printf 'stop: daemon pid mismatch (expected 1, found 2)\\n' >&2\nexit 1",
+        )
+
+        result = self.run_stop(self.setup(pid_file, refusing, identity))
+
+        # The helper's own diagnosis is the only signal that the socket was
+        # taken over by another daemon, so it must not be swallowed.
+        self.assertIn("trusted stop helper exited 1", result.stderr)
+        self.assertIn("daemon pid mismatch (expected 1, found 2)", result.stderr)
+        # The validated pid is still stopped, and only that pid.
+        self.assertIn("status=0 result=stopped", result.stdout)
+        daemon.wait(timeout=5)
+        self.assertIsNone(foreign.poll())
+
     def test_history_purge_does_not_issue_a_second_stop(self) -> None:
         marker = self.root / "purge-helper-argv"
         helper = self.home / "purge-helper"

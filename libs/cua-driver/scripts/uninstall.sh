@@ -248,6 +248,7 @@ verify_release_daemon_absent() {
 stop_release_daemon() {
     DAEMON_STOP_RESULT=none
     local pid="" helper="${DAEMON_STOP_HELPER:-}" pid_file="${DAEMON_PID_FILE:-}" pid_identity_status=0
+    local helper_status=0 helper_stderr=""
 
     if [[ -n "$pid_file" ]] && pid="$(read_daemon_pid "$pid_file" 2>/dev/null)" \
         && daemon_pid_alive "$pid"; then
@@ -262,7 +263,22 @@ stop_release_daemon() {
             # option before `stop` deliberately: an older helper does not know
             # the option, so it treats the PID as the command/tool and fails
             # instead of issuing an unbound shutdown to the default socket.
-            "$helper" --expected-pid "$pid" stop >/dev/null 2>&1 || true
+            helper_stderr="$("$helper" --expected-pid "$pid" stop 2>&1 >/dev/null)" || helper_status=$?
+            if [[ "$helper_status" != "0" ]]; then
+                # Either an installed helper that predates --expected-pid, or a
+                # helper that refused because the socket no longer belongs to
+                # this PID. Both are expected outcomes, not script errors, so
+                # the fallback below still runs — but report why the graceful
+                # path was skipped instead of discarding the helper's own
+                # diagnosis. A pid mismatch here is the socket-replacement race
+                # this option exists to catch, and it must stay visible.
+                printf 'note: trusted stop helper exited %s for pid %s; falling back to signals.\n' \
+                    "$helper_status" "$pid" >&2
+                [[ -z "$helper_stderr" ]] || printf '%s\n' "$helper_stderr" >&2
+            fi
+            # Signals below target the PID whose executable identity was
+            # validated above, never whatever process currently owns the
+            # socket, so a failed handshake cannot redirect them.
             if ! daemon_wait_for_exit "$pid"; then
                 kill -TERM "$pid" 2>/dev/null || true
                 if ! daemon_wait_for_exit "$pid"; then

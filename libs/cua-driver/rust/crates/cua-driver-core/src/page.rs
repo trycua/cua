@@ -75,39 +75,42 @@ pub enum PageReadSource {
     AxFallback,
 }
 
-/// Structured metadata attached to a legacy page read when the backend can
-/// identify its modality.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct PageReadMetadata {
-    pub source: PageReadSource,
+/// Compatibility result for `get_text` and `query_dom`. `content` remains the
+/// exact legacy text payload while the optional fields serialize as MCP
+/// structured content. Backends without provenance return [`PageReadResult::text`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PageReadResult {
+    #[serde(skip)]
+    pub content: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<PageReadSource>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub fallback_error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub truncated: Option<bool>,
 }
 
-/// Compatibility result for `get_text` and `query_dom`. `content` remains the
-/// exact legacy text payload; metadata is emitted separately as MCP structured
-/// content. Backends without modality metadata can keep implementing the
-/// original string-returning methods.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PageReadResult {
-    pub content: String,
-    pub metadata: Option<PageReadMetadata>,
-}
-
 impl PageReadResult {
     pub fn text(content: String) -> Self {
         Self {
             content,
-            metadata: None,
+            source: None,
+            fallback_error: None,
+            truncated: None,
         }
     }
 
-    pub fn with_metadata(content: String, metadata: PageReadMetadata) -> Self {
+    pub fn sourced(
+        content: String,
+        source: PageReadSource,
+        fallback_error: Option<String>,
+        truncated: Option<bool>,
+    ) -> Self {
         Self {
             content,
-            metadata: Some(metadata),
+            source: Some(source),
+            fallback_error,
+            truncated,
         }
     }
 }
@@ -120,40 +123,18 @@ impl PageReadResult {
 #[async_trait]
 pub trait PageBackend: Send + Sync {
     /// Returns the visible text of the page (rough analog of
-    /// `document.body.innerText`).
-    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String>;
+    /// `document.body.innerText`) plus optional backend provenance.
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult>;
 
-    /// Metadata-aware form used by the shared dispatcher. The default keeps
-    /// existing platform backends source-compatible and returns plain text.
-    async fn get_text_result(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
-        self.get_text(pid, window_id)
-            .await
-            .map(PageReadResult::text)
-    }
-
-    /// Find elements matching `css_selector` and return a formatted-text
-    /// response (same human-readable shape macOS already emits).
+    /// Find elements matching `css_selector` and return the legacy formatted
+    /// text response plus optional backend provenance.
     async fn query_dom(
         &self,
         pid: i32,
         window_id: u64,
         css_selector: &str,
         attributes: &[String],
-    ) -> anyhow::Result<String>;
-
-    /// Metadata-aware form used by the shared dispatcher. See
-    /// [`PageBackend::get_text_result`].
-    async fn query_dom_result(
-        &self,
-        pid: i32,
-        window_id: u64,
-        css_selector: &str,
-        attributes: &[String],
-    ) -> anyhow::Result<PageReadResult> {
-        self.query_dom(pid, window_id, css_selector, attributes)
-            .await
-            .map(PageReadResult::text)
-    }
+    ) -> anyhow::Result<PageReadResult>;
 
     /// Evaluate `javascript` against the page and return the stringified
     /// result. Backends without a JS path should return an actionable error.
@@ -531,7 +512,7 @@ impl Tool for PageTool {
                 }
             }
 
-            "get_text" => match self.backend.get_text_result(pid, window_id).await {
+            "get_text" => match self.backend.get_text(pid, window_id).await {
                 Ok(result) => page_read_tool_result(result),
                 Err(e) => ToolResult::error(format!("Page text extraction failed: {e}")),
             },
@@ -620,7 +601,7 @@ impl Tool for PageTool {
                     .unwrap_or_default();
                 match self
                     .backend
-                    .query_dom_result(pid, window_id, &selector, &attributes)
+                    .query_dom(pid, window_id, &selector, &attributes)
                     .await
                 {
                     Ok(result) => page_read_tool_result(result),
@@ -634,11 +615,12 @@ impl Tool for PageTool {
 }
 
 fn page_read_tool_result(result: PageReadResult) -> ToolResult {
+    let structured = result
+        .source
+        .map(|_| serde_json::to_value(&result).expect("page read metadata must serialize"));
     let tool_result = ToolResult::text(result.content);
-    match result.metadata {
-        Some(metadata) => tool_result.with_structured(
-            serde_json::to_value(metadata).expect("page read metadata must serialize"),
-        ),
+    match structured {
+        Some(metadata) => tool_result.with_structured(metadata),
         None => tool_result,
     }
 }
@@ -671,8 +653,8 @@ mod tests {
 
     #[async_trait]
     impl PageBackend for RecordingBackend {
-        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<String> {
-            Ok(String::new())
+        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::text(String::new()))
         }
 
         async fn query_dom(
@@ -681,8 +663,8 @@ mod tests {
             _window_id: u64,
             _css_selector: &str,
             _attributes: &[String],
-        ) -> anyhow::Result<String> {
-            Ok(String::new())
+        ) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::text(String::new()))
         }
 
         async fn execute_javascript(
@@ -717,22 +699,12 @@ mod tests {
 
     #[async_trait]
     impl PageBackend for ProvenanceBackend {
-        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<String> {
-            Ok("legacy payload".to_owned())
-        }
-
-        async fn get_text_result(
-            &self,
-            _pid: i32,
-            _window_id: u64,
-        ) -> anyhow::Result<PageReadResult> {
-            Ok(PageReadResult::with_metadata(
+        async fn get_text(&self, _pid: i32, _window_id: u64) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::sourced(
                 "legacy payload".to_owned(),
-                PageReadMetadata {
-                    source: PageReadSource::AxFallback,
-                    fallback_error: Some("JavaScript from Apple Events is disabled".to_owned()),
-                    truncated: Some(true),
-                },
+                PageReadSource::AxFallback,
+                Some("JavaScript from Apple Events is disabled".to_owned()),
+                Some(true),
             ))
         }
 
@@ -742,8 +714,8 @@ mod tests {
             _window_id: u64,
             _css_selector: &str,
             _attributes: &[String],
-        ) -> anyhow::Result<String> {
-            Ok(String::new())
+        ) -> anyhow::Result<PageReadResult> {
+            Ok(PageReadResult::text(String::new()))
         }
 
         async fn execute_javascript(

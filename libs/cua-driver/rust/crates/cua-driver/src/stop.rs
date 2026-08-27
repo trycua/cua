@@ -1,10 +1,12 @@
-//! PID-bound daemon shutdown for the public `cua-driver stop` command.
+//! PID-bound daemon shutdown for `cua-driver stop --expected-pid <pid>`.
 //!
 //! The uninstaller validates a release daemon's executable identity before it
-//! asks the installed helper to stop that exact PID. When `--expected-pid` is
-//! present, the daemon metadata handshake and the shutdown request must share
-//! one connected transport so another daemon cannot replace the socket between
-//! those two operations.
+//! asks the installed helper to stop that exact PID. `Command::Stop` routes
+//! here whenever the parser saw `--expected-pid`; the daemon metadata
+//! handshake and the shutdown request then share one connected transport so
+//! another daemon cannot replace the socket between those two operations. The
+//! daemon wire protocol is unchanged: both requests are the existing
+//! `metadata` and `shutdown` methods.
 
 use cua_driver_core::daemon::{DaemonMetadata, DaemonRequest, DaemonResponse};
 

@@ -896,8 +896,8 @@ PY
     fi
 
     # --- Closing message ---
-    # Shutdown failures already abort before deletion, so reaching this point
-    # means the release runtime was removed only after a verified stop.
+    # TCC grants were already revoked above, before the app was removed, so
+    # the reset could still resolve the bundle id through LaunchServices.
     if [[ "$OS" == "Darwin" ]]; then
         echo ""
         echo "cua-driver uninstalled."
@@ -922,8 +922,10 @@ Reset them explicitly if you want a clean re-install flow:
 FINALUNMSG
         fi
     else
-        echo ""
-        echo "cua-driver uninstalled."
+        cat << 'FINALUNMSG'
+
+cua-driver uninstalled.
+FINALUNMSG
         if [[ "$PURGE_DATA" == "0" ]]; then
             cat << 'TELEMETRYUNMSG'
 

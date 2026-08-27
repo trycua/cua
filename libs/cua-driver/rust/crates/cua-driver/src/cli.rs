@@ -3751,8 +3751,8 @@ fn run_permissions_grant() {
             if !sr {
                 println!(
                     "If {app_name} is missing from Screen & System Audio Recording, click +, \
-                     add {}, enable it, then re-run the command.",
-                    app_path.display()
+                     add {app_path}, enable it, then re-run the command.",
+                    app_path = app_path.display()
                 );
             }
             process::exit(1);

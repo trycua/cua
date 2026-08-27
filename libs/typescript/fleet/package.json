@@ -26,13 +26,23 @@
   "files": [
     "dist"
   ],
-  "main": "./dist/index.js",
-  "module": "./dist/index.js",
-  "types": "./dist/index.d.ts",
+  "main": "./dist/node.js",
+  "module": "./dist/node.js",
+  "types": "./dist/node.d.ts",
   "exports": {
     ".": {
-      "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
+      "types": "./dist/node.d.ts",
+      "browser": "./dist/browser.js",
+      "node": "./dist/node.js",
+      "import": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
     },
     "./package.json": "./package.json"
   },
@@ -48,6 +58,8 @@
   },
   "devDependencies": {
     "esbuild": "^0.27.0",
-    "typescript": "^5.9.0"
-  }
+    "typescript": "^5.9.0",
+    "@types/node": "^22.15.17"
+  },
+  "browser": "./dist/browser.js"
 }

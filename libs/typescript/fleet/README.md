@@ -1,13 +1,13 @@
 # @trycua/fleet
 
-Browser and WebAssembly bindings for the Cua Fleet control plane. The package
-exposes the generated lifecycle client used to create templates, pools, and
-claims and to connect to services running inside a sandbox.
+Browser and Node.js WebAssembly bindings for the Cua Fleet control plane. Both
+entry points expose the generated lifecycle client used to create templates,
+pools, claims, and authenticated requests to sandbox services.
 
 The package is built from the public Fleet mirror in
 [`libs/fleet`](../../fleet). That mirror is synchronized from the canonical
-Fleet repository, so the npm release and the public SDK source stay in the same
-repository and release history.
+Fleet repository, so the npm release and public SDK source share one repository
+and release history.
 
 ## Install
 
@@ -15,20 +15,34 @@ repository and release history.
 npm install @trycua/fleet
 ```
 
-## Use an existing pool
-
-Initialize the WebAssembly module once, create a client with a Fleet access
-token, and claim a sandbox from an existing pool:
+## Browser
 
 ```ts
 import {
-  CreateClaimRequestBuilder,
   CyclopsClient,
   CyclopsTokenProviderConfigurationBuilder,
   uniffiInitAsync,
-} from '@trycua/fleet';
+} from '@trycua/fleet/browser';
 
 await uniffiInitAsync();
+const configuration = new CyclopsTokenProviderConfigurationBuilder()
+  .baseUrl('https://run.cua.ai')
+  .poolPollIntervalMs(5_000n)
+  .poolPollLimit(120)
+  .claimPollIntervalMs(5_000n)
+  .claimPollLimit(120)
+  .build();
+const client = CyclopsClient.connectBrowserWithAccessToken(configuration, accessToken);
+```
+
+## Node.js
+
+The Node entry loads the same WASM artifact from disk and supplies a fetch-based
+UniFFI HTTP transport, so it does not require a platform-specific native
+`libcyclops_sdk`.
+
+```ts
+import { CyclopsTokenProviderConfigurationBuilder, createFleetClient } from '@trycua/fleet/node';
 
 const configuration = new CyclopsTokenProviderConfigurationBuilder()
   .baseUrl('https://run.cua.ai')
@@ -37,45 +51,23 @@ const configuration = new CyclopsTokenProviderConfigurationBuilder()
   .claimPollIntervalMs(5_000n)
   .claimPollLimit(120)
   .build();
-
-const client = CyclopsClient.connectBrowserWithAccessToken(configuration, accessToken);
-
-const pool = await client.getPool('my-pool');
-const claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
-const sandbox = await client.waitClaim(claim);
-
-try {
-  const response = await client.serviceRequest(sandbox, 'mcp', '/health', {
-    method: 'GET',
-    url: 'https://ignored.invalid/health',
-    headers: [],
-  });
-  console.log(response.status);
-} finally {
-  await client.deleteClaim(claim);
-  client.uniffiDestroy();
-}
+const client = await createFleetClient(configuration, accessToken);
 ```
 
-The current package targets browser-compatible runtimes with `fetch`,
-`WebAssembly`, `TextEncoder`, and `TextDecoder`. The checked-in Node binding
-under `libs/fleet/sdk-bindings/ts-uniffi` requires a native `libcyclops_sdk`
-library and is not part of this package.
+The package root uses conditional exports: browser-aware bundlers receive the
+browser entry and Node.js receives the Node entry. Explicit subpath imports are
+recommended for application code and tests.
 
 ## Development
-
-The build regenerates the browser UniFFI binding from `libs/fleet`, compiles
-the Rust SDK to WebAssembly, bundles the JavaScript entry point, and emits
-TypeScript declarations:
 
 ```bash
 pnpm --dir libs/typescript/fleet build
 pnpm --dir libs/typescript/fleet pack:check
 ```
 
-Build prerequisites are Rust, `rustup`, Cargo, Node.js 20 or newer, and npm.
-The build script installs the pinned `wasm32-unknown-unknown` target and the
-matching `wasm-bindgen-cli` when they are missing.
+The build regenerates the browser UniFFI binding from `libs/fleet`, compiles the
+pinned Rust SDK to WebAssembly, and emits both ESM entry points plus TypeScript
+declarations.
 
 ## Links
 

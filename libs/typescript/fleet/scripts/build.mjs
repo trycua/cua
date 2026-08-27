@@ -53,6 +53,8 @@ export function uniffiInitAsync(): Promise<void> {
   })()
   return initialization
 }
+
+await uniffiInitAsync()
 `;
 
 const nodeSource = `
@@ -91,6 +93,8 @@ export function uniffiInitAsync(): Promise<void> {
   })()
   return initialization
 }
+
+await uniffiInitAsync()
 
 export async function createFleetClient(
   configuration: fleet_sdk.CyclopsTokenProviderConfiguration,

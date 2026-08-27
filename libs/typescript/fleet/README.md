@@ -4,6 +4,10 @@ Browser and Node.js WebAssembly bindings for the Cua Fleet control plane. Both
 entry points expose the generated lifecycle client used to create templates,
 pools, claims, and authenticated requests to sandbox services.
 
+Both entry points initialize their WASM module during import, so generated
+constructors and static client methods are ready immediately. The exported
+`uniffiInitAsync()` function remains available and idempotent for compatibility.
+
 The package is built from the public Fleet mirror in
 [`libs/fleet`](../../fleet). That mirror is synchronized from the canonical
 Fleet repository, so the npm release and public SDK source share one repository

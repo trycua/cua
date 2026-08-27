@@ -50,7 +50,9 @@
     "access": "public"
   },
   "scripts": {
-    "build": "node ./scripts/build.mjs",
+    "build": "pnpm run build:artifacts && pnpm run test:node",
+    "build:artifacts": "node ./scripts/build.mjs",
+    "test:node": "node --test ./tests/node-client-credentials.test.mjs",
     "pack:check": "pnpm run build && npm pack --dry-run"
   },
   "dependencies": {

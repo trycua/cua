@@ -44,7 +44,8 @@ class DaemonStopTests(unittest.TestCase):
 
         executable(
             self.bin / "pgrep",
-            f"awk -F'|' '$3 == \"alive\" {{ print $1 }}' '{self.map}'",
+            f"awk -F'|' '$3 == \"alive\" {{ print $1 }}' '{self.map}' | "
+            "while IFS= read -r pid; do kill -0 \"$pid\" 2>/dev/null && printf '%s\\n' \"$pid\"; done",
         )
         executable(
             self.bin / "ps",
@@ -171,6 +172,29 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         self.assertFalse(marker.exists())
         daemon.wait(timeout=5)
         self.assertIsNone(foreign.poll())
+
+    def test_history_purge_does_not_issue_a_second_stop(self) -> None:
+        marker = self.root / "purge-helper-argv"
+        helper = self.home / "purge-helper"
+        codesign = self.bin / "codesign"
+        executable(helper, f"printf '%s\\n' \"$*\" >> '{marker}'")
+        executable(codesign, "exit 0")
+
+        result = source(
+            self.env,
+            f"""
+status=0
+purge_linux_history "{helper}" 1 || status=$?
+purge_macos_history "/Applications/CuaDriver.app" "{helper}" 1 "{codesign}" || status=$?
+printf 'status=%s\n' "$status"
+""",
+        )
+
+        self.assertIn("status=0", result.stdout)
+        self.assertEqual(
+            marker.read_text(encoding="utf-8").splitlines(),
+            ["history purge-offline --yes", "history purge-offline --yes"],
+        )
 
     def test_stale_pid_only_inspects_and_never_calls_helper_or_signals(self) -> None:
         owned, identity = self.spawn("sleep")

@@ -7366,14 +7366,12 @@ impl Tool for KillAppTool {
         if adapter_id != "process_control" {
             return Ok(None);
         }
-        use cua_driver_core::browser::platform::BrowserPlatform;
         let pid = args
             .get("pid")
             .and_then(Value::as_i64)
             .filter(|pid| *pid > 0)
             .ok_or_else(|| "kill_app requires a positive integer pid".to_owned())?;
-        let fingerprint = crate::browser_platform::LinuxBrowserPlatform::default()
-            .process_fingerprint(pid)
+        let fingerprint = crate::browser_platform::process_fingerprint(pid)
             .await
             .map_err(|error| error.message)?;
         Ok(Some(json!({

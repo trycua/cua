@@ -220,17 +220,25 @@ pub enum BrowserVisualActionKind {
     Drag,
 }
 
+impl BrowserVisualActionKind {
+    pub fn shows_click_pulse(self) -> bool {
+        matches!(
+            self,
+            Self::Click | Self::Type | Self::RightClick | Self::DoubleClick | Self::Drag
+        )
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BrowserCursorVisibility {
+    pub session: String,
+    pub visible: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct BrowserVisualAction {
     pub session: String,
     pub window_id: u64,
-    /// Real CDP page target that owns this cursor. Platform adapters may use
-    /// it to keep several session cursors associated with separate tabs.
-    pub cdp_target_id: String,
-    /// Live, non-activating page-visibility proof collected immediately
-    /// before the action. False also covers an unavailable proof so visual
-    /// feedback fails closed instead of appearing over the wrong tab.
-    pub tab_is_active: bool,
     /// Screen coordinates in the platform-normalized device-independent
     /// space used by [`NativeWindowInfo::bounds`]. Child-frame or
     /// untrustworthy geometry intentionally produces no visual point while
@@ -238,6 +246,17 @@ pub struct BrowserVisualAction {
     pub screen_x: Option<f64>,
     pub screen_y: Option<f64>,
     pub kind: BrowserVisualActionKind,
+    /// Shared core owns active-tab arbitration so native adapters only map this
+    /// plan onto their existing overlay router.
+    pub visibility_updates: Vec<BrowserCursorVisibility>,
+}
+
+impl BrowserVisualAction {
+    pub fn current_session_visible(&self) -> bool {
+        self.visibility_updates
+            .iter()
+            .any(|update| update.session == self.session && update.visible)
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

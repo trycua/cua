@@ -4,15 +4,15 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::path::PathBuf;
 use std::process::Stdio;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
-    BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
-    ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    BrowserPlatform, BrowserVisualAction, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
+    PrepareAction, PrepareOutcome, PrepareRequest,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -44,59 +44,11 @@ use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROO
 #[derive(Clone)]
 pub struct WindowsBrowserPlatform {
     cursor_registry: Arc<cursor_overlay::CursorRegistry>,
-    browser_cursors: Arc<Mutex<BrowserCursorTracker>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserCursorBinding {
-    window_id: u64,
-    cdp_target_id: String,
-}
-
-#[derive(Debug, Default)]
-struct BrowserCursorTracker {
-    bindings: HashMap<String, BrowserCursorBinding>,
-}
-
-impl BrowserCursorTracker {
-    fn update(
-        &mut self,
-        session: &str,
-        window_id: u64,
-        cdp_target_id: &str,
-        tab_is_active: bool,
-    ) -> Vec<(String, bool)> {
-        self.bindings.insert(
-            session.to_owned(),
-            BrowserCursorBinding {
-                window_id,
-                cdp_target_id: cdp_target_id.to_owned(),
-            },
-        );
-
-        if !tab_is_active {
-            return vec![(session.to_owned(), false)];
-        }
-
-        self.bindings
-            .iter()
-            .filter(|(_, binding)| binding.window_id == window_id)
-            .map(|(key, binding)| {
-                (
-                    key.clone(),
-                    key == session && binding.cdp_target_id == cdp_target_id,
-                )
-            })
-            .collect()
-    }
 }
 
 impl WindowsBrowserPlatform {
     pub fn new(cursor_registry: Arc<cursor_overlay::CursorRegistry>) -> Self {
-        Self {
-            cursor_registry,
-            browser_cursors: Arc::new(Mutex::new(BrowserCursorTracker::default())),
-        }
+        Self { cursor_registry }
     }
 }
 
@@ -1331,37 +1283,27 @@ impl BrowserPlatform for WindowsBrowserPlatform {
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
-        if action.session.is_empty()
-            || action.cdp_target_id.is_empty()
-            || cua_driver_core::session::is_session_ended(&action.session)
-        {
-            return;
-        }
-
-        let visibility_updates = self.browser_cursors.lock().unwrap().update(
-            &action.session,
-            action.window_id,
-            &action.cdp_target_id,
-            action.tab_is_active,
-        );
         let cursor_enabled = self
             .cursor_registry
             .get_or_create(&action.session)
             .config
             .enabled;
-        for (key, visible) in visibility_updates {
-            let enabled = if key == action.session {
-                visible && cursor_enabled
+        for update in &action.visibility_updates {
+            let enabled = if update.session == action.session {
+                update.visible && cursor_enabled
             } else {
-                visible
+                update.visible
                     && self
                         .cursor_registry
-                        .get(&key)
+                        .get(&update.session)
                         .is_some_and(|state| state.config.enabled)
             };
-            crate::overlay::send_command(key, cursor_overlay::OverlayCommand::SetEnabled(enabled));
+            crate::overlay::send_command(
+                update.session.clone(),
+                cursor_overlay::OverlayCommand::SetEnabled(enabled),
+            );
         }
-        if !action.tab_is_active || !cursor_enabled {
+        if !action.current_session_visible() || !cursor_enabled {
             return;
         }
         let (Some(screen_x), Some(screen_y)) = (action.screen_x, action.screen_y) else {
@@ -1384,14 +1326,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         self.cursor_registry
             .update_position(&action.session, screen_x, screen_y);
 
-        if matches!(
-            action.kind,
-            BrowserVisualActionKind::Click
-                | BrowserVisualActionKind::Type
-                | BrowserVisualActionKind::RightClick
-                | BrowserVisualActionKind::DoubleClick
-                | BrowserVisualActionKind::Drag
-        ) {
+        if action.kind.shows_click_pulse() {
             crate::overlay::send_command(
                 action.session,
                 cursor_overlay::OverlayCommand::ClickPulse {
@@ -2124,33 +2059,6 @@ mod tests {
     }
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
-
-    #[test]
-    fn browser_cursor_tracker_shows_only_the_active_tabs_session_per_window() {
-        let mut tracker = BrowserCursorTracker::default();
-        assert_eq!(
-            tracker.update("tab-a", 101, "target-a", false),
-            vec![("tab-a".to_owned(), false)]
-        );
-        assert_eq!(
-            tracker.update("tab-b", 101, "target-b", false),
-            vec![("tab-b".to_owned(), false)]
-        );
-
-        let mut updates = tracker.update("tab-a", 101, "target-a", true);
-        updates.sort();
-        assert_eq!(
-            updates,
-            vec![("tab-a".to_owned(), true), ("tab-b".to_owned(), false)]
-        );
-
-        let mut updates = tracker.update("tab-b", 101, "target-b", true);
-        updates.sort();
-        assert_eq!(
-            updates,
-            vec![("tab-a".to_owned(), false), ("tab-b".to_owned(), true)]
-        );
-    }
 
     #[test]
     fn netstat_parser_requires_loopback_listening_and_browser_process_tree() {

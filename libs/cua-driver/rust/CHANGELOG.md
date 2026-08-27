@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.22.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.1...cua-driver-rs-v0.22.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** align Wayland capture, focus, and overlays ([#3152](https://github.com/trycua/cua/issues/3152)) ([2fc59ea](https://github.com/trycua/cua/commit/2fc59ea943a03e7ab74f948b478afac6765493b5))
+* **cua-driver:** report macOS Retina backing scale ([#3328](https://github.com/trycua/cua/issues/3328)) ([9029514](https://github.com/trycua/cua/commit/90295148d34dac8e5a1307bac917e08171af5839))
+
 ## [0.22.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.0...cua-driver-rs-v0.22.1) (2026-08-25)
 
 

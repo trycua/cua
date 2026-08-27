@@ -183,10 +183,13 @@ def test_first_nightly_plan_is_reproducible_and_uses_stable_attribution_base(
     monkeypatch: pytest.MonkeyPatch,
 ):
     source_sha = "a" * 40
+    stable_version = (ROOT / "libs/lume/VERSION").read_text(encoding="utf-8").strip()
+    stable_tag = f"lume-v{stable_version}"
+    nightly_version = derive_nightly_version(stable_version, "20260812", "42")
 
     def fake_git(_root, command, *args):
         if command == "rev-list":
-            assert args == ("-n", "1", "lume-v0.5.3")
+            assert args == ("-n", "1", stable_tag)
             return "d" * 40
         assert command == "merge-base"
         assert args == ("--is-ancestor", "d" * 40, source_sha)
@@ -204,10 +207,10 @@ def test_first_nightly_plan_is_reproducible_and_uses_stable_attribution_base(
     )
     assert plan["shouldBuild"] is True
     assert plan["reason"] == "first-nightly"
-    assert plan["tag"] == "nightly-lume-v0.5.4-nightly.20260812.42"
-    assert plan["bundleVersion"] == "0.5.4"
+    assert plan["tag"] == f"nightly-lume-v{nightly_version}"
+    assert plan["bundleVersion"] == nightly_version.split("-", 1)[0]
     assert plan["previousNightlyTag"] is None
-    assert plan["attributionBaseTag"] == "lume-v0.5.3"
+    assert plan["attributionBaseTag"] == stable_tag
 
 
 def test_plan_skips_an_identical_published_source(monkeypatch: pytest.MonkeyPatch):

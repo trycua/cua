@@ -133,8 +133,57 @@ fn set_preview_admitted_preference_at(path: &Path, admitted: bool) -> anyhow::Re
     Ok(())
 }
 
+fn expected_pid_stop_from_args(args: &[String]) -> Result<Option<u32>, String> {
+    let Some(first) = args.first() else {
+        return Ok(None);
+    };
+    if first != "--expected-pid" && !first.starts_with("--expected-pid=") {
+        return Ok(None);
+    }
+    if args.len() != 3 || first != "--expected-pid" || args[2] != "stop" {
+        return Err("usage: cua-driver --expected-pid <pid> stop".to_owned());
+    }
+    let pid = args[1]
+        .parse::<u32>()
+        .ok()
+        .filter(|pid| *pid != 0)
+        .ok_or_else(|| "--expected-pid requires a positive integer PID".to_owned())?;
+    Ok(Some(pid))
+}
+
+fn run_expected_pid_stop_if_requested(args: &[String]) -> Option<i32> {
+    let expected_pid = match expected_pid_stop_from_args(args) {
+        Ok(None) => return None,
+        Ok(Some(pid)) => pid,
+        Err(error) => {
+            eprintln!("{error}");
+            return Some(64);
+        }
+    };
+    let socket_path = crate::serve::default_socket_path();
+    match cua_driver_core::daemon::request_daemon_metadata(&socket_path) {
+        Ok(metadata) if metadata.pid == expected_pid => {}
+        Ok(metadata) => {
+            eprintln!(
+                "stop: daemon pid mismatch (expected {expected_pid}, found {})",
+                metadata.pid
+            );
+            return Some(1);
+        }
+        Err(error) => {
+            eprintln!("stop: failed to read daemon metadata: {error}");
+            return Some(1);
+        }
+    }
+    crate::serve::run_stop_cmd(&socket_path);
+    Some(0)
+}
+
 pub fn run_offline_purge_if_requested() -> Option<i32> {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if let Some(exit_code) = run_expected_pid_stop_if_requested(&args) {
+        return Some(exit_code);
+    }
     if args.as_slice() != ["history", "purge-offline", "--yes"] {
         return None;
     }
@@ -500,6 +549,22 @@ fn platform_application_identity_provider() -> std::sync::Arc<dyn ApplicationIde
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn args(values: &[&str]) -> Vec<String> {
+        values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn expected_pid_stop_requires_the_backward_safe_argv_shape() {
+        assert_eq!(
+            expected_pid_stop_from_args(&args(&["--expected-pid", "42", "stop"])),
+            Ok(Some(42))
+        );
+        assert!(expected_pid_stop_from_args(&args(&["stop", "--expected-pid", "42"])).is_err());
+        assert!(expected_pid_stop_from_args(&args(&["--expected-pid=42", "stop"])).is_err());
+        assert!(expected_pid_stop_from_args(&args(&["--expected-pid", "0", "stop"])).is_err());
+        assert_eq!(expected_pid_stop_from_args(&args(&["stop"])), Ok(None));
+    }
 
     #[test]
     fn default_root_is_namespace_specific() {

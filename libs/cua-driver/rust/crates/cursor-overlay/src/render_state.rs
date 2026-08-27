@@ -127,7 +127,7 @@ impl RenderStateCore {
             theme,
             theme_paint_radius,
             theme_fallback,
-            pos: (-200.0, -200.0),
+            pos: (0.0, 0.0),
             placed: false,
             heading: std::f64::consts::FRAC_PI_4,
             path: None,
@@ -966,6 +966,22 @@ fn paint_cursor_impl(
                 alpha_scale,
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod placement_tests {
+    use super::*;
+    use crate::CursorConfig;
+
+    #[test]
+    fn visibility_uses_placement_not_coordinate_sign() {
+        let mut core = RenderStateCore::new(CursorConfig::default());
+        core.pos = (-867.0, -200.0);
+        assert!(!core.cursor_is_revealed());
+
+        core.placed = true;
+        assert!(core.cursor_is_revealed());
     }
 }
 

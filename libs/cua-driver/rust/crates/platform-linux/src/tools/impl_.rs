@@ -2055,8 +2055,7 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
     if crate::wayland::is_wayland() {
         crate::wayland::shell_helper::move_cursor(sx as i32, sy as i32);
     }
-    let pos = crate::overlay::current_position_for(cursor_id);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if !crate::overlay::is_placed_for(cursor_id) {
         crate::overlay::send_command_for(
             cursor_id.to_owned(),
             cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },

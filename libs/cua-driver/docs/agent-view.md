@@ -63,11 +63,14 @@ cua-driver permissions grant
 ```
 
 That command requests **Accessibility**, **Screen Recording**, and direct
-ScreenCaptureKit access through CuaDriver.app. macOS can show its own capture
-acknowledgement during this setup, so finish it before starting background-only
-work. Strict startup only checks the existing TCC grants. If either base grant
-is missing, it exits with setup instructions instead of showing a prompt or
-opening System Settings over the user's desktop.
+ScreenCaptureKit access through CuaDriver.app. It then asks ScreenCaptureKit for
+one native 2-by-2 display frame, checks that the frame completed without a
+fallback, wipes those 16 pixel bytes in memory, and does not write them to a
+file. macOS can show its own capture acknowledgement during this trusted setup,
+so finish it before starting background-only work. Strict startup only checks
+the existing TCC grants. If either base grant is missing, it exits with setup
+instructions instead of showing a prompt or opening System Settings over the
+user's desktop.
 
 macOS may renew its capture acknowledgement later. That system UI can briefly
 change the active/key application. Background-only mode cannot suppress it, so

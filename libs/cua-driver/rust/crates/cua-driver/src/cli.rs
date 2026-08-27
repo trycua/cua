@@ -695,6 +695,9 @@ pub fn parse_command() -> Command {
             "                                          macOS may show its capture acknowledgement"
         );
         println!("                                          during that trusted setup step.");
+        println!(
+            "                                          macOS can renew that acknowledgement later."
+        );
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");
@@ -1840,7 +1843,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--agent-view", "type": "flag", "description": "Show the optional always-on-top Agent View presentation." },
-                  { "name": "--agent-view-background-only", "type": "flag", "description": "macOS only: start strict same-session Agent View after trusted permissions/direct-capture setup; exact-target mutation fails closed." },
+                  { "name": "--agent-view-background-only", "type": "flag", "description": "macOS only: start strict same-session Agent View after trusted permissions/direct-capture setup; exact-target mutation fails closed. macOS can renew its capture acknowledgement later." },
                   { "name": "--agent-view-geometry", "type": "string", "description": "Set the Agent View size and optional top-left position as WxH[+X+Y]." },
                   { "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
               ] },
@@ -3324,15 +3327,58 @@ fn permission_flag(structured: &serde_json::Value, key: &str) -> bool {
         .unwrap_or(false)
 }
 
+fn native_capture_frame_is_ready(structured: &serde_json::Value) -> bool {
+    let width = structured
+        .get("direct_capture_frame_width")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let height = structured
+        .get("direct_capture_frame_height")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let byte_count = structured
+        .get("direct_capture_frame_byte_count")
+        .and_then(serde_json::Value::as_u64)
+        .unwrap_or(0);
+    let expected_byte_count = width
+        .checked_mul(height)
+        .and_then(|pixels| pixels.checked_mul(4));
+
+    permission_flag(structured, "screen_recording_capturable")
+        && structured
+            .get("direct_capture_status")
+            .and_then(serde_json::Value::as_str)
+            == Some("ready")
+        && structured
+            .get("direct_capture_backend")
+            .and_then(serde_json::Value::as_str)
+            == Some("screencapturekit")
+        && structured
+            .get("direct_capture_operation")
+            .and_then(serde_json::Value::as_str)
+            == Some("screenshot_manager_display_frame")
+        && structured
+            .get("direct_capture_frame_captured")
+            .and_then(serde_json::Value::as_bool)
+            == Some(true)
+        && width > 0
+        && height > 0
+        && byte_count > 0
+        && expected_byte_count == Some(byte_count)
+        && structured
+            .get("direct_capture_fallback_used")
+            .and_then(serde_json::Value::as_bool)
+            == Some(false)
+}
+
 fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
     permission_flag(structured, "accessibility")
         && permission_flag(structured, "screen_recording")
-        && permission_flag(structured, "screen_recording_capturable")
+        && native_capture_frame_is_ready(structured)
 }
 
 fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool {
-    permission_flag(structured, "screen_recording")
-        && !permission_flag(structured, "screen_recording_capturable")
+    permission_flag(structured, "screen_recording") && !native_capture_frame_is_ready(structured)
 }
 
 fn permission_status_request() -> crate::serve::DaemonRequest {
@@ -3630,7 +3676,11 @@ fn run_permissions_grant() {
              captures screen video only; it does not enable system-audio capture. This \
              consent does not authorize browser profiles, browser data, or CDP attachment."
         );
-        println!("Choose Allow to request and verify direct capture now…");
+        println!(
+            "Choose Allow to request direct capture now. Setup then captures one 2×2 \
+             ScreenCaptureKit frame from the current display, validates it, and immediately \
+             discards the pixels without writing a file."
+        );
 
         let direct_status = request_permissions_via_launchservices(true).ok();
         if direct_status
@@ -3638,7 +3688,13 @@ fn run_permissions_grant() {
             .is_some_and(permission_grant_is_ready)
         {
             println!(
-                "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
+                "\n✅ {app_name} has Accessibility and Screen Recording access, and a native \
+                 ScreenCaptureKit frame completed without a fallback. The setup frame was \
+                 discarded and was not stored. You're set."
+            );
+            println!(
+                "macOS can renew its direct-capture acknowledgement later. If it appears \
+                 again, approve it and re-run `{cli_name} permissions grant` before Agent View."
             );
             return;
         }
@@ -3650,7 +3706,7 @@ fn run_permissions_grant() {
         {
             eprintln!(
                 "Screen Recording is granted, but the private-window-picker bypass consent \
-                 was denied or the live probe failed."
+                 was denied or the native frame probe did not complete."
             );
         }
         eprintln!(
@@ -4906,7 +4962,12 @@ mod tests {
         let stale = serde_json::json!({
             "accessibility": true,
             "screen_recording": true,
-            "screen_recording_capturable": false
+            "screen_recording_capturable": false,
+            "direct_capture_status": "unavailable",
+            "direct_capture_backend": "screencapturekit",
+            "direct_capture_operation": "screenshot_manager_display_frame",
+            "direct_capture_frame_captured": false,
+            "direct_capture_fallback_used": false
         });
 
         assert!(!permission_grant_is_ready(&stale));
@@ -4918,11 +4979,61 @@ mod tests {
         let ready = serde_json::json!({
             "accessibility": true,
             "screen_recording": true,
-            "screen_recording_capturable": true
+            "screen_recording_capturable": true,
+            "direct_capture_status": "ready",
+            "direct_capture_backend": "screencapturekit",
+            "direct_capture_operation": "screenshot_manager_display_frame",
+            "direct_capture_frame_captured": true,
+            "direct_capture_frame_width": 2,
+            "direct_capture_frame_height": 2,
+            "direct_capture_frame_byte_count": 16,
+            "direct_capture_fallback_used": false
         });
 
         assert!(permission_grant_is_ready(&ready));
         assert!(!permission_grant_needs_direct_capture(&ready));
+    }
+
+    #[test]
+    fn permission_grant_rejects_enumeration_without_a_native_frame() {
+        let enumeration_only = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true,
+            "direct_capture_status": "ready",
+            "direct_capture_backend": null,
+            "direct_capture_operation": null,
+            "direct_capture_frame_captured": null,
+            "direct_capture_frame_width": null,
+            "direct_capture_frame_height": null,
+            "direct_capture_frame_byte_count": null,
+            "direct_capture_fallback_used": null
+        });
+
+        assert!(!permission_grant_is_ready(&enumeration_only));
+        assert!(permission_grant_needs_direct_capture(&enumeration_only));
+    }
+
+    #[test]
+    fn permission_grant_rejects_fallback_or_empty_frame_claims() {
+        let mut invalid = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true,
+            "direct_capture_status": "ready",
+            "direct_capture_backend": "screencapturekit",
+            "direct_capture_operation": "screenshot_manager_display_frame",
+            "direct_capture_frame_captured": true,
+            "direct_capture_frame_width": 2,
+            "direct_capture_frame_height": 2,
+            "direct_capture_frame_byte_count": 16,
+            "direct_capture_fallback_used": true
+        });
+        assert!(!permission_grant_is_ready(&invalid));
+
+        invalid["direct_capture_fallback_used"] = serde_json::json!(false);
+        invalid["direct_capture_frame_byte_count"] = serde_json::json!(0);
+        assert!(!permission_grant_is_ready(&invalid));
     }
 
     #[test]

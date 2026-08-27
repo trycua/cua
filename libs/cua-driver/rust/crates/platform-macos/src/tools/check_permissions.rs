@@ -18,11 +18,24 @@ pub const PERMISSIONS_HOST_REQUEST_ARG: &str = "__permissions-host-request";
 
 pub struct CheckPermissionsTool {
     state: Arc<ToolState>,
+    /// Set only by the private LaunchServices permission helper. Registered
+    /// agent tools retain the legacy enumeration probe.
+    native_setup_frame_probe: bool,
 }
 
 impl CheckPermissionsTool {
     pub fn new(state: Arc<ToolState>) -> Self {
-        Self { state }
+        Self {
+            state,
+            native_setup_frame_probe: false,
+        }
+    }
+
+    fn for_trusted_permission_setup(state: Arc<ToolState>) -> Self {
+        Self {
+            state,
+            native_setup_frame_probe: true,
+        }
     }
 }
 
@@ -31,7 +44,12 @@ impl CheckPermissionsTool {
 /// standalone `permissions grant` command launches the app bundle and macOS
 /// owns the actual approval UI.
 pub async fn request_from_launchservices_host(probe_direct_capture: bool) -> ToolResult {
-    let tool = CheckPermissionsTool::new(Arc::new(ToolState::new(false, false, None)));
+    // This constructor is the only route that selects a prompt-capable native
+    // frame. The public tool constructor remains enumeration-only, and strict
+    // startup calls the tool read-only with `prompt:false`.
+    let tool = CheckPermissionsTool::for_trusted_permission_setup(Arc::new(ToolState::new(
+        false, false, None,
+    )));
     tool.invoke(serde_json::json!({
         "prompt": true,
         "probe_direct_capture": probe_direct_capture,
@@ -100,6 +118,33 @@ impl DirectCaptureProbeResult {
     }
 }
 
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct DirectCaptureProvenance {
+    backend: Option<&'static str>,
+    operation: Option<&'static str>,
+    frame_captured: Option<bool>,
+    frame_width: Option<u32>,
+    frame_height: Option<u32>,
+    frame_byte_count: Option<u64>,
+    fallback_used: Option<bool>,
+}
+
+impl DirectCaptureProvenance {
+    fn native_attempt(frame: Option<crate::capture::NativePermissionSetupFrame>) -> Self {
+        Self {
+            backend: Some(crate::capture::PERMISSION_SETUP_CAPTURE_BACKEND),
+            operation: Some(crate::capture::PERMISSION_SETUP_CAPTURE_OPERATION),
+            frame_captured: Some(frame.is_some()),
+            frame_width: frame.map(|value| value.width),
+            frame_height: frame.map(|value| value.height),
+            frame_byte_count: frame.map(|value| value.rgba_byte_count),
+            // This trusted probe has no shell compatibility call. The CLI can
+            // distinguish it from ordinary capture's silent fallback.
+            fallback_used: Some(false),
+        }
+    }
+}
+
 async fn run_direct_capture_probe<F>(timeout: Duration, probe: F) -> DirectCaptureProbeResult
 where
     F: Future<Output = Result<bool, tokio::task::JoinError>>,
@@ -121,6 +166,22 @@ async fn bounded_screen_recording_capturable() -> DirectCaptureProbeResult {
         tokio::task::spawn_blocking(screen_recording_capturable),
     )
     .await
+}
+
+fn bounded_native_setup_frame() -> (
+    DirectCaptureProbeResult,
+    Option<crate::capture::NativePermissionSetupFrame>,
+) {
+    match crate::capture::capture_native_permission_setup_frame() {
+        Ok(frame) => (DirectCaptureProbeResult::Ready, Some(frame)),
+        Err(error) if crate::capture::native_capture_timed_out(&error) => {
+            (DirectCaptureProbeResult::TimedOut, None)
+        }
+        Err(error) => {
+            tracing::warn!(%error, "native ScreenCaptureKit setup-frame probe failed");
+            (DirectCaptureProbeResult::Failed, None)
+        }
+    }
 }
 
 fn should_probe_direct_capture(
@@ -242,7 +303,8 @@ fn def() -> &'static ToolDef {
             probe when `prompt` is true; null on read-only calls), \
             `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, \
             `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured \
-            timeout/probe failure when applicable), and `source` (which TCC identity the \
+            timeout/probe failure when applicable), native backend/operation/frame provenance, \
+            and `source` (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
             from a terminal reports the terminal's grants, not the driver's. The \
@@ -317,23 +379,52 @@ impl Tool for CheckPermissionsTool {
         // (A) Authoritative live probe — see `screen_recording_capturable`.
         // SCShareableContent::get() can itself raise Tahoe's separate
         // private-window-picker bypass consent. A status/read-only call must
-        // therefore never execute it. The explicit grant path opts in with
-        // `prompt:true`, explains the dialog first, and verifies the result.
-        let (screen_recording_capturable, direct_capture_status, direct_capture_error) =
+        // therefore never execute it. Only the private LaunchServices setup
+        // constructor selects the stronger SCScreenshotManager frame probe;
+        // public tool instances remain enumeration-only.
+        let (screen_recording_capturable, direct_capture_status, direct_capture_error, provenance) =
             if !should_prompt {
-                (None, "not_checked", None)
+                (
+                    None,
+                    "not_checked",
+                    None,
+                    DirectCaptureProvenance::default(),
+                )
             } else if !screen_recording {
-                (None, "blocked_by_screen_recording", None)
+                (
+                    None,
+                    "blocked_by_screen_recording",
+                    None,
+                    DirectCaptureProvenance::default(),
+                )
             } else if should_probe_direct_capture(
                 should_prompt,
                 screen_recording,
                 probe_direct_capture,
             ) {
-                bounded_screen_recording_capturable()
-                    .await
-                    .response_fields()
+                let (result, frame) = if self.native_setup_frame_probe {
+                    bounded_native_setup_frame()
+                } else {
+                    (bounded_screen_recording_capturable().await, None)
+                };
+                let (capturable, status, error) = result.response_fields();
+                (
+                    capturable,
+                    status,
+                    error,
+                    if self.native_setup_frame_probe {
+                        DirectCaptureProvenance::native_attempt(frame)
+                    } else {
+                        DirectCaptureProvenance::default()
+                    },
+                )
             } else {
-                (None, "not_checked", None)
+                (
+                    None,
+                    "not_checked",
+                    None,
+                    DirectCaptureProvenance::default(),
+                )
             };
         // (B) Which identity the booleans above belong to.
         let source = permission_source(
@@ -405,6 +496,13 @@ impl Tool for CheckPermissionsTool {
             "screen_recording_capturable": screen_recording_capturable,
             "direct_capture_status":        direct_capture_status,
             "direct_capture_error":         direct_capture_error,
+            "direct_capture_backend":       provenance.backend,
+            "direct_capture_operation":     provenance.operation,
+            "direct_capture_frame_captured": provenance.frame_captured,
+            "direct_capture_frame_width":   provenance.frame_width,
+            "direct_capture_frame_height":  provenance.frame_height,
+            "direct_capture_frame_byte_count": provenance.frame_byte_count,
+            "direct_capture_fallback_used": provenance.fallback_used,
             "source":                      source,
         }))
     }
@@ -545,6 +643,50 @@ mod tests {
 
         assert_eq!(ready, DirectCaptureProbeResult::Ready);
         assert_eq!(unavailable, DirectCaptureProbeResult::Unavailable);
+    }
+
+    #[test]
+    fn capability_enumeration_preserves_legacy_ready_status() {
+        let (_, status, _) = DirectCaptureProbeResult::Ready.response_fields();
+        assert_eq!(status, "ready", "keep the existing public status contract");
+    }
+
+    #[test]
+    fn trusted_native_frame_has_explicit_no_fallback_provenance() {
+        let provenance = DirectCaptureProvenance::native_attempt(Some(
+            crate::capture::NativePermissionSetupFrame {
+                width: 2,
+                height: 2,
+                rgba_byte_count: 16,
+            },
+        ));
+
+        assert_eq!(provenance.backend, Some("screencapturekit"));
+        assert_eq!(
+            provenance.operation,
+            Some("screenshot_manager_display_frame")
+        );
+        assert_eq!(provenance.frame_captured, Some(true));
+        assert_eq!(provenance.frame_width, Some(2));
+        assert_eq!(provenance.frame_height, Some(2));
+        assert_eq!(provenance.frame_byte_count, Some(16));
+        assert_eq!(provenance.fallback_used, Some(false));
+    }
+
+    #[test]
+    fn only_trusted_permission_setup_selects_the_native_frame_probe() {
+        let state = Arc::new(ToolState::new(false, false, None));
+        let public = CheckPermissionsTool::new(Arc::clone(&state));
+        let trusted = CheckPermissionsTool::for_trusted_permission_setup(state);
+
+        assert_eq!(
+            public.native_setup_frame_probe, false,
+            "registered tool keeps the non-frame legacy probe"
+        );
+        assert_eq!(
+            trusted.native_setup_frame_probe, true,
+            "only the private permission helper captures a setup frame"
+        );
     }
 
     #[test]

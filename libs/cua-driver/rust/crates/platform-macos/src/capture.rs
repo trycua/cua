@@ -351,6 +351,54 @@ const WINDOW_PLAN_CACHE_CAPACITY: usize = 32;
 /// Keep native capture below the public observation deadline after the AX
 /// walk's own 20-second bound. The shell fallback retains its prior behavior.
 const WINDOW_CAPTURE_NATIVE_TIMEOUT: Duration = Duration::from_secs(3);
+/// The interactive `permissions grant` helper gets a little longer than a
+/// normal observation because macOS may put a consent sheet in front of the
+/// user before the first native frame completes. The caller still gets a
+/// bounded result, and the worker gate prevents timeout retries from piling
+/// up detached ScreenCaptureKit work.
+const PERMISSION_SETUP_CAPTURE_TIMEOUT: Duration = Duration::from_secs(10);
+const PERMISSION_SETUP_FRAME_WIDTH: u32 = 2;
+const PERMISSION_SETUP_FRAME_HEIGHT: u32 = 2;
+const PERMISSION_SETUP_FRAME_BYTE_COUNT: usize = 16;
+
+/// Stable provenance reported by the trusted permission-setup response.
+///
+/// The value is intentionally backend-level rather than an implementation
+/// type name so callers can require native ScreenCaptureKit without coupling
+/// to the Rust binding crate.
+pub(crate) const PERMISSION_SETUP_CAPTURE_BACKEND: &str = "screencapturekit";
+pub(crate) const PERMISSION_SETUP_CAPTURE_OPERATION: &str = "screenshot_manager_display_frame";
+
+/// Non-sensitive proof that `SCScreenshotManager` returned a materialized
+/// 2x2 frame. Pixel bytes are validated and dropped inside the capture worker;
+/// they are never returned to, logged by, or stored for permission setup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct NativePermissionSetupFrame {
+    pub width: u32,
+    pub height: u32,
+    pub rgba_byte_count: u64,
+}
+
+#[derive(Debug)]
+struct NativeCaptureTimedOut {
+    timeout: Duration,
+}
+
+impl std::fmt::Display for NativeCaptureTimedOut {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            formatter,
+            "ScreenCaptureKit capture timed out after {} ms",
+            self.timeout.as_millis()
+        )
+    }
+}
+
+impl std::error::Error for NativeCaptureTimedOut {}
+
+pub(crate) fn native_capture_timed_out(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<NativeCaptureTimedOut>().is_some()
+}
 
 /// Permit at most one ScreenCaptureKit worker. If an Apple completion callback
 /// never fires, the timed-out worker keeps this permit, and every later request
@@ -415,15 +463,110 @@ where
     match receiver.recv_timeout(timeout) {
         Ok(result) => result,
         Err(mpsc::RecvTimeoutError::Timeout) => {
-            anyhow::bail!(
-                "ScreenCaptureKit capture timed out after {} ms",
-                timeout.as_millis()
-            )
+            Err(anyhow::Error::new(NativeCaptureTimedOut { timeout }))
         }
         Err(mpsc::RecvTimeoutError::Disconnected) => {
             anyhow::bail!("ScreenCaptureKit worker ended without a result")
         }
     }
+}
+
+fn validate_native_permission_setup_frame(
+    width: usize,
+    height: usize,
+    rgba_byte_count: usize,
+) -> anyhow::Result<NativePermissionSetupFrame> {
+    let width = checked_image_dim(width, "permission-setup CGImage width")?;
+    let height = checked_image_dim(height, "permission-setup CGImage height")?;
+    if width != PERMISSION_SETUP_FRAME_WIDTH || height != PERMISSION_SETUP_FRAME_HEIGHT {
+        anyhow::bail!(
+            "permission-setup CGImage size {width}x{height} != expected {}x{}",
+            PERMISSION_SETUP_FRAME_WIDTH,
+            PERMISSION_SETUP_FRAME_HEIGHT
+        );
+    }
+    let expected = u64::from(width)
+        .checked_mul(u64::from(height))
+        .and_then(|pixels| pixels.checked_mul(4))
+        .ok_or_else(|| anyhow::anyhow!("permission-setup RGBA byte length overflow"))?;
+    let actual = u64::try_from(rgba_byte_count)
+        .map_err(|_| anyhow::anyhow!("permission-setup RGBA byte length does not fit u64"))?;
+    if actual == 0 || actual != expected {
+        anyhow::bail!(
+            "permission-setup CGImage RGBA length {actual} != {width}*{height}*4 ({expected})"
+        );
+    }
+    Ok(NativePermissionSetupFrame {
+        width,
+        height,
+        rgba_byte_count: actual,
+    })
+}
+
+/// Perform one real, native ScreenCaptureKit display screenshot for the
+/// interactive permission-setup command.
+///
+/// This deliberately calls `SCScreenshotManager` directly. It never calls the
+/// `screencapture` compatibility backend used by ordinary window
+/// observations, so a success is unambiguous native-backend proof. The RGBA
+/// pixels are downsampled to a fixed 2x2 output, materialized only to reject
+/// empty/partial results, then dropped before this function returns. This
+/// minimizes both memory use and exposure of screen contents while still
+/// forcing ScreenCaptureKit to start the native screenshot path.
+fn capture_native_permission_setup_frame_inner() -> anyhow::Result<NativePermissionSetupFrame> {
+    use screencapturekit::prelude::{SCContentFilter, SCShareableContent, SCStreamConfiguration};
+    use screencapturekit::screenshot_manager::{CGImageExt, SCScreenshotManager};
+    use zeroize::Zeroize as _;
+
+    let content = SCShareableContent::get()
+        .map_err(|error| anyhow::anyhow!("SCShareableContent::get failed: {error}"))?;
+    let display = content
+        .displays()
+        .into_iter()
+        .next()
+        .ok_or_else(|| anyhow::anyhow!("no displays available for ScreenCaptureKit"))?;
+    if display.width() == 0 || display.height() == 0 {
+        anyhow::bail!(
+            "ScreenCaptureKit returned an invalid {}x{} display",
+            display.width(),
+            display.height()
+        );
+    }
+
+    let filter = SCContentFilter::create()
+        .with_display(&display)
+        .with_excluding_windows(&[])
+        .build();
+    let config = SCStreamConfiguration::new()
+        .with_width(PERMISSION_SETUP_FRAME_WIDTH)
+        .with_height(PERMISSION_SETUP_FRAME_HEIGHT)
+        .with_shows_cursor(false);
+    let image = SCScreenshotManager::capture_image(&filter, &config)
+        .map_err(|error| anyhow::anyhow!("SCScreenshotManager::capture_image failed: {error}"))?;
+    let mut rgba = [0_u8; PERMISSION_SETUP_FRAME_BYTE_COUNT];
+    let evidence = image
+        .rgba_data_into(&mut rgba)
+        .map_err(|error| anyhow::anyhow!("CGImage::rgba_data_into failed: {error}"))
+        .and_then(|written| {
+            validate_native_permission_setup_frame(image.width(), image.height(), written)
+        });
+    // Wipe the tiny pixel buffer on both success and failure.
+    rgba.zeroize();
+    evidence
+}
+
+/// Bounded native-frame proof for `cua-driver permissions grant`.
+///
+/// This API is crate-private on purpose: strict/background startup and agent
+/// tools must never call a prompt-capable first-frame probe. The only caller
+/// is the private LaunchServices-hosted permission setup path.
+pub(crate) fn capture_native_permission_setup_frame() -> anyhow::Result<NativePermissionSetupFrame>
+{
+    run_native_capture_worker(
+        native_capture_gate(),
+        PERMISSION_SETUP_CAPTURE_TIMEOUT,
+        capture_native_permission_setup_frame_inner,
+    )
 }
 
 fn window_plan_cache() -> &'static Mutex<TimedCache<u32, std::sync::Arc<WindowCapturePlan>>> {
@@ -893,6 +1036,29 @@ mod tests {
     }
 
     #[test]
+    fn permission_setup_accepts_only_the_fixed_nonempty_tiny_frame() {
+        let evidence = validate_native_permission_setup_frame(2, 2, 16)
+            .expect("a complete 2x2 RGBA frame is valid");
+
+        assert_eq!(evidence.width, 2);
+        assert_eq!(evidence.height, 2);
+        assert_eq!(evidence.rgba_byte_count, 16);
+        assert_eq!(PERMISSION_SETUP_CAPTURE_BACKEND, "screencapturekit");
+        assert_eq!(
+            PERMISSION_SETUP_CAPTURE_OPERATION,
+            "screenshot_manager_display_frame"
+        );
+    }
+
+    #[test]
+    fn permission_setup_rejects_empty_partial_or_larger_frames() {
+        assert!(validate_native_permission_setup_frame(2, 2, 0).is_err());
+        assert!(validate_native_permission_setup_frame(2, 2, 15).is_err());
+        assert!(validate_native_permission_setup_frame(1, 1, 4).is_err());
+        assert!(validate_native_permission_setup_frame(4, 4, 64).is_err());
+    }
+
+    #[test]
     fn native_window_capture_cache_reuses_fresh_and_expires_stale_entries() {
         use std::time::{Duration, Instant};
 
@@ -1068,10 +1234,12 @@ mod tests {
             .recv()
             .expect("first worker starts before its timeout is observed");
         let first = first_caller.join().expect("first caller joins");
-        assert!(first
-            .expect_err("stalled worker times out")
-            .to_string()
-            .contains("timed out"));
+        let first_error = first.expect_err("stalled worker times out");
+        assert!(first_error.to_string().contains("timed out"));
+        assert!(
+            native_capture_timed_out(&first_error),
+            "timeout remains machine-classifiable for structured permission errors"
+        );
 
         let second = run_native_capture_worker(&GATE, Duration::from_secs(1), || {
             SPAWNED_WORK.fetch_add(1, AtomicOrdering::SeqCst);

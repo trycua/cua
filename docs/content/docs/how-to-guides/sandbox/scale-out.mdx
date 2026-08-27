@@ -73,7 +73,7 @@ each task releases its claim and returns the sandbox to the pool.
 import asyncio
 import os
 
-from cua import Pool
+from cua_sandbox import Pool
 
 async def worker(queue: asyncio.Queue[str | None], pool: Pool, worker_id: int) -> None:
     while True:

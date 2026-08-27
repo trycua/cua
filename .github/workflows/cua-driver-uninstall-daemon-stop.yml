@@ -1,0 +1,34 @@
+name: Cua Driver uninstall daemon-stop
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/scripts/uninstall.sh"
+      - "libs/cua-driver/scripts/tests/test_uninstall_daemon_stop.py"
+      - "libs/cua-driver/rust/crates/cua-driver/src/cli.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/main.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/stop.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs"
+      - ".github/workflows/cua-driver-uninstall-daemon-stop.yml"
+  push:
+    paths:
+      - "libs/cua-driver/scripts/uninstall.sh"
+      - "libs/cua-driver/scripts/tests/test_uninstall_daemon_stop.py"
+      - "libs/cua-driver/rust/crates/cua-driver/src/cli.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/main.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/stop.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/history_runtime.rs"
+      - ".github/workflows/cua-driver-uninstall-daemon-stop.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  focused-unix-shutdown:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path libs/cua-driver/rust/Cargo.toml --all -- --check
+      - name: Run focused uninstaller shutdown tests
+        run: python3 libs/cua-driver/scripts/tests/test_uninstall_daemon_stop.py

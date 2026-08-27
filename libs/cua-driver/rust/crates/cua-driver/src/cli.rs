@@ -3228,7 +3228,7 @@ fn run_permissions_status(json: bool) {
         None
     };
 
-    let Some(mut structured) = daemon_status else {
+    let Some(structured) = daemon_status else {
         // No reliable answer. Emit NO accessibility/screen_recording booleans —
         // nothing downstream can misread a false `granted: true`.
         if json {

@@ -43,6 +43,18 @@ pub(crate) enum RuntimeCreateError {
     Unavailable(String),
 }
 
+fn validate_interaction_posture(
+    platform: &str,
+    posture: InteractionPosture,
+) -> Result<(), RuntimeCreateError> {
+    if posture == InteractionPosture::BackgroundOnly && platform != "macos" {
+        return Err(RuntimeCreateError::Unavailable(format!(
+            "background-only Agent View interaction is currently unavailable on {platform}; it requires macOS"
+        )));
+    }
+    Ok(())
+}
+
 #[derive(Clone)]
 pub(crate) struct RuntimeOptions {
     pub cursor: CursorConfig,
@@ -171,6 +183,7 @@ pub(crate) struct DriverRuntime {
 
 impl DriverRuntime {
     pub(crate) fn create(options: RuntimeOptions) -> Result<Arc<Self>, RuntimeCreateError> {
+        validate_interaction_posture(std::env::consts::OS, options.interaction_posture)?;
         #[cfg(target_os = "windows")]
         if let Err(reason) = platform_windows::diagnostics::interactive_desktop_check() {
             return Err(RuntimeCreateError::Unavailable(format!(
@@ -705,6 +718,18 @@ mod tests {
             RuntimeOptions::embedded_with_ceiling(false, ceiling, PermissionMode::Standard, None);
         options.authorization_host = Some(Arc::new(TestProtectedHost));
         options
+    }
+
+    #[test]
+    fn background_only_posture_is_rejected_off_macos_before_registry_construction() {
+        for platform in ["windows", "linux", "freebsd"] {
+            assert!(matches!(
+                validate_interaction_posture(platform, InteractionPosture::BackgroundOnly),
+                Err(RuntimeCreateError::Unavailable(_))
+            ));
+            assert!(validate_interaction_posture(platform, InteractionPosture::Normal).is_ok());
+        }
+        assert!(validate_interaction_posture("macos", InteractionPosture::BackgroundOnly).is_ok());
     }
 
     #[tokio::test]

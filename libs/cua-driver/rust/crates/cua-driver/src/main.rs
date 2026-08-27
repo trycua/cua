@@ -1179,6 +1179,13 @@ fn main() -> anyhow::Result<()> {
             grants,
             experimental_history,
         } => {
+            let pip_cfg = match pip_preview::default_config_path() {
+                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+                None => pip_preview::PipConfig::from_args(),
+            };
+            if pip_cfg.background_only {
+                anyhow::bail!("--agent-view-background-only is currently available only on macOS");
+            }
             configure_startup_permission_mode(
                 permission_mode.as_deref(),
                 dangerously_bypass_approvals,
@@ -1220,10 +1227,6 @@ fn main() -> anyhow::Result<()> {
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             )?;
-            let pip_cfg = match pip_preview::default_config_path() {
-                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-                None => pip_preview::PipConfig::from_args(),
-            };
             let _pip_initialized = maybe_init_pip(&pip_cfg)?;
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();

@@ -262,6 +262,19 @@ fn serve_only_authorization_flag(args: &[String]) -> Option<&'static str> {
     })
 }
 
+fn unsupported_background_only_flag(
+    args: &[String],
+    command: Option<&str>,
+) -> Option<&'static str> {
+    const FLAG: &str = "--agent-view-background-only";
+    let exact = args.iter().any(|arg| arg == FLAG);
+    let assignment = args.iter().any(|arg| {
+        arg.strip_prefix(FLAG)
+            .is_some_and(|remainder| remainder.starts_with('='))
+    });
+    (assignment || (exact && command != Some("serve"))).then_some(FLAG)
+}
+
 /// Classify the requested finite command without parsing its arguments. The
 /// parent process uses this before `parse_command` so invalid JSON and other
 /// parser exits are still observed as completed failures.
@@ -662,15 +675,19 @@ pub fn parse_command() -> Command {
             "                              Native presentation is available on macOS, Windows,"
         );
         println!("                              and Linux (X11/XWayland).");
-        println!("  --agent-view-background-only     macOS: enable Agent View and refuse");
+        println!(
+            "  --agent-view-background-only     macOS serve only: enable Agent View and refuse"
+        );
         println!(
             "                                          foreground, global-pointer, app-launch,"
         );
         println!("                                          and window-management actions before dispatch.");
         println!(
-            "                                          Exact-window background input and exact"
+            "                                          Only fresh Accessibility presses and exact"
         );
-        println!("                                          browser-tab input remain available.");
+        println!(
+            "                                          pre-bound embedded-tab click/text remain."
+        );
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");
@@ -714,6 +731,16 @@ pub fn parse_command() -> Command {
             positionals.push(a);
             i += 1;
         }
+    }
+
+    if let Some(flag) = unsupported_background_only_flag(&args, positionals.first().copied()) {
+        eprintln!(
+            "cua-driver: {flag} must be a bare flag and is supported only by `cua-driver serve` on macOS."
+        );
+        eprintln!(
+            "Start the installed CuaDriver application with `--args serve {flag}`; other commands refuse instead of silently using normal interaction."
+        );
+        process::exit(64);
     }
 
     if matches!(positionals.first().copied(), None | Some("mcp")) {
@@ -1804,8 +1831,11 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--no-permissions-gate", "type": "flag", "description": "Skip the macOS TCC first-launch gate." },
                   { "name": "--claude-code-computer-use-compat", "type": "flag", "description": "Forwarded by the MCP proxy when the client asked for the compat surface." },
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
-                  { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." }
-                  ,{ "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
+                  { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
+                  { "name": "--agent-view", "type": "flag", "description": "Show the optional always-on-top Agent View presentation." },
+                  { "name": "--agent-view-background-only", "type": "flag", "description": "macOS only: start strict same-session Agent View with fail-closed exact-target mutation." },
+                  { "name": "--agent-view-geometry", "type": "string", "description": "Set the Agent View size and optional top-left position as WxH[+X+Y]." },
+                  { "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
               ] },
             { "name": "stop",
               "description": "Stop a running daemon by sending it a shutdown request.",
@@ -4705,6 +4735,30 @@ mod tests {
     }
 
     #[test]
+    fn background_only_flag_is_serve_only() {
+        for command in [None, Some("mcp"), Some("list-tools"), Some("call")] {
+            assert_eq!(
+                unsupported_background_only_flag(&args(&["--agent-view-background-only"]), command,),
+                Some("--agent-view-background-only")
+            );
+        }
+        assert_eq!(
+            unsupported_background_only_flag(
+                &args(&["serve", "--agent-view-background-only"]),
+                Some("serve"),
+            ),
+            None
+        );
+        assert_eq!(
+            unsupported_background_only_flag(
+                &args(&["serve", "--agent-view-background-only=true"]),
+                Some("serve"),
+            ),
+            Some("--agent-view-background-only")
+        );
+    }
+
+    #[test]
     fn deprecated_session_policy_flag_remains_a_capability_manifest_alias() {
         let argv = args(&["serve", "--session-policy", "/tmp/legacy.yaml"]);
         assert_eq!(
@@ -5017,6 +5071,35 @@ mod tests {
                 obj.get("args").and_then(|v| v.as_array()).is_some(),
                 "subcommand missing args[]: {entry}"
             );
+        }
+    }
+
+    #[test]
+    fn manifest_declares_agent_view_only_on_serve() {
+        let manifest = build_manifest();
+        let subcommands = manifest["subcommands"].as_array().unwrap();
+        let serve = subcommands
+            .iter()
+            .find(|entry| entry["name"] == "serve")
+            .unwrap();
+        let serve_args: Vec<&str> = serve["args"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|arg| arg["name"].as_str())
+            .collect();
+        for flag in [
+            "--agent-view",
+            "--agent-view-background-only",
+            "--agent-view-geometry",
+        ] {
+            assert!(serve_args.contains(&flag), "serve manifest omitted {flag}");
+            assert!(subcommands
+                .iter()
+                .filter(|entry| entry["name"] != "serve")
+                .all(|entry| entry["args"]
+                    .as_array()
+                    .map_or(true, |args| args.iter().all(|arg| arg["name"] != flag))));
         }
     }
 

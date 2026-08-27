@@ -164,6 +164,22 @@ fn dispatch_to_main_sync<T>(payload: T, cb: unsafe extern "C" fn(*mut c_void)) {
     }
 }
 
+const NS_APPLICATION_ACTIVATION_POLICY_ACCESSORY: isize = 1;
+
+fn validate_accessory_policy_postcondition(
+    set_attempt_succeeded: bool,
+    effective_policy: isize,
+) -> anyhow::Result<()> {
+    if effective_policy == NS_APPLICATION_ACTIVATION_POLICY_ACCESSORY {
+        return Ok(());
+    }
+    anyhow::bail!(
+        "Agent View could not establish the accessory activation policy \
+         (setActivationPolicy returned {set_attempt_succeeded}; effective policy is \
+         {effective_policy})"
+    )
+}
+
 fn validate_window_server_readiness(
     window_number: isize,
     appkit_visible: bool,
@@ -1917,10 +1933,15 @@ unsafe fn initialize_agent_view(cfg: &PipConfig) -> anyhow::Result<()> {
     if app.is_null() {
         anyhow::bail!("Agent View could not initialize NSApplication");
     }
-    let accessory_policy_applied: bool = msg_send![app, setActivationPolicy: 1i64];
-    if !accessory_policy_applied {
-        anyhow::bail!("Agent View could not apply the accessory activation policy");
-    }
+    let accessory_policy_applied: bool = msg_send![
+        app,
+        setActivationPolicy: NS_APPLICATION_ACTIVATION_POLICY_ACCESSORY
+    ];
+    // `setActivationPolicy:` may return false when an LSUIElement process is
+    // already running with accessory policy. The observable postcondition is
+    // authoritative: accept only when AppKit reports that policy as effective.
+    let effective_policy: isize = msg_send![app, activationPolicy];
+    validate_accessory_policy_postcondition(accessory_policy_applied, effective_policy)?;
     // Complete NSApplication startup before querying screens or creating the
     // panel. The previous async path got this ordering from the already-running
     // AppKit loop; synchronous startup must establish it explicitly so the
@@ -2236,6 +2257,27 @@ mod tests {
     fn background_only_routes_keep_local_controls_hit_testable() {
         assert!(!should_yield_native_hit_testing(true));
         assert!(should_yield_native_hit_testing(false));
+    }
+
+    #[test]
+    fn accessory_policy_readback_is_the_startup_postcondition() {
+        assert!(validate_accessory_policy_postcondition(false, 1).is_ok());
+        assert!(validate_accessory_policy_postcondition(true, 1).is_ok());
+
+        for (set_attempt_succeeded, effective_policy) in [(false, 0), (true, 2)] {
+            let error =
+                validate_accessory_policy_postcondition(set_attempt_succeeded, effective_policy)
+                    .unwrap_err();
+            let message = error.to_string();
+            assert!(
+                message.contains(&format!("returned {set_attempt_succeeded}")),
+                "{message}"
+            );
+            assert!(
+                message.contains(&format!("effective policy is {effective_policy}")),
+                "{message}"
+            );
+        }
     }
 
     #[test]

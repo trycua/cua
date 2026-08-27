@@ -19,7 +19,7 @@ func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Mid
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user := auth.GetUser(r.Context())
 			source, ok := SourceForUser(user, spaClientID)
-			eventName, tracked := activationEvent(route, r)
+			activation, tracked := activationEvent(route, r)
 			if !ok || !tracked {
 				next.ServeHTTP(w, r)
 				return
@@ -27,8 +27,13 @@ func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Mid
 			rw := newAnalyticsResponseWriter(w)
 			next.ServeHTTP(rw, r)
 			status := rw.statusCode
+			// Current pool creation finishes with the template request. Keep an
+			// earlier warm-pool success from counting a partially-created pool.
+			if activation.suppressSuccess && status >= 200 && status < 300 {
+				return
+			}
 			outcome := OutcomeFailure
-			if successfulActivation(eventName, status) {
+			if successfulActivation(activation.eventName, status) {
 				outcome = OutcomeSuccess
 			}
 			principalType := user.PrincipalType
@@ -37,7 +42,7 @@ func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Mid
 			}
 			traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
 			capturer.Capture(Event{
-				Name: eventName, DistinctID: user.ID, InsertID: traceID,
+				Name: activation.eventName, DistinctID: user.ID, InsertID: traceID,
 				Properties: map[string]any{
 					"outcome": outcome, "source": source, "principal_type": principalType,
 					"status_code": status, "error_class": errorClass(status),
@@ -47,24 +52,33 @@ func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Mid
 	}
 }
 
-func activationEvent(route string, r *http.Request) (string, bool) {
+type activationTarget struct {
+	eventName       string
+	suppressSuccess bool
+}
+
+func activationEvent(route string, r *http.Request) (activationTarget, bool) {
 	if strings.HasPrefix(route, "/api/svc/") {
-		return EventHTTPProxyRequest, true
+		return activationTarget{eventName: EventHTTPProxyRequest}, true
 	}
 	if route != "/api/k8s/{path...}" || r.Method != http.MethodPost {
-		return "", false
+		return activationTarget{}, false
 	}
 	parts := strings.Split(strings.Trim(r.PathValue("path"), "/"), "/")
 	if len(parts) != 6 || parts[0] != "apis" || parts[3] != "namespaces" || parts[4] == "" {
-		return "", false
+		return activationTarget{}, false
 	}
 	switch {
 	case parts[1] == "cua.ai" && parts[2] == "v1" && parts[5] == "osgymworkspacepools":
-		return EventPoolCreate, true
+		return activationTarget{eventName: EventPoolCreate}, true
+	case parts[1] == "osgym.cua.ai" && parts[2] == "v1alpha1" && parts[5] == "osgymsandboxwarmpools":
+		return activationTarget{eventName: EventPoolCreate, suppressSuccess: true}, true
+	case parts[1] == "osgym.cua.ai" && parts[2] == "v1alpha1" && parts[5] == "osgymsandboxtemplates":
+		return activationTarget{eventName: EventPoolCreate}, true
 	case parts[1] == "osgym.cua.ai" && parts[2] == "v1alpha1" && parts[5] == "osgymsandboxclaims":
-		return EventClaimCreate, true
+		return activationTarget{eventName: EventClaimCreate}, true
 	default:
-		return "", false
+		return activationTarget{}, false
 	}
 }
 

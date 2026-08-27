@@ -32,6 +32,9 @@ func TestRouteObserverCapturesActivationOutcomes(t *testing.T) {
 		wantEvent, wantOutcome, wantSource, wantClass string
 	}{
 		{name: "pool success", route: "/api/k8s/{path...}", method: http.MethodPost, path: "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", status: 201, user: &auth.User{ID: "u-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, wantEvent: EventPoolCreate, wantOutcome: OutcomeSuccess, wantSource: SourceSPA},
+		{name: "warm pool failure", route: "/api/k8s/{path...}", method: http.MethodPost, path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxwarmpools", status: 422, user: &auth.User{ID: "u-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, wantEvent: EventPoolCreate, wantOutcome: OutcomeFailure, wantSource: SourceSPA, wantClass: "validation"},
+		{name: "pool template success", route: "/api/k8s/{path...}", method: http.MethodPost, path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxtemplates", status: 201, user: &auth.User{ID: "u-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, wantEvent: EventPoolCreate, wantOutcome: OutcomeSuccess, wantSource: SourceSPA},
+		{name: "pool template failure", route: "/api/k8s/{path...}", method: http.MethodPost, path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxtemplates", status: 500, user: &auth.User{ID: "u-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, wantEvent: EventPoolCreate, wantOutcome: OutcomeFailure, wantSource: SourceSPA, wantClass: "upstream_5xx"},
 		{name: "claim authorization", route: "/api/k8s/{path...}", method: http.MethodPost, path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims", status: 403, user: &auth.User{ID: "u-1", AZP: "ukey-one", PrincipalType: auth.PrincipalTypeUserKey}, wantEvent: EventClaimCreate, wantOutcome: OutcomeFailure, wantSource: SourceUserKey, wantClass: "authorization"},
 		{name: "proxy redirect", route: "/api/svc/{namespace}/{service}/{path...}", method: http.MethodGet, status: 302, user: &auth.User{ID: "u-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, wantEvent: EventHTTPProxyRequest, wantOutcome: OutcomeSuccess, wantSource: SourceSPA},
 		{name: "proxy upstream", route: "/api/svc/{namespace}/{service}", method: http.MethodPost, status: 502, user: &auth.User{ID: "u-1", AZP: "ukey-one", PrincipalType: auth.PrincipalTypeUserKey}, wantEvent: EventHTTPProxyRequest, wantOutcome: OutcomeFailure, wantSource: SourceUserKey, wantClass: "upstream_5xx"},
@@ -73,6 +76,30 @@ func TestRouteObserverIgnoresNonActivationRequests(t *testing.T) {
 		if len(sink.events) != 0 {
 			t.Fatalf("request %#v captured %#v", test, sink.events)
 		}
+	}
+}
+
+func TestRouteObserverSuppressesSuccessfulWarmPoolCreation(t *testing.T) {
+	sink := &captureSink{}
+	handlerCalled := false
+	handler := RouteObserver("/api/k8s/{path...}", sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		handlerCalled = true
+		w.WriteHeader(http.StatusCreated)
+	}))
+	request := observedRequest(
+		http.MethodPost,
+		"/api/k8s/{path...}",
+		"apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxwarmpools",
+		&auth.User{ID: "u-1", AZP: "cyclops-cs-spa"},
+	)
+
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	if !handlerCalled {
+		t.Fatal("wrapped handler was not called")
+	}
+	if len(sink.events) != 0 {
+		t.Fatalf("captured events = %#v", sink.events)
 	}
 }
 

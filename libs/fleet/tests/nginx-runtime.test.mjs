@@ -15,6 +15,20 @@ const nginxConf = process.env.NGINX_CONF
   ? path.resolve(process.env.NGINX_CONF)
   : path.resolve(__dirname, "../nginx.conf")
 
+test("nginx exposes Fleet analytics and permits large OAuth callback headers", async () => {
+  const source = await readFile(nginxConf, "utf8")
+  assert.match(
+    source,
+    /location ~ \^\/api\/\([^\n]*analytics[^\n]*\)\(\/\|\$\)/,
+    "/api/analytics must be proxied to the backend",
+  )
+
+  const oauthLocation = source.match(/location \/oauth2\/ \{([\s\S]*?)\n    \}/)?.[1]
+  assert.ok(oauthLocation, "missing /oauth2/ location")
+  assert.match(oauthLocation, /proxy_buffer_size\s+32k;/)
+  assert.match(oauthLocation, /proxy_buffers\s+8\s+32k;/)
+})
+
 function listen(server) {
   return new Promise((resolve, reject) => {
     server.once("error", reject)

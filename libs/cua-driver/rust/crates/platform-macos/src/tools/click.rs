@@ -650,6 +650,7 @@ impl Tool for ClickTool {
                                     selection_pixel,
                                     &selection_modifiers,
                                     foreground,
+                                    ax_only,
                                 )?);
                                 std::thread::sleep(std::time::Duration::from_millis(150));
                                 Ok(())
@@ -683,6 +684,7 @@ impl Tool for ClickTool {
                                 selection_pixel,
                                 &selection_modifiers,
                                 false,
+                                ax_only,
                             )
                             .map(|outcome| (outcome, false))
                         }
@@ -754,7 +756,7 @@ impl Tool for ClickTool {
                     }
                     ToolResult::text(msg).with_structured(structured)
                 }
-                Ok(Err(e)) => ToolResult::error(format!("AX action failed: {e}")),
+                Ok(Err(e)) => ax_action_failure(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             }
         } else if let (Some(mut cx), Some(mut cy)) = (x, y) {
@@ -1201,6 +1203,81 @@ fn selection_pixel_fallback_allowed(action: &str, ax_only: bool) -> bool {
     action == "press" && !ax_only
 }
 
+const AX_ONLY_PRESS_UNAVAILABLE_CODE: &str = "agent_view_ax_press_unavailable";
+
+/// A background-only click may run exactly one actuator: `AXPress` on the
+/// certified element. Keep these failures typed so the async caller can return
+/// a stable, machine-readable refusal rather than a generic AX error.
+#[derive(Debug, PartialEq, Eq, thiserror::Error)]
+enum AxOnlyPressRefusal {
+    #[error("background-only AX click refused before dispatch: only AXPress is certified")]
+    NonPressAction,
+    #[error(
+        "background-only AX click refused before dispatch: an unclassified fallback route was configured"
+    )]
+    FallbackConfigured,
+    #[error(
+        "background-only AX click refused before dispatch: the target does not advertise AXPress"
+    )]
+    PressNotAdvertised,
+}
+
+fn enforce_ax_only_press_route(
+    ax_only: bool,
+    ax_action: &str,
+    advertised: &[String],
+    selection_pixel_configured: bool,
+    has_modifiers: bool,
+    foreground: bool,
+) -> Result<(), AxOnlyPressRefusal> {
+    if !ax_only {
+        return Ok(());
+    }
+    if ax_action != "AXPress" {
+        return Err(AxOnlyPressRefusal::NonPressAction);
+    }
+    if selection_pixel_configured || has_modifiers || foreground {
+        return Err(AxOnlyPressRefusal::FallbackConfigured);
+    }
+    if !advertised.iter().any(|action| action == "AXPress") {
+        return Err(AxOnlyPressRefusal::PressNotAdvertised);
+    }
+    Ok(())
+}
+
+/// Run the ordinary-mode AXSelected compatibility actuator only when that
+/// fallback class is explicitly available. Taking the actuator as a closure
+/// gives the policy test a direct proof that strict mode never even calls it.
+fn try_ax_selected_fallback<T>(
+    ax_only: bool,
+    ax_action: &str,
+    has_modifiers: bool,
+    fallback: impl FnOnce() -> Option<T>,
+) -> Option<T> {
+    if !ax_only && ax_action == "AXPress" && !has_modifiers {
+        fallback()
+    } else {
+        None
+    }
+}
+
+fn ax_action_failure(error: anyhow::Error) -> ToolResult {
+    if let Some(refusal) = error.downcast_ref::<AxOnlyPressRefusal>() {
+        let reason = refusal.to_string();
+        return ToolResult::error(reason.clone()).with_structured(serde_json::json!({
+            "status": "refused",
+            "code": AX_ONLY_PRESS_UNAVAILABLE_CODE,
+            "effect": "refused",
+            "interaction_posture": "background_only",
+            "path": "ax",
+            "dispatched": false,
+            "fallback_used": false,
+            "reason": reason,
+        }));
+    }
+    ToolResult::error(format!("AX action failed: {error}"))
+}
+
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
 /// Returns `(summary_text, needs_webkit_delay, suspected_noop,
@@ -1221,6 +1298,7 @@ fn perform_ax_click(
     selection_pixel: Option<SelectionPixelTarget>,
     modifiers: &[String],
     foreground: bool,
+    ax_only: bool,
 ) -> anyhow::Result<(String, bool, bool, bool, bool)> {
     let ax_action = map_action(action_str);
     let element = element_ptr as AXUIElementRef;
@@ -1235,6 +1313,18 @@ fn perform_ax_click(
     // (AX returns success even when the element doesn't advertise the action).
     let advertised = unsafe { copy_action_names(element) };
 
+    // The caller-unforgeable strict marker certifies AXPress, not the broader
+    // family of semantic compatibility fallbacks used in ordinary mode. Make
+    // that route decision before any actuator runs.
+    enforce_ax_only_press_route(
+        ax_only,
+        ax_action,
+        &advertised,
+        selection_pixel.is_some(),
+        !modifiers.is_empty(),
+        foreground,
+    )?;
+
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
     let title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
 
@@ -1243,21 +1333,21 @@ fn perform_ax_click(
     // read-back-verified AXSelected write over dispatching a known hollow press
     // or forcing the caller onto a less stable pixel coordinate.
     if ax_action == "AXPress" && !advertised.iter().any(|action| action == ax_action) {
-        if modifiers.is_empty() {
-            if let Some(selected_role) =
+        if let Some(selected_role) =
+            try_ax_selected_fallback(ax_only, ax_action, !modifiers.is_empty(), || {
                 crate::input::ax_actions::select_nearest_container(element_ptr)
-            {
-                return Ok((
-                    format!(
-                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
-                         confirmed AXSelected=true."
-                    ),
-                    false,
-                    false,
-                    true,
-                    false,
-                ));
-            }
+            })
+        {
+            return Ok((
+                format!(
+                    "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\"; \
+                     confirmed AXSelected=true."
+                ),
+                false,
+                false,
+                true,
+                false,
+            ));
         }
 
         if let (Some(target), Some(selection)) = (
@@ -1355,21 +1445,21 @@ fn perform_ax_click(
         // Some collection rows claim a click-like action but Finder returns
         // kAXErrorCannotComplete. Use the same verified selection fallback
         // before surfacing the dispatch error.
-        if ax_action == "AXPress" && modifiers.is_empty() {
-            if let Some(selected_role) =
+        if let Some(selected_role) =
+            try_ax_selected_fallback(ax_only, ax_action, !modifiers.is_empty(), || {
                 crate::input::ax_actions::select_nearest_container(element_ptr)
-            {
-                return Ok((
-                    format!(
-                        "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
-                         after AXPress returned {err}; confirmed AXSelected=true."
-                    ),
-                    false,
-                    false,
-                    true,
-                    false,
-                ));
-            }
+            })
+        {
+            return Ok((
+                format!(
+                    "✅ Selected nearest {selected_role} for [{idx}] {role} \"{title}\" \
+                     after AXPress returned {err}; confirmed AXSelected=true."
+                ),
+                false,
+                false,
+                true,
+                false,
+            ));
         }
         anyhow::bail!("AXUIElementPerformAction({ax_action}) returned {err}");
     }
@@ -1602,6 +1692,75 @@ mod tests {
         assert!(selection_pixel_fallback_allowed("press", false));
         assert!(!selection_pixel_fallback_allowed("press", true));
         assert!(!selection_pixel_fallback_allowed("show_menu", false));
+    }
+
+    #[test]
+    fn strict_ax_click_requires_an_exact_advertised_axpress_route() {
+        let advertised = vec!["AXPress".to_owned()];
+        assert_eq!(
+            enforce_ax_only_press_route(true, "AXPress", &advertised, false, false, false),
+            Ok(())
+        );
+        assert_eq!(
+            enforce_ax_only_press_route(true, "AXShowMenu", &advertised, false, false, false),
+            Err(AxOnlyPressRefusal::NonPressAction)
+        );
+        assert_eq!(
+            enforce_ax_only_press_route(true, "AXPress", &advertised, true, false, false),
+            Err(AxOnlyPressRefusal::FallbackConfigured)
+        );
+        assert_eq!(
+            enforce_ax_only_press_route(true, "AXPress", &[], false, false, false),
+            Err(AxOnlyPressRefusal::PressNotAdvertised)
+        );
+
+        // Normal mode retains its existing AXSelected / coordinate fallback
+        // behavior even when the element does not advertise AXPress.
+        assert_eq!(
+            enforce_ax_only_press_route(false, "AXPress", &[], true, true, true),
+            Ok(())
+        );
+    }
+
+    #[test]
+    fn strict_ax_click_never_invokes_the_axselected_fallback_actuator() {
+        let hits = std::cell::Cell::new(0);
+        let strict_result = try_ax_selected_fallback(true, "AXPress", false, || {
+            hits.set(hits.get() + 1);
+            Some("AXRow")
+        });
+        assert_eq!(strict_result, None);
+        assert_eq!(hits.get(), 0, "strict mode must not call AXSelected");
+
+        let normal_result = try_ax_selected_fallback(false, "AXPress", false, || {
+            hits.set(hits.get() + 1);
+            Some("AXRow")
+        });
+        assert_eq!(normal_result, Some("AXRow"));
+        assert_eq!(hits.get(), 1, "ordinary mode keeps the existing fallback");
+    }
+
+    #[test]
+    fn unavailable_strict_axpress_returns_a_stable_pre_dispatch_refusal() {
+        let result = ax_action_failure(anyhow::Error::new(AxOnlyPressRefusal::PressNotAdvertised));
+        assert_eq!(result.is_error, Some(true));
+        let structured = result.structured_content.expect("structured refusal");
+        assert_eq!(
+            structured.get("code").and_then(Value::as_str),
+            Some(AX_ONLY_PRESS_UNAVAILABLE_CODE)
+        );
+        assert_eq!(
+            structured.get("effect").and_then(Value::as_str),
+            Some("refused")
+        );
+        assert_eq!(
+            structured.get("dispatched").and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            structured.get("fallback_used").and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     /// The no-foreground contract must not depend on the private activation

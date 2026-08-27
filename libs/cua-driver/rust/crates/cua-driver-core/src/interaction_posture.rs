@@ -11,8 +11,8 @@ use serde_json::{json, Value};
 use crate::protocol::ToolResult;
 
 /// Registry-injected, caller-unforgeable instruction for the macOS click
-/// implementation. Strict semantic clicks may use AXPress or AXSelected, but
-/// must not cross internally to an element-center coordinate click.
+/// implementation. Strict semantic clicks may use only AXPress and must not
+/// cross internally to AXSelected or an element-center coordinate click.
 pub const AX_ONLY_CLICK_ARG: &str = "_interaction_posture_ax_only";
 
 /// Immutable interaction posture selected by a trusted runtime owner.

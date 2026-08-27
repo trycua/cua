@@ -688,13 +688,21 @@ pub fn parse_command() -> Command {
         println!(
             "                                          pre-bound embedded-tab click/text remain."
         );
+        println!("                                          Set up and start it in this order:");
         println!(
-            "                                          Run `cua-driver permissions grant` first;"
+            "                                            {} permissions grant",
+            crate::bundle::cli_name()
         );
         println!(
-            "                                          macOS may show its capture acknowledgement"
+            "                                            {} stop",
+            crate::bundle::cli_name()
         );
-        println!("                                          during that trusted setup step.");
+        println!(
+            "                                            open -n -g \"{}\" --args serve --agent-view-background-only",
+            crate::bundle::launch_app_bundle_path().display()
+        );
+        println!("                                          The driver does not stop an existing daemon automatically.");
+        println!("                                          macOS may show its capture acknowledgement during setup.");
         println!(
             "                                          macOS can renew that acknowledgement later."
         );
@@ -1211,9 +1219,9 @@ pub fn run_describe(tools_list: &serde_json::Value, name: &str) {
 /// seconds. Returns Err with a diagnostic message if `open` failed
 /// or the daemon never came up.
 ///
-/// Mirror of Swift `MCPCommand.launchDaemonViaOpen` +
-/// `waitForDaemon`. Split into one Rust function because we don't
-/// need the post-launch probe separation Swift has.
+/// Rust counterpart of Swift `MCPCommand.launchDaemonViaOpen` +
+/// `waitForDaemon`. The explicit bundle path also makes a staged app relaunch
+/// itself rather than another app with the same registered name.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum LaunchDaemonErrorKind {
     Failed,
@@ -1273,11 +1281,11 @@ fn launch_daemon_with_state_and_wait(
     // and the proxy would block forever waiting for a daemon on the
     // user-supplied path that never comes up. Only added when the path
     // actually differs from the default, so the common case keeps the
-    // shorter `open` argv (and matches Swift's invocation byte-for-byte).
+    // shorter daemon argv.
     let app_name = crate::bundle::app_name();
-    let app_path = crate::bundle::app_bundle_path();
+    let app_path = crate::bundle::launch_app_bundle_path();
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let open_args = daemon_launch_arguments(app_name, socket_path, state, experimental_history);
+    let open_args = daemon_launch_arguments(&app_path, socket_path, state, experimental_history);
     // Thread the Claude-Code compat flag through to the daemon. Without this
     // the proxy-spawned daemon always called build_macos_registry() (compat
     // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
@@ -1291,11 +1299,11 @@ fn launch_daemon_with_state_and_wait(
     // pre-existing daemon keeps whatever surface it launched with.
     let status = Cmd::new("/usr/bin/open")
         // `-n` forces a new instance: CuaDriver.app might already be
-        // running from a previous MCP session, and without `-n`, `open
-        // -a` would re-use it and drop our `--args serve`, leaving no
+        // running from a previous MCP session, and without `-n`, `open`
+        // would re-use it and drop our `--args serve`, leaving no
         // daemon up. `-g` keeps the new instance backgrounded —
         // LSUIElement=true in Info.plist already does this but the
-        // flag makes it explicit and matches Swift's invocation.
+        // flag makes it explicit.
         .args(&open_args)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -1310,8 +1318,9 @@ fn launch_daemon_with_state_and_wait(
         return Err(LaunchDaemonError {
             kind: LaunchDaemonErrorKind::Failed,
             message: format!(
-                "`open -n -g -a {app_name} --args serve{}` exited {:?}. \
-             Check that `{app_path}` is installed.",
+                "`open -n -g {} --args serve{}` exited {:?}. \
+             Check that this app bundle is available.",
+                app_path.display(),
                 if pass_socket {
                     format!(" --socket {socket_path}")
                 } else {
@@ -1573,7 +1582,7 @@ fn restart_managed_daemon_if_present(_executable: &std::path::Path) -> bool {
 
 #[cfg(target_os = "macos")]
 fn daemon_launch_arguments(
-    app_name: &str,
+    app_path: &std::path::Path,
     socket_path: &str,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
@@ -1581,8 +1590,7 @@ fn daemon_launch_arguments(
     let mut args = vec![
         "-n".to_owned(),
         "-g".to_owned(),
-        "-a".to_owned(),
-        app_name.to_owned(),
+        app_path.to_string_lossy().into_owned(),
         "--args".to_owned(),
         "serve".to_owned(),
     ];
@@ -1693,6 +1701,7 @@ where
         #[cfg(target_os = "macos")]
         {
             let app_name = crate::bundle::app_name();
+            let app_path = crate::bundle::launch_app_bundle_path();
             let socket_suffix = if socket_path != crate::serve::default_socket_path() {
                 format!(" --socket {socket_path}")
             } else {
@@ -1700,9 +1709,10 @@ where
             };
             eprintln!(
                 "{}: mcp launched without {app_name}.app's TCC grants; \
-                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}` \
+                 auto-launching the daemon via `open -n -g {} --args serve{socket_suffix}` \
                  and proxying MCP requests through it.",
-                crate::bundle::cli_name()
+                crate::bundle::cli_name(),
+                app_path.display()
             );
             if let Err(error) = launch_daemon_and_wait(
                 &socket_path,
@@ -3205,6 +3215,7 @@ fn run_permissions_status(json: bool) {
     let socket = crate::serve::default_socket_path();
     let cli_name = crate::bundle::cli_name();
     let app_name = crate::bundle::app_name();
+    let app_path = crate::bundle::launch_app_bundle_path();
     let bundle_id = crate::bundle::bundle_id();
 
     // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
@@ -3268,7 +3279,10 @@ fn run_permissions_status(json: bool) {
              driver's.)"
         );
         println!("  → Run `{cli_name} permissions grant` to grant + verify, or start the daemon");
-        println!("    (`open -n -g -a {app_name} --args serve`) and re-run this command.");
+        println!(
+            "    (`open -n -g \"{}\" --args serve`) and re-run this command.",
+            app_path.display()
+        );
         return;
     };
 
@@ -3477,6 +3491,28 @@ pub fn run_permissions_host_request_if_requested() -> Option<i32> {
 }
 
 #[cfg(target_os = "macos")]
+fn permissions_host_launch_arguments(
+    app_path: &std::path::Path,
+    result_file: &std::path::Path,
+    probe_direct_capture: bool,
+) -> Vec<String> {
+    let mut args = vec![
+        "-n".to_owned(),
+        "-W".to_owned(),
+        "-g".to_owned(),
+        app_path.to_string_lossy().into_owned(),
+        "--args".to_owned(),
+        platform_macos::tools::PERMISSIONS_HOST_REQUEST_ARG.to_owned(),
+        "--result-file".to_owned(),
+        result_file.to_string_lossy().into_owned(),
+    ];
+    if probe_direct_capture {
+        args.push("--probe-direct-capture".to_owned());
+    }
+    args
+}
+
+#[cfg(target_os = "macos")]
 fn request_permissions_via_launchservices(
     probe_direct_capture: bool,
 ) -> Result<serde_json::Value, String> {
@@ -3503,20 +3539,8 @@ fn request_permissions_via_launchservices(
         .map_err(|error| format!("secure permission result file: {error}"))?;
 
     let app_name = crate::bundle::app_name();
-    let app_path = crate::bundle::app_bundle_path();
-    let mut args = vec![
-        "-n".to_owned(),
-        "-W".to_owned(),
-        "-g".to_owned(),
-        app_path.to_owned(),
-        "--args".to_owned(),
-        platform_macos::tools::PERMISSIONS_HOST_REQUEST_ARG.to_owned(),
-        "--result-file".to_owned(),
-        result_file.to_string_lossy().into_owned(),
-    ];
-    if probe_direct_capture {
-        args.push("--probe-direct-capture".to_owned());
-    }
+    let app_path = crate::bundle::launch_app_bundle_path();
+    let args = permissions_host_launch_arguments(&app_path, &result_file, probe_direct_capture);
     let mut child = ProcessCommand::new("/usr/bin/open")
         .args(&args)
         .stdout(Stdio::null())
@@ -3570,7 +3594,7 @@ fn run_permissions_grant() {
     {
         let cli_name = crate::bundle::cli_name();
         let app_name = crate::bundle::app_name();
-        let app_path = crate::bundle::app_bundle_path();
+        let app_path = crate::bundle::launch_app_bundle_path();
         let bundle_id = crate::bundle::bundle_id();
         let socket = crate::serve::default_socket_path();
         let daemon_already_running = crate::serve::is_daemon_listening(&socket);
@@ -3662,7 +3686,8 @@ fn run_permissions_grant() {
             if !sr {
                 println!(
                     "If {app_name} is missing from Screen & System Audio Recording, click +, \
-                     add {app_path}, enable it, then re-run the command."
+                     add {}, enable it, then re-run the command.",
+                    app_path.display()
                 );
             }
             process::exit(1);
@@ -4757,7 +4782,12 @@ mod tests {
             grants,
         };
         #[cfg(target_os = "macos")]
-        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        let launch = daemon_launch_arguments(
+            std::path::Path::new("/private/tmp/staged/CuaDriver.app"),
+            "/tmp/history-test.sock",
+            &state,
+            true,
+        );
         #[cfg(not(target_os = "macos"))]
         let launch = daemon_process_arguments("history-test.sock", &state, true);
         assert!(launch
@@ -4777,9 +4807,48 @@ mod tests {
             .windows(2)
             .any(|pair| pair == ["--grant", "capability:b"]));
         #[cfg(target_os = "macos")]
-        assert!(launch
-            .windows(2)
-            .any(|pair| pair == ["--socket", "/tmp/history-test.sock"]));
+        {
+            assert_eq!(
+                &launch[..4],
+                ["-n", "-g", "/private/tmp/staged/CuaDriver.app", "--args"]
+            );
+            assert!(!launch.contains(&"-a".to_owned()));
+            assert!(launch
+                .windows(2)
+                .any(|pair| pair == ["--socket", "/tmp/history-test.sock"]));
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn permission_host_launch_uses_the_explicit_bundle_path() {
+        let launch = permissions_host_launch_arguments(
+            std::path::Path::new("/private/tmp/staged/CuaDriver.app"),
+            std::path::Path::new("/private/tmp/cua-driver-permissions-test.json"),
+            true,
+        );
+        assert_eq!(
+            &launch[..6],
+            [
+                "-n",
+                "-W",
+                "-g",
+                "/private/tmp/staged/CuaDriver.app",
+                "--args",
+                platform_macos::tools::PERMISSIONS_HOST_REQUEST_ARG,
+            ]
+        );
+        assert!(launch.windows(2).any(|pair| {
+            pair == [
+                "--result-file",
+                "/private/tmp/cua-driver-permissions-test.json",
+            ]
+        }));
+        assert_eq!(
+            launch.last().map(String::as_str),
+            Some("--probe-direct-capture")
+        );
+        assert!(!launch.contains(&"-a".to_owned()));
     }
 
     #[test]

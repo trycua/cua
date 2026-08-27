@@ -44,23 +44,25 @@ View keeps its local controls clickable throughout the action.
 ## macOS background-only mode
 
 For a same-login-session view that refuses actions known to disturb the user's
-foreground desktop, start the daemon with:
+foreground desktop, complete trusted capture setup and then start the strict
+daemon in this order:
 
 ```console
-open -n -g -a CuaDriver --args serve --agent-view-background-only
+cua-driver permissions grant
+cua-driver stop
+open -n -g /Applications/CuaDriver.app --args serve --agent-view-background-only
 ```
+
+The setup command may start an ordinary daemon so it can check permissions with
+the CuaDriver app identity. Stop that daemon before starting background-only
+mode so the strict daemon can own the normal socket. Cua Driver does not stop an
+already-running daemon automatically because it may be serving other work.
 
 This flag implies `--agent-view`. It does not create or connect to a VM, switch
 macOS users, or start another WindowServer session. Agent View remains one
 non-activating PiP window in the current login session. The window cards and
 cursor inside it are presentation: cards are exact target captures, and the
 cursor is the last agent action position drawn over its target.
-
-Complete the trusted capture setup before using this mode:
-
-```console
-cua-driver permissions grant
-```
 
 That command requests **Accessibility**, **Screen Recording**, and direct
 ScreenCaptureKit access through CuaDriver.app. It then asks ScreenCaptureKit for

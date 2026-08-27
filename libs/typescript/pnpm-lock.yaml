@@ -60,11 +60,11 @@ importers:
   computer:
     dependencies:
       "@trycua/core":
-        specifier: workspace:^
-        version: link:../core
+        specifier: ^0.1.4
+        version: 0.1.4
       "@trycua/fleet":
-        specifier: workspace:^
-        version: link:../fleet
+        specifier: ^0.1.0
+        version: 0.1.0
       pino:
         specifier: ^9.7.0
         version: 9.14.0

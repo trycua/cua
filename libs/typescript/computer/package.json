@@ -42,11 +42,11 @@
     "pretypecheck": "pnpm --filter @trycua/core build && pnpm --filter @trycua/fleet build"
   },
   "dependencies": {
-    "@trycua/core": "^0.1.4",
+    "@trycua/core": "workspace:^",
     "pino": "^9.7.0",
     "uuid": "^11.1.1",
     "ws": "^8.21.0",
-    "@trycua/fleet": "^0.1.0"
+    "@trycua/fleet": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

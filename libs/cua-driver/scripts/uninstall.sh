@@ -260,10 +260,11 @@ stop_release_daemon() {
                 return 1
             fi
             # Bind the graceful shutdown request to the exact PID whose
-            # executable identity was just validated. If the default socket is
-            # owned by another daemon, that daemon rejects the mismatch and the
-            # escalation below remains confined to this validated PID.
-            CUA_DRIVER_STOP_EXPECTED_PID="$pid" "$helper" stop >/dev/null 2>&1 || true
+            # executable identity was just validated. Keep the value-taking
+            # option before `stop` deliberately: an older helper does not know
+            # the option, so it treats the PID as the command/tool and fails
+            # instead of issuing an unbound shutdown to the default socket.
+            "$helper" --expected-pid "$pid" stop >/dev/null 2>&1 || true
             if ! daemon_wait_for_exit "$pid"; then
                 kill -TERM "$pid" 2>/dev/null || true
                 if ! daemon_wait_for_exit "$pid"; then

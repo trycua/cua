@@ -97,9 +97,13 @@ release state, and release TCC grants untouched. On macOS it revokes only
 
 The release Unix uninstaller shuts down the release service before removing
 anything. It first requires the systemd/launchd supervisor to stop, then uses
-the daemon PID file to validate the installed release process, invokes the
-trusted installed `cua-driver stop`, and escalates only that validated PID if
-needed. It verifies the daemon stays stopped before cleanup begins.
+the daemon PID file to validate the installed release process and invokes the
+trusted installed helper as `cua-driver --expected-pid <pid> stop`. A helper
+that supports this option reads daemon metadata and requires the daemon PID to
+match before sending shutdown; older helpers reject this argv shape instead of
+silently stopping an unrelated default-socket daemon. The uninstaller escalates
+only the already-validated release PID if graceful shutdown is unavailable, and
+verifies the daemon stays stopped before cleanup begins.
 
 With a missing or stale PID file, the script performs only a narrow
 release-executable process check. It never signals an ambiguous process. If

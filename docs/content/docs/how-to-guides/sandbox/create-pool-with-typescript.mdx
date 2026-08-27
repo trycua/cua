@@ -14,8 +14,6 @@ The package provides separate runtime entry points:
 - `@trycua/fleet/browser` loads the Fleet WebAssembly module in a browser.
 - `@trycua/fleet/node` loads the same WebAssembly module from disk and provides
   a fetch-based HTTP transport.
-- `@trycua/computer` can claim an existing Fleet pool and expose the familiar
-  Computer screenshot and input APIs from Node.js.
 
 ## Prerequisites
 
@@ -40,10 +38,10 @@ public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d
 <Tabs groupId="fleet-typescript-runtime" persist items={['Node.js', 'Browser']}>
   <Tab value="Node.js">
 
-Install the Fleet lifecycle SDK, Computer SDK, and a TypeScript runner:
+Install the Fleet lifecycle SDK and a TypeScript runner:
 
 ```bash
-npm install @trycua/fleet @trycua/computer
+npm install @trycua/fleet
 npm install --save-dev tsx typescript
 ```
 
@@ -58,8 +56,8 @@ Save this script as `create-pool.ts`:
 
 ```ts title="create-pool.ts"
 import { writeFile } from 'node:fs/promises';
-import { FleetComputer, OSType } from '@trycua/computer';
 import {
+  CreateClaimRequestBuilder,
   CreatePoolRequestBuilder,
   CreateTemplateRequestBuilder,
   CyclopsTokenProviderConfigurationBuilder,
@@ -69,6 +67,7 @@ import {
   SandboxTemplateRefBuilder,
   VmTemplateBuilder,
   createFleetClient,
+  type Claim,
 } from '@trycua/fleet/node';
 
 const IMAGE =
@@ -85,6 +84,19 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+function screenshotBase64(responseBody: ArrayBuffer): string {
+  const text = new TextDecoder().decode(responseBody);
+  const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+  if (!dataLine) throw new Error(`No screenshot data frame: ${text.slice(0, 200)}`);
+
+  const payload = JSON.parse(dataLine.slice(6));
+  if (!payload.success) throw new Error(payload.error ?? 'Screenshot failed');
+
+  const encoded = payload.image_data ?? payload.result?.image_data;
+  if (typeof encoded !== 'string') throw new Error('Screenshot response has no image data');
+  return encoded;
+}
+
 const configuration = new CyclopsTokenProviderConfigurationBuilder()
   .baseUrl(BASE_URL)
   .poolPollIntervalMs(5_000n)
@@ -92,9 +104,9 @@ const configuration = new CyclopsTokenProviderConfigurationBuilder()
   .claimPollIntervalMs(5_000n)
   .claimPollLimit(120)
   .build();
-
 const client = await createFleetClient(configuration, ACCESS_TOKEN);
 
+let claim: Claim | undefined;
 try {
   const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
   const vm = new VmTemplateBuilder()
@@ -111,39 +123,47 @@ try {
     .build();
 
   const pool = await client.createPool(
-    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
+    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build(),
   );
   const template = await client.createTemplate(
     new CreateTemplateRequestBuilder()
       .namespace(POOL_NAME)
       .name(TEMPLATE_NAME)
       .spec(templateSpec)
-      .build()
+      .build(),
   );
 
   console.log(`Created pool ${pool.metadata.name}`);
   console.log(`Created template ${template.metadata.name}`);
 
-  const computer = new FleetComputer({
-    name: `${POOL_NAME}-screenshot`,
-    osType: OSType.LINUX,
-    accessToken: ACCESS_TOKEN,
-    poolName: POOL_NAME,
-    namespace: POOL_NAME,
-    fleetBaseUrl: BASE_URL,
-    serviceName: 'server',
-  });
+  claim = await client.createClaim(
+    new CreateClaimRequestBuilder().pool(pool).build(),
+  );
+  const sandbox = await client.waitClaim(claim);
 
-  await computer.run();
-  try {
-    await writeFile('sandbox.png', await computer.interface.screenshot());
-    console.log('Wrote sandbox.png');
-  } finally {
-    // Releases the claim. The pool and its warm replica remain available.
-    await computer.stop();
+  const requestBody = await new Blob([
+    JSON.stringify({ command: 'screenshot' }),
+  ]).arrayBuffer();
+  const response = await client.serviceRequest(sandbox, 'server', '/cmd', {
+    method: 'POST',
+    url: 'https://service.invalid/cmd',
+    headers: [{ name: 'content-type', value: 'application/json' }],
+    body: requestBody,
+    timeoutSecs: 60n,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Screenshot request failed with HTTP ${response.status}`);
   }
+
+  await writeFile('sandbox.png', Buffer.from(screenshotBase64(response.body), 'base64'));
+  console.log('Wrote sandbox.png');
 } finally {
-  client.uniffiDestroy();
+  try {
+    // Release the claim but leave the reusable pool warm.
+    if (claim) await client.deleteClaim(claim);
+  } finally {
+    client.uniffiDestroy();
+  }
 }
 ```
 
@@ -153,9 +173,9 @@ Run it:
 npx tsx create-pool.ts
 ```
 
-The script writes `sandbox.png` in the current directory. `FleetComputer`
-creates and waits for a claim, connects through Fleet's authenticated WebSocket
-proxy, and deletes the claim in `stop()`.
+The script writes `sandbox.png` in the current directory. The Fleet client
+creates and waits for the claim, routes `POST /cmd` through the authenticated
+`server` service proxy, and deletes the claim before closing.
 
   </Tab>
   <Tab value="Browser">

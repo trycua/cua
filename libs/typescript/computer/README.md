@@ -1,36 +1,31 @@
 # @trycua/computer
 
-Computer-use interface for controlling local, legacy Cloud, and Fleet-backed
-macOS, Linux, and Windows sandboxes.
+Computer-use interface for controlling local and legacy Cloud macOS, Linux, and
+Windows sandboxes.
 
-## Fleet
+## Use Fleet for sandbox lifecycle
 
-`FleetComputer` claims a sandbox from an existing Fleet pool, connects to its
-computer-server service through the authenticated Fleet WebSocket proxy, and
-releases the claim on `stop()` or `disconnect()`.
+New applications should use `@trycua/fleet` to create templates, pools, and
+claims and to send authenticated requests to services inside Fleet sandboxes:
 
-```ts
-import { FleetComputer, OSType } from '@trycua/computer';
-
-const computer = new FleetComputer({
-  name: 'keiki-task',
-  osType: OSType.LINUX,
-  accessToken: process.env.CUA_FLEET_ACCESS_TOKEN!,
-  poolName: 'keiki-pool',
-  namespace: 'keiki',
-  serviceName: 'server',
-});
-
-await computer.run();
-try {
-  const screenshot = await computer.interface.screenshot();
-  console.log(screenshot.length);
-} finally {
-  await computer.stop();
-}
+```bash
+npm install @trycua/fleet
 ```
 
-The package depends on `@trycua/fleet/node`; it does not vendor a second copy of
-the Fleet lifecycle implementation.
+Use the runtime-specific entry point in application code:
+
+```ts
+import { createFleetClient } from '@trycua/fleet/node';
+// Browser applications use @trycua/fleet/browser.
+```
+
+Do not call the legacy VM API or implement a second copy of Fleet lifecycle
+logic through `@trycua/computer`. See
+[Create a sandbox pool with TypeScript](https://cua.ai/docs/how-to-guides/sandbox/create-pool-with-typescript)
+for complete Node.js and browser examples, including screenshots.
+
+`@trycua/computer` remains available for existing computer-control integrations.
+Its Fleet compatibility provider delegates lifecycle operations to
+`@trycua/fleet`; new Fleet integrations should use the Fleet package directly.
 
 **[Documentation](https://cua.ai/docs/cua/reference/computer-sdk)** - Installation, guides, and configuration.

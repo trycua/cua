@@ -581,12 +581,21 @@ mod tests {
     fn desktop_query_stays_layer0_and_pid_query_admits_every_layer() {
         let desktop = WindowQuery::desktop();
         assert!(desktop.admits(0, 800));
-        assert!(!desktop.admits(3, 800), "the Dock, tooltips and NSMenus must stay out of a whole-desktop listing");
+        assert!(
+            !desktop.admits(3, 800),
+            "the Dock, tooltips and NSMenus must stay out of a whole-desktop listing"
+        );
 
         let for_pid = WindowQuery::for_pid(800);
         assert!(for_pid.admits(0, 800));
-        assert!(for_pid.admits(3, 800), "issue #1451: an accessory-only app must be reachable through its pid");
-        assert!(!for_pid.admits(0, 801), "another process's windows never leak into a pid query");
+        assert!(
+            for_pid.admits(3, 800),
+            "issue #1451: an accessory-only app must be reachable through its pid"
+        );
+        assert!(
+            !for_pid.admits(0, 801),
+            "another process's windows never leak into a pid query"
+        );
     }
 
     /// A fixed Space attribution table standing in for SkyLight.

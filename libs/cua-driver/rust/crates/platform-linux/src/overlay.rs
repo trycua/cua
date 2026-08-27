@@ -118,6 +118,44 @@ fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
     !wayland_display_present
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum WaylandOverlayBackend {
+    SemanticShellHelper,
+    LayerShell,
+    LegacyShellHelper,
+    None,
+}
+
+#[cfg(target_os = "linux")]
+static WAYLAND_OVERLAY_BACKEND: OnceLock<WaylandOverlayBackend> = OnceLock::new();
+
+fn select_wayland_overlay_backend(
+    semantic_shell_helper: bool,
+    layer_shell_available: bool,
+    legacy_shell_helper: bool,
+) -> WaylandOverlayBackend {
+    if semantic_shell_helper {
+        WaylandOverlayBackend::SemanticShellHelper
+    } else if layer_shell_available {
+        WaylandOverlayBackend::LayerShell
+    } else if legacy_shell_helper {
+        WaylandOverlayBackend::LegacyShellHelper
+    } else {
+        WaylandOverlayBackend::None
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn wayland_overlay_backend() -> WaylandOverlayBackend {
+    *WAYLAND_OVERLAY_BACKEND.get_or_init(|| {
+        select_wayland_overlay_backend(
+            crate::wayland::shell_helper::semantic_cursor_available(),
+            crate::wayland::overlay::available(),
+            crate::wayland::shell_helper::available(),
+        )
+    })
+}
+
 #[cfg(target_os = "linux")]
 struct X11OverlayThreadCleanup {
     receiver: Option<std::sync::mpsc::Receiver<OverlayMsg>>,
@@ -292,9 +330,9 @@ pub fn send_command_for(key: CursorKey, cmd: OverlayCommand) {
     let _ = try_send_command_for(key, cmd);
 }
 
-/// Dispatch to every active Linux overlay backend. The result reports only
+/// Dispatch to exactly one Linux overlay backend. The result reports only
 /// whether the X11 owner accepted the command and can fire `ARRIVAL_TX`; the
-/// Wayland layer-shell path does not currently publish arrival notifications.
+/// Wayland backends do not currently publish arrival notifications.
 fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
     if key.is_empty() {
         return false;
@@ -303,6 +341,7 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         key: key.clone(),
         cmd: cmd.clone(),
     });
+    #[cfg(target_os = "linux")]
     let native_wayland = crate::wayland::is_wayland();
     let x11_overlay_allowed =
         should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some());
@@ -314,67 +353,76 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
             "overlay: X11 channel rejected command (no sender or queue full)"
         );
     }
-    // Also forward to the native-Wayland layer-shell overlay when Wayland
-    // is opted in. The wayland overlay's `forward` is a no-op when its
-    // owner thread isn't started yet (which is the normal X11-only case).
     #[cfg(target_os = "linux")]
     {
         if native_wayland {
-            if crate::wayland::shell_helper::semantic_cursor_available() {
-                crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(
-                    &key,
-                ));
-                // GNOME has no layer-shell. Drive only the final positioning
-                // commands through the compositor helper; it performs its own
-                // easing and avoids starting a worker that must fail.
-                match &cmd {
-                    cursor_overlay::OverlayCommand::ClickPulse { x, y } => {
-                        crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
-                    }
-                    cursor_overlay::OverlayCommand::MoveTo { x, y, .. } => {
-                        crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
-                    }
-                    cursor_overlay::OverlayCommand::SnapTo { x, y, .. } => {
-                        crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
-                    }
-                    cursor_overlay::OverlayCommand::BeginAction {
-                        action,
-                        delivery,
-                        target,
-                    } => {
-                        crate::wayland::shell_helper::set_cursor_state(
-                            action.as_str(),
-                            delivery.as_ref().map_or("", |value| value.as_str()),
-                            target.as_ref().map_or("", |value| value.as_str()),
-                            true,
-                        );
-                    }
-                    cursor_overlay::OverlayCommand::EndAction(action) => {
-                        crate::wayland::shell_helper::set_cursor_state(
-                            action.as_str(),
-                            "",
-                            "",
-                            false,
-                        );
-                    }
-                    cursor_overlay::OverlayCommand::SetSessionLabel(label) => {
-                        crate::wayland::shell_helper::set_session_label(
-                            cursor_overlay::sanitize_session_label(label)
-                                .as_deref()
-                                .unwrap_or(""),
-                        );
-                    }
-                    cursor_overlay::OverlayCommand::SetEnabled(false) => {
-                        crate::wayland::shell_helper::hide_cursor();
-                    }
-                    _ => {}
-                }
-            } else if !crate::wayland::shell_helper::available() {
-                let _ = crate::wayland::overlay::forward(&msg);
-            }
+            dispatch_wayland_overlay_message(&msg);
         }
     }
     x11_queued
+}
+
+#[cfg(target_os = "linux")]
+fn dispatch_wayland_overlay_message(msg: &OverlayMsg) -> WaylandOverlayBackend {
+    let backend = wayland_overlay_backend();
+    match backend {
+        WaylandOverlayBackend::SemanticShellHelper | WaylandOverlayBackend::LegacyShellHelper => {
+            let semantic = backend == WaylandOverlayBackend::SemanticShellHelper;
+            match msg {
+                OverlayMsg::Cmd(command) => {
+                    dispatch_shell_helper_command(&command.key, &command.cmd, semantic);
+                }
+                OverlayMsg::Remove(_) => crate::wayland::shell_helper::hide_cursor(),
+                OverlayMsg::Revive(_) => {}
+            }
+        }
+        WaylandOverlayBackend::LayerShell if !crate::wayland::overlay::forward(msg) => {
+            return WaylandOverlayBackend::None;
+        }
+        WaylandOverlayBackend::LayerShell | WaylandOverlayBackend::None => {}
+    }
+    backend
+}
+
+#[cfg(target_os = "linux")]
+fn dispatch_shell_helper_command(key: &str, cmd: &OverlayCommand, semantic: bool) {
+    if semantic {
+        crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(key));
+    }
+    match cmd {
+        OverlayCommand::ClickPulse { x, y } if semantic => {
+            crate::wayland::shell_helper::click_pulse(*x as i32, *y as i32);
+        }
+        OverlayCommand::MoveTo { x, y, .. }
+        | OverlayCommand::SnapTo { x, y, .. }
+        | OverlayCommand::ClickPulse { x, y } => {
+            crate::wayland::shell_helper::move_cursor(*x as i32, *y as i32);
+        }
+        OverlayCommand::BeginAction {
+            action,
+            delivery,
+            target,
+        } if semantic => {
+            crate::wayland::shell_helper::set_cursor_state(
+                action.as_str(),
+                delivery.as_ref().map_or("", |value| value.as_str()),
+                target.as_ref().map_or("", |value| value.as_str()),
+                true,
+            );
+        }
+        OverlayCommand::EndAction(action) if semantic => {
+            crate::wayland::shell_helper::set_cursor_state(action.as_str(), "", "", false);
+        }
+        OverlayCommand::SetSessionLabel(label) if semantic => {
+            crate::wayland::shell_helper::set_session_label(
+                cursor_overlay::sanitize_session_label(label)
+                    .as_deref()
+                    .unwrap_or(""),
+            );
+        }
+        OverlayCommand::SetEnabled(false) => crate::wayland::shell_helper::hide_cursor(),
+        _ => {}
+    }
 }
 
 pub fn is_enabled() -> bool {
@@ -545,14 +593,12 @@ pub fn remove_cursor(key: CursorKey) {
         let _ = tx.try_send(msg.clone());
     }
     #[cfg(target_os = "linux")]
-    if crate::wayland::is_wayland() && !crate::wayland::shell_helper::available() {
-        let _ = crate::wayland::overlay::forward(&msg);
+    if crate::wayland::is_wayland() {
+        dispatch_wayland_overlay_message(&msg);
     }
 }
 
-/// Clear the X11 render-side tombstone after a successful explicit session
-/// revival. Wayland has no keyed tombstone, so forwarding this lifecycle
-/// signal there is an accepted no-op.
+/// Clear the render-side tombstone after a successful explicit session revival.
 pub fn revive_cursor(key: CursorKey) {
     if key.is_empty() {
         return;
@@ -562,8 +608,8 @@ pub fn revive_cursor(key: CursorKey) {
         let _ = tx.try_send(msg.clone());
     }
     #[cfg(target_os = "linux")]
-    if crate::wayland::is_wayland() && !crate::wayland::shell_helper::available() {
-        let _ = crate::wayland::overlay::forward(&msg);
+    if crate::wayland::is_wayland() {
+        dispatch_wayland_overlay_message(&msg);
     }
 }
 
@@ -2732,6 +2778,26 @@ mod tests {
     fn wayland_display_does_not_start_legacy_x11_overlay() {
         assert!(!should_start_x11_overlay(true));
         assert!(should_start_x11_overlay(false));
+    }
+
+    #[test]
+    fn wayland_overlay_backend_is_selected_once_with_legacy_fallback() {
+        assert_eq!(
+            select_wayland_overlay_backend(true, true, true),
+            WaylandOverlayBackend::SemanticShellHelper
+        );
+        assert_eq!(
+            select_wayland_overlay_backend(false, true, true),
+            WaylandOverlayBackend::LayerShell
+        );
+        assert_eq!(
+            select_wayland_overlay_backend(false, false, true),
+            WaylandOverlayBackend::LegacyShellHelper
+        );
+        assert_eq!(
+            select_wayland_overlay_backend(false, false, false),
+            WaylandOverlayBackend::None
+        );
     }
 
     fn drain_x11_test_events(conn: &impl x11rb::connection::Connection) -> anyhow::Result<()> {

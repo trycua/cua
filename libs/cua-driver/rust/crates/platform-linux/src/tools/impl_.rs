@@ -2051,13 +2051,12 @@ async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
         cursor_id.to_owned(),
         cursor_overlay::OverlayCommand::SetEnabled(true),
     );
-    // Wayland (Mutter/KDE, no layer-shell): glide the agent cursor via the
-    // WinRects shell extension. It eases to the target itself, so send the
-    // destination once here rather than the interpolated stream the X11 render
-    // loop uses (which is invisible on those compositors anyway). No-op if the
-    // extension isn't installed.
+    // Every Wayland backend owns its animation loop. Send one destination and
+    // let the Linux overlay layer select the semantic helper, layer-shell, or
+    // older helper fallback without an interpolated stream fighting it.
     if crate::wayland::is_wayland() {
-        crate::wayland::shell_helper::move_cursor(sx as i32, sy as i32);
+        overlay_move_to_for(cursor_id, sx, sy, None);
+        return;
     }
     let pos = crate::overlay::current_position_for(cursor_id);
     if pos.0 < 0.0 && pos.1 < 0.0 {

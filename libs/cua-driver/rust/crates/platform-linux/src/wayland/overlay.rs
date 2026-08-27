@@ -28,6 +28,7 @@ use std::time::{Duration, Instant};
 use crossbeam_channel::{bounded, Receiver, Sender};
 use cursor_overlay::{CursorConfig, CursorKey, OverlayCommand, OverlayMsg, RenderStateCore};
 use wayland_client::{
+    globals::{registry_queue_init, GlobalListContents},
     protocol::{
         wl_buffer::WlBuffer,
         wl_compositor::WlCompositor,
@@ -66,6 +67,39 @@ static TX: OnceLock<Sender<WlOverlayCmd>> = OnceLock::new();
 // lazy forwarding from bypassing --no-overlay before any window exists.
 static CONFIG_ENABLED: AtomicBool = AtomicBool::new(false);
 static CONFIG_TEMPLATE: OnceLock<CursorConfig> = OnceLock::new();
+static LAYER_SHELL_AVAILABLE: OnceLock<bool> = OnceLock::new();
+
+struct LayerShellProbe;
+
+impl Dispatch<wl_registry::WlRegistry, GlobalListContents> for LayerShellProbe {
+    fn event(
+        _: &mut Self,
+        _: &wl_registry::WlRegistry,
+        _: wl_registry::Event,
+        _: &GlobalListContents,
+        _: &Connection,
+        _: &QueueHandle<Self>,
+    ) {
+    }
+}
+
+/// Probe once so a queued command is never mistaken for a usable layer-shell
+/// backend. This lets an older compositor helper remain a real fallback when
+/// the compositor does not advertise `zwlr_layer_shell_v1`.
+pub fn available() -> bool {
+    *LAYER_SHELL_AVAILABLE.get_or_init(|| {
+        let Ok(conn) = Connection::connect_to_env() else {
+            return false;
+        };
+        let Ok((globals, _queue)) = registry_queue_init::<LayerShellProbe>(&conn) else {
+            return false;
+        };
+        globals.contents().with_list(|list| {
+            list.iter()
+                .any(|global| global.interface == "zwlr_layer_shell_v1")
+        })
+    })
+}
 
 pub fn set_config(config: CursorConfig) {
     CONFIG_ENABLED.store(config.enabled, Ordering::Release);
@@ -356,7 +390,7 @@ fn apply_keyed_command(
     };
     if let Some((target_x, target_y)) = seed_target {
         if core.pos.0 < -50.0 {
-            const SEED_OFFSET: f64 = 16.0;
+            const SEED_OFFSET: f64 = 140.0;
             core.pos = (
                 (target_x - SEED_OFFSET).max(2.0),
                 (target_y - SEED_OFFSET).max(2.0),
@@ -968,6 +1002,9 @@ fn redraw_output(
         painted_positions.len(),
     ));
     surface.attach(Some(&buffer), 0, 0);
+    // Damage both coordinate spaces. Some wlroots compositors otherwise leave
+    // stale transparent frames behind while an animated cursor is moving.
+    surface.damage(0, 0, w as i32, h as i32);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
     // Mark initialized only after the buffer attach + surface commit succeed.

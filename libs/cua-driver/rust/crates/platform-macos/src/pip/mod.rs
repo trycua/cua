@@ -8,6 +8,7 @@
 use std::ffi::{c_void, CStr};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 use pip_preview::{
     layout_desktop, png_dimensions, PipBackend, PipBackendFactory, PipConfig, PipFrame,
@@ -104,6 +105,8 @@ const SESSION_SELECTOR_HEIGHT: f64 = 34.0;
 const RESIZE_HIT_INSET: f64 = 7.0;
 const GLANCE_DURATION_SECONDS: u64 = 8;
 const NANOSECONDS_PER_SECOND: u64 = 1_000_000_000;
+const WINDOW_SERVER_READINESS_TIMEOUT: Duration = Duration::from_millis(500);
+const STARTUP_RUN_LOOP_SLICE: Duration = Duration::from_millis(10);
 
 // Keep the PiP shell visually clean for now; invisible hit zones still provide
 // dragging and resizing without exposing a native or custom frame.
@@ -177,6 +180,74 @@ fn validate_accessory_policy_postcondition(
         "Agent View could not establish the accessory activation policy \
          (setActivationPolicy returned {set_attempt_succeeded}; effective policy is \
          {effective_policy})"
+    )
+}
+
+fn pump_until_ready<Elapsed, Ready, Pump>(
+    timeout: Duration,
+    pump_slice: Duration,
+    mut elapsed: Elapsed,
+    mut ready: Ready,
+    mut pump_once: Pump,
+) -> bool
+where
+    Elapsed: FnMut() -> Duration,
+    Ready: FnMut() -> bool,
+    Pump: FnMut(Duration) -> bool,
+{
+    if pump_slice.is_zero() {
+        return ready();
+    }
+    loop {
+        if ready() {
+            return true;
+        }
+        let elapsed = elapsed();
+        if elapsed >= timeout {
+            return false;
+        }
+        let slice = pump_slice.min(timeout - elapsed);
+        if !pump_once(slice) {
+            // A failed run-loop pass cannot make progress. Recheck once in
+            // case the WindowServer reply landed during that call, then fail
+            // instead of spinning until the deadline.
+            return ready();
+        }
+    }
+}
+
+unsafe fn pump_appkit_default_run_loop_once(slice: Duration) -> bool {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+
+    objc2::rc::autoreleasepool(|_| unsafe {
+        let run_loop: *mut AnyObject = msg_send![class!(NSRunLoop), currentRunLoop];
+        if run_loop.is_null() {
+            return false;
+        }
+        let mode = ns_string("kCFRunLoopDefaultMode");
+        let deadline: *mut AnyObject = msg_send![
+            class!(NSDate),
+            dateWithTimeIntervalSinceNow: slice.as_secs_f64()
+        ];
+        if mode.is_null() || deadline.is_null() {
+            return false;
+        }
+        msg_send![run_loop, runMode: mode beforeDate: deadline]
+    })
+}
+
+fn wait_for_window_server_surface(window_id: u32) -> bool {
+    if objc2_foundation::MainThreadMarker::new().is_none() {
+        return false;
+    }
+    let started = Instant::now();
+    pump_until_ready(
+        WINDOW_SERVER_READINESS_TIMEOUT,
+        STARTUP_RUN_LOOP_SLICE,
+        || started.elapsed(),
+        || window_server_reports_on_screen(window_id),
+        |slice| unsafe { pump_appkit_default_run_loop_once(slice) },
     )
 }
 
@@ -2105,18 +2176,19 @@ unsafe fn initialize_agent_view(cfg: &PipConfig) -> anyhow::Result<()> {
     let _: () = msg_send![content_view, displayIfNeeded];
     let _: () = msg_send![window, orderFrontRegardless];
     let window_number: isize = msg_send![window, windowNumber];
-    let visible: bool = msg_send![window, isVisible];
     let window_server_on_screen = u32::try_from(window_number)
         .ok()
         .filter(|window_id| *window_id > 0)
-        .is_some_and(window_server_reports_on_screen);
+        .is_some_and(wait_for_window_server_surface);
+    let visible: bool = msg_send![window, isVisible];
     if let Err(error) =
         validate_window_server_readiness(window_number, visible, window_server_on_screen)
     {
         // The backend is not usable unless AppKit and WindowServer both agree
-        // that the panel is ordered on-screen. This is a synchronous server
-        // round-trip, so startup never waits on a main-queue callback before
-        // NSApplication.run() and cannot report queued false-success.
+        // that the exact panel is ordered on-screen. Startup gives AppKit a
+        // short bounded set of default-run-loop passes to publish the surface;
+        // it never waits on a main-queue callback before NSApplication.run()
+        // and cannot report queued false-success.
         shutdown_cb(std::ptr::null_mut());
         return Err(error);
     }
@@ -2278,6 +2350,63 @@ mod tests {
                 "{message}"
             );
         }
+    }
+
+    #[test]
+    fn startup_pump_retries_until_readiness_is_observed() {
+        use std::cell::Cell;
+
+        let elapsed = Cell::new(Duration::ZERO);
+        let checks = Cell::new(0usize);
+        let pumps = Cell::new(0usize);
+        let ready = pump_until_ready(
+            Duration::from_millis(50),
+            Duration::from_millis(10),
+            || elapsed.get(),
+            || {
+                let next = checks.get() + 1;
+                checks.set(next);
+                next == 3
+            },
+            |slice| {
+                pumps.set(pumps.get() + 1);
+                elapsed.set(elapsed.get() + slice);
+                true
+            },
+        );
+
+        assert!(ready);
+        assert_eq!(checks.get(), 3);
+        assert_eq!(pumps.get(), 2);
+        assert_eq!(elapsed.get(), Duration::from_millis(20));
+    }
+
+    #[test]
+    fn startup_pump_stops_at_the_bounded_deadline() {
+        use std::cell::Cell;
+
+        let elapsed = Cell::new(Duration::ZERO);
+        let checks = Cell::new(0usize);
+        let pumps = Cell::new(0usize);
+        let ready = pump_until_ready(
+            Duration::from_millis(25),
+            Duration::from_millis(10),
+            || elapsed.get(),
+            || {
+                checks.set(checks.get() + 1);
+                false
+            },
+            |slice| {
+                pumps.set(pumps.get() + 1);
+                elapsed.set(elapsed.get() + slice);
+                true
+            },
+        );
+
+        assert!(!ready);
+        assert_eq!(checks.get(), 4);
+        assert_eq!(pumps.get(), 3);
+        assert_eq!(elapsed.get(), Duration::from_millis(25));
     }
 
     #[test]

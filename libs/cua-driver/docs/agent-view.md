@@ -26,6 +26,8 @@ viewer without activating or resizing the represented application. Click
   session ends or is removed. There is no agent-facing selection tool.
 - Public session names are display labels only. The private runtime session ID
   remains the isolation identity, so equal labels never combine sessions.
+- Cards keep a stable slot within the selected session when their contents
+  refresh, so activity in one target does not make neighboring cards swap.
 - Ending, disconnecting, revoking, or idle-expiring a session removes its cards.
   Reusing a revived session starts with an empty view.
 

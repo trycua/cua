@@ -512,10 +512,17 @@ impl PipViewModel {
             .values()
             .filter(|frame| frame.target.workspace_id == selected)
             .collect::<Vec<_>>();
+        // A card's position is part of the observer's spatial context. Sorting
+        // by recency made two active targets swap slots after every update,
+        // which was especially distracting in the compact view. The identity
+        // key is stable across updates and repeated browser bindings, so keep
+        // it as the primary presentation order while the timestamp continues
+        // to drive workspace auto-follow and eviction.
         frames.sort_by(|a, b| {
-            b.timestamp_ms
-                .cmp(&a.timestamp_ms)
-                .then_with(|| a.target.identity_key.cmp(&b.target.identity_key))
+            a.target
+                .identity_key
+                .cmp(&b.target.identity_key)
+                .then_with(|| a.target.target_id.cmp(&b.target.target_id))
         });
         frames
     }
@@ -770,6 +777,28 @@ mod tests {
         model.upsert(frame("agent-a", "window:1:2", 3));
         assert_eq!(model.len(), 2);
         assert_eq!(model.ordered_frames()[0].target.target_id, "window:1:2");
+    }
+
+    #[test]
+    fn updating_one_target_does_not_move_its_selected_card() {
+        let mut model = PipViewModel::new(4);
+        model.upsert(frame("agent-a", "window:b", 1));
+        model.upsert(frame("agent-a", "window:a", 2));
+        let before = model
+            .selected_frames()
+            .into_iter()
+            .map(|frame| frame.target.target_id.clone())
+            .collect::<Vec<_>>();
+
+        model.upsert(frame("agent-a", "window:b", 3));
+        let after = model
+            .selected_frames()
+            .into_iter()
+            .map(|frame| frame.target.target_id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(before, vec!["window:a", "window:b"]);
+        assert_eq!(after, before);
     }
 
     #[test]

@@ -21,8 +21,6 @@ mod autostart;
 mod bundle;
 mod check_update_tool;
 mod cli;
-#[cfg(target_os = "macos")]
-mod direct_capture_verification;
 mod doctor;
 mod history_runtime;
 mod mcp_http;

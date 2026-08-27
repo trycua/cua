@@ -61,9 +61,10 @@ pub struct UiaNode {
     /// Toggle/selection state when the element exposes one of those patterns.
     pub selected: Option<bool>,
     /// Raw COM pointer (IUIAutomationElement for UIA path, IAccessible for
-    /// MSAA path) as usize. Retained — `Snapshots` Drop releases it via
-    /// the `kind`-appropriate vtable.
+    /// MSAA path) as usize. Borrowed from `retained_element`, which owns the
+    /// reference until a snapshot explicitly adopts it.
     pub element_ptr: usize,
+    pub(crate) retained_element: Option<snapshot::RetainedElement>,
     /// Screen-coordinate center, captured at walk time to avoid later COM calls.
     pub center_x: i32,
     pub center_y: i32,
@@ -178,20 +179,6 @@ fn exact_menu_path_matches(nodes: &[UiaNode], path: &[String]) -> Vec<usize> {
         .collect()
 }
 
-unsafe fn release_walk_nodes(nodes: Vec<UiaNode>) {
-    use windows::Win32::UI::Accessibility::IAccessible;
-    for node in nodes {
-        if node.element_ptr == 0 {
-            continue;
-        }
-        if node.msaa_role.is_some() {
-            drop(IAccessible::from_raw(node.element_ptr as *mut _));
-        } else {
-            drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _));
-        }
-    }
-}
-
 unsafe fn invoke_menu_element(element_ptr: usize, final_segment: bool) -> Result<(), String> {
     let element =
         std::mem::ManuallyDrop::new(IUIAutomationElement::from_raw(element_ptr as *mut _));
@@ -232,11 +219,9 @@ pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
         let target_index = match matches.as_slice() {
             [index] => *index,
             [] => {
-                unsafe { release_walk_nodes(result.nodes) };
                 return Err(format!("menu path segment {depth} was not found"));
             }
             _ => {
-                unsafe { release_walk_nodes(result.nodes) };
                 return Err(format!("menu path segment {depth} is ambiguous"));
             }
         };
@@ -250,7 +235,7 @@ pub fn invoke_menu_path(hwnd: u64, path: &[String]) -> Result<(), String> {
         } else {
             unsafe { invoke_menu_element(target.element_ptr, depth + 1 == path.len()) }.err()
         };
-        unsafe { release_walk_nodes(result.nodes) };
+        drop(result);
         if let Some(error) = error {
             return Err(format!("menu path segment {depth}: {error}"));
         }
@@ -418,6 +403,7 @@ unsafe fn walk_tree_unsafe(
         0,
         None,
         false,
+        true,
         &mut nodes,
         &mut lines,
         &mut counter,
@@ -596,7 +582,9 @@ unsafe fn walk_root_by_pid(
                 continue;
             }
         };
-        walk_cached_bounded(&cached, 0, None, false, nodes, lines, counter, walk_state);
+        walk_cached_bounded(
+            &cached, 0, None, false, true, nodes, lines, counter, walk_state,
+        );
     }
 }
 
@@ -606,6 +594,7 @@ unsafe fn walk_cached_bounded(
     depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
+    ancestors_enabled: bool,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -615,11 +604,12 @@ unsafe fn walk_cached_bounded(
         return;
     }
 
-    let (control_type, emitted_parent) = emit_cached_node(
+    let (control_type, emitted_parent, is_enabled) = emit_cached_node(
         element,
         depth,
         parent_index,
         in_web_content,
+        ancestors_enabled,
         nodes,
         lines,
         counter,
@@ -647,6 +637,7 @@ unsafe fn walk_cached_bounded(
                 depth + 1,
                 emitted_parent,
                 in_web_content || control_type.eq_ignore_ascii_case("Document"),
+                is_enabled,
                 nodes,
                 lines,
                 counter,
@@ -746,6 +737,7 @@ pub fn walk_native_tree(hwnd: u64) -> Result<Vec<UiaNode>, String> {
             &cache_req,
             0,
             None,
+            true,
             &mut nodes,
             &mut lines,
             &mut counter,
@@ -753,10 +745,7 @@ pub fn walk_native_tree(hwnd: u64) -> Result<Vec<UiaNode>, String> {
         );
         match walked {
             Ok(()) => Ok(nodes),
-            Err(error) => {
-                release_walk_nodes(nodes);
-                Err(error)
-            }
+            Err(error) => Err(error),
         }
     }
 }
@@ -767,6 +756,7 @@ unsafe fn walk_native_level(
     cache_req: &IUIAutomationCacheRequest,
     depth: usize,
     parent_index: Option<usize>,
+    ancestors_enabled: bool,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -778,8 +768,16 @@ unsafe fn walk_native_level(
     if !budget.admit() {
         return Err("the native UIA tree exceeded the element budget".to_owned());
     }
-    let (control_type, emitted_parent) =
-        emit_cached_node(element, depth, parent_index, false, nodes, lines, counter);
+    let (control_type, emitted_parent, is_enabled) = emit_cached_node(
+        element,
+        depth,
+        parent_index,
+        false,
+        ancestors_enabled,
+        nodes,
+        lines,
+        counter,
+    );
     if control_type.eq_ignore_ascii_case("Document") {
         return Ok(());
     }
@@ -796,6 +794,7 @@ unsafe fn walk_native_level(
             cache_req,
             depth + 1,
             emitted_parent,
+            is_enabled,
             nodes,
             lines,
             counter,
@@ -806,25 +805,24 @@ unsafe fn walk_native_level(
 }
 
 /// Project one cached element into `nodes`/`lines`. Returns its control type
-/// and the parent index its descendants should inherit.
+/// and the parent index and effective enabled state its descendants inherit.
 fn emit_cached_node(
     element: &IUIAutomationElement,
     depth: usize,
     parent_index: Option<usize>,
     in_web_content: bool,
+    ancestors_enabled: bool,
     nodes: &mut Vec<UiaNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
-) -> (String, Option<usize>) {
+) -> (String, Option<usize>, bool) {
     let control_type = read_cached_control_type(element);
     let name = read_cached_bstr_name(element);
     let value = read_cached_bstr_value(element);
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
     let help_text = read_cached_bstr(element, UIA_HelpTextPropertyId);
-    let enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
-    // Missing UIA state must remain unknown on the structured observation
-    // surface. Action discovery keeps its historical best-effort assumption.
-    let is_enabled = enabled.unwrap_or(true);
+    let reported_enabled = read_cached_bool(element, UIA_IsEnabledPropertyId);
+    let (enabled, is_enabled) = effective_enabled(reported_enabled, ancestors_enabled);
     let selected = read_cached_selected(element);
     let actions = detect_cached_actions(element, &control_type, is_enabled);
     let is_actionable = !actions.is_empty() && is_enabled;
@@ -839,60 +837,60 @@ fn emit_cached_node(
 
     let mut emitted_parent: Option<usize> = parent_index;
     if is_actionable || has_content {
-        let retained: IUIAutomationElement = element.clone();
-        let ptr = retained.as_raw() as usize;
-        std::mem::forget(retained);
-
-        let node = if is_actionable {
+        let element_index = if is_actionable {
             let idx = *counter;
             *counter += 1;
-            let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
             emitted_parent = Some(idx);
-            UiaNode {
-                element_index: Some(idx),
-                control_type: control_type.clone(),
-                name: name.clone(),
-                value: value.clone(),
-                automation_id: automation_id.clone(),
-                help_text: help_text.clone(),
-                actions: actions.clone(),
-                enabled,
-                selected,
-                element_ptr: ptr,
-                center_x,
-                center_y,
-                rect,
-                msaa_role: None,
-                depth,
-                parent_element_index: parent_index,
-                in_web_content,
-            }
+            Some(idx)
         } else {
-            UiaNode {
-                element_index: None,
-                control_type: control_type.clone(),
-                name: name.clone(),
-                value: value.clone(),
-                automation_id: automation_id.clone(),
-                help_text: help_text.clone(),
-                actions: vec![],
-                enabled,
-                selected,
-                element_ptr: ptr,
-                center_x: 0,
-                center_y: 0,
-                rect: None,
-                msaa_role: None,
-                depth,
-                parent_element_index: parent_index,
-                in_web_content,
-            }
+            None
         };
+        let (center_x, center_y, rect) = if is_actionable {
+            read_cached_bounding_rect_full(element)
+        } else {
+            (0, 0, None)
+        };
+        let retained_element = is_actionable.then(|| {
+            snapshot::RetainedElement::from_uia(element.clone(), (center_x, center_y), rect)
+        });
+        let node = UiaNode {
+            element_index,
+            control_type: control_type.clone(),
+            name,
+            value,
+            automation_id,
+            help_text,
+            actions,
+            enabled,
+            selected,
+            element_ptr: retained_element
+                .as_ref()
+                .map_or(0, snapshot::RetainedElement::as_ptr),
+            retained_element,
+            center_x,
+            center_y,
+            rect,
+            msaa_role: None,
+            depth,
+            parent_element_index: parent_index,
+            in_web_content,
+        };
+        debug_assert_eq!(node.element_ptr != 0, node.element_index.is_some());
 
         lines.push((depth, format_node_line(&node)));
         nodes.push(node);
     }
-    (control_type, emitted_parent)
+    (control_type, emitted_parent, is_enabled)
+}
+
+fn effective_enabled(
+    reported_enabled: Option<bool>,
+    ancestors_enabled: bool,
+) -> (Option<bool>, bool) {
+    if !ancestors_enabled {
+        return (Some(false), false);
+    }
+    (reported_enabled, reported_enabled.unwrap_or(true))
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {
@@ -1128,6 +1126,9 @@ pub(crate) fn format_node_line(node: &UiaNode) -> String {
         if let Some(v) = &node.value {
             s.push_str(&format!(" = \"{}\"", v));
         }
+    }
+    if node.enabled == Some(false) {
+        s.push_str(" [enabled=false]");
     }
     s
 }

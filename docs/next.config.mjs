@@ -66,6 +66,11 @@ const config = {
         permanent: true,
       },
       {
+        source: '/how-to-guides/sandbox/lifecycle',
+        destination: '/concepts/sandbox-lifecycle',
+        permanent: true,
+      },
+      {
         source: '/how-to-guides/fleets/configure-run-cua-fleets',
         destination: '/how-to-guides/sandbox/configure-pool-with-terraform',
         permanent: true,

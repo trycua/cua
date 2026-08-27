@@ -19,7 +19,7 @@ The package provides separate runtime entry points:
 ## Prerequisites
 
 - Node.js 20 or newer.
-- A run.cua.ai access token with permission to manage sandbox pools.
+- OAuth client credentials with permission to manage sandbox pools.
 - A globally unique, lowercase DNS-label pool name.
 
 This guide uses the public Linux computer-server image:
@@ -30,8 +30,8 @@ public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d
 
 <Callout type="warn">
   Browser code can read every `VITE_*` value bundled into the application. Use the browser example
-  only in a trusted local or internal application with a short-lived, narrowly scoped token. Keep
-  long-lived credentials in Node.js or exchange them for a short-lived token on your backend.
+  only in a trusted local or internal application with temporary, narrowly scoped client
+  credentials. Keep long-lived credentials in Node.js or on your backend.
 </Callout>
 
 ## Choose a runtime
@@ -47,12 +47,16 @@ npm install --save-dev tsx typescript
 npm pkg set type=module
 ```
 
-Set the token and a unique pool name:
+Set your OAuth client credentials and a unique pool name:
 
 ```bash
-export CUA_FLEET_ACCESS_TOKEN="<your-access-token>"
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
 export CUA_POOL_NAME="my-team-js-pool"
 ```
+
+Set `CUA_FLEET_BASE_URL` or `CUA_TOKEN_URL` only when you need to use different
+Fleet or OAuth endpoints.
 
 Save this script as `create-pool.ts`:
 
@@ -62,22 +66,28 @@ import {
   CreateClaimRequestBuilder,
   CreatePoolRequestBuilder,
   CreateTemplateRequestBuilder,
-  CyclopsTokenProviderConfigurationBuilder,
+  CyclopsClient,
+  CyclopsCredentials,
+  FetchHttpClient,
   OsGymSandboxTemplateSpecBuilder,
   OsGymSandboxWarmPoolSpecBuilder,
   SandboxServiceBuilder,
   SandboxTemplateRefBuilder,
   VmTemplateBuilder,
-  createFleetClient,
-  uniffiInitAsync,
   type Claim,
+  type CyclopsConfiguration,
+  uniffiInitAsync,
 } from '@trycua/fleet/node';
 
 const IMAGE =
   'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
   '@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d';
 const BASE_URL = process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
-const ACCESS_TOKEN = requiredEnv('CUA_FLEET_ACCESS_TOKEN');
+const TOKEN_URL =
+  process.env.CUA_TOKEN_URL ??
+  'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token';
+const CLIENT_ID = requiredEnv('CUA_CLIENT_ID');
+const CLIENT_SECRET = requiredEnv('CUA_CLIENT_SECRET');
 const POOL_NAME = requiredEnv('CUA_POOL_NAME');
 const TEMPLATE_NAME = `${POOL_NAME}-template`;
 
@@ -102,14 +112,16 @@ function screenshotBase64(responseBody: ArrayBuffer): string {
 
 await uniffiInitAsync();
 
-const configuration = new CyclopsTokenProviderConfigurationBuilder()
-  .baseUrl(BASE_URL)
-  .poolPollIntervalMs(5_000n)
-  .poolPollLimit(120)
-  .claimPollIntervalMs(5_000n)
-  .claimPollLimit(120)
-  .build();
-const client = await createFleetClient(configuration, ACCESS_TOKEN);
+const configuration: CyclopsConfiguration = {
+  baseUrl: BASE_URL,
+  tokenUrl: TOKEN_URL,
+  credentials: new CyclopsCredentials(CLIENT_ID, CLIENT_SECRET),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
 
 let claim: Claim | undefined;
 try {
@@ -128,27 +140,23 @@ try {
     .build();
 
   const pool = await client.createPool(
-    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build(),
+    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
   );
   const template = await client.createTemplate(
     new CreateTemplateRequestBuilder()
       .namespace(POOL_NAME)
       .name(TEMPLATE_NAME)
       .spec(templateSpec)
-      .build(),
+      .build()
   );
 
   console.log(`Created pool ${pool.metadata.name}`);
   console.log(`Created template ${template.metadata.name}`);
 
-  claim = await client.createClaim(
-    new CreateClaimRequestBuilder().pool(pool).build(),
-  );
+  claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
   const sandbox = await client.waitClaim(claim);
 
-  const requestBody = await new Blob([
-    JSON.stringify({ command: 'screenshot' }),
-  ]).arrayBuffer();
+  const requestBody = await new Blob([JSON.stringify({ command: 'screenshot' })]).arrayBuffer();
   const response = await client.serviceRequest(sandbox, 'server', '/cmd', {
     method: 'POST',
     url: 'https://service.invalid/cmd',
@@ -194,12 +202,17 @@ npm install
 npm install @trycua/fleet
 ```
 
-Create `.env.local` with a short-lived access token and a unique pool name:
+Create `.env.local` with temporary, narrowly scoped OAuth client credentials
+and a unique pool name:
 
 ```bash title=".env.local"
-VITE_CUA_FLEET_ACCESS_TOKEN=<your-short-lived-access-token>
+VITE_CUA_CLIENT_ID=<your-client-id>
+VITE_CUA_CLIENT_SECRET=<your-client-secret>
 VITE_CUA_POOL_NAME=my-team-browser-pool
 ```
+
+Set `VITE_CUA_FLEET_BASE_URL` or `VITE_CUA_TOKEN_URL` only when you need to use
+different Fleet or OAuth endpoints.
 
 Replace `src/main.ts` with the following code:
 
@@ -209,21 +222,29 @@ import {
   CreatePoolRequestBuilder,
   CreateTemplateRequestBuilder,
   CyclopsClient,
-  CyclopsTokenProviderConfigurationBuilder,
+  CyclopsCredentials,
   OsGymSandboxTemplateSpecBuilder,
   OsGymSandboxWarmPoolSpecBuilder,
   SandboxServiceBuilder,
   SandboxTemplateRefBuilder,
   VmTemplateBuilder,
-  uniffiInitAsync,
   type Claim,
+  type CyclopsConfiguration,
+  type HttpClient,
+  type HttpRequest,
+  type HttpResponse,
+  uniffiInitAsync,
 } from '@trycua/fleet/browser';
 
 const IMAGE =
   'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
   '@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d';
 const BASE_URL = import.meta.env.VITE_CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
-const ACCESS_TOKEN = requiredEnv('VITE_CUA_FLEET_ACCESS_TOKEN');
+const TOKEN_URL =
+  import.meta.env.VITE_CUA_TOKEN_URL ??
+  'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token';
+const CLIENT_ID = requiredEnv('VITE_CUA_CLIENT_ID');
+const CLIENT_SECRET = requiredEnv('VITE_CUA_CLIENT_SECRET');
 const POOL_NAME = requiredEnv('VITE_CUA_POOL_NAME');
 const TEMPLATE_NAME = `${POOL_NAME}-template`;
 
@@ -251,16 +272,38 @@ function pngBlob(encoded: string): Blob {
   return new Blob([bytes], { type: 'image/png' });
 }
 
+class FetchHttpClient implements HttpClient {
+  async execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> {
+    const timeoutSignal = request.timeoutSecs
+      ? AbortSignal.timeout(Number(request.timeoutSecs) * 1_000)
+      : undefined;
+    const response = await fetch(request.url, {
+      method: request.method,
+      headers: request.headers.map(({ name, value }) => [name, value] as [string, string]),
+      body: request.body,
+      signal: asyncOpts_?.signal ?? timeoutSignal,
+      redirect: 'manual',
+    });
+    return {
+      status: response.status,
+      headers: [...response.headers].map(([name, value]) => ({ name, value })),
+      body: await response.arrayBuffer(),
+    };
+  }
+}
+
 await uniffiInitAsync();
 
-const configuration = new CyclopsTokenProviderConfigurationBuilder()
-  .baseUrl(BASE_URL)
-  .poolPollIntervalMs(5_000n)
-  .poolPollLimit(120)
-  .claimPollIntervalMs(5_000n)
-  .claimPollLimit(120)
-  .build();
-const client = CyclopsClient.connectBrowserWithAccessToken(configuration, ACCESS_TOKEN);
+const configuration: CyclopsConfiguration = {
+  baseUrl: BASE_URL,
+  tokenUrl: TOKEN_URL,
+  credentials: new CyclopsCredentials(CLIENT_ID, CLIENT_SECRET),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
 
 let claim: Claim | undefined;
 try {
@@ -310,8 +353,12 @@ try {
   if (!image) throw new Error('Missing #screenshot image element');
   image.src = URL.createObjectURL(pngBlob(screenshotBase64(response.body)));
 } finally {
-  // Release the claim but leave the reusable pool warm.
-  if (claim) await client.deleteClaim(claim);
+  try {
+    // Release the claim but leave the reusable pool warm.
+    if (claim) await client.deleteClaim(claim);
+  } finally {
+    client.uniffiDestroy();
+  }
 }
 ```
 

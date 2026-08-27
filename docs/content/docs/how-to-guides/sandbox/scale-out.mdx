@@ -60,15 +60,14 @@ asyncio.run(main())
 ## Process a dynamic queue of tasks
 
 Use `asyncio.Queue` when tasks arrive at runtime. For maximum throughput, have
-each worker claim a sandbox from an existing Fleet pool and reuse it across
-tasks. Claims assign warm or autoscaled Fleet capacity to workers without
-launching a new sandbox for every task.
+each worker dequeue a task and then claim a sandbox from an existing Fleet
+pool. Claims are effectively instant when warm capacity is available, so each
+task can start without launching a new ephemeral sandbox.
 
-Before running this example, create a Fleet pool whose replica count or
-autoscaling maximum can support `num_workers`, authenticate with
-`FLEETS_TOKEN` or OAuth client credentials, and set `CUA_POOL_NAME` to the pool
-name. Each worker releases its claim when it exits, returning the sandbox to
-the pool.
+Before running this example, create a Fleet pool with enough warm capacity for
+`num_workers`, authenticate with `FLEETS_TOKEN` or OAuth client credentials,
+and set `CUA_POOL_NAME` to the pool name. Exiting the `async with` block after
+each task releases its claim and returns the sandbox to the pool.
 
 ```python
 import asyncio
@@ -77,19 +76,19 @@ import os
 from cua import Pool
 
 async def worker(queue: asyncio.Queue[str | None], pool: Pool, worker_id: int) -> None:
-    async with pool.claim(time_to_start=900) as sb:
-        while True:
-            task = await queue.get()
-            try:
-                if task is None:
-                    return
+    while True:
+        task = await queue.get()
+        try:
+            if task is None:
+                return
+            async with pool.claim(time_to_start=900) as sb:
                 result = await sb.shell.run(task)
                 if result.success:
                     print(f'[worker-{worker_id}] {result.stdout.strip()}')
                 else:
                     print(f'[worker-{worker_id}] FAILED: {result.stderr.strip()}')
-            finally:
-                queue.task_done()
+        finally:
+            queue.task_done()
 
 async def main() -> None:
     pool = await Pool.get(os.environ['CUA_POOL_NAME'])

@@ -123,7 +123,6 @@ purge_macos_history() {
         printf 'history_purge_incomplete: installed signed Cua Driver helper unavailable; preserved history state for retry\n' >&2
         return 1
     fi
-    "$helper" stop >/dev/null 2>&1 || true
     if ! "$helper" history purge-offline --yes; then
         printf 'history_purge_incomplete: exact-namespace key destruction was not verified; preserved history state and app for retry\n' >&2
         return 1
@@ -137,7 +136,6 @@ purge_linux_history() {
         printf 'history_purge_incomplete: installed Cua Driver helper unavailable; preserved history state for retry\n' >&2
         return 1
     fi
-    "$helper" stop >/dev/null 2>&1 || true
     if ! "$helper" history purge-offline --yes; then
         printf 'history_purge_incomplete: exact-namespace Secret Service key destruction was not verified; preserved history state and runtime for retry\n' >&2
         return 1

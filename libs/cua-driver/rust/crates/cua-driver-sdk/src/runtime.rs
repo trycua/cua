@@ -7,6 +7,7 @@
 use crate::{DriverActivityEvent, DriverActivityKind, DriverActivityObserver};
 use cua_driver_core::{
     authorization::PermissionMode,
+    interaction_posture::InteractionPosture,
     protocol::ToolResult as CoreToolResult,
     session_authorization::{
         AuthenticatedActionConnection, DelegatedSessionRequest, EffectiveAuthorizationContext,
@@ -45,6 +46,8 @@ pub(crate) enum RuntimeCreateError {
 #[derive(Clone)]
 pub(crate) struct RuntimeOptions {
     pub cursor: CursorConfig,
+    /// Immutable mutation ceiling selected by the trusted runtime owner.
+    pub interaction_posture: InteractionPosture,
     /// Whether the importing/embedding host owns macOS permission UX. Such a
     /// runtime may inspect TCC state but must never raise Cua-owned prompts.
     pub host_owns_permission_ux: bool,
@@ -68,6 +71,7 @@ impl RuntimeOptions {
                 enabled: false,
                 ..CursorConfig::default()
             },
+            interaction_posture: InteractionPosture::Normal,
             host_owns_permission_ux: true,
             host_bundle_id: None,
             compatibility_mode,
@@ -525,12 +529,13 @@ fn build_registry(options: &RuntimeOptions) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     let mut registry = {
         configure_macos_runtime();
-        platform_macos::register_tools_with_cursor_and_provider(
+        platform_macos::register_tools_with_cursor_provider_and_posture(
             options.authorization_host.clone(),
             options.cursor.clone(),
             options.compatibility_mode,
             options.host_owns_permission_ux,
             options.host_bundle_id.clone(),
+            options.interaction_posture,
         )
     };
 

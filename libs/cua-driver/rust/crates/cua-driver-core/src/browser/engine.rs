@@ -713,6 +713,34 @@ impl BrowserEngine {
         engine
     }
 
+    /// Content-free proof used by the registry's background-only posture.
+    ///
+    /// This is intentionally narrower than ordinary browser mutation
+    /// admission: only the exact single-page embedded route used by an
+    /// application-owned Chromium surface is certified. Standalone profiles,
+    /// heuristic bindings, stale ids, and cross-session ids all fail closed
+    /// before authorization or platform work begins.
+    pub(crate) fn certifies_exact_embedded_target(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        external_ref: &str,
+    ) -> bool {
+        self.store
+            .get_target(session, target_id)
+            .is_ok_and(|target| {
+                target.quality == BindingQuality::Exact
+                    && target.cdp_window_id.is_none()
+                    && target.endpoint_access_class == EndpointAccessClass::EmbeddedApplication
+                    && target.tabs.contains_key(tab_id)
+            })
+            && self
+                .store
+                .resolve_ref(session, target_id, tab_id, external_ref)
+                .is_ok()
+    }
+
     // ── Endpoint / CDP plumbing ─────────────────────────────────────────
 
     pub(crate) async fn existing_profile_grant(

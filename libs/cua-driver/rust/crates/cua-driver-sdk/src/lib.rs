@@ -1001,6 +1001,7 @@ impl CuaDriver {
     pub fn inspect_host_tools(options: DriverHostOptions) -> Value {
         runtime::tool_inventory(RuntimeOptions {
             cursor: options.cursor,
+            interaction_posture: cua_driver_core::interaction_posture::InteractionPosture::Normal,
             host_owns_permission_ux: options.host_owns_permission_ux,
             host_bundle_id: options.host_bundle_id,
             compatibility_mode: options.claude_code_compatibility,
@@ -1146,6 +1147,8 @@ impl CuaDriver {
             backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_for_host(
                 RuntimeOptions {
                     cursor: options.cursor,
+                    interaction_posture:
+                        cua_driver_core::interaction_posture::InteractionPosture::Normal,
                     host_owns_permission_ux: options.host_owns_permission_ux,
                     host_bundle_id: options.host_bundle_id,
                     compatibility_mode: options.claude_code_compatibility,
@@ -1172,6 +1175,20 @@ impl CuaDriver {
     pub fn try_create_service_for_host(
         options: DriverHostOptions,
     ) -> Result<Arc<Self>, DriverError> {
+        Self::try_create_service_for_host_with_interaction_posture(
+            options,
+            cua_driver_core::interaction_posture::InteractionPosture::Normal,
+        )
+    }
+
+    /// Construct a service runtime with a trusted, immutable interaction
+    /// ceiling. This separate constructor keeps the existing public host
+    /// options source-compatible; ordinary embedders continue to get the
+    /// normal action surface by default.
+    pub fn try_create_service_for_host_with_interaction_posture(
+        options: DriverHostOptions,
+        interaction_posture: cua_driver_core::interaction_posture::InteractionPosture,
+    ) -> Result<Arc<Self>, DriverError> {
         let mode =
             cua_driver_core::authorization::configured_permission_mode().map_err(|error| {
                 DriverError::Configuration {
@@ -1194,6 +1211,7 @@ impl CuaDriver {
             backend: DriverBackend::Embedded(Arc::new(NativeAbiDriver::create_for_host(
                 RuntimeOptions {
                     cursor: options.cursor,
+                    interaction_posture,
                     host_owns_permission_ux: options.host_owns_permission_ux,
                     host_bundle_id: options.host_bundle_id,
                     compatibility_mode: options.claude_code_compatibility,

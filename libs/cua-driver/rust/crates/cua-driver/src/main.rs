@@ -221,10 +221,11 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// platforms; the `Call` arm intentionally skips PiP since the
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
+/// Returns `true` only after a usable native backend has started.
 ///
-fn maybe_init_pip(cfg: &pip_preview::PipConfig) -> anyhow::Result<()> {
+fn maybe_init_pip(cfg: &pip_preview::PipConfig) -> anyhow::Result<bool> {
     if !cfg.enabled {
-        return Ok(());
+        return Ok(false);
     }
 
     #[cfg(not(target_os = "macos"))]
@@ -311,7 +312,6 @@ fn maybe_init_pip(cfg: &pip_preview::PipConfig) -> anyhow::Result<()> {
             });
             #[cfg(target_os = "macos")]
             if cfg.background_only {
-                cua_driver_core::pip_hook::enable_background_only();
                 eprintln!(
                     "⚗️  Agent View enabled (macOS background-only mode; foreground and global UI actions are refused)"
                 );
@@ -320,15 +320,16 @@ fn maybe_init_pip(cfg: &pip_preview::PipConfig) -> anyhow::Result<()> {
             }
             #[cfg(not(target_os = "macos"))]
             eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
+            Ok(true)
         }
         Err(e) => {
             if cfg.background_only {
                 anyhow::bail!("background-only Agent View could not start: {e}");
             }
             eprintln!("⚗️  Agent View requested but unavailable: {e}");
+            Ok(false)
         }
     }
-    Ok(())
 }
 
 // ── Public SDK runtime host ──────────────────────────────────────────────
@@ -337,19 +338,23 @@ fn maybe_init_pip(cfg: &pip_preview::PipConfig) -> anyhow::Result<()> {
 /// The private socket and MCP layers consume this object downstream.
 fn build_driver(
     cursor: cursor_overlay::CursorConfig,
+    interaction_posture: cua_driver_core::interaction_posture::InteractionPosture,
     compatibility_mode: bool,
     host_owns_permission_ux: bool,
 ) -> Result<Arc<cua_driver_sdk::CuaDriver>, cua_driver_sdk::DriverError> {
-    cua_driver_sdk::CuaDriver::try_create_service_for_host(cua_driver_sdk::DriverHostOptions {
-        cursor,
-        host_owns_permission_ux,
-        host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
-        claude_code_compatibility: compatibility_mode,
-        prepare_desktop_environment: true,
-        register_host_tools: Some(history_runtime::register_host_tools),
-        authorization_host: None,
-        activity_observer: None,
-    })
+    cua_driver_sdk::CuaDriver::try_create_service_for_host_with_interaction_posture(
+        cua_driver_sdk::DriverHostOptions {
+            cursor,
+            host_owns_permission_ux,
+            host_bundle_id: std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV).ok(),
+            claude_code_compatibility: compatibility_mode,
+            prepare_desktop_environment: true,
+            register_host_tools: Some(history_runtime::register_host_tools),
+            authorization_host: None,
+            activity_observer: None,
+        },
+        interaction_posture,
+    )
 }
 
 #[cfg(test)]
@@ -359,6 +364,7 @@ fn build_driver_without_cursor() -> Arc<cua_driver_sdk::CuaDriver> {
             enabled: false,
             ..cursor_overlay::CursorConfig::default()
         },
+        cua_driver_core::interaction_posture::InteractionPosture::Normal,
         false,
         false,
     )
@@ -409,7 +415,12 @@ fn run_mcp_direct(compatibility_mode: bool) -> anyhow::Result<()> {
         cursor.enabled = false;
         cursor
     };
-    let driver = build_driver(cursor, compatibility_mode, true)?;
+    let driver = build_driver(
+        cursor,
+        cua_driver_core::interaction_posture::InteractionPosture::Normal,
+        compatibility_mode,
+        true,
+    )?;
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
@@ -429,13 +440,13 @@ enum MacosMainLoopHost {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> MacosMainLoopHost {
+fn macos_main_loop_host(cursor_enabled: bool, agent_view_initialized: bool) -> MacosMainLoopHost {
     if cursor_enabled {
         // The cursor host also owns NSApplication's main run loop. Agent View
         // posts its window updates to that same queue, so both surfaces can
         // coexist without leaving cursor animations waiting forever.
         MacosMainLoopHost::CursorOverlay
-    } else if agent_view_enabled {
+    } else if agent_view_initialized {
         MacosMainLoopHost::AgentView
     } else {
         MacosMainLoopHost::ServeThread
@@ -445,6 +456,28 @@ fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> Macos
 #[cfg(target_os = "macos")]
 fn macos_cursor_overlay_enabled(requested: bool, background_only: bool) -> bool {
     requested && !background_only
+}
+
+#[cfg(target_os = "macos")]
+fn preflight_background_only_permissions(
+    background_only: bool,
+    status: platform_macos::permissions::PermissionsStatus,
+) -> anyhow::Result<()> {
+    if !background_only || status.all_granted() {
+        return Ok(());
+    }
+
+    let missing = match (status.accessibility, status.screen_recording) {
+        (false, false) => "Accessibility and Screen Recording",
+        (false, true) => "Accessibility",
+        (true, false) => "Screen Recording",
+        (true, true) => unreachable!("all granted returned above"),
+    };
+    anyhow::bail!(
+        "background-only Agent View requires macOS {missing} permission before startup. \
+         Grant CuaDriver access in System Settings > Privacy & Security, then start it again. \
+         Strict startup only checks current status; it will not prompt or open System Settings"
+    )
 }
 
 #[cfg(test)]
@@ -466,7 +499,11 @@ mod history_admission_tests {
 
 #[cfg(all(test, target_os = "macos"))]
 mod macos_main_loop_host_tests {
-    use super::{macos_cursor_overlay_enabled, macos_main_loop_host, MacosMainLoopHost};
+    use super::{
+        macos_cursor_overlay_enabled, macos_main_loop_host, preflight_background_only_permissions,
+        MacosMainLoopHost,
+    };
+    use platform_macos::permissions::PermissionsStatus;
 
     #[test]
     fn cursor_overlay_hosts_the_shared_appkit_loop_when_agent_view_is_enabled() {
@@ -492,6 +529,59 @@ mod macos_main_loop_host_tests {
     fn background_only_mode_keeps_the_cursor_inside_agent_view() {
         assert!(!macos_cursor_overlay_enabled(true, true));
         assert!(macos_cursor_overlay_enabled(true, false));
+    }
+
+    #[test]
+    fn normal_mode_keeps_the_interactive_permission_flow() {
+        assert!(preflight_background_only_permissions(
+            false,
+            PermissionsStatus {
+                accessibility: false,
+                screen_recording: false,
+            },
+        )
+        .is_ok());
+    }
+
+    #[test]
+    fn strict_permission_preflight_accepts_only_both_grants() {
+        assert!(preflight_background_only_permissions(
+            true,
+            PermissionsStatus {
+                accessibility: true,
+                screen_recording: true,
+            },
+        )
+        .is_ok());
+
+        for (status, expected_missing) in [
+            (
+                PermissionsStatus {
+                    accessibility: false,
+                    screen_recording: true,
+                },
+                "Accessibility",
+            ),
+            (
+                PermissionsStatus {
+                    accessibility: true,
+                    screen_recording: false,
+                },
+                "Screen Recording",
+            ),
+            (
+                PermissionsStatus {
+                    accessibility: false,
+                    screen_recording: false,
+                },
+                "Accessibility and Screen Recording",
+            ),
+        ] {
+            let error = preflight_background_only_permissions(true, status).unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains(expected_missing), "{message}");
+            assert!(message.contains("will not prompt or open System Settings"));
+        }
     }
 }
 
@@ -682,16 +772,34 @@ fn main() {
                 claude_code_compat,
                 &grants,
             );
-            let gate_opts =
-                platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate);
-            if let Some((progress, context)) =
-                platform_macos::permissions::gate::prepare_telemetry_context(gate_opts.opt_out)
-            {
-                if progress == platform_macos::permissions::GateProgress::Started {
-                    telemetry::capture_permissions_gate_started(
-                        context.missing_accessibility,
-                        context.missing_screen_recording,
-                    );
+            let pip_cfg = match pip_preview::default_config_path() {
+                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
+                None => pip_preview::PipConfig::from_args(),
+            };
+            if pip_cfg.background_only {
+                let status = platform_macos::permissions::current_status();
+                if let Err(error) = preflight_background_only_permissions(true, status) {
+                    eprintln!("cua-driver: Agent View startup error: {error}");
+                    std::process::exit(64);
+                }
+            }
+
+            // Strict mode never starts the interactive gate. Its status-only
+            // preflight above has already failed closed before Agent View,
+            // the desktop runtime, or the daemon socket can be created.
+            let gate_opts = (!pip_cfg.background_only).then(|| {
+                platform_macos::permissions::GateOpts::from_env_and_flag(no_permissions_gate)
+            });
+            if let Some(gate_opts) = gate_opts.as_ref() {
+                if let Some((progress, context)) =
+                    platform_macos::permissions::gate::prepare_telemetry_context(gate_opts.opt_out)
+                {
+                    if progress == platform_macos::permissions::GateProgress::Started {
+                        telemetry::capture_permissions_gate_started(
+                            context.missing_accessibility,
+                            context.missing_screen_recording,
+                        );
+                    }
                 }
             }
             if !platform_macos::permissions::gate::is_gate_reexec() {
@@ -704,14 +812,13 @@ fn main() {
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let pip_cfg = match pip_preview::default_config_path() {
-                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-                None => pip_preview::PipConfig::from_args(),
+            let pip_initialized = match maybe_init_pip(&pip_cfg) {
+                Ok(initialized) => initialized,
+                Err(error) => {
+                    eprintln!("cua-driver: Agent View startup error: {error}");
+                    std::process::exit(64);
+                }
             };
-            if let Err(error) = maybe_init_pip(&pip_cfg) {
-                eprintln!("cua-driver: Agent View startup error: {error}");
-                std::process::exit(64);
-            }
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
@@ -732,6 +839,11 @@ fn main() {
             // the full screenshot tool regardless of the client's request.
             let driver = match build_driver(
                 cursor_cfg.clone(),
+                if pip_cfg.background_only {
+                    cua_driver_core::interaction_posture::InteractionPosture::BackgroundOnly
+                } else {
+                    cua_driver_core::interaction_posture::InteractionPosture::Normal
+                },
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             ) {
@@ -784,45 +896,47 @@ fn main() {
             // and the daemon continues to serve — individual tool calls
             // will then fail with the underlying TCC error, mirroring
             // Swift's "user closed the panel" fallback.
-            let gate_result = platform_macos::permissions::run_if_needed_with_observer(
-                gate_opts,
-                |progress, context| match progress {
-                    platform_macos::permissions::GateProgress::Started => {
-                        telemetry::capture_permissions_gate_started(
-                            context.missing_accessibility,
-                            context.missing_screen_recording,
-                        );
-                    }
-                    platform_macos::permissions::GateProgress::Dismissed => {
-                        telemetry::capture_permissions_gate_dismissed(
-                            context.missing_accessibility,
-                            context.missing_screen_recording,
-                            context.elapsed,
-                        );
-                    }
-                },
-            );
-            let gate_context = platform_macos::permissions::gate::telemetry_context();
-            if gate_context.engaged {
-                telemetry::capture_permissions_gate_completed(
-                    gate_context.missing_accessibility,
-                    gate_context.missing_screen_recording,
-                    gate_context.panel_shown,
-                    gate_context.dismissed,
-                    telemetry::permissions_gate_resolution(
-                        gate_result.is_err(),
+            if let Some(gate_opts) = gate_opts {
+                let gate_result = platform_macos::permissions::run_if_needed_with_observer(
+                    gate_opts,
+                    |progress, context| match progress {
+                        platform_macos::permissions::GateProgress::Started => {
+                            telemetry::capture_permissions_gate_started(
+                                context.missing_accessibility,
+                                context.missing_screen_recording,
+                            );
+                        }
+                        platform_macos::permissions::GateProgress::Dismissed => {
+                            telemetry::capture_permissions_gate_dismissed(
+                                context.missing_accessibility,
+                                context.missing_screen_recording,
+                                context.elapsed,
+                            );
+                        }
+                    },
+                );
+                let gate_context = platform_macos::permissions::gate::telemetry_context();
+                if gate_context.engaged {
+                    telemetry::capture_permissions_gate_completed(
+                        gate_context.missing_accessibility,
+                        gate_context.missing_screen_recording,
+                        gate_context.panel_shown,
                         gate_context.dismissed,
-                    ),
-                    gate_context.elapsed,
-                );
-            }
-            if let Err(e) = gate_result {
-                eprintln!("[cua-driver] permissions gate: {e}");
-                eprintln!(
-                    "[cua-driver] continuing — tool calls touching AX or \
-                           Screen Recording fail until you grant the missing TCC \
-                           permissions."
-                );
+                        telemetry::permissions_gate_resolution(
+                            gate_result.is_err(),
+                            gate_context.dismissed,
+                        ),
+                        gate_context.elapsed,
+                    );
+                }
+                if let Err(e) = gate_result {
+                    eprintln!("[cua-driver] permissions gate: {e}");
+                    eprintln!(
+                        "[cua-driver] continuing — tool calls touching AX or \
+                               Screen Recording fail until you grant the missing TCC \
+                               permissions."
+                    );
+                }
             }
 
             // Keep the main thread alive for the daemon.
@@ -831,7 +945,7 @@ fn main() {
             // When both are enabled, the cursor host must drain its command
             // receiver as well as NSApplication events; the Agent View-only
             // loop would leave cursor-bearing actions waiting indefinitely.
-            match macos_main_loop_host(cursor_cfg.enabled, pip_cfg.enabled) {
+            match macos_main_loop_host(cursor_cfg.enabled, pip_initialized) {
                 MacosMainLoopHost::CursorOverlay => {
                     // `run_on_main_thread` self-guards on graphic-session
                     // access. If it returns, keep the daemon alive by joining
@@ -1102,6 +1216,7 @@ fn main() -> anyhow::Result<()> {
             let cursor_cfg = cursor_overlay::CursorConfig::from_args();
             let driver = build_driver(
                 cursor_cfg,
+                cua_driver_core::interaction_posture::InteractionPosture::Normal,
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             )?;
@@ -1109,7 +1224,7 @@ fn main() -> anyhow::Result<()> {
                 Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
                 None => pip_preview::PipConfig::from_args(),
             };
-            maybe_init_pip(&pip_cfg)?;
+            let _pip_initialized = maybe_init_pip(&pip_cfg)?;
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             // run_serve_cmd builds its own runtime; must run on a fresh thread.

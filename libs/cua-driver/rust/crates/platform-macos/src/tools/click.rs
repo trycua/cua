@@ -401,6 +401,10 @@ impl Tool for ClickTool {
         let from_zoom = args.bool_or("from_zoom", false);
         let debug_image_out = args.opt_str("debug_image_out");
         let modifiers: Vec<String> = args.str_array("modifier");
+        let ax_only = args
+            .get(cua_driver_core::interaction_posture::AX_ONLY_CLICK_ARG)
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
 
         // PID-routed key transitions can look correct for one AX poll and then
         // collapse to a plain click once AppKit resolves the gesture. Refuse
@@ -553,16 +557,17 @@ impl Tool for ClickTool {
             // verified coordinate frame only for those collection-like
             // elements so perform_ax_click can cross that one failed semantic
             // rung internally and confirm the result by AX read-back.
-            let selection_candidate = if effective_action == "press" {
-                tokio::task::spawn_blocking(move || {
-                    crate::input::ax_actions::nearest_container_selection_state(element_ptr)
-                        .is_some()
-                })
-                .await
-                .unwrap_or(false)
-            } else {
-                false
-            };
+            let selection_candidate =
+                if selection_pixel_fallback_allowed(&effective_action, ax_only) {
+                    tokio::task::spawn_blocking(move || {
+                        crate::input::ax_actions::nearest_container_selection_state(element_ptr)
+                            .is_some()
+                    })
+                    .await
+                    .unwrap_or(false)
+                } else {
+                    false
+                };
             let mut selection_pixel = if selection_candidate {
                 if let Some((cx, cy)) = center {
                     super::px_frame::resolve_or_refuse(wid)
@@ -582,9 +587,10 @@ impl Tool for ClickTool {
             };
             // The selection fallback delivers a routed window-local pixel
             // click — a stricter (WindowPointer) rung than the semantic gate
-            // above. In background, drop the fallback rather than silently
-            // escalate when the pointer rung would refuse (e.g. a
-            // minimized/hidden target); the semantic path still runs.
+            // above. Strict interaction posture disables this fallback before
+            // it is constructed. In ordinary background mode, drop it rather
+            // than silently escalate when the pointer rung would refuse (e.g.
+            // a minimized/hidden target); the semantic path still runs.
             if selection_pixel.is_some()
                 && !delivery_mode.is_foreground()
                 && _mutation_lease
@@ -1191,6 +1197,10 @@ impl Tool for ClickTool {
     }
 }
 
+fn selection_pixel_fallback_allowed(action: &str, ax_only: bool) -> bool {
+    action == "press" && !ax_only
+}
+
 // ── AX click implementation (blocking) ───────────────────────────────────────
 
 /// Returns `(summary_text, needs_webkit_delay, suspected_noop,
@@ -1585,6 +1595,13 @@ mod tests {
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
         );
+    }
+
+    #[test]
+    fn strict_ax_click_never_constructs_the_pixel_selection_fallback() {
+        assert!(selection_pixel_fallback_allowed("press", false));
+        assert!(!selection_pixel_fallback_allowed("press", true));
+        assert!(!selection_pixel_fallback_allowed("show_menu", false));
     }
 
     /// The no-foreground contract must not depend on the private activation

@@ -107,14 +107,40 @@ pub fn register_tools_with_cursor_and_provider(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) -> ToolRegistry {
+    register_tools_with_cursor_provider_and_posture(
+        provider,
+        cfg,
+        compat,
+        host_owns_permission_ux,
+        host_bundle_id,
+        cua_driver_core::interaction_posture::InteractionPosture::Normal,
+    )
+}
+
+/// Register the macOS runtime with an immutable interaction posture chosen by
+/// its trusted owner before the registry or any platform tool is constructed.
+pub fn register_tools_with_cursor_provider_and_posture(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+    host_owns_permission_ux: bool,
+    host_bundle_id: Option<String>,
+    interaction_posture: cua_driver_core::interaction_posture::InteractionPosture,
+) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     {
-        let cursor_overlay_available =
-            cursor_overlay_facility_available(cfg.enabled, session::has_graphic_access());
+        let cursor_overlay_available = cursor_overlay_facility_available(
+            cfg.enabled,
+            session::has_graphic_access(),
+            interaction_posture,
+        );
         if cursor_overlay_available {
             cursor::overlay::init(cfg);
         }
-        let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+        let mut r = ToolRegistry::new_with_protected_consent_provider_and_posture(
+            provider,
+            interaction_posture,
+        );
         tools::register_all(
             &mut r,
             compat,
@@ -131,24 +157,55 @@ pub fn register_tools_with_cursor_and_provider(
         let _ = host_owns_permission_ux;
         let _ = host_bundle_id;
         let _ = provider;
+        let _ = interaction_posture;
         ToolRegistry::new()
     }
 }
 
 #[cfg(target_os = "macos")]
-fn cursor_overlay_facility_available(enabled: bool, graphic_access: bool) -> bool {
-    enabled && graphic_access
+fn cursor_overlay_facility_available(
+    enabled: bool,
+    graphic_access: bool,
+    interaction_posture: cua_driver_core::interaction_posture::InteractionPosture,
+) -> bool {
+    enabled
+        && graphic_access
+        && interaction_posture
+            != cua_driver_core::interaction_posture::InteractionPosture::BackgroundOnly
 }
 
 #[cfg(all(test, target_os = "macos"))]
 mod cursor_overlay_host_tests {
+    use cua_driver_core::interaction_posture::InteractionPosture;
+
     use super::cursor_overlay_facility_available;
 
     #[test]
     fn overlay_requires_both_host_enablement_and_graphic_session_access() {
-        assert!(cursor_overlay_facility_available(true, true));
-        assert!(!cursor_overlay_facility_available(false, true));
-        assert!(!cursor_overlay_facility_available(true, false));
-        assert!(!cursor_overlay_facility_available(false, false));
+        assert!(cursor_overlay_facility_available(
+            true,
+            true,
+            InteractionPosture::Normal
+        ));
+        assert!(!cursor_overlay_facility_available(
+            false,
+            true,
+            InteractionPosture::Normal
+        ));
+        assert!(!cursor_overlay_facility_available(
+            true,
+            false,
+            InteractionPosture::Normal
+        ));
+        assert!(!cursor_overlay_facility_available(
+            true,
+            true,
+            InteractionPosture::BackgroundOnly
+        ));
+        assert!(!cursor_overlay_facility_available(
+            false,
+            false,
+            InteractionPosture::Normal
+        ));
     }
 }

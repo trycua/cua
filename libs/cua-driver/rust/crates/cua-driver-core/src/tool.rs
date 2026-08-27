@@ -642,17 +642,35 @@ pub struct ToolRegistry {
     protected_resource_grants: Arc<crate::consent::ProtectedResourceGrants>,
     protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     browser_engine: Option<Arc<crate::browser::BrowserEngine>>,
+    /// Immutable interaction ceiling selected by the trusted runtime owner.
+    /// Presentation state and caller arguments cannot widen it.
+    interaction_posture: crate::interaction_posture::InteractionPosture,
 }
 
 impl ToolRegistry {
     pub fn new() -> Self {
-        Self::new_with_protected_consent_provider(None)
+        Self::new_with_protected_consent_provider_and_posture(
+            None,
+            crate::interaction_posture::InteractionPosture::Normal,
+        )
     }
 
     /// Construct a registry with a provider installed by a trusted embedding
     /// host. Public tool calls and transport metadata cannot replace it.
     pub fn new_with_protected_consent_provider(
         provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
+    ) -> Self {
+        Self::new_with_protected_consent_provider_and_posture(
+            provider,
+            crate::interaction_posture::InteractionPosture::Normal,
+        )
+    }
+
+    /// Construct a registry with an immutable interaction posture chosen by a
+    /// trusted runtime owner before any tool is registered or callable.
+    pub fn new_with_protected_consent_provider_and_posture(
+        provider: Option<Arc<dyn crate::consent::ProtectedConsentProvider>>,
+        interaction_posture: crate::interaction_posture::InteractionPosture,
     ) -> Self {
         let approval_broker = Arc::new(crate::consent::ApprovalBroker::new(provider));
         let protected_resource_grants = Arc::new(crate::consent::ProtectedResourceGrants::new(
@@ -706,6 +724,7 @@ impl ToolRegistry {
             protected_resource_grants,
             protected_resource_ownership,
             browser_engine: None,
+            interaction_posture,
         }
     }
 
@@ -797,6 +816,91 @@ impl ToolRegistry {
         self.browser_engine = Some(engine);
     }
 
+    fn certifies_exact_embedded_browser_target(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        context: &crate::session_authorization::EffectiveAuthorizationContext,
+    ) -> bool {
+        if !matches!(tool_name, "browser_click" | "browser_type") {
+            return false;
+        }
+        let Some(public_session) = args
+            .get("session")
+            .and_then(Value::as_str)
+            .filter(|session| !session.is_empty() && *session != "default")
+        else {
+            return false;
+        };
+        let Some(target_id) = args
+            .get("target_id")
+            .and_then(Value::as_str)
+            .filter(|target| !target.is_empty())
+        else {
+            return false;
+        };
+        let Some(tab_id) = args
+            .get("tab_id")
+            .and_then(Value::as_str)
+            .filter(|tab| !tab.is_empty())
+        else {
+            return false;
+        };
+        let Some(external_ref) = args
+            .get("ref")
+            .and_then(Value::as_str)
+            .filter(|external_ref| !external_ref.is_empty())
+        else {
+            return false;
+        };
+        self.browser_engine.as_ref().is_some_and(|engine| {
+            engine.certifies_exact_embedded_target(
+                &context.runtime_session_key(public_session),
+                target_id,
+                tab_id,
+                external_ref,
+            )
+        })
+    }
+
+    /// Resolve the caller's element handle against this dispatch runtime
+    /// before authorization, recording, or platform work. The click tool
+    /// resolves it again immediately before AX actuation, so replacing the
+    /// snapshot between these two checks fails closed rather than turning the
+    /// call into a pixel fallback.
+    fn certifies_exact_native_element(&self, tool_name: &str, args: &Value) -> bool {
+        if tool_name != "click" {
+            return false;
+        }
+        let Some(pid) = args
+            .get("pid")
+            .and_then(Value::as_i64)
+            .filter(|pid| *pid > 0 && *pid <= i64::from(i32::MAX))
+            .map(|pid| pid as i32)
+        else {
+            return false;
+        };
+        let window_id = args
+            .get("window_id")
+            .and_then(Value::as_u64)
+            .and_then(|window_id| u32::try_from(window_id).ok());
+        let element_index = args
+            .get("element_index")
+            .and_then(Value::as_u64)
+            .and_then(|index| usize::try_from(index).ok());
+        matches!(
+            crate::element_token::resolve_element_args(
+                pid,
+                element_index,
+                args.get("element_token").and_then(Value::as_str),
+                args.get("snapshot_id").and_then(Value::as_str),
+                window_id,
+                "click",
+            ),
+            Ok(crate::element_token::ResolvedElement::Element { .. })
+        )
+    }
+
     pub fn retain_session_end_hook(
         &mut self,
         registration: crate::session::SessionEndHookRegistration,
@@ -879,7 +983,19 @@ impl ToolRegistry {
             .iter()
             .filter(|name| crate::policy::is_tool_listable(name))
             .filter_map(|name| self.tools.get(name))
-            .map(|tool| tool.def().to_list_entry())
+            .filter(|tool| {
+                crate::interaction_posture::tool_is_available(
+                    self.interaction_posture,
+                    &tool.def().name,
+                    tool.def().read_only,
+                )
+            })
+            .map(|tool| {
+                crate::interaction_posture::project_tool_entry(
+                    self.interaction_posture,
+                    tool.def().to_list_entry(),
+                )
+            })
             .collect();
         // `capability_version` is the contract version for the
         // capability tokens claimed by each tool entry. Bumped on
@@ -899,6 +1015,7 @@ impl ToolRegistry {
             "tools": list,
             "capability_version": CAPABILITY_VERSION,
             "schema_version": TOOLS_LIST_SCHEMA_VERSION,
+            "interaction_posture": self.interaction_posture.as_str(),
             "enforcement_adapters": crate::authorization::enforcement_adapter_inventory_json(),
         })
     }
@@ -1044,17 +1161,24 @@ impl ToolRegistry {
         // caller-forgeable here.
         crate::tool_args::sanitize_reserved_args(&mut args);
 
-        if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
-            return protected_refusal(
-                "authorization_suspended",
-                "authorization for this Cua runtime has been suspended by revoke-all",
-            );
-        }
-        if context.is_revoked() {
-            return protected_refusal(
-                "authorization_revoked",
-                "this session authorization context has been revoked",
-            );
+        // Preserve the established Normal-posture contract exactly: runtime
+        // suspension and context revocation win before alias resolution, tool
+        // lookup, or argument normalization. BackgroundOnly deliberately
+        // waits until after its normalized fail-closed posture check so an
+        // unsafe mutation always receives the stable posture refusal.
+        if self.interaction_posture == crate::interaction_posture::InteractionPosture::Normal {
+            if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
+                return protected_refusal(
+                    "authorization_suspended",
+                    "authorization for this Cua runtime has been suspended by revoke-all",
+                );
+            }
+            if context.is_revoked() {
+                return protected_refusal(
+                    "authorization_revoked",
+                    "this session authorization context has been revoked",
+                );
+            }
         }
 
         // Deprecated alias: `type_text_chars` → `type_text`.  Swift's
@@ -1081,8 +1205,43 @@ impl ToolRegistry {
         {
             return result;
         }
-        if let Some(refusal) = crate::pip_hook::enforce_background_only(resolved_name, &args) {
+        let exact_native_element = self.interaction_posture
+            == crate::interaction_posture::InteractionPosture::BackgroundOnly
+            && self.certifies_exact_native_element(resolved_name, &args);
+        let exact_embedded_browser_target = self.interaction_posture
+            == crate::interaction_posture::InteractionPosture::BackgroundOnly
+            && self.certifies_exact_embedded_browser_target(resolved_name, &args, context);
+        if let Some(refusal) = crate::interaction_posture::enforce(
+            self.interaction_posture,
+            resolved_name,
+            &args,
+            tool.def().read_only,
+            exact_native_element,
+            exact_embedded_browser_target,
+        ) {
             return refusal;
+        }
+
+        // The immutable runtime posture is evaluated before mutable
+        // authorization state. This keeps its structured refusal stable and,
+        // more importantly, guarantees that a globally unsafe action never
+        // advances into any authorization or consent machinery even when the
+        // caller's lease was concurrently suspended or revoked.
+        if self.interaction_posture
+            == crate::interaction_posture::InteractionPosture::BackgroundOnly
+        {
+            if crate::session::is_runtime_scope_suspended(&context.runtime_scope_key()) {
+                return protected_refusal(
+                    "authorization_suspended",
+                    "authorization for this Cua runtime has been suspended by revoke-all",
+                );
+            }
+            if context.is_revoked() {
+                return protected_refusal(
+                    "authorization_revoked",
+                    "this session authorization context has been revoked",
+                );
+            }
         }
 
         // This registry is the canonical native dispatch boundary shared by
@@ -1101,6 +1260,11 @@ impl ToolRegistry {
         }
 
         let mut public_args = args.clone();
+        crate::interaction_posture::apply_trusted_constraints(
+            self.interaction_posture,
+            resolved_name,
+            &mut args,
+        );
 
         // Public session labels remain part of the stable transport contract,
         // but mutable core/platform state must not be keyed by that
@@ -2882,7 +3046,9 @@ mod runtime_isolation_tests {
         authorization::PermissionMode,
         consent::{ConsentAction, ConsentRequest, ProtectedConsentProvider, ProviderDecision},
         protocol::ToolResult,
-        session_authorization::{SessionAuthorizationRegistry, SessionModeCeiling},
+        session_authorization::{
+            DelegatedSessionRequest, SessionAuthorizationRegistry, SessionModeCeiling,
+        },
     };
     use std::io::Write;
     use std::sync::{
@@ -2915,6 +3081,38 @@ mod runtime_isolation_tests {
         SessionAuthorizationRegistry::with_ceiling(ceiling)
             .compatibility_context(PermissionMode::Unrestricted, None)
             .unwrap()
+    }
+
+    fn revoked_standard_context() -> Arc<crate::session_authorization::EffectiveAuthorizationContext>
+    {
+        let ceiling = SessionModeCeiling::for_trusted_sessions(
+            [PermissionMode::Standard],
+            false,
+            Duration::from_secs(60),
+            Duration::from_secs(30),
+        )
+        .unwrap();
+        let authorizations = SessionAuthorizationRegistry::with_ceiling(ceiling);
+        let (host, connection) = authorizations.trusted_in_process_binding();
+        authorizations
+            .bind_delegated_session(
+                &host,
+                &connection,
+                DelegatedSessionRequest {
+                    public_session: "revoked-public".to_owned(),
+                    transport_session: "revoked-transport".to_owned(),
+                    mode: PermissionMode::Standard,
+                    ttl: Duration::from_secs(60),
+                    idle_ttl: Duration::from_secs(30),
+                    capability_manifest: None,
+                },
+            )
+            .unwrap();
+        let context = authorizations
+            .resolve_delegated(&connection, "revoked-public", "revoked-transport")
+            .unwrap();
+        assert!(authorizations.revoke_connection(&connection));
+        context
     }
 
     fn bounded_context(
@@ -3085,7 +3283,20 @@ mod runtime_isolation_tests {
         provider: Option<Arc<dyn ProtectedConsentProvider>>,
         hits: Arc<AtomicUsize>,
     ) -> Arc<super::ToolRegistry> {
-        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
+        input_registry_with_posture(
+            provider,
+            hits,
+            crate::interaction_posture::InteractionPosture::Normal,
+        )
+    }
+
+    fn input_registry_with_posture(
+        provider: Option<Arc<dyn ProtectedConsentProvider>>,
+        hits: Arc<AtomicUsize>,
+        posture: crate::interaction_posture::InteractionPosture,
+    ) -> Arc<super::ToolRegistry> {
+        let mut registry =
+            super::ToolRegistry::new_with_protected_consent_provider_and_posture(provider, posture);
         registry.register(Box::new(ObservationProbe {
             hits,
             def: super::ToolDef {
@@ -3733,6 +3944,367 @@ resources:
         }
         assert_eq!(hits.load(Ordering::SeqCst), 3);
         assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn normal_registry_keeps_revocation_precedence_before_lookup_and_normalization() {
+        let suspended_context = standard_context();
+        let suspended_scope = suspended_context.runtime_scope_key();
+        assert!(crate::session::suspend_runtime_scope(&suspended_scope));
+
+        let unknown = super::ToolRegistry::new()
+            .invoke_with_context(
+                "future_unknown_tool",
+                serde_json::json!({}),
+                suspended_context.clone(),
+            )
+            .await;
+        assert_eq!(
+            unknown
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_suspended")
+        );
+
+        let suspended_hits = Arc::new(AtomicUsize::new(0));
+        let malformed = input_registry(None, suspended_hits.clone())
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"target": "not-an-object"}),
+                suspended_context,
+            )
+            .await;
+        assert_eq!(suspended_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            malformed
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_suspended")
+        );
+        assert!(crate::session::forget_suspended_runtime_scope(
+            &suspended_scope
+        ));
+
+        let revoked_context = revoked_standard_context();
+        let unknown = super::ToolRegistry::new()
+            .invoke_with_context(
+                "future_unknown_tool",
+                serde_json::json!({}),
+                revoked_context.clone(),
+            )
+            .await;
+        assert_eq!(
+            unknown
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_revoked")
+        );
+
+        let revoked_hits = Arc::new(AtomicUsize::new(0));
+        let malformed = input_registry(None, revoked_hits.clone())
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"target": "not-an-object"}),
+                revoked_context,
+            )
+            .await;
+        assert_eq!(revoked_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            malformed
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("authorization_revoked")
+        );
+    }
+
+    #[tokio::test]
+    async fn background_only_registry_refuses_raw_input_before_authorization_or_dispatch() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = input_registry_with_posture(
+            None,
+            hits.clone(),
+            crate::interaction_posture::InteractionPosture::BackgroundOnly,
+        );
+        let args = serde_json::json!({
+            "pid": 42,
+            "window_id": 7,
+            "session": "control",
+            "delivery_mode": "background",
+            "x": 10,
+            "y": 20,
+        });
+        let result = registry
+            .invoke_with_context("click", args.clone(), unrestricted_context())
+            .await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.as_ref().unwrap()["refusal"]["code"],
+            "agent_view_raw_input_refused"
+        );
+
+        // This context does not authorize click. The posture's stable refusal
+        // must still win, proving it runs before ordinary authorization as
+        // well as before the tool implementation.
+        let denied_context = bounded_context(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 30m
+allow:
+  tools: [get_window_state]
+"#,
+        );
+        let denied = registry
+            .invoke_with_context("click", args, denied_context)
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            denied.structured_content.as_ref().unwrap()["refusal"]["code"],
+            "agent_view_raw_input_refused"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_only_normalizes_and_enforces_before_revocation_state() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let registry = input_registry_with_posture(
+            None,
+            hits.clone(),
+            crate::interaction_posture::InteractionPosture::BackgroundOnly,
+        );
+
+        let suspended_context = standard_context();
+        let suspended_scope = suspended_context.runtime_scope_key();
+        assert!(crate::session::suspend_runtime_scope(&suspended_scope));
+        let malformed = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"target": "not-an-object"}),
+                suspended_context,
+            )
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            malformed
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.get("code"))
+                .and_then(serde_json::Value::as_str),
+            Some("invalid_action_target")
+        );
+        assert!(crate::session::forget_suspended_runtime_scope(
+            &suspended_scope
+        ));
+
+        let refused = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "delivery_mode": "background",
+                    "x": 10,
+                    "y": 20,
+                }),
+                revoked_standard_context(),
+            )
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(
+            refused
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("agent_view_raw_input_refused")
+        );
+    }
+
+    #[tokio::test]
+    async fn background_only_registry_admits_exact_semantic_ax_press() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let context = unrestricted_context();
+        let snapshot_id = super::with_runtime_scope(context.runtime_scope_key(), || {
+            crate::element_token::global().register_snapshot(42, 7, 3)
+        });
+        let result = input_registry_with_posture(
+            None,
+            hits.clone(),
+            crate::interaction_posture::InteractionPosture::BackgroundOnly,
+        )
+        .invoke_with_context(
+            "click",
+            serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "session": "control",
+                "delivery_mode": "background",
+                "element_index": 2,
+                "snapshot_id": format!("s{snapshot_id:08x}"),
+                "action": "press",
+            }),
+            context,
+        )
+        .await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_ne!(result.is_error, Some(true));
+    }
+
+    #[tokio::test]
+    async fn background_only_registry_refuses_a_stale_element_before_dispatch() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let context = unrestricted_context();
+        let stale_snapshot = super::with_runtime_scope(context.runtime_scope_key(), || {
+            crate::element_token::global().register_snapshot(42, 7, 1)
+        });
+        // A replacement snapshot for the same window invalidates the old
+        // element cache at exactly the same boundary.
+        super::with_runtime_scope(context.runtime_scope_key(), || {
+            crate::element_token::global().register_snapshot(42, 7, 1)
+        });
+        let result = input_registry_with_posture(
+            None,
+            hits.clone(),
+            crate::interaction_posture::InteractionPosture::BackgroundOnly,
+        )
+        .invoke_with_context(
+            "click",
+            serde_json::json!({
+                "pid": 42,
+                "window_id": 7,
+                "session": "control",
+                "delivery_mode": "background",
+                "element_index": 0,
+                "snapshot_id": format!("s{stale_snapshot:08x}"),
+                "action": "press",
+            }),
+            context,
+        )
+        .await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result.structured_content.as_ref().unwrap()["refusal"]["code"],
+            "agent_view_native_target_not_certified"
+        );
+    }
+
+    #[tokio::test]
+    async fn background_only_inventory_and_dispatch_reject_unknown_read_only_tools() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider_and_posture(
+            None,
+            crate::interaction_posture::InteractionPosture::BackgroundOnly,
+        );
+        for (name, read_only) in [
+            ("get_window_state", true),
+            ("click", false),
+            ("browser_click", false),
+            ("move_cursor", false),
+            ("clipboard_write", false),
+            ("future_mutation", false),
+            ("future_observation", true),
+        ] {
+            let input_schema = if name == "get_window_state" {
+                serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "pid": {"type": "integer"},
+                        "screenshot_out_file": {"type": "string"}
+                    }
+                })
+            } else {
+                serde_json::json!({"type": "object"})
+            };
+            registry.register(Box::new(ObservationProbe {
+                hits: hits.clone(),
+                def: super::ToolDef {
+                    name: name.to_owned(),
+                    description: "inventory probe".into(),
+                    input_schema,
+                    read_only,
+                    destructive: false,
+                    idempotent: read_only,
+                    open_world: false,
+                },
+            }));
+        }
+
+        let inventory = registry.tools_list();
+        let names = inventory["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|tool| tool["name"].as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(inventory["interaction_posture"], "background_only");
+        assert!(names.contains(&"get_window_state"));
+        assert!(names.contains(&"click"));
+        assert!(names.contains(&"browser_click"));
+        assert!(!names.contains(&"move_cursor"));
+        assert!(!names.contains(&"clipboard_write"));
+        assert!(!names.contains(&"future_mutation"));
+        assert!(!names.contains(&"future_observation"));
+        let get_window_state = inventory["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|tool| tool["name"] == "get_window_state")
+            .unwrap();
+        assert!(get_window_state
+            .pointer("/inputSchema/properties/screenshot_out_file")
+            .is_none());
+
+        let refused = registry
+            .invoke_with_context(
+                "future_observation",
+                serde_json::json!({}),
+                unrestricted_context(),
+            )
+            .await;
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        assert_eq!(refused.is_error, Some(true));
+        assert_eq!(
+            refused
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("agent_view_operation_unavailable")
+        );
+    }
+
+    #[tokio::test]
+    async fn normal_registry_keeps_raw_input_behavior() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let result = input_registry(None, hits.clone())
+            .invoke_with_context(
+                "click",
+                serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "session": "control",
+                    "x": 10,
+                    "y": 20,
+                }),
+                unrestricted_context(),
+            )
+            .await;
+
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        assert_ne!(result.is_error, Some(true));
     }
 
     #[tokio::test]

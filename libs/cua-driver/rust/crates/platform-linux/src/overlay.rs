@@ -3461,7 +3461,9 @@ mod tests {
         let mut map = default_render_map();
         map.scr_w = 1920;
         map.scr_h = 2160;
-        map.cursors.get_mut("default").unwrap().core.pos = (100.0, 2000.0);
+        let cursor = &mut map.cursors.get_mut("default").unwrap().core;
+        cursor.pos = (100.0, 2000.0);
+        cursor.placed = true;
         assert_eq!(render_x11_tiles(&map).len(), 1);
 
         update_render_map_geometry(&mut map, 1920, 1080);
@@ -3483,6 +3485,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
@@ -3495,6 +3498,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
 
         // Default reduced_motion (auto) floats, so frames keep flowing while
@@ -3512,6 +3516,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3595,6 +3600,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (10.0, 10.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
         }
         let other = render_state_for_key(&map.template, "other");
@@ -3731,6 +3737,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (100.0, 100.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
             cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
@@ -3797,6 +3804,7 @@ mod tests {
         map.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
 
         let tiles = render_x11_tiles(&map);
 
@@ -3854,6 +3862,7 @@ mod tests {
         map.scr_h = 1080;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (10.0, 12.0);
+        cursor.core.placed = true;
 
         let tiles = render_x11_tiles(&map);
         assert_eq!(tiles.len(), 1);
@@ -3876,9 +3885,12 @@ mod tests {
         let mut map = default_render_map();
         map.scr_w = 7680;
         map.scr_h = 2160;
-        map.cursors.get_mut("default").unwrap().core.pos = (100.0, 100.0);
+        let cursor = &mut map.cursors.get_mut("default").unwrap().core;
+        cursor.pos = (100.0, 100.0);
+        cursor.placed = true;
         let mut other = render_state_for_key(&map.template, "other");
         other.core.pos = (7400.0, 1800.0);
+        other.core.placed = true;
         map.cursors.insert("other".to_owned(), other);
 
         let tiles = render_x11_tiles(&map);

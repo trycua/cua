@@ -788,6 +788,7 @@ mod tests {
     fn positioned_core() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (100.0, 100.0);
+        core.placed = true;
         core.motion.idle_hide_ms = 1_000.0;
         core
     }

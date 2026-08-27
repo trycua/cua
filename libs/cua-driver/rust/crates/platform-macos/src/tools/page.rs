@@ -10,9 +10,7 @@
 //! `cua_driver_core::page` — this file only implements the backend.
 
 use async_trait::async_trait;
-use cua_driver_core::page::{
-    ClickElementResult, PageBackend, PageReadMetadata, PageReadResult, PageReadSource,
-};
+use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult, PageReadSource};
 use std::{future::Future, sync::Arc};
 
 use super::ToolState;
@@ -43,28 +41,14 @@ impl MacOsPageBackend {
 
 #[async_trait]
 impl PageBackend for MacOsPageBackend {
-    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<String> {
-        Ok(self.get_text_result(pid, window_id).await?.content)
-    }
-
-    async fn get_text_result(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
+    async fn get_text(&self, pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
         let bundle_id = Self::bundle_id_for(pid).await;
-
-        let use_ax_fallback = !BrowserJs::supports(&bundle_id)
-            && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid))
-                .await
-                .unwrap_or(false);
-
-        if use_ax_fallback {
-            return ax_text_fallback(pid, window_id)
-                .await
-                .map(AxFallbackRead::into_page_result);
-        }
-
-        let source = primary_source(&bundle_id);
-        read_with_ax_fallback(
-            source,
-            execute_js("document.body.innerText", &bundle_id, pid, window_id),
+        read_page(
+            resolve_page_read_route(&bundle_id, pid).await?,
+            &bundle_id,
+            pid,
+            window_id,
+            "document.body.innerText",
             || ax_text_fallback(pid, window_id),
         )
         .await
@@ -76,38 +60,17 @@ impl PageBackend for MacOsPageBackend {
         window_id: u64,
         css_selector: &str,
         attributes: &[String],
-    ) -> anyhow::Result<String> {
-        Ok(self
-            .query_dom_result(pid, window_id, css_selector, attributes)
-            .await?
-            .content)
-    }
-
-    async fn query_dom_result(
-        &self,
-        pid: i32,
-        window_id: u64,
-        css_selector: &str,
-        attributes: &[String],
     ) -> anyhow::Result<PageReadResult> {
         let bundle_id = Self::bundle_id_for(pid).await;
-
-        let use_ax_fallback = !BrowserJs::supports(&bundle_id)
-            && tokio::task::spawn_blocking(move || is_wk_web_view_app(pid))
-                .await
-                .unwrap_or(false);
-
-        if use_ax_fallback {
-            return ax_query_fallback(pid, window_id, css_selector)
-                .await
-                .map(AxFallbackRead::into_page_result);
-        }
-
         let js = build_query_selector_js(css_selector, attributes);
-        let source = primary_source(&bundle_id);
-        read_with_ax_fallback(source, execute_js(&js, &bundle_id, pid, window_id), || {
-            ax_query_fallback(pid, window_id, css_selector)
-        })
+        read_page(
+            resolve_page_read_route(&bundle_id, pid).await?,
+            &bundle_id,
+            pid,
+            window_id,
+            &js,
+            || ax_query_fallback(pid, window_id, css_selector),
+        )
         .await
     }
 
@@ -305,30 +268,65 @@ async fn execute_js(js: &str, bundle_id: &str, pid: i32, window_id: u64) -> anyh
     anyhow::bail!("Unsupported browser: bundle_id={bundle_id}");
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct AxFallbackRead {
-    content: String,
-    truncated: bool,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum PageReadRoute {
+    Javascript,
+    Cdp,
+    Ax,
 }
 
-impl AxFallbackRead {
-    fn into_page_result(self) -> PageReadResult {
-        PageReadResult::with_metadata(
-            self.content,
-            PageReadMetadata {
-                source: PageReadSource::AxFallback,
-                fallback_error: None,
-                truncated: Some(self.truncated),
-            },
-        )
+async fn resolve_page_read_route(bundle_id: &str, pid: i32) -> anyhow::Result<PageReadRoute> {
+    let javascript_supported = BrowserJs::supports(bundle_id);
+    let is_electron = if javascript_supported {
+        false
+    } else {
+        tokio::task::spawn_blocking(move || ElectronJs::is_electron(pid)).await?
+    };
+    Ok(classify_page_read_route(javascript_supported, is_electron))
+}
+
+fn classify_page_read_route(javascript_supported: bool, is_electron: bool) -> PageReadRoute {
+    if javascript_supported {
+        PageReadRoute::Javascript
+    } else if is_electron {
+        PageReadRoute::Cdp
+    } else {
+        PageReadRoute::Ax
     }
 }
 
-fn primary_source(bundle_id: &str) -> PageReadSource {
-    if BrowserJs::supports(bundle_id) {
-        PageReadSource::Javascript
-    } else {
-        PageReadSource::Cdp
+async fn read_page<F, A>(
+    route: PageReadRoute,
+    bundle_id: &str,
+    pid: i32,
+    window_id: u64,
+    javascript: &str,
+    ax_fallback: F,
+) -> anyhow::Result<PageReadResult>
+where
+    F: FnOnce() -> A,
+    A: Future<Output = anyhow::Result<PageReadResult>>,
+{
+    match route {
+        PageReadRoute::Javascript => {
+            let window_id = u32::try_from(window_id)
+                .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
+            read_with_ax_fallback(
+                PageReadSource::Javascript,
+                BrowserJs::execute(javascript, bundle_id, window_id),
+                ax_fallback,
+            )
+            .await
+        }
+        PageReadRoute::Cdp => {
+            read_with_ax_fallback(
+                PageReadSource::Cdp,
+                ElectronJs::execute(javascript, pid),
+                ax_fallback,
+            )
+            .await
+        }
+        PageReadRoute::Ax => ax_fallback().await,
     }
 }
 
@@ -340,38 +338,28 @@ async fn read_with_ax_fallback<P, F, A>(
 where
     P: Future<Output = anyhow::Result<String>>,
     F: FnOnce() -> A,
-    A: Future<Output = anyhow::Result<AxFallbackRead>>,
+    A: Future<Output = anyhow::Result<PageReadResult>>,
 {
     match primary.await {
-        Ok(content) => Ok(PageReadResult::with_metadata(
-            content,
-            PageReadMetadata {
-                source: primary_source,
-                fallback_error: None,
-                truncated: None,
-            },
-        )),
+        Ok(content) => Ok(PageReadResult::sourced(content, primary_source, None, None)),
         Err(error) => {
-            let fallback = ax_fallback().await.map_err(|fallback_error| {
+            let mut fallback = ax_fallback().await.map_err(|fallback_error| {
                 anyhow::anyhow!(
                     "AX fallback failed after {primary_source:?} read failed: {error}; \
                      AX fallback error: {fallback_error}"
                 )
             })?;
-            Ok(PageReadResult::with_metadata(
-                fallback.content,
-                PageReadMetadata {
-                    source: PageReadSource::AxFallback,
-                    fallback_error: Some(error.to_string()),
-                    truncated: Some(fallback.truncated),
-                },
-            ))
+            if fallback.source != Some(PageReadSource::AxFallback) {
+                anyhow::bail!("AX fallback omitted read provenance");
+            }
+            fallback.fallback_error = Some(error.to_string());
+            Ok(fallback)
         }
     }
 }
 
 /// Extract page text via the bounded AX tree.
-async fn ax_text_fallback(pid: i32, window_id: u64) -> anyhow::Result<AxFallbackRead> {
+async fn ax_text_fallback(pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let result = tokio::task::spawn_blocking(move || {
@@ -385,10 +373,11 @@ async fn ax_text_fallback(pid: i32, window_id: u64) -> anyhow::Result<AxFallback
     })
     .await
     .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    Ok(AxFallbackRead {
-        content: AXPageReader::extract_text(&result.tree_markdown),
-        truncated: result.truncated,
-    })
+    require_ax_window_scope(result.window_scope.as_ref(), pid, window_id)?;
+    Ok(ax_page_read(
+        AXPageReader::extract_text(&result.tree_markdown),
+        result.truncated,
+    ))
 }
 
 /// Query the bounded AX tree by CSS selector.
@@ -396,7 +385,7 @@ async fn ax_query_fallback(
     pid: i32,
     window_id: u64,
     selector: &str,
-) -> anyhow::Result<AxFallbackRead> {
+) -> anyhow::Result<PageReadResult> {
     let window_id = u32::try_from(window_id)
         .map_err(|_| anyhow::anyhow!("macOS window_id {window_id} is out of u32 range"))?;
     let sel = selector.to_owned();
@@ -411,10 +400,38 @@ async fn ax_query_fallback(
     })
     .await
     .map_err(|e| anyhow::anyhow!("AX walk task failed: {e}"))?;
-    Ok(AxFallbackRead {
-        content: format_ax_elements(&AXPageReader::query(&sel, &result.tree_markdown)),
-        truncated: result.truncated,
-    })
+    require_ax_window_scope(result.window_scope.as_ref(), pid, window_id)?;
+    Ok(ax_page_read(
+        format_ax_elements(&AXPageReader::query(&sel, &result.tree_markdown)),
+        result.truncated,
+    ))
+}
+
+fn ax_page_read(content: String, truncated: bool) -> PageReadResult {
+    PageReadResult::sourced(content, PageReadSource::AxFallback, None, Some(truncated))
+}
+
+fn require_ax_window_scope(
+    scope: Option<&crate::ax::WindowScope>,
+    pid: i32,
+    window_id: u32,
+) -> anyhow::Result<()> {
+    match scope {
+        Some(crate::ax::WindowScope::Matched) => Ok(()),
+        Some(crate::ax::WindowScope::NotFound) => {
+            anyhow::bail!("macOS window_id {window_id} no longer exists")
+        }
+        Some(crate::ax::WindowScope::OwnerPidMismatch {
+            owner_pid,
+            owner_app_name,
+        }) => anyhow::bail!(
+            "macOS window_id {window_id} belongs to pid {owner_pid} ({owner_app_name}), not pid {pid}"
+        ),
+        Some(crate::ax::WindowScope::AxUnresolved { ax_window_count }) => anyhow::bail!(
+            "macOS window_id {window_id} belongs to pid {pid}, but its AX surface could not be resolved among {ax_window_count} window(s)"
+        ),
+        None => anyhow::bail!("macOS AX walk did not report scope for window_id {window_id}"),
+    }
 }
 
 fn format_ax_elements(elements: &[crate::browser::ax_page_reader::AXElement]) -> String {
@@ -509,11 +526,8 @@ fn required_finite(value: &serde_json::Value, key: &str, raw: &str) -> anyhow::R
 mod tests {
     use super::*;
 
-    fn ax(content: &str, truncated: bool) -> anyhow::Result<AxFallbackRead> {
-        Ok(AxFallbackRead {
-            content: content.to_owned(),
-            truncated,
-        })
+    fn ax(content: &str, truncated: bool) -> anyhow::Result<PageReadResult> {
+        Ok(ax_page_read(content.to_owned(), truncated))
     }
 
     #[tokio::test]
@@ -527,14 +541,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.content, "visible text");
+        assert_eq!(result.source, Some(PageReadSource::AxFallback));
         assert_eq!(
-            result.metadata,
-            Some(PageReadMetadata {
-                source: PageReadSource::AxFallback,
-                fallback_error: Some("JavaScript from Apple Events is disabled".to_owned()),
-                truncated: Some(false),
-            })
+            result.fallback_error.as_deref(),
+            Some("JavaScript from Apple Events is disabled")
         );
+        assert_eq!(result.truncated, Some(false));
     }
 
     #[tokio::test]
@@ -548,14 +560,12 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.content, "partial query");
+        assert_eq!(result.source, Some(PageReadSource::AxFallback));
         assert_eq!(
-            result.metadata,
-            Some(PageReadMetadata {
-                source: PageReadSource::AxFallback,
-                fallback_error: Some("Could not find Electron inspector port".to_owned()),
-                truncated: Some(true),
-            })
+            result.fallback_error.as_deref(),
+            Some("Could not find Electron inspector port")
         );
+        assert_eq!(result.truncated, Some(true));
     }
 
     #[tokio::test]
@@ -573,22 +583,50 @@ mod tests {
         assert!(error.contains("AX permission denied"));
     }
 
-    #[test]
-    fn wkwebview_direct_fallback_has_no_triggering_error() {
-        let result = AxFallbackRead {
-            content: "tauri text".to_owned(),
-            truncated: false,
-        }
-        .into_page_result();
+    #[tokio::test]
+    async fn direct_ax_route_has_no_triggering_error() {
+        let result = read_page(
+            PageReadRoute::Ax,
+            "com.example.Native",
+            42,
+            7,
+            "unused",
+            || async { ax("native text", false) },
+        )
+        .await
+        .unwrap();
 
+        assert_eq!(result.content, "native text");
+        assert_eq!(result.source, Some(PageReadSource::AxFallback));
+        assert_eq!(result.fallback_error, None);
+        assert_eq!(result.truncated, Some(false));
+    }
+
+    #[test]
+    fn route_classification_never_calls_unknown_native_apps_cdp() {
         assert_eq!(
-            result.metadata,
-            Some(PageReadMetadata {
-                source: PageReadSource::AxFallback,
-                fallback_error: None,
-                truncated: Some(false),
-            })
+            classify_page_read_route(true, false),
+            PageReadRoute::Javascript
         );
+        assert_eq!(classify_page_read_route(false, true), PageReadRoute::Cdp);
+        assert_eq!(classify_page_read_route(false, false), PageReadRoute::Ax);
+    }
+
+    #[test]
+    fn ax_page_read_refuses_foreign_window_scope() {
+        let error = require_ax_window_scope(
+            Some(&crate::ax::WindowScope::OwnerPidMismatch {
+                owner_pid: 900,
+                owner_app_name: "Open and Save Panel Service".to_owned(),
+            }),
+            800,
+            41,
+        )
+        .unwrap_err()
+        .to_string();
+
+        assert!(error.contains("belongs to pid 900"));
+        assert!(error.contains("not pid 800"));
     }
 
     #[tokio::test]
@@ -602,14 +640,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(result.content, "[{\"tagName\":\"BUTTON\"}]");
-        assert_eq!(
-            result.metadata,
-            Some(PageReadMetadata {
-                source: PageReadSource::Javascript,
-                fallback_error: None,
-                truncated: None,
-            })
-        );
+        assert_eq!(result.source, Some(PageReadSource::Javascript));
+        assert_eq!(result.fallback_error, None);
+        assert_eq!(result.truncated, None);
     }
 
     #[tokio::test]
@@ -622,6 +655,6 @@ mod tests {
         .await
         .unwrap();
 
-        assert_eq!(result.metadata.unwrap().source, PageReadSource::Cdp);
+        assert_eq!(result.source, Some(PageReadSource::Cdp));
     }
 }

@@ -11,14 +11,14 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use core_foundation::base::{CFRelease, CFTypeRef};
 use cua_driver_core::action_record::{
-    resolve_surface_delta, ActionSurfaceCandidate, ActionSurfaceDelta, ActionSurfaceTarget,
+    resolve_surface_delta, ActionSurfaceDelta, ActionSurfaceTarget,
 };
 use cua_driver_core::protocol::ToolResult;
 use cua_driver_core::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 use serde_json::Value;
 
 use crate::ax::bindings::{
-    ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_array_attr, copy_string_attr,
+    ax_get_window_id, copy_ax_windows, copy_element_array_attr, copy_string_attr,
     element_screen_rect, AXUIElementCreateApplication, AXUIElementRef,
     AXUIElementSetMessagingTimeout,
 };
@@ -48,8 +48,6 @@ enum RootKey {
 struct Root {
     window_id: Option<u32>,
     title: String,
-    modal: bool,
-    focused: bool,
 }
 
 type RootSnapshot = HashMap<RootKey, Root>;
@@ -222,21 +220,17 @@ fn resolve_candidates(
     app_name: &str,
     roots: &[Root],
     windows: &[crate::windows::WindowInfo],
-) -> Vec<ActionSurfaceCandidate> {
+) -> Vec<ActionSurfaceTarget> {
     roots
         .iter()
         .filter_map(|root| {
             let window_id = root.window_id?;
             let (owner_pid, owner_app_name) = surface_owner(windows, pid, window_id, app_name)?;
-            Some(ActionSurfaceCandidate {
-                target: ActionSurfaceTarget {
-                    pid: i64::from(owner_pid),
-                    window_id: u64::from(window_id),
-                    app_name: owner_app_name,
-                    title: root.title.clone(),
-                    modal: root.modal,
-                },
-                focused: root.focused,
+            Some(ActionSurfaceTarget {
+                pid: i64::from(owner_pid),
+                window_id: u64::from(window_id),
+                app_name: owner_app_name,
+                title: root.title.clone(),
             })
         })
         .collect()
@@ -295,11 +289,6 @@ unsafe fn insert_root(
     let title = copy_string_attr(element, "AXTitle").unwrap_or_default();
     let own_window_id = ax_get_window_id(element);
     let effective_window_id = own_window_id.or(parent_window_id);
-    let modal = copy_bool_attr(element, "AXModal").unwrap_or(false)
-        || role == "AXSheet"
-        || role == "AXDialog"
-        || subrole.to_ascii_lowercase().contains("dialog")
-        || subrole.to_ascii_lowercase().contains("modal");
     let key = match own_window_id {
         Some(window_id) => RootKey::Native {
             window_id,
@@ -320,8 +309,6 @@ unsafe fn insert_root(
         Root {
             window_id: effective_window_id,
             title,
-            modal,
-            focused: copy_bool_attr(element, "AXFocused").unwrap_or(false),
         },
     );
 }
@@ -332,6 +319,9 @@ fn surface_owner(
     window_id: u32,
     target_app_name: &str,
 ) -> Option<(i32, String)> {
+    // Keep the AX root's exact WindowServer identity. AppKit can publish an
+    // addressable same-process proxy beside an AX-empty XPC duplicate; replacing
+    // that proxy by title or geometry would make the rebind less usable.
     match crate::windows::resolve_window_owner_in(windows, target_pid, window_id) {
         crate::windows::WindowOwner::SamePid => Some((target_pid, target_app_name.to_owned())),
         crate::windows::WindowOwner::ForeignPid {
@@ -346,44 +336,18 @@ fn surface_owner(
 mod tests {
     use super::*;
 
-    fn root(window_id: u32, title: &str, modal: bool) -> Root {
+    fn root(window_id: u32, title: &str) -> Root {
         Root {
             window_id: Some(window_id),
             title: title.into(),
-            modal,
-            focused: false,
         }
     }
 
-    #[test]
-    fn root_diff_ignores_metadata_changes_and_reports_an_appeared_modal() {
-        let parent = RootKey::Native {
-            window_id: 7,
-            role: "AXWindow".into(),
-            subrole: "AXStandardWindow".into(),
-        };
-        let before = RootSnapshot::from([(parent.clone(), root(7, "Draft", false))]);
-        let mut after = RootSnapshot::from([(parent, root(7, "Draft — Edited", false))]);
-        assert!(appeared_roots(&before, &after).is_empty());
-
-        let sheet = RootKey::Native {
-            window_id: 8,
-            role: "AXSheet".into(),
-            subrole: String::new(),
-        };
-        after.insert(sheet, root(8, "Open", true));
-        assert_eq!(appeared_roots(&before, &after), vec![root(8, "Open", true)]);
-    }
-
-    #[test]
-    fn owner_resolution_can_follow_an_ax_root_without_guessing() {
-        let roots = vec![root(8, "Open", true)];
-        assert!(resolve_candidates(42, "TextEdit", &roots, &[]).is_empty());
-
-        let windows = vec![crate::windows::WindowInfo {
-            window_id: 8,
-            pid: 99,
-            app_name: "Open and Save Panel Service".into(),
+    fn window(window_id: u32, pid: i32, app_name: &str) -> crate::windows::WindowInfo {
+        crate::windows::WindowInfo {
+            window_id,
+            pid,
+            app_name: app_name.into(),
             title: "Open".into(),
             bounds: crate::windows::WindowBounds {
                 x: 0.0,
@@ -397,11 +361,54 @@ mod tests {
             current_space_id: None,
             on_current_space: None,
             space_ids: None,
-        }];
+        }
+    }
+
+    #[test]
+    fn root_diff_ignores_metadata_changes_and_reports_an_appeared_modal() {
+        let parent = RootKey::Native {
+            window_id: 7,
+            role: "AXWindow".into(),
+            subrole: "AXStandardWindow".into(),
+        };
+        let before = RootSnapshot::from([(parent.clone(), root(7, "Draft"))]);
+        let mut after = RootSnapshot::from([(parent, root(7, "Draft — Edited"))]);
+        assert!(appeared_roots(&before, &after).is_empty());
+
+        let sheet = RootKey::Native {
+            window_id: 8,
+            role: "AXSheet".into(),
+            subrole: String::new(),
+        };
+        after.insert(sheet, root(8, "Open"));
+        assert_eq!(appeared_roots(&before, &after), vec![root(8, "Open")]);
+    }
+
+    #[test]
+    fn owner_resolution_can_follow_an_ax_root_without_guessing() {
+        let roots = vec![root(8, "Open")];
+        assert!(resolve_candidates(42, "TextEdit", &roots, &[]).is_empty());
+
+        let windows = vec![window(8, 99, "Open and Save Panel Service")];
         let candidates = resolve_candidates(42, "TextEdit", &roots, &windows);
         assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].target.pid, 99);
-        assert_eq!(candidates[0].target.window_id, 8);
+        assert_eq!(candidates[0].pid, 99);
+        assert_eq!(candidates[0].window_id, 8);
+    }
+
+    #[test]
+    fn owner_resolution_preserves_an_addressable_same_pid_proxy() {
+        let roots = vec![root(8, "Open")];
+        let windows = vec![
+            window(8, 42, "TextEdit"),
+            window(9, 99, "Open and Save Panel Service"),
+        ];
+
+        let candidates = resolve_candidates(42, "TextEdit", &roots, &windows);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].pid, 42);
+        assert_eq!(candidates[0].window_id, 8);
+        assert_eq!(candidates[0].app_name, "TextEdit");
     }
 
     #[test]

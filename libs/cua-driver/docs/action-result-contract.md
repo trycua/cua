@@ -78,10 +78,14 @@ facts, but they do not independently justify `confirmed`.
 
 On macOS, one action decorator snapshots accessibility roots for the target PID
 before and after dispatch. It reports new windows, dialogs, sheets, and popovers
-without activating them. An exact `rebind` target is present only when one new
-owner-verified root is modal or focused; ambiguous changes require
-`list_windows`. Windows and Linux currently emit no topology record rather than
-substituting a global desktop heuristic.
+without activating them. An exact `rebind` target is present when exactly one
+new owner-verified root appeared; ambiguous changes require `list_windows`.
+Owner verification preserves the exact WindowServer identity
+reported by the appeared AX root. AppKit can expose an addressable same-process
+proxy beside an AX-empty XPC duplicate, so a foreign PID is not required; the
+returned target is the identity callers can resnapshot. Windows and Linux
+currently emit no topology record rather than substituting a global desktop
+heuristic.
 
 ## Verification remains separate
 

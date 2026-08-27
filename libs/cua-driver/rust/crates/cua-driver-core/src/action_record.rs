@@ -199,14 +199,6 @@ pub struct ActionSurfaceTarget {
     pub window_id: u64,
     pub app_name: String,
     pub title: String,
-    pub modal: bool,
-}
-
-/// A target-owned candidate passed from a platform observer to shared policy.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ActionSurfaceCandidate {
-    pub target: ActionSurfaceTarget,
-    pub focused: bool,
 }
 
 /// Typed platform observation with an optional validated exact rebind.
@@ -220,37 +212,21 @@ pub struct ActionSurfaceDelta {
 /// Apply the same fail-closed exact-target rule to every platform observer.
 /// Ownership must already be proven by target-scoped native enumeration.
 pub fn resolve_surface_delta(
-    candidates: Vec<ActionSurfaceCandidate>,
+    candidates: Vec<ActionSurfaceTarget>,
     foreground_changed: bool,
 ) -> Option<ActionSurfaceDelta> {
-    let mut unique: Vec<ActionSurfaceCandidate> = Vec::new();
+    let mut new_windows = Vec::new();
     for candidate in candidates {
-        if let Some(index) = unique.iter().position(|existing| {
-            existing.target.pid == candidate.target.pid
-                && existing.target.window_id == candidate.target.window_id
+        if !new_windows.iter().any(|existing: &ActionSurfaceTarget| {
+            existing.pid == candidate.pid && existing.window_id == candidate.window_id
         }) {
-            if (candidate.target.modal && !unique[index].target.modal)
-                || (candidate.focused && !unique[index].focused)
-            {
-                unique[index] = candidate;
-            }
-        } else {
-            unique.push(candidate);
+            new_windows.push(candidate);
         }
     }
-    let new_windows: Vec<ActionSurfaceTarget> = unique
-        .iter()
-        .map(|candidate| candidate.target.clone())
-        .collect();
     if new_windows.is_empty() {
         return None;
     }
-    let eligible: Vec<ActionSurfaceTarget> = unique
-        .iter()
-        .filter(|candidate| candidate.focused || candidate.target.modal)
-        .map(|candidate| candidate.target.clone())
-        .collect();
-    let rebind = (eligible.len() == 1).then(|| eligible[0].clone());
+    let rebind = (new_windows.len() == 1).then(|| new_windows[0].clone());
     Some(ActionSurfaceDelta {
         new_windows,
         foreground_changed,
@@ -1336,27 +1312,10 @@ mod tests {
             window_id: 7,
             app_name: "Editor".into(),
             title: "Open".into(),
-            modal: true,
-        };
-        let parent = ActionSurfaceTarget {
-            modal: false,
-            ..target.clone()
         };
         record.observe_surface_delta(
-            resolve_surface_delta(
-                vec![
-                    ActionSurfaceCandidate {
-                        target: parent,
-                        focused: false,
-                    },
-                    ActionSurfaceCandidate {
-                        target: target.clone(),
-                        focused: false,
-                    },
-                ],
-                false,
-            )
-            .expect("surface delta"),
+            resolve_surface_delta(vec![target.clone(), target.clone()], false)
+                .expect("surface delta"),
         );
 
         assert_eq!(record.effect, ActionEffect::Unverifiable);
@@ -1384,22 +1343,10 @@ mod tests {
             window_id: 8,
             ..target.clone()
         };
-        assert!(resolve_surface_delta(
-            vec![
-                ActionSurfaceCandidate {
-                    target,
-                    focused: false,
-                },
-                ActionSurfaceCandidate {
-                    target: second,
-                    focused: true,
-                },
-            ],
-            false,
-        )
-        .expect("ambiguous surface delta")
-        .rebind
-        .is_none());
+        assert!(resolve_surface_delta(vec![target, second], false)
+            .expect("ambiguous surface delta")
+            .rebind
+            .is_none());
     }
 
     #[test]

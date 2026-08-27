@@ -1,7 +1,6 @@
 {
   "title": "Sandbox",
   "pages": [
-    "lifecycle",
     "configure-pool-with-terraform",
     "create-pool-with-python",
     "create-pool-with-typescript",

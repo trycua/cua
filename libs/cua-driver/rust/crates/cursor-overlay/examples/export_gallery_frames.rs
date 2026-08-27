@@ -141,6 +141,7 @@ fn export_state(output: &Path, state: GalleryState) {
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
             f64::from(SIZE) / (2.0 * f64::from(PREVIEW_BACKING_SCALE)),
         );
+        core.placed = true;
         core.heading = f64::from(std::f32::consts::FRAC_PI_4);
         if let Some(session_label) = state.session_label {
             core.apply_command_base(

@@ -399,12 +399,7 @@ pub fn is_visible_for_session(key: &str) -> bool {
             guard
                 .as_ref()
                 .and_then(|map| map.cursors.get(key))
-                .map(|rs| {
-                    rs.core.cfg.enabled
-                        && rs.core.visible
-                        && rs.core.idle_alpha >= 0.004
-                        && rs.core.pos.0 >= -100.0
-                })
+                .map(|rs| rs.core.cfg.enabled && rs.core.cursor_is_revealed())
         })
         .unwrap_or(false)
 }
@@ -422,7 +417,20 @@ pub fn current_position_for(key: &str) -> (f64, f64) {
                 .and_then(|m| m.cursors.get(key))
                 .map(|rs| rs.core.pos)
         })
-        .unwrap_or((-200.0, -200.0))
+        .unwrap_or_default()
+}
+
+pub fn is_placed_for(key: &str) -> bool {
+    RENDER
+        .lock()
+        .ok()
+        .and_then(|guard| {
+            guard
+                .as_ref()
+                .and_then(|map| map.cursors.get(key))
+                .map(|state| state.core.placed)
+        })
+        .unwrap_or(false)
 }
 
 pub fn current_motion_for(key: &str) -> cursor_overlay::MotionConfig {
@@ -459,7 +467,7 @@ pub fn current_theme_state_for(
     Some((id, version, profile, fallback, state.core.visual.clone()))
 }
 
-fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
+fn seed_start_if_unplaced(key: &CursorKey, target_x: f64, target_y: f64) -> bool {
     const SEED_OFFSET: f64 = 140.0;
     let mut guard = RENDER.lock().unwrap();
     let Some(map) = guard.as_mut() else {
@@ -474,7 +482,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         .cursors
         .entry(key.clone())
         .or_insert_with(|| render_state_for_key(&template, &k));
-    if !(rs.core.cfg.enabled && rs.core.pos.0 < -50.0) {
+    if !(rs.core.cfg.enabled && !rs.core.placed) {
         return false;
     }
     let max_x = map.scr_w.max(2) as f64 - 2.0;
@@ -486,6 +494,7 @@ fn seed_start_if_sentinel(key: &CursorKey, target_x: f64, target_y: f64) -> bool
         sy = (target_y + SEED_OFFSET).clamp(2.0, max_y);
     }
     rs.core.pos = (sx, sy);
+    rs.core.placed = true;
     true
 }
 
@@ -497,13 +506,13 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
     if key.is_empty() {
         return;
     }
-    seed_start_if_sentinel(&key, x, y);
+    seed_start_if_unplaced(&key, x, y);
     let should_animate = {
         let guard = RENDER.lock().unwrap();
-        match guard.as_ref().and_then(|m| m.cursors.get(&key)) {
-            Some(rs) if rs.core.cfg.enabled && rs.core.visible && rs.core.pos.0 > -50.0 => true,
-            _ => false,
-        }
+        matches!(
+            guard.as_ref().and_then(|map| map.cursors.get(&key)),
+            Some(state) if state.core.cfg.enabled && state.core.visible && state.core.placed
+        )
     };
     if !should_animate {
         return;
@@ -620,8 +629,7 @@ impl RenderState {
     }
 
     fn apply_command(&mut self, cmd: OverlayCommand) {
-        // Linux uses the non-sentinel-snap behaviour for both MoveTo and
-        // ClickPulse: every command updates `self.pos` unconditionally.
+        // Linux updates the position for every MoveTo and ClickPulse.
         // Custom-shape / gradient / focus-rect commands are not rendered on
         // Linux at present; `apply_command_base` consumes SetShape +
         // SetGradient and returns false for ShowFocusRect — both cases drop
@@ -630,7 +638,7 @@ impl RenderState {
     }
 
     /// True while the render loop must wake at frame cadence because the next
-    /// tick can change pixels. A brand-new sentinel cursor is deliberately
+    /// tick can change pixels. A brand-new unplaced cursor is deliberately
     /// quiescent, so an idle MCP server can park on bounded maintenance waits
     /// instead of rebuilding and repainting X11 cursor tiles at 60 fps.
     #[cfg(target_os = "linux")]
@@ -647,15 +655,11 @@ impl RenderState {
             // mid-swing on Linux while macOS keeps levitating. The term dies
             // with `idle_alpha` once the idle fade completes, returning the
             // parked-overlay fast path to the fully hidden cursor.
-            || (self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_alpha >= 0.004
+            || (self.core.cursor_is_revealed()
                 && self.core.visual.reduced_motion != cursor_overlay::ReducedMotion::On)
             || (self.core.motion.idle_hide_ms > 0.0
-                && self.core.visible
-                && self.core.pos.0 >= -100.0
-                && self.core.idle_secs >= fade_start
-                && self.core.idle_alpha >= 0.004)
+                && self.core.cursor_is_revealed()
+                && self.core.idle_secs >= fade_start)
     }
 }
 
@@ -668,7 +672,7 @@ fn render_map_needs_frame_tick(map: &RenderMap) -> bool {
 fn render_map_needs_z_order_tick(map: &RenderMap) -> bool {
     map.cursors
         .values()
-        .any(|rs| rs.core.visible && rs.core.idle_alpha >= 0.004 && rs.core.pos.0 >= -100.0)
+        .any(|state| state.core.cursor_is_revealed())
 }
 
 #[cfg(target_os = "linux")]
@@ -740,8 +744,7 @@ fn render_map_idle_wait_interval(map: &RenderMap) -> Option<Duration> {
         .values()
         .filter_map(|rs| {
             let core = &rs.core;
-            if !core.visible
-                || core.pos.0 < -100.0
+            if !core.cursor_is_revealed()
                 || core.motion.idle_hide_ms <= 0.0
                 || core.path.is_some()
                 || core.spring.is_some()
@@ -2066,7 +2069,7 @@ fn cursor_tile_bounds(
     screen_width: u32,
     screen_height: u32,
 ) -> Option<X11TileBounds> {
-    if !core.visible || core.pos.0 < -100.0 || core.idle_alpha < 0.004 {
+    if !core.cursor_is_revealed() {
         return None;
     }
 
@@ -3458,7 +3461,9 @@ mod tests {
         let mut map = default_render_map();
         map.scr_w = 1920;
         map.scr_h = 2160;
-        map.cursors.get_mut("default").unwrap().core.pos = (100.0, 2000.0);
+        let cursor = &mut map.cursors.get_mut("default").unwrap().core;
+        cursor.pos = (100.0, 2000.0);
+        cursor.placed = true;
         assert_eq!(render_x11_tiles(&map).len(), 1);
 
         update_render_map_geometry(&mut map, 1920, 1080);
@@ -3480,6 +3485,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
@@ -3492,6 +3498,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
 
         // Default reduced_motion (auto) floats, so frames keep flowing while
@@ -3509,6 +3516,7 @@ mod tests {
         let mut map = default_render_map();
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (100.0, 100.0);
+        cursor.core.placed = true;
         cursor.core.motion.idle_hide_ms = 0.0;
         cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
         let (_tx, rx) = std::sync::mpsc::channel();
@@ -3592,6 +3600,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (10.0, 10.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
         }
         let other = render_state_for_key(&map.template, "other");
@@ -3728,6 +3737,7 @@ mod tests {
         {
             let cursor = map.cursors.get_mut("default").unwrap();
             cursor.core.pos = (100.0, 100.0);
+            cursor.core.placed = true;
             cursor.core.motion.idle_hide_ms = 500.0;
             cursor.core.visual.reduced_motion = cursor_overlay::ReducedMotion::On;
 
@@ -3794,6 +3804,7 @@ mod tests {
         map.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
 
         let tiles = render_x11_tiles(&map);
 
@@ -3812,6 +3823,7 @@ mod tests {
         map.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.apply_command(OverlayCommand::SetSessionLabel("research-run".to_owned()));
 
         let tiles = render_x11_tiles(&map);
@@ -3829,6 +3841,7 @@ mod tests {
         map.scr_h = 2160;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (4000.0, 1000.0);
+        cursor.core.placed = true;
         cursor.apply_command(OverlayCommand::BeginAction {
             action: CursorAction::Click,
             delivery: Some(cursor_overlay::DeliveryModifier::Foreground),
@@ -3849,6 +3862,7 @@ mod tests {
         map.scr_h = 1080;
         let cursor = map.cursors.get_mut("default").unwrap();
         cursor.core.pos = (10.0, 12.0);
+        cursor.core.placed = true;
 
         let tiles = render_x11_tiles(&map);
         assert_eq!(tiles.len(), 1);
@@ -3871,9 +3885,12 @@ mod tests {
         let mut map = default_render_map();
         map.scr_w = 7680;
         map.scr_h = 2160;
-        map.cursors.get_mut("default").unwrap().core.pos = (100.0, 100.0);
+        let cursor = &mut map.cursors.get_mut("default").unwrap().core;
+        cursor.pos = (100.0, 100.0);
+        cursor.placed = true;
         let mut other = render_state_for_key(&map.template, "other");
         other.core.pos = (7400.0, 1800.0);
+        other.core.placed = true;
         map.cursors.insert("other".to_owned(), other);
 
         let tiles = render_x11_tiles(&map);

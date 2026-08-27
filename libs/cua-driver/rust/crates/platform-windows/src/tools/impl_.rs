@@ -231,9 +231,8 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
-/// On the very first call the cursor is at the off-screen initial position
-/// (-200, -200).  Animating from there would cause a jarring off-screen fly-in,
-/// so we snap to the target with a ClickPulse first and skip the glide wait.
+/// On the first call, an unplaced cursor would otherwise produce a jarring
+/// fly-in, so we snap to the target with a ClickPulse and skip the glide wait.
 ///
 /// For all subsequent calls this defers to
 /// [`crate::overlay::animate_cursor_to`], which sends `MoveTo` and awaits the
@@ -251,8 +250,7 @@ async fn overlay_glide_to(key: &str, sx: f64, sy: f64) {
     if !crate::overlay::is_enabled(key) {
         return;
     }
-    let pos = crate::overlay::current_position(key);
-    if pos.0 < 0.0 && pos.1 < 0.0 {
+    if !crate::overlay::is_placed(key) {
         // Snap to target on first use; no animation to wait for.
         crate::overlay::send_command(
             key.to_owned(),

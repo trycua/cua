@@ -314,13 +314,8 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     break;
                 }
                 Ok(WlOverlayCmd::Cmd { cmd }) => {
-                    // Seed: if the cursor is still at the off-screen sentinel
-                    // `(-200, -200)` from `RenderStateCore::new`, snap to a
-                    // point near the MoveTo / SnapTo target so the spring
-                    // animation starts on-screen. Mirrors X11 overlay.rs's
-                    // `seed_start_if_sentinel` helper — without it, the
-                    // spring oscillates around the sentinel and the cursor
-                    // never reaches the screen.
+                    // Give an unplaced cursor an on-screen start point near the
+                    // target so its first spring animation is visible.
                     let seed_target = match &cmd {
                         OverlayCommand::MoveTo { x, y, .. }
                         | OverlayCommand::SnapTo { x, y, .. }
@@ -328,16 +323,15 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                         _ => None,
                     };
                     if let Some((tx, ty)) = seed_target {
-                        if state.core.pos.0 < -50.0 {
+                        if !state.core.placed {
                             const SEED_OFFSET: f64 = 16.0;
                             let sx = (tx - SEED_OFFSET).max(2.0);
                             let sy = (ty - SEED_OFFSET).max(2.0);
                             state.core.pos = (sx, sy);
+                            state.core.placed = true;
                         }
                     }
-                    // apply_command_base consumes every variant the X11
-                    // path handles. `move_to_snap_sentinel` / `click_pulse
-                    // _sentinel_only` are both `false` here — same as X11.
+                    // Apply the command with the same placement behavior as X11.
                     let disabling = matches!(&cmd, OverlayCommand::SetEnabled(false));
                     dirty |= state.core.apply_command_base(cmd, false, false);
                     if disabling {
@@ -348,7 +342,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
                     // Single-cursor overlay: removing the active cursor
                     // hides it. Multi-cursor wlroots support can layer on
                     // top of this in a follow-up if needed.
-                    dirty |= state.core.visible || state.core.pos.0 >= -100.0;
+                    dirty |= state.core.cursor_is_revealed();
                     state.core.visible = false;
                     quiesce_hidden(&mut state.core);
                 }
@@ -438,7 +432,7 @@ fn next_wait(core: &RenderStateCore, frame_tick_needed: bool) -> WlWait {
 }
 
 fn needs_frame_tick(core: &RenderStateCore) -> bool {
-    if !core.visible || core.pos.0 < -100.0 {
+    if !core.visible || !core.placed {
         return false;
     }
     let fade_start = core.motion.idle_hide_ms / 1000.0;
@@ -453,7 +447,7 @@ fn needs_frame_tick(core: &RenderStateCore) -> bool {
 
 fn idle_fade_wait(core: &RenderStateCore) -> Option<Duration> {
     if !core.visible
-        || core.pos.0 < -100.0
+        || !core.placed
         || core.motion.idle_hide_ms <= 0.0
         || core.path.is_some()
         || core.spring.is_some()
@@ -485,8 +479,8 @@ fn quiesce_hidden(core: &mut RenderStateCore) {
 ///    in `ext_screencopy::encode_buffer_to_png`.
 /// 4. Attach + damage + commit on the layer surface.
 ///
-/// When the cursor is hidden (`core.visible == false`, idle-faded, or
-/// off-screen sentinel) the pixmap is all zeros — the surface remains
+/// When the cursor is hidden, unplaced, or idle-faded, the pixmap is all
+/// zeros — the surface remains
 /// transparent and click-through.
 fn redraw(
     state: &mut OverlayState,
@@ -794,6 +788,7 @@ mod tests {
     fn positioned_core() -> RenderStateCore {
         let mut core = RenderStateCore::new(CursorConfig::default());
         core.pos = (100.0, 100.0);
+        core.placed = true;
         core.motion.idle_hide_ms = 1_000.0;
         core
     }

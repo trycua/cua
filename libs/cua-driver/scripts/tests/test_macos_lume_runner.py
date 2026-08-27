@@ -23,6 +23,7 @@ RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 SEED_TCC = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh"
 SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
+STANDALONE_BROWSER_RUNNER = REPO_ROOT / "scripts/ci/run-rust-standalone-browser-e2e.sh"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
     REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"
@@ -79,7 +80,15 @@ def _fields(output: str) -> dict[str, str]:
 
 @pytest.mark.parametrize(
     "script",
-    [RUN_ALL, RUN_RUST_E2E, SEED_TCC, SEED_TCC_GUEST, ELECTRON_BUILD, TAURI_BUILD],
+    [
+        RUN_ALL,
+        RUN_RUST_E2E,
+        STANDALONE_BROWSER_RUNNER,
+        SEED_TCC,
+        SEED_TCC_GUEST,
+        ELECTRON_BUILD,
+        TAURI_BUILD,
+    ],
     ids=lambda path: f"{path.parent.name}/{path.name}",
 )
 def test_runner_scripts_have_valid_bash_syntax(script: Path) -> None:
@@ -543,6 +552,7 @@ REPORT_OPTIONS = (
     'printf "attempts=%s\\n" "$RETRY_ATTEMPTS"\n'
     'printf "only=%s\\n" "$RETRY_ONLY"\n'
     'printf "standalone=%s\\n" "$RUN_STANDALONE_BROWSER"\n'
+    'printf "standalone_test=%s\\n" "$STANDALONE_BROWSER_TEST"\n'
     'printf "nobuild=%s\\n" "$NO_BUILD"\n'
     'printf "lane=%s\\n" "$RETRY_INTERNAL_LANE"\n'
 )
@@ -561,6 +571,13 @@ def test_default_invocation_runs_the_full_matrix() -> None:
     assert fields["only"] == "0"
     assert fields["standalone"] == "0"
     assert fields["nobuild"] == "0"
+
+
+def test_standalone_browser_diagnostic_selection_is_accepted() -> None:
+    fields = _parse(["--standalone-browser-test", "standalone_browser_existing_profile_setup"])
+    assert fields["status"] == "0"
+    assert fields["standalone"] == "0"
+    assert fields["standalone_test"] == "standalone_browser_existing_profile_setup"
 
 
 def test_full_retry_selection_is_accepted() -> None:
@@ -657,6 +674,31 @@ def test_native_swiftui_selector_matches_exactly_one_owned_cell() -> None:
             ["--retry-cell", "cell", "--retry-only", "--standalone-browser"],
             id="retry-only-with-standalone-browser",
         ),
+        pytest.param(
+            [
+                "--standalone-browser-test",
+                "standalone_browser_roundtrip",
+                "--standalone-browser",
+            ],
+            id="focused-with-full-standalone-browser",
+        ),
+        pytest.param(
+            [
+                "--standalone-browser-test",
+                "standalone_browser_roundtrip",
+                "--retry-cell",
+                "cell",
+            ],
+            id="focused-with-retry",
+        ),
+        pytest.param(
+            ["--standalone-browser-test", "../escape"],
+            id="focused-path-traversal",
+        ),
+        pytest.param(
+            ["--standalone-browser-test"],
+            id="focused-missing-value",
+        ),
         pytest.param(["--unknown"], id="unknown-argument"),
     ],
 )
@@ -670,6 +712,55 @@ def test_help_exits_without_running() -> None:
     fields = _fields(completed.stdout)
     assert fields["status"] == "3"
     assert "--retry-cell" in completed.stdout
+    assert "--standalone-browser-test" in completed.stdout
+
+
+def test_standalone_browser_runner_help_has_no_setup_side_effects(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    completed = subprocess.run(
+        ["bash", str(STANDALONE_BROWSER_RUNNER), "--help"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUA_E2E_ARTIFACT_DIR": str(artifact_dir)},
+        check=False,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "--test" in completed.stdout
+    assert not artifact_dir.exists()
+
+
+def test_standalone_browser_runner_refuses_malformed_test_before_setup(tmp_path: Path) -> None:
+    artifact_dir = tmp_path / "artifacts"
+    completed = subprocess.run(
+        ["bash", str(STANDALONE_BROWSER_RUNNER), "--test", "../escape"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "CUA_E2E_ARTIFACT_DIR": str(artifact_dir)},
+        check=False,
+    )
+    assert completed.returncode == 2
+    assert "artifact-safe" in completed.stderr
+    assert not artifact_dir.exists()
+
+
+def test_macos_focused_browser_runner_forwards_exact_selection(tmp_path: Path) -> None:
+    fake_repo = tmp_path / "repo"
+    output = tmp_path / "selection.txt"
+    _write_executable(
+        fake_repo / "scripts/ci/run-rust-standalone-browser-e2e.sh",
+        'printf "test=%s\\nartifact=%s\\n" "$2" "$CUA_E2E_ARTIFACT_DIR" > "$OUTPUT"\n',
+    )
+    completed = _run(
+        RUN_ALL,
+        f'REPO_ROOT="{fake_repo}"\n'
+        "ensure_unrestricted_daemon() { :; }\n"
+        "run_standalone_browser_tests standalone_browser_existing_profile_setup\n",
+        env={"OUTPUT": str(output)},
+    )
+    assert completed.returncode == 0, completed.stderr
+    fields = _fields(output.read_text(encoding="utf-8"))
+    assert fields["test"] == "standalone_browser_existing_profile_setup"
+    assert fields["artifact"] == str(fake_repo / "artifacts/cua-driver/macos-standalone-browser")
 
 
 def test_full_matrix_clears_inherited_retry_filters(tmp_path: Path) -> None:

@@ -7,6 +7,39 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 RUST_ROOT="${REPO_ROOT}/libs/cua-driver/rust"
 ARTIFACT_DIR="${CUA_E2E_ARTIFACT_DIR:-${REPO_ROOT}/artifacts/cua-driver/standalone-browser}"
 
+usage() {
+  cat <<'EOF'
+Usage: run-rust-standalone-browser-e2e.sh [--test <exact-rust-test-name>]
+
+Run the complete external Chromium browser matrix by default.
+
+--test runs one exact declared Rust test as a local diagnostic. Its result is
+not a canonical matrix result and cannot be used to shorten certification.
+EOF
+}
+
+SELECTED_TEST=""
+while (($#)); do
+  case "$1" in
+    --test=*) SELECTED_TEST="${1#*=}" ;;
+    --test)
+      if (($# < 2)) || [[ -z "$2" || "$2" == -* ]]; then
+        echo "--test requires one exact Rust test name" >&2
+        exit 2
+      fi
+      SELECTED_TEST="$2"
+      shift
+      ;;
+    -h|--help) usage; exit 0 ;;
+    *) echo "unknown argument: $1" >&2; usage >&2; exit 2 ;;
+  esac
+  shift
+done
+if [[ -n "${SELECTED_TEST}" && ! "${SELECTED_TEST}" =~ ^standalone_browser_[a-z0-9_]+$ ]]; then
+  echo "--test must be one artifact-safe standalone_browser_* Rust test name" >&2
+  exit 2
+fi
+
 if [[ -d "${ARTIFACT_DIR}" ]] \
     && [[ -n "$(find "${ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
   echo "Standalone-browser artifact directory is not empty: ${ARTIFACT_DIR}" >&2
@@ -79,6 +112,13 @@ fi
 : > "${CUA_E2E_ENVIRONMENT_FILE}"
 : > "${CUA_E2E_BROWSER_PROVENANCE_FILE}"
 : > "${CUA_E2E_RESULTS_FILE}"
+if [[ -n "${SELECTED_TEST}" ]]; then
+  jq -n \
+    --arg schema 'cua-driver/standalone-browser-diagnostic@v1' \
+    --arg test "${SELECTED_TEST}" \
+    '{schema: $schema, test: $test, canonical: false}' \
+    > "${ARTIFACT_DIR}/diagnostic-selection.json"
+fi
 
 SOURCE_MARKER="${REPO_ROOT}/.cua-e2e-source-sha"
 if [[ -f "${SOURCE_MARKER}" ]]; then
@@ -136,6 +176,23 @@ else
     standalone_browser_window_collision
   )
 fi
+
+if [[ -n "${SELECTED_TEST}" ]]; then
+  declared=0
+  for test_name in "${tests[@]}"; do
+    if [[ "${test_name}" == "${SELECTED_TEST}" ]]; then
+      declared=1
+      break
+    fi
+  done
+  if [[ "${declared}" != 1 ]]; then
+    echo "--test is not declared for ${HOST_OS}: ${SELECTED_TEST}" >&2
+    exit 2
+  fi
+  tests=("${SELECTED_TEST}")
+  echo "[DIAGNOSTIC] Running only ${SELECTED_TEST}; this is not a canonical matrix"
+fi
+
 failure_count=0
 for test_name in "${tests[@]}"; do
   echo "[RUN] ${test_name}"
@@ -168,8 +225,16 @@ if [[ "${report_status}" != 0 ]]; then
 fi
 
 if [[ "${failure_count}" != 0 ]]; then
-  echo "Standalone-browser E2E had ${failure_count} failing step(s)" >&2
+  if [[ -n "${SELECTED_TEST}" ]]; then
+    echo "Standalone-browser diagnostic ${SELECTED_TEST} had ${failure_count} failing step(s)" >&2
+  else
+    echo "Standalone-browser E2E had ${failure_count} failing step(s)" >&2
+  fi
   exit 1
 fi
 
-echo "Standalone-browser E2E completed"
+if [[ -n "${SELECTED_TEST}" ]]; then
+  echo "Standalone-browser diagnostic completed for ${SELECTED_TEST}"
+else
+  echo "Standalone-browser E2E completed"
+fi

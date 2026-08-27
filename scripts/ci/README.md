@@ -18,6 +18,18 @@ scripts/ci/run-rust-standalone-browser-e2e.sh
 scripts/ci/windows/run-rust-standalone-browser-e2e.ps1
 ```
 
+The Unix runner also accepts one exact diagnostic selection:
+
+```bash
+scripts/ci/run-rust-standalone-browser-e2e.sh \
+  --test standalone_browser_existing_profile_setup
+```
+
+This still builds the source driver, stages the sentinel, writes isolated
+evidence, and validates the report, but `diagnostic-selection.json` marks the
+result non-canonical. The selector must name one test declared for the current
+platform. The no-selector command remains the complete installed-browser gate.
+
 The runners require an existing desktop user session and a fresh artifact
 directory. They stage the repo-owned Electron foreground sentinel when the
 fixture is absent and execute each scenario in an independent Cargo process.
@@ -105,7 +117,10 @@ The maintainer-facing macOS command is
 Lume seed, installs the exact committed source, and then delegates to the thin
 `macos/run-rust-e2e.sh` matrix runner above. There is no GitHub-hosted macOS GUI
 job. Pass `--standalone-browser` to run the optional installed Chrome/Edge
-browser matrix after the canonical repo-local harness matrix.
+browser matrix after the canonical repo-local harness matrix. For one macOS
+browser diagnostic with the same signed source install and daemon lifecycle,
+use `--standalone-browser-test <exact-rust-test-name>`; this skips the repo-local
+matrix and produces explicitly non-canonical evidence.
 
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every

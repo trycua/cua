@@ -386,7 +386,21 @@ cd ~/cua
 libs/cua-driver/tests/runners/macos-lume/run-all.sh --standalone-browser
 ```
 
-This adds the declared adversarial installed-browser rows and writes their
+For one focused browser diagnostic, keep the same exact-source installation,
+permission checks, fixture staging, unrestricted daemon transition, evidence
+setup, and standard-daemon restoration:
+
+```bash
+cd ~/cua
+libs/cua-driver/tests/runners/macos-lume/run-all.sh \
+  --standalone-browser-test standalone_browser_existing_profile_setup
+```
+
+This skips the canonical repo-local matrix and runs only one browser test that
+is declared for macOS. Its artifact includes `diagnostic-selection.json` with
+`canonical: false`; it cannot replace either complete matrix.
+
+`--standalone-browser` adds the declared adversarial installed-browser rows and writes their
 separate typed results and MP4 evidence under
 `artifacts/cua-driver/macos-standalone-browser/`. Missing external browsers are
 a hard failure for this option; they never shrink the reported matrix. On a

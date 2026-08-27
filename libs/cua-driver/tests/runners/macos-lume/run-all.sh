@@ -43,6 +43,7 @@ RETRYABLE_LANES=(
 usage() {
   cat <<'EOF'
 Usage: run-all.sh [--no-build] [--standalone-browser]
+                  [--standalone-browser-test <exact-rust-test-name>]
                   [--retry-cell <cell-id> [--retry-harness <harness>]
                    [--retry-attempts <1-3>] [--retry-only]]
 
@@ -52,6 +53,11 @@ logged-in desktop session, not over SSH.
 
 --standalone-browser also runs the optional installed Chrome/Edge browser-tool
 matrix after the canonical repo-local harness matrix.
+
+--standalone-browser-test runs one exact declared browser test as a diagnostic,
+after the same source install, fixture setup, and daemon authorization. It skips
+the canonical repo-local matrix and cannot be combined with retry options or
+--standalone-browser. Its result is not canonical certification evidence.
 
 --retry-cell authorizes exactly one bounded retry selection. After a failing
 full matrix the runner retries that single cell only when it was the matrix's
@@ -68,6 +74,7 @@ EOF
 }
 
 RUN_STANDALONE_BROWSER=0
+STANDALONE_BROWSER_TEST=""
 NO_BUILD=0
 RETRY_CELL=""
 RETRY_HARNESS=""
@@ -76,6 +83,7 @@ RETRY_ONLY=0
 
 parse_arguments() {
   RUN_STANDALONE_BROWSER=0
+  STANDALONE_BROWSER_TEST=""
   NO_BUILD=0
   RETRY_CELL=""
   RETRY_HARNESS=""
@@ -85,16 +93,18 @@ parse_arguments() {
     case "$1" in
       --no-build) NO_BUILD=1 ;;
       --standalone-browser) RUN_STANDALONE_BROWSER=1 ;;
+      --standalone-browser-test=*) STANDALONE_BROWSER_TEST="${1#*=}" ;;
       --retry-only) RETRY_ONLY=1 ;;
       --retry-cell=*) RETRY_CELL="${1#*=}" ;;
       --retry-harness=*) RETRY_HARNESS="${1#*=}" ;;
       --retry-attempts=*) RETRY_ATTEMPTS="${1#*=}" ;;
-      --retry-cell|--retry-harness|--retry-attempts)
+      --standalone-browser-test|--retry-cell|--retry-harness|--retry-attempts)
         if (($# < 2)) || [[ -z "$2" || "$2" == -* ]]; then
           echo "$1 requires a value" >&2
           return 2
         fi
         case "$1" in
+          --standalone-browser-test) STANDALONE_BROWSER_TEST="$2" ;;
           --retry-cell) RETRY_CELL="$2" ;;
           --retry-harness) RETRY_HARNESS="$2" ;;
           --retry-attempts) RETRY_ATTEMPTS="$2" ;;
@@ -110,6 +120,23 @@ parse_arguments() {
 }
 
 validate_arguments() {
+  if [[ -n "${STANDALONE_BROWSER_TEST}" ]]; then
+    if [[ ! "${STANDALONE_BROWSER_TEST}" =~ ^standalone_browser_[a-z0-9_]+$ ]]; then
+      echo "--standalone-browser-test must be one artifact-safe standalone_browser_* Rust test name" >&2
+      return 2
+    fi
+    if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
+      echo "--standalone-browser-test cannot be combined with --standalone-browser" >&2
+      return 2
+    fi
+    if [[ -n "${RETRY_CELL}" || -n "${RETRY_HARNESS}" || -n "${RETRY_ATTEMPTS}" \
+        || "${RETRY_ONLY}" == 1 ]]; then
+      echo "--standalone-browser-test cannot be combined with retry options" >&2
+      return 2
+    fi
+    return 0
+  fi
+
   if [[ -z "${RETRY_CELL}" ]]; then
     if [[ -n "${RETRY_HARNESS}" ]]; then
       echo "--retry-harness requires --retry-cell" >&2
@@ -715,6 +742,31 @@ run_retry_sequence() {
   return 1
 }
 
+run_standalone_browser_tests() {
+  local selected_test="${1:-}"
+  local browser_args=()
+  local browser_status=0
+  local browser_artifact_dir="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
+  if [[ -n "${selected_test}" ]]; then
+    browser_args=(--test "${selected_test}")
+    echo "[E2E] Running standalone browser diagnostic ${selected_test}"
+  else
+    echo "[E2E] Running the optional standalone browser matrix"
+  fi
+  if [[ -d "${browser_artifact_dir}" ]] \
+      && [[ -n "$(find "${browser_artifact_dir}" -mindepth 1 -print -quit)" ]]; then
+    local browser_artifact_archive
+    browser_artifact_archive="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
+    mv "${browser_artifact_dir}" "${browser_artifact_archive}/macos-standalone-browser"
+    echo "Previous standalone-browser evidence preserved at ${browser_artifact_archive}/macos-standalone-browser"
+  fi
+  ensure_unrestricted_daemon
+  CUA_E2E_ARTIFACT_DIR="${browser_artifact_dir}" \
+    "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh" \
+    "${browser_args[@]}" || browser_status=$?
+  return "${browser_status}"
+}
+
 if [[ "${CUA_E2E_RUNNER_LIB_ONLY:-0}" == 1 ]]; then
   # Sourced by the focused runner tests, which exercise the helpers above
   # without a macOS GUI session.
@@ -892,6 +944,11 @@ fi
 RESULTS_FILE="${ARTIFACT_DIR}/results.jsonl"
 FAILURES_FILE="${ARTIFACT_DIR}/failures.json"
 
+if [[ -n "${STANDALONE_BROWSER_TEST}" ]]; then
+  run_standalone_browser_tests "${STANDALONE_BROWSER_TEST}"
+  exit $?
+fi
+
 if [[ "${RETRY_ONLY}" == 1 ]]; then
   echo "[E2E] Running only the authorized retry selection for ${RETRY_CELL}"
   RETRY_STATUS=0
@@ -944,22 +1001,5 @@ elif [[ -n "${RETRY_CELL}" ]]; then
 fi
 
 if [[ "${RUN_STANDALONE_BROWSER}" == 1 ]]; then
-  echo "[E2E] Running the optional standalone browser matrix"
-  BROWSER_ARTIFACT_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-standalone-browser"
-  if [[ -d "${BROWSER_ARTIFACT_DIR}" ]] \
-      && [[ -n "$(find "${BROWSER_ARTIFACT_DIR}" -mindepth 1 -print -quit)" ]]; then
-    BROWSER_ARTIFACT_ARCHIVE="$(mktemp -d "${TMPDIR:-/tmp}/cua-macos-browser-e2e.XXXXXX")"
-    mv "${BROWSER_ARTIFACT_DIR}" "${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-    echo "Previous standalone-browser evidence preserved at ${BROWSER_ARTIFACT_ARCHIVE}/macos-standalone-browser"
-  fi
-  ensure_unrestricted_daemon
-  set +e
-  CUA_E2E_ARTIFACT_DIR="${BROWSER_ARTIFACT_DIR}" \
-    "${REPO_ROOT}/scripts/ci/run-rust-standalone-browser-e2e.sh"
-  BROWSER_STATUS=$?
-  set -e
-
-  if [[ "${BROWSER_STATUS}" != 0 ]]; then
-    exit "${BROWSER_STATUS}"
-  fi
+  run_standalone_browser_tests
 fi

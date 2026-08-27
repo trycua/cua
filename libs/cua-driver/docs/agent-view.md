@@ -56,10 +56,22 @@ non-activating PiP window in the current login session. The window cards and
 cursor inside it are presentation: cards are exact target captures, and the
 cursor is the last agent action position drawn over its target.
 
-Grant CuaDriver both **Accessibility** and **Screen Recording** before using
-this mode. Strict startup only checks the existing grants. If either is
-missing, it exits with setup instructions instead of showing a prompt or
+Complete the trusted capture setup before using this mode:
+
+```console
+cua-driver permissions grant
+```
+
+That command requests **Accessibility**, **Screen Recording**, and direct
+ScreenCaptureKit access through CuaDriver.app. macOS can show its own capture
+acknowledgement during this setup, so finish it before starting background-only
+work. Strict startup only checks the existing TCC grants. If either base grant
+is missing, it exits with setup instructions instead of showing a prompt or
 opening System Settings over the user's desktop.
+
+macOS may renew its capture acknowledgement later. That system UI can briefly
+change the active/key application. Background-only mode cannot suppress it, so
+cold or renewed first-capture non-disruption is not yet guaranteed.
 
 The mode changes dispatch behavior on macOS:
 

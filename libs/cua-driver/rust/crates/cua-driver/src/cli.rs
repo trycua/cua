@@ -688,6 +688,13 @@ pub fn parse_command() -> Command {
         println!(
             "                                          pre-bound embedded-tab click/text remain."
         );
+        println!(
+            "                                          Run `cua-driver permissions grant` first;"
+        );
+        println!(
+            "                                          macOS may show its capture acknowledgement"
+        );
+        println!("                                          during that trusted setup step.");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");
@@ -1833,7 +1840,7 @@ pub fn build_manifest() -> serde_json::Value {
                   { "name": "--embedded", "type": "flag", "description": "Run embedded inside a host app: inherit the host's TCC grants, never prompt or relaunch. Also CUA_DRIVER_EMBEDDED=1." },
                   { "name": "--host-bundle-id", "type": "string", "description": "Advisory host bundle id label echoed in check_permissions output." },
                   { "name": "--agent-view", "type": "flag", "description": "Show the optional always-on-top Agent View presentation." },
-                  { "name": "--agent-view-background-only", "type": "flag", "description": "macOS only: start strict same-session Agent View with fail-closed exact-target mutation." },
+                  { "name": "--agent-view-background-only", "type": "flag", "description": "macOS only: start strict same-session Agent View after trusted permissions/direct-capture setup; exact-target mutation fails closed." },
                   { "name": "--agent-view-geometry", "type": "string", "description": "Set the Agent View size and optional top-left position as WxH[+X+Y]." },
                   { "name": "--experimental-history", "type": "flag", "description": "Admit the encrypted local Computer History early preview for this daemon launch." }
               ] },

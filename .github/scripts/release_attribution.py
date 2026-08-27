@@ -331,6 +331,30 @@ def _normalized_set(config: Mapping[str, Any], key: str) -> set[str]:
     return {str(item).strip().lower() for item in config.get(key, [])}
 
 
+def unresolved_coauthor_identities(
+    commits: Sequence[CommitRecord], config: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    """Return commit trailers that cannot resolve to a trusted contributor."""
+    ignored = _normalized_set(config, "ignoredCoauthorEmails")
+    overrides = _normalized_map(config, "identityOverrides")
+    coauthor_overrides = _normalized_map(config, "coauthorOverrides")
+    unresolved: dict[tuple[str, str], dict[str, str]] = {}
+    for commit in commits:
+        for match in COAUTHOR_RE.finditer(commit.body):
+            name = match.group("name").strip() or "unknown"
+            email = match.group("email").strip().lower()
+            if not email or email in ignored:
+                continue
+            identity = f"{name} <{email}>".lower()
+            login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
+            if login:
+                continue
+            unresolved.setdefault(
+                (commit.sha, email), {"sha": commit.sha, "name": name, "email": email}
+            )
+    return sorted(unresolved.values(), key=lambda item: (item["email"], item["sha"]))
+
+
 def validate_pr_attribution(
     *,
     repository: str,
@@ -423,19 +447,11 @@ def validate_pr_attribution(
         author_email = str(author.get("email") or "").strip().lower()
         linked_author = str((item.get("author") or {}).get("login") or "").strip()
         author_login = resolved_login(author_name, author_email, linked_author)
-        committer = commit.get("committer") or {}
-        committer_email = str(committer.get("email") or "").strip().lower()
-        linked_committer = str((item.get("committer") or {}).get("login") or "").strip()
         parents = [str(parent.get("sha") or "") for parent in item.get("parents") or []]
         is_base_sync_merge = len(parents) > 1 and any(
             parent and parent not in commit_shas for parent in parents[1:]
         )
-        preserved_unlinked_author = (
-            not author_login
-            and bool(pull_login)
-            and linked_committer.lower() == pull_login.lower()
-            and author_email != committer_email
-        )
+        unlinked_author = not author_login and author_email not in ignored
         distinct_external_author = bool(author_login) and (
             author_login.lower() != pull_login.lower()
             and not is_bot(author_login, bots)
@@ -457,12 +473,12 @@ def validate_pr_attribution(
                     "distinct from the landing PR author, but that contribution is not "
                     f"credited; add `{trailer}` to a commit in this PR"
                 )
-        elif preserved_unlinked_author and author_email not in ignored:
+        elif unlinked_author:
             record_unresolved(
                 email=author_email,
                 name=author_name,
                 sha=sha,
-                kind="commit author",
+                kind="unlinked commit author (would become a squash coauthor)",
                 references=references,
             )
         elif distinct_external_author:
@@ -753,8 +769,9 @@ def _change_contributors(
         login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
         if not login:
             raise ReleaseError(
-                f"commit {commit.sha} has an unresolved human coauthor email; "
-                "add an exceptional identityOverrides entry"
+                f"commit {commit.sha} has unresolved human coauthor {email}; "
+                "link that email to GitHub, amend the commit with a recognized email, "
+                "or add a verified identityOverrides entry"
             )
         if is_bot(login, bots) or login.lower() in opt_out:
             continue
@@ -905,9 +922,12 @@ def build_manifest(
         )
         if not entries:
             continue
-        contributors, issues, pull_visual = _change_contributors(
-            pull, commit, github, repository, attribution_config
-        )
+        try:
+            contributors, issues, pull_visual = _change_contributors(
+                pull, commit, github, repository, attribution_config
+            )
+        except ReleaseError as error:
+            raise ReleaseError(f"pull request #{pull_number}: {error}") from error
         visual_requested = visual_requested or pull_visual
         all_contributors.extend(contributors)
 

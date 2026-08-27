@@ -44,6 +44,7 @@ Install the Fleet lifecycle SDK and a TypeScript runner:
 ```bash
 npm install @trycua/fleet
 npm install --save-dev tsx typescript
+npm pkg set type=module
 ```
 
 Set the token and a unique pool name:
@@ -68,6 +69,7 @@ import {
   SandboxTemplateRefBuilder,
   VmTemplateBuilder,
   createFleetClient,
+  uniffiInitAsync,
   type Claim,
 } from '@trycua/fleet/node';
 
@@ -97,6 +99,8 @@ function screenshotBase64(responseBody: ArrayBuffer): string {
   if (typeof encoded !== 'string') throw new Error('Screenshot response has no image data');
   return encoded;
 }
+
+await uniffiInitAsync();
 
 const configuration = new CyclopsTokenProviderConfigurationBuilder()
   .baseUrl(BASE_URL)

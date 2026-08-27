@@ -125,6 +125,10 @@ pub fn is_xaml_host_hwnd(hwnd: u64) -> bool {
 }
 
 const KEY_DELAY_MS: u64 = 4;
+// Foreground key presses must remain down long enough for frame-polled input
+// loops to observe them. Sending down and up in one SendInput batch is valid
+// for message-driven controls but can disappear between game frames.
+const FOREGROUND_KEY_HOLD_MS: u64 = 35;
 
 /// If any UI thread under the target has a focused child window that's a
 /// descendant of `parent`, return that child. Otherwise `None`. Used to retarget
@@ -458,28 +462,39 @@ pub fn send_key_synthesized_after_focus(
     let key_vk = key_name_to_vk(key)?;
     let mod_vks: Vec<VIRTUAL_KEY> = modifiers.iter().filter_map(|m| modifier_vk(m)).collect();
 
-    // Build the INPUT sequence: modifiers down, key down, key up, modifiers up
-    // (reverse order). Each event sends the scancode + EXTENDEDKEY flag where
-    // appropriate so apps that read scancodes (not virtual keys) work too.
-    let mut events: Vec<INPUT> = Vec::with_capacity(mod_vks.len() * 2 + 2);
+    // Build separate press and release phases. Each event sends the scancode +
+    // EXTENDEDKEY flag where appropriate so apps that read scancodes work too.
+    let mut press_events: Vec<INPUT> = Vec::with_capacity(mod_vks.len() + 1);
     for mvk in &mod_vks {
-        events.push(key_input(*mvk, false));
+        press_events.push(key_input(*mvk, false));
     }
-    events.push(key_input(key_vk, false));
-    events.push(key_input(key_vk, true));
+    press_events.push(key_input(key_vk, false));
+    let mut release_events: Vec<INPUT> = Vec::with_capacity(mod_vks.len() + 1);
+    release_events.push(key_input(key_vk, true));
     for mvk in mod_vks.iter().rev() {
-        events.push(key_input(*mvk, true));
+        release_events.push(key_input(*mvk, true));
     }
 
     with_confirmed_foreground(target, "key delivery", focus, || unsafe {
-        let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
-        if sent as usize != events.len() {
+        let pressed = SendInput(&press_events, std::mem::size_of::<INPUT>() as i32);
+        if pressed as usize != press_events.len() {
             bail!(
-                "SendInput inserted only {sent} of {} events. Likely cause: \
+                "SendInput inserted only {pressed} of {} key-down events. Likely cause: \
                  the daemon is not at UIAccess integrity, so SetForegroundWindow \
                  was rejected and the events landed on the wrong window. Run \
                  hotkey through the cua-driver-uia worker.",
-                events.len()
+                press_events.len()
+            );
+        }
+        sleep(Duration::from_millis(FOREGROUND_KEY_HOLD_MS));
+        let released = SendInput(&release_events, std::mem::size_of::<INPUT>() as i32);
+        if released as usize != release_events.len() {
+            // Retry releases once so a partial SendInput does not leave a key
+            // or modifier held while still reporting the failure honestly.
+            let _ = SendInput(&release_events, std::mem::size_of::<INPUT>() as i32);
+            bail!(
+                "SendInput inserted only {released} of {} key-up events.",
+                release_events.len()
             );
         }
         Ok(())

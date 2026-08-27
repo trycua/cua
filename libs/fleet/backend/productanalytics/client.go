@@ -144,7 +144,7 @@ func (client *Client) run() {
 
 func (client *Client) deliver(events []Event) {
 	started := time.Now()
-	defer metrics.ObserveProductAnalyticsDelivery(time.Since(started))
+	defer func() { metrics.ObserveProductAnalyticsDelivery(time.Since(started)) }()
 	items := make([]map[string]any, 0, len(events))
 	for _, event := range events {
 		properties := cloneMap(event.Properties)

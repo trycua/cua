@@ -62,8 +62,9 @@ func (f *fakeBillingService) CreateSetupSession(_ context.Context, subject strin
 	f.setupCalls++
 	f.setupSubject = subject
 	f.setupOptions = options
-	if f.setupErr != nil {
-		return "", f.setupErr
+	setupErr := f.setupErr
+	if setupErr != nil {
+		return "", setupErr
 	}
 	return "https://checkout.stripe.test/session", nil
 }

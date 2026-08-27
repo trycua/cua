@@ -230,6 +230,47 @@ pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option
     None
 }
 
+/// Convert a borrowed AX attribute value only when it is an exact binary state.
+unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        return Some(CFBoolean::wrap_under_get_rule(value as _).into());
+    }
+    if type_id == CFNumber::type_id() {
+        return match CFNumber::wrap_under_get_rule(value as _).to_f64()? {
+            value if value.abs() < f64::EPSILON => Some(false),
+            value if (value - 1.0).abs() < f64::EPSILON => Some(true),
+            _ => None,
+        };
+    }
+    None
+}
+
+/// Copy an exact binary attribute from an AX element in one read.
+///
+/// Accepts native `CFBoolean` values and numeric `0` or `1`. Other numeric
+/// values and all other types return `None` instead of being coerced to true.
+/// Use this for two-state controls whose intermediate or malformed values must
+/// fail closed; use [`copy_bool_attr`] for ordinary truthy attributes.
+///
+/// # Safety
+///
+/// `element` must be a valid Accessibility object reference for the duration
+/// of this call.
+pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let result = coerce_binary_value(value);
+    CFRelease(value);
+    result
+}
+
 /// A copied AX attribute represented for both existing string-only consumers
 /// and the wider structured control-state response.
 #[derive(Debug, PartialEq, Eq)]
@@ -723,6 +764,40 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
 mod tests {
     use super::*;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn binary_value_accepts_booleans_and_exact_zero_or_one() {
+        let true_value = CFBoolean::true_value();
+        let false_value = CFBoolean::false_value();
+        let zero = CFNumber::from(0.0);
+        let one = CFNumber::from(1.0);
+        let fractional = CFNumber::from(0.5);
+        let other = CFNumber::from(2.0);
+        let string = CFStr::new("1");
+
+        assert_eq!(
+            unsafe { coerce_binary_value(true_value.as_CFTypeRef()) },
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(false_value.as_CFTypeRef()) },
+            Some(false)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(zero.as_CFTypeRef()) },
+            Some(false)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(one.as_CFTypeRef()) },
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(fractional.as_CFTypeRef()) },
+            None
+        );
+        assert_eq!(unsafe { coerce_binary_value(other.as_CFTypeRef()) }, None);
+        assert_eq!(unsafe { coerce_binary_value(string.as_CFTypeRef()) }, None);
+    }
 
     #[test]
     fn stringish_value_coerces_cfstring_cfnumber_and_cfboolean() {

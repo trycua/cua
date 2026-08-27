@@ -34,6 +34,12 @@ struct NativeHandles {
     delegate: usize,
 }
 
+#[derive(Default)]
+struct ExpansionState {
+    compact_frame: Option<[f64; 4]>,
+    expanded: bool,
+}
+
 /// Outer corner radius of the Agent View container chrome.
 const CONTAINER_RADIUS: f64 = 15.0;
 const PIP_CORNER_RADIUS: f64 = 12.0;
@@ -55,6 +61,10 @@ const RESIZE_TOP: isize = 8;
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
 static VIEW_MODEL: Mutex<Option<PipViewModel>> = Mutex::new(None);
+static EXPANSION_STATE: Mutex<ExpansionState> = Mutex::new(ExpansionState {
+    compact_frame: None,
+    expanded: false,
+});
 
 #[link(name = "dispatch", kind = "dylib")]
 extern "C" {
@@ -899,6 +909,142 @@ fn resized_window_frame(
     NSRect::new(NSPoint::new(x, y), NSSize::new(width, height))
 }
 
+fn expanded_window_frame(
+    current: objc2_foundation::NSRect,
+    available: objc2_foundation::NSRect,
+) -> objc2_foundation::NSRect {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let horizontal_margin = 24.0;
+    let vertical_margin = 24.0;
+    let max_width = (available.size.width - 2.0 * horizontal_margin).max(current.size.width);
+    let max_height = (available.size.height - 2.0 * vertical_margin).max(current.size.height);
+    let width = (available.size.width * 0.76)
+        .max(current.size.width + 180.0)
+        .min(max_width);
+    let height = (available.size.height * 0.78)
+        .max(current.size.height + 140.0)
+        .min(max_height);
+
+    NSRect::new(
+        NSPoint::new(
+            available.origin.x + (available.size.width - width) / 2.0,
+            available.origin.y + (available.size.height - height) / 2.0,
+        ),
+        NSSize::new(width, height),
+    )
+}
+
+fn rect_from_components(components: [f64; 4]) -> objc2_foundation::NSRect {
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+    NSRect::new(
+        NSPoint::new(components[0], components[1]),
+        NSSize::new(components[2], components[3]),
+    )
+}
+
+fn rect_components(rect: objc2_foundation::NSRect) -> [f64; 4] {
+    [
+        rect.origin.x,
+        rect.origin.y,
+        rect.size.width,
+        rect.size.height,
+    ]
+}
+
+extern "C" fn on_toggle_expanded(
+    _delegate: *mut objc2::runtime::AnyObject,
+    _selector: objc2::runtime::Sel,
+    sender: *mut objc2::runtime::AnyObject,
+) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+
+    if sender.is_null() {
+        return;
+    }
+    unsafe {
+        let window: *mut AnyObject = msg_send![sender, window];
+        if window.is_null() {
+            return;
+        }
+        let current: objc2_foundation::NSRect = msg_send![window, frame];
+        let screen: *mut AnyObject = msg_send![window, screen];
+        if screen.is_null() {
+            return;
+        }
+        let available: objc2_foundation::NSRect = msg_send![screen, visibleFrame];
+        let (target, expanded) = {
+            let mut state = EXPANSION_STATE.lock().unwrap();
+            if state.expanded {
+                let target = state
+                    .compact_frame
+                    .map(rect_from_components)
+                    .unwrap_or(current);
+                state.expanded = false;
+                (target, false)
+            } else {
+                state.compact_frame = Some(rect_components(current));
+                state.expanded = true;
+                (expanded_window_frame(current, available), true)
+            }
+        };
+        let _: () = msg_send![window, setFrame: target display: true animate: true];
+        let title = ns_string(if expanded { "Shrink" } else { "Expand" });
+        let tooltip = ns_string(if expanded {
+            "Restore compact Agent View"
+        } else {
+            "Expand Agent View"
+        });
+        let _: () = msg_send![sender, setTitle: title];
+        let _: () = msg_send![sender, setToolTip: tooltip];
+        let _: () = msg_send![sender, setAccessibilityLabel: tooltip];
+    }
+}
+
+unsafe fn install_expand_button(
+    content_view: *mut objc2::runtime::AnyObject,
+    bounds: objc2_foundation::NSRect,
+    delegate: *mut objc2::runtime::AnyObject,
+) {
+    use objc2::msg_send;
+    use objc2::runtime::AnyObject;
+    use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+    let size = NSSize::new(58.0, 26.0);
+    let button: *mut AnyObject = {
+        let allocated: *mut AnyObject = msg_send![objc2::class!(NSButton), alloc];
+        msg_send![
+            allocated,
+            initWithFrame: NSRect::new(
+                NSPoint::new(bounds.size.width - size.width - 12.0, bounds.size.height - size.height - 12.0),
+                size,
+            )
+        ]
+    };
+    let title = ns_string("Expand");
+    let tooltip = ns_string("Expand Agent View");
+    let _: () = msg_send![button, setTitle: title];
+    let _: () = msg_send![button, setToolTip: tooltip];
+    let _: () = msg_send![button, setAccessibilityLabel: tooltip];
+    let _: () = msg_send![button, setBordered: false];
+    let _: () = msg_send![button, setRefusesFirstResponder: true];
+    let _: () = msg_send![button, setAutoresizingMask: 9u64];
+    let _: () = msg_send![button, setWantsLayer: true];
+    let foreground: *mut AnyObject = msg_send![objc2::class!(NSColor), whiteColor];
+    let _: () = msg_send![button, setContentTintColor: foreground];
+    let layer: *mut AnyObject = msg_send![button, layer];
+    let _: () = msg_send![layer, setCornerRadius: 9.0_f64];
+    set_continuous_corners(layer);
+    set_layer_background(layer, color(0.04, 0.05, 0.07, 0.82));
+    set_layer_border(layer, 0.7, color(1.0, 1.0, 1.0, 0.42));
+    let font: *mut AnyObject = msg_send![objc2::class!(NSFont), boldSystemFontOfSize: 10.0_f64];
+    let _: () = msg_send![button, setFont: font];
+    let _: () = msg_send![button, setTarget: delegate];
+    let _: () = msg_send![button, setAction: objc2::sel!(toggleExpanded:)];
+    let _: () = msg_send![content_view, addSubview: button];
+}
+
 fn agent_view_shell_hit_class() -> &'static objc2::runtime::AnyClass {
     use objc2::class;
     use objc2::declare::ClassBuilder;
@@ -1163,6 +1309,7 @@ unsafe extern "C" fn shutdown_cb(_ctx: *mut c_void) {
         let _: () = msg_send![window, close];
         let _ = handles.delegate;
     }
+    *EXPANSION_STATE.lock().unwrap() = ExpansionState::default();
 }
 
 fn agent_view_delegate_class() -> &'static objc2::runtime::AnyClass {
@@ -1182,6 +1329,10 @@ fn agent_view_delegate_class() -> &'static objc2::runtime::AnyClass {
             builder.add_method(
                 objc2::sel!(selectWorkspace:),
                 on_select_workspace as extern "C" fn(_, _, _),
+            );
+            builder.add_method(
+                objc2::sel!(toggleExpanded:),
+                on_toggle_expanded as extern "C" fn(_, _, _),
             );
         }
         builder.register()
@@ -1627,6 +1778,8 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
 
     let delegate = agent_view_delegate_instance();
     let _: () = msg_send![window, setDelegate: delegate];
+    install_expand_button(content_view, bounds, delegate);
+    *EXPANSION_STATE.lock().unwrap() = ExpansionState::default();
     *HANDLES.lock().unwrap() = Some(NativeHandles {
         window: window as usize,
         canvas_view: canvas as usize,
@@ -1710,6 +1863,22 @@ mod tests {
         assert_eq!(inner.origin, NSPoint::new(9.0, 10.0));
         assert_eq!(inner.size, NSSize::new(602.0, 390.0));
         assert_eq!(outer.size.height - inner.origin.y - inner.size.height, 20.0);
+    }
+
+    #[test]
+    fn expanded_frame_grows_and_stays_inside_the_visible_screen() {
+        use objc2_foundation::{NSPoint, NSRect, NSSize};
+
+        let compact = NSRect::new(NSPoint::new(1050.0, 470.0), NSSize::new(820.0, 540.0));
+        let visible = NSRect::new(NSPoint::new(0.0, 40.0), NSSize::new(1920.0, 1040.0));
+        let expanded = expanded_window_frame(compact, visible);
+
+        assert!(expanded.size.width > compact.size.width);
+        assert!(expanded.size.height > compact.size.height);
+        assert!(expanded.origin.x >= visible.origin.x + 24.0);
+        assert!(expanded.origin.y >= visible.origin.y + 24.0);
+        assert!(expanded.origin.x + expanded.size.width <= visible.origin.x + visible.size.width);
+        assert!(expanded.origin.y + expanded.size.height <= visible.origin.y + visible.size.height);
     }
 
     #[test]

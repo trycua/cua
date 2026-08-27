@@ -11,6 +11,9 @@ cua-driver --agent-view
 Use `--agent-view-geometry WxH[+X+Y]` to override its initial size and optional
 top-left position. The default is `640x420` near the top-right of the main
 display. The view is resizable on macOS, Windows, and Linux X11/XWayland.
+On macOS, the local **Expand** button grows Agent View into a large centered
+viewer without activating or resizing the represented application. Click
+**Shrink** to return to the prior compact frame.
 
 ## Session model
 

@@ -34,6 +34,41 @@ impl RetainedElement {
 }
 
 impl RetainedElement {
+    pub(crate) fn from_uia(
+        element: IUIAutomationElement,
+        center: (i32, i32),
+        rect: Option<(i32, i32, i32, i32)>,
+    ) -> Self {
+        let ptr = element.as_raw() as usize;
+        std::mem::forget(element);
+        Self {
+            ptr,
+            kind: SnapshotKind::Uia,
+            center,
+            rect,
+            msaa_role: None,
+            read_while_minimized: false,
+        }
+    }
+
+    pub(crate) fn from_msaa(
+        element: IAccessible,
+        center: (i32, i32),
+        rect: Option<(i32, i32, i32, i32)>,
+        role: Option<i32>,
+    ) -> Self {
+        let ptr = element.as_raw() as usize;
+        std::mem::forget(element);
+        Self {
+            ptr,
+            kind: SnapshotKind::Msaa,
+            center,
+            rect,
+            msaa_role: role,
+            read_while_minimized: false,
+        }
+    }
+
     pub fn as_ptr(&self) -> usize {
         self.ptr
     }
@@ -120,18 +155,20 @@ pub struct UiaSnapshot {
 }
 
 impl UiaSnapshot {
-    pub fn from_nodes(nodes: &[UiaNode], kind: SnapshotKind) -> Self {
+    /// Transfer the walk's actionable references into a snapshot. The node
+    /// guards release every reference that is not adopted, including on error.
+    pub fn adopt_nodes(nodes: &mut [UiaNode]) -> Self {
         Self {
             elements: nodes
-                .iter()
+                .iter_mut()
                 .filter(|node| node.element_index.is_some())
-                .map(|node| RetainedElement {
-                    ptr: node.element_ptr,
-                    kind,
-                    center: (node.center_x, node.center_y),
-                    rect: node.rect,
-                    msaa_role: node.msaa_role,
-                    read_while_minimized: false,
+                .map(|node| {
+                    let retained = node
+                        .retained_element
+                        .take()
+                        .expect("actionable walk node must own its COM reference");
+                    node.element_ptr = 0;
+                    retained
                 })
                 .collect(),
         }

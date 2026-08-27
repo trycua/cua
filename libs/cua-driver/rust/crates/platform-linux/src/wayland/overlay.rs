@@ -605,6 +605,10 @@ fn redraw(
         state.core.pos.0, state.core.pos.1, state.core.visible
     ));
     surface.attach(Some(&buffer), 0, 0);
+    // Mark both logical and buffer-space damage. Some wlroots versions do
+    // not repaint transparent pixels reliably when only damage_buffer is
+    // supplied, which leaves stale cursor frames visible as trails.
+    surface.damage(0, 0, w as i32, h as i32);
     surface.damage_buffer(0, 0, w as i32, h as i32);
     surface.commit();
     pool.destroy();

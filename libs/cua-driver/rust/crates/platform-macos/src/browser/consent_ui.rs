@@ -66,21 +66,170 @@ fn consent_surface_ids(
         .collect()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct ConsentButtonCandidate {
+    element_ptr: usize,
+    frame: [f64; 4],
+}
+
+fn subtree_end(nodes: &[AXNode], root_index: usize) -> usize {
+    let root_depth = nodes[root_index].depth;
+    nodes
+        .iter()
+        .enumerate()
+        .skip(root_index + 1)
+        .find(|(_, node)| node.depth <= root_depth)
+        .map_or(nodes.len(), |(index, _)| index)
+}
+
+fn edge_gap(first: [f64; 4], second: [f64; 4]) -> Option<f64> {
+    let [first_x, first_y, first_width, first_height] = first;
+    let [second_x, second_y, second_width, second_height] = second;
+    let same_row = (first_y - second_y).abs() <= 1.0 && (first_height - second_height).abs() <= 1.0;
+    if !same_row {
+        return None;
+    }
+    let first_right = first_x + first_width;
+    let second_right = second_x + second_width;
+    if first_right <= second_x {
+        Some(second_x - first_right)
+    } else if second_right <= first_x {
+        Some(first_x - second_right)
+    } else {
+        None
+    }
+}
+
+fn frame_is_inside(inner: [f64; 4], outer: [f64; 4]) -> bool {
+    let [inner_x, inner_y, inner_width, inner_height] = inner;
+    let [outer_x, outer_y, outer_width, outer_height] = outer;
+    inner_width > 0.0
+        && inner_height > 0.0
+        && inner_x >= outer_x - 1.0
+        && inner_y >= outer_y - 1.0
+        && inner_x + inner_width <= outer_x + outer_width + 1.0
+        && inner_y + inner_height <= outer_y + outer_height + 1.0
+}
+
+fn structural_consent_actions(
+    sheet: &AXNode,
+    sheet_nodes: &[AXNode],
+) -> Result<Option<(usize, usize)>, BrowserRefusal> {
+    let sheet_title = normalized_text(sheet);
+    if sheet_title.is_empty()
+        || sheet_nodes
+            .iter()
+            .filter(|node| node.role == "AXHeading" && normalized_text(node) == sheet_title)
+            .count()
+            != 1
+        || sheet_nodes
+            .iter()
+            .filter(|node| node.role == "AXStaticText")
+            .count()
+            < 2
+    {
+        return Ok(None);
+    }
+    let Some(sheet_frame) = sheet.frame else {
+        return Ok(None);
+    };
+    let mut candidates = sheet_nodes
+        .iter()
+        .filter_map(|node| {
+            let frame = node.frame?;
+            (node.role == "AXButton"
+                && node.actions.iter().any(|action| action == "AXPress")
+                && node.element_ptr != 0
+                && frame_is_inside(frame, sheet_frame))
+            .then_some(ConsentButtonCandidate {
+                element_ptr: node.element_ptr,
+                frame,
+            })
+        })
+        .collect::<Vec<_>>();
+    candidates.dedup_by(|first, second| first.frame == second.frame);
+    if candidates.len() != 3 {
+        return Ok(None);
+    }
+
+    let mut pairwise_gaps = Vec::new();
+    for first in 0..candidates.len() {
+        for second in (first + 1)..candidates.len() {
+            if let Some(gap) = edge_gap(candidates[first].frame, candidates[second].frame) {
+                pairwise_gaps.push((gap, first, second));
+            }
+        }
+    }
+    pairwise_gaps.sort_by(|first, second| first.0.total_cmp(&second.0));
+    let [(standard_gap, first_standard, second_standard), (extra_gap, _, _), _] =
+        pairwise_gaps.as_slice()
+    else {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent buttons did not form one exact non-overlapping row",
+        ));
+    };
+    let first_width = candidates[*first_standard].frame[2];
+    let second_width = candidates[*second_standard].frame[2];
+    if standard_gap >= extra_gap
+        || *standard_gap > first_width.max(second_width)
+        || *extra_gap < standard_gap * 2.0
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            "the native Chromium consent sheet had no uniquely separated standard button pair",
+        ));
+    }
+
+    let extra_index = (0..candidates.len())
+        .find(|index| index != first_standard && index != second_standard)
+        .expect("three candidates and a two-button pair");
+    let first_to_extra = edge_gap(
+        candidates[*first_standard].frame,
+        candidates[extra_index].frame,
+    );
+    let second_to_extra = edge_gap(
+        candidates[*second_standard].frame,
+        candidates[extra_index].frame,
+    );
+    // AppKit places the default action at the outer edge of the standard pair.
+    // The whole footer mirrors in RTL locales, so distance from the separated
+    // settings action is stable while left/right ordering is not.
+    let allow_index = match (first_to_extra, second_to_extra) {
+        (Some(first_gap), Some(second_gap)) if first_gap > second_gap => *first_standard,
+        (Some(first_gap), Some(second_gap)) if second_gap > first_gap => *second_standard,
+        _ => {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the native Chromium consent sheet had no unique outer default action",
+            ));
+        }
+    };
+    let cancel_index = if allow_index == *first_standard {
+        *second_standard
+    } else {
+        *first_standard
+    };
+    Ok(Some((
+        candidates[allow_index].element_ptr,
+        candidates[cancel_index].element_ptr,
+    )))
+}
+
 fn remote_debugging_sheet_present(nodes: &[AXNode]) -> bool {
     nodes.iter().enumerate().any(|(sheet_index, sheet)| {
         if sheet.role != "AXSheet" {
             return false;
         }
-        let end = nodes
-            .iter()
-            .enumerate()
-            .skip(sheet_index + 1)
-            .find(|(_, node)| node.depth <= sheet.depth)
-            .map_or(nodes.len(), |(index, _)| index);
-        nodes[sheet_index..end].iter().any(|node| {
+        let end = subtree_end(nodes, sheet_index);
+        let sheet_nodes = &nodes[sheet_index..end];
+        sheet_nodes.iter().any(|node| {
             let text = normalized_text(node);
             text.contains("remote debugging") || text.contains("remote-debugging")
-        })
+        }) || structural_consent_actions(sheet, sheet_nodes)
+            .ok()
+            .flatten()
+            .is_some()
     })
 }
 
@@ -91,18 +240,16 @@ fn exact_allow_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal>
         .enumerate()
         .filter(|(_, node)| node.role == "AXSheet")
     {
-        let end = nodes
-            .iter()
-            .enumerate()
-            .skip(sheet_index + 1)
-            .find(|(_, node)| node.depth <= sheet.depth)
-            .map_or(nodes.len(), |(index, _)| index);
+        let end = subtree_end(nodes, sheet_index);
         let sheet_nodes = &nodes[sheet_index..end];
         let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
             let text = normalized_text(node);
             text.contains("remote debugging") || text.contains("remote-debugging")
         });
         if !prompt_is_remote_debugging {
+            if let Some((allow, _)) = structural_consent_actions(sheet, sheet_nodes)? {
+                matches.push(allow);
+            }
             continue;
         }
         for node in sheet_nodes {
@@ -140,18 +287,16 @@ fn exact_cancel_button(nodes: &[AXNode]) -> Result<Option<usize>, BrowserRefusal
         .enumerate()
         .filter(|(_, node)| node.role == "AXSheet")
     {
-        let end = nodes
-            .iter()
-            .enumerate()
-            .skip(sheet_index + 1)
-            .find(|(_, node)| node.depth <= sheet.depth)
-            .map_or(nodes.len(), |(index, _)| index);
+        let end = subtree_end(nodes, sheet_index);
         let sheet_nodes = &nodes[sheet_index..end];
         let prompt_is_remote_debugging = sheet_nodes.iter().any(|node| {
             let text = normalized_text(node);
             text.contains("remote debugging") || text.contains("remote-debugging")
         });
         if !prompt_is_remote_debugging {
+            if let Some((_, cancel)) = structural_consent_actions(sheet, sheet_nodes)? {
+                matches.push(cancel);
+            }
             continue;
         }
         for node in sheet_nodes {
@@ -408,6 +553,27 @@ mod tests {
         }
     }
 
+    fn framed_button(title: &str, element_ptr: usize, frame: [f64; 4]) -> AXNode {
+        let mut button = node("AXButton", 2, Some(title), &["AXPress"]);
+        button.element_ptr = element_ptr;
+        button.frame = Some(frame);
+        button
+    }
+
+    fn localized_prompt(title: &str, labels: [&str; 3]) -> Vec<AXNode> {
+        let mut sheet = node("AXSheet", 1, Some(title), &[]);
+        sheet.frame = Some([0.0, 0.0, 448.0, 200.0]);
+        vec![
+            sheet,
+            node("AXHeading", 2, Some(title), &[]),
+            node("AXStaticText", 2, Some("localized warning"), &[]),
+            node("AXStaticText", 2, Some("localized safety note"), &[]),
+            framed_button(labels[0], 11, [20.0, 160.0, 123.0, 36.0]),
+            framed_button(labels[1], 12, [292.0, 160.0, 64.0, 36.0]),
+            framed_button(labels[2], 13, [364.0, 160.0, 64.0, 36.0]),
+        ]
+    }
+
     #[test]
     fn matcher_requires_sheet_prompt_and_unique_press_action() {
         let nodes = vec![
@@ -450,6 +616,35 @@ mod tests {
             node("AXButton", 2, Some("Cancel"), &["AXPress"]),
         ];
         assert_eq!(exact_cancel_button(&unrelated).unwrap(), None);
+    }
+
+    #[test]
+    fn matcher_is_language_independent_for_localized_chromium_sheet() {
+        let nodes = localized_prompt("要允许远程调试吗？", ["在“设置”中关闭", "取消", "允许"]);
+        assert!(remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(13));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(12));
+    }
+
+    #[test]
+    fn structural_matcher_supports_mirrored_rtl_button_order() {
+        let mut nodes = localized_prompt(
+            "هل تريد السماح بتصحيح الأخطاء عن بُعد؟",
+            ["تعطيل", "إلغاء", "سماح"],
+        );
+        nodes[4].frame = Some([305.0, 160.0, 123.0, 36.0]);
+        nodes[5].frame = Some([92.0, 160.0, 64.0, 36.0]);
+        nodes[6].frame = Some([20.0, 160.0, 64.0, 36.0]);
+        assert_eq!(exact_allow_button(&nodes).unwrap(), Some(13));
+        assert_eq!(exact_cancel_button(&nodes).unwrap(), Some(12));
+    }
+
+    #[test]
+    fn structural_matcher_requires_the_sheet_heading_binding() {
+        let mut nodes = localized_prompt("要允许远程调试吗？", ["在“设置”中关闭", "取消", "允许"]);
+        nodes[1].title = Some("不同的确认对话框".to_owned());
+        assert!(!remote_debugging_sheet_present(&nodes));
+        assert_eq!(exact_allow_button(&nodes).unwrap(), None);
     }
 
     #[test]

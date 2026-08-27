@@ -520,8 +520,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 7 {
-		t.Fatalf("expected exactly seven migrations, got %d", len(files))
+	if len(files) != 8 {
+		t.Fatalf("expected exactly eight migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -658,6 +658,22 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	} {
 		if !strings.Contains(metabaseUsage.SQL, expected) {
 			t.Errorf("Metabase usage migration is missing contract %q", expected)
+		}
+	}
+
+	filteredMetabaseUsage := files[7]
+	if filteredMetabaseUsage.Version != 8 || filteredMetabaseUsage.Name != "000008_metabase_hourly_reservation_usage_excluding_tenants.sql" {
+		t.Fatalf("expected version 8 filtered Metabase usage migration, got version=%d name=%q", filteredMetabaseUsage.Version, filteredMetabaseUsage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE VIEW k8s_reporting.hourly_reservation_usage_excluding_tenants",
+		"fact.capsule_tenant NOT IN",
+		"user-f039fe89-9b5f-43dc-8ccd-d100ae732246",
+		"user-30a53246-881d-4f1a-8005-979f2a07933e",
+		"GRANT SELECT ON k8s_reporting.hourly_reservation_usage_excluding_tenants TO k8s_metabase",
+	} {
+		if !strings.Contains(filteredMetabaseUsage.SQL, expected) {
+			t.Errorf("filtered Metabase usage migration is missing contract %q", expected)
 		}
 	}
 }

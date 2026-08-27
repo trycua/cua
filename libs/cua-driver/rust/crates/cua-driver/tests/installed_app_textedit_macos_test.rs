@@ -238,12 +238,8 @@ fn background_open_panel_returns_a_typed_rebind() {
             .expect("typed window_change candidates");
         assert_eq!(candidates.len(), 1, "expected one Open-panel root");
         let candidate = &candidates[0];
-        let panel_pid = candidate["pid"].as_i64().expect("panel owner pid");
+        let panel_pid = candidate["pid"].as_i64().expect("panel target pid");
         let panel_window_id = candidate["window_id"].as_u64().expect("panel window id");
-        assert_ne!(
-            panel_pid, pid,
-            "AppKit panel service ownership was not resolved"
-        );
         assert_eq!(opened.structured()["escalation"]["target"], "rebind");
         assert_eq!(
             opened.structured()["escalation"]["window"],
@@ -262,6 +258,14 @@ fn background_open_panel_returns_a_typed_rebind() {
         assert!(
             !panel.is_error(),
             "rebound panel was not addressable: {}",
+            panel.text()
+        );
+        let panel_elements = panel.structured()["elements"]
+            .as_array()
+            .expect("rebound panel elements");
+        assert!(
+            panel_elements.len() > 1,
+            "rebound target did not expose the Open panel accessibility tree: {}",
             panel.text()
         );
         passed.push(OracleKind::AxState);

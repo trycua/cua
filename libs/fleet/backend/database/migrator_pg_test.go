@@ -117,6 +117,7 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	})
 	tenantURL := createTenantRolePath(t, ctx, credentials.RoleAdmin, tenantRole, tenantPassword, "tenant-alice")
 	seedStateBoundaryData(t, ctx, inspectionURL)
+	assertFilteredReservationUsageTenantContract(t, ctx, migrationURL, credentials.Metabase)
 
 	assertWriterBoundary(t, ctx, credentials.Writer)
 	assertExporterBoundary(t, ctx, credentials.Exporter)
@@ -189,14 +190,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 8 || upgrade.Pending != 7 || upgrade.Applied != 7 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 9 || upgrade.Pending != 8 || upgrade.Applied != 8 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 8 || noOp.Target != 8 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 8 || noOp.Result != "success" {
+	if noOp.Current != 9 || noOp.Target != 9 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 9 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1592,8 +1593,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 8 {
-		t.Fatalf("migration ledger row count = %d, want 8", len(ledger))
+	if len(ledger) != 9 {
+		t.Fatalf("migration ledger row count = %d, want 9", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1607,6 +1608,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{6, "000006_chat_conversations.sql"},
 		{7, "000007_metabase_hourly_reservation_usage.sql"},
 		{8, "000008_metabase_hourly_reservation_usage_excluding_tenants.sql"},
+		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1941,7 +1943,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 8 {
+		if err != nil || count != 9 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
@@ -2132,6 +2134,49 @@ func seedStateBoundaryData(t *testing.T, ctx context.Context, adminURL string) {
 		values ('00000000-0000-0000-0000-000000000001', 'migration-test', '', 'pods', 'alice-ns', 'pod-a', 'tenant-alice', 'schema', 'ADDED', 1, 2, '{}', clock_timestamp())`)
 	if err != nil {
 		t.Fatal("seed access-boundary state")
+	}
+}
+
+func assertFilteredReservationUsageTenantContract(t *testing.T, ctx context.Context, migrationURL, metabaseURL string) {
+	t.Helper()
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `
+		set role billing_meter_owner;
+		insert into billing_meter.reservation_hour_collection
+			(collection_run_id, logical_key, revision, cluster_id, hour_start, hour_end, covered_seconds, discovered_sandboxes, inserted_facts, unchanged_facts, source_sha256)
+		values
+			('00000000-0000-0000-0000-000000000101', 'filtered-tenant-contract', 1, 'filtered-tenant-contract', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 3600, 5, 5, 0, repeat('a', 64));
+		insert into billing_meter.reservation_hour_fact
+			(fact_id, logical_key, revision, cluster_id, capsule_tenant, namespace, sandbox_uid, sandbox_name, pool_name, runtime, hour_start, hour_end, virtual_cpu_core_seconds, virtual_memory_byte_seconds, ready_seconds, covered_seconds, scrape_interval_seconds, source_sha256, collection_run_id)
+		values
+			('00000000-0000-0000-0000-000000000102', 'filtered-tenant-contract-1', 1, 'filtered-tenant-contract', 'user-f039fe89-9b5f-43dc-8ccd-d100ae732246', 'contract', 'excluded-1', 'excluded-1', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 10, 100, 10, 3600, 60, repeat('b', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000103', 'filtered-tenant-contract-2', 1, 'filtered-tenant-contract', 'user-30a53246-881d-4f1a-8005-979f2a07933e', 'contract', 'excluded-2', 'excluded-2', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 20, 200, 20, 3600, 60, repeat('c', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000104', 'filtered-tenant-contract-3', 1, 'filtered-tenant-contract', 'user-0ea07f31-b7bd-4e99-b29a-2376f6fde1be', 'contract', 'excluded-3', 'excluded-3', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 30, 300, 30, 3600, 60, repeat('d', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000105', 'filtered-tenant-contract-4', 1, 'filtered-tenant-contract', 'user-a89b2628-9656-4ef0-bf01-e925b120ed1d', 'contract', 'excluded-4', 'excluded-4', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 40, 400, 40, 3600, 60, repeat('e', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000106', 'filtered-tenant-contract-5', 1, 'filtered-tenant-contract', 'included-tenant', 'contract', 'included', 'included', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 50, 500, 50, 3600, 60, repeat('f', 64), '00000000-0000-0000-0000-000000000101');
+		reset role`); err != nil {
+		t.Fatal("seed filtered reservation usage contract: ", err)
+	}
+
+	metabase := connect(t, ctx, metabaseURL)
+	defer metabase.Close(ctx)
+	var discoveredSandboxes, reservationFacts int
+	var includedCPU, includedMemory, includedReady bool
+	if err := metabase.QueryRow(ctx, `
+		select
+			discovered_sandboxes,
+			reservation_fact_count,
+			virtual_cpu_core_seconds = 50,
+			virtual_memory_byte_seconds = 500,
+			ready_seconds = 50
+		from k8s_reporting.hourly_reservation_usage_excluding_tenants
+		where cluster_id = 'filtered-tenant-contract'
+		  and hour_start = '2026-08-27 00:00:00+00'`).Scan(&discoveredSandboxes, &reservationFacts, &includedCPU, &includedMemory, &includedReady); err != nil {
+		t.Fatal("query filtered reservation usage view: ", err)
+	}
+	if discoveredSandboxes != 1 || reservationFacts != 1 || !includedCPU || !includedMemory || !includedReady {
+		t.Fatalf("filtered reservation usage = sandboxes:%d facts:%d cpu:%t memory:%t ready:%t, want only included tenant", discoveredSandboxes, reservationFacts, includedCPU, includedMemory, includedReady)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -520,8 +521,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 8 {
-		t.Fatalf("expected exactly eight migrations, got %d", len(files))
+	if len(files) != 9 {
+		t.Fatalf("expected exactly nine migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -675,6 +676,39 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 		if !strings.Contains(filteredMetabaseUsage.SQL, expected) {
 			t.Errorf("filtered Metabase usage migration is missing contract %q", expected)
 		}
+	}
+	extendedFilteredMetabaseUsage := files[8]
+	if extendedFilteredMetabaseUsage.Version != 9 || extendedFilteredMetabaseUsage.Name != "000009_extend_metabase_revenue_tenant_exclusions.sql" {
+		t.Fatalf("expected version 9 extended filtered Metabase usage migration, got version=%d name=%q", extendedFilteredMetabaseUsage.Version, extendedFilteredMetabaseUsage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE OR REPLACE VIEW k8s_reporting.hourly_reservation_usage_excluding_tenants",
+		"GRANT SELECT ON k8s_reporting.hourly_reservation_usage_excluding_tenants TO k8s_metabase",
+	} {
+		if !strings.Contains(extendedFilteredMetabaseUsage.SQL, expected) {
+			t.Errorf("extended filtered Metabase usage migration is missing contract %q", expected)
+		}
+	}
+	predicate := regexp.MustCompile(`(?s)\bfact\.capsule_tenant\s+NOT\s+IN\s*\((.*?)\)`).FindStringSubmatch(extendedFilteredMetabaseUsage.SQL)
+	if len(predicate) != 2 {
+		t.Fatal("version 9 migration does not contain a fact.capsule_tenant NOT IN predicate")
+	}
+	quotedLabel := regexp.MustCompile(`'([^']*)'`)
+	labels := make([]string, 0)
+	for _, match := range quotedLabel.FindAllStringSubmatch(predicate[1], -1) {
+		labels = append(labels, match[1])
+	}
+	wantLabels := []string{
+		"user-f039fe89-9b5f-43dc-8ccd-d100ae732246",
+		"user-30a53246-881d-4f1a-8005-979f2a07933e",
+		"user-0ea07f31-b7bd-4e99-b29a-2376f6fde1be",
+		"user-a89b2628-9656-4ef0-bf01-e925b120ed1d",
+	}
+	if !reflect.DeepEqual(labels, wantLabels) {
+		t.Fatalf("version 9 filtered tenant labels = %#v, want %#v", labels, wantLabels)
+	}
+	if remaining := strings.Trim(quotedLabel.ReplaceAllString(predicate[1], ""), " \t\r\n,"); remaining != "" {
+		t.Fatalf("version 9 filtered tenant predicate contains non-label content %q", remaining)
 	}
 }
 

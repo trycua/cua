@@ -268,6 +268,67 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
 
 
+def test_plan_holds_before_build_for_unresolved_attribution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    previous_sha = "b" * 40
+    source_sha = "c" * 40
+    config_path = tmp_path / "release-attribution-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "ignoredCoauthorEmails": [],
+                "identityOverrides": {},
+                "coauthorOverrides": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_git(_root, command, *args):
+        if command == "rev-list":
+            return previous_sha
+        if command == "merge-base":
+            return ""
+        if command == "diff":
+            return "libs/cua-driver/rust/src/main.rs"
+        raise AssertionError((command, args))
+
+    monkeypatch.setattr(release_channels, "_git", fake_git)
+    monkeypatch.setattr(
+        release_channels.release_attribution,
+        "commits_in_range",
+        lambda *_args: [
+            release_channels.release_attribution.CommitRecord(
+                "deadbeef",
+                "fix: preserve attribution",
+                "Co-authored-by: Local Machine <machine@example.invalid>",
+            )
+        ],
+    )
+    plan = plan_nightly(
+        "cua-driver-rs",
+        source_sha,
+        "20260812",
+        "45",
+        [
+            {
+                "tag_name": "nightly-cua-driver-rs-v0.19.4-nightly.20260811.41",
+                "draft": False,
+                "published_at": "2026-08-11T04:17:00Z",
+            }
+        ],
+        registry_path=REGISTRY,
+        root=ROOT,
+        attribution_config_path=config_path,
+    )
+    assert plan["shouldBuild"] is False
+    assert plan["reason"] == "held-attribution"
+    assert plan["attributionIssues"] == [
+        {"sha": "deadbeef", "name": "Local Machine", "email": "machine@example.invalid"}
+    ]
+
+
 def test_manifest_uses_stable_authority_with_a_separately_versioned_asset_tree(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):

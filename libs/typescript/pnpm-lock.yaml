@@ -60,7 +60,7 @@ importers:
   computer:
     dependencies:
       "@trycua/core":
-        specifier: workspace:^
+        specifier: workspace:^0.1.4
         version: link:../core
       "@trycua/fleet":
         specifier: workspace:^

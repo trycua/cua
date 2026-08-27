@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/productanalytics"
 
 	"github.com/trycua/cloud/pkg/featureflags"
 )
@@ -24,6 +26,7 @@ type fakeBillingService struct {
 	portalSubject          string
 	portalReturnURL        string
 	setupCalls             int
+	setupErr               error
 	portalCalls            int
 	defaultCustomerID      string
 	defaultPaymentMethodID string
@@ -59,6 +62,9 @@ func (f *fakeBillingService) CreateSetupSession(_ context.Context, subject strin
 	f.setupCalls++
 	f.setupSubject = subject
 	f.setupOptions = options
+	if f.setupErr != nil {
+		return "", f.setupErr
+	}
 	return "https://checkout.stripe.test/session", nil
 }
 
@@ -75,7 +81,7 @@ func (f *fakeBillingService) Usage(_ context.Context, subject string, months int
 	return f.usageResponse, f.usageErr
 }
 
-var billingAlice = &auth.User{ID: "user-alice"}
+var billingAlice = &auth.User{ID: "user-alice", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}
 
 func newBillingRequest(method, target, body string, user *auth.User) *http.Request {
 	var request *http.Request
@@ -192,6 +198,7 @@ func TestCreateSetupSessionUsesAuthenticatedSubjectAndNoClientInput(t *testing.T
 	service := &fakeBillingService{}
 	h := Handlers{
 		Billing: service,
+		AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
 		Stripe: config.StripeConfiguration{
 			SecretKey:          "sk_test",
 			CheckoutSuccessURL: "https://run.example.test/settings?setup=success",
@@ -215,6 +222,9 @@ func TestCreateSetupSessionUsesAuthenticatedSubjectAndNoClientInput(t *testing.T
 	}
 	if service.setupSubject != billingAlice.ID {
 		t.Fatalf("setup subject = %q, want %q", service.setupSubject, billingAlice.ID)
+	}
+	if service.setupOptions.Source != productanalytics.SourceSPA {
+		t.Fatalf("setup source = %q, want spa", service.setupOptions.Source)
 	}
 	var response BillingSessionResponse
 	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
@@ -309,5 +319,26 @@ func TestBillingEndpointsRejectWhenFlagDisabled(t *testing.T) {
 				t.Fatalf("billing service calls = %d, want 0", calls)
 			}
 		})
+	}
+}
+
+func TestCreateSetupSessionProviderFailureEmitsFailureEvent(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{setupErr: errors.New("stripe unavailable")}
+	capture := &analyticsCapture{}
+	h := Handlers{
+		Billing:   service,
+		Analytics: capture,
+		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+		Stripe:    config.StripeConfiguration{SecretKey: "sk_test", CheckoutSuccessURL: "https://run.example.test/success", CheckoutCancelURL: "https://run.example.test/cancel"},
+	}
+	response := httptest.NewRecorder()
+	h.CreateBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session", "", billingAlice))
+	if response.Code != http.StatusBadGateway || len(capture.events) != 1 {
+		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
+	}
+	event := capture.events[0]
+	if event.Name != productanalytics.EventPaymentMethodSetup || event.DistinctID != billingAlice.ID || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
+		t.Fatalf("event = %#v", event)
 	}
 }

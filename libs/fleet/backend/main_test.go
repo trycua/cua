@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -30,6 +31,7 @@ import (
 	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/handlers"
 	"cyclops-cs-backend/metrics"
+	"cyclops-cs-backend/productanalytics"
 	"cyclops-cs-backend/statequery"
 	"cyclops-cs-backend/usage"
 
@@ -1274,5 +1276,31 @@ func TestInitializeUsageProviderQueryTransportOnlyIsDisabled(t *testing.T) {
 	defer closeProvider()
 	if provider != nil {
 		t.Fatal("initializeUsageProvider() provider != nil, want disabled provider")
+	}
+}
+
+func TestProductAnalyticsClientConfigPreservesRuntimeSettings(t *testing.T) {
+	cfg := productAnalyticsClientConfig(config.ProductAnalyticsConfiguration{
+		Enabled: true, Host: "https://eu.i.posthog.com", ProjectToken: "phc_test",
+		Environment: "production", ExcludedSubjects: []string{"internal-1"},
+	})
+	want := productanalytics.Config{
+		Enabled: true, Host: "https://eu.i.posthog.com", ProjectToken: "phc_test",
+		Environment: "production", ExcludedSubjects: []string{"internal-1"},
+	}
+	if !reflect.DeepEqual(cfg, want) {
+		t.Fatalf("config = %#v, want %#v", cfg, want)
+	}
+}
+
+func TestServeUntilCanceledShutsDownServer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	if err := serveUntilCanceled(ctx, server); err != nil {
+		t.Fatalf("serveUntilCanceled() error = %v", err)
 	}
 }

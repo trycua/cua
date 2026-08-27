@@ -17,6 +17,7 @@ import (
 	"cyclops-cs-backend/config"
 	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/keycloak"
+	"cyclops-cs-backend/productanalytics"
 	"cyclops-cs-backend/usage"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
@@ -35,6 +36,7 @@ type Handlers struct {
 	Billing         BillingService
 	UserAccounts    UserAccountService
 	WebhookVerifier WebhookVerifier
+	Analytics       productanalytics.Capturer
 
 	// Features carries the database-backed dependencies (the state query
 	// executor and the GitHub trust policy store). It is a pointer because
@@ -71,6 +73,7 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		AuthCfg:      cfg.Auth,
 		KC:           cfg.Keycloak,
 		Stripe:       cfg.Stripe,
+		Analytics:    productanalytics.Nop(),
 		chatLocks:    newConversationLockRegistry(),
 	}
 }

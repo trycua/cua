@@ -27,16 +27,17 @@ import (
 )
 
 type Configuration struct {
-	WebServer WebServerConfiguration
-	Auth      AuthConfiguration
-	Keycloak  KeycloakConfiguration
-	Gateway   GatewayConfiguration
-	Database  DatabaseConfiguration
-	Stripe    StripeConfiguration
-	Chat      ChatConfiguration
-	Metrics   MetricsConfiguration
-	Telemetry TelemetryConfiguration
-	Usage     UsageConfiguration
+	WebServer        WebServerConfiguration
+	Auth             AuthConfiguration
+	Keycloak         KeycloakConfiguration
+	Gateway          GatewayConfiguration
+	Database         DatabaseConfiguration
+	Stripe           StripeConfiguration
+	Chat             ChatConfiguration
+	Metrics          MetricsConfiguration
+	Telemetry        TelemetryConfiguration
+	Usage            UsageConfiguration
+	ProductAnalytics ProductAnalyticsConfiguration
 }
 
 type WebServerConfiguration struct {
@@ -142,6 +143,14 @@ type MetricsConfiguration struct {
 	Addr string // METRICS_ADDR — Prometheus listen addr
 }
 
+type ProductAnalyticsConfiguration struct {
+	Enabled          bool
+	Host             string
+	ProjectToken     string
+	Environment      string
+	ExcludedSubjects []string
+}
+
 type TelemetryConfiguration struct {
 	Endpoint         string // OTEL_EXPORTER_OTLP_ENDPOINT
 	Protocol         string // OTEL_EXPORTER_OTLP_PROTOCOL
@@ -201,6 +210,10 @@ var specs = []flagSpec{
 	{"chat.api-key", "litellm-api-key", "LITELLM_API_KEY", "", "LiteLLM virtual key"},
 	{"chat.model", "litellm-model", "LITELLM_MODEL", "large", "LiteLLM model alias"},
 	{"metrics.addr", "metrics-addr", "METRICS_ADDR", ":9091", "Prometheus metrics listen address"},
+	{"product-analytics.enabled", "fleet-analytics-enabled", "FLEET_ANALYTICS_ENABLED", "false", "Enable Fleet product analytics delivery"},
+	{"product-analytics.host", "posthog-host", "POSTHOG_HOST", "https://eu.i.posthog.com", "PostHog capture host"},
+	{"product-analytics.project-token", "posthog-project-token", "POSTHOG_PROJECT_TOKEN", "", "PostHog project token"},
+	{"product-analytics.excluded-subjects", "fleet-analytics-excluded-subs", "FLEET_ANALYTICS_EXCLUDED_SUBS", "", "Comma-separated Keycloak subjects excluded from analytics"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
 	{"telemetry.service-name", "otel-service-name", "OTEL_SERVICE_NAME", "cyclops-cs-backend", "OTEL service.name"},
@@ -323,6 +336,13 @@ func LoadConfig() (*Configuration, error) {
 			MaxResponseBytes:  usageMaxResponseBytes,
 		},
 		Metrics: MetricsConfiguration{Addr: viper.GetString("metrics.addr")},
+		ProductAnalytics: ProductAnalyticsConfiguration{
+			Enabled:          viper.GetBool("product-analytics.enabled"),
+			Host:             strings.TrimSpace(viper.GetString("product-analytics.host")),
+			ProjectToken:     strings.TrimSpace(viper.GetString("product-analytics.project-token")),
+			Environment:      strings.TrimSpace(viper.GetString("telemetry.environment")),
+			ExcludedSubjects: splitCommaSeparated(viper.GetString("product-analytics.excluded-subjects")),
+		},
 		Telemetry: TelemetryConfiguration{
 			Endpoint:         viper.GetString("telemetry.endpoint"),
 			Protocol:         viper.GetString("telemetry.protocol"),

@@ -12,6 +12,8 @@ import (
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
+	"cyclops-cs-backend/middlewares"
+	"cyclops-cs-backend/productanalytics"
 )
 
 type BillingService interface {
@@ -167,11 +169,28 @@ func (h Handlers) CreateBillingSetupSession(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusServiceUnavailable, "Stripe card setup is not configured; redirect URLs are required")
 		return
 	}
+	source, sourceOK := productanalytics.SourceForUser(user, h.AuthCfg.SPAClientID)
 	url, err := h.Billing.CreateSetupSession(r.Context(), user.ID, billing.SetupOptions{
 		SuccessURL: h.Stripe.CheckoutSuccessURL,
 		CancelURL:  h.Stripe.CheckoutCancelURL,
+		Source:     source,
 	})
 	if err != nil {
+		if sourceOK {
+			traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
+			capturer := h.Analytics
+			if capturer == nil {
+				capturer = productanalytics.Nop()
+			}
+			capturer.Capture(productanalytics.Event{
+				Name: productanalytics.EventPaymentMethodSetup, DistinctID: user.ID, InsertID: traceID,
+				Properties: map[string]any{
+					"outcome": productanalytics.OutcomeFailure, "source": source,
+					"principal_type": user.PrincipalType, "status_code": http.StatusBadGateway,
+					"error_class": "payment_provider",
+				},
+			})
+		}
 		writeErr(w, http.StatusBadGateway, "could not create Stripe card setup Session")
 		return
 	}

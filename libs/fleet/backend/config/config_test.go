@@ -320,3 +320,29 @@ func TestLoadConfig_UsageConfiguration(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_ProductAnalyticsValues(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	t.Setenv("FLEET_ANALYTICS_ENABLED", "true")
+	t.Setenv("POSTHOG_HOST", "https://eu.i.posthog.com")
+	t.Setenv("POSTHOG_PROJECT_TOKEN", "phc_test")
+	t.Setenv("FLEET_ANALYTICS_EXCLUDED_SUBS", "internal-1, internal-2")
+	t.Setenv("OTEL_ENVIRONMENT", "production")
+	RegisterFlags(pflag.NewFlagSet("analytics-test", pflag.ContinueOnError))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if !cfg.ProductAnalytics.Enabled || cfg.ProductAnalytics.Host != "https://eu.i.posthog.com" || cfg.ProductAnalytics.ProjectToken != "phc_test" {
+		t.Fatalf("ProductAnalytics = %#v", cfg.ProductAnalytics)
+	}
+	if got, want := cfg.ProductAnalytics.Environment, "production"; got != want {
+		t.Fatalf("Environment = %q, want %q", got, want)
+	}
+	if got, want := cfg.ProductAnalytics.ExcludedSubjects, []string{"internal-1", "internal-2"}; !slices.Equal(got, want) {
+		t.Fatalf("ExcludedSubjects = %#v, want %#v", got, want)
+	}
+}

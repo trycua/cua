@@ -4,7 +4,8 @@
 // children once we have a valid session.
 
 import { useEffect, useLayoutEffect, useState } from "react"
-import { initKc } from "./keycloak"
+import { initKc, kc } from "./keycloak"
+import { recordFleetLogin } from "./analytics"
 import { isLocalVisualPreview } from "../local-visual-preview"
 
 interface Props {
@@ -29,6 +30,7 @@ export function AuthProvider({ children }: Props) {
           return
         }
         setReady(true)
+        void recordFleetLogin(kc.sessionId).catch(() => undefined)
       })
       .catch(e => setError(String(e)))
   }, [visualPreview])

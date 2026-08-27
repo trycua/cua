@@ -277,6 +277,7 @@ var surfacePolicies = map[string]surfacePolicy{
 // and one compiled plan.
 var routeSurfaces = map[string]string{
 	"/api/config":                "config",
+	"/api/analytics/session":     "config",
 	"/api/state/query":           "state-query",
 	"/api/usage/overview":        "usage",
 	"/api/usage/pool":            "usage",

@@ -26,6 +26,8 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -42,6 +44,7 @@ import (
 	"cyclops-cs-backend/keycloak"
 	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/middlewares"
+	"cyclops-cs-backend/productanalytics"
 	"cyclops-cs-backend/statequery"
 	"cyclops-cs-backend/telemetry"
 	"cyclops-cs-backend/usage"
@@ -103,15 +106,16 @@ func traceMiddleware(route string) auth.Middleware {
 // that — PolicyMiddleware logs it at Error itself. Re-adding elapsed time per
 // policy belongs on the policy library as a span, not on one middleware as an
 // unreachable log line.
-func withAuthenticatedMiddlewares(route string, h http.HandlerFunc) http.Handler {
-	return withMiddlewares(
-		http.HandlerFunc(h),
+func withAuthenticatedMiddlewares(route string, h http.HandlerFunc, observers ...auth.Middleware) http.Handler {
+	chain := []auth.Middleware{
 		traceMiddleware(route),
 		middlewares.LogMiddleware,
 		auth.RouteContext(route),
 		auth.TokenAuthMiddleware,
-		auth.RouteMiddleware(route),
-	)
+	}
+	chain = append(chain, observers...)
+	chain = append(chain, auth.RouteMiddleware(route))
+	return withMiddlewares(http.HandlerFunc(h), chain...)
 }
 
 func onlyLog(route string, h http.HandlerFunc) http.Handler {
@@ -138,6 +142,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// Feature flags / per-user config. SPA-only (same auth as /api/keys).
 	r.Handle("GET /api/config",
 		withAuthenticatedMiddlewares("/api/config", c.GetConfig))
+	r.Handle("POST /api/analytics/session",
+		withAuthenticatedMiddlewares("/api/analytics/session", c.RecordAnalyticsSession))
 
 	r.Handle("POST /api/chat/conversations",
 		withAuthenticatedMiddlewares("/api/chat/conversations", c.CreateConversation))
@@ -220,13 +226,16 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// their claims, everyone else by an impersonated RoleBinding probe the
 	// policy reads as a fact — see auth/authz_ownership.rego.
 	r.Handle("/api/svc/{namespace}/{service}",
-		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}", c.Svc))
+		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}", c.Svc,
+			productanalytics.RouteObserver("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID)))
 	r.Handle("/api/svc/{namespace}/{service}/{path...}",
-		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc))
+		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc,
+			productanalytics.RouteObserver("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID)))
 
 	// K8s API access replaces the unauthenticated /k8s-api nginx location.
 	r.Handle("/api/k8s/{path...}",
-		withAuthenticatedMiddlewares("/api/k8s/{path...}", c.K8s))
+		withAuthenticatedMiddlewares("/api/k8s/{path...}", c.K8s,
+			productanalytics.RouteObserver("/api/k8s/{path...}", c.Analytics, c.AuthCfg.SPAClientID)))
 
 	// Wrap the entire mux in the metrics middleware so every request
 	// (including /healthz and unmatched routes) is recorded. This must be
@@ -270,6 +279,13 @@ func initializeTelemetry(ctx context.Context, cfg config.TelemetryConfiguration)
 	return shutdown, nil
 }
 
+func productAnalyticsClientConfig(cfg config.ProductAnalyticsConfiguration) productanalytics.Config {
+	return productanalytics.Config{
+		Enabled: cfg.Enabled, Host: cfg.Host, ProjectToken: cfg.ProjectToken,
+		Environment: cfg.Environment, ExcludedSubjects: cfg.ExcludedSubjects,
+	}
+}
+
 func initializeFeatureFlags(ctx context.Context, environment string, credentials featureflags.AWSCredentials) error {
 	err := featureflags.SetupProvider(ctx, environment, credentials)
 	if err != nil {
@@ -281,7 +297,8 @@ func initializeFeatureFlags(ctx context.Context, environment string, credentials
 
 func run() error {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
-	ctx := context.Background()
+	ctx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
 	var startupErrors error
 	var telemetryErr error
 
@@ -290,6 +307,15 @@ func run() error {
 		return fmt.Errorf("load config: %w", err)
 	}
 	configValues = cfg
+
+	analyticsClient := productanalytics.New(productAnalyticsClientConfig(cfg.ProductAnalytics))
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		if err := analyticsClient.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("product analytics shutdown failed")
+		}
+	}()
 
 	telemetryShutdown, telemetryErr := initializeTelemetry(ctx, cfg.Telemetry)
 	defer func() {
@@ -347,6 +373,7 @@ func run() error {
 	}
 
 	h := handlers.New(admin, cfg)
+	h.Analytics = analyticsClient
 	usageProvider, closeUsageProvider, err := initializeUsageProvider(ctx, cfg.Usage)
 	if err != nil {
 		return errors.Join(fmt.Errorf("initialize usage provider: %w", err), startupErrors, telemetryErr)
@@ -412,10 +439,31 @@ func run() error {
 	router := setupRouter(h)
 
 	srv := &http.Server{Addr: cfg.WebServer.Addr, Handler: router}
-	if err := srv.ListenAndServe(); err != nil {
-		return errors.Join(fmt.Errorf("server exited: %w", err), startupErrors, telemetryErr)
+	return errors.Join(serveUntilCanceled(ctx, srv), startupErrors, telemetryErr)
+}
+
+func serveUntilCanceled(ctx context.Context, server *http.Server) error {
+	serverErrors := make(chan error, 1)
+	go func() {
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return fmt.Errorf("server exited: %w", err)
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		shutdownErr := server.Shutdown(shutdownCtx)
+		serverErr := <-serverErrors
+		if errors.Is(serverErr, http.ErrServerClosed) {
+			serverErr = nil
+		}
+		return errors.Join(shutdownErr, serverErr)
 	}
-	return errors.Join(startupErrors, telemetryErr)
 }
 
 func newFeatureFlagAdminService(store featureflags.ManagementStore, lock featureflagadmin.MutationLock) *featureflagadmin.Service {

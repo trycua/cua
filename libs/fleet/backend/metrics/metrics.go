@@ -69,6 +69,21 @@ var (
 		Help: "Total Stripe billing webhook requests by processing result and event type.",
 	}, []string{"result", "event_type"})
 
+	ProductAnalyticsEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cyclops_cs_product_analytics_events_total",
+		Help: "Fleet product analytics events by event name and delivery result.",
+	}, []string{"event", "result"})
+
+	ProductAnalyticsQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "cyclops_cs_product_analytics_queue_depth",
+		Help: "Current Fleet product analytics delivery queue depth.",
+	})
+
+	ProductAnalyticsDeliveryDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "cyclops_cs_product_analytics_delivery_duration_seconds",
+		Help: "Fleet product analytics batch delivery duration.",
+	})
+
 	// DatabaseFeaturesReady reports whether the PostgreSQL-backed features
 	// came up at startup. The serving tier deliberately does NOT gate
 	// readiness on the database (see
@@ -266,4 +281,16 @@ func StartMetricsServer(addr string) error {
 
 func RecordBillingWebhook(result, eventType string) {
 	BillingWebhookEventsTotal.WithLabelValues(result, eventType).Inc()
+}
+
+func RecordProductAnalytics(event, result string) {
+	ProductAnalyticsEventsTotal.WithLabelValues(event, result).Inc()
+}
+
+func SetProductAnalyticsQueueDepth(depth int) {
+	ProductAnalyticsQueueDepth.Set(float64(depth))
+}
+
+func ObserveProductAnalyticsDelivery(duration time.Duration) {
+	ProductAnalyticsDeliveryDuration.Observe(duration.Seconds())
 }

@@ -5,8 +5,10 @@ import (
 	"io"
 	"net/http"
 
+	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/metrics"
+	"cyclops-cs-backend/productanalytics"
 )
 
 const stripeWebhookBodyLimit = 64 << 10
@@ -54,7 +56,23 @@ func (h Handlers) HandleBillingWebhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if event.Type != "setup_intent.succeeded" || event.Purpose != billing.SetupPurpose {
+	if event.Purpose != billing.SetupPurpose {
+		metrics.RecordBillingWebhook("ignored", event.Type)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if event.Type == "setup_intent.setup_failed" {
+		if event.Subject == "" || event.Source == "" || event.SetupGeneration == "" {
+			metrics.RecordBillingWebhook("malformed", event.Type)
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		capturePaymentSetup(h.Analytics, event, productanalytics.OutcomeFailure, "payment_provider")
+		metrics.RecordBillingWebhook("setup_failed", event.Type)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if event.Type != "setup_intent.succeeded" {
 		metrics.RecordBillingWebhook("ignored", event.Type)
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -80,6 +98,30 @@ func (h Handlers) HandleBillingWebhook(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	capturePaymentSetup(h.Analytics, event, productanalytics.OutcomeSuccess, "")
 	metrics.RecordBillingWebhook("configured", event.Type)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func capturePaymentSetup(capturer productanalytics.Capturer, event billing.WebhookEvent, outcome, errorClass string) {
+	if event.Subject == "" || (event.Source != productanalytics.SourceSPA && event.Source != productanalytics.SourceUserKey) {
+		return
+	}
+	if capturer == nil {
+		capturer = productanalytics.Nop()
+	}
+	principalType := auth.PrincipalTypeUser
+	if event.Source == productanalytics.SourceUserKey {
+		principalType = auth.PrincipalTypeUserKey
+	}
+	properties := map[string]any{
+		"outcome": outcome, "source": event.Source, "principal_type": principalType,
+	}
+	if errorClass != "" {
+		properties["error_class"] = errorClass
+	}
+	capturer.Capture(productanalytics.Event{
+		Name: productanalytics.EventPaymentMethodSetup, DistinctID: event.Subject,
+		InsertID: event.ID, Properties: properties,
+	})
 }

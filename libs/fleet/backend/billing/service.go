@@ -17,6 +17,7 @@ const (
 	CustomerIdempotencyPrefix = "fleet-customer-"
 	SetupPurpose              = "fleet_default_card"
 	MetadataSetupGeneration   = "fleet_setup_generation"
+	MetadataSetupSource       = "fleet_source"
 )
 
 var (
@@ -41,6 +42,8 @@ type SetupSessionRequest struct {
 	SuccessURL      string
 	CancelURL       string
 	SetupGeneration string
+	Subject         string
+	Source          string
 }
 
 type PortalSessionRequest struct {
@@ -344,6 +347,7 @@ func (s *Service) Usage(ctx context.Context, subject string, months int, now tim
 type SetupOptions struct {
 	SuccessURL string
 	CancelURL  string
+	Source     string
 }
 
 func (s *Service) CreateSetupSession(ctx context.Context, subject string, options SetupOptions) (string, error) {
@@ -360,6 +364,8 @@ func (s *Service) CreateSetupSession(ctx context.Context, subject string, option
 		SuccessURL:      options.SuccessURL,
 		CancelURL:       options.CancelURL,
 		SetupGeneration: generation,
+		Subject:         subject,
+		Source:          options.Source,
 	})
 	if err != nil {
 		return "", err

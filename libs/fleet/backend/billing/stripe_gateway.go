@@ -165,6 +165,8 @@ func setupSessionParams(request SetupSessionRequest) *stripe.CheckoutSessionCrea
 	setupIntentData := &stripe.CheckoutSessionCreateSetupIntentDataParams{}
 	setupIntentData.AddMetadata("purpose", SetupPurpose)
 	setupIntentData.AddMetadata(MetadataSetupGeneration, request.SetupGeneration)
+	setupIntentData.AddMetadata(MetadataSubject, request.Subject)
+	setupIntentData.AddMetadata(MetadataSetupSource, request.Source)
 	return &stripe.CheckoutSessionCreateParams{
 		Mode:               stripe.String(string(stripe.CheckoutSessionModeSetup)),
 		Customer:           stripe.String(request.CustomerID),

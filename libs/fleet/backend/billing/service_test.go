@@ -344,6 +344,7 @@ func TestCreateSetupSessionUsesServerRequestAndOwnedCustomer(t *testing.T) {
 	url, err := service.CreateSetupSession(context.Background(), "subject-123", SetupOptions{
 		SuccessURL: "https://run.example.test/billing?checkout=success",
 		CancelURL:  "https://run.example.test/billing?checkout=cancelled",
+		Source:     "spa",
 	})
 	if err != nil {
 		t.Fatalf("CreateSetupSession() error = %v", err)
@@ -356,6 +357,8 @@ func TestCreateSetupSessionUsesServerRequestAndOwnedCustomer(t *testing.T) {
 		SuccessURL:      "https://run.example.test/billing?checkout=success",
 		CancelURL:       "https://run.example.test/billing?checkout=cancelled",
 		SetupGeneration: gateway.updatedMetadata[MetadataSetupGeneration],
+		Subject:         "subject-123",
+		Source:          "spa",
 	}
 	if want.SetupGeneration == "" || !reflect.DeepEqual(gateway.setupRequest, want) {
 		t.Fatalf("setup request = %#v, want %#v", gateway.setupRequest, want)

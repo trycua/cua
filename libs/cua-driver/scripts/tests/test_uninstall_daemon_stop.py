@@ -94,22 +94,36 @@ DAEMON_EXECUTABLES=("{identity}")
     def helper(self, target: subprocess.Popen[bytes], marker: Path | None = None) -> Path:
         path = self.home / "cua-driver"
         marker_line = (
-            f"printf '%s' \"${{CUA_DRIVER_STOP_EXPECTED_PID:-}}\" > '{marker}'"
+            f"printf '%s|%s|%s' \"$1\" \"$2\" \"$3\" > '{marker}'"
             if marker
             else ":"
         )
         executable(
             path,
             f"""
-if [ "$1" = stop ]; then
+if [ "$1" = "--expected-pid" ] && [ "$2" = "{target.pid}" ] && [ "$3" = stop ]; then
   {marker_line}
-  [ "${{CUA_DRIVER_STOP_EXPECTED_PID:-}}" = "{target.pid}" ] || exit 2
   awk -F'|' -v p='{target.pid}' 'BEGIN {{ OFS="|" }} $1 == p {{ $3="dead" }} {{ print }}' '{self.map}' > '{self.map}.tmp'
   mv '{self.map}.tmp' '{self.map}'
   kill {target.pid} 2>/dev/null || true
   exit 0
 fi
 exit 1
+""",
+        )
+        return path
+
+    def old_helper(self, foreign: subprocess.Popen[bytes], marker: Path) -> Path:
+        path = self.home / "old-cua-driver"
+        executable(
+            path,
+            f"""
+if [ "$1" = stop ]; then
+  : > '{marker}'
+  kill {foreign.pid} 2>/dev/null || true
+  exit 0
+fi
+exit 2
 """,
         )
         return path
@@ -135,7 +149,26 @@ printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
         result = self.run_stop(self.setup(pid_file, self.helper(daemon, marker), identity))
 
         self.assertIn("status=0 result=stopped", result.stdout)
-        self.assertEqual(marker.read_text(encoding="utf-8"), str(daemon.pid))
+        self.assertEqual(
+            marker.read_text(encoding="utf-8"),
+            f"--expected-pid|{daemon.pid}|stop",
+        )
+        daemon.wait(timeout=5)
+        self.assertIsNone(foreign.poll())
+
+    def test_old_helper_cannot_receive_an_unbound_stop(self) -> None:
+        daemon, identity = self.spawn("sleep")
+        foreign, _ = self.spawn("tail")
+        pid_file = self.home / "cua-driver.pid"
+        pid_file.write_text(str(daemon.pid), encoding="utf-8")
+        marker = self.root / "old-helper-issued-stop"
+
+        result = self.run_stop(
+            self.setup(pid_file, self.old_helper(foreign, marker), identity)
+        )
+
+        self.assertIn("status=0 result=stopped", result.stdout)
+        self.assertFalse(marker.exists())
         daemon.wait(timeout=5)
         self.assertIsNone(foreign.poll())
 

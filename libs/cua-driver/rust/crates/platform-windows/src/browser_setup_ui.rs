@@ -30,12 +30,6 @@ use crate::uia::UiaNode;
 // same rule: its native URL and web-control topology are contracts; its
 // localized document, heading, and checkbox names are not.
 
-fn release_nodes(nodes: &[UiaNode]) {
-    for node in nodes.iter().filter(|node| node.element_ptr != 0) {
-        unsafe { drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _)) };
-    }
-}
-
 /// Browser chrome only: tab strip, toolbar, omnibox, and the active tab's
 /// `Document` node without its renderer-owned descendants. Tab topology and
 /// the committed setup URL are native facts, so reading them must not depend
@@ -206,11 +200,7 @@ fn stable_native_tab_count(hwnd: u64, initial_count: usize) -> Result<usize, Bro
     loop {
         std::thread::sleep(Duration::from_millis(100));
         let current = match native_nodes(hwnd) {
-            Ok(nodes) => {
-                let current = native_tab_count(&nodes);
-                release_nodes(&nodes);
-                current
-            }
+            Ok(nodes) => native_tab_count(&nodes),
             Err(_) => 0,
         };
         if current > 0 && current == previous {
@@ -446,7 +436,6 @@ impl SetupUiHandle {
             },
             _ => false,
         };
-        release_nodes(&tree.nodes);
         if restored {
             self.enabled_remote_debugging = false;
         }
@@ -483,11 +472,8 @@ impl SetupUiHandle {
         if !self.opened_setup_page {
             return Ok(None);
         }
-        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
-            let proven = setup_page_proven(&nodes, self.descriptor);
-            release_nodes(&nodes);
-            proven
-        });
+        let proven =
+            native_nodes(self.hwnd).is_ok_and(|nodes| setup_page_proven(&nodes, self.descriptor));
         if !proven {
             let error = BrowserRefusal::new(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -519,11 +505,8 @@ impl SetupUiHandle {
         if self.input_may_be_unread {
             return Some(false);
         }
-        let proven = native_nodes(self.hwnd).is_ok_and(|nodes| {
-            let proven = setup_page_proven(&nodes, self.descriptor);
-            release_nodes(&nodes);
-            proven
-        });
+        let proven =
+            native_nodes(self.hwnd).is_ok_and(|nodes| setup_page_proven(&nodes, self.descriptor));
         if !proven {
             return Some(false);
         }
@@ -584,7 +567,7 @@ fn set_remote_debugging(
     let initial_native = native_nodes(hwnd)?;
     let setup_page_active = needs_setup_page_renderer(&initial_native, descriptor);
     let initial_tab_count = native_tab_count(&initial_native);
-    release_nodes(&initial_native);
+    drop(initial_native);
     // Only the setup page's own checkbox needs renderer-owned nodes. Any other
     // active page is left unread, so an unresponsive renderer cannot stall
     // setup or cleanup before the dedicated setup tab exists.
@@ -607,7 +590,6 @@ fn set_remote_debugging(
             enable_attempted: false,
         },
         Ok(None) => {
-            release_nodes(&initial);
             let tab_count_before = stable_native_tab_count(hwnd, initial_tab_count)?;
 
             let mut handle = SetupUiHandle {
@@ -628,7 +610,6 @@ fn set_remote_debugging(
             let new_tab_button = match exact_native_new_tab_button(&tab_tree) {
                 Ok(Some(element)) => element,
                 Ok(None) => {
-                    release_nodes(&tab_tree);
                     return Err(handle.abort(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
@@ -638,15 +619,13 @@ fn set_remote_debugging(
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&tab_tree);
                     return Err(handle.abort(error));
                 }
             };
             if let Err(error) = unsafe { invoke(new_tab_button, "native new-tab button") } {
-                release_nodes(&tab_tree);
                 return Err(handle.abort(error));
             }
-            release_nodes(&tab_tree);
+            drop(tab_tree);
             handle.opened_setup_page = true;
 
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -656,7 +635,6 @@ fn set_remote_debugging(
                 if tab_count_after == tab_count_before + 1 {
                     break tree;
                 }
-                release_nodes(&tree);
                 if Instant::now() >= deadline {
                     return Err(handle.abort(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -671,7 +649,6 @@ fn set_remote_debugging(
             let omnibox = match unique_native_actionable(&created, "Edit", "set_value") {
                 Ok(Some(element)) => element,
                 Ok(None) => {
-                    release_nodes(&created);
                     return Err(handle.abort(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
@@ -681,15 +658,12 @@ fn set_remote_debugging(
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&created);
                     return Err(handle.abort(error));
                 }
             };
             if let Err(error) = unsafe { set_value(omnibox, descriptor.setup_url) } {
-                release_nodes(&created);
                 return Err(handle.abort(error));
             }
-            release_nodes(&created);
             created = match native_nodes(hwnd) {
                 Ok(nodes) => nodes,
                 Err(error) => return Err(handle.abort(error)),
@@ -706,14 +680,12 @@ fn set_remote_debugging(
                     element
                 }
                 Ok(_) => {
-                    release_nodes(&created);
                     return Err(handle.abort(BrowserRefusal::new(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         "the unique native address field did not retain the exact setup URL",
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&created);
                     return Err(handle.abort(error));
                 }
             };
@@ -725,20 +697,15 @@ fn set_remote_debugging(
                 &mut handle.focused_setup_address_field,
                 &mut handle.input_may_be_unread,
             ) {
-                release_nodes(&created);
                 return Err(handle.abort(error));
             }
-            release_nodes(&created);
             handle
         }
         Err(error) => {
-            release_nodes(&initial);
             return Err(error);
         }
     };
-    if !handle.opened_setup_page {
-        release_nodes(&initial);
-    }
+    drop(initial);
 
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
@@ -760,16 +727,14 @@ fn set_remote_debugging(
                     Ok(_) => Ok(false),
                     Err(error) => Err(error),
                 };
-                release_nodes(&tree.nodes);
                 match outcome {
                     Ok(true) => return Ok(handle),
                     Ok(false) => handle.enable_attempted = true,
                     Err(error) => return Err(handle.abort(error)),
                 }
             }
-            Ok(None) => release_nodes(&tree.nodes),
+            Ok(None) => {}
             Err(error) => {
-                release_nodes(&tree.nodes);
                 return Err(handle.abort(error));
             }
         }
@@ -823,6 +788,7 @@ mod tests {
             selected: None,
             is_password: None,
             element_ptr: 7,
+            retained_element: None,
             center_x: 0,
             center_y: 0,
             rect: None,

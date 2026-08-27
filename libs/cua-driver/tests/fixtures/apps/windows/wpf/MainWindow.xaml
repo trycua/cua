@@ -354,6 +354,16 @@ Multi-line. Deterministic. Used for OCR + AX value comparisons.
                     </StackPanel>
                 </GroupBox>
 
+                <GroupBox x:Name="DisabledAncestor" IsEnabled="False"
+                          AutomationProperties.AutomationId="grp-disabled-ancestor">
+                    <GroupBox>
+                        <local:EnabledReportingCheckBox Content="Ancestor-disabled checkbox"
+                            AutomationProperties.AutomationId="chk-disabled-descendant"/>
+                    </GroupBox>
+                </GroupBox>
+                <Button Content="Enable ancestor" AutomationProperties.AutomationId="btn-enable-ancestor"
+                        Click="OnEnableAncestorClick"/>
+
             </StackPanel>
         </ScrollViewer>
     </DockPanel>

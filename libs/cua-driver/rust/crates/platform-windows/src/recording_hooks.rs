@@ -107,7 +107,7 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
         "pid": pid,
         "window_id": hwnd,
         "element_count": element_count,
-        "tree_markdown": result.tree_markdown,
+        "tree_markdown": &result.tree_markdown,
     });
     serde_json::to_vec_pretty(&payload).ok()
 }

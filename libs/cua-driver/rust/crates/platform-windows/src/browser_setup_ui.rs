@@ -31,12 +31,6 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
-fn release_nodes(nodes: &[UiaNode]) {
-    for node in nodes.iter().filter(|node| node.element_ptr != 0) {
-        unsafe { drop(IUIAutomationElement::from_raw(node.element_ptr as *mut _)) };
-    }
-}
-
 fn unique_web_actionable(
     nodes: &[UiaNode],
     control_type: &str,
@@ -178,7 +172,6 @@ fn stable_native_tab_count(hwnd: u64, initial_count: usize) -> Result<usize, Bro
         std::thread::sleep(Duration::from_millis(100));
         let tree = crate::uia::walk_tree(hwnd, None);
         let current = native_tab_count(&tree.nodes);
-        release_nodes(&tree.nodes);
         if current > 0 && current == previous {
             return Ok(current);
         }
@@ -393,7 +386,6 @@ impl SetupUiHandle {
             },
             _ => false,
         };
-        release_nodes(&tree.nodes);
         if restored {
             self.enabled_remote_debugging = false;
         }
@@ -430,7 +422,6 @@ impl SetupUiHandle {
         }
         let tree = crate::uia::walk_tree(self.hwnd, None);
         let proven = setup_page_proven(&tree.nodes, self.descriptor);
-        release_nodes(&tree.nodes);
         if !proven {
             let error = refusal(
                 BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -456,7 +447,6 @@ impl SetupUiHandle {
         }
         let tree = crate::uia::walk_tree(self.hwnd, None);
         let proven = setup_page_proven(&tree.nodes, self.descriptor);
-        release_nodes(&tree.nodes);
         Some(
             proven
                 && crate::input::keyboard::send_key_synthesized(self.hwnd, "w", &["ctrl"]).is_ok(),
@@ -525,7 +515,6 @@ fn set_remote_debugging(
         },
         Ok(None) => {
             let initial_tab_count = native_tab_count(&initial.nodes);
-            release_nodes(&initial.nodes);
             let tab_count_before = stable_native_tab_count(hwnd, initial_tab_count)?;
 
             let mut handle = SetupUiHandle {
@@ -542,7 +531,6 @@ fn set_remote_debugging(
             let new_tab_button = match exact_native_new_tab_button(&tab_tree.nodes) {
                 Ok(Some(element)) => element,
                 Ok(None) => {
-                    release_nodes(&tab_tree.nodes);
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
@@ -552,15 +540,12 @@ fn set_remote_debugging(
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&tab_tree.nodes);
                     return Err(handle.abort(error));
                 }
             };
             if let Err(error) = unsafe { invoke(new_tab_button, "native new-tab button") } {
-                release_nodes(&tab_tree.nodes);
                 return Err(handle.abort(error));
             }
-            release_nodes(&tab_tree.nodes);
             handle.opened_setup_page = true;
 
             let deadline = Instant::now() + Duration::from_secs(3);
@@ -570,7 +555,6 @@ fn set_remote_debugging(
                 if tab_count_after == tab_count_before + 1 {
                     break tree;
                 }
-                release_nodes(&tree.nodes);
                 if Instant::now() >= deadline {
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
@@ -585,7 +569,6 @@ fn set_remote_debugging(
             let omnibox = match unique_native_actionable(&created.nodes, "Edit", "set_value") {
                 Ok(Some(element)) => element,
                 Ok(None) => {
-                    release_nodes(&created.nodes);
                     return Err(handle.abort(refusal(
                         BrowserRefusalCode::BrowserWrongTargetRefused,
                         format!(
@@ -595,15 +578,12 @@ fn set_remote_debugging(
                     )));
                 }
                 Err(error) => {
-                    release_nodes(&created.nodes);
                     return Err(handle.abort(error));
                 }
             };
             if let Err(error) = unsafe { set_value(omnibox, descriptor.setup_url) } {
-                release_nodes(&created.nodes);
                 return Err(handle.abort(error));
             }
-            release_nodes(&created.nodes);
             created = crate::uia::walk_tree(hwnd, None);
             let refreshed_omnibox =
                 match unique_native_actionable(&created.nodes, "Edit", "set_value") {
@@ -618,14 +598,12 @@ fn set_remote_debugging(
                         element
                     }
                     Ok(_) => {
-                        release_nodes(&created.nodes);
                         return Err(handle.abort(refusal(
                             BrowserRefusalCode::BrowserWrongTargetRefused,
                             "the unique native address field did not retain the exact setup URL",
                         )));
                     }
                     Err(error) => {
-                        release_nodes(&created.nodes);
                         return Err(handle.abort(error));
                     }
                 };
@@ -636,21 +614,14 @@ fn set_remote_debugging(
                 &mut handle.injected_global_input,
                 &mut handle.focused_setup_address_field,
             ) {
-                release_nodes(&created.nodes);
                 return Err(handle.abort(error));
             }
-            release_nodes(&created.nodes);
             handle
         }
         Err(error) => {
-            release_nodes(&initial.nodes);
             return Err(error);
         }
     };
-    if !handle.opened_setup_page {
-        release_nodes(&initial.nodes);
-    }
-
     let deadline = Instant::now() + EXISTING_PROFILE_SETUP_READY_TIMEOUT;
     loop {
         let tree = crate::uia::walk_tree(hwnd, None);
@@ -671,16 +642,14 @@ fn set_remote_debugging(
                     Ok(_) => Ok(false),
                     Err(error) => Err(error),
                 };
-                release_nodes(&tree.nodes);
                 match outcome {
                     Ok(true) => return Ok(handle),
                     Ok(false) => handle.enable_attempted = true,
                     Err(error) => return Err(handle.abort(error)),
                 }
             }
-            Ok(None) => release_nodes(&tree.nodes),
+            Ok(None) => {}
             Err(error) => {
-                release_nodes(&tree.nodes);
                 return Err(handle.abort(error));
             }
         }
@@ -732,7 +701,7 @@ mod tests {
             actions: actions.iter().map(|value| (*value).to_owned()).collect(),
             enabled: None,
             selected: None,
-            element_ptr: 7,
+            element_ptr: if actions.is_empty() { 0 } else { 7 },
             center_x: 0,
             center_y: 0,
             rect: None,

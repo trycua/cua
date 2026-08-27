@@ -156,23 +156,11 @@ fn pid_bound_shutdown(_socket_path: &str, _expected_pid: u32) -> anyhow::Result<
     anyhow::bail!("--expected-pid is not supported on this platform")
 }
 
-pub fn run_stop_cmd(socket_path: &str, expected_pid: Option<u32>) {
+pub fn run_pid_bound_stop_cmd(socket_path: &str, expected_pid: u32) {
     // A PID-bound stop intentionally does not make an initial liveness probe:
     // the very first connection is the one whose metadata is checked and whose
     // shutdown is requested, closing the check/use race.
-    let stop_result = match expected_pid {
-        Some(expected_pid) => pid_bound_shutdown(socket_path, expected_pid),
-        None => {
-            if !crate::serve::is_daemon_listening(socket_path) {
-                eprintln!("Cua Driver daemon is not running");
-                std::process::exit(1);
-            }
-            let response = crate::serve::send_request(socket_path, &request("shutdown"));
-            response.and_then(|response| require_ok(response, "shutdown").map(|_| ()))
-        }
-    };
-
-    if let Err(error) = stop_result {
+    if let Err(error) = pid_bound_shutdown(socket_path, expected_pid) {
         eprintln!("stop: {error}");
         std::process::exit(1);
     }

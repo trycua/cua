@@ -208,6 +208,7 @@ func TestPoolAdmissionImagePullSecret(t *testing.T) {
 		{"ecr secret disallowed image", "POST", map[string]any{"containerDiskImage": "evil.example/workspace:latest", "imagePullSecret": "ecr-credentials"}, false},
 		{"repository prefix collision", "POST", map[string]any{"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-evil:latest", "imagePullSecret": "ecr-credentials"}, false},
 		{"allowlisted digest", "POST", map[string]any{"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace@sha256:abc", "imagePullSecret": "ecr-credentials"}, true},
+		{"omarchy digest", "POST", map[string]any{"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950", "imagePullSecret": "ecr-credentials"}, true},
 		{"unrelated patch", "PATCH", map[string]any{"cpuCores": 8}, true},
 		{"image only patch denied", "PATCH", map[string]any{"containerDiskImage": allowedImage}, false},
 		{"secret only patch denied", "PATCH", map[string]any{"imagePullSecret": "ecr-credentials"}, false},

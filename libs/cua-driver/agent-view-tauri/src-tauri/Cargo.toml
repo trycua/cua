@@ -1,0 +1,20 @@
+[package]
+name = "cua-agent-view"
+version = "0.1.0"
+description = "Tauri presentation companion for Cua Driver Agent View"
+edition = "2021"
+rust-version = "1.77"
+
+[build-dependencies]
+tauri-build = { version = "2" }
+
+[dependencies]
+anyhow = "1"
+base64 = "0.22"
+pip-preview = { path = "../../rust/crates/pip-preview" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tauri = { version = "2", features = ["macos-private-api"] }
+tauri-runtime = "2"
+
+[workspace]

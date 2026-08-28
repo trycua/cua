@@ -1,0 +1,22 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Cua Agent View",
+  "version": "0.1.0",
+  "identifier": "com.trycua.agent-view",
+  "build": {
+    "beforeBuildCommand": "",
+    "beforeDevCommand": "",
+    "frontendDist": "../web"
+  },
+  "app": {
+    "withGlobalTauri": true,
+    "macOSPrivateApi": true,
+    "windows": [],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": false
+  }
+}

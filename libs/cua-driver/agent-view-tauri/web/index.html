@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Cua Agent View</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="shell" data-tauri-drag-region>
+      <div class="ambient ambient-one"></div>
+      <div class="ambient ambient-two"></div>
+      <nav id="sessions" class="sessions" aria-label="Agent sessions"></nav>
+      <section id="stage" class="stage" aria-live="polite">
+        <div class="empty-state">
+          <div class="empty-orbit"><span></span></div>
+          <strong>Agent View</strong>
+          <p>Used windows and tabs will appear here.</p>
+        </div>
+      </section>
+      <footer id="status" class="status" data-tauri-drag-region>
+        <span class="status-pulse"></span>
+        <span>Waiting for agent activity</span>
+      </footer>
+      <div class="resize-edge north" data-resize="north"></div>
+      <div class="resize-edge north-east" data-resize="north-east"></div>
+      <div class="resize-edge east" data-resize="east"></div>
+      <div class="resize-edge south-east" data-resize="south-east"></div>
+      <div class="resize-edge south" data-resize="south"></div>
+      <div class="resize-edge south-west" data-resize="south-west"></div>
+      <div class="resize-edge west" data-resize="west"></div>
+      <div class="resize-edge north-west" data-resize="north-west"></div>
+    </main>
+    <script src="app.js"></script>
+  </body>
+</html>

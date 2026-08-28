@@ -1,0 +1,316 @@
+:root {
+  color-scheme: light dark;
+  font-family: "Avenir Next", "Segoe UI Variable", "Noto Sans", sans-serif;
+  --shell: rgba(236, 241, 247, 0.72);
+  --shell-edge: rgba(255, 255, 255, 0.64);
+  --ink: #17212b;
+  --muted: rgba(23, 33, 43, 0.58);
+  --active: #2f8cff;
+  --card: rgba(247, 250, 252, 0.78);
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  padding: 18px;
+  overflow: hidden;
+  border: 1px solid var(--shell-edge);
+  border-radius: 28px;
+  background:
+    linear-gradient(145deg, rgba(255, 255, 255, 0.5), transparent 34%),
+    var(--shell);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.74),
+    inset 0 -1px 0 rgba(72, 91, 110, 0.16),
+    0 24px 60px rgba(16, 31, 48, 0.28);
+  backdrop-filter: blur(28px) saturate(145%);
+}
+
+.ambient {
+  position: absolute;
+  border-radius: 999px;
+  filter: blur(45px);
+  opacity: 0.36;
+  pointer-events: none;
+}
+
+.ambient-one {
+  width: 46%;
+  height: 42%;
+  right: -8%;
+  top: -12%;
+  background: #75d1ee;
+}
+
+.ambient-two {
+  width: 40%;
+  height: 46%;
+  left: -12%;
+  bottom: -18%;
+  background: #e8a971;
+}
+
+.sessions {
+  position: relative;
+  z-index: 3;
+  display: none;
+  gap: 7px;
+  height: 36px;
+  margin: 0 4px 12px;
+}
+
+.sessions.visible {
+  display: flex;
+}
+
+.session-tab {
+  min-width: 0;
+  max-width: 180px;
+  padding: 7px 12px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.48);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.26);
+  color: var(--muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.session-tab.selected {
+  background: rgba(255, 255, 255, 0.7);
+  color: var(--ink);
+  box-shadow: 0 5px 18px rgba(28, 48, 68, 0.12);
+}
+
+.stage {
+  position: relative;
+  z-index: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-auto-rows: minmax(0, 1fr);
+  gap: 13px;
+  height: calc(100% - 38px);
+  min-height: 0;
+}
+
+.sessions.visible + .stage {
+  height: calc(100% - 86px);
+}
+
+.target-card {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.58);
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: 0 11px 25px rgba(23, 37, 52, 0.16);
+  animation: arrive 240ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.target-card.active {
+  border-color: rgba(47, 140, 255, 0.92);
+  box-shadow:
+    0 0 0 2px rgba(47, 140, 255, 0.3),
+    0 14px 30px rgba(23, 67, 112, 0.25);
+}
+
+.target-card img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  background: rgba(16, 21, 27, 0.9);
+  pointer-events: none;
+}
+
+.target-meta {
+  position: absolute;
+  left: 9px;
+  right: 9px;
+  bottom: 9px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 9px;
+  border: 1px solid rgba(255, 255, 255, 0.36);
+  border-radius: 11px;
+  background: rgba(17, 25, 34, 0.66);
+  color: white;
+  font-size: 11px;
+  backdrop-filter: blur(13px);
+}
+
+.target-kind {
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.17);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 8px;
+}
+
+.target-label {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.synthetic-cursor {
+  position: absolute;
+  width: 18px;
+  height: 24px;
+  transform: translate(-2px, -2px);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.42));
+  pointer-events: none;
+}
+
+.synthetic-cursor::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(0 0, 0 88%, 24% 67%, 38% 100%, 56% 91%, 42% 60%, 72% 60%);
+  background: white;
+}
+
+.synthetic-cursor::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  clip-path: polygon(0 0, 0 84%, 24% 64%, 39% 98%, 52% 91%, 39% 58%, 68% 58%);
+  background: #17212b;
+}
+
+.empty-state {
+  grid-column: 1 / -1;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-state strong {
+  margin-top: 13px;
+  color: var(--ink);
+  font-size: 18px;
+}
+
+.empty-state p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.empty-orbit {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border: 1px solid rgba(47, 140, 255, 0.38);
+  border-radius: 50%;
+  animation: breathe 2.2s ease-in-out infinite;
+}
+
+.empty-orbit span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  background: var(--active);
+  box-shadow: 0 0 16px var(--active);
+}
+
+.status {
+  position: absolute;
+  z-index: 3;
+  right: 24px;
+  bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.status-pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #36bd8a;
+  box-shadow: 0 0 8px rgba(54, 189, 138, 0.7);
+}
+
+.resize-edge {
+  position: absolute;
+  z-index: 10;
+}
+
+.north,
+.south {
+  left: 18px;
+  right: 18px;
+  height: 8px;
+}
+
+.north { top: 0; cursor: ns-resize; }
+.south { bottom: 0; cursor: ns-resize; }
+.east,
+.west { top: 18px; bottom: 18px; width: 8px; }
+.east { right: 0; cursor: ew-resize; }
+.west { left: 0; cursor: ew-resize; }
+.north-east,
+.north-west,
+.south-east,
+.south-west { width: 18px; height: 18px; }
+.north-east { top: 0; right: 0; cursor: nesw-resize; }
+.north-west { top: 0; left: 0; cursor: nwse-resize; }
+.south-east { right: 0; bottom: 0; cursor: nwse-resize; }
+.south-west { left: 0; bottom: 0; cursor: nesw-resize; }
+
+@keyframes arrive {
+  from { opacity: 0; transform: scale(0.97) translateY(5px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes breathe {
+  50% { transform: scale(1.08); opacity: 0.72; }
+}
+
+@media (max-width: 520px) {
+  .shell { padding: 14px; border-radius: 23px; }
+  .stage { grid-template-columns: 1fr; gap: 10px; }
+  .target-card { border-radius: 15px; }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --shell: rgba(23, 29, 36, 0.74);
+    --shell-edge: rgba(255, 255, 255, 0.24);
+    --ink: #f3f6f9;
+    --muted: rgba(235, 241, 247, 0.58);
+    --card: rgba(35, 43, 52, 0.82);
+  }
+}

@@ -32,9 +32,9 @@ not a separate public mode or contract.
   same window; the tab strip is hidden when only one session has cards.
 - Until a person selects a session locally, Agent View follows the session with
   the most recent exact target activity.
-- When multiple sessions have cards, the native Agent View window exposes a
-  local session switcher. Selecting a session pins the view there until that
-  session ends or is removed. There is no agent-facing selection tool.
+- When multiple sessions have cards, Agent View exposes a local session
+  switcher. Selecting a session pins the view there until that session ends or
+  is removed. There is no agent-facing selection tool.
 - Public session names are display labels only. The private runtime session ID
   remains the isolation identity, so equal labels never combine sessions.
 - Ending, disconnecting, revoking, or idle-expiring a session removes its cards.

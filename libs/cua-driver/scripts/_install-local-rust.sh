@@ -42,6 +42,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # libs/cua-driver/scripts/; the Cargo workspace lives one level deeper
 # under libs/cua-driver/rust/.
 REPO_ROOT="$(cd "$SCRIPT_DIR/../rust" && pwd)"
+AGENT_VIEW_MANIFEST="$REPO_ROOT/../agent-view-tauri/src-tauri/Cargo.toml"
 
 # Embed local-build provenance in `get_config`. An explicit value remains
 # authoritative for source snapshots copied to VMs without `.git`; otherwise
@@ -233,18 +234,25 @@ echo "${BOLD}Building cua-driver ($BUILD_CONFIG)...${NORMAL}"
 cd "$REPO_ROOT"
 if [ "$BUILD_CONFIG" = "release" ]; then
     cargo build --release -p cua-driver -p cursor-theme-cli
+    cargo build --release --manifest-path "$AGENT_VIEW_MANIFEST"
 else
     cargo build -p cua-driver -p cursor-theme-cli
+    cargo build --manifest-path "$AGENT_VIEW_MANIFEST"
 fi
 
 BUILT_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-driver"
 BUILT_THEME_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-cursor-theme"
+BUILT_AGENT_VIEW_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-agent-view"
 if [ ! -x "$BUILT_BINARY" ]; then
     echo "${RED}Error: build produced no binary at $BUILT_BINARY${NORMAL}"
     exit 1
 fi
 if [ ! -x "$BUILT_THEME_BINARY" ]; then
     echo "${RED}Error: build produced no cursor-theme compiler at $BUILT_THEME_BINARY${NORMAL}"
+    exit 1
+fi
+if [ ! -x "$BUILT_AGENT_VIEW_BINARY" ]; then
+    echo "${RED}Error: build produced no Agent View companion at $BUILT_AGENT_VIEW_BINARY${NORMAL}"
     exit 1
 fi
 echo ""
@@ -281,6 +289,7 @@ stage_binary() {
 }
 stage_binary "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
 stage_binary "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
+stage_binary "$BUILT_AGENT_VIEW_BINARY" "$VERSIONED_DIR/cua-agent-view"
 
 # Re-sign with a fresh ad-hoc signature.
 #
@@ -299,6 +308,8 @@ if [ "$OS" = "Darwin" ]; then
             || echo "${YELLOW}warning: codesign --force --sign - failed; first run may fail with SIGKILL on macOS 26+${NORMAL}" >&2
         codesign --force --sign - "$VERSIONED_DIR/cua-cursor-theme" 2>/dev/null \
             || echo "${YELLOW}warning: cursor-theme sidecar signing failed${NORMAL}" >&2
+        codesign --force --sign - "$VERSIONED_DIR/cua-agent-view" 2>/dev/null \
+            || echo "${YELLOW}warning: Agent View companion signing failed${NORMAL}" >&2
     fi
 fi
 
@@ -388,8 +399,10 @@ if [ "$OS" = "Darwin" ]; then
     cp -R "$SKELETON/Contents/." "$APP_STAGE/Contents/"
     cp "$VERSIONED_DIR/cua-driver-local" "$APP_STAGE/Contents/MacOS/cua-driver-local"
     cp "$VERSIONED_DIR/cua-cursor-theme" "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
+    cp "$VERSIONED_DIR/cua-agent-view" "$APP_STAGE/Contents/MacOS/cua-agent-view"
     chmod +x "$APP_STAGE/Contents/MacOS/cua-driver-local"
     chmod +x "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
+    chmod +x "$APP_STAGE/Contents/MacOS/cua-agent-view"
     rm -f "$APP_STAGE/Contents/MacOS/.gitkeep"
     PREVIOUS_REQUIREMENT=""
     if [ -d "$APP_DEST" ] && command -v codesign >/dev/null 2>&1; then

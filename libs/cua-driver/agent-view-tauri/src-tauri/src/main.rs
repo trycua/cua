@@ -88,9 +88,7 @@ fn frame_snapshot(frame: &PipFrame) -> FrameSnapshot {
         ),
         action_label: frame.action_label.clone(),
         timestamp_ms: frame.timestamp_ms,
-        cursor_position: frame
-            .cursor_position
-            .map(|(x, y)| CursorSnapshot { x, y }),
+        cursor_position: frame.cursor_position.map(|(x, y)| CursorSnapshot { x, y }),
     }
 }
 
@@ -176,8 +174,7 @@ fn main() -> anyhow::Result<()> {
             if let (Some(x), Some(y)) = (geometry.x, geometry.y) {
                 builder = builder.position(x as f64, y as f64);
             }
-            let window = builder.build()?;
-            window.set_focus()?;
+            builder.build()?;
             write_ack(AgentViewAck {
                 request_id,
                 ok: true,
@@ -214,6 +211,9 @@ fn spawn_command_reader(app: tauri::AppHandle) {
                     break;
                 }
             }
+            // The driver owns this companion. EOF means the daemon exited or
+            // closed the pipe, so the UI must not survive as an orphan.
+            app.exit(0);
         })
         .expect("spawn Agent View command reader");
 }

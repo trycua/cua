@@ -79,11 +79,18 @@ impl PipBackend for TauriPipBackend {
 /// Candidate locations for the companion, ordered from explicit development
 /// override to the sibling path used by installed builds.
 pub fn companion_binary_candidates() -> Vec<PathBuf> {
-    let mut candidates = Vec::new();
-    if let Some(path) = std::env::var_os(COMPANION_ENV) {
-        candidates.push(PathBuf::from(path));
-    }
-    if let Ok(executable) = std::env::current_exe() {
+    companion_binary_candidates_from(
+        std::env::var_os(COMPANION_ENV).map(PathBuf::from),
+        std::env::current_exe().ok(),
+    )
+}
+
+fn companion_binary_candidates_from(
+    explicit: Option<PathBuf>,
+    executable: Option<PathBuf>,
+) -> Vec<PathBuf> {
+    let mut candidates = explicit.into_iter().collect::<Vec<_>>();
+    if let Some(executable) = executable {
         if let Some(parent) = executable.parent() {
             candidates.push(parent.join(companion_binary_name()));
         }
@@ -281,16 +288,14 @@ mod tests {
 
     #[test]
     fn explicit_companion_override_is_considered_first() {
-        let key = COMPANION_ENV;
-        let previous = std::env::var_os(key);
-        std::env::set_var(key, "/tmp/cua-agent-view-test");
+        let candidates = companion_binary_candidates_from(
+            Some(PathBuf::from("/tmp/cua-agent-view-test")),
+            Some(PathBuf::from("/opt/cua/cua-driver")),
+        );
         assert_eq!(
-            companion_binary_candidates().first().unwrap(),
+            candidates.first().unwrap(),
             &PathBuf::from("/tmp/cua-agent-view-test")
         );
-        match previous {
-            Some(value) => std::env::set_var(key, value),
-            None => std::env::remove_var(key),
-        }
+        assert_eq!(candidates[1], PathBuf::from("/opt/cua/cua-agent-view"));
     }
 }

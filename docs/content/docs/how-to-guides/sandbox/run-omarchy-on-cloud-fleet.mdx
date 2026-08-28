@@ -35,7 +35,7 @@ You need:
 The Fleet-verified public image reference is:
 
 ```text
-public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:9540dc2cbdc1bd3c98c3a7c738507cb0d78e36ebffa6cfa1f022e2ce97fe07df
+public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab
 ```
 
 The image is an amd64 KubeVirt containerDisk. It is not an ordinary OCI
@@ -90,7 +90,7 @@ from cua_sandbox import Image, Pool
 IMAGE = os.environ.get(
     "OMARCHY_IMAGE",
     "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace"
-    "@sha256:9540dc2cbdc1bd3c98c3a7c738507cb0d78e36ebffa6cfa1f022e2ce97fe07df",
+    "@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab",
 )
 POOL_NAME = os.environ["CUA_POOL_NAME"]
 

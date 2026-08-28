@@ -1087,6 +1087,37 @@ impl BrowserPlatform for MacOsBrowserPlatform {
             })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = i32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the macOS process-id range",
+            )
+        })?;
+        let window_id = u32::try_from(request.window_id).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser window is outside the macOS window-id range",
+            )
+        })?;
+        let dismissed_before = super::consent_ui::dismiss(pid, window_id)?;
+        let closed_setup_page = super::setup_ui::disable(pid, window_id, descriptor)?;
+        let dismissed_after = super::consent_ui::dismiss(pid, window_id)?;
+        Ok(dismissed_before || closed_setup_page || dismissed_after)
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,

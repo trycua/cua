@@ -189,7 +189,7 @@ allowed, and the desktop-side-effect oracles pass.
 | Linux Sway Harness E2E | Controlled wlroots session | `scripts/ci/linux/run-rust-e2e-wayland.sh` |
 | Linux nested-compositor E2E | Controlled experimental session | `scripts/ci/linux/run-rust-e2e-inject.sh` |
 | Linux representative desktop E2E | Existing GNOME, KDE, or Xorg login | `scripts/ci/linux/run-rust-e2e-desktop.sh <desktop>` |
-| macOS Harness E2E | Maintainer Lume SIP-off worker with a logged-in session and inherited grants | `libs/cua-driver/tests/runners/macos-lume/run-all.sh` |
+| macOS Harness E2E | Maintainer Lume SIP-off worker with a logged-in session and inherited grants, or a disposable worker prepared with the checked-in macOS consent seed helper | `libs/cua-driver/tests/runners/macos-lume/run-all.sh` |
 
 Workflows select private execution lanes. Rust source owns scenario definitions,
 fixture oracles, and result records. OS runners only build the driver, stage the

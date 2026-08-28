@@ -1,0 +1,106 @@
+name: "CI: Image API"
+
+on:
+  push:
+    paths:
+      - "clusters/base/cua-images/**"
+      - "libs/python/cua-sandbox/cua_sandbox/image.py"
+      - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
+      - "libs/python/cua-sandbox/cua_sandbox/generated/**"
+      - "libs/python/cua-sandbox/schemas/**"
+      - "libs/python/cua-sandbox/scripts/generate_image_models.py"
+      - "libs/python/cua-sandbox/tests/test_image*.py"
+      - "libs/python/cua-sandbox/pyproject.toml"
+      - "libs/python/cua-sandbox/uv.lock"
+      - ".github/workflows/ci-image-api.yml"
+      - ".github/workflows/cd-image-api.yml"
+  pull_request:
+    paths:
+      - "clusters/base/cua-images/**"
+      - "libs/python/cua-sandbox/cua_sandbox/image.py"
+      - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
+      - "libs/python/cua-sandbox/cua_sandbox/generated/**"
+      - "libs/python/cua-sandbox/schemas/**"
+      - "libs/python/cua-sandbox/scripts/generate_image_models.py"
+      - "libs/python/cua-sandbox/tests/test_image*.py"
+      - "libs/python/cua-sandbox/pyproject.toml"
+      - "libs/python/cua-sandbox/uv.lock"
+      - ".github/workflows/ci-image-api.yml"
+      - ".github/workflows/cd-image-api.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.x"
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync --project libs/python/cua-sandbox --group dev --extra dev
+          go install sigs.k8s.io/kustomize/kustomize/v5@v5.8.1
+          go install sigs.k8s.io/kind@v0.26.0
+
+      - name: Verify generated Image API artifacts
+        run: |
+          uv run --project libs/python/cua-sandbox \
+            python libs/python/cua-sandbox/scripts/generate_image_models.py --check
+
+      - name: Render the CRD package
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          kustomize build clusters/base/cua-images >/tmp/cua-image-crd.yaml
+          grep -q '^kind: CustomResourceDefinition$' /tmp/cua-image-crd.yaml
+          grep -q 'name: images.images.cua.ai' /tmp/cua-image-crd.yaml
+
+      - name: Validate CRD API-server admission
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          kind create cluster --name cua-image-api --wait 120s
+          kubectl apply --server-side --dry-run=server -f clusters/base/cua-images/crd.yaml
+
+      - name: Delete temporary Kind cluster
+        if: always()
+        run: |
+          export PATH="$(go env GOPATH)/bin:$PATH"
+          kind delete cluster --name cua-image-api
+
+      - name: Run focused tests
+        run: |
+          uv run --project libs/python/cua-sandbox pytest \
+            libs/python/cua-sandbox/tests/test_image_crd.py \
+            libs/python/cua-sandbox/tests/test_image_model_generation.py \
+            libs/python/cua-sandbox/tests/test_image_build_recipe.py \
+            libs/python/cua-sandbox/tests/test_image_api_workflows.py \
+            libs/python/cua-sandbox/tests/test_image.py \
+            -q
+
+      - name: Check formatting and repository hygiene
+        run: |
+          uv run --project libs/python/cua-sandbox ruff check \
+            libs/python/cua-sandbox/cua_sandbox/image.py \
+            libs/python/cua-sandbox/scripts/generate_image_models.py \
+            libs/python/cua-sandbox/tests/test_image_crd.py \
+            libs/python/cua-sandbox/tests/test_image_model_generation.py \
+            libs/python/cua-sandbox/tests/test_image_build_recipe.py \
+            libs/python/cua-sandbox/tests/test_image_api_workflows.py
+          uv run --project libs/python/cua-sandbox ruff format --check \
+            libs/python/cua-sandbox/cua_sandbox/image.py \
+            libs/python/cua-sandbox/tests/test_image_api_workflows.py
+          git diff --check

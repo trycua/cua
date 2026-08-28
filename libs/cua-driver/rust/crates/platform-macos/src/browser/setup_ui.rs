@@ -1168,10 +1168,11 @@ pub fn abort_pending(pid: i32, window_id: u32, error: BrowserRefusal) -> Browser
     }
 }
 
-pub fn enable(
+fn set_remote_debugging(
     pid: i32,
     window_id: u32,
     descriptor: &'static BrowserSetupDescriptor,
+    desired_enabled: bool,
 ) -> Result<SetupUiHandle, BrowserRefusal> {
     let initial = walk_tree(pid, Some(window_id), None);
     let initial_checkbox = exact_setup_checkbox(&initial, descriptor);
@@ -1494,14 +1495,20 @@ pub fn enable(
             Ok(Some(element)) => {
                 let value = unsafe { copy_number_attr(element as AXUIElementRef, "AXValue") };
                 match checkbox_state(value) {
-                    Ok(CheckboxState::On) => {
-                        if handle.enable_attempted || handle.remote_debugging_mutation_possible {
+                    Ok(state) if (state == CheckboxState::On) == desired_enabled => {
+                        if desired_enabled
+                            && (handle.enable_attempted
+                                || handle.remote_debugging_mutation_possible)
+                        {
                             handle.enabled_remote_debugging = true;
+                        } else if !desired_enabled {
+                            handle.enabled_remote_debugging = false;
+                            handle.remote_debugging_mutation_possible = false;
                         }
                         release_actionable_nodes(&tree.nodes);
                         return Ok(handle);
                     }
-                    Ok(CheckboxState::Off) => {
+                    Ok(_) => {
                         if !handle.enable_attempted {
                             handle.enable_attempted = true;
                             handle.remote_debugging_mutation_possible = true;
@@ -1590,12 +1597,7 @@ pub fn enable(
                 descriptor,
                 handle.setup_navigation_committed,
             ) {
-                Ok(Some(
-                    checkbox @ PixelCheckbox {
-                        state: CheckboxState::On,
-                        ..
-                    },
-                )) => {
+                Ok(Some(checkbox)) if (checkbox.state == CheckboxState::On) == desired_enabled => {
                     handle.used_bounded_pixel_fallback = true;
                     if handle
                         .pixel_checkbox
@@ -1614,8 +1616,11 @@ pub fn enable(
                             ),
                         ));
                     }
-                    if handle.remote_debugging_mutation_possible {
+                    if desired_enabled && handle.remote_debugging_mutation_possible {
                         handle.enabled_remote_debugging = true;
+                    } else if !desired_enabled {
+                        handle.enabled_remote_debugging = false;
+                        handle.remote_debugging_mutation_possible = false;
                     }
                     release_actionable_nodes(&tree.nodes);
                     return Ok(handle);
@@ -1677,6 +1682,23 @@ pub fn enable(
         }
         std::thread::sleep(Duration::from_millis(100));
     }
+}
+
+pub fn enable(
+    pid: i32,
+    window_id: u32,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<SetupUiHandle, BrowserRefusal> {
+    set_remote_debugging(pid, window_id, descriptor, true)
+}
+
+pub fn disable(
+    pid: i32,
+    window_id: u32,
+    descriptor: &'static BrowserSetupDescriptor,
+) -> Result<bool, BrowserRefusal> {
+    let handle = set_remote_debugging(pid, window_id, descriptor, false)?;
+    Ok(handle.close().unwrap_or(false))
 }
 
 #[cfg(test)]

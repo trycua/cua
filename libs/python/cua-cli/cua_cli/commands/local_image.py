@@ -771,6 +771,10 @@ def _shell_linux_docker(args: argparse.Namespace, info: dict, name: str) -> int:
         print_error(f"No Docker image configured for '{name}'")
         return 1
 
+    config = PLATFORMS["linux-docker"]
+    internal_vnc_port = config["internal_vnc_port"]
+    internal_api_port = config["internal_api_port"]
+
     user_vnc = getattr(args, "vnc_port", None)
     user_api = getattr(args, "api_port", None)
 
@@ -806,9 +810,9 @@ def _shell_linux_docker(args: argparse.Namespace, info: dict, name: str) -> int:
         "-t",
         "--rm",
         "-p",
-        f"{vnc_port}:6901",
+        f"{vnc_port}:{internal_vnc_port}",
         "-p",
-        f"{api_port}:8000",
+        f"{api_port}:{internal_api_port}",
         "--name",
         container_name,
         docker_image,

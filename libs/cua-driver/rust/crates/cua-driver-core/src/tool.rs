@@ -437,9 +437,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
 /// richer live schema.
 pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec<String> {
     let mut capabilities = default_capabilities_for(tool_name);
-    let accepts_delivery_mode = input_schema
-        .pointer("/properties/delivery_mode")
-        .is_some_and(Value::is_object);
+    let accepts_delivery_mode = schema_accepts_delivery_mode(input_schema);
     if accepts_delivery_mode
         && !capabilities
             .iter()
@@ -448,6 +446,53 @@ pub fn advertised_capabilities_for(tool_name: &str, input_schema: &Value) -> Vec
         capabilities.push("input.delivery_mode".into());
     }
     capabilities
+}
+
+fn schema_accepts_delivery_mode(input_schema: &Value) -> bool {
+    input_schema
+        .pointer("/properties/delivery_mode")
+        .is_some_and(Value::is_object)
+}
+
+/// Canonicalize the hidden pre-0.7 Windows `dispatch` compatibility alias.
+///
+/// This runs at the native dispatch boundary before policy, protected-resource
+/// authorization, recording, and platform execution. Every downstream
+/// consumer therefore sees the same modern field and one of the two supported
+/// values. The live schema remains modern-only, and schema gating prevents an
+/// unrelated tool's `dispatch` argument from being reinterpreted.
+///
+/// Presence of `delivery_mode` always wins, including when its value is null or
+/// malformed. As with the platform parsers, only an explicit case-insensitive
+/// `foreground` opts into foreground delivery; every other supplied value,
+/// including the removed legacy `auto`, fails closed to `background`.
+fn normalize_delivery_mode_args(tool: &ToolDef, args: &mut Value) {
+    if !schema_accepts_delivery_mode(&tool.input_schema) {
+        return;
+    }
+    let Some(arguments) = args.as_object_mut() else {
+        return;
+    };
+
+    let supplied = if arguments.contains_key("delivery_mode") {
+        arguments.get("delivery_mode")
+    } else {
+        arguments.get("dispatch")
+    };
+    let Some(supplied) = supplied else {
+        return;
+    };
+    let mode = if supplied
+        .as_str()
+        .is_some_and(|value| value.eq_ignore_ascii_case("foreground"))
+    {
+        "foreground"
+    } else {
+        "background"
+    };
+
+    arguments.remove("dispatch");
+    arguments.insert("delivery_mode".to_owned(), Value::String(mode.to_owned()));
 }
 
 /// Runtime-owned provenance for protected-resource admission.
@@ -1022,6 +1067,9 @@ impl ToolRegistry {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
 
+        // Normalize deprecated public argument spellings before any policy,
+        // consent, recording, or implementation layer interprets the call.
+        normalize_delivery_mode_args(tool.def(), &mut args);
         if let Err(result) = crate::action_target::normalize_action_target(resolved_name, &mut args)
         {
             return result;
@@ -3569,6 +3617,46 @@ resources:
     }
 
     #[tokio::test]
+    async fn canonical_dispatch_normalizes_legacy_delivery_mode_before_execution() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let last_args = Arc::new(Mutex::new(None));
+        let mut registry = super::ToolRegistry::new();
+        registry.register(Box::new(ArgumentProbe {
+            hits: hits.clone(),
+            last_args: last_args.clone(),
+            def: super::ToolDef {
+                name: "click".into(),
+                description: "test input".into(),
+                input_schema: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                    }
+                }),
+                read_only: false,
+                destructive: false,
+                idempotent: false,
+                open_world: false,
+            },
+        }));
+        let registry = Arc::new(registry);
+
+        let result = registry
+            .invoke_with_context(
+                "click",
+                serde_json::json!({"dispatch": "foreground"}),
+                standard_context(),
+            )
+            .await;
+
+        assert_ne!(result.is_error, Some(true));
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
+        let received = last_args.lock().unwrap().clone().expect("arguments");
+        assert_eq!(received["delivery_mode"], "foreground");
+        assert!(received.get("dispatch").is_none());
+    }
+
+    #[tokio::test]
     async fn standard_file_transfer_is_promptless_and_still_canonicalizes_paths() {
         let files = tempfile::tempdir().unwrap();
         let first = files.path().join("first.txt");
@@ -5034,6 +5122,77 @@ mod capability_tests {
                 .iter()
                 .any(|capability| capability == "input.delivery_mode")
         );
+    }
+
+    #[test]
+    fn delivery_mode_normalization_is_schema_gated_modern_first_and_fail_closed() {
+        let with_delivery_mode = super::ToolDef {
+            name: "click".into(),
+            description: "test input".into(),
+            input_schema: serde_json::json!({
+                "type": "object",
+                "properties": {
+                    "delivery_mode": crate::tool_schema::delivery_mode_schema()
+                }
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        let without_delivery_mode = super::ToolDef {
+            name: "other".into(),
+            description: "unrelated tool".into(),
+            input_schema: serde_json::json!({"type": "object", "properties": {}}),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+
+        for (mut args, expected) in [
+            (serde_json::json!({"dispatch": "foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "Foreground"}), "foreground"),
+            (serde_json::json!({"dispatch": "background"}), "background"),
+            (serde_json::json!({"dispatch": "auto"}), "background"),
+            (serde_json::json!({"dispatch": "unknown"}), "background"),
+            (serde_json::json!({"dispatch": null}), "background"),
+            (
+                serde_json::json!({"delivery_mode": "Foreground"}),
+                "foreground",
+            ),
+            (
+                serde_json::json!({"delivery_mode": "unknown"}),
+                "background",
+            ),
+            (serde_json::json!({"delivery_mode": null}), "background"),
+            (
+                serde_json::json!({
+                    "delivery_mode": "background",
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+            (
+                serde_json::json!({
+                    "delivery_mode": null,
+                    "dispatch": "foreground"
+                }),
+                "background",
+            ),
+        ] {
+            super::normalize_delivery_mode_args(&with_delivery_mode, &mut args);
+            assert_eq!(args["delivery_mode"], expected, "arguments: {args}");
+            assert!(args.get("dispatch").is_none(), "arguments: {args}");
+        }
+
+        let mut absent = serde_json::json!({"x": 1});
+        super::normalize_delivery_mode_args(&with_delivery_mode, &mut absent);
+        assert_eq!(absent, serde_json::json!({"x": 1}));
+
+        let mut unrelated = serde_json::json!({"dispatch": "foreground"});
+        super::normalize_delivery_mode_args(&without_delivery_mode, &mut unrelated);
+        assert_eq!(unrelated, serde_json::json!({"dispatch": "foreground"}));
     }
 
     #[test]

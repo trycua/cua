@@ -4,6 +4,7 @@ Callback system for ComputerAgent preprocessing and postprocessing hooks.
 
 from .base import AsyncCallbackHandler
 from .budget_manager import BudgetManagerCallback
+from .captcha_solver import CaptchaSolverCallback
 from .image_retention import ImageRetentionCallback
 from .logging import LoggingCallback
 from .operator_validator import OperatorNormalizerCallback
@@ -14,6 +15,7 @@ from .trajectory_saver import TrajectorySaverCallback
 
 __all__ = [
     "AsyncCallbackHandler",
+    "CaptchaSolverCallback",
     "ImageRetentionCallback",
     "LoggingCallback",
     "TrajectorySaverCallback",

@@ -1429,6 +1429,10 @@ async fn snapshot_composes_shadow_iframe_and_oopif_refs() {
     assert_eq!(snap["oopif"]["status"], "attached");
     assert_eq!(snap["oopif"]["frames"], 1);
     assert_eq!(snap["truncated"], false);
+    assert!(
+        snap.get("challenge").is_none(),
+        "the frozen dom_refs_v1 response must not gain semantic_v2 fields: {snap}"
+    );
 
     // Composed shadow content keeps its labels; user-agent shadow
     // internals (backend 22, role=button) must not have been minted.
@@ -1453,6 +1457,11 @@ async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
 
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["format"], "semantic_v2", "{snap}");
+    assert_eq!(snap["challenge"]["required"], false, "{snap}");
+    assert_eq!(
+        snap["challenge"]["origin"], "https://fixture.test",
+        "{snap}"
+    );
     assert!(
         snap["outline"]
             .as_str()

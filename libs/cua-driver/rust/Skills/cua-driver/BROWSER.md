@@ -136,6 +136,25 @@ or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
+For a standalone run where the caller wants Cua Driver to select and pass a
+nonzero DevTools port, request the factual `driver_selected_port` posture:
+
+```bash
+cua-driver browser_prepare \
+  '{"session":"browser-run-1","allow_launch":true,
+    "launch_posture":"driver_selected_port",
+    "profile":{"mode":"isolated_new"}}'
+```
+
+This mode is still a separate driver-owned profile. It does not attach to the
+user's existing profile or accept a `pid`. The result reports the selected
+launch posture, but the driver does not infer `navigator.webdriver` from it
+because Chromium behavior can vary by version. Verify `navigator.webdriver`
+in-page if the value matters. This mode applies no other browser identity or
+fingerprint overrides and does not guarantee that a site will accept the
+session. Treat any CAPTCHA or bot-detector result as site policy, not as a Cua
+guarantee.
+
 ### Existing profile
 
 Attaching to an authenticated profile requires explicit trusted launch or host

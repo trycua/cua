@@ -82,6 +82,24 @@ pub struct PrepareProfile {
     pub name: Option<String>,
 }
 
+/// Browser launch posture for a driver-owned isolated profile.
+///
+/// This is intentionally not an existing-profile setting. Existing profiles
+/// keep their real browser identity and the reviewed personal-profile CDP
+/// policy; callers cannot use this enum to request identity overrides or page
+/// script injection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PrepareLaunchPosture {
+    /// Current deterministic launch: minimize browser-owned background work so
+    /// setup is quiet and repeatable.
+    #[default]
+    Standard,
+    /// Use a driver-selected nonzero DevTools port rather than asking Chromium
+    /// to choose one through `--remote-debugging-port=0`.
+    DriverSelectedPort,
+}
+
 /// Acting strategy for browser preparation that is not a driver-owned profile
 /// lifecycle operation. Existing profiles remain owned by the user/browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,9 +112,8 @@ pub enum PrepareStrategy {
 /// implicit: `get_browser_state` must not trigger it.
 #[derive(Debug, Clone)]
 pub struct PrepareRequest {
-    /// Existing browser process used to select and attest the launch executable.
-    /// Omitted only for a driver-owned isolated launch, where the platform
-    /// resolves a supported installed Chromium executable instead.
+    /// Existing browser process to prepare, or the standard isolated launch
+    /// executable source. Omitted for pid-free driver-owned isolated launch.
     pub pid: Option<i64>,
     /// Exact native window used as the visible approval and ownership anchor
     /// for existing-profile attachment.
@@ -112,6 +129,9 @@ pub struct PrepareRequest {
     /// Allows launching a separate driver-owned isolated browser process.
     /// It never authorizes terminating or modifying the requested process.
     pub allow_launch: bool,
+    /// Standalone launch posture. Non-default values are valid only with a
+    /// driver-owned isolated launch (`allow_launch=true` plus `profile`).
+    pub launch_posture: PrepareLaunchPosture,
 }
 
 /// What a platform adapter actually did (or found) during prepare.
@@ -141,6 +161,8 @@ pub struct PrepareOutcome {
     pub message: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prepared_pid: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub launch_posture: Option<PrepareLaunchPosture>,
     #[serde(default)]
     pub side_effects: PrepareSideEffects,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -340,6 +362,18 @@ pub trait BrowserPlatform: Send + Sync {
             .discover_owned_endpoint(pid)
             .await?
             .filter(|endpoint| endpoint.ws_url == expected_ws_url))
+    }
+
+    /// Discover and attest the browser-level endpoint on a driver-selected
+    /// fixed port. Native adapters own the `/json/version` request and socket
+    /// ownership proof so core does not grow a fourth platform-specific
+    /// endpoint-discovery path.
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        _pid: i64,
+        _port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        Ok(None)
     }
 
     /// Discover an endpoint while handling an explicitly approved

@@ -1198,6 +1198,42 @@ async fn spawned_browser_endpoints_for_pid(
     .await
 }
 
+async fn fixed_port_spawned_browser_endpoints_once(
+    root_pid: u32,
+    expected_port: u16,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    let mut endpoints = Vec::new();
+    for (port, listener_pid) in loopback_listeners_for_process_tree(root_pid)
+        .await?
+        .into_iter()
+        .filter(|(port, _listener_pid)| *port == expected_port)
+    {
+        let Some(ws_url) = browser_websocket_url(port).await else {
+            continue;
+        };
+        // Unlike the DevToolsActivePort route, the endpoint URL came from the
+        // listener itself. Reprove it only against the live launcher tree;
+        // never use the stale-parent handoff fallback here.
+        let reproved = loopback_listeners_for_process_tree(root_pid).await?;
+        if reproved.contains(&(port, listener_pid)) {
+            endpoints.push((port, ws_url, listener_pid));
+        }
+    }
+    Ok(endpoints)
+}
+
+async fn fixed_port_spawned_browser_endpoints(
+    root_pid: u32,
+    expected_port: u16,
+) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
+    retry_empty_endpoint_discovery(
+        ENDPOINT_DISCOVERY_ATTEMPTS,
+        ENDPOINT_DISCOVERY_RETRY_DELAY,
+        || fixed_port_spawned_browser_endpoints_once(root_pid, expected_port),
+    )
+    .await
+}
+
 fn owned_endpoint_from_listener(
     root_pid: i64,
     port: u16,
@@ -1593,6 +1629,35 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         )
     }
 
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        pid: i64,
+        port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let pid_u32 = u32::try_from(pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("pid {pid} is outside the Windows process-id range"),
+            )
+        })?;
+        select_unique_owned_endpoint(
+            pid,
+            fixed_port_spawned_browser_endpoints(pid_u32, port).await?,
+            "driver-selected fixed port owned by the live driver-spawned browser tree",
+            EndpointTransport::SpawnedExact,
+        )
+        .and_then(|endpoint| {
+            endpoint
+                .ok_or_else(|| {
+                    refusal(
+                        BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                        "the driver-selected DevTools port is not owned by the spawned browser",
+                    )
+                })
+                .map(Some)
+        })
+    }
+
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
@@ -1939,6 +2004,7 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
                 side_effects: Default::default(),
                 attachment: None,
             });

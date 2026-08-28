@@ -47,6 +47,18 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+fn standalone_automation_exposure_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<p id="standalone-webdriver-state" data-cua-id="standalone-webdriver-state"></p>
+<script>
+  document.getElementById('standalone-webdriver-state').textContent =
+    `navigator.webdriver=${navigator.webdriver}`;
+</script>
+</body>"#,
+    )
+}
+
 /// Synthetic control that records event delivery but deliberately rejects the
 /// application action unless the browser marks the click as trusted.
 fn standalone_trust_gated_click_html() -> String {
@@ -577,6 +589,72 @@ fn record_browser_provenance(spec: &BrowserSpec, port: u16) {
     });
     append_json_line(Path::new(&path), &record)
         .unwrap_or_else(|error| panic!("write browser provenance: {error}"));
+}
+
+#[cfg(target_os = "linux")]
+fn process_executable_path(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+#[cfg(target_os = "windows")]
+fn process_executable_path(pid: u32) -> Option<PathBuf> {
+    platform_windows::history::process_executable_path(pid)
+}
+
+#[cfg(target_os = "macos")]
+fn process_executable_path(pid: u32) -> Option<PathBuf> {
+    let output = Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+fn browser_product_from_executable(executable: &Path) -> String {
+    let name = executable
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if name.contains("msedge") || name.contains("microsoft edge") || name.contains("microsoft-edge")
+    {
+        "edge".to_owned()
+    } else if name.contains("chromium") {
+        "chromium".to_owned()
+    } else if name.contains("chrome") {
+        "chrome".to_owned()
+    } else {
+        name
+    }
+}
+
+fn record_platform_selected_browser_provenance(pid: u32, launch_posture: &str) {
+    let executable = process_executable_path(pid)
+        .unwrap_or_else(|| panic!("resolve platform-selected browser executable for pid {pid}"));
+    let product = browser_product_from_executable(&executable);
+    eprintln!(
+        "[standalone-browser] platform-selected {product} pid={pid} executable={}",
+        executable.display()
+    );
+    let Some(path) = std::env::var_os("CUA_E2E_BROWSER_PROVENANCE_FILE") else {
+        return;
+    };
+    let record = serde_json::json!({
+        "schema": "cua-driver-platform-selected-browser-provenance-v1",
+        "source_sha": std::env::var("CUA_E2E_SOURCE_SHA").ok(),
+        "selection": "platform_selected",
+        "product": product,
+        "executable": executable,
+        "prepared_pid": pid,
+        "launch_posture": launch_posture,
+    });
+    append_json_line(Path::new(&path), &record)
+        .unwrap_or_else(|error| panic!("write platform-selected browser provenance: {error}"));
 }
 
 fn harness_cdp_call_at_url(
@@ -1495,18 +1573,6 @@ fn case(browser: &str, action: &str) -> CaseSpec {
     )
 }
 
-fn prepare_isolated_case(browser: &str) -> CaseSpec {
-    let case = case(browser, "browser_prepare_isolated_launch");
-    if cfg!(target_os = "windows")
-        && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
-            == Ok("hosted_runner_token")
-    {
-        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
-    } else {
-        case
-    }
-}
-
 fn refusal_case(browser: &str, action: &str, code: RefusalCode) -> CaseSpec {
     case(browser, action).expecting_refusal(vec![code])
 }
@@ -2243,76 +2309,27 @@ fn run_trusted_click(spec: &BrowserSpec) {
     });
 }
 
-fn run_prepare_isolated_launch(spec: &BrowserSpec) {
+fn run_prepare_isolated_launch() {
     let scenario = format!(
-        "{}-{}-standalone-prepare-isolated",
-        std::env::consts::OS,
-        spec.name
+        "{}-platform-selected-chromium-standalone-prepare-isolated",
+        std::env::consts::OS
     );
-    execute_case(prepare_isolated_case(&spec.name), |evidence| {
-        let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
-        let driver_profiles = driver_profile_root();
-        let profiles_before = profile_entries(&driver_profiles);
-        let mut driver = spawn_driver(&scenario);
-        *evidence = recording_evidence(driver.recording_dir());
+    execute_case(
+        case(
+            "platform-selected-chromium",
+            "browser_prepare_isolated_launch",
+        ),
+        |evidence| {
+            let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
+            let driver_profiles = driver_profile_root();
+            let profiles_before = profile_entries(&driver_profiles);
+            let mut driver = spawn_driver(&scenario);
+            *evidence = recording_evidence(driver.recording_dir());
 
-        let session = format!("standalone-prepare-{}", spec.name);
-        let started = driver.call("start_session", serde_json::json!({ "session": session }));
-        assert!(!started.is_error(), "start_session failed: {}", started.raw);
-        driver.start_behavior_recording();
-
-        if cfg!(target_os = "windows")
-            && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
-                == Ok("hosted_runner_token")
-        {
-            let sentinel = ForegroundSentinel::launch(&mut driver);
-            let (prepared, passed) = sentinel
-                .observe_desktop(|| {
-                    driver.call(
-                        "browser_prepare",
-                        serde_json::json!({
-                            "session": session,
-                            "allow_launch": true,
-                            "profile": {"mode": "isolated_new"},
-                        }),
-                    )
-                })
-                .expect("observe hosted Windows browser limitation");
-            assert_eq!(
-                prepared.structured()["status"],
-                "refused",
-                "{}",
-                prepared.raw
-            );
-            assert_eq!(
-                prepared.structured()["refusal"]["code"],
-                "browser_route_unavailable",
-                "{}",
-                prepared.raw
-            );
-            assert!(
-                prepared.structured()["action"].is_null()
-                    && prepared.structured()["prepared_pid"].is_null()
-                    && prepared.structured()["side_effects"].is_null(),
-                "hosted Windows refusal must precede browser setup: {}",
-                prepared.raw
-            );
-            assert_eq!(
-                profile_entries(&driver_profiles),
-                profiles_before,
-                "hosted Windows refusal must not create an isolated profile"
-            );
-            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
-            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
-            let mut observation = Observation::refused(
-                RefusalCode::BrowserRouteUnavailable,
-                vec![OracleKind::FixtureState],
-                prepared.text(),
-                Evidence::default(),
-            );
-            observation.passed_oracles.extend(passed);
-            observation
-        } else {
+            let session = "standalone-prepare-platform-selected-chromium";
+            let started = driver.call("start_session", serde_json::json!({ "session": session }));
+            assert!(!started.is_error(), "start_session failed: {}", started.raw);
+            driver.start_behavior_recording();
             let prepared = driver.call(
                 "browser_prepare",
                 serde_json::json!({
@@ -2346,6 +2363,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             let prepared_pid = prepared.structured()["prepared_pid"]
                 .as_u64()
                 .expect("prepared browser pid") as u32;
+            record_platform_selected_browser_provenance(prepared_pid, "standard");
             let (prepared_window_id, state) =
                 wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
                     .expect("isolated browser did not expose an exactly bindable window");
@@ -2430,8 +2448,199 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 thread::sleep(Duration::from_millis(100));
             }
             observation
-        }
+        },
+    );
+}
+
+#[cfg(target_os = "windows")]
+fn run_prepare_isolated_hosted_token_refusal() {
+    let scenario = "windows-platform-selected-chromium-hosted-token-refusal";
+    let refusal = case(
+        "platform-selected-chromium",
+        "browser_prepare_isolated_hosted_token_refusal",
+    )
+    .expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable]);
+    execute_case(refusal, |evidence| {
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(scenario);
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let session = "standalone-prepare-hosted-token-refusal";
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+        driver.start_behavior_recording();
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        let (prepared, passed) = sentinel
+            .observe_desktop(|| {
+                driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "session": session,
+                        "allow_launch": true,
+                        "profile": {"mode": "isolated_new"},
+                    }),
+                )
+            })
+            .expect("observe hosted Windows browser limitation");
+        assert_eq!(
+            prepared.structured()["status"],
+            "refused",
+            "{}",
+            prepared.raw
+        );
+        assert_eq!(
+            prepared.structured()["refusal"]["code"],
+            "browser_route_unavailable",
+            "{}",
+            prepared.raw
+        );
+        assert!(
+            prepared.structured()["action"].is_null()
+                && prepared.structured()["prepared_pid"].is_null()
+                && prepared.structured()["side_effects"].is_null(),
+            "hosted Windows refusal must precede browser setup: {}",
+            prepared.raw
+        );
+        assert_eq!(
+            profile_entries(&driver_profiles),
+            profiles_before,
+            "hosted Windows refusal must not create an isolated profile"
+        );
+        let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+        assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+        let mut observation = Observation::refused(
+            RefusalCode::BrowserRouteUnavailable,
+            vec![OracleKind::FixtureState],
+            prepared.text(),
+            Evidence::default(),
+        );
+        observation.passed_oracles.extend(passed);
+        observation
     });
+}
+
+fn run_prepare_automation_postures(action: &'static str, postures: &[(&'static str, bool)]) {
+    let scenario = format!(
+        "{}-platform-selected-chromium-standalone-{action}",
+        std::env::consts::OS,
+    );
+    execute_case(
+        foreground_page_case("platform-selected-chromium", action),
+        |evidence| {
+            let target_server = BrowserFixtureServer::start(&standalone_automation_exposure_html());
+            let driver_profiles = driver_profile_root();
+            let profiles_before = profile_entries(&driver_profiles);
+            let mut driver = spawn_driver(&scenario);
+            *evidence = recording_evidence(driver.recording_dir());
+            driver.start_behavior_recording();
+
+            for &(posture, expected_exposure) in postures {
+                let session = format!("standalone-prepare-automation-platform-selected-{posture}");
+                let started =
+                    driver.call("start_session", serde_json::json!({ "session": session }));
+                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                let prepared = driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "session": session,
+                        "allow_launch": true,
+                        "launch_posture": posture,
+                        "profile": {"mode": "isolated_new"},
+                    }),
+                );
+                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                assert_eq!(
+                    prepared.structured()["action"],
+                    "launched_isolated_browser",
+                    "{}",
+                    prepared.raw
+                );
+                assert_eq!(
+                    prepared.structured()["launch_posture"],
+                    posture,
+                    "{}",
+                    prepared.raw
+                );
+                let prepared_pid = prepared.structured()["prepared_pid"]
+                    .as_u64()
+                    .expect("prepared browser pid") as u32;
+                record_platform_selected_browser_provenance(prepared_pid, posture);
+                let (_, state) =
+                    wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
+                        .expect("isolated browser did not expose an exactly bindable window");
+                let target = state.structured()["target_id"]
+                    .as_str()
+                    .expect("prepared target id")
+                    .to_owned();
+                let tab = state.structured()["tabs"]
+                    .as_array()
+                    .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+                    .and_then(|tab| tab["tab_id"].as_str())
+                    .expect("prepared active tab")
+                    .to_owned();
+                let navigated = driver.call(
+                    "browser_navigate",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "url": target_server.page_url(),
+                        "session": session,
+                    }),
+                );
+                assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+
+                let expected_page_value = format!("navigator.webdriver={expected_exposure}");
+                let deadline = Instant::now() + Duration::from_secs(20);
+                let snapshot = loop {
+                    let snapshot = driver.call(
+                        "get_browser_state",
+                        serde_json::json!({
+                            "target_id": target,
+                            "tab_id": tab,
+                            "session": session,
+                            "snapshot_format": "semantic_v2",
+                        }),
+                    );
+                    if snapshot.structured()["outline"]
+                        .as_str()
+                        .is_some_and(|outline| outline.contains(&expected_page_value))
+                    {
+                        break snapshot;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "{posture} launch never exposed {expected_page_value:?} in the live page: {}",
+                        snapshot.raw
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                };
+                assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+
+                let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+                assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+                wait_for_pid_windows_to_close(&mut driver, prepared_pid);
+                let profile_deadline = Instant::now() + Duration::from_secs(5);
+                while profile_entries(&driver_profiles) != profiles_before {
+                    assert!(
+                        Instant::now() < profile_deadline,
+                        "isolated_new profile remained after {posture} end_session"
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
+fn run_prepare_automation_exposure() {
+    run_prepare_automation_postures(
+        "browser_prepare_automation_exposure",
+        &[("standard", true), ("driver_selected_port", false)],
+    );
 }
 
 #[test]
@@ -4798,6 +5007,19 @@ fn run_browser_scenario(run: fn(&BrowserSpec)) {
     );
 }
 
+fn run_platform_selected_browser_scenario(run: fn()) {
+    let _guard = STANDALONE_BROWSER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    write_environment_from_env(&EnvironmentRecord::ready(Duration::ZERO))
+        .expect("write standalone-browser environment evidence");
+    eprintln!(
+        "[standalone-browser] pid-free browser_prepare selects one platform-attested browser"
+    );
+    run();
+    settle_between_browser_rows();
+}
+
 macro_rules! standalone_browser_test {
     ($name:ident, $run:ident) => {
         #[test]
@@ -4832,10 +5054,25 @@ standalone_browser_test!(
     run_web_type_text_verification
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
-standalone_browser_test!(
-    standalone_browser_prepare_isolated,
-    run_prepare_isolated_launch
-);
+#[test]
+#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
+fn standalone_browser_prepare_isolated() {
+    run_platform_selected_browser_scenario(run_prepare_isolated_launch);
+}
+
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "requires the hosted Windows administrator-token limitation"]
+fn standalone_browser_prepare_isolated_hosted_token_refusal() {
+    run_platform_selected_browser_scenario(run_prepare_isolated_hosted_token_refusal);
+}
+
+#[test]
+#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
+fn standalone_browser_prepare_automation_exposure() {
+    run_platform_selected_browser_scenario(run_prepare_automation_exposure);
+}
+
 #[cfg(not(target_os = "macos"))]
 standalone_browser_test!(
     standalone_browser_existing_profile_standard_refusal,

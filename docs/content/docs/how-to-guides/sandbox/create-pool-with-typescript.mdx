@@ -6,9 +6,9 @@ description: Create a reusable Fleet pool and capture a sandbox screenshot from 
 import { Callout } from 'fumadocs-ui/components/callout';
 import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
 
-Use `@trycua/fleet` to create a reusable sandbox pool from TypeScript. This
-guide creates a one-replica Linux pool, claims a sandbox, captures a screenshot,
-and releases the claim while leaving the pool warm.
+Use `@trycua/fleet` to reconcile a reusable sandbox pool from TypeScript. This
+guide applies a one-replica Linux pool configuration, claims a sandbox, captures
+a screenshot, and releases the claim while leaving the pool warm.
 
 The package provides separate runtime entry points:
 
@@ -139,10 +139,10 @@ try {
     .sandboxTemplateRef(templateRef)
     .build();
 
-  const pool = await client.createPool(
+  const pool = await client.reconcilePool(
     new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
   );
-  const template = await client.createTemplate(
+  const template = await client.reconcileTemplate(
     new CreateTemplateRequestBuilder()
       .namespace(POOL_NAME)
       .name(TEMPLATE_NAME)
@@ -150,8 +150,8 @@ try {
       .build()
   );
 
-  console.log(`Created pool ${pool.metadata.name}`);
-  console.log(`Created template ${template.metadata.name}`);
+  console.log(`Reconciled pool ${pool.metadata.name}`);
+  console.log(`Reconciled template ${template.metadata.name}`);
 
   claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
   const sandbox = await client.waitClaim(claim);
@@ -321,10 +321,10 @@ try {
     .sandboxTemplateRef(templateRef)
     .build();
 
-  const pool = await client.createPool(
+  const pool = await client.reconcilePool(
     new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
   );
-  const template = await client.createTemplate(
+  const template = await client.reconcileTemplate(
     new CreateTemplateRequestBuilder()
       .namespace(POOL_NAME)
       .name(TEMPLATE_NAME)
@@ -332,7 +332,7 @@ try {
       .build()
   );
 
-  console.log(`Created pool ${pool.metadata.name} with template ${template.metadata.name}`);
+  console.log(`Reconciled pool ${pool.metadata.name} with template ${template.metadata.name}`);
 
   claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
   const sandbox = await client.waitClaim(claim);
@@ -398,25 +398,26 @@ and displays the PNG.
 Both examples release only the claim, so the one-replica pool remains warm for
 the next task. This is the normal reusable-pool lifecycle.
 
-The low-level Fleet SDK creates resources rather than reconciling them. Reusing
-the same pool name in the creation script returns an already-exists error. To
-reuse the pool, skip the creation calls and load it with:
-
-```ts
-const pool = await client.getPool(POOL_NAME);
-```
+The TypeScript SDK does not currently expose `pool.apply`. Instead,
+`reconcilePool()` and `reconcileTemplate()` are the lower-level UniFFI
+reconciliation primitives that Python `Pool.apply` delegates to internally.
+They do not provide `Pool.apply`'s request derivation, validation, ownership,
+rollback, or cleanup. Each method looks up its named resource, updates the
+existing resource's specification, or creates the resource when the lookup
+returns HTTP 403 or 404. Calling both methods lets you rerun the complete example
+without maintaining separate get-or-create branches.
 
 To remove the pool permanently, retain the `pool` and `template` values and run
 the following after every claim has been released:
 
 ```ts
-await client.deletePool(pool);
 await client.deleteTemplate(template);
+await client.deletePool(pool);
 ```
 
-Pool names are globally unique across Cua accounts. If creation returns HTTP
-403, choose another pool name; changing the claim name does not resolve a pool
-namespace conflict.
+Pool names are globally unique across Cua accounts. If reconciliation returns
+HTTP 403, choose another pool name; changing the claim name does not resolve a
+pool namespace conflict.
 
 ## Use autoscaling instead of one replica
 

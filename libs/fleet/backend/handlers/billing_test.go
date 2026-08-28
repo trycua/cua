@@ -21,6 +21,9 @@ import (
 type fakeBillingService struct {
 	summaryCalls           int
 	summarySubject         string
+	attachedCards          []billing.SavedCard
+	attachedErr            error
+	attachedCalls          int
 	setupSubject           string
 	setupOptions           billing.SetupOptions
 	portalSubject          string
@@ -41,7 +44,15 @@ type fakeBillingService struct {
 }
 
 func (f *fakeBillingService) AttachedCards(context.Context, string) ([]billing.SavedCard, error) {
-	return []billing.SavedCard{}, nil
+	f.attachedCalls++
+	attachedErr := f.attachedErr
+	if attachedErr != nil {
+		return nil, attachedErr
+	}
+	if f.attachedCards == nil {
+		return []billing.SavedCard{}, nil
+	}
+	return f.attachedCards, nil
 }
 
 func (f *fakeBillingService) Summary(_ context.Context, subject string) (billing.Summary, error) {
@@ -138,6 +149,71 @@ func TestGetBillingUsageRejectsUnsupportedHistoryWindow(t *testing.T) {
 	}
 	if service.usageMonths != 0 {
 		t.Fatalf("usage months = %d, want no call", service.usageMonths)
+	}
+}
+
+func TestBillingSummaryReportsPoolCreateCardRequired(t *testing.T) {
+	postCutoff := time.Date(2026, time.August, 15, 0, 0, 0, 0, time.UTC)
+	preCutoff := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	nextYear := int64(time.Now().UTC().Year() + 1)
+	cases := []struct {
+		name            string
+		cardFlag        bool
+		adminSubs       string
+		createdAt       time.Time
+		cards           []billing.SavedCard
+		cardsErr        error
+		want            bool
+		wantStripeCalls int
+	}{
+		{name: "card flag off", cardFlag: false, createdAt: postCutoff, want: false},
+		{name: "admin exempt", cardFlag: true, adminSubs: `["` + billingAlice.ID + `"]`, createdAt: postCutoff, want: false},
+		{name: "grandfathered user", cardFlag: true, createdAt: preCutoff, want: false},
+		{name: "no card", cardFlag: true, createdAt: postCutoff, want: true, wantStripeCalls: 1},
+		{name: "qualifying card", cardFlag: true, createdAt: postCutoff, cards: []billing.SavedCard{{Brand: "visa", Last4: "4242", ExpYear: nextYear, ExpMonth: 1}}, want: false, wantStripeCalls: 1},
+		{name: "expired card", cardFlag: true, createdAt: postCutoff, cards: []billing.SavedCard{{Brand: "visa", Last4: "4242", ExpYear: 2020, ExpMonth: 1}}, want: true, wantStripeCalls: 1},
+		{name: "stripe outage fails open", cardFlag: true, createdAt: postCutoff, cardsErr: errors.New("stripe unavailable"), want: false, wantStripeCalls: 1},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			cardFlag := "false"
+			if testCase.cardFlag {
+				cardFlag = "true"
+			}
+			adminSubs := testCase.adminSubs
+			if adminSubs == "" {
+				adminSubs = `[]`
+			}
+			t.Setenv("CYCLOPS_CS_REQUIRE_CARD_FOR_CUSTOM_RESOURCE_CREATION", cardFlag)
+			t.Setenv("CYCLOPS_CS_ADMIN_SUBS", adminSubs)
+			t.Setenv("CYCLOPS_CS_CARD_REQUIREMENT_EXEMPT_SUBS", `[]`)
+			setBillingFlag(t, true)
+			auth.InvalidateFeatureFlags()
+			auth.LoadOpa()
+			t.Cleanup(auth.InvalidateFeatureFlags)
+
+			service := &fakeBillingService{attachedCards: testCase.cards, attachedErr: testCase.cardsErr}
+			accounts := &cardEligibilityAccounts{createdAt: testCase.createdAt}
+			h := Handlers{Billing: service, UserAccounts: accounts, Stripe: config.StripeConfiguration{SecretKey: "sk_test"}}
+			w := httptest.NewRecorder()
+
+			h.GetBillingSummary(w, newBillingRequest(http.MethodGet, "/api/billing/summary", "", billingAlice))
+
+			if w.Code != http.StatusOK {
+				t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+			}
+			var summary billing.Summary
+			if err := json.Unmarshal(w.Body.Bytes(), &summary); err != nil {
+				t.Fatalf("decode summary: %v; body = %s", err, w.Body.String())
+			}
+			if summary.PoolCreateCardRequired != testCase.want {
+				t.Fatalf("pool_create_card_required = %v, want %v", summary.PoolCreateCardRequired, testCase.want)
+			}
+			if service.attachedCalls != testCase.wantStripeCalls {
+				t.Fatalf("attached card lookups = %d, want %d", service.attachedCalls, testCase.wantStripeCalls)
+			}
+		})
 	}
 }
 

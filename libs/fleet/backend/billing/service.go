@@ -187,6 +187,12 @@ type CardSummary struct {
 type Summary struct {
 	PaymentMethodPresent bool         `json:"payment_method_present" binding:"required"`
 	Card                 *CardSummary `json:"card" binding:"required" extensions:"x-nullable"`
+	// PoolCreateCardRequired is advisory admission state the API handler
+	// fills in (Service.Summary always leaves it false): true when creating
+	// a pool or any other custom resource would be denied because the
+	// account has no qualifying payment card. The dashboard reads it to gate
+	// create flows before a request ever reaches the enforcing policy.
+	PoolCreateCardRequired bool `json:"pool_create_card_required" binding:"required"`
 }
 
 func (s *Service) AttachedCards(ctx context.Context, subject string) ([]SavedCard, error) {

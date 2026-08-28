@@ -337,6 +337,100 @@ test.describe("Pool creation", () => {
     await dialog.getByRole("button", { name: "Keep editing" }).click()
     await expect(name).toHaveValue("new-fleet")
   })
+
+  test("create is blocked when the account still needs a payment card", async ({
+    page,
+  }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    await page.route("**/api/billing/summary", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: false,
+          card: null,
+          // A missing payment method must block creation even when the
+          // advisory policy result is false (for example, a grandfathered
+          // account or a failed-open policy evaluation).
+          pool_create_card_required: false,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    // Cloudscape renders reason-carrying disabled buttons with aria-disabled
+    // (kept focusable for the tooltip) rather than the disabled attribute.
+    await expect(page.getByRole("button", { name: "Create" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    )
+    await page.getByRole("button", { name: "Create" }).hover()
+    await expect(
+      page
+        .getByRole("tooltip")
+        .getByText("Add a payment method in Settings to create pools."),
+    ).toBeVisible()
+
+    await page.getByRole("button", { name: "Add payment method" }).click()
+    await expect(page).toHaveURL(/\/settings$/)
+  })
+
+  test("create stays enabled once a payment card is on file", async ({
+    page,
+  }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    await page.route("**/api/billing/summary", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: true,
+          card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+          pool_create_card_required: false,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByPlaceholder("my-pool")).toBeVisible()
+    await expect(page.getByText("Payment method required")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Create" })).toBeEnabled()
+  })
+
+  test("create failure pipes the backend error into the flash message", async ({
+    page,
+  }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    // Registered after mockPoolsApi so it wins: the pool create POST is
+    // denied the way the card-admission policy denies it.
+    const denial =
+      "A payment method is required to create this resource. Add one in Billing and try again."
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
+      (route) => {
+        if (route.request().method() !== "POST") return route.fallback()
+        return route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ error: denial }),
+        })
+      },
+    )
+
+    await page.goto("/pools/new")
+    await page.getByRole("textbox", { name: "Name" }).fill("gated-pool")
+    await page.getByRole("button", { name: "Create" }).click()
+
+    await expect(page.getByText("Create failed")).toBeVisible()
+    await expect(page.getByText(denial)).toBeVisible()
+  })
 })
 
 test.describe("Pool duplication", () => {

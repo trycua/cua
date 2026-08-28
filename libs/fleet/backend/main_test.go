@@ -486,7 +486,7 @@ func TestBillingSummaryGeneratedContract(t *testing.T) {
 		t.Fatalf("unmarshal swagger.json: %v", err)
 	}
 	summary := document.Definitions["billing.Summary"]
-	if !slices.Contains(summary.Required, "payment_method_present") || !slices.Contains(summary.Required, "card") {
+	if !slices.Contains(summary.Required, "payment_method_present") || !slices.Contains(summary.Required, "card") || !slices.Contains(summary.Required, "pool_create_card_required") {
 		t.Fatalf("billing summary required fields = %#v", summary.Required)
 	}
 	var card struct {

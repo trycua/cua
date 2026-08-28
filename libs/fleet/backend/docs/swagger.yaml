@@ -19,9 +19,18 @@ definitions:
         x-nullable: true
       payment_method_present:
         type: boolean
+      pool_create_card_required:
+        description: |-
+          PoolCreateCardRequired is advisory admission state the API handler
+          fills in (Service.Summary always leaves it false): true when creating
+          a pool or any other custom resource would be denied because the
+          account has no qualifying payment card. The dashboard reads it to gate
+          create flows before a request ever reaches the enforcing policy.
+        type: boolean
     required:
     - card
     - payment_method_present
+    - pool_create_card_required
     type: object
   billing.Usage:
     properties:
@@ -727,7 +736,8 @@ paths:
   /api/billing/summary:
     get:
       description: Returns a sanitized Stripe-backed billing summary for the authenticated
-        Cyclops subject.
+        Cyclops subject, including whether creating pools currently requires adding
+        a payment card.
       produces:
       - application/json
       responses:

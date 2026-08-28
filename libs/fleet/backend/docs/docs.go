@@ -503,7 +503,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.",
+                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject, including whether creating pools currently requires adding a payment card.",
                 "produces": [
                     "application/json"
                 ],
@@ -1648,7 +1648,8 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "card",
-                "payment_method_present"
+                "payment_method_present",
+                "pool_create_card_required"
             ],
             "properties": {
                 "card": {
@@ -1660,6 +1661,10 @@ const docTemplate = `{
                     "x-nullable": true
                 },
                 "payment_method_present": {
+                    "type": "boolean"
+                },
+                "pool_create_card_required": {
+                    "description": "PoolCreateCardRequired is advisory admission state the API handler\nfills in (Service.Summary always leaves it false): true when creating\na pool or any other custom resource would be denied because the\naccount has no qualifying payment card. The dashboard reads it to gate\ncreate flows before a request ever reaches the enforcing policy.",
                     "type": "boolean"
                 }
             }

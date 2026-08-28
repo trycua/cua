@@ -80,9 +80,25 @@ func requireEmptyBillingBody(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// poolCreateCardRequired resolves the advisory pool_create_card_required
+// summary field from the same admission policy /api/k8s enforces. The field
+// only pre-warns the dashboard — the policy still denies bypassing creates —
+// so evaluation failures fail open to not-required instead of erroring the
+// whole summary.
+func (h Handlers) poolCreateCardRequired(r *http.Request, user *auth.User) bool {
+	required, err := auth.EvalPoolCreateCardRequired(r.Context(), user, func(ctx context.Context) (auth.FactSet, error) {
+		return StripeCardFacts(h).LoadFacts(ctx, r)
+	})
+	if err != nil {
+		slog.WarnContext(r.Context(), "billing: card requirement eval failed; reporting not required", "err", err)
+		return false
+	}
+	return required
+}
+
 // GetBillingSummary godoc
 // @Summary Billing summary
-// @Description Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.
+// @Description Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject, including whether creating pools currently requires adding a payment card.
 // @Tags billing
 // @Produce json
 // @Success 200 {object} billing.Summary
@@ -104,6 +120,7 @@ func (h Handlers) GetBillingSummary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "could not load billing summary")
 		return
 	}
+	summary.PoolCreateCardRequired = h.poolCreateCardRequired(r, user)
 	writeJSON(w, http.StatusOK, summary)
 }
 

@@ -34,6 +34,9 @@ var (
 	opaAdminQuery *rego.PreparedEvalQuery
 	opaChatQuery  *rego.PreparedEvalQuery
 	opaUsageQuery *rego.PreparedEvalQuery
+
+	opaCardExemptQuery   *rego.PreparedEvalQuery
+	opaCardEligibleQuery *rego.PreparedEvalQuery
 )
 
 // authzPolicy is the shared principal vocabulary every surface module imports.
@@ -395,6 +398,22 @@ func LoadOpa() {
 	opaChatQuery = prepareAuthzQuery("data.authz.chat_enabled")
 	opaUsageQuery = prepareAuthzQuery("data.authz.usage_enabled")
 
+	// Card-admission queries pair authz.rego with the admission module because
+	// custom_resource_creation_admission.rego imports data.authz for is_admin.
+	prepareCardAdmissionQuery := func(q string) *rego.PreparedEvalQuery {
+		pq, err := rego.New(
+			rego.Query(q),
+			rego.Module("authz.rego", authzPolicy),
+			rego.Module("custom_resource_creation_admission.rego", customResourceCreationAdmissionPolicy),
+		).PrepareForEval(context.Background())
+		if err != nil {
+			log.Fatalf("opa: prepare card admission %q: %v", q, err)
+		}
+		return &pq
+	}
+	opaCardExemptQuery = prepareCardAdmissionQuery("data.custom_resource_creation_admission.exempt")
+	opaCardEligibleQuery = prepareCardAdmissionQuery("data.custom_resource_creation_admission.billing_eligible")
+
 	// Warm the flag cache once so the first request isn't slowed by the
 	// initial resolve and any SSM/provider misconfiguration surfaces in the
 	// startup logs rather than on a user's first call.
@@ -537,6 +556,81 @@ func EvalBillingEnabled(ctx context.Context, user *User) (bool, error) {
 	callCtx, cancel := context.WithTimeout(ctx, 3*time.Second)
 	defer cancel()
 	return ffClient.BooleanValue(callCtx, billingFlag, false, openfeature.NewEvaluationContext(user.ID, nil))
+}
+
+// cardAdmissionProbePath is a representative custom-resource create path so
+// the admission module's is_custom_resource_create matches; without it the
+// "not is_custom_resource_create" rule would exempt everyone.
+const cardAdmissionProbePath = "apis/cua.ai/v1/namespaces/probe/osgymsandboxwarmpools"
+
+func cardAdmissionInput(user *User, stripeCards FactSet, now time.Time) map[string]interface{} {
+	input := map[string]interface{}{
+		"user":   buildUserInput(user),
+		"flags":  flagsData(),
+		"method": http.MethodPost,
+		"params": map[string]interface{}{"path": cardAdmissionProbePath},
+	}
+	if stripeCards != nil {
+		input["facts"] = map[string]interface{}{
+			StripeCardsFactNamespace: map[string]any(stripeCards),
+			TimeFactNamespace: map[string]interface{}{
+				"current_year":  now.UTC().Year(),
+				"current_month": int(now.UTC().Month()),
+			},
+		}
+	}
+	return input
+}
+
+func evalPreparedBool(ctx context.Context, query *rego.PreparedEvalQuery, input map[string]interface{}) (bool, error) {
+	if query == nil {
+		return false, fmt.Errorf("opa card admission query is not prepared; call LoadOpa first")
+	}
+	res, err := query.Eval(ctx, rego.EvalInput(input))
+	if err != nil {
+		return false, err
+	}
+	if len(res) == 0 || len(res[0].Expressions) == 0 {
+		return false, nil
+	}
+	v, _ := res[0].Expressions[0].Value.(bool)
+	return v, nil
+}
+
+// EvalPoolCreateCardRequired reports whether the card-admission policy would
+// deny this user a custom-resource create (a pool, template, or claim) for
+// lack of a qualifying payment card. It evaluates the same Rego module the
+// /api/k8s route enforces, against a representative create request, so the
+// advisory answer the dashboard shows cannot drift from enforcement.
+// loadStripeCards is called only when the user is not otherwise exempt
+// (flag off, admin, exempt sub), mirroring the enforcement path's lazy fact
+// loading; it should return the StripeCardsFactNamespace fact set.
+func EvalPoolCreateCardRequired(
+	ctx context.Context,
+	user *User,
+	loadStripeCards func(context.Context) (FactSet, error),
+) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	// The exempt rules read only input.flags and input.user, so no facts
+	// (and no clock) are attached to this first evaluation.
+	exempt, err := evalPreparedBool(ctx, opaCardExemptQuery, cardAdmissionInput(user, nil, time.Time{}))
+	if err != nil {
+		return false, err
+	}
+	if exempt {
+		return false, nil
+	}
+	stripeCards, err := loadStripeCards(ctx)
+	if err != nil {
+		return false, err
+	}
+	eligible, err := evalPreparedBool(ctx, opaCardEligibleQuery, cardAdmissionInput(user, stripeCards, time.Now()))
+	if err != nil {
+		return false, err
+	}
+	return !eligible, nil
 }
 
 func writeJSONErr(w http.ResponseWriter, status int, msg string) {

@@ -15,6 +15,12 @@ export interface SavedCard {
 export interface BillingSummary {
 	payment_method_present: boolean;
 	card: SavedCard | null;
+	/**
+	 * True when creating a pool (or any custom resource) would be denied by
+	 * the backend's card-admission policy until a payment card is added.
+	 * Optional so older backends without the field keep parsing.
+	 */
+	pool_create_card_required?: boolean;
 }
 
 export type UsageRangeMonths = 3 | 6 | 12;
@@ -66,6 +72,7 @@ export const billingApi = {
 			? Promise.resolve<BillingSummary>({
 					payment_method_present: true,
 					card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+					pool_create_card_required: false,
 				})
 			: billingRequest<BillingSummary>("/api/billing/summary", "GET"),
 	setup: () =>

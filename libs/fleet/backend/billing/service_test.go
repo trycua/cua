@@ -312,7 +312,7 @@ func TestSummaryJSONContract(t *testing.T) {
 		{
 			name:    "cardless",
 			summary: Summary{},
-			want:    `{"payment_method_present":false,"card":null}`,
+			want:    `{"payment_method_present":false,"card":null,"pool_create_card_required":false}`,
 		},
 		{
 			name: "saved card",
@@ -320,7 +320,14 @@ func TestSummaryJSONContract(t *testing.T) {
 				PaymentMethodPresent: true,
 				Card:                 &CardSummary{Brand: "visa", Last4: "4242", ExpMonth: 12, ExpYear: 2030},
 			},
-			want: `{"payment_method_present":true,"card":{"brand":"visa","last4":"4242","exp_month":12,"exp_year":2030}}`,
+			want: `{"payment_method_present":true,"card":{"brand":"visa","last4":"4242","exp_month":12,"exp_year":2030},"pool_create_card_required":false}`,
+		},
+		{
+			name: "card required for pool creation",
+			summary: Summary{
+				PoolCreateCardRequired: true,
+			},
+			want: `{"payment_method_present":false,"card":null,"pool_create_card_required":true}`,
 		},
 	}
 

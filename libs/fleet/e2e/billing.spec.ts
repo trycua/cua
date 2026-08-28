@@ -62,6 +62,9 @@ test("usage shows reserved resources and calculated cost by pool", async ({ page
 	await mockResourceUsage(page);
 	await page.goto("/usage");
 	await expect(page.getByRole("button", { name: "Usage history range Last 24 hours" })).toBeVisible();
+	const pricing = page.locator(".usage-pricing");
+	await expect(pricing.getByText("CPU: $0.044625/vCPU/hour")).toBeVisible();
+	await expect(pricing.getByText("Memory: $0.0223125/GB/hour")).toBeVisible();
 	await expect(page.getByText("Cost", { exact: true }).first()).toBeVisible();
 	const summary = page.getByLabel("Usage summary");
 	await expect(summary.getByText("$43.51")).toBeVisible();
@@ -83,6 +86,9 @@ test("usage cost uses pricing returned by api config", async ({ page }) => {
 	});
 	await mockResourceUsage(page);
 	await page.goto("/usage");
+	const pricing = page.locator(".usage-pricing");
+	await expect(pricing.getByText("CPU: $0.1/vCPU/hour")).toBeVisible();
+	await expect(pricing.getByText("Memory: $0.2/GB/hour")).toBeVisible();
 	await expect(page.getByLabel("Usage summary").getByText("$291.00")).toBeVisible();
 	await expect(page.getByRole("cell", { name: "$216.00" })).toBeVisible();
 });

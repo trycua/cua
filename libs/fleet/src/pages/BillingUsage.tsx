@@ -30,6 +30,12 @@ const moneyFormatter = new Intl.NumberFormat(undefined, {
   minimumFractionDigits: 2,
   maximumFractionDigits: 2,
 })
+const rateFormatter = new Intl.NumberFormat("en-US", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 0,
+  maximumFractionDigits: 7,
+})
 const resourceFormatter = new Intl.NumberFormat(undefined, {
   maximumFractionDigits: 2,
 })
@@ -159,6 +165,13 @@ export function BillingUsagePage() {
     <PageShell
       eyebrow="Billing"
       title="Usage"
+      description={
+        <span className="usage-pricing">
+          <strong>Pricing:</strong>
+          <span>CPU: {rateFormatter.format(usagePricing.vcpuHourUSD)}/vCPU/hour</span>
+          <span>Memory: {rateFormatter.format(usagePricing.memoryGiBHourUSD)}/GB/hour</span>
+        </span>
+      }
       actions={
         <Select
           ariaLabel="Usage history range"

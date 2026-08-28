@@ -3,6 +3,14 @@
   gap: 20px;
 }
 
+.usage-pricing {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 18px;
+  color: var(--cua-color-text-body, rgba(224, 230, 238, 0.84));
+  font-variant-numeric: tabular-nums;
+}
+
 .usage-admin {
   display: grid;
   gap: 8px;

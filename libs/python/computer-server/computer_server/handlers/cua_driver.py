@@ -173,6 +173,11 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
 
         target_type = getattr(self._sdk, "ActionTarget", None)
         if target_type is None:
+            # cua-driver 0.22.x keeps the generated type in its private module
+            # while older package roots do not re-export it yet.
+            contract = getattr(self._sdk, "_native_contract", None)
+            target_type = getattr(contract, "ActionTarget", None)
+        if target_type is None:
             # Preserve compatibility with lightweight injected SDK test doubles.
             return None, self._sdk.DesktopScope.DESKTOP
         return target_type.DESKTOP(display_id="primary"), None

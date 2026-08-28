@@ -591,6 +591,71 @@ fn record_browser_provenance(spec: &BrowserSpec, port: u16) {
         .unwrap_or_else(|error| panic!("write browser provenance: {error}"));
 }
 
+#[cfg(target_os = "linux")]
+fn process_executable_path(pid: u32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/exe")).ok()
+}
+
+#[cfg(target_os = "windows")]
+fn process_executable_path(pid: u32) -> Option<PathBuf> {
+    platform_windows::history::process_executable_path(pid)
+}
+
+#[cfg(target_os = "macos")]
+fn process_executable_path(pid: u32) -> Option<PathBuf> {
+    let output = Command::new("/bin/ps")
+        .args(["-p", &pid.to_string(), "-o", "comm="])
+        .output()
+        .ok()?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+}
+
+fn browser_product_from_executable(executable: &Path) -> String {
+    let name = executable
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if name.contains("msedge") {
+        "edge".to_owned()
+    } else if name.contains("chromium") {
+        "chromium".to_owned()
+    } else if name.contains("chrome") {
+        "chrome".to_owned()
+    } else {
+        name
+    }
+}
+
+fn record_platform_selected_browser_provenance(pid: u32, launch_posture: &str) {
+    let executable = process_executable_path(pid)
+        .unwrap_or_else(|| panic!("resolve platform-selected browser executable for pid {pid}"));
+    let product = browser_product_from_executable(&executable);
+    eprintln!(
+        "[standalone-browser] platform-selected {product} pid={pid} executable={}",
+        executable.display()
+    );
+    let Some(path) = std::env::var_os("CUA_E2E_BROWSER_PROVENANCE_FILE") else {
+        return;
+    };
+    let record = serde_json::json!({
+        "schema": "cua-driver-platform-selected-browser-provenance-v1",
+        "source_sha": std::env::var("CUA_E2E_SOURCE_SHA").ok(),
+        "selection": "platform_selected",
+        "product": product,
+        "executable": executable,
+        "prepared_pid": pid,
+        "launch_posture": launch_posture,
+    });
+    append_json_line(Path::new(&path), &record)
+        .unwrap_or_else(|error| panic!("write platform-selected browser provenance: {error}"));
+}
+
 fn harness_cdp_call_at_url(
     ws_url: &str,
     method: &str,
@@ -2243,14 +2308,16 @@ fn run_trusted_click(spec: &BrowserSpec) {
     });
 }
 
-fn run_prepare_isolated_launch(spec: &BrowserSpec) {
+fn run_prepare_isolated_launch() {
     let scenario = format!(
-        "{}-{}-standalone-prepare-isolated",
-        std::env::consts::OS,
-        spec.name
+        "{}-platform-selected-chromium-standalone-prepare-isolated",
+        std::env::consts::OS
     );
     execute_case(
-        case(&spec.name, "browser_prepare_isolated_launch"),
+        case(
+            "platform-selected-chromium",
+            "browser_prepare_isolated_launch",
+        ),
         |evidence| {
             let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
             let driver_profiles = driver_profile_root();
@@ -2258,7 +2325,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             let mut driver = spawn_driver(&scenario);
             *evidence = recording_evidence(driver.recording_dir());
 
-            let session = format!("standalone-prepare-{}", spec.name);
+            let session = "standalone-prepare-platform-selected-chromium";
             let started = driver.call("start_session", serde_json::json!({ "session": session }));
             assert!(!started.is_error(), "start_session failed: {}", started.raw);
             driver.start_behavior_recording();
@@ -2295,6 +2362,7 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
             let prepared_pid = prepared.structured()["prepared_pid"]
                 .as_u64()
                 .expect("prepared browser pid") as u32;
+            record_platform_selected_browser_provenance(prepared_pid, "standard");
             let (prepared_window_id, state) =
                 wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
                     .expect("isolated browser did not expose an exactly bindable window");
@@ -2383,14 +2451,16 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
     );
 }
 
-fn run_prepare_automation_exposure(spec: &BrowserSpec) {
+fn run_prepare_automation_exposure() {
     let scenario = format!(
-        "{}-{}-standalone-prepare-automation-exposure",
-        std::env::consts::OS,
-        spec.name
+        "{}-platform-selected-chromium-standalone-prepare-automation-exposure",
+        std::env::consts::OS
     );
     execute_case(
-        foreground_page_case(&spec.name, "browser_prepare_automation_exposure"),
+        foreground_page_case(
+            "platform-selected-chromium",
+            "browser_prepare_automation_exposure",
+        ),
         |evidence| {
             let target_server = BrowserFixtureServer::start(&standalone_automation_exposure_html());
             let driver_profiles = driver_profile_root();
@@ -2402,7 +2472,7 @@ fn run_prepare_automation_exposure(spec: &BrowserSpec) {
             for (posture, expected_exposure) in
                 [("standard", true), ("driver_selected_port", false)]
             {
-                let session = format!("standalone-prepare-automation-{}-{posture}", spec.name);
+                let session = format!("standalone-prepare-automation-platform-selected-{posture}");
                 let started =
                     driver.call("start_session", serde_json::json!({ "session": session }));
                 assert!(!started.is_error(), "start_session failed: {}", started.raw);
@@ -2438,6 +2508,7 @@ fn run_prepare_automation_exposure(spec: &BrowserSpec) {
                 let prepared_pid = prepared.structured()["prepared_pid"]
                     .as_u64()
                     .expect("prepared browser pid") as u32;
+                record_platform_selected_browser_provenance(prepared_pid, posture);
                 let (_, state) =
                     wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
                         .expect("isolated browser did not expose an exactly bindable window");
@@ -4871,6 +4942,32 @@ fn run_browser_scenario(run: fn(&BrowserSpec)) {
     );
 }
 
+fn run_platform_selected_browser_scenario(run: fn()) {
+    let _guard = STANDALONE_BROWSER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    write_environment_from_env(&EnvironmentRecord::ready(Duration::ZERO))
+        .expect("write standalone-browser environment evidence");
+    let specs = browser_specs();
+    if specs.is_empty() {
+        if std::env::var_os("CUA_TEST_REQUIRE_EXTERNAL_BROWSERS").is_some() {
+            panic!("no standalone Chrome, Edge, or Chromium executable was found");
+        }
+        eprintln!("no standalone Chromium browser installed; optional suite skipped");
+        return;
+    }
+    eprintln!(
+        "[standalone-browser] pid-free browser_prepare selects one trusted platform browser; installed candidates: {}",
+        specs
+            .iter()
+            .map(|spec| format!("{} at {}", spec.name, spec.executable.display()))
+            .collect::<Vec<_>>()
+            .join(", ")
+    );
+    run();
+    settle_between_browser_rows();
+}
+
 macro_rules! standalone_browser_test {
     ($name:ident, $run:ident) => {
         #[test]
@@ -4905,14 +5002,17 @@ standalone_browser_test!(
     run_web_type_text_verification
 );
 standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
-standalone_browser_test!(
-    standalone_browser_prepare_isolated,
-    run_prepare_isolated_launch
-);
-standalone_browser_test!(
-    standalone_browser_prepare_automation_exposure,
-    run_prepare_automation_exposure
-);
+#[test]
+#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
+fn standalone_browser_prepare_isolated() {
+    run_platform_selected_browser_scenario(run_prepare_isolated_launch);
+}
+
+#[test]
+#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
+fn standalone_browser_prepare_automation_exposure() {
+    run_platform_selected_browser_scenario(run_prepare_automation_exposure);
+}
 #[cfg(not(target_os = "macos"))]
 standalone_browser_test!(
     standalone_browser_existing_profile_standard_refusal,

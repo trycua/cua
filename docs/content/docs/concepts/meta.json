@@ -14,6 +14,7 @@
     "how-cua-driver-is-validated",
     "---Cua Sandbox---",
     "how-sandboxes-work",
+    "sandbox-lifecycle",
     "---Lume---",
     "how-lume-unattended-setup-works",
     "how-sip-works-in-lume-vms",

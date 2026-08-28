@@ -5,7 +5,7 @@ description: Choose the right Sandbox SDK lifecycle pattern for temporary, persi
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Use the **lifecycle pattern** that matches whether you want the sandbox *deleted after the job*, *kept for later*, or *attached to while it is already running*.
+Use the **lifecycle pattern** that matches whether you want the sandbox _deleted after the job_, _kept for later_, or _attached to while it is already running_.
 
 ## Create and auto-destroy a sandbox
 
@@ -43,11 +43,11 @@ async with Sandbox.connect('my-dev-sandbox', local=True) as sb:
     await sb.destroy()
 ```
 
-| Method | Effect | When |
-|--------|--------|------|
-| `await sb.disconnect()` | keeps running | reconnect later |
-| `await sb.destroy()` | permanently destroyed | done with it |
-| `await Sandbox.delete(name)` | permanently destroyed (by name, no connect) | classmethod |
+| Method                       | Effect                                      | When            |
+| ---------------------------- | ------------------------------------------- | --------------- |
+| `await sb.disconnect()`      | keeps running                               | reconnect later |
+| `await sb.destroy()`         | permanently destroyed                       | done with it    |
+| `await Sandbox.delete(name)` | permanently destroyed (by name, no connect) | classmethod     |
 
 ## Reconnect to a running sandbox
 

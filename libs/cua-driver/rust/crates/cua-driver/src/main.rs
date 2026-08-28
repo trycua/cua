@@ -215,16 +215,13 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
     std::process::exit(status.code().unwrap_or(1));
 }
 
-/// Wire up the experimental picture-in-picture preview window.
+/// Wire up the multi-target Agent View.
 ///
 /// Called from every long-running entry point (Serve and Mcp on all
 /// platforms; the `Call` arm intentionally skips PiP since the
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-/// No-op when `--experimental-pip` is not on argv. On Windows / Linux
-/// the factory returns "not yet implemented" — we log and continue
-/// without a window so the rest of the daemon keeps working.
 fn maybe_init_pip() {
     let cfg = match pip_preview::default_config_path() {
         Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
@@ -255,24 +252,66 @@ fn maybe_init_pip() {
                 StdMutex<Option<Box<dyn pip_preview::PipBackend>>>,
             > = std::sync::OnceLock::new();
             let _ = BACKEND.set(StdMutex::new(Some(backend)));
-            cua_driver_core::pip_hook::set_pip_push_fn(|frame| {
+            cua_driver_core::pip_hook::set_pip_event_fn(|event| {
                 if let Some(slot) = BACKEND.get() {
                     if let Some(b) = slot.lock().unwrap().as_ref() {
-                        b.push_frame(pip_preview::PipFrame {
-                            png_bytes: frame.png_bytes,
-                            action_label: frame.action_label,
-                            timestamp_ms: frame.timestamp_ms,
-                        });
+                        match event {
+                            cua_driver_core::pip_hook::PipHookEvent::Upsert(frame) => {
+                                let target_kind = match frame.target.target_kind {
+                                    cua_driver_core::pip_hook::PipHookTargetKind::NativeWindow => {
+                                        pip_preview::PipTargetKind::NativeWindow
+                                    }
+                                    cua_driver_core::pip_hook::PipHookTargetKind::BrowserTab => {
+                                        pip_preview::PipTargetKind::BrowserTab
+                                    }
+                                };
+                                b.push_frame(pip_preview::PipFrame {
+                                    target: pip_preview::PipTarget {
+                                        workspace_id: frame.target.workspace_id,
+                                        workspace_label: frame.target.workspace_label,
+                                        target_id: frame.target.target_id,
+                                        identity_key: frame.target.identity_key,
+                                        target_kind,
+                                        target_label: frame.target.target_label,
+                                        native_container: frame.target.native_container.map(
+                                            |container| pip_preview::PipNativeContainer {
+                                                pid: container.pid,
+                                                window_id: container.window_id,
+                                            },
+                                        ),
+                                    },
+                                    png_bytes: frame.png_bytes,
+                                    action_label: frame.action_label,
+                                    timestamp_ms: frame.timestamp_ms,
+                                    cursor_position: frame.cursor_position,
+                                });
+                            }
+                            cua_driver_core::pip_hook::PipHookEvent::SetInputPassthrough {
+                                passthrough,
+                            } => {
+                                return b
+                                    .set_input_passthrough(passthrough)
+                                    .map_err(|error| error.to_string());
+                            }
+                            cua_driver_core::pip_hook::PipHookEvent::RemoveWorkspace {
+                                workspace_id,
+                            } => b.remove_workspace(&workspace_id),
+                            cua_driver_core::pip_hook::PipHookEvent::RemoveTarget {
+                                workspace_id,
+                                identity_key,
+                            } => b.remove_target(&workspace_id, &identity_key),
+                        }
                     }
                 }
+                Ok(())
             });
-            eprintln!(
-                "⚗️  PiP preview enabled (experimental — macOS only today; \
-                 see https://github.com/trycua/cua/issues for follow-up)"
-            );
+            cua_driver_core::session::register_session_end_hook(|workspace_id| {
+                cua_driver_core::pip_hook::remove_pip_workspace(workspace_id);
+            });
+            eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
         }
         Err(e) => {
-            eprintln!("⚗️  PiP preview requested but unavailable: {e}");
+            eprintln!("⚗️  Agent View requested but unavailable: {e}");
         }
     }
 }
@@ -366,6 +405,28 @@ fn history_admission_requested(explicit: bool, persisted: bool) -> bool {
     explicit || persisted
 }
 
+#[cfg(target_os = "macos")]
+#[derive(Debug, PartialEq, Eq)]
+enum MacosMainLoopHost {
+    CursorOverlay,
+    AgentView,
+    ServeThread,
+}
+
+#[cfg(target_os = "macos")]
+fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> MacosMainLoopHost {
+    if cursor_enabled {
+        // The cursor host also owns NSApplication's main run loop. Agent View
+        // posts its window updates to that same queue, so both surfaces can
+        // coexist without leaving cursor animations waiting forever.
+        MacosMainLoopHost::CursorOverlay
+    } else if agent_view_enabled {
+        MacosMainLoopHost::AgentView
+    } else {
+        MacosMainLoopHost::ServeThread
+    }
+}
+
 #[cfg(test)]
 mod history_admission_tests {
     use super::history_admission_requested;
@@ -380,6 +441,31 @@ mod history_admission_tests {
         assert!(!history_admission_requested(false, false));
         assert!(history_admission_requested(true, false));
         assert!(history_admission_requested(true, true));
+    }
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod macos_main_loop_host_tests {
+    use super::{macos_main_loop_host, MacosMainLoopHost};
+
+    #[test]
+    fn cursor_overlay_hosts_the_shared_appkit_loop_when_agent_view_is_enabled() {
+        assert_eq!(
+            macos_main_loop_host(true, true),
+            MacosMainLoopHost::CursorOverlay
+        );
+    }
+
+    #[test]
+    fn agent_view_hosts_appkit_only_when_the_cursor_is_disabled() {
+        assert_eq!(
+            macos_main_loop_host(false, true),
+            MacosMainLoopHost::AgentView
+        );
+        assert_eq!(
+            macos_main_loop_host(false, false),
+            MacosMainLoopHost::ServeThread
+        );
     }
 }
 
@@ -707,24 +793,24 @@ fn main() {
 
             // Keep the main thread alive for the daemon.
             //
-            // PiP needs the AppKit main run loop to process the
-            // dispatch_async_f calls that push frames into NSImageView;
-            // park main in NSApplication.run() when --experimental-pip is
-            // on. Otherwise just join the serve thread so the process
-            // stays up as long as the daemon does.
-            if pip_cfg.enabled {
-                platform_macos::pip::run_appkit_main_loop();
-            } else if cursor_cfg.enabled {
-                // Render the agent-cursor overlay: park the main thread in the
-                // AppKit run loop so the overlay NSWindow draws. `run_on_main_thread`
-                // self-guards on `has_graphic_access()` and returns immediately
-                // when the daemon has no Window Server session — fall through to
-                // join so the daemon still serves headless. The serve thread runs
-                // on its background thread regardless.
-                platform_macos::cursor::overlay::run_on_main_thread();
-                let _ = serve_handle.join();
-            } else {
-                let _ = serve_handle.join();
+            // Cursor and Agent View share one AppKit application/main queue.
+            // When both are enabled, the cursor host must drain its command
+            // receiver as well as NSApplication events; the Agent View-only
+            // loop would leave cursor-bearing actions waiting indefinitely.
+            match macos_main_loop_host(cursor_cfg.enabled, pip_cfg.enabled) {
+                MacosMainLoopHost::CursorOverlay => {
+                    // `run_on_main_thread` self-guards on graphic-session
+                    // access. If it returns, keep the daemon alive by joining
+                    // the serve thread.
+                    platform_macos::cursor::overlay::run_on_main_thread();
+                    let _ = serve_handle.join();
+                }
+                MacosMainLoopHost::AgentView => {
+                    platform_macos::pip::run_appkit_main_loop();
+                }
+                MacosMainLoopHost::ServeThread => {
+                    let _ = serve_handle.join();
+                }
             }
         }
         cli::Command::Stop { socket } => {

@@ -398,11 +398,14 @@ and displays the PNG.
 Both examples release only the claim, so the one-replica pool remains warm for
 the next task. This is the normal reusable-pool lifecycle.
 
-The TypeScript SDK does not currently expose `pool.apply`. Its equivalents are
-`reconcilePool()` and `reconcileTemplate()`: each method looks up its named
-resource, updates the existing resource's specification, or creates the resource
-when the lookup returns HTTP 403 or 404. Calling both methods lets you rerun the
-complete example without maintaining separate get-or-create branches.
+The TypeScript SDK does not currently expose `pool.apply`. Instead,
+`reconcilePool()` and `reconcileTemplate()` are the lower-level UniFFI
+reconciliation primitives that Python `Pool.apply` delegates to internally.
+They do not provide `Pool.apply`'s request derivation, validation, ownership,
+rollback, or cleanup. Each method looks up its named resource, updates the
+existing resource's specification, or creates the resource when the lookup
+returns HTTP 403 or 404. Calling both methods lets you rerun the complete example
+without maintaining separate get-or-create branches.
 
 To remove the pool permanently, retain the `pool` and `template` values and run
 the following after every claim has been released:

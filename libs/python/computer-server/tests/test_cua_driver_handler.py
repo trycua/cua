@@ -26,6 +26,12 @@ class _DesktopScope(Enum):
     DESKTOP = "desktop"
 
 
+class _ActionTarget:
+    class DESKTOP:
+        def __init__(self, *, display_id):
+            self.display_id = display_id
+
+
 class _EffectiveScope(Enum):
     WINDOW = "window"
     DESKTOP = "desktop"
@@ -194,6 +200,7 @@ def sdk():
     return SimpleNamespace(
         CaptureScope=_CaptureScope,
         DesktopScope=_DesktopScope,
+        ActionTarget=_ActionTarget,
         EffectiveScope=_EffectiveScope,
         EscalationReason=_EscalationReason,
         ClickButton=_ClickButton,
@@ -258,8 +265,8 @@ async def test_desktop_actions_share_one_typed_session(sdk, fallback):
     assert start.cursor_theme is None
     clicked = next(value for name, value in driver.calls if name == "click")
     assert (clicked.x, clicked.y) == (12.0, 34.0)
-    assert clicked.target is None
-    assert clicked.scope is _DesktopScope.DESKTOP
+    assert clicked.target.display_id == "primary"
+    assert clicked.scope is None
 
 
 @pytest.mark.asyncio
@@ -326,7 +333,8 @@ async def test_adapter_uses_the_generated_python_contract(fallback):
         request = next(value for call, value in driver.calls if call == name)
         assert isinstance(request, expected_type)
         if hasattr(request, "target"):
-            assert request.target is None
+            assert request.target.display_id == "primary"
+            assert request.scope is None
 
 
 @pytest.mark.asyncio

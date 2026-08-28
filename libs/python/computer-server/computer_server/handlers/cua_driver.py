@@ -168,6 +168,15 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
     def capture_scope(self) -> str:
         return self._capture_scope
 
+    def _desktop_target(self) -> tuple[Any, Optional[Any]]:
+        """Build the typed desktop target used by the current SDK contract."""
+
+        target_type = getattr(self._sdk, "ActionTarget", None)
+        if target_type is None:
+            # Preserve compatibility with lightweight injected SDK test doubles.
+            return None, self._sdk.DesktopScope.DESKTOP
+        return target_type.DESKTOP(display_id="primary"), None
+
     async def _ensure_session(self) -> None:
         if self._closed:
             raise RuntimeError("Cua Driver automation handler is closed")
@@ -349,12 +358,13 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
         try:
             await self._ensure_session()
             px, py = await self._point(x, y)
+            target, scope = self._desktop_target()
             result = await self._driver.click(
                 self._sdk.ClickInput(
                     x=float(px),
                     y=float(py),
-                    target=None,
-                    scope=self._sdk.DesktopScope.DESKTOP,
+                    target=target,
+                    scope=scope,
                     session=self._session_id,
                     button={
                         "left": self._sdk.ClickButton.LEFT,
@@ -387,12 +397,13 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
     async def move_cursor(self, x: int, y: int) -> Dict[str, Any]:
         try:
             await self._ensure_session()
+            target, scope = self._desktop_target()
             result = await self._driver.move_cursor(
                 self._sdk.MoveCursorInput(
                     x=float(x),
                     y=float(y),
-                    target=None,
-                    scope=self._sdk.DesktopScope.DESKTOP,
+                    target=target,
+                    scope=scope,
                     session=self._session_id,
                 )
             )
@@ -423,14 +434,15 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
         steps: Optional[int],
     ) -> Dict[str, Any]:
         await self._ensure_session()
+        target, scope = self._desktop_target()
         result = await self._driver.drag(
             self._sdk.DragInput(
                 from_x=float(start_x),
                 from_y=float(start_y),
                 to_x=float(end_x),
                 to_y=float(end_y),
-                target=None,
-                scope=self._sdk.DesktopScope.DESKTOP,
+                target=target,
+                scope=scope,
                 session=self._session_id,
                 duration_ms=min(10000, max(0, int(duration * 1000))),
                 steps=steps,
@@ -477,11 +489,12 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
     async def type_text(self, text: str) -> Dict[str, Any]:
         try:
             await self._ensure_session()
+            target, scope = self._desktop_target()
             result = await self._driver.type_text(
                 self._sdk.TypeTextInput(
                     text=text,
-                    target=None,
-                    scope=self._sdk.DesktopScope.DESKTOP,
+                    target=target,
+                    scope=scope,
                     session=self._session_id,
                 )
             )
@@ -492,11 +505,12 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
     async def press_key(self, key: str) -> Dict[str, Any]:
         try:
             await self._ensure_session()
+            target, scope = self._desktop_target()
             result = await self._driver.press_key(
                 self._sdk.PressKeyInput(
                     key=key,
-                    target=None,
-                    scope=self._sdk.DesktopScope.DESKTOP,
+                    target=target,
+                    scope=scope,
                     session=self._session_id,
                     modifiers=None,
                 )
@@ -512,11 +526,12 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             return await self.press_key(keys[0])
         try:
             await self._ensure_session()
+            target, scope = self._desktop_target()
             result = await self._driver.hotkey(
                 self._sdk.HotkeyInput(
                     keys=keys,
-                    target=None,
-                    scope=self._sdk.DesktopScope.DESKTOP,
+                    target=target,
+                    scope=scope,
                     session=self._session_id,
                 )
             )
@@ -528,6 +543,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
         try:
             await self._ensure_session()
             x, y = await self._point(None, None)
+            target, scope = self._desktop_target()
             result = await self._driver.scroll(
                 self._sdk.ScrollInput(
                     x=float(x),
@@ -538,8 +554,8 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
                         "left": self._sdk.ScrollDirection.LEFT,
                         "right": self._sdk.ScrollDirection.RIGHT,
                     }[direction],
-                    target=None,
-                    scope=self._sdk.DesktopScope.DESKTOP,
+                    target=target,
+                    scope=scope,
                     session=self._session_id,
                     by=self._sdk.ScrollBy.LINE,
                     amount=min(50, max(1, amount)),

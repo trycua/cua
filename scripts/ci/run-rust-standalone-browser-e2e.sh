@@ -107,6 +107,7 @@ if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; the
 else
   tests=(
     standalone_browser_background_type
+    standalone_browser_challenge_article_false_positive
     standalone_browser_type_replace
     standalone_browser_owned_permission_prompt
     standalone_browser_dialogs

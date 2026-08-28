@@ -20,7 +20,11 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from PIL import Image
 
-from .base import BaseAccessibilityHandler, BaseAutomationHandler, normalize_screenshot_format
+from .base import (
+    BaseAccessibilityHandler,
+    BaseAutomationHandler,
+    normalize_screenshot_format,
+)
 
 
 class CuaDriverAccessibilityHandler(BaseAccessibilityHandler):

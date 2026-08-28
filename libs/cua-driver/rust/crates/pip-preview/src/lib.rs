@@ -13,11 +13,15 @@ use std::sync::OnceLock;
 use std::collections::HashMap;
 
 mod desktop_layout;
+mod session_tabs;
 
 pub use desktop_layout::{
     layout_desktop, layout_desktop_with_shell, png_dimensions, DesktopLayout, LayoutRect,
     ShellStyle, TargetLayout, TargetSize,
 };
+pub use session_tabs::{layout_session_tabs, session_accent, SessionTab, SessionTabsLayout};
+
+pub const AGENT_VIEW_DEFAULT_ENABLED: bool = true;
 
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
 /// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
@@ -73,20 +77,20 @@ pub fn write_config_key(key: &str, value: serde_json::Value) -> Result<(), Strin
 pub fn read_agent_view_keys_from_file() -> (bool, Option<String>) {
     let path = match default_config_path() {
         Some(p) => p,
-        None => return (false, None),
+        None => return (AGENT_VIEW_DEFAULT_ENABLED, None),
     };
     let text = match std::fs::read_to_string(&path) {
         Ok(t) => t,
-        Err(_) => return (false, None),
+        Err(_) => return (AGENT_VIEW_DEFAULT_ENABLED, None),
     };
     let json: serde_json::Value = match serde_json::from_str(&text) {
         Ok(v) => v,
-        Err(_) => return (false, None),
+        Err(_) => return (AGENT_VIEW_DEFAULT_ENABLED, None),
     };
     let enabled = json
         .get("agent_view")
         .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+        .unwrap_or(AGENT_VIEW_DEFAULT_ENABLED);
     let geometry = json
         .get("agent_view_geometry")
         .and_then(|v| v.as_str())
@@ -164,7 +168,7 @@ pub struct PipConfig {
 impl Default for PipConfig {
     fn default() -> Self {
         Self {
-            enabled: false,
+            enabled: AGENT_VIEW_DEFAULT_ENABLED,
             geometry: PipGeometry::default(),
             title: "Cua Agent View".to_owned(),
         }
@@ -173,9 +177,10 @@ impl Default for PipConfig {
 
 impl PipConfig {
     /// Parse the Agent View CLI flags out of `std::env::args()`.
-    /// Recognised flags (all opt-in):
+    /// Recognised flags:
     /// ```text
     /// --agent-view
+    /// --no-agent-view
     /// --agent-view-geometry  WxH | WxH+X+Y
     /// ```
     /// Unknown flags are ignored so this never conflicts with the
@@ -187,13 +192,27 @@ impl PipConfig {
 
     pub fn parse(args: &[String]) -> Self {
         let mut cfg = PipConfig::default();
+        let (enabled, geometry) = Self::parse_overrides(args);
+        if let Some(enabled) = enabled {
+            cfg.enabled = enabled;
+        }
+        if let Some(geometry) = geometry {
+            cfg.geometry = geometry;
+        }
+        cfg
+    }
+
+    fn parse_overrides(args: &[String]) -> (Option<bool>, Option<PipGeometry>) {
+        let mut enabled = None;
+        let mut geometry = None;
         let mut i = 0usize;
         while i < args.len() {
             match args[i].as_str() {
-                "--agent-view" => cfg.enabled = true,
+                "--agent-view" => enabled = Some(true),
+                "--no-agent-view" => enabled = Some(false),
                 "--agent-view-geometry" => {
                     if let Some(geom) = args.get(i + 1).and_then(|s| PipGeometry::parse(s)) {
-                        cfg.geometry = geom;
+                        geometry = Some(geom);
                         i += 1;
                     }
                 }
@@ -201,7 +220,7 @@ impl PipConfig {
             }
             i += 1;
         }
-        cfg
+        (enabled, geometry)
     }
 
     /// Resolve the config from (in order of precedence, low → high):
@@ -215,6 +234,11 @@ impl PipConfig {
     /// `claude mcp add` with the flag baked into the args list.
     /// Malformed or missing file falls back to the next layer silently.
     pub fn from_args_and_file(config_path: &std::path::Path) -> Self {
+        let args: Vec<String> = std::env::args().skip(1).collect();
+        Self::from_file_and_args(config_path, &args)
+    }
+
+    fn from_file_and_args(config_path: &std::path::Path, args: &[String]) -> Self {
         let mut cfg = PipConfig::default();
         if let Ok(text) = std::fs::read_to_string(config_path) {
             if let Ok(json) = serde_json::from_str::<serde_json::Value>(&text) {
@@ -229,20 +253,12 @@ impl PipConfig {
             }
         }
         // CLI args override anything in the file.
-        let args: Vec<String> = std::env::args().collect();
-        let cli = PipConfig::parse(&args[1..]);
-        if cli.enabled {
-            cfg.enabled = true;
+        let (enabled, geometry) = PipConfig::parse_overrides(args);
+        if let Some(enabled) = enabled {
+            cfg.enabled = enabled;
         }
-        // CLI geometry only overrides when explicitly passed — detect by
-        // diffing against PipGeometry::default() (the parse() entry point
-        // returns the default when no flag is present).
-        if cli.geometry.width != PipGeometry::default().width
-            || cli.geometry.height != PipGeometry::default().height
-            || cli.geometry.x.is_some()
-            || cli.geometry.y.is_some()
-        {
-            cfg.geometry = cli.geometry;
+        if let Some(geometry) = geometry {
+            cfg.geometry = geometry;
         }
         cfg
     }
@@ -332,6 +348,7 @@ pub struct PipViewModel {
     max_targets: usize,
     frames: HashMap<String, PipFrame>,
     workspace_activity_ms: HashMap<String, u64>,
+    active_targets: HashMap<String, String>,
     selected_workspace_id: Option<String>,
     selection_pinned: bool,
 }
@@ -350,6 +367,7 @@ impl PipViewModel {
             max_targets: max_targets.max(1),
             frames: HashMap::new(),
             workspace_activity_ms: HashMap::new(),
+            active_targets: HashMap::new(),
             selected_workspace_id: None,
             selection_pinned: false,
         }
@@ -393,6 +411,8 @@ impl PipViewModel {
                 .and_then(|previous| previous.cursor_position);
         }
         self.frames.insert(view_id.clone(), frame);
+        self.active_targets
+            .insert(workspace_id.clone(), view_id.clone());
         if self.frames.len() <= self.max_targets {
             return None;
         }
@@ -425,7 +445,15 @@ impl PipViewModel {
             })
             .map(|(id, _)| id.clone());
         if let Some(id) = evicted.as_ref() {
+            let workspace_id = self
+                .frames
+                .get(id)
+                .map(|frame| frame.target.workspace_id.clone());
             self.frames.remove(id);
+            self.clear_active_view(id);
+            if let Some(workspace_id) = workspace_id.as_deref() {
+                self.reconcile_active_target(workspace_id);
+            }
         }
         self.prune_empty_workspace_activity();
         self.reconcile_selection();
@@ -451,6 +479,10 @@ impl PipViewModel {
             .as_ref()
             .is_some_and(|view_id| self.frames.remove(view_id).is_some());
         if removed {
+            if let Some(view_id) = view_id.as_deref() {
+                self.clear_active_view(view_id);
+            }
+            self.reconcile_active_target(workspace_id);
             self.prune_empty_workspace_activity();
             self.reconcile_selection();
         }
@@ -468,6 +500,7 @@ impl PipViewModel {
             self.frames.remove(id);
         }
         self.workspace_activity_ms.remove(workspace_id);
+        self.active_targets.remove(workspace_id);
         if self.selected_workspace_id.as_deref() == Some(workspace_id) {
             self.selection_pinned = false;
         }
@@ -506,6 +539,11 @@ impl PipViewModel {
                 .then_with(|| a.target.identity_key.cmp(&b.target.identity_key))
         });
         frames
+    }
+
+    pub fn active_view_id(&self) -> Option<&str> {
+        let workspace_id = self.selected_workspace_id()?;
+        self.active_targets.get(workspace_id).map(String::as_str)
     }
 
     pub fn workspaces(&self) -> Vec<PipWorkspaceSummary> {
@@ -591,6 +629,36 @@ impl PipViewModel {
                 .values()
                 .any(|frame| frame.target.workspace_id == *workspace_id)
         });
+    }
+
+    fn clear_active_view(&mut self, view_id: &str) {
+        self.active_targets.retain(|_, active| active != view_id);
+    }
+
+    fn reconcile_active_target(&mut self, workspace_id: &str) {
+        if self
+            .active_targets
+            .get(workspace_id)
+            .is_some_and(|active| self.frames.contains_key(active))
+        {
+            return;
+        }
+        let fallback = self
+            .frames
+            .iter()
+            .filter(|(_, frame)| frame.target.workspace_id == workspace_id)
+            .max_by(|(left_id, left), (right_id, right)| {
+                left.timestamp_ms
+                    .cmp(&right.timestamp_ms)
+                    .then_with(|| right_id.cmp(left_id))
+            })
+            .map(|(id, _)| id.clone());
+        if let Some(fallback) = fallback {
+            self.active_targets
+                .insert(workspace_id.to_owned(), fallback);
+        } else {
+            self.active_targets.remove(workspace_id);
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -797,6 +865,65 @@ mod tests {
     }
 
     #[test]
+    fn active_target_is_scoped_to_the_selected_workspace() {
+        let mut model = PipViewModel::new(6);
+        model.upsert(frame("agent-a", "a-old", 1));
+        model.upsert(frame("agent-a", "a-active", 2));
+        model.upsert(frame("agent-b", "b-old", 3));
+        model.upsert(frame("agent-b", "b-active", 4));
+
+        assert_eq!(
+            model.active_view_id(),
+            Some(view_id("agent-b", "b-active").as_str())
+        );
+        assert!(model.select_workspace("agent-a"));
+        assert_eq!(
+            model.active_view_id(),
+            Some(view_id("agent-a", "a-active").as_str())
+        );
+        assert!(model.select_workspace("agent-b"));
+        assert_eq!(
+            model.active_view_id(),
+            Some(view_id("agent-b", "b-active").as_str())
+        );
+    }
+
+    #[test]
+    fn removing_an_active_target_falls_back_within_its_workspace() {
+        let mut model = PipViewModel::new(6);
+        model.upsert(frame("agent-a", "older", 1));
+        model.upsert(frame("agent-a", "newer", 2));
+        model.upsert(frame("agent-b", "other", 3));
+        assert!(model.select_workspace("agent-a"));
+
+        assert!(model.remove_target("agent-a", "newer"));
+
+        assert_eq!(
+            model.active_view_id(),
+            Some(view_id("agent-a", "older").as_str())
+        );
+        assert_eq!(model.selected_workspace_id(), Some("agent-a"));
+    }
+
+    #[test]
+    fn evicting_an_active_target_falls_back_within_its_workspace() {
+        let mut model = PipViewModel::new(3);
+        model.upsert(frame("agent-a", "fallback", 10));
+        model.upsert(frame("agent-a", "active", 1));
+        model.upsert(frame("agent-b", "other", 20));
+        assert!(model.select_workspace("agent-a"));
+
+        assert_eq!(
+            model.upsert(frame("agent-c", "new", 30)),
+            Some(view_id("agent-a", "active"))
+        );
+        assert_eq!(
+            model.active_view_id(),
+            Some(view_id("agent-a", "fallback").as_str())
+        );
+    }
+
+    #[test]
     fn removing_the_selected_workspace_falls_back_to_the_most_recent() {
         let mut model = PipViewModel::new(4);
         model.upsert(frame("agent-a", "a", 1));
@@ -977,6 +1104,13 @@ mod tests {
     }
 
     #[test]
+    fn explicit_no_agent_view_overrides_the_default() {
+        let cfg = PipConfig::parse(&["--no-agent-view".to_owned()]);
+        assert!(!cfg.enabled);
+        assert!(PipConfig::default().enabled);
+    }
+
+    #[test]
     fn ignores_removed_pip_cli_names() {
         let cfg = PipConfig::parse(&[
             "--experimental-pip".to_owned(),
@@ -984,7 +1118,7 @@ mod tests {
             "640x420".to_owned(),
             "--pip".to_owned(),
         ]);
-        assert!(!cfg.enabled);
+        assert!(cfg.enabled);
         assert_eq!(cfg.geometry.width, PipGeometry::default().width);
         assert_eq!(cfg.geometry.height, PipGeometry::default().height);
     }
@@ -1012,6 +1146,57 @@ mod tests {
     }
 
     #[test]
+    fn config_file_overrides_defaults_without_cli_flags() {
+        let path = std::env::temp_dir().join(format!(
+            "cua-agent-view-config-{}-file-precedence.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"agent_view":false,"agent_view_geometry":"800x600+12+24"}"#,
+        )
+        .unwrap();
+
+        let cfg = PipConfig::from_file_and_args(&path, &[]);
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.geometry.width, 800);
+        assert_eq!(cfg.geometry.height, 600);
+        assert_eq!(cfg.geometry.x, Some(12));
+        assert_eq!(cfg.geometry.y, Some(24));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn cli_flags_override_config_file_values() {
+        let path = std::env::temp_dir().join(format!(
+            "cua-agent-view-config-{}-cli-precedence.json",
+            std::process::id()
+        ));
+        std::fs::write(
+            &path,
+            r#"{"agent_view":true,"agent_view_geometry":"800x600+12+24"}"#,
+        )
+        .unwrap();
+
+        let cfg = PipConfig::from_file_and_args(
+            &path,
+            &[
+                "--no-agent-view".to_owned(),
+                "--agent-view-geometry".to_owned(),
+                "720x480+30+40".to_owned(),
+            ],
+        );
+        assert!(!cfg.enabled);
+        assert_eq!(cfg.geometry.width, 720);
+        assert_eq!(cfg.geometry.height, 480);
+        assert_eq!(cfg.geometry.x, Some(30));
+        assert_eq!(cfg.geometry.y, Some(40));
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn ignores_removed_pip_config_names() {
         let path = std::env::temp_dir().join(format!(
             "cua-agent-view-config-{}-old.json",
@@ -1024,7 +1209,7 @@ mod tests {
         .unwrap();
 
         let cfg = PipConfig::from_args_and_file(&path);
-        assert!(!cfg.enabled);
+        assert!(cfg.enabled);
         assert_eq!(cfg.geometry.width, PipGeometry::default().width);
         assert_eq!(cfg.geometry.height, PipGeometry::default().height);
 

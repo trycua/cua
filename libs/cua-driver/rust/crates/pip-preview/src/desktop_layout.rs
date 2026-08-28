@@ -48,8 +48,10 @@ pub struct TargetLayout {
 /// swaps its shell.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ShellStyle {
-    /// Centered dock floating clear of every edge (macOS and Linux).
+    /// No permanent launcher or taskbar chrome.
     #[default]
+    None,
+    /// Centered dock floating clear of every edge (macOS and Linux).
     FloatingDock,
     /// Full-width bar flush with the bottom screen edge (Windows).
     EdgeTaskbar,
@@ -90,7 +92,7 @@ const DOCK_ICON_GAP: f64 = 8.0;
 /// room while keeping portrait and square windows compact. Narrow containers
 /// collapse to one column instead of shrinking previews beyond usefulness.
 pub fn layout_desktop(width: f64, height: f64, targets: &[TargetSize]) -> DesktopLayout {
-    layout_desktop_with_shell(width, height, targets, ShellStyle::FloatingDock)
+    layout_desktop_with_shell(width, height, targets, ShellStyle::None)
 }
 
 /// Lay out a miniature desktop for one platform shell idiom.
@@ -112,7 +114,11 @@ pub fn layout_desktop_with_shell(
     let outer_gap = (short_edge * 0.045).clamp(16.0, 26.0);
     let dock_height = (height * 0.12).clamp(38.0, 58.0).min(height * 0.22);
     let dock_bottom_margin = (height * 0.028).clamp(10.0, 16.0);
-    let dock_y = (height - dock_height - dock_bottom_margin).max(outer_gap);
+    let dock_y = if shell == ShellStyle::None {
+        height - outer_gap
+    } else {
+        (height - dock_height - dock_bottom_margin).max(outer_gap)
+    };
     let desktop_y = outer_gap;
     let desktop_height = (dock_y - outer_gap - desktop_y).max(1.0);
     let desktop = LayoutRect {
@@ -123,6 +129,18 @@ pub fn layout_desktop_with_shell(
     };
 
     let chrome = match shell {
+        ShellStyle::None => ShellChrome {
+            dock: LayoutRect {
+                x: 0.0,
+                y: height,
+                width: 0.0,
+                height: 0.0,
+            },
+            dock_icons: Vec::new(),
+            start_button: None,
+            tray: None,
+            indicators: Vec::new(),
+        },
         ShellStyle::FloatingDock => {
             floating_dock_chrome(width, outer_gap, dock_y, dock_height, targets.len())
         }
@@ -476,10 +494,11 @@ mod tests {
     #[test]
     fn dock_stays_below_targets_and_inside_the_panel() {
         let height = 520.0;
-        let layout = layout_desktop(
+        let layout = layout_desktop_with_shell(
             720.0,
             height,
             &[size(1600, 900), size(700, 1200), size(900, 900)],
+            ShellStyle::FloatingDock,
         );
         let lowest_target = layout
             .targets
@@ -491,16 +510,15 @@ mod tests {
     }
 
     #[test]
-    fn floating_dock_is_the_default_shell_and_carries_no_taskbar_metadata() {
+    fn no_shell_is_the_default_and_carries_no_launcher_metadata() {
         let layout = layout_desktop(720.0, 520.0, &[size(1600, 900), size(900, 900)]);
-        assert_eq!(layout.shell, ShellStyle::FloatingDock);
+        assert_eq!(layout.shell, ShellStyle::None);
         assert_eq!(layout.shell, ShellStyle::default());
         assert!(layout.start_button.is_none());
         assert!(layout.tray.is_none());
         assert!(layout.indicators.is_empty());
-        assert!(layout.dock.x > 0.0);
-        assert!(layout.dock.bottom() < 520.0);
-        assert_eq!(layout.dock_icons.len(), 2);
+        assert_eq!(layout.dock.width, 0.0);
+        assert!(layout.dock_icons.is_empty());
     }
 
     #[test]
@@ -508,7 +526,7 @@ mod tests {
         let width = 720.0;
         let height = 520.0;
         let targets = [size(1600, 900), size(900, 900), size(700, 1200)];
-        let floating = layout_desktop(width, height, &targets);
+        let floating = layout_desktop_with_shell(width, height, &targets, ShellStyle::FloatingDock);
         let taskbar = layout_desktop_with_shell(width, height, &targets, ShellStyle::EdgeTaskbar);
 
         assert_eq!(taskbar.shell, ShellStyle::EdgeTaskbar);
@@ -532,7 +550,8 @@ mod tests {
             size(1000, 700),
         ];
         for (width, height) in [(720.0, 520.0), (380.0, 620.0), (360.0, 260.0)] {
-            let floating = layout_desktop(width, height, &targets);
+            let floating =
+                layout_desktop_with_shell(width, height, &targets, ShellStyle::FloatingDock);
             let taskbar =
                 layout_desktop_with_shell(width, height, &targets, ShellStyle::EdgeTaskbar);
             assert_eq!(floating.desktop, taskbar.desktop);

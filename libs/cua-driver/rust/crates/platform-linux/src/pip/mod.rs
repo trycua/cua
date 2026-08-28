@@ -11,8 +11,9 @@ use std::time::Duration;
 #[cfg(target_os = "linux")]
 use image::imageops::FilterType;
 use pip_preview::{
-    layout_desktop, png_dimensions, LayoutRect, PipBackend, PipBackendFactory, PipConfig, PipFrame,
-    PipTargetKind, PipViewModel, PipWorkspaceSummary, TargetSize,
+    layout_desktop, layout_session_tabs, png_dimensions, LayoutRect, PipBackend, PipBackendFactory,
+    PipConfig, PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary, SessionTabsLayout,
+    TargetSize,
 };
 
 const MIN_WIDTH: u16 = 360;
@@ -38,9 +39,13 @@ impl LinuxPipBackend {
     /// change prevents an always-on-top Agent View from intercepting the action.
     pub fn set_input_transparent(&self, transparent: bool) -> anyhow::Result<()> {
         let (reply_tx, reply_rx) = mpsc::sync_channel(1);
-        self.tx
+        if self
+            .tx
             .send(UiMessage::SetInputTransparent(transparent, reply_tx))
-            .map_err(|_| anyhow::anyhow!("Agent View X11 thread is not running"))?;
+            .is_err()
+        {
+            return Ok(());
+        }
         reply_rx
             .recv_timeout(Duration::from_secs(2))
             .map_err(|error| {
@@ -274,14 +279,16 @@ fn run_x11_window(
                 }
                 Ok(Some(Event::ButtonPress(event))) => {
                     let workspaces = model.workspaces();
-                    if let Some(index) = session_selector_hit_test(
+                    let tabs = session_tabs_for_bounds(
                         width,
                         height,
-                        workspaces.len(),
-                        f64::from(event.event_x),
-                        f64::from(event.event_y),
-                    ) {
-                        dirty |= model.select_workspace(&workspaces[index].workspace_id);
+                        &workspaces,
+                        model.selected_workspace_id(),
+                    );
+                    if let Some(workspace_id) =
+                        tabs.hit_test(f64::from(event.event_x), f64::from(event.event_y))
+                    {
+                        dirty |= model.select_workspace(workspace_id);
                     }
                 }
                 Ok(Some(Event::ClientMessage(event)))
@@ -308,6 +315,7 @@ fn run_x11_window(
                 &frames,
                 &workspaces,
                 model.selected_workspace_id(),
+                model.active_view_id(),
             );
             if let Err(error) = upload_image(&conn, window, gc, depth, width, height, &pixels) {
                 tracing::warn!(target: "pip", "Agent View X11 paint failed: {error}");
@@ -493,6 +501,7 @@ fn render_agent_view(
     frames: &[&PipFrame],
     workspaces: &[PipWorkspaceSummary],
     selected_workspace_id: Option<&str>,
+    active_view_id: Option<&str>,
 ) -> Vec<u8> {
     let mut canvas = Canvas::new(width, height);
     canvas.vertical_gradient(Color::rgb(45, 57, 66), Color::rgb(24, 29, 34));
@@ -541,8 +550,17 @@ fn render_agent_view(
     } else {
         for (frame, target) in frames.iter().zip(&layout.targets) {
             render_target(&mut canvas, frame, target.window);
+            if active_view_id == Some(frame.target.view_id().as_str()) {
+                canvas.stroke_rounded_rect(
+                    Rect::from_layout(target.window).expand(3.0),
+                    13.0,
+                    2.0,
+                    Color::rgba(55, 148, 255, 242),
+                );
+            }
         }
-        render_dash(&mut canvas, frames, &layout.dock, &layout.dock_icons);
+        // Agent View has no permanent launcher; session tabs remain the only
+        // presentation-level navigation surface.
     }
     render_session_selector(
         &mut canvas,
@@ -613,43 +631,25 @@ fn draw_frame_image(_canvas: &mut Canvas, _frame: &PipFrame, _rect: Rect) -> boo
     false
 }
 
-fn session_selector_layout(width: u16, height: u16, count: usize) -> Option<(Rect, Vec<Rect>)> {
-    if count <= 1 {
-        return None;
-    }
-    let visible = count;
-    let icon = 22.0;
-    let gap = 5.0;
-    let padding = 6.0;
-    let selector_width = padding * 2.0 + visible as f64 * icon + (visible - 1) as f64 * gap;
-    let selector = Rect::new(
-        (f64::from(width) - selector_width) / 2.0,
-        4.0_f64.min(f64::from(height).max(0.0)),
-        selector_width,
-        28.0,
-    );
-    let icons = (0..visible)
-        .map(|index| {
-            Rect::new(
-                selector.x + padding + index as f64 * (icon + gap),
-                selector.y + 3.0,
-                icon,
-                icon,
-            )
-        })
-        .collect();
-    Some((selector, icons))
-}
-
-fn session_selector_hit_test(
+fn session_tabs_for_bounds(
     width: u16,
     height: u16,
-    count: usize,
-    x: f64,
-    y: f64,
-) -> Option<usize> {
-    let (_, icons) = session_selector_layout(width, height, count)?;
-    icons.iter().position(|icon| icon.contains(x, y))
+    workspaces: &[PipWorkspaceSummary],
+    selected_workspace_id: Option<&str>,
+) -> SessionTabsLayout {
+    let visible = workspaces.len().min(6);
+    let desired_width = visible as f64 * 190.0 + visible.saturating_sub(1) as f64 * 6.0;
+    let panel_width = desired_width.min((f64::from(width) - 16.0).max(1.0));
+    layout_session_tabs(
+        LayoutRect {
+            x: ((f64::from(width) - panel_width) / 2.0).max(0.0),
+            y: 4.0_f64.min(f64::from(height).max(0.0)),
+            width: panel_width,
+            height: 34.0,
+        },
+        workspaces,
+        selected_workspace_id,
+    )
 }
 
 fn render_session_selector(
@@ -659,9 +659,17 @@ fn render_session_selector(
     workspaces: &[PipWorkspaceSummary],
     selected_workspace_id: Option<&str>,
 ) {
-    let Some((dock, icons)) = session_selector_layout(width, height, workspaces.len()) else {
+    let tabs = session_tabs_for_bounds(width, height, workspaces, selected_workspace_id);
+    let Some(first) = tabs.tabs.first() else {
         return;
     };
+    let last = tabs.tabs.last().expect("session tabs are non-empty");
+    let dock = Rect::new(
+        first.rect.x - 6.0,
+        first.rect.y - 3.0,
+        last.rect.x + last.rect.width - first.rect.x + 12.0,
+        first.rect.height + 6.0,
+    );
     canvas.shadow(dock, 12.0, 5.0, Color::rgba(0, 0, 0, 100));
     canvas.rounded_rect(dock, dock.height * 0.27, Color::rgba(67, 70, 72, 195));
     canvas.stroke_rounded_rect(
@@ -670,10 +678,10 @@ fn render_session_selector(
         1.0,
         Color::rgba(231, 235, 236, 66),
     );
-    for (workspace, icon) in workspaces.iter().zip(icons) {
-        let selected = selected_workspace_id == Some(workspace.workspace_id.as_str());
-        let accent = workspace_accent(&workspace.workspace_id);
-        if selected {
+    for (workspace, tab) in workspaces.iter().zip(&tabs.tabs) {
+        let icon = Rect::from_layout(tab.rect);
+        let accent = Color::rgb(tab.accent.0, tab.accent.1, tab.accent.2);
+        if tab.selected {
             canvas.rounded_rect(
                 icon.expand(2.0),
                 icon.width * 0.27,
@@ -704,7 +712,7 @@ fn render_session_selector(
                 icon.x + icon.width / 2.0 + (index as f64 - (indicators - 1) as f64 / 2.0) * 5.0,
                 dock.y + dock.height - 4.0,
                 1.4,
-                Color::rgba(242, 245, 246, if selected { 245 } else { 145 }),
+                Color::rgba(242, 245, 246, if tab.selected { 245 } else { 145 }),
             );
         }
     }
@@ -777,20 +785,6 @@ fn render_dash(canvas: &mut Canvas, frames: &[&PipFrame], dock: &LayoutRect, ico
     }
 }
 
-fn workspace_accent(workspace_id: &str) -> Color {
-    let hash = workspace_id.bytes().fold(0u32, |hash, byte| {
-        hash.wrapping_mul(31).wrapping_add(u32::from(byte))
-    });
-    const COLORS: [Color; 5] = [
-        Color::rgb(53, 154, 220),
-        Color::rgb(239, 112, 54),
-        Color::rgb(72, 178, 123),
-        Color::rgb(214, 151, 48),
-        Color::rgb(104, 136, 196),
-    ];
-    COLORS[hash as usize % COLORS.len()]
-}
-
 fn render_resize_affordance(canvas: &mut Canvas, width: u16, height: u16) {
     let x = f64::from(width) - 15.0;
     let y = f64::from(height) - 8.0;
@@ -844,10 +838,6 @@ impl Rect {
             self.width + amount * 2.0,
             self.height + amount * 2.0,
         )
-    }
-
-    fn contains(self, x: f64, y: f64) -> bool {
-        x >= self.x && y >= self.y && x < self.x + self.width && y < self.y + self.height
     }
 }
 
@@ -1114,36 +1104,49 @@ fn lerp_color(from: Color, to: Color, t: f64) -> Color {
 mod tests {
     use super::*;
 
+    fn workspace(id: &str) -> PipWorkspaceSummary {
+        PipWorkspaceSummary {
+            workspace_id: id.to_owned(),
+            workspace_label: id.to_owned(),
+            target_count: 1,
+            updated_ms: 0,
+        }
+    }
+
     #[test]
     fn renderer_emits_x11_bgrx_at_the_requested_size() {
-        let rendered = render_agent_view(360, 260, &[], &[], None);
+        let rendered = render_agent_view(360, 260, &[], &[], None, None);
         assert_eq!(rendered.len(), 360 * 260 * 4);
         assert!(rendered.chunks_exact(4).all(|pixel| pixel[3] == 0));
     }
 
     #[test]
     fn session_selector_is_hidden_for_zero_or_one_workspace() {
-        assert!(session_selector_layout(720, 520, 0).is_none());
-        assert!(session_selector_layout(720, 520, 1).is_none());
-        assert!(session_selector_layout(720, 520, 2).is_some());
+        assert!(session_tabs_for_bounds(720, 520, &[], None).tabs.is_empty());
+        assert!(
+            session_tabs_for_bounds(720, 520, &[workspace("one")], Some("one"))
+                .tabs
+                .is_empty()
+        );
+        assert_eq!(
+            session_tabs_for_bounds(720, 520, &[workspace("one"), workspace("two")], Some("one"),)
+                .tabs
+                .len(),
+            2
+        );
     }
 
     #[test]
-    fn session_selector_hit_testing_only_accepts_session_icons() {
-        let (dock, icons) = session_selector_layout(720, 520, 3).unwrap();
-        let first = icons[0];
+    fn session_selector_hit_testing_only_accepts_session_tabs() {
+        let workspaces = [workspace("one"), workspace("two"), workspace("three")];
+        let tabs = session_tabs_for_bounds(720, 520, &workspaces, Some("one"));
+        let first = tabs.tabs[0].rect;
         assert_eq!(
-            session_selector_hit_test(
-                720,
-                520,
-                3,
-                first.x + first.width / 2.0,
-                first.y + first.height / 2.0,
-            ),
-            Some(0)
+            tabs.hit_test(first.x + first.width / 2.0, first.y + first.height / 2.0),
+            Some("one")
         );
         assert_eq!(
-            session_selector_hit_test(720, 520, 3, dock.x + 2.0, dock.y + 2.0),
+            tabs.hit_test(first.x - 2.0, first.y + first.height / 2.0),
             None
         );
     }

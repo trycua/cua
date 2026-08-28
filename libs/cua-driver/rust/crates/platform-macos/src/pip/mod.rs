@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use pip_preview::{
-    layout_desktop, png_dimensions, PipBackend, PipBackendFactory, PipConfig, PipFrame,
-    PipTargetKind, PipViewModel, PipWorkspaceSummary, TargetSize,
+    layout_desktop, layout_session_tabs, png_dimensions, LayoutRect, PipBackend, PipBackendFactory,
+    PipConfig, PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary, SessionTabsLayout,
+    TargetSize,
 };
 
 #[repr(C)]
@@ -125,9 +126,9 @@ impl PipBackend for MacosPipBackend {
             },
             set_input_passthrough_cb,
         );
-        if !applied.load(Ordering::Acquire) {
-            anyhow::bail!("Agent View window is not running");
-        }
+        // The user may close the optional presentation window while the
+        // daemon continues serving tools; that must never break input.
+        let _ = applied.load(Ordering::Acquire);
         Ok(())
     }
 
@@ -187,6 +188,7 @@ struct ViewSnapshot {
     frames: Vec<PipFrame>,
     workspaces: Vec<PipWorkspaceSummary>,
     selected_workspace_id: Option<String>,
+    active_view_id: Option<String>,
 }
 
 fn clone_snapshot(model: &PipViewModel) -> ViewSnapshot {
@@ -194,6 +196,7 @@ fn clone_snapshot(model: &PipViewModel) -> ViewSnapshot {
         frames: model.selected_frames().into_iter().cloned().collect(),
         workspaces: model.workspaces(),
         selected_workspace_id: model.selected_workspace_id().map(str::to_owned),
+        active_view_id: model.active_view_id().map(str::to_owned),
     }
 }
 
@@ -207,6 +210,7 @@ fn current_snapshot() -> ViewSnapshot {
             frames: Vec::new(),
             workspaces: Vec::new(),
             selected_workspace_id: None,
+            active_view_id: None,
         })
 }
 
@@ -520,6 +524,7 @@ unsafe fn render_target_window(
     frame: &PipFrame,
     layout: pip_preview::TargetLayout,
     bounds_height: f64,
+    active: bool,
 ) {
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
@@ -546,7 +551,9 @@ unsafe fn render_target_window(
         true,
     );
     let window_layer: *mut AnyObject = msg_send![window, layer];
-    if SHOW_SHELL_BORDER {
+    if active {
+        set_layer_border(window_layer, 2.2, color(0.25, 0.65, 1.0, 0.96));
+    } else if SHOW_SHELL_BORDER {
         set_layer_border(window_layer, 0.55, color(0.0, 0.0, 0.0, 0.22));
     }
     let image_view: *mut AnyObject = {
@@ -680,48 +687,22 @@ unsafe fn render_dock(
     let _: () = msg_send![canvas, addSubview: dock];
 }
 
-fn session_selector_layout(
+fn session_tabs_layout(
     width: f64,
     height: f64,
-    count: usize,
-) -> Option<(objc2_foundation::NSRect, Vec<objc2_foundation::NSRect>)> {
-    use objc2_foundation::{NSPoint, NSRect, NSSize};
-
-    if count <= 1 {
-        return None;
-    }
-    let visible = count;
-    let icon = 22.0;
-    let gap = 5.0;
-    let padding = 6.0;
-    let selector_width = padding * 2.0 + visible as f64 * icon + (visible - 1) as f64 * gap;
-    let selector = NSRect::new(
-        NSPoint::new((width - selector_width) / 2.0, height - 29.0),
-        NSSize::new(selector_width, 28.0),
-    );
-    let icons = (0..visible)
-        .map(|index| {
-            NSRect::new(
-                NSPoint::new(padding + index as f64 * (icon + gap), 3.0),
-                NSSize::new(icon, icon),
-            )
-        })
-        .collect();
-    Some((selector, icons))
-}
-
-fn workspace_accent(workspace_id: &str) -> (f64, f64, f64) {
-    let hash = workspace_id.bytes().fold(2_166_136_261u32, |value, byte| {
-        (value ^ u32::from(byte)).wrapping_mul(16_777_619)
-    });
-    let palette = [
-        (0.29, 0.64, 0.96),
-        (0.30, 0.78, 0.56),
-        (0.96, 0.58, 0.27),
-        (0.91, 0.39, 0.49),
-        (0.46, 0.72, 0.86),
-    ];
-    palette[hash as usize % palette.len()]
+    workspaces: &[PipWorkspaceSummary],
+    selected_workspace_id: Option<&str>,
+) -> SessionTabsLayout {
+    layout_session_tabs(
+        LayoutRect {
+            x: (width - 600.0).max(0.0) / 2.0,
+            y: (height - SESSION_SELECTOR_HEIGHT).max(0.0),
+            width: width.min(600.0),
+            height: SESSION_SELECTOR_HEIGHT,
+        },
+        workspaces,
+        selected_workspace_id,
+    )
 }
 
 unsafe fn render_session_selector(
@@ -733,11 +714,23 @@ unsafe fn render_session_selector(
     use objc2::runtime::AnyObject;
     use objc2::{class, msg_send};
 
-    let Some((selector_frame, icons)) =
-        session_selector_layout(bounds.size.width, bounds.size.height, workspaces.len())
-    else {
+    let tabs = session_tabs_layout(
+        bounds.size.width,
+        bounds.size.height,
+        workspaces,
+        selected_workspace_id,
+    );
+    let Some(first) = tabs.tabs.first() else {
         return;
     };
+    let last = tabs.tabs.last().expect("tabs are non-empty");
+    let selector_frame = objc2_foundation::NSRect::new(
+        objc2_foundation::NSPoint::new(first.rect.x - 6.0, first.rect.y - 3.0),
+        objc2_foundation::NSSize::new(
+            last.rect.x + last.rect.width - first.rect.x + 12.0,
+            first.rect.height + 6.0,
+        ),
+    );
     let selector = visual_effect_view(selector_frame, 14.0, 6, 1, true);
     let selector_layer: *mut AnyObject = msg_send![selector, layer];
     set_layer_background(selector_layer, color(0.10, 0.12, 0.15, 0.30));
@@ -749,9 +742,18 @@ unsafe fn render_session_selector(
         .as_ref()
         .map(|handles| handles.delegate as *mut AnyObject)
         .unwrap_or(std::ptr::null_mut());
-    for (index, (workspace, icon_frame)) in workspaces.iter().zip(icons).enumerate() {
-        let selected = selected_workspace_id == Some(workspace.workspace_id.as_str());
-        let (red, green, blue) = workspace_accent(&workspace.workspace_id);
+    for (index, tab) in tabs.tabs.iter().enumerate() {
+        let workspace = &workspaces[index];
+        let selected = tab.selected;
+        let (red, green, blue) = (
+            f64::from(tab.accent.0) / 255.0,
+            f64::from(tab.accent.1) / 255.0,
+            f64::from(tab.accent.2) / 255.0,
+        );
+        let icon_frame = objc2_foundation::NSRect::new(
+            objc2_foundation::NSPoint::new(tab.rect.x, tab.rect.y),
+            objc2_foundation::NSSize::new(tab.rect.width, tab.rect.height),
+        );
         let button: *mut AnyObject = {
             let allocated: *mut AnyObject = msg_send![class!(NSButton), alloc];
             msg_send![allocated, initWithFrame: icon_frame]
@@ -1138,9 +1140,15 @@ unsafe fn render_snapshot(snapshot: &ViewSnapshot) {
         );
     } else {
         for (frame, target_layout) in snapshot.frames.iter().zip(layout.targets.iter().copied()) {
-            render_target_window(canvas, frame, target_layout, content_height);
+            render_target_window(
+                canvas,
+                frame,
+                target_layout,
+                content_height,
+                snapshot.active_view_id.as_deref() == Some(frame.target.view_id().as_str()),
+            );
         }
-        render_dock(canvas, &snapshot.frames, &layout, content_height);
+        // Keep the resting Agent View free of a redundant internal Dock.
     }
     render_session_selector(
         canvas,
@@ -1633,6 +1641,7 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         frames: Vec::new(),
         workspaces: Vec::new(),
         selected_workspace_id: None,
+        active_view_id: None,
     });
     let _: () = msg_send![window, orderFrontRegardless];
 
@@ -1647,6 +1656,15 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn workspace(id: &str, target_count: usize, updated_ms: u64) -> PipWorkspaceSummary {
+        PipWorkspaceSummary {
+            workspace_id: id.to_owned(),
+            workspace_label: id.to_owned(),
+            target_count,
+            updated_ms,
+        }
+    }
 
     #[test]
     fn parses_native_pid_from_exact_window_target() {
@@ -1684,29 +1702,33 @@ mod tests {
     }
 
     #[test]
-    fn desktop_frame_preserves_asymmetric_shell_rails() {
+    fn desktop_frame_uses_full_bounds_when_shell_border_is_hidden() {
         use objc2_foundation::{NSPoint, NSRect, NSSize};
 
         let outer = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(620.0, 420.0));
         let inner = desktop_frame(outer);
 
-        assert_eq!(inner.origin, NSPoint::new(9.0, 10.0));
-        assert_eq!(inner.size, NSSize::new(602.0, 390.0));
-        assert_eq!(outer.size.height - inner.origin.y - inner.size.height, 20.0);
+        assert_eq!(inner, outer);
     }
 
     #[test]
     fn session_selector_is_local_compact_and_hidden_for_one_session() {
-        assert!(session_selector_layout(602.0, 390.0, 1).is_none());
-        let (selector, icons) = session_selector_layout(602.0, 390.0, 3).unwrap();
-        assert_eq!(icons.len(), 3);
-        assert!(selector.origin.x > 0.0);
-        assert!(selector.origin.y + selector.size.height <= 390.0);
-        assert!(icons.iter().all(|icon| {
-            icon.origin.x >= 0.0
-                && icon.origin.y >= 0.0
-                && icon.origin.x + icon.size.width <= selector.size.width
-                && icon.origin.y + icon.size.height <= selector.size.height
+        let one = [workspace("one", 1, 1)];
+        assert!(session_tabs_layout(602.0, 390.0, &one, Some("one"))
+            .tabs
+            .is_empty());
+        let workspaces = [
+            workspace("one", 1, 1),
+            workspace("two", 1, 1),
+            workspace("three", 1, 1),
+        ];
+        let tabs = session_tabs_layout(602.0, 390.0, &workspaces, Some("one"));
+        assert_eq!(tabs.tabs.len(), 3);
+        assert!(tabs.tabs.iter().all(|tab| {
+            tab.rect.x >= 0.0
+                && tab.rect.y >= 0.0
+                && tab.rect.x + tab.rect.width <= 602.0
+                && tab.rect.y + tab.rect.height <= 390.0
         }));
     }
 

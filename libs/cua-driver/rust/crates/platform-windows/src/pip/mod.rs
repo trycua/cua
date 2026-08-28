@@ -23,9 +23,9 @@ mod native {
     use cursor_overlay::{rasterize_inter_text, TextRaster};
     use image::imageops::FilterType;
     use pip_preview::{
-        layout_desktop_with_shell, png_dimensions, LayoutRect, PipBackend, PipBackendFactory,
-        PipConfig, PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary, ShellStyle,
-        TargetSize,
+        layout_desktop_with_shell, layout_session_tabs, png_dimensions, LayoutRect, PipBackend,
+        PipBackendFactory, PipConfig, PipFrame, PipTargetKind, PipViewModel, PipWorkspaceSummary,
+        ShellStyle, TargetSize,
     };
     use windows::core::PCWSTR;
     use windows::Win32::Foundation::{HWND, LPARAM, LRESULT, POINT, RECT, WPARAM};
@@ -74,7 +74,7 @@ mod native {
         fn set_input_passthrough(&self, passthrough: bool) -> anyhow::Result<()> {
             let hwnd = self.hwnd.load(Ordering::Acquire);
             if hwnd == 0 {
-                anyhow::bail!("Agent View window is not running");
+                return Ok(());
             }
             let applied = unsafe {
                 SendMessageW(
@@ -289,11 +289,20 @@ mod native {
                     let x = lparam.0 as i16 as i32;
                     let y = (lparam.0 >> 16) as i16 as i32;
                     let mut client = RECT::default();
-                    if GetClientRect(hwnd, &mut client).is_ok()
-                        && contains(switcher_rect(client.right - client.left), x, y)
-                    {
+                    if GetClientRect(hwnd, &mut client).is_ok() {
                         let state = &*state_ptr;
-                        let changed = state.model.lock().unwrap().select_next_workspace();
+                        let mut model = state.model.lock().unwrap();
+                        let workspaces = model.workspaces();
+                        let tabs = session_tabs_for_width(
+                            client.right - client.left,
+                            client.bottom - client.top,
+                            &workspaces,
+                            model.selected_workspace_id(),
+                        );
+                        let changed = tabs
+                            .hit_test(f64::from(x), f64::from(y))
+                            .map(|workspace_id| model.select_workspace(workspace_id))
+                            .unwrap_or(false);
                         if changed {
                             let _ = InvalidateRect(hwnd, None, false);
                         }
@@ -335,20 +344,24 @@ mod native {
                             y: screen_y,
                         };
                         let mut client = RECT::default();
-                        let has_switcher = if state_ptr.is_null() {
-                            false
-                        } else {
-                            (&*state_ptr).model.lock().unwrap().workspaces().len() > 1
-                        };
-                        if has_switcher
+                        let tabs_hit = if !state_ptr.is_null()
                             && ScreenToClient(hwnd, &mut client_point).as_bool()
                             && GetClientRect(hwnd, &mut client).is_ok()
-                            && contains(
-                                switcher_rect(client.right - client.left),
-                                client_point.x,
-                                client_point.y,
-                            )
                         {
+                            let model = (&*state_ptr).model.lock().unwrap();
+                            let workspaces = model.workspaces();
+                            session_tabs_for_width(
+                                client.right - client.left,
+                                client.bottom - client.top,
+                                &workspaces,
+                                model.selected_workspace_id(),
+                            )
+                            .hit_test(f64::from(client_point.x), f64::from(client_point.y))
+                            .is_some()
+                        } else {
+                            false
+                        };
+                        if tabs_hit {
                             return LRESULT(HTCLIENT as isize);
                         }
                         if screen_y - window.top < 28 {
@@ -387,7 +400,7 @@ mod native {
         }
         let width = (rect.right - rect.left).max(1) as u32;
         let height = (rect.bottom - rect.top).max(1) as u32;
-        let (frames, workspaces, selected_workspace_id) = {
+        let (frames, workspaces, selected_workspace_id, active_view_id) = {
             let model = state.model.lock().unwrap();
             (
                 model
@@ -397,6 +410,7 @@ mod native {
                     .collect::<Vec<_>>(),
                 model.workspaces(),
                 model.selected_workspace_id().map(str::to_owned),
+                model.active_view_id().map(str::to_owned),
             )
         };
         let pixels = render_view(
@@ -405,6 +419,7 @@ mod native {
             &frames,
             &workspaces,
             selected_workspace_id.as_deref(),
+            active_view_id.as_deref(),
         );
         let info = BITMAPINFO {
             bmiHeader: BITMAPINFOHEADER {
@@ -443,6 +458,7 @@ mod native {
         frames: &[PipFrame],
         workspaces: &[PipWorkspaceSummary],
         selected_workspace_id: Option<&str>,
+        active_view_id: Option<&str>,
     ) -> Vec<u8> {
         let mut canvas = Canvas::new(width, height);
         canvas.smoked_shell();
@@ -458,12 +474,8 @@ mod native {
                 })
             })
             .collect::<Vec<_>>();
-        let layout = layout_desktop_with_shell(
-            desktop.2 as f64,
-            desktop.3 as f64,
-            &sizes,
-            ShellStyle::EdgeTaskbar,
-        );
+        let layout =
+            layout_desktop_with_shell(desktop.2 as f64, desktop.3 as f64, &sizes, ShellStyle::None);
         canvas.border((0, 0, width as i32, height as i32), 14, [19, 12, 7, 225]);
         canvas.border(
             (1, 1, width as i32 - 2, height as i32 - 2),
@@ -494,38 +506,14 @@ mod native {
                 canvas.blit(&image, rect, 7);
             }
             canvas.border(rect, 7, [40, 52, 72, 76]);
+            if active_view_id == Some(frame.target.view_id().as_str()) {
+                canvas.border(
+                    (rect.0 - 3, rect.1 - 3, rect.2 + 6, rect.3 + 6),
+                    9,
+                    [230, 158, 73, 232],
+                );
+            }
         }
-        // Windows shells anchor their bar to the bottom screen edge instead of
-        // floating it, so the band is painted as a material over the desktop
-        // that is already composited beneath it rather than as a card on top.
-        let taskbar = offset_pixels(layout.dock, desktop.0, desktop.1);
-        canvas.taskbar_material(taskbar, desktop);
-        if let Some(start) = layout.start_button {
-            canvas.start_glyph(offset_pixels(start, desktop.0, desktop.1));
-        }
-        let active = active_target_index(frames);
-        for (index, icon) in layout.dock_icons.iter().enumerate() {
-            canvas.icon(
-                offset_pixels(*icon, desktop.0, desktop.1),
-                frames[index].target.target_kind,
-                index,
-            );
-        }
-        for (index, indicator) in layout.indicators.iter().enumerate() {
-            canvas.running_indicator(
-                offset_pixels(*indicator, desktop.0, desktop.1),
-                Some(index) == active,
-            );
-        }
-        if let Some(tray) = layout.tray {
-            canvas.tray(
-                offset_pixels(tray, desktop.0, desktop.1),
-                active.map(|index| frames[index].timestamp_ms),
-            );
-        }
-        // The bar reaches the desktop's bottom edge, so restore the rounded
-        // frame it just painted over.
-        canvas.border(desktop, 10, [181, 151, 122, 138]);
         canvas.data
     }
 
@@ -603,7 +591,25 @@ mod native {
     }
 
     fn switcher_rect(width: i32) -> (i32, i32, i32, i32) {
-        ((width - 58).max(8), 8, 50, 22)
+        (12, 8, (width - 24).max(1), 28)
+    }
+
+    fn session_tabs_for_width(
+        width: i32,
+        height: i32,
+        workspaces: &[PipWorkspaceSummary],
+        selected_workspace_id: Option<&str>,
+    ) -> pip_preview::SessionTabsLayout {
+        layout_session_tabs(
+            LayoutRect {
+                x: 12.0,
+                y: 8.0,
+                width: f64::from((width - 24).max(1)),
+                height: f64::from(height.max(1)),
+            },
+            workspaces,
+            selected_workspace_id,
+        )
     }
 
     fn contains(rect: (i32, i32, i32, i32), x: i32, y: i32) -> bool {
@@ -707,32 +713,34 @@ mod native {
             workspaces: &[PipWorkspaceSummary],
             selected_workspace_id: Option<&str>,
         ) {
-            self.shadow(rect);
-            self.fill(rect, 11, [42, 31, 24, 235]);
-            self.border(rect, 11, [205, 177, 148, 128]);
-
-            let visible = workspaces.len().min(4);
-            let selected = workspaces
-                .iter()
-                .position(|workspace| {
-                    Some(workspace.workspace_id.as_str()) == selected_workspace_id
-                })
-                .unwrap_or(0)
-                .min(visible.saturating_sub(1));
-            for index in 0..visible {
-                let color = if index == selected {
-                    [230, 158, 73, 255]
-                } else {
-                    [104, 92, 78, 255]
-                };
-                self.fill((rect.0 + 8 + index as i32 * 8, rect.1 + 8, 6, 6), 3, color);
-            }
-
-            let chevron_x = rect.0 + rect.2 - 10;
-            let chevron_y = rect.1 + rect.3 / 2;
-            for step in 0..4 {
-                self.set(chevron_x + step, chevron_y - 3 + step, [224, 210, 190, 255]);
-                self.set(chevron_x + step, chevron_y + 3 - step, [224, 210, 190, 255]);
+            let tabs = layout_session_tabs(
+                LayoutRect {
+                    x: f64::from(rect.0),
+                    y: f64::from(rect.1),
+                    width: f64::from(rect.2),
+                    height: f64::from(rect.3),
+                },
+                workspaces,
+                selected_workspace_id,
+            );
+            for tab in tabs.tabs {
+                let tab_rect = offset_pixels(tab.rect, 0, 0);
+                self.shadow(tab_rect);
+                self.fill(
+                    tab_rect,
+                    9,
+                    [42, 31, 24, if tab.selected { 242 } else { 204 }],
+                );
+                self.border(
+                    tab_rect,
+                    9,
+                    [
+                        tab.accent.0,
+                        tab.accent.1,
+                        tab.accent.2,
+                        if tab.selected { 235 } else { 128 },
+                    ],
+                );
             }
         }
 
@@ -1096,6 +1104,7 @@ mod native {
                 ],
                 &workspaces,
                 Some("workspace"),
+                None,
             );
             assert_eq!(data.len(), 480 * 320 * 4);
             assert!(data.chunks_exact(4).all(|pixel| pixel[3] == 255));
@@ -1122,7 +1131,7 @@ mod native {
             let width = 520;
             let height = 360;
             let workspaces = [workspace("workspace", 2, 1)];
-            let data = render_view(width, height, &frames, &workspaces, Some("workspace"));
+            let data = render_view(width, height, &frames, &workspaces, Some("workspace"), None);
             let desktop = desktop_rect(width, height, false);
             let layout = layout_desktop_with_shell(
                 desktop.2 as f64,
@@ -1170,7 +1179,7 @@ mod native {
         #[test]
         fn renderer_separates_dark_shell_from_inset_desktop() {
             let width = 360;
-            let data = render_view(width, 240, &[], &[], None);
+            let data = render_view(width, 240, &[], &[], None, None);
             let shell = pixel(&data, width, 4, 100);
             let desktop = pixel(&data, width, 180, 100);
             let highlight = pixel(&data, width, 180, 1);
@@ -1188,8 +1197,8 @@ mod native {
             let width = 420;
             let one = [workspace("agent-a", 1, 1)];
             let two = [workspace("agent-b", 1, 2), workspace("agent-a", 1, 1)];
-            let single = render_view(width, 280, &[], &one, Some("agent-a"));
-            let multiple = render_view(width, 280, &[], &two, Some("agent-a"));
+            let single = render_view(width, 280, &[], &one, Some("agent-a"), None);
+            let multiple = render_view(width, 280, &[], &two, Some("agent-a"), None);
             let switcher = switcher_rect(width as i32);
             let sample_x = (switcher.0 + switcher.2 / 2) as u32;
             let sample_y = (switcher.1 + switcher.3 / 2) as u32;
@@ -1306,6 +1315,7 @@ mod native {
                 ],
                 &[workspace("w", 2, 2)],
                 Some("w"),
+                None,
             );
             let center_x = (desktop.0 + desktop.2 / 2) as u32;
             let above = pixel(&data, width, center_x, (bar.1 - 6) as u32);
@@ -1325,6 +1335,7 @@ mod native {
                 &[frame("w", "a", PipTargetKind::BrowserTab, Vec::new(), 1)],
                 &[workspace("w", 1, 1)],
                 Some("w"),
+                None,
             );
 
             // The wallpaper's lower glow sits left of center, so a material
@@ -1361,6 +1372,7 @@ mod native {
                 ],
                 &[workspace("w", 2, 9)],
                 Some("w"),
+                None,
             );
             assert_eq!(layout.indicators.len(), 2);
             let brightness = |index: usize| {
@@ -1405,8 +1417,9 @@ mod native {
                 ],
                 &[workspace("w", 2, 42 * 60_000)],
                 Some("w"),
+                None,
             );
-            let empty = render_view(width, height, &[], &[workspace("w", 0, 1)], Some("w"));
+            let empty = render_view(width, height, &[], &[workspace("w", 0, 1)], Some("w"), None);
             let glyph_region = |data: &[u8], rect: (i32, i32, i32, i32)| {
                 let mut ink = 0u32;
                 for y in rect.1..rect.1 + rect.3 {

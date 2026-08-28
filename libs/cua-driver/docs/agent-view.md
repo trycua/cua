@@ -2,11 +2,16 @@
 
 Agent View is an optional, always-on-top miniature desktop that shows the exact
 application windows and browser tabs traversed by one Cua Driver agent session.
-Enable it when starting the daemon:
+It is enabled by default on supported interactive desktops. Disable it for one
+daemon invocation with:
 
 ```console
-cua-driver --agent-view
+cua-driver --no-agent-view
 ```
+
+`--agent-view` remains accepted as an explicit enable for compatibility. The
+durable config equivalent is `{"agent_view": false}` in
+`~/.cua-driver/config.json`.
 
 Use `--agent-view-geometry WxH[+X+Y]` to override its initial size and optional
 top-left position. The default is `640x420` near the top-right of the main
@@ -15,7 +20,8 @@ display. The view is resizable on macOS, Windows, and Linux X11/XWayland.
 ## Session model
 
 - One Agent View window belongs to one daemon and displays one selected private
-  runtime session at a time.
+  runtime session at a time. Multiple sessions appear as local tabs in that
+  same window; the tab strip is hidden when only one session has cards.
 - Until a person selects a session locally, Agent View follows the session with
   the most recent exact target activity.
 - When multiple sessions have cards, the native Agent View window exposes a

@@ -632,7 +632,7 @@ pub fn parse_command() -> Command {
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
         println!();
-        println!("experimental options (default: off):");
+        println!("experimental options:");
         println!(
             "  --experimental-history      Admit encrypted local Computer History for this daemon."
         );
@@ -641,8 +641,8 @@ pub fn parse_command() -> Command {
         );
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
-        println!("  --agent-view                Show an always-on-top miniature desktop for the");
-        println!("                              selected agent session. Exact native windows and");
+        println!("  --agent-view                Show the Agent View (enabled by default).");
+        println!("                              Exact native windows and");
         println!(
             "                              Chrome tabs traversed through Cua Driver become cards."
         );
@@ -662,6 +662,7 @@ pub fn parse_command() -> Command {
             "                              Native presentation is available on macOS, Windows,"
         );
         println!("                              and Linux (X11/XWayland).");
+        println!("  --no-agent-view             Disable Agent View for this daemon invocation.");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");

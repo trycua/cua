@@ -222,13 +222,24 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-fn maybe_init_pip() {
+fn maybe_init_pip() -> bool {
     let cfg = match pip_preview::default_config_path() {
         Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
         None => pip_preview::PipConfig::from_args(),
     };
     if !cfg.enabled {
-        return;
+        return false;
+    }
+
+    // AppKit's shared application registration aborts the process when the
+    // daemon has no Window Server session (for example, an SSH-launched or
+    // headless service). Do not select the Agent View run loop unless the
+    // native surface can safely exist; the socket-serving thread must remain
+    // the main lifetime owner in that case.
+    #[cfg(target_os = "macos")]
+    if !platform_macos::session::has_graphic_access() {
+        eprintln!("⚗️  Agent View requested but unavailable: no Window Server graphic session");
+        return false;
     }
 
     // Register the platform factory. The set is idempotent so multiple
@@ -309,9 +320,11 @@ fn maybe_init_pip() {
                 cua_driver_core::pip_hook::remove_pip_workspace(workspace_id);
             });
             eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
+            true
         }
         Err(e) => {
             eprintln!("⚗️  Agent View requested but unavailable: {e}");
+            false
         }
     }
 }
@@ -678,11 +691,7 @@ fn main() {
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let pip_cfg = match pip_preview::default_config_path() {
-                Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
-                None => pip_preview::PipConfig::from_args(),
-            };
-            maybe_init_pip();
+            let pip_available = maybe_init_pip();
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
@@ -797,7 +806,7 @@ fn main() {
             // When both are enabled, the cursor host must drain its command
             // receiver as well as NSApplication events; the Agent View-only
             // loop would leave cursor-bearing actions waiting indefinitely.
-            match macos_main_loop_host(cursor_cfg.enabled, pip_cfg.enabled) {
+            match macos_main_loop_host(cursor_cfg.enabled, pip_available) {
                 MacosMainLoopHost::CursorOverlay => {
                     // `run_on_main_thread` self-guards on graphic-session
                     // access. If it returns, keep the daemon alive by joining
@@ -1071,7 +1080,7 @@ fn main() -> anyhow::Result<()> {
                 claude_code_compat,
                 cua_driver_core::embedded_mode(),
             )?;
-            maybe_init_pip();
+            let _ = maybe_init_pip();
             let sp = socket.unwrap_or_else(serve::default_socket_path);
             let pid_path = serve::default_pid_file_path();
             // run_serve_cmd builds its own runtime; must run on a fresh thread.

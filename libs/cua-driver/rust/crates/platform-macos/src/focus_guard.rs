@@ -29,9 +29,9 @@
 //! This Rust port only ships **layer 3** (the reactive suppressor).
 //! Layers 1+2 require AX assertion + AX attribute write/restore machinery
 //! that isn't yet ported — and empirically the layer-3 reactive guard
-//! catches the majority of side-effects when combined with
-//! `WindowChangeDetector`'s wildcard lease at the snapshot→detect
-//! boundary. This gap is a known, intentional limitation.
+//! catches the majority of side-effects when combined with the action
+//! decorator's cross-application suppression lease. This gap is a known,
+//! intentional limitation.
 //!
 //! ## Why this is a separate module
 //!
@@ -56,12 +56,11 @@ use crate::focus_steal;
 /// Wrap an async closure `f` with a targeted focus-steal suppressor.
 ///
 /// - `target_pid` — the pid the action is dispatched to. `Some(pid)` is
-///   the standard case; `None` skips the targeted entry entirely
-///   (caller relies on the surrounding `WindowChangeDetector` wildcard
-///   lease).
+///   the standard case; `None` skips the targeted entry entirely because the
+///   surrounding action decorator owns cross-application suppression.
 /// - `prior_frontmost` — the pid to restore focus to if the target
 ///   activates. Typically captured from `apps::frontmost_pid()` before
-///   the snapshot.
+///   dispatch.
 /// - `origin` — short static label for tracing, e.g. `"click.AXPress"`.
 /// - `f` — the action to run with suppression armed.
 ///

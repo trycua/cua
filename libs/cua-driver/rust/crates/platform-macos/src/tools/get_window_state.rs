@@ -649,9 +649,8 @@ impl Tool for GetWindowStateTool {
         );
         ToolResult {
             content,
-            is_error: None,
             structured_content: Some(structured),
-            action_record: None,
+            ..Default::default()
         }
     }
 }

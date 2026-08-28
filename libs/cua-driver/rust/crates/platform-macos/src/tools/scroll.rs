@@ -15,7 +15,6 @@ use crate::ax::bindings::{
     perform_action, AXUIElementRef,
 };
 use crate::focus_guard;
-use crate::window_change_detector::WindowChangeDetector;
 
 use super::ToolState;
 
@@ -544,7 +543,6 @@ impl Tool for ScrollTool {
             );
 
             let prior_front = apps::frontmost_pid();
-            let snapshot = WindowChangeDetector::snapshot(prior_front);
 
             let WheelTarget {
                 screen_x,
@@ -590,7 +588,6 @@ impl Tool for ScrollTool {
             )
             .await;
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
             let mode_label = if fg {
                 " (delivery_mode:foreground)"
             } else {
@@ -600,8 +597,7 @@ impl Tool for ScrollTool {
                 Ok(Ok(())) => ToolResult::text(format!(
                     "✅ Sent {direction} scroll by {by} × {amount} via pixel wheel at \
                      ({screen_x:.0}, {screen_y:.0}){mode_label} (background CGEvent; not \
-                     driver-verified — confirm via screenshot).{}",
-                    changes.result_suffix()
+                     driver-verified — confirm via screenshot)."
                 ))
                 .with_structured(serde_json::json!({
                     "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"
@@ -651,16 +647,7 @@ impl Tool for ScrollTool {
             }
         }
 
-        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // Scroll keystrokes (PageDown / arrow) into search-box autocomplete
-        // can spawn floating helper windows; rare but real. Wrap for parity
-        // with the other action tools.
-        //
-        // The AX focus_element() pre-write also runs inside the closure so
-        // any reflex activations it triggers are caught by both the wildcard
-        // snapshot suppressor and the targeted FocusGuard lease.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -689,13 +676,10 @@ impl Tool for ScrollTool {
         )
         .await;
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
-
         match result {
             Ok(Ok(())) => ToolResult::text(format!(
                 "✅ Sent {direction} scroll by {by} × {amount} via keystroke \
-                 (background; not driver-verified — confirm via screenshot).{}",
-                changes.result_suffix()
+                 (background; not driver-verified — confirm via screenshot)."
             ))
             .with_structured(serde_json::json!({ "path": "key_events", "verified": false })),
             Ok(Err(e)) => ToolResult::error(format!("Scroll failed: {e}")),

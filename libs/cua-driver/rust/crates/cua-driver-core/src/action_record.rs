@@ -187,11 +187,51 @@ pub enum EvidenceKind {
     AccessibilityReadback,
     BrowserReadback,
     ValueReadback,
-    WindowChange,
     NativeApiResult,
     ScreenshotComparison,
     EventReceipt,
     OperatorObservation,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionSurfaceTarget {
+    pub pid: i64,
+    pub window_id: u64,
+    pub app_name: String,
+    pub title: String,
+}
+
+/// Typed platform observation with an optional validated exact rebind.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ActionSurfaceDelta {
+    pub new_windows: Vec<ActionSurfaceTarget>,
+    pub foreground_changed: bool,
+    pub rebind: Option<ActionSurfaceTarget>,
+}
+
+/// Apply the same fail-closed exact-target rule to every platform observer.
+/// Ownership must already be proven by target-scoped native enumeration.
+pub fn resolve_surface_delta(
+    candidates: Vec<ActionSurfaceTarget>,
+    foreground_changed: bool,
+) -> Option<ActionSurfaceDelta> {
+    let mut new_windows = Vec::new();
+    for candidate in candidates {
+        if !new_windows.iter().any(|existing: &ActionSurfaceTarget| {
+            existing.pid == candidate.pid && existing.window_id == candidate.window_id
+        }) {
+            new_windows.push(candidate);
+        }
+    }
+    if new_windows.is_empty() {
+        return None;
+    }
+    let rebind = (new_windows.len() == 1).then(|| new_windows[0].clone());
+    Some(ActionSurfaceDelta {
+        new_windows,
+        foreground_changed,
+        rebind,
+    })
 }
 
 /// A failed or superseded transport attempt.
@@ -241,6 +281,7 @@ pub struct ActionExecutionRecord {
     pub fallbacks: Vec<ActionFallback>,
     pub evidence: Vec<ActionEvidence>,
     pub escalation: Option<ActionEscalation>,
+    pub surface_delta: Option<ActionSurfaceDelta>,
     pub delivered_count: Option<u32>,
     pub detail: Option<String>,
 }
@@ -260,6 +301,7 @@ impl ActionExecutionRecord {
             fallbacks: Vec::new(),
             evidence: Vec::new(),
             escalation: None,
+            surface_delta: None,
             delivered_count: None,
             detail: None,
         }
@@ -275,7 +317,16 @@ impl ActionExecutionRecord {
 
     pub fn validate(&self) -> Result<(), ActionRecordValidationError> {
         match self.effect {
-            ActionEffect::Confirmed if projected_evidence(&self.evidence).is_none() => {
+            ActionEffect::Confirmed
+                if !self.evidence.iter().any(|evidence| {
+                    matches!(
+                        evidence.kind,
+                        EvidenceKind::AccessibilityReadback
+                            | EvidenceKind::BrowserReadback
+                            | EvidenceKind::ValueReadback
+                    )
+                }) =>
+            {
                 Err(ActionRecordValidationError::ConfirmedRequiresEvidence)
             }
             ActionEffect::Partial
@@ -293,6 +344,12 @@ impl ActionExecutionRecord {
         }
     }
 
+    /// Attach observer facts without changing the actuator's effect or
+    /// overwriting its internal escalation account.
+    pub fn observe_surface_delta(&mut self, delta: ActionSurfaceDelta) {
+        self.surface_delta = Some(delta);
+    }
+
     pub fn stable_projection(
         &self,
     ) -> Result<ActionOutcomeProjection, ActionRecordValidationError> {
@@ -306,6 +363,7 @@ impl ActionExecutionRecord {
             }),
             evidence: projected_evidence(&self.evidence),
             escalation: self.escalation.clone(),
+            surface_delta: self.surface_delta.clone(),
         })
     }
 
@@ -360,60 +418,78 @@ impl ActionExecutionRecord {
                             | ProjectedEvidenceKind::ValueReadback => {
                                 cua_driver_contract::ActionEvidenceKind::ValueReadback
                             }
-                            ProjectedEvidenceKind::WindowChange => {
-                                cua_driver_contract::ActionEvidenceKind::WindowChange
-                            }
                         },
                     })
                     .collect()
             }),
-            escalation: projection.escalation.map(|escalation| {
-                use cua_driver_contract::{
-                    ActionEscalation, ActionEscalationReason, ActionEscalationTarget,
-                };
-
-                let (target, reason) = match escalation.kind {
-                    EscalationKind::ActivateTarget
-                    | EscalationKind::RetryWithForegroundDelivery => (
-                        ActionEscalationTarget::Foreground,
-                        ActionEscalationReason::DeliveryFailed,
-                    ),
-                    EscalationKind::RetryWithPixelTarget => (
-                        ActionEscalationTarget::Pixel,
-                        ActionEscalationReason::EffectUnconfirmed,
-                    ),
-                    EscalationKind::RetryWithPageAction => (
-                        ActionEscalationTarget::Page,
-                        ActionEscalationReason::EffectUnconfirmed,
-                    ),
-                    EscalationKind::RefreshPageState => (
-                        ActionEscalationTarget::Page,
-                        ActionEscalationReason::RouteUnavailable,
-                    ),
-                    EscalationKind::RequestPermission | EscalationKind::ElevateAccess => (
-                        ActionEscalationTarget::Session,
-                        ActionEscalationReason::PermissionRequired,
-                    ),
-                    EscalationKind::ExpandCaptureScope => (
-                        ActionEscalationTarget::Session,
-                        ActionEscalationReason::RouteUnavailable,
-                    ),
-                    EscalationKind::PrepareSession => (
-                        ActionEscalationTarget::Session,
-                        ActionEscalationReason::RouteUnavailable,
-                    ),
-                };
-                ActionEscalation {
-                    target,
-                    reason: if projection.effect == ActionEffect::SuspectedNoop
-                        && reason != ActionEscalationReason::PermissionRequired
-                    {
-                        ActionEscalationReason::SuspectedNoop
-                    } else {
-                        reason
-                    },
+            window_change: projection.surface_delta.as_ref().map(|delta| {
+                cua_driver_contract::ActionWindowChange {
+                    new_windows: delta
+                        .new_windows
+                        .iter()
+                        .map(public_surface_target)
+                        .collect(),
+                    foreground_changed: delta.foreground_changed,
                 }
             }),
+            escalation: projection
+                .surface_delta
+                .as_ref()
+                .map(|delta| cua_driver_contract::ActionEscalation {
+                    target: cua_driver_contract::ActionEscalationTarget::Rebind,
+                    reason: cua_driver_contract::ActionEscalationReason::SurfaceChanged,
+                    window: delta.rebind.as_ref().map(public_surface_target),
+                })
+                .or_else(|| {
+                    projection.escalation.map(|escalation| {
+                        use cua_driver_contract::{
+                            ActionEscalation, ActionEscalationReason, ActionEscalationTarget,
+                        };
+
+                        let (target, reason) = match escalation.kind {
+                            EscalationKind::ActivateTarget
+                            | EscalationKind::RetryWithForegroundDelivery => (
+                                ActionEscalationTarget::Foreground,
+                                ActionEscalationReason::DeliveryFailed,
+                            ),
+                            EscalationKind::RetryWithPixelTarget => (
+                                ActionEscalationTarget::Pixel,
+                                ActionEscalationReason::EffectUnconfirmed,
+                            ),
+                            EscalationKind::RetryWithPageAction => (
+                                ActionEscalationTarget::Page,
+                                ActionEscalationReason::EffectUnconfirmed,
+                            ),
+                            EscalationKind::RefreshPageState => (
+                                ActionEscalationTarget::Page,
+                                ActionEscalationReason::RouteUnavailable,
+                            ),
+                            EscalationKind::RequestPermission | EscalationKind::ElevateAccess => (
+                                ActionEscalationTarget::Session,
+                                ActionEscalationReason::PermissionRequired,
+                            ),
+                            EscalationKind::ExpandCaptureScope => (
+                                ActionEscalationTarget::Session,
+                                ActionEscalationReason::RouteUnavailable,
+                            ),
+                            EscalationKind::PrepareSession => (
+                                ActionEscalationTarget::Session,
+                                ActionEscalationReason::RouteUnavailable,
+                            ),
+                        };
+                        ActionEscalation {
+                            target,
+                            reason: if projection.effect == ActionEffect::SuspectedNoop
+                                && reason != ActionEscalationReason::PermissionRequired
+                            {
+                                ActionEscalationReason::SuspectedNoop
+                            } else {
+                                reason
+                            },
+                            window: None,
+                        }
+                    })
+                }),
         })
     }
 
@@ -536,8 +612,22 @@ impl ActionExecutionRecord {
                 "kind": escalation_kind_name(escalation.kind),
                 "detail": escalation.detail,
             })),
+            "surface_delta": self.surface_delta.as_ref().map(|delta| serde_json::json!({
+                "foreground_changed": delta.foreground_changed,
+                "new_window_ids": delta.new_windows.iter().map(|window| window.window_id).collect::<Vec<_>>(),
+                "rebind_window_id": delta.rebind.as_ref().map(|window| window.window_id),
+            })),
             "detail": self.detail,
         })
+    }
+}
+
+fn public_surface_target(target: &ActionSurfaceTarget) -> cua_driver_contract::ActionWindowTarget {
+    cua_driver_contract::ActionWindowTarget {
+        pid: target.pid,
+        window_id: target.window_id,
+        app_name: target.app_name.clone(),
+        title: target.title.clone(),
     }
 }
 
@@ -916,7 +1006,6 @@ fn projected_evidence(evidence: &[ActionEvidence]) -> Option<Vec<ActionEvidenceP
                 EvidenceKind::AccessibilityReadback => ProjectedEvidenceKind::AccessibilityReadback,
                 EvidenceKind::BrowserReadback => ProjectedEvidenceKind::BrowserReadback,
                 EvidenceKind::ValueReadback => ProjectedEvidenceKind::ValueReadback,
-                EvidenceKind::WindowChange => ProjectedEvidenceKind::WindowChange,
                 EvidenceKind::NativeApiResult
                 | EvidenceKind::ScreenshotComparison
                 | EvidenceKind::EventReceipt
@@ -974,7 +1063,6 @@ fn evidence_kind_name(kind: EvidenceKind) -> &'static str {
         EvidenceKind::AccessibilityReadback => "accessibility_readback",
         EvidenceKind::BrowserReadback => "browser_readback",
         EvidenceKind::ValueReadback => "value_readback",
-        EvidenceKind::WindowChange => "window_change",
         EvidenceKind::NativeApiResult => "native_api_result",
         EvidenceKind::ScreenshotComparison => "screenshot_comparison",
         EvidenceKind::EventReceipt => "event_receipt",
@@ -1099,6 +1187,7 @@ pub struct ActionOutcomeProjection {
     pub delivery: Option<ActionDeliveryProjection>,
     pub evidence: Option<Vec<ActionEvidenceProjection>>,
     pub escalation: Option<ActionEscalation>,
+    pub surface_delta: Option<ActionSurfaceDelta>,
 }
 
 /// Published delivery accounting; the original request is intentionally absent.
@@ -1120,7 +1209,6 @@ pub enum ProjectedEvidenceKind {
     AccessibilityReadback,
     BrowserReadback,
     ValueReadback,
-    WindowChange,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1210,6 +1298,55 @@ mod tests {
         .evidence(evidence())
         .build()
         .is_ok());
+    }
+
+    #[test]
+    fn surface_observation_preserves_actuator_effect() {
+        let mut record = ActionExecutionRecord::new(
+            ActionEffect::Unverifiable,
+            ActionTransport::MacosAxAction,
+            RequestedDelivery::Background,
+        );
+        let target = ActionSurfaceTarget {
+            pid: 42,
+            window_id: 7,
+            app_name: "Editor".into(),
+            title: "Open".into(),
+        };
+        record.observe_surface_delta(
+            resolve_surface_delta(vec![target.clone(), target.clone()], false)
+                .expect("surface delta"),
+        );
+
+        assert_eq!(record.effect, ActionEffect::Unverifiable);
+        let public = record.public_result().expect("public result");
+        assert_eq!(
+            public.effect,
+            cua_driver_contract::ActionEffect::Unverifiable
+        );
+        assert_eq!(
+            public
+                .window_change
+                .as_ref()
+                .map(|change| change.new_windows.len()),
+            Some(1),
+            "several AX roots for one native window are one rebind address"
+        );
+        assert_eq!(
+            public.escalation.and_then(|escalation| escalation.window),
+            public
+                .window_change
+                .and_then(|change| change.new_windows.into_iter().next())
+        );
+
+        let second = ActionSurfaceTarget {
+            window_id: 8,
+            ..target.clone()
+        };
+        assert!(resolve_surface_delta(vec![target, second], false)
+            .expect("ambiguous surface delta")
+            .rebind
+            .is_none());
     }
 
     #[test]
@@ -1364,7 +1501,11 @@ mod tests {
             .unwrap();
             assert_eq!(
                 result.escalation,
-                Some(cua_driver_contract::ActionEscalation { target, reason })
+                Some(cua_driver_contract::ActionEscalation {
+                    target,
+                    reason,
+                    window: None,
+                })
             );
         }
 
@@ -1648,6 +1789,7 @@ mod tests {
             Some(cua_driver_contract::ActionEscalation {
                 target: cua_driver_contract::ActionEscalationTarget::Page,
                 reason: cua_driver_contract::ActionEscalationReason::RouteUnavailable,
+                window: None,
             })
         );
 

@@ -19,23 +19,6 @@ logger = logging.getLogger(__name__)
 
 OS_TYPE = get_current_os()
 
-if OS_TYPE == "android":
-    from .android import (
-        AndroidAccessibilityHandler,
-        AndroidAutomationHandler,
-        AndroidDesktopHandler,
-        AndroidFileHandler,
-        AndroidWindowHandler,
-    )
-elif OS_TYPE == "darwin":
-    from computer_server.diorama.macos import MacOSDioramaHandler
-
-    from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
-elif OS_TYPE == "linux":
-    from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
-elif OS_TYPE == "windows":
-    from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
-
 from .generic import GenericDesktopHandler, GenericFileHandler, GenericWindowHandler
 
 HandlerTuple = Tuple[
@@ -91,14 +74,32 @@ class HandlerFactory:
             raise RuntimeError("CUA_BACKEND must be native, vnc, or cua-driver")
         if backend == "cua-driver" and OS_TYPE == "android":
             raise RuntimeError("CUA_BACKEND=cua-driver is not supported on Android")
-
-        driver_automation: Optional[BaseAutomationHandler] = None
         if backend == "cua-driver":
-            from .cua_driver import CuaDriverAutomationHandler
+            from .cua_driver import (
+                CuaDriverAccessibilityHandler,
+                CuaDriverAutomationHandler,
+            )
 
-            driver_automation = CuaDriverAutomationHandler()
+            automation = CuaDriverAutomationHandler()
+            logger.info("Using Cua Driver automation backend (%s mode)", automation.mode)
+            return (
+                CuaDriverAccessibilityHandler(),
+                automation,
+                BaseDioramaHandler(),
+                GenericFileHandler(),
+                GenericDesktopHandler(),
+                GenericWindowHandler(),
+            )
 
         if OS_TYPE == "android":
+            from .android import (
+                AndroidAccessibilityHandler,
+                AndroidAutomationHandler,
+                AndroidDesktopHandler,
+                AndroidFileHandler,
+                AndroidWindowHandler,
+            )
+
             handlers: HandlerTuple = (
                 AndroidAccessibilityHandler(),
                 AndroidAutomationHandler(),
@@ -108,31 +109,35 @@ class HandlerFactory:
                 AndroidWindowHandler(),
             )
         elif OS_TYPE == "darwin":
+            from computer_server.diorama.macos import MacOSDioramaHandler
+
+            from .macos import MacOSAccessibilityHandler, MacOSAutomationHandler
+
             handlers = (
                 MacOSAccessibilityHandler(),
-                (driver_automation if driver_automation is not None else MacOSAutomationHandler()),
+                MacOSAutomationHandler(),
                 MacOSDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "linux":
+            from .linux import LinuxAccessibilityHandler, LinuxAutomationHandler
+
             handlers = (
                 LinuxAccessibilityHandler(),
-                (driver_automation if driver_automation is not None else LinuxAutomationHandler()),
+                LinuxAutomationHandler(),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
                 GenericWindowHandler(),
             )
         elif OS_TYPE == "windows":
+            from .windows import WindowsAccessibilityHandler, WindowsAutomationHandler
+
             handlers = (
                 WindowsAccessibilityHandler(),
-                (
-                    driver_automation
-                    if driver_automation is not None
-                    else WindowsAutomationHandler()
-                ),
+                WindowsAutomationHandler(),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
@@ -140,9 +145,6 @@ class HandlerFactory:
             )
         else:
             raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")
-
-        if driver_automation is not None:
-            logger.info("Using Cua Driver automation backend (%s mode)", handlers[1].mode)
 
         return handlers
 

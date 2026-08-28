@@ -20,7 +20,30 @@ from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 from PIL import Image
 
-from .base import BaseAutomationHandler, normalize_screenshot_format
+from .base import BaseAccessibilityHandler, BaseAutomationHandler, normalize_screenshot_format
+
+
+class CuaDriverAccessibilityHandler(BaseAccessibilityHandler):
+    """Refuse accessibility calls the portable driver contract does not expose."""
+
+    @staticmethod
+    def _unsupported() -> Dict[str, Any]:
+        return {
+            "success": False,
+            "code": "unsupported_in_cua_driver",
+            "error": "Accessibility queries are unavailable with the Cua Driver backend",
+        }
+
+    async def get_accessibility_tree(self) -> Dict[str, Any]:
+        return self._unsupported()
+
+    async def find_element(
+        self,
+        role: Optional[str] = None,
+        title: Optional[str] = None,
+        value: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        return self._unsupported()
 
 
 class DriverImage(Protocol):

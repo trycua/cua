@@ -1,10 +1,14 @@
 import json
+import sys
 from enum import Enum
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from computer_server.handlers.cua_driver import CuaDriverAutomationHandler
+from computer_server.handlers.cua_driver import (
+    CuaDriverAccessibilityHandler,
+    CuaDriverAutomationHandler,
+)
 
 
 class _Record:
@@ -429,21 +433,19 @@ def test_factory_selects_driver_without_constructing_native_automation(monkeypat
 
     driver = SimpleNamespace(mode="embedded")
 
-    def fail_native():
-        raise AssertionError("native automation must not be constructed")
-
     monkeypatch.setattr(factory, "OS_TYPE", "linux")
-    monkeypatch.setattr(factory, "LinuxAccessibilityHandler", object, raising=False)
-    monkeypatch.setattr(factory, "LinuxAutomationHandler", fail_native, raising=False)
     monkeypatch.setattr(factory, "BaseDioramaHandler", object)
     monkeypatch.setattr(factory, "GenericFileHandler", object)
     monkeypatch.setattr(factory, "GenericDesktopHandler", object)
     monkeypatch.setattr(factory, "GenericWindowHandler", object)
     monkeypatch.setattr(driver_module, "CuaDriverAutomationHandler", lambda: driver)
+    sys.modules.pop("computer_server.handlers.linux", None)
 
     handlers = factory.HandlerFactory.create_handlers()
 
     assert handlers[1] is driver
+    assert isinstance(handlers[0], CuaDriverAccessibilityHandler)
+    assert "computer_server.handlers.linux" not in sys.modules
 
 
 @pytest.mark.asyncio

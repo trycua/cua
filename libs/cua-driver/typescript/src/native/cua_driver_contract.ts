@@ -2900,6 +2900,15 @@ export type SessionStateOutput = {
     session: string,
     captureScope: CaptureScope,
     effectiveScope: EffectiveScope,
+    /**
+     * Whether this session is authorized to use desktop-scope capture and
+     * actions. This does not report the operating system's lock-screen state.
+     */
+    desktopCaptureAuthorized: boolean,
+    /**
+     * Compatibility field: this reports whether this session has unlocked
+     * desktop capture scope. It is not an operating-system lock-screen probe.
+     */
     desktopUnlocked: boolean,
     escalationReason?: EscalationReason,
     escalationDetail?: string
@@ -2929,6 +2938,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
                 session: FfiConverterString.read(from),
                 captureScope: FfiConverterTypeCaptureScope.read(from),
                 effectiveScope: FfiConverterTypeEffectiveScope.read(from),
+                desktopCaptureAuthorized: FfiConverterBool.read(from),
                 desktopUnlocked: FfiConverterBool.read(from),
                 escalationReason: FfiConverterOptionalTypeEscalationReason.read(from),
                 escalationDetail: FfiConverterOptionalString.read(from)
@@ -2938,6 +2948,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
             FfiConverterString.write(value.session, into);
             FfiConverterTypeCaptureScope.write(value.captureScope, into);
             FfiConverterTypeEffectiveScope.write(value.effectiveScope, into);
+            FfiConverterBool.write(value.desktopCaptureAuthorized, into);
             FfiConverterBool.write(value.desktopUnlocked, into);
             FfiConverterOptionalTypeEscalationReason.write(value.escalationReason, into);
             FfiConverterOptionalString.write(value.escalationDetail, into);
@@ -2946,6 +2957,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
             return FfiConverterString.allocationSize(value.session) +
              FfiConverterTypeCaptureScope.allocationSize(value.captureScope) +
              FfiConverterTypeEffectiveScope.allocationSize(value.effectiveScope) +
+             FfiConverterBool.allocationSize(value.desktopCaptureAuthorized) +
              FfiConverterBool.allocationSize(value.desktopUnlocked) +
              FfiConverterOptionalTypeEscalationReason.allocationSize(value.escalationReason) +
              FfiConverterOptionalString.allocationSize(value.escalationDetail);

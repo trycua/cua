@@ -131,6 +131,9 @@ Contributor documentation:
 
 - `docs/cursor-themes.md` documents the default semantic cursor and custom
   dotLottie authoring contract.
+- `docs/agent-view.md` documents the cross-platform miniature desktop (enabled
+  by default, with an explicit opt-out), its selected-session model, and
+  exact-target membership rules.
 - `docs/test-matrix.md` maps unit and canonical harness E2E suites.
 - `docs/action-support.md` is the empirical platform behavior ledger.
 - `docs/test-harnesses-guide.md` explains fixture and runner ownership.

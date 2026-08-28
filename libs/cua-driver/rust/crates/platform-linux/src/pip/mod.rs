@@ -9,6 +9,9 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::Duration;
 
 #[cfg(target_os = "linux")]
+mod wayland;
+
+#[cfg(target_os = "linux")]
 use image::imageops::FilterType;
 use pip_preview::{
     layout_desktop, layout_session_tabs, png_dimensions, LayoutRect, PipBackend, PipBackendFactory,
@@ -19,7 +22,7 @@ use pip_preview::{
 const MIN_WIDTH: u16 = 360;
 const MIN_HEIGHT: u16 = 260;
 
-enum UiMessage {
+pub(super) enum UiMessage {
     Frame(PipFrame),
     RemoveTarget(String, String),
     RemoveWorkspace(String),
@@ -95,13 +98,26 @@ impl PipBackendFactory for LinuxPipBackendFactory {
         let cfg = cfg.clone();
         std::thread::Builder::new()
             .name("cua-agent-view-linux".to_owned())
-            .spawn(move || run_x11_window(cfg, rx, ready_tx))?;
+            .spawn(move || {
+                #[cfg(target_os = "linux")]
+                if should_use_native_wayland() {
+                    wayland::run_window(cfg, rx, ready_tx);
+                    return;
+                }
+                run_x11_window(cfg, rx, ready_tx)
+            })?;
 
         ready_rx
             .recv()
             .map_err(|_| anyhow::anyhow!("Agent View X11 thread exited during startup"))??;
         Ok(Box::new(LinuxPipBackend { tx }))
     }
+}
+
+#[cfg(target_os = "linux")]
+fn should_use_native_wayland() -> bool {
+    std::env::var_os("WAYLAND_DISPLAY").is_some()
+        && (crate::wayland::is_wayland() || std::env::var_os("DISPLAY").is_none())
 }
 
 #[cfg(target_os = "linux")]
@@ -495,7 +511,7 @@ fn clamp_i16(value: i32) -> i16 {
     value.clamp(i32::from(i16::MIN), i32::from(i16::MAX)) as i16
 }
 
-fn render_agent_view(
+pub(super) fn render_agent_view(
     width: u16,
     height: u16,
     frames: &[&PipFrame],
@@ -1149,6 +1165,18 @@ mod tests {
             tabs.hit_test(first.x - 2.0, first.y + first.height / 2.0),
             None
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore = "requires a live pure-Wayland compositor with layer-shell"]
+    fn native_wayland_agent_view_starts_and_stops() {
+        assert!(std::env::var_os("WAYLAND_DISPLAY").is_some());
+        assert!(std::env::var_os("DISPLAY").is_none());
+        let backend = LinuxPipBackendFactory
+            .start(&PipConfig::default())
+            .expect("native Wayland Agent View should start");
+        backend.shutdown();
     }
 
     #[test]

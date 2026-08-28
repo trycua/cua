@@ -16,6 +16,13 @@ durable config equivalent is `{"agent_view": false}` in
 Use `--agent-view-geometry WxH[+X+Y]` to override its initial size and optional
 top-left position. The default is `640x420` near the top-right of the main
 display. The view is resizable on macOS, Windows, and Linux X11/XWayland.
+Pure Wayland uses a native top-right layer surface when the compositor exposes
+`zwlr_layer_shell_v1`; its position and size are compositor-managed. GNOME
+sessions without layer-shell use the supported XWayland presentation path. A
+pure layer-shell view remains click-through and follows the most-recent session;
+local tab selection, dragging, and manual resizing require the X11/XWayland
+window path because standard Wayland does not expose those global window
+management operations to clients.
 
 ## Session model
 

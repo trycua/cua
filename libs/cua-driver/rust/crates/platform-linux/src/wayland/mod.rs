@@ -1489,9 +1489,7 @@ pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<(
         || {
             libei_wait_pointer_ready()?;
             if let Some((pid, window_id)) = current_foreground_target() {
-                return with_target_foreground(pid, window_id, || {
-                    libei_click(x, y, count, button)
-                });
+                return with_target_foreground(pid, window_id, || libei_click(x, y, count, button));
             }
             libei_click(x, y, count, button)
         },
@@ -2410,7 +2408,7 @@ fn key_to_evdev(key: &str) -> Option<u32> {
         "delete" | "del" => 111,         // KEY_DELETE
         "up" => 103,                     // KEY_UP
         "down" => 108,                   // KEY_DOWN
-        "left" => 105,                    // KEY_LEFT
+        "left" => 105,                   // KEY_LEFT
         "right" => 106,                  // KEY_RIGHT
         "home" => 102,                   // KEY_HOME
         "end" => 107,                    // KEY_END

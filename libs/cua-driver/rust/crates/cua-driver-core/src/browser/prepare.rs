@@ -15,8 +15,8 @@ use super::engine::unsupported_engine_refusal;
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
-    PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects,
-    PrepareStrategy,
+    PrepareLaunchPosture, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
+    PrepareSideEffects, PrepareStrategy,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -342,15 +342,80 @@ fn configure_linux_isolated_browser_command(
     }
 }
 
-fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
+fn reserve_driver_selected_debugging_port() -> Result<u16, BrowserRefusal> {
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not reserve a driver-selected loopback DevTools port: {error}"),
+        )
+    })?;
+    let port = listener
+        .local_addr()
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect the reserved loopback DevTools port: {error}"),
+            )
+        })?
+        .port();
+    drop(listener);
+    if port == 0 {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the reserved loopback DevTools port was not usable",
+        ));
+    }
+    Ok(port)
+}
+
+fn launch_posture_notes(posture: PrepareLaunchPosture) -> Vec<String> {
+    match posture {
+        PrepareLaunchPosture::Standard => Vec::new(),
+        PrepareLaunchPosture::DriverSelectedPort => vec![
+            "standalone-only: launched a separate driver-owned profile, with no pid or existing browser profile attachment".to_owned(),
+            "uses a driver-selected nonzero loopback DevTools port instead of Chromium's port=0 launch path".to_owned(),
+            "navigator.webdriver is false for this fixed-port launch; no other browser identity or fingerprint overrides are applied, and detector bypass is not guaranteed".to_owned(),
+        ],
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpawnedEndpointHint {
+    ProfilePortFile,
+    FixedLoopbackPort(u16),
+}
+
+struct IsolatedBrowserCommand {
+    command: Command,
+    endpoint_hint: SpawnedEndpointHint,
+}
+
+fn isolated_browser_command(
+    executable: &str,
+    profile: &Path,
+    launch_posture: PrepareLaunchPosture,
+) -> Result<IsolatedBrowserCommand, BrowserRefusal> {
     let mut command = Command::new(executable);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
+    let (remote_debugging_port, endpoint_hint) = match launch_posture {
+        PrepareLaunchPosture::Standard => (
+            "--remote-debugging-port=0".to_owned(),
+            SpawnedEndpointHint::ProfilePortFile,
+        ),
+        PrepareLaunchPosture::DriverSelectedPort => {
+            let port = reserve_driver_selected_debugging_port()?;
+            (
+                format!("--remote-debugging-port={port}"),
+                SpawnedEndpointHint::FixedLoopbackPort(port),
+            )
+        }
+    };
     command
-        .arg("--remote-debugging-port=0")
+        .arg(remote_debugging_port)
         .arg(format!("--user-data-dir={}", profile.display()))
         .arg("--no-first-run")
         .arg("--no-default-browser-check")
@@ -381,7 +446,10 @@ fn isolated_browser_command(executable: &str, profile: &Path) -> Command {
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(stderr);
-    command
+    Ok(IsolatedBrowserCommand {
+        command,
+        endpoint_hint,
+    })
 }
 
 fn clean_spawn_exit_can_be_launcher_handoff(status: &ExitStatus) -> bool {
@@ -521,8 +589,10 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
 }
 
 async fn wait_for_spawned_endpoint(
+    engine: &BrowserEngine,
     child: &mut Child,
     profile: &Path,
+    endpoint_hint: SpawnedEndpointHint,
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(20);
     let port_file = profile.join("DevToolsActivePort");
@@ -547,30 +617,43 @@ async fn wait_for_spawned_endpoint(
                 ));
             }
         }
-        if let Ok(text) = fs::read_to_string(&port_file) {
-            let mut lines = text.lines();
-            if let (Some(port), Some(path)) = (lines.next(), lines.next()) {
-                if let Ok(port) = port.parse::<u16>() {
-                    if path.starts_with("/devtools/browser/")
-                        && tokio::net::TcpStream::connect(("127.0.0.1", port))
-                            .await
-                            .is_ok()
-                    {
-                        return Ok(OwnedEndpoint {
-                            ws_url: format!("ws://127.0.0.1:{port}{path}"),
-                            http_port: Some(port),
-                            transport: super::types::EndpointTransport::SpawnedExact,
-                            ownership: EndpointOwnershipProof {
-                                method: EndpointOwnershipMethod::SpawnedByDriver,
-                                owner_pid: i64::from(child.id()),
-                                listener_pid: None,
-                                detail: Some(
-                                    "driver-spawned process and private profile port file"
-                                        .to_owned(),
-                                ),
-                            },
-                        });
+        match endpoint_hint {
+            SpawnedEndpointHint::ProfilePortFile => {
+                if let Ok(text) = fs::read_to_string(&port_file) {
+                    let mut lines = text.lines();
+                    if let (Some(port), Some(path)) = (lines.next(), lines.next()) {
+                        if let Ok(port) = port.parse::<u16>() {
+                            if path.starts_with("/devtools/browser/")
+                                && tokio::net::TcpStream::connect(("127.0.0.1", port))
+                                    .await
+                                    .is_ok()
+                            {
+                                return Ok(OwnedEndpoint {
+                                    ws_url: format!("ws://127.0.0.1:{port}{path}"),
+                                    http_port: Some(port),
+                                    transport: super::types::EndpointTransport::SpawnedExact,
+                                    ownership: EndpointOwnershipProof {
+                                        method: EndpointOwnershipMethod::SpawnedByDriver,
+                                        owner_pid: i64::from(child.id()),
+                                        listener_pid: None,
+                                        detail: Some(
+                                            "driver-spawned process and private profile port file"
+                                                .to_owned(),
+                                        ),
+                                    },
+                                });
+                            }
+                        }
                     }
+                }
+            }
+            SpawnedEndpointHint::FixedLoopbackPort(port) => {
+                if let Some(endpoint) = engine
+                    .platform
+                    .discover_spawned_endpoint_on_port(i64::from(child.id()), port)
+                    .await?
+                {
+                    return Ok(endpoint);
                 }
             }
         }
@@ -604,6 +687,11 @@ async fn attest_spawned_endpoint(
                 && live.ws_url == profile_endpoint.ws_url
             {
                 let runtime_pid = spawned_runtime_pid(&live.ownership);
+                let endpoint_source = profile_endpoint
+                    .ownership
+                    .detail
+                    .as_deref()
+                    .unwrap_or("driver-spawned browser endpoint");
                 return Ok(OwnedEndpoint {
                     ws_url: live.ws_url,
                     http_port: live.http_port,
@@ -619,11 +707,11 @@ async fn attest_spawned_endpoint(
                         owner_pid: runtime_pid,
                         listener_pid: live.ownership.listener_pid,
                         detail: Some(if runtime_pid == child_pid {
-                            "driver-owned profile port file plus live loopback socket owner"
-                                .to_owned()
+                            format!("{endpoint_source} plus live loopback socket owner")
                         } else {
-                            "driver-owned profile port file plus live loopback socket owner promoted from a short-lived launcher process"
-                                    .to_owned()
+                            format!(
+                                "{endpoint_source} plus live loopback socket owner promoted from a short-lived launcher process"
+                            )
                         }),
                     },
                 });
@@ -662,6 +750,17 @@ impl BrowserEngine {
         &self,
         request: PrepareRequest,
     ) -> Result<PrepareOutcome, BrowserRefusal> {
+        if request.launch_posture != PrepareLaunchPosture::Standard
+            && !(request.pid.is_none()
+                && request.strategy.is_none()
+                && request.allow_launch
+                && request.profile.is_some())
+        {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "launch_posture=driver_selected_port is standalone-only: omit pid and pass allow_launch=true with an isolated profile; it cannot attach to an existing profile or prepare an existing browser process",
+            ));
+        }
         if request.strategy == Some(PrepareStrategy::ExistingProfile) {
             return self.attach_existing_profile(request).await;
         }
@@ -727,15 +826,32 @@ impl BrowserEngine {
             self.platform.isolated_browser_executable()?
         };
         let prepared_profile = prepare_profile(profile_request)?;
-        let mut command = isolated_browser_command(&executable, &prepared_profile.path);
-        let mut child = command.spawn().map_err(|error| {
+        let mut launch = match isolated_browser_command(
+            &executable,
+            &prepared_profile.path,
+            request.launch_posture,
+        ) {
+            Ok(launch) => launch,
+            Err(error) => {
+                cleanup_created_profile(&prepared_profile);
+                return Err(error);
+            }
+        };
+        let mut child = launch.command.spawn().map_err(|error| {
             cleanup_created_profile(&prepared_profile);
             refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not launch an isolated browser process: {error}"),
             )
         })?;
-        let endpoint = match wait_for_spawned_endpoint(&mut child, &prepared_profile.path).await {
+        let endpoint = match wait_for_spawned_endpoint(
+            self,
+            &mut child,
+            &prepared_profile.path,
+            launch.endpoint_hint,
+        )
+        .await
+        {
             Ok(endpoint) => {
                 match attest_spawned_endpoint(self, i64::from(child.id()), endpoint).await {
                     Ok(endpoint) => endpoint,
@@ -778,8 +894,14 @@ impl BrowserEngine {
         Ok(PrepareOutcome {
             action: PrepareAction::LaunchedIsolatedBrowser,
             endpoint: Some(endpoint),
-            message: "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned(),
+            message: match request.launch_posture {
+                PrepareLaunchPosture::Standard => "Launched a separate driver-owned isolated Chromium process; no existing browser process was modified or terminated.".to_owned(),
+                PrepareLaunchPosture::DriverSelectedPort => "Launched a separate driver-owned isolated Chromium process with a driver-selected nonzero DevTools port; navigator.webdriver is false for this launch, but no other browser identity or fingerprint overrides are applied and detector bypass is not guaranteed.".to_owned(),
+            },
             prepared_pid: Some(prepared_pid),
+            launch_posture: Some(request.launch_posture),
+            automation_exposed: request.launch_posture == PrepareLaunchPosture::Standard,
+            launch_posture_notes: launch_posture_notes(request.launch_posture),
             side_effects: PrepareSideEffects {
                 launched_browser: true,
                 created_profile: prepared_profile.created,
@@ -1199,6 +1321,9 @@ impl BrowserEngine {
             endpoint: Some(endpoint),
             message: "Attached to the approved existing Chromium profile. Bind the native window again before using browser capabilities.".to_owned(),
             prepared_pid: Some(pid),
+            launch_posture: None,
+            automation_exposed: false,
+            launch_posture_notes: Vec::new(),
             side_effects: PrepareSideEffects {
                 displayed_consent_prompt,
                 changed_preferences: setup.enabled_remote_debugging,
@@ -1396,8 +1521,15 @@ mod tests {
     #[test]
     fn isolated_launch_uses_a_deterministic_clean_profile() {
         let profile = Path::new("profile-under-test");
-        let command = isolated_browser_command("chromium-under-test", profile);
-        let args = command
+        let launch = isolated_browser_command(
+            "chromium-under-test",
+            profile,
+            PrepareLaunchPosture::Standard,
+        )
+        .expect("standard launch command");
+        assert_eq!(launch.endpoint_hint, SpawnedEndpointHint::ProfilePortFile);
+        let args = launch
+            .command
             .get_args()
             .map(|arg| arg.to_string_lossy().into_owned())
             .collect::<Vec<_>>();
@@ -1418,6 +1550,53 @@ mod tests {
         #[cfg(target_os = "windows")]
         for required in ["--window-position=40,40", "--window-size=900,640"] {
             assert!(args.iter().any(|arg| arg == required), "missing {required}");
+        }
+        #[cfg(target_os = "linux")]
+        assert!(args.iter().any(|arg| arg == "--password-store=basic"));
+    }
+
+    #[test]
+    fn driver_selected_port_launch_uses_a_fixed_nonzero_port() {
+        let profile = Path::new("profile-under-test");
+        let launch = isolated_browser_command(
+            "chromium-under-test",
+            profile,
+            PrepareLaunchPosture::DriverSelectedPort,
+        )
+        .expect("driver-selected-port launch command");
+        let SpawnedEndpointHint::FixedLoopbackPort(hint_port) = launch.endpoint_hint else {
+            panic!("driver-selected-port launch must use a fixed loopback port hint");
+        };
+        assert_ne!(hint_port, 0);
+        let args = launch
+            .command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+
+        assert!(args
+            .iter()
+            .any(|arg| arg == &format!("--remote-debugging-port={hint_port}")));
+        for required in [
+            "--user-data-dir=profile-under-test",
+            "--no-first-run",
+            "--no-default-browser-check",
+            "--disable-background-networking",
+            "--disable-component-update",
+            "--disable-default-apps",
+            "--disable-extensions",
+            "about:blank",
+        ] {
+            assert!(args.iter().any(|arg| arg == required), "missing {required}");
+        }
+        for omitted in [
+            "--disable-blink-features=AutomationControlled",
+            "--enable-automation",
+        ] {
+            assert!(
+                !args.iter().any(|arg| arg == omitted),
+                "driver-selected-port posture must not add {omitted}"
+            );
         }
         #[cfg(target_os = "linux")]
         assert!(args.iter().any(|arg| arg == "--password-store=basic"));

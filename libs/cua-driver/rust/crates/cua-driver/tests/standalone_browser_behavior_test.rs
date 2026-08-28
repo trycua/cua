@@ -47,6 +47,18 @@ fn standalone_fixture_html() -> String {
     )
 }
 
+fn standalone_automation_exposure_html() -> String {
+    standalone_fixture_html().replace(
+        "</body>",
+        r#"<p id="standalone-webdriver-state" data-cua-id="standalone-webdriver-state"></p>
+<script>
+  document.getElementById('standalone-webdriver-state').textContent =
+    `navigator.webdriver=${navigator.webdriver}`;
+</script>
+</body>"#,
+    )
+}
+
 /// Synthetic control that records event delivery but deliberately rejects the
 /// application action unless the browser marks the click as trusted.
 fn standalone_trust_gated_click_html() -> String {
@@ -2367,6 +2379,130 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 thread::sleep(Duration::from_millis(100));
             }
             observation
+        },
+    );
+}
+
+fn run_prepare_automation_exposure(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-prepare-automation-exposure",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        foreground_page_case(&spec.name, "browser_prepare_automation_exposure"),
+        |evidence| {
+            let target_server = BrowserFixtureServer::start(&standalone_automation_exposure_html());
+            let driver_profiles = driver_profile_root();
+            let profiles_before = profile_entries(&driver_profiles);
+            let mut driver = spawn_driver(&scenario);
+            *evidence = recording_evidence(driver.recording_dir());
+            driver.start_behavior_recording();
+
+            for (posture, expected_exposure) in
+                [("standard", true), ("driver_selected_port", false)]
+            {
+                let session = format!("standalone-prepare-automation-{}-{posture}", spec.name);
+                let started =
+                    driver.call("start_session", serde_json::json!({ "session": session }));
+                assert!(!started.is_error(), "start_session failed: {}", started.raw);
+                let prepared = driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "session": session,
+                        "allow_launch": true,
+                        "launch_posture": posture,
+                        "profile": {"mode": "isolated_new"},
+                    }),
+                );
+                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                assert_eq!(
+                    prepared.structured()["action"],
+                    "launched_isolated_browser",
+                    "{}",
+                    prepared.raw
+                );
+                assert_eq!(
+                    prepared.structured()["launch_posture"],
+                    posture,
+                    "{}",
+                    prepared.raw
+                );
+                assert_eq!(
+                    prepared.structured()["automation_exposed"],
+                    expected_exposure,
+                    "the prepare result must report the page-visible automation indicator: {}",
+                    prepared.raw
+                );
+
+                let prepared_pid = prepared.structured()["prepared_pid"]
+                    .as_u64()
+                    .expect("prepared browser pid") as u32;
+                let (_, state) =
+                    wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
+                        .expect("isolated browser did not expose an exactly bindable window");
+                let target = state.structured()["target_id"]
+                    .as_str()
+                    .expect("prepared target id")
+                    .to_owned();
+                let tab = state.structured()["tabs"]
+                    .as_array()
+                    .and_then(|tabs| tabs.iter().find(|tab| tab["active"] == true))
+                    .and_then(|tab| tab["tab_id"].as_str())
+                    .expect("prepared active tab")
+                    .to_owned();
+                let navigated = driver.call(
+                    "browser_navigate",
+                    serde_json::json!({
+                        "target_id": target,
+                        "tab_id": tab,
+                        "url": target_server.page_url(),
+                        "session": session,
+                    }),
+                );
+                assert_eq!(navigated.structured()["status"], "ok", "{}", navigated.raw);
+
+                let expected_page_value = format!("navigator.webdriver={expected_exposure}");
+                let deadline = Instant::now() + Duration::from_secs(20);
+                let snapshot = loop {
+                    let snapshot = driver.call(
+                        "get_browser_state",
+                        serde_json::json!({
+                            "target_id": target,
+                            "tab_id": tab,
+                            "session": session,
+                            "snapshot_format": "semantic_v2",
+                        }),
+                    );
+                    if snapshot.structured()["outline"]
+                        .as_str()
+                        .is_some_and(|outline| outline.contains(&expected_page_value))
+                    {
+                        break snapshot;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "{posture} launch never exposed {expected_page_value:?} in the live page: {}",
+                        snapshot.raw
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                };
+                assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+
+                let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+                assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+                wait_for_pid_windows_to_close(&mut driver, prepared_pid);
+                let profile_deadline = Instant::now() + Duration::from_secs(5);
+                while profile_entries(&driver_profiles) != profiles_before {
+                    assert!(
+                        Instant::now() < profile_deadline,
+                        "isolated_new profile remained after {posture} end_session"
+                    );
+                    thread::sleep(Duration::from_millis(100));
+                }
+            }
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
     );
 }
@@ -4772,6 +4908,10 @@ standalone_browser_test!(standalone_browser_trusted_click, run_trusted_click);
 standalone_browser_test!(
     standalone_browser_prepare_isolated,
     run_prepare_isolated_launch
+);
+standalone_browser_test!(
+    standalone_browser_prepare_automation_exposure,
+    run_prepare_automation_exposure
 );
 #[cfg(not(target_os = "macos"))]
 standalone_browser_test!(

@@ -1,0 +1,163 @@
+---
+title: Your first Cloud Fleet
+description: Provision a Cloud Fleet, claim an isolated Linux desktop, run a command, save a screenshot, and clean up the cloud resources.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+In this tutorial, you provision a one-sandbox **Cloud Fleet** on
+`run.cua.ai`, claim its Linux desktop, run `uname -a`, save a screenshot, and
+delete the Fleet. The Cua Sandbox SDK represents a Fleet as a `Pool` and an
+active desktop as a claim on that pool.
+
+<Callout type="info">
+  You need Python `>=3.11,<3.14`, [uv](https://docs.astral.sh/uv/), and Fleet
+  credentials with permission to manage sandbox pools.
+</Callout>
+
+<Callout type="warn">
+  A pool with `replicas=1` keeps one cloud sandbox warm until you delete the pool. Cloud resources
+  can incur usage charges. The script deletes the pool in a `finally` block; the cleanup section
+  also shows how to delete it after an interrupted run.
+</Callout>
+
+## 1. Authenticate with Fleet
+
+The SDK connects to `https://run.cua.ai` by default. Export a Fleet access
+token:
+
+```bash
+export FLEETS_TOKEN="<your-access-token>"
+```
+
+Or export OAuth client credentials:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+`cua auth login` does not supply credentials to the Fleet SDK. See
+[Authentication](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
+for the supported Fleet credential paths.
+
+## 2. Choose a unique Fleet name
+
+Pool names are lowercase DNS labels and are globally unique across Cua
+accounts. Choose a name that identifies you or your team:
+
+```bash
+export CUA_POOL_NAME="<unique-lowercase-name>"
+```
+
+If the name belongs to another account, `Pool.apply()` returns
+`PoolAccessDeniedError`. Choose another name and run the script again.
+
+## 3. Create the Fleet script
+
+Save the following script as `first_cloud_fleet.py`:
+
+```python title="first_cloud_fleet.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox",
+# ]
+# ///
+
+import asyncio
+import os
+from pathlib import Path
+
+from cua_sandbox import Image, Pool
+
+
+IMAGE = (
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
+)
+
+
+async def main() -> None:
+    pool_name = os.environ["CUA_POOL_NAME"]
+    print(f"Provisioning Cloud Fleet: {pool_name}")
+
+    pool = await Pool.apply(
+        Image.from_registry(IMAGE),
+        name=pool_name,
+        replicas=1,
+        cpu=4,
+        memory_mb=4096,
+        services={"server": 8000},
+    )
+
+    try:
+        async with pool.claim(
+            name="first-claim",
+            service="server",
+            time_to_start=900,
+        ) as sandbox:
+            print(f"Connected to sandbox: {sandbox.name}")
+
+            result = await sandbox.shell.run("uname -a")
+            if not result.success:
+                raise RuntimeError(result.stderr)
+            print(result.stdout.strip())
+
+            screenshot = Path("cloud-fleet.png")
+            screenshot.write_bytes(await sandbox.screenshot())
+            print(f"Screenshot saved to {screenshot.resolve()}")
+    finally:
+        print(f"Deleting Cloud Fleet: {pool_name}")
+        await pool.delete()
+
+
+asyncio.run(main())
+```
+
+## 4. Run it
+
+Run the script from the same directory. `uv` reads the inline metadata and
+installs `cua-sandbox` in an isolated environment:
+
+```bash
+uv run first_cloud_fleet.py
+```
+
+The first run can take several minutes while Fleet provisions the Linux
+sandbox. The script prints the sandbox name and Linux kernel information, then
+writes `cloud-fleet.png` in the current directory.
+
+When the claim block exits, the SDK releases the claimed sandbox. The `finally`
+block then deletes the pool and its template, so the warm cloud capacity does
+not remain running.
+
+## Clean up an interrupted run
+
+If the process is killed or loses connectivity after provisioning, the
+`finally` block might not reach Fleet. Keep `CUA_POOL_NAME` set and rerun the
+same script when connectivity returns:
+
+```bash
+uv run first_cloud_fleet.py
+```
+
+`Pool.apply()` reconciles the existing named pool instead of creating a second
+one. The script then uses the Fleet and reaches the same deletion path. Deleting
+the pool destroys its sandboxes and their state, so save any files you need
+before cleanup.
+
+## What you built
+
+`Pool.apply()` created or reconciled a named Fleet pool and its Linux sandbox
+template. `pool.claim()` reserved one sandbox and connected the SDK to its
+`server` service. The shell and screenshot calls operated on that cloud desktop,
+not on your local machine. Exiting the claim released the sandbox, and
+`pool.delete()` removed the Fleet resources.
+
+## Next steps
+
+- [Create a reusable sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python)
+- [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform)
+- [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
+- [Sandbox SDK API reference](/reference/sandbox-sdk)

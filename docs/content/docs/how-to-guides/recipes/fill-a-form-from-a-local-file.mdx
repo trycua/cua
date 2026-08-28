@@ -9,7 +9,8 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 Use this recipe when the data already lives on your machine, for example in a PDF resume or a CSV file, and the form lives in a browser on the same desktop. **Cua Driver** drives both, so the **data never has to be uploaded anywhere** because the agent reads it locally and types it into the form.
 
 <Callout type="info">
-  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions, and [connect your agent](/how-to-guides/driver/connect-your-agent).
+  Before you start: [install Cua Driver](/how-to-guides/driver/install), grant host permissions, and
+  [connect your agent](/how-to-guides/driver/connect-your-agent).
 </Callout>
 
 <Steps>
@@ -25,6 +26,7 @@ Use this recipe when the data already lives on your machine, for example in a PD
     Cua Driver has **no filesystem read tool**. The agent reads local files by opening them in an app it can see, for example Preview, another PDF viewer, or a text editor, then reading the on-screen content with the accessibility tree and screenshots from `get_window_state`.
 
     For a CSV, open the file in a text editor, spreadsheet app, or browser tab. If the file contains many rows, start with one row and name the row or record the agent should use.
+
   </Step>
 
   <Step>
@@ -40,6 +42,7 @@ Use this recipe when the data already lives on your machine, for example in a PD
     ```
 
     The agent can use `launch_app` to open the PDF viewer, `page` to drive the browser, `get_window_state` or `get_accessibility_tree` to read visible fields, and `click`, `type_text`, or `set_value` to fill the form. `get_window_state` returns a screenshot alongside the tree by default, so the agent can ground on both.
+
   </Step>
 
   <Step>
@@ -50,6 +53,7 @@ Use this recipe when the data already lives on your machine, for example in a PD
     <Callout type="info">
       Forms vary, so the agent works best when you name the exact fields to fill, such as name, email, and phone, instead of asking it to fill the whole form.
     </Callout>
+
   </Step>
 </Steps>
 
@@ -57,4 +61,4 @@ Use this recipe when the data already lives on your machine, for example in a PD
 
 One desktop fills one form at a time. To submit several forms in parallel, for example one per CSV row or one per applicant, run one local Cua Sandbox per job and cap concurrency to the resources available on the host.
 
-Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently. Use [Choose and build a sandbox image](/how-to-guides/sandbox/images) to stage the source files in an image or mount them into each sandbox. Use [Your first local sandbox](/tutorials/your-first-local-sandbox) for the basic SDK lifecycle.
+Use [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out) to run the jobs concurrently. Use [Choose and build a sandbox image](/how-to-guides/sandbox/images) to stage the source files in an image or mount them into each sandbox. Use [Sandbox lifecycle](/concepts/sandbox-lifecycle) for the basic local SDK lifecycle.

@@ -1,17 +1,18 @@
 {
   "name": "@trycua/computer",
-  "version": "0.1.7",
+  "version": "0.2.1",
   "packageManager": "pnpm@10.11.0",
   "description": "Typescript SDK for Cua computer interaction",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/trycua/cua/tree/feature/computer/typescript/libs/typescript/computer",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/computer",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/trycua/cua.git"
+    "url": "git+https://github.com/trycua/cua.git",
+    "directory": "libs/typescript/computer"
   },
   "author": "cua",
   "files": [
@@ -35,13 +36,17 @@
     "test": "vitest",
     "typecheck": "tsc --noEmit",
     "release": "bumpp && pnpm publish",
-    "prepublishOnly": "pnpm run build"
+    "prepublishOnly": "pnpm run build",
+    "prebuild": "pnpm --filter @trycua/core build && pnpm --filter @trycua/fleet build",
+    "pretest": "pnpm --filter @trycua/core build && pnpm --filter @trycua/fleet build",
+    "pretypecheck": "pnpm --filter @trycua/core build && pnpm --filter @trycua/fleet build"
   },
   "dependencies": {
-    "@trycua/core": "workspace:^",
+    "@trycua/core": "workspace:^0.1.4",
     "pino": "^9.7.0",
     "uuid": "^11.1.1",
-    "ws": "^8.21.0"
+    "ws": "^8.21.0",
+    "@trycua/fleet": "workspace:^"
   },
   "devDependencies": {
     "@types/node": "^22.15.17",

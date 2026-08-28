@@ -32,16 +32,16 @@ You need:
 - `cua-sandbox==0.4.3`; and
 - a Fleet access token or OAuth client credentials that can manage pools.
 
-The Fleet-verified image reference is:
+The Fleet-verified public image reference is:
 
 ```text
-296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950
+public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab
 ```
 
 The image is an amd64 KubeVirt containerDisk. It is not an ordinary OCI
 application image: the image contains a bootable disk at `/disk/disk.img`.
-Fleet pulls the approved image with its registry credentials, so you do not
-need AWS credentials on the machine that runs this script.
+Fleet pulls the public image, so you do not need AWS credentials on the
+machine that runs this script.
 
 ## Authenticate with Fleet
 
@@ -89,8 +89,8 @@ from cua_sandbox import Image, Pool
 
 IMAGE = os.environ.get(
     "OMARCHY_IMAGE",
-    "296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace"
-    "@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950",
+    "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace"
+    "@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab",
 )
 POOL_NAME = os.environ["CUA_POOL_NAME"]
 

@@ -2,9 +2,8 @@
 
 The compatibility server keeps its remote HTTP/WebSocket, shell, file, PTY,
 and authentication surfaces while delegating the portable desktop action space
-to the generated ``cua-driver`` Python SDK. Operations that are not part of the
-portable driver contract remain on the supplied legacy handler until they have
-an equivalent Rust implementation.
+to the generated ``cua-driver`` Python SDK. Unsupported input primitives fail
+explicitly instead of falling back to a platform-native automation backend.
 """
 
 from __future__ import annotations
@@ -39,6 +38,8 @@ class DriverResult(Protocol):
 
 
 class DriverClient(Protocol):
+    async def call_tool(self, name: str, arguments_json: str) -> DriverResult: ...
+
     async def start_session(self, input: Any) -> Any: ...
 
     async def end_session(self, input: Any) -> Any: ...
@@ -81,7 +82,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
 
     def __init__(
         self,
-        fallback: BaseAutomationHandler,
+        fallback: Optional[BaseAutomationHandler] = None,
         *,
         driver: Optional[DriverClient] = None,
         sdk: Optional[ModuleType] = None,
@@ -156,6 +157,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
                         "window": self._sdk.CaptureScope.WINDOW,
                         "desktop": self._sdk.CaptureScope.DESKTOP,
                     }[self._capture_scope],
+                    cursor_theme=None,
                 )
             )
             if not started.active:
@@ -303,12 +305,16 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
     async def mouse_down(
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
-        return await self._fallback.mouse_down(x, y, button)
+        return self._error(
+            NotImplementedError("Cua Driver does not support separate mouse-down actions")
+        )
 
     async def mouse_up(
         self, x: Optional[int] = None, y: Optional[int] = None, button: str = "left"
     ) -> Dict[str, Any]:
-        return await self._fallback.mouse_up(x, y, button)
+        return self._error(
+            NotImplementedError("Cua Driver does not support separate mouse-up actions")
+        )
 
     async def _click(
         self, x: Optional[int], y: Optional[int], *, button: str, count: int
@@ -320,6 +326,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
                 self._sdk.ClickInput(
                     x=float(px),
                     y=float(py),
+                    target=None,
                     scope=self._sdk.DesktopScope.DESKTOP,
                     session=self._session_id,
                     button={
@@ -357,6 +364,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
                 self._sdk.MoveCursorInput(
                     x=float(x),
                     y=float(y),
+                    target=None,
                     scope=self._sdk.DesktopScope.DESKTOP,
                     session=self._session_id,
                 )
@@ -394,6 +402,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
                 from_y=float(start_y),
                 to_x=float(end_x),
                 to_y=float(end_y),
+                target=None,
                 scope=self._sdk.DesktopScope.DESKTOP,
                 session=self._session_id,
                 duration_ms=min(10000, max(0, int(duration * 1000))),
@@ -429,10 +438,14 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             return self._error(error)
 
     async def key_down(self, key: str) -> Dict[str, Any]:
-        return await self._fallback.key_down(key)
+        return self._error(
+            NotImplementedError("Cua Driver does not support separate key-down actions")
+        )
 
     async def key_up(self, key: str) -> Dict[str, Any]:
-        return await self._fallback.key_up(key)
+        return self._error(
+            NotImplementedError("Cua Driver does not support separate key-up actions")
+        )
 
     async def type_text(self, text: str) -> Dict[str, Any]:
         try:
@@ -440,6 +453,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             result = await self._driver.type_text(
                 self._sdk.TypeTextInput(
                     text=text,
+                    target=None,
                     scope=self._sdk.DesktopScope.DESKTOP,
                     session=self._session_id,
                 )
@@ -454,6 +468,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             result = await self._driver.press_key(
                 self._sdk.PressKeyInput(
                     key=key,
+                    target=None,
                     scope=self._sdk.DesktopScope.DESKTOP,
                     session=self._session_id,
                     modifiers=None,
@@ -473,6 +488,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             result = await self._driver.hotkey(
                 self._sdk.HotkeyInput(
                     keys=keys,
+                    target=None,
                     scope=self._sdk.DesktopScope.DESKTOP,
                     session=self._session_id,
                 )
@@ -495,6 +511,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
                         "left": self._sdk.ScrollDirection.LEFT,
                         "right": self._sdk.ScrollDirection.RIGHT,
                     }[direction],
+                    target=None,
                     scope=self._sdk.DesktopScope.DESKTOP,
                     session=self._session_id,
                     by=self._sdk.ScrollBy.LINE,
@@ -591,10 +608,41 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             return self._error(error)
 
     async def copy_to_clipboard(self) -> Dict[str, Any]:
-        return await self._fallback.copy_to_clipboard()
+        try:
+            await self._ensure_session()
+            result = await self._driver.call_tool(
+                "clipboard_read",
+                json.dumps({"include_text": True, "session": self._session_id}),
+            )
+            data = self._result_data(result)
+            if not data.get("supported", False):
+                raise RuntimeError("Cua Driver clipboard read is not supported")
+            return self._ok({"content": data.get("text") or ""})
+        except Exception as error:
+            return self._error(error)
 
     async def set_clipboard(self, text: str) -> Dict[str, Any]:
-        return await self._fallback.set_clipboard(text)
+        try:
+            await self._ensure_session()
+            result = await self._driver.call_tool(
+                "clipboard_write",
+                json.dumps(
+                    {
+                        "text": text,
+                        "image_path": None,
+                        "file_path": None,
+                        "session": self._session_id,
+                    }
+                ),
+            )
+            data = self._result_data(result)
+            if not data.get("supported", False):
+                raise RuntimeError("Cua Driver clipboard write is not supported")
+            return self._ok(data)
+        except Exception as error:
+            return self._error(error)
 
     async def run_command(self, command: str, timeout: Optional[float] = None) -> Dict[str, Any]:
-        return await self._fallback.run_command(command, timeout)
+        if self._fallback is not None:
+            return await self._fallback.run_command(command, timeout)
+        return await super().run_command(command, timeout)

@@ -89,6 +89,14 @@ class HandlerFactory:
             )
         if backend not in {"native", "cua-driver"}:
             raise RuntimeError("CUA_BACKEND must be native, vnc, or cua-driver")
+        if backend == "cua-driver" and OS_TYPE == "android":
+            raise RuntimeError("CUA_BACKEND=cua-driver is not supported on Android")
+
+        driver_automation: Optional[BaseAutomationHandler] = None
+        if backend == "cua-driver":
+            from .cua_driver import CuaDriverAutomationHandler
+
+            driver_automation = CuaDriverAutomationHandler()
 
         if OS_TYPE == "android":
             handlers: HandlerTuple = (
@@ -102,7 +110,7 @@ class HandlerFactory:
         elif OS_TYPE == "darwin":
             handlers = (
                 MacOSAccessibilityHandler(),
-                MacOSAutomationHandler(),
+                (driver_automation if driver_automation is not None else MacOSAutomationHandler()),
                 MacOSDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
@@ -111,7 +119,7 @@ class HandlerFactory:
         elif OS_TYPE == "linux":
             handlers = (
                 LinuxAccessibilityHandler(),
-                LinuxAutomationHandler(),
+                (driver_automation if driver_automation is not None else LinuxAutomationHandler()),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
@@ -120,7 +128,11 @@ class HandlerFactory:
         elif OS_TYPE == "windows":
             handlers = (
                 WindowsAccessibilityHandler(),
-                WindowsAutomationHandler(),
+                (
+                    driver_automation
+                    if driver_automation is not None
+                    else WindowsAutomationHandler()
+                ),
                 BaseDioramaHandler(),
                 GenericFileHandler(),
                 GenericDesktopHandler(),
@@ -129,19 +141,7 @@ class HandlerFactory:
         else:
             raise NotImplementedError(f"OS '{OS_TYPE}' is not supported")
 
-        if backend == "cua-driver":
-            if OS_TYPE == "android":
-                raise RuntimeError("CUA_BACKEND=cua-driver is not supported on Android")
-            from .cua_driver import CuaDriverAutomationHandler
-
-            handlers = (
-                handlers[0],
-                CuaDriverAutomationHandler(handlers[1]),
-                handlers[2],
-                handlers[3],
-                handlers[4],
-                handlers[5],
-            )
+        if driver_automation is not None:
             logger.info("Using Cua Driver automation backend (%s mode)", handlers[1].mode)
 
         return handlers

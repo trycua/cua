@@ -55,7 +55,7 @@ vnc = [
     "vncdotool>=1.2.0"
 ]
 driver = [
-    "cua-driver>=0.12.2,<0.13.0"
+    "cua-driver>=0.22.2,<0.23.0"
 ]
 
 [project.urls]

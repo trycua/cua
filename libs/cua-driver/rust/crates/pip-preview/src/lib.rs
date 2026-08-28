@@ -21,7 +21,7 @@ pub use desktop_layout::{
 };
 pub use session_tabs::{layout_session_tabs, session_accent, SessionTab, SessionTabsLayout};
 
-pub const AGENT_VIEW_DEFAULT_ENABLED: bool = true;
+pub const AGENT_VIEW_DEFAULT_ENABLED: bool = false;
 
 /// Canonical `~/.cua-driver/config.json` path matching what the per-platform
 /// `set_config` tools write to. Resolves `$HOME` first (Unix/macOS) and falls
@@ -1104,10 +1104,10 @@ mod tests {
     }
 
     #[test]
-    fn explicit_no_agent_view_overrides_the_default() {
-        let cfg = PipConfig::parse(&["--no-agent-view".to_owned()]);
+    fn agent_view_is_disabled_by_default() {
+        let cfg = PipConfig::parse(&[]);
         assert!(!cfg.enabled);
-        assert!(PipConfig::default().enabled);
+        assert!(!PipConfig::default().enabled);
     }
 
     #[test]
@@ -1118,7 +1118,7 @@ mod tests {
             "640x420".to_owned(),
             "--pip".to_owned(),
         ]);
-        assert!(cfg.enabled);
+        assert!(!cfg.enabled);
         assert_eq!(cfg.geometry.width, PipGeometry::default().width);
         assert_eq!(cfg.geometry.height, PipGeometry::default().height);
     }
@@ -1168,6 +1168,20 @@ mod tests {
     }
 
     #[test]
+    fn agent_view_cli_overrides_disabled_config_file() {
+        let path = std::env::temp_dir().join(format!(
+            "cua-agent-view-config-{}-cli-enable.json",
+            std::process::id()
+        ));
+        std::fs::write(&path, r#"{"agent_view":false}"#).unwrap();
+
+        let cfg = PipConfig::from_file_and_args(&path, &["--agent-view".to_owned()]);
+        assert!(cfg.enabled);
+
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
     fn cli_flags_override_config_file_values() {
         let path = std::env::temp_dir().join(format!(
             "cua-agent-view-config-{}-cli-precedence.json",
@@ -1209,7 +1223,7 @@ mod tests {
         .unwrap();
 
         let cfg = PipConfig::from_args_and_file(&path);
-        assert!(cfg.enabled);
+        assert!(!cfg.enabled);
         assert_eq!(cfg.geometry.width, PipGeometry::default().width);
         assert_eq!(cfg.geometry.height, PipGeometry::default().height);
 

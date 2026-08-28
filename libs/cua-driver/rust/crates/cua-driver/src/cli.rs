@@ -641,7 +641,7 @@ pub fn parse_command() -> Command {
         );
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
-        println!("  --agent-view                Show the Agent View (enabled by default).");
+        println!("  --agent-view                Enable the optional Agent View.");
         println!("                              Exact native windows and");
         println!(
             "                              Chrome tabs traversed through Cua Driver become cards."
@@ -662,7 +662,7 @@ pub fn parse_command() -> Command {
             "                              Native presentation is available on macOS, Windows,"
         );
         println!("                              and Linux (X11/XWayland).");
-        println!("  --no-agent-view             Disable Agent View for this daemon invocation.");
+        println!("  --no-agent-view             Disable Agent View, including a persisted enable.");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");
         println!("                                          corner of the main display.");

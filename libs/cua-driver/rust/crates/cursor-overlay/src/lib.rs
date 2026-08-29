@@ -27,10 +27,10 @@ pub use render_state::{
     SESSION_BADGE_HOLD_SECS,
 };
 pub use session_badge::{
-    paint_session_badge, sanitize_session_label, session_badge_extents, session_badge_layout,
-    BadgeExtents, BadgeLabelLayout, SessionBadgeInput, SessionBadgeLayout, BADGE_CHIP_GAP,
-    BADGE_CHIP_GROUP_GAP, BADGE_CHIP_SIZE, BADGE_CURSOR_GAP, BADGE_HEIGHT, BADGE_MAX_WIDTH,
-    MAX_SESSION_LABEL_CHARS,
+    paint_session_badge, rasterize_inter_text, sanitize_session_label, session_badge_extents,
+    session_badge_layout, BadgeExtents, BadgeLabelLayout, SessionBadgeInput, SessionBadgeLayout,
+    TextRaster, BADGE_CHIP_GAP, BADGE_CHIP_GROUP_GAP, BADGE_CHIP_SIZE, BADGE_CURSOR_GAP,
+    BADGE_HEIGHT, BADGE_MAX_WIDTH, MAX_SESSION_LABEL_CHARS,
 };
 pub use theme::{
     session_fill_hex, session_fill_rgba, CursorAction, CursorVisualState, DeliveryModifier,
@@ -406,5 +406,23 @@ mod pointer_tracking_tests {
         };
         assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
         assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn session_cleanup_removes_named_cursor_but_preserves_anonymous_default() {
+        let registry = CursorRegistry::new();
+        registry.update_position("session-a", 12.0, 34.0);
+        registry.update_position("default", 56.0, 78.0);
+
+        registry.remove("session-a");
+        registry.remove("default");
+
+        assert!(registry.get("session-a").is_none());
+        assert_eq!(
+            registry
+                .get("default")
+                .and_then(|cursor| cursor.x.zip(cursor.y)),
+            Some((56.0, 78.0))
+        );
     }
 }

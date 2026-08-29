@@ -543,6 +543,7 @@ mod tests {
                 "session",
                 "capture_scope",
                 "effective_scope",
+                "desktop_capture_authorized",
                 "desktop_unlocked",
                 "escalation_reason",
                 "escalation_detail",

@@ -11,6 +11,7 @@
 
 pub mod ext_screencopy;
 pub mod ext_toplevel;
+pub mod kwin_helper;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
@@ -63,6 +64,32 @@ use wayland_protocols_wlr::virtual_pointer::v1::client::{
 const BTN_LEFT: u32 = 0x110;
 
 use crate::x11::WindowInfo;
+
+thread_local! {
+    /// Exact foreground target currently held by an outer compositor guard.
+    /// Focus-bound helpers use this only to re-enter the guard after a blocking
+    /// portal/libei readiness wait, so the actual input is preceded by a fresh
+    /// compositor verification rather than relying on a stale pre-wait check.
+    static CURRENT_FOREGROUND_TARGET: std::cell::Cell<Option<(u32, u64)>> =
+        const { std::cell::Cell::new(None) };
+}
+
+struct ForegroundTargetGuard(Option<(u32, u64)>);
+
+impl Drop for ForegroundTargetGuard {
+    fn drop(&mut self) {
+        CURRENT_FOREGROUND_TARGET.with(|target| target.set(self.0));
+    }
+}
+
+fn bind_foreground_target(pid: u32, window_id: u64) -> ForegroundTargetGuard {
+    let previous = CURRENT_FOREGROUND_TARGET.with(|target| target.replace(Some((pid, window_id))));
+    ForegroundTargetGuard(previous)
+}
+
+fn current_foreground_target() -> Option<(u32, u64)> {
+    CURRENT_FOREGROUND_TARGET.with(std::cell::Cell::get)
+}
 
 /// Name of the opt-in env var that unlocks the experimental native-Wayland
 /// backend.
@@ -208,6 +235,7 @@ struct Toplevel {
     title: String,
     app_id: String,
     closed: bool,
+    activated: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -594,10 +622,19 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
         match event {
             ftl_handle::Event::Title { title } => tl.title = title,
             ftl_handle::Event::AppId { app_id } => tl.app_id = app_id,
+            ftl_handle::Event::State { state } => {
+                tl.activated = foreign_toplevel_state_is_activated(&state)
+            }
             ftl_handle::Event::Closed => tl.closed = true,
             _ => {}
         }
     }
+}
+
+fn foreign_toplevel_state_is_activated(state: &[u8]) -> bool {
+    state
+        .chunks_exact(std::mem::size_of::<u32>())
+        .any(|bytes| u32::from_ne_bytes(bytes.try_into().expect("four-byte state")) == 2)
 }
 
 /// Enumerate native Wayland toplevels via wlr-foreign-toplevel-management.
@@ -1327,10 +1364,23 @@ pub fn activate_window_for_input_target(
         state.seat.clone(),
         matching_handle(&state, window_id),
     ) {
+        let protocol_id = handle.id().protocol_id();
         handle.activate(&seat);
-        queue.roundtrip(&mut state)?;
-        std::thread::sleep(std::time::Duration::from_millis(60));
-        return Ok(());
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+        loop {
+            queue.roundtrip(&mut state)?;
+            if state
+                .toplevels
+                .get(&protocol_id)
+                .is_some_and(|toplevel| toplevel.activated)
+            {
+                return Ok(());
+            }
+            if std::time::Instant::now() >= deadline {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     if shell_helper::activate_window(window_id) {
@@ -1354,6 +1404,7 @@ pub fn with_target_foreground<T>(
     window_id: u64,
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
+    let _target_guard = bind_foreground_target(pid, window_id);
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         if window.pid != pid {
             anyhow::bail!(
@@ -1362,6 +1413,9 @@ pub fn with_target_foreground<T>(
             );
         }
         return sway_ipc::with_focused_container(window_id, body);
+    }
+    if kwin_helper::trusted_window_for_id(pid, window_id).is_some() {
+        return kwin_helper::with_focused_window(pid, window_id, body);
     }
     if shell_helper::trusted_window_for_id(pid, window_id).is_some() {
         return shell_helper::with_focused_window(pid, window_id, body);
@@ -1443,6 +1497,31 @@ pub fn click(window_id: u64, x: i32, y: i32, count: u32, button: u8) -> anyhow::
             libei_click(x, y, count, button)
         },
     )
+}
+
+/// Click through a foreground target already guarded by
+/// [`with_target_foreground`]. wlroots keeps its native virtual-pointer path.
+/// If that path is unavailable and libei needs a potentially blocking portal
+/// readiness wait, re-enter the exact foreground guard *after* readiness so
+/// KWin/GNOME/Sway ownership and focus are freshly verified immediately before
+/// the actual libei dispatch.
+#[cfg(feature = "portal-input")]
+pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    with_libei_fallback(
+        || click_vptr(None, x, y, count, button),
+        || {
+            libei_wait_pointer_ready()?;
+            if let Some((pid, window_id)) = current_foreground_target() {
+                return with_target_foreground(pid, window_id, || libei_click(x, y, count, button));
+            }
+            libei_click(x, y, count, button)
+        },
+    )
+}
+
+#[cfg(not(feature = "portal-input"))]
+pub fn click_focused(x: i32, y: i32, count: u32, button: u8) -> anyhow::Result<()> {
+    click_vptr(None, x, y, count, button)
 }
 
 /// Click a desktop-absolute point without selecting or activating a toplevel.
@@ -3052,10 +3131,20 @@ fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     windows
 }
 
+fn apply_pid_filter(mut windows: Vec<WindowInfo>, filter_pid: Option<u32>) -> Vec<WindowInfo> {
+    if let Some(pid) = filter_pid {
+        windows.retain(|window| window.pid == Some(pid));
+    }
+    windows
+}
+
 /// Window-enumeration dispatcher: native Wayland when available, else X11.
 pub fn list_windows_dispatch(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     if wayland_enabled() && std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        // Prefer the richer wlroots protocol. The generic staging protocol is
+        if let Some(ws) = kwin_helper::list_window_infos() {
+            return listed_windows(apply_pid_filter(ws, filter_pid));
+        }
+        // Prefer the richer wlroots protocol when no trusted KWin helper is available.
         // only consulted when wlroots yields no windows (including when its
         // manager global is absent).
         let native = match list_windows() {
@@ -3192,6 +3281,7 @@ fn enrich_native_windows(
                 title: undecorated_native_title(window).to_owned(),
                 app_id: window.app_name.clone(),
                 closed: false,
+                activated: false,
             };
             window.xid = candidate.xid;
             remember_identity(window.xid, &toplevel);
@@ -3364,6 +3454,21 @@ mod tests {
         assert_eq!(windows[0].xid, 10);
         assert_eq!(windows[1].pid, Some(200));
         assert_eq!(windows[2].pid, None);
+    }
+
+    #[test]
+    fn pid_filter_excludes_other_process_windows() {
+        let filtered = apply_pid_filter(
+            vec![
+                window(10, Some(100), "wanted"),
+                window(20, Some(200), "other"),
+                window(30, None, "unknown"),
+            ],
+            Some(100),
+        );
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].pid, Some(100));
+        assert_eq!(filtered[0].xid, 10);
     }
 
     #[test]
@@ -3577,6 +3682,26 @@ mod tests {
         .expect("visible compositor-attested Wayland surface should capture");
         let decoded = image::load_from_memory(&cropped).expect("decode cropped PNG");
         assert_eq!((decoded.width(), decoded.height()), (3, 4));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_requires_activated_value() {
+        let states = [0_u32, 2_u32, 3_u32]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect::<Vec<_>>();
+        assert!(foreign_toplevel_state_is_activated(&states));
+
+        let inactive = [0_u32, 1_u32, 3_u32]
+            .into_iter()
+            .flat_map(u32::to_ne_bytes)
+            .collect::<Vec<_>>();
+        assert!(!foreign_toplevel_state_is_activated(&inactive));
+    }
+
+    #[test]
+    fn foreign_toplevel_state_ignores_incomplete_wire_values() {
+        assert!(!foreign_toplevel_state_is_activated(&[2, 0, 0]));
     }
 
     #[test]

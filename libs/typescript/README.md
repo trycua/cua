@@ -3,21 +3,23 @@
 This repository contains TypeScript implementations of the Cua libraries:
 
 - `@trycua/core`: Core functionality including telemetry and logging
-- `@trycua/computer`: Computer interaction SDK for VM management and control
+- `@trycua/fleet`: Browser and Node.js SDK for sandbox templates, pools, claims, and services
+- `@trycua/computer`: Legacy computer interaction and control compatibility SDK
 
 ## Project Structure
 
 ```text
 libs/typescript/
-├── computer/       # Computer SDK package
+├── computer/       # Computer-control compatibility package
 ├── core/           # Core functionality package
+├── fleet/          # Fleet sandbox lifecycle package
 ├── package.json    # Root package configuration
 └── pnpm-workspace.yaml  # Workspace configuration
 ```
 
 ## Prerequisites
 
-- [Node.js](https://nodejs.org/) (v18 or later)
+- [Node.js](https://nodejs.org/) (v20 or later)
 - [pnpm](https://pnpm.io/) (v10 or later)
 
 ## Setup and Installation
@@ -50,7 +52,10 @@ Build specific packages:
 # Build core package
 pnpm --filter @trycua/core build
 
-# Build computer package
+# Build Fleet package
+pnpm --filter @trycua/fleet build
+
+# Build computer compatibility package
 pnpm --filter @trycua/computer build
 ```
 
@@ -97,9 +102,10 @@ Core functionality for Cua libraries including:
 
 ### @trycua/computer
 
-Computer interaction SDK for managing and controlling virtual machines:
+Compatibility SDK for existing computer-control integrations. Use `@trycua/fleet`
+for new sandbox lifecycle code instead of managing Fleet resources here.
 
-- VM provider system (Cloud)
+- Legacy VM provider system (Cloud)
 - Interface system for OS-specific interactions
 - Screenshot, keyboard, and mouse control
 - Command execution

@@ -2,7 +2,7 @@
 
 # ── Docker image tags ────────────────────────────────────────────────────────
 
-UBUNTU_XFCE = "trycua/cua-xfce:latest"
+UBUNTU_XFCE = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest"
 QEMU_LINUX = "trycua/cua-qemu-linux:latest"
 QEMU_WINDOWS = "trycua/cua-qemu-windows:latest"
 QEMU_ANDROID = "trycua/cua-qemu-android:latest"
@@ -21,7 +21,7 @@ MACOS_VERSION_IMAGES: dict[str, str] = {
 # ── Internal ports (inside the container) ────────────────────────────────────
 
 XFCE_API_PORT = 8000
-XFCE_VNC_PORT = 6901
+XFCE_VNC_PORT = 6080
 
 QEMU_API_PORT = 5000
 QEMU_VNC_PORT = 8006

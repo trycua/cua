@@ -49,6 +49,7 @@ impl SessionCaptureScope {
             session: session.to_owned(),
             capture_scope: self.policy,
             effective_scope: self.effective_scope(),
+            desktop_capture_authorized: self.desktop_unlocked,
             desktop_unlocked: self.desktop_unlocked,
             escalation_reason: self.escalation_reason,
             escalation_detail: self.escalation_detail.clone(),
@@ -286,7 +287,7 @@ pub fn enforce_tool(tool_name: &str, args: &Value) -> Result<(), ScopeViolation>
             Err(ScopeViolation {
                 code: "desktop_escalation_required",
                 message: format!(
-                    "desktop-scope tool '{tool_name}' is locked for auto session '{session}'; exhaust the window action ladder, verify each attempt, then call escalate_session"
+                    "desktop-scope tool '{tool_name}' requires desktop capture authorization for auto session '{session}'; this is separate from the host lock-screen state. Exhaust the window action ladder, verify each attempt, then call escalate_session"
                 ),
                 state,
             })
@@ -335,12 +336,11 @@ mod tests {
         bind_session(&desktop, Some(CaptureScopePolicy::Desktop)).unwrap();
         bind_session(&window, Some(CaptureScopePolicy::Window)).unwrap();
 
-        assert_eq!(
-            enforce_tool("get_desktop_state", &json!({"session": auto}))
-                .unwrap_err()
-                .code,
-            "desktop_escalation_required"
-        );
+        let auto_error = enforce_tool("get_desktop_state", &json!({"session": auto})).unwrap_err();
+        assert_eq!(auto_error.code, "desktop_escalation_required");
+        assert!(auto_error
+            .message
+            .contains("separate from the host lock-screen state"));
         assert!(enforce_tool("get_desktop_state", &json!({"session": desktop})).is_ok());
         assert_eq!(
             enforce_tool("get_desktop_state", &json!({"session": window}))
@@ -388,6 +388,7 @@ mod tests {
                 "session": session,
                 "capture_scope": "auto",
                 "effective_scope": "desktop",
+                "desktop_capture_authorized": true,
                 "desktop_unlocked": true,
                 "escalation_reason": "foreground_ineffective",
                 "escalation_detail": "window ladder exhausted",

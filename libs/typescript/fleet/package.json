@@ -1,17 +1,18 @@
 {
   "name": "@trycua/fleet",
-  "version": "0.0.3",
+  "version": "0.1.0",
   "packageManager": "pnpm@10.12.3",
-  "description": "Reserved for Cua Fleet — fleet orchestration for computer-use agents and sandboxes. Placeholder release.",
+  "description": "Browser and WebAssembly SDK for Cua Fleet sandbox lifecycle management",
   "type": "module",
   "license": "MIT",
-  "homepage": "https://github.com/trycua/cua",
+  "homepage": "https://github.com/trycua/cua/tree/main/libs/typescript/fleet",
   "bugs": {
     "url": "https://github.com/trycua/cua/issues"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/trycua/cua.git"
+    "url": "git+https://github.com/trycua/cua.git",
+    "directory": "libs/typescript/fleet"
   },
   "author": "cua",
   "keywords": [
@@ -23,17 +24,42 @@
     "automation"
   ],
   "files": [
-    "index.js",
-    "index.d.ts"
+    "dist"
   ],
-  "main": "./index.js",
-  "module": "./index.js",
-  "types": "./index.d.ts",
+  "main": "./dist/node.js",
+  "module": "./dist/node.js",
+  "types": "./dist/node.d.ts",
   "exports": {
-    ".": "./index.js",
+    ".": {
+      "types": "./dist/node.d.ts",
+      "browser": "./dist/browser.js",
+      "node": "./dist/node.js",
+      "import": "./dist/node.js"
+    },
+    "./browser": {
+      "types": "./dist/browser.d.ts",
+      "import": "./dist/browser.js"
+    },
+    "./node": {
+      "types": "./dist/node.d.ts",
+      "import": "./dist/node.js"
+    },
     "./package.json": "./package.json"
   },
   "publishConfig": {
     "access": "public"
-  }
+  },
+  "scripts": {
+    "build": "node ./scripts/build.mjs",
+    "pack:check": "pnpm run build && npm pack --dry-run"
+  },
+  "dependencies": {
+    "@ubjs/core": "0.31.0-3"
+  },
+  "devDependencies": {
+    "esbuild": "^0.27.0",
+    "typescript": "^5.9.0",
+    "@types/node": "^22.15.17"
+  },
+  "browser": "./dist/browser.js"
 }

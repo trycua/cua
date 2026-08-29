@@ -94,7 +94,7 @@ fn semantic_cursor_showcase_records_session_and_action_states() {
         // visible for two seconds, so this settle stays inside that window.
         settle(900);
 
-        let cursor_png = capture_cursor_oracle_png(&mut driver);
+        let cursor_png = capture_cursor_oracle_png(&mut driver, width, height);
         let cursor_frame = image::load_from_memory(&cursor_png)
             .expect("decode cursor desktop screenshot")
             .to_rgba8();
@@ -300,34 +300,49 @@ fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
     (png, width, height)
 }
 
-fn capture_cursor_oracle_png(driver: &mut McpDriver) -> Vec<u8> {
+fn capture_cursor_oracle_png(driver: &mut McpDriver, width: f64, height: f64) -> Vec<u8> {
     #[cfg(target_os = "linux")]
     {
-        // A compositor-less X11 root read can omit the overlay client's own
-        // shaped window even while an independent display capture sees the
-        // complete cursor and badge. The action evidence recorder is the
-        // canonical external behavior oracle and has already captured the
-        // move_cursor after-frame before this call returns.
-        let path = driver
-            .recording_dir()
-            .expect("showcase recording directory")
-            .join("turn-00001/after.png");
-        for _ in 0..20 {
-            if let Ok(png) = std::fs::read(&path) {
-                if !png.is_empty() {
-                    return png;
-                }
-            }
-            settle(50);
-        }
-        panic!(
-            "action evidence did not produce the cursor after-frame at {}",
-            path.display()
+        let _ = driver;
+        // XGetImage root reads can omit a shaped overlay client's pixels on a
+        // compositor-less X11 server. Capture the composed display exactly as
+        // the behavioral recording does so the oracle observes what a user sees.
+        let display = std::env::var("DISPLAY").expect("Linux cursor showcase requires DISPLAY");
+        let video_size = format!("{}x{}", width.round() as u32, height.round() as u32);
+        let output = std::process::Command::new("ffmpeg")
+            .args([
+                "-hide_banner",
+                "-loglevel",
+                "error",
+                "-f",
+                "x11grab",
+                "-draw_mouse",
+                "0",
+                "-video_size",
+                &video_size,
+                "-i",
+                &display,
+                "-frames:v",
+                "1",
+                "-f",
+                "image2pipe",
+                "-vcodec",
+                "png",
+                "pipe:1",
+            ])
+            .output()
+            .expect("launch ffmpeg X11 display capture");
+        assert!(
+            output.status.success() && !output.stdout.is_empty(),
+            "ffmpeg X11 display capture failed: {}",
+            String::from_utf8_lossy(&output.stderr)
         );
+        output.stdout
     }
 
     #[cfg(not(target_os = "linux"))]
     {
+        let _ = (width, height);
         capture_desktop_png(driver).0
     }
 }

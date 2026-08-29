@@ -53,7 +53,7 @@ wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # wp-viewporter (HiDPI for the layer-shell overlay). The transitive pull
 # from wayland-protocols-wlr does NOT enable `staging`; declaring it here
 # unifies the feature globally.
-wayland-protocols = { version = "0.32", features = ["client", "staging"] }
+wayland-protocols = { version = "0.32", features = ["client", "staging", "unstable"] }
 # xdg-desktop-portal client: display-screenshot tier
 # (org.freedesktop.portal.Screenshot), per-window ScreenCast
 # (org.freedesktop.portal.ScreenCast), and the libei input session
@@ -145,9 +145,14 @@ tempfile = "3"
 # falls through.
 tracing-subscriber = { workspace = true }
 
-# Cargo example that exercises the libei input path directly. Lives under
+# Cargo example that probes portal/libei device readiness without sending input.
+# Lives under
 # the `portal-input` feature gate so a stock `cargo build --examples`
 # doesn't try to compile against the (now-optional) reis/xkbcommon deps.
+[[example]]
+name = "libei_probe"
+required-features = ["portal-input"]
+
 [[example]]
 name = "libei_input"
 required-features = ["portal-input"]

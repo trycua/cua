@@ -674,6 +674,45 @@ fn daemon_metadata_response() -> DaemonResponse {
     )
 }
 
+fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
+    if request.method == "shutdown" {
+        return (
+            DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+            true,
+        );
+    }
+    let expected_pid = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("expected_pid"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid != 0);
+    let Some(expected_pid) = expected_pid else {
+        return (
+            DaemonResponse::err(
+                "shutdown_if_pid requires a positive integer expected_pid",
+                64,
+            ),
+            false,
+        );
+    };
+    let actual_pid = std::process::id();
+    if expected_pid != actual_pid {
+        return (
+            DaemonResponse::err(
+                format!("daemon pid mismatch (expected {expected_pid}, found {actual_pid})"),
+                1,
+            ),
+            false,
+        );
+    }
+    (
+        DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+        true,
+    )
+}
+
 async fn wait_for_parent_stdin_eof() {
     use tokio::io::AsyncReadExt as _;
 
@@ -790,7 +829,7 @@ fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Va
 mod peer_authentication_tests {
     use super::{
         authenticate_unix_peer, authenticate_unix_uid, history_relaunch_state_response,
-        DaemonRequest, ToolObservationOrigin,
+        shutdown_response, DaemonRequest, ToolObservationOrigin,
     };
 
     #[tokio::test]
@@ -823,6 +862,40 @@ mod peer_authentication_tests {
             Some("history_relaunch_state_requires_local_cli")
         );
         assert!(history_relaunch_state_response(&request, true).ok);
+    }
+
+    fn shutdown_request(expected_pid: serde_json::Value) -> DaemonRequest {
+        DaemonRequest {
+            method: "shutdown_if_pid".to_owned(),
+            name: None,
+            args: Some(serde_json::json!({"expected_pid": expected_pid})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pid_bound_shutdown_accepts_only_the_current_process() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(std::process::id().into()));
+        assert!(response.ok);
+        assert!(should_shutdown);
+
+        let wrong_pid = if std::process::id() == 1 { 2 } else { 1 };
+        let (response, should_shutdown) = shutdown_response(&shutdown_request(wrong_pid.into()));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert!(response.error.unwrap().contains("daemon pid mismatch"));
+    }
+
+    #[test]
+    fn pid_bound_shutdown_rejects_malformed_pid() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(serde_json::json!("1")));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert_eq!(response.exit_code, Some(64));
     }
 }
 
@@ -945,11 +1018,14 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() {
                                     let _ = tx.send(());
@@ -1683,11 +1759,14 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() { let _ = tx.send(()); }
                                 return;

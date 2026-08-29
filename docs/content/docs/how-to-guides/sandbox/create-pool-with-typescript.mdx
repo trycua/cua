@@ -1,0 +1,442 @@
+---
+title: Create a sandbox pool with TypeScript
+description: Create a reusable Fleet pool and capture a sandbox screenshot from browser or Node.js TypeScript.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Use `@trycua/fleet` to reconcile a reusable sandbox pool from TypeScript. This
+guide applies a one-replica Linux pool configuration, claims a sandbox, captures
+a screenshot, and releases the claim while leaving the pool warm.
+
+The package provides separate runtime entry points:
+
+- `@trycua/fleet/browser` loads the Fleet WebAssembly module in a browser.
+- `@trycua/fleet/node` loads the same WebAssembly module from disk and provides
+  a fetch-based HTTP transport.
+
+## Prerequisites
+
+- Node.js 20 or newer.
+- OAuth client credentials with permission to manage sandbox pools.
+- A globally unique, lowercase DNS-label pool name.
+
+This guide uses the public Linux computer-server image:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d
+```
+
+<Callout type="warn">
+  Browser code can read every `VITE_*` value bundled into the application. Use the browser example
+  only in a trusted local or internal application with temporary, narrowly scoped client
+  credentials. Keep long-lived credentials in Node.js or on your backend.
+</Callout>
+
+## Choose a runtime
+
+<Tabs groupId="fleet-typescript-runtime" persist items={['Node.js', 'Browser']}>
+  <Tab value="Node.js">
+
+Install the Fleet lifecycle SDK and a TypeScript runner:
+
+```bash
+npm install @trycua/fleet
+npm install --save-dev tsx typescript
+npm pkg set type=module
+```
+
+Set your OAuth client credentials and a unique pool name:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+export CUA_POOL_NAME="my-team-js-pool"
+```
+
+Set `CUA_FLEET_BASE_URL` or `CUA_TOKEN_URL` only when you need to use different
+Fleet or OAuth endpoints.
+
+Save this script as `create-pool.ts`:
+
+```ts title="create-pool.ts"
+import { writeFile } from 'node:fs/promises';
+import {
+  CreateClaimRequestBuilder,
+  CreatePoolRequestBuilder,
+  CreateTemplateRequestBuilder,
+  CyclopsClient,
+  CyclopsCredentials,
+  FetchHttpClient,
+  OsGymSandboxTemplateSpecBuilder,
+  OsGymSandboxWarmPoolSpecBuilder,
+  SandboxServiceBuilder,
+  SandboxTemplateRefBuilder,
+  VmTemplateBuilder,
+  type Claim,
+  type CyclopsConfiguration,
+  uniffiInitAsync,
+} from '@trycua/fleet/node';
+
+const IMAGE =
+  'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
+  '@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d';
+const BASE_URL = process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
+const TOKEN_URL =
+  process.env.CUA_TOKEN_URL ??
+  'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token';
+const CLIENT_ID = requiredEnv('CUA_CLIENT_ID');
+const CLIENT_SECRET = requiredEnv('CUA_CLIENT_SECRET');
+const POOL_NAME = requiredEnv('CUA_POOL_NAME');
+const TEMPLATE_NAME = `${POOL_NAME}-template`;
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+function screenshotBase64(responseBody: ArrayBuffer): string {
+  const text = new TextDecoder().decode(responseBody);
+  const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+  if (!dataLine) throw new Error(`No screenshot data frame: ${text.slice(0, 200)}`);
+
+  const payload = JSON.parse(dataLine.slice(6));
+  if (!payload.success) throw new Error(payload.error ?? 'Screenshot failed');
+
+  const encoded = payload.image_data ?? payload.result?.image_data;
+  if (typeof encoded !== 'string') throw new Error('Screenshot response has no image data');
+  return encoded;
+}
+
+await uniffiInitAsync();
+
+const configuration: CyclopsConfiguration = {
+  baseUrl: BASE_URL,
+  tokenUrl: TOKEN_URL,
+  credentials: new CyclopsCredentials(CLIENT_ID, CLIENT_SECRET),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
+
+let claim: Claim | undefined;
+try {
+  const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const vm = new VmTemplateBuilder()
+    .containerDiskImage(IMAGE)
+    .cpuCores(4)
+    .memory('4Gi')
+    .services([service])
+    .build();
+  const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
+  const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
+  const poolSpec = new OsGymSandboxWarmPoolSpecBuilder()
+    .replicas(1)
+    .sandboxTemplateRef(templateRef)
+    .build();
+
+  const pool = await client.reconcilePool(
+    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
+  );
+  const template = await client.reconcileTemplate(
+    new CreateTemplateRequestBuilder()
+      .namespace(POOL_NAME)
+      .name(TEMPLATE_NAME)
+      .spec(templateSpec)
+      .build()
+  );
+
+  console.log(`Reconciled pool ${pool.metadata.name}`);
+  console.log(`Reconciled template ${template.metadata.name}`);
+
+  claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
+  const sandbox = await client.waitClaim(claim);
+
+  const requestBody = await new Blob([JSON.stringify({ command: 'screenshot' })]).arrayBuffer();
+  const response = await client.serviceRequest(sandbox, 'server', '/cmd', {
+    method: 'POST',
+    url: 'https://service.invalid/cmd',
+    headers: [{ name: 'content-type', value: 'application/json' }],
+    body: requestBody,
+    timeoutSecs: 60n,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Screenshot request failed with HTTP ${response.status}`);
+  }
+
+  await writeFile('sandbox.png', Buffer.from(screenshotBase64(response.body), 'base64'));
+  console.log('Wrote sandbox.png');
+} finally {
+  try {
+    // Release the claim but leave the reusable pool warm.
+    if (claim) await client.deleteClaim(claim);
+  } finally {
+    client.uniffiDestroy();
+  }
+}
+```
+
+Run it:
+
+```bash
+npx tsx create-pool.ts
+```
+
+The script writes `sandbox.png` in the current directory. The Fleet client
+creates and waits for the claim, routes `POST /cmd` through the authenticated
+`server` service proxy, and deletes the claim before closing.
+
+  </Tab>
+  <Tab value="Browser">
+
+Create a Vite TypeScript project and install the browser SDK:
+
+```bash
+npm create vite@latest fleet-browser -- --template vanilla-ts
+cd fleet-browser
+npm install
+npm install @trycua/fleet
+```
+
+Create `.env.local` with temporary, narrowly scoped OAuth client credentials
+and a unique pool name:
+
+```bash title=".env.local"
+VITE_CUA_CLIENT_ID=<your-client-id>
+VITE_CUA_CLIENT_SECRET=<your-client-secret>
+VITE_CUA_POOL_NAME=my-team-browser-pool
+```
+
+Set `VITE_CUA_FLEET_BASE_URL` or `VITE_CUA_TOKEN_URL` only when you need to use
+different Fleet or OAuth endpoints.
+
+Replace `src/main.ts` with the following code:
+
+```ts title="src/main.ts"
+import {
+  CreateClaimRequestBuilder,
+  CreatePoolRequestBuilder,
+  CreateTemplateRequestBuilder,
+  CyclopsClient,
+  CyclopsCredentials,
+  OsGymSandboxTemplateSpecBuilder,
+  OsGymSandboxWarmPoolSpecBuilder,
+  SandboxServiceBuilder,
+  SandboxTemplateRefBuilder,
+  VmTemplateBuilder,
+  type Claim,
+  type CyclopsConfiguration,
+  type HttpClient,
+  type HttpRequest,
+  type HttpResponse,
+  uniffiInitAsync,
+} from '@trycua/fleet/browser';
+
+const IMAGE =
+  'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
+  '@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d';
+const BASE_URL = import.meta.env.VITE_CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
+const TOKEN_URL =
+  import.meta.env.VITE_CUA_TOKEN_URL ??
+  'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token';
+const CLIENT_ID = requiredEnv('VITE_CUA_CLIENT_ID');
+const CLIENT_SECRET = requiredEnv('VITE_CUA_CLIENT_SECRET');
+const POOL_NAME = requiredEnv('VITE_CUA_POOL_NAME');
+const TEMPLATE_NAME = `${POOL_NAME}-template`;
+
+function requiredEnv(name: string): string {
+  const value = import.meta.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+function screenshotBase64(responseBody: ArrayBuffer): string {
+  const text = new TextDecoder().decode(responseBody);
+  const dataLine = text.split('\n').find((line) => line.startsWith('data: '));
+  if (!dataLine) throw new Error(`No screenshot data frame: ${text.slice(0, 200)}`);
+
+  const payload = JSON.parse(dataLine.slice(6));
+  if (!payload.success) throw new Error(payload.error ?? 'Screenshot failed');
+
+  const encoded = payload.image_data ?? payload.result?.image_data;
+  if (typeof encoded !== 'string') throw new Error('Screenshot response has no image data');
+  return encoded;
+}
+
+function pngBlob(encoded: string): Blob {
+  const bytes = Uint8Array.from(atob(encoded), (character) => character.charCodeAt(0));
+  return new Blob([bytes], { type: 'image/png' });
+}
+
+class FetchHttpClient implements HttpClient {
+  async execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> {
+    const timeoutSignal = request.timeoutSecs
+      ? AbortSignal.timeout(Number(request.timeoutSecs) * 1_000)
+      : undefined;
+    const response = await fetch(request.url, {
+      method: request.method,
+      headers: request.headers.map(({ name, value }) => [name, value] as [string, string]),
+      body: request.body,
+      signal: asyncOpts_?.signal ?? timeoutSignal,
+      redirect: 'manual',
+    });
+    return {
+      status: response.status,
+      headers: [...response.headers].map(([name, value]) => ({ name, value })),
+      body: await response.arrayBuffer(),
+    };
+  }
+}
+
+await uniffiInitAsync();
+
+const configuration: CyclopsConfiguration = {
+  baseUrl: BASE_URL,
+  tokenUrl: TOKEN_URL,
+  credentials: new CyclopsCredentials(CLIENT_ID, CLIENT_SECRET),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
+
+let claim: Claim | undefined;
+try {
+  const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const vm = new VmTemplateBuilder()
+    .containerDiskImage(IMAGE)
+    .cpuCores(4)
+    .memory('4Gi')
+    .services([service])
+    .build();
+  const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
+  const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
+  const poolSpec = new OsGymSandboxWarmPoolSpecBuilder()
+    .replicas(1)
+    .sandboxTemplateRef(templateRef)
+    .build();
+
+  const pool = await client.reconcilePool(
+    new CreatePoolRequestBuilder().namespace(POOL_NAME).spec(poolSpec).build()
+  );
+  const template = await client.reconcileTemplate(
+    new CreateTemplateRequestBuilder()
+      .namespace(POOL_NAME)
+      .name(TEMPLATE_NAME)
+      .spec(templateSpec)
+      .build()
+  );
+
+  console.log(`Reconciled pool ${pool.metadata.name} with template ${template.metadata.name}`);
+
+  claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
+  const sandbox = await client.waitClaim(claim);
+
+  const requestBody = await new Blob([JSON.stringify({ command: 'screenshot' })]).arrayBuffer();
+  const response = await client.serviceRequest(sandbox, 'server', '/cmd', {
+    method: 'POST',
+    url: 'https://service.invalid/cmd',
+    headers: [{ name: 'content-type', value: 'application/json' }],
+    body: requestBody,
+    timeoutSecs: 60n,
+  });
+  if (response.status < 200 || response.status >= 300) {
+    throw new Error(`Screenshot request failed with HTTP ${response.status}`);
+  }
+
+  const image = document.querySelector<HTMLImageElement>('#screenshot');
+  if (!image) throw new Error('Missing #screenshot image element');
+  image.src = URL.createObjectURL(pngBlob(screenshotBase64(response.body)));
+} finally {
+  try {
+    // Release the claim but leave the reusable pool warm.
+    if (claim) await client.deleteClaim(claim);
+  } finally {
+    client.uniffiDestroy();
+  }
+}
+```
+
+Replace `index.html` with a minimal screenshot page:
+
+```html title="index.html"
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Fleet screenshot</title>
+  </head>
+  <body>
+    <h1>Fleet sandbox screenshot</h1>
+    <img id="screenshot" alt="Fleet sandbox desktop" />
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
+```
+
+Start the development server and open the printed URL:
+
+```bash
+npm run dev
+```
+
+The browser SDK authenticates the Fleet API request, routes `POST /cmd` through
+the named `server` service, decodes the computer-server event-stream response,
+and displays the PNG.
+
+  </Tab>
+</Tabs>
+
+## Keep or delete the pool
+
+Both examples release only the claim, so the one-replica pool remains warm for
+the next task. This is the normal reusable-pool lifecycle.
+
+The TypeScript SDK does not currently expose `pool.apply`. Instead,
+`reconcilePool()` and `reconcileTemplate()` are the lower-level UniFFI
+reconciliation primitives that Python `Pool.apply` delegates to internally.
+They do not provide `Pool.apply`'s request derivation, validation, ownership,
+rollback, or cleanup. Each method looks up its named resource, updates the
+existing resource's specification, or creates the resource when the lookup
+returns HTTP 403 or 404. Calling both methods lets you rerun the complete example
+without maintaining separate get-or-create branches.
+
+To remove the pool permanently, retain the `pool` and `template` values and run
+the following after every claim has been released:
+
+```ts
+await client.deleteTemplate(template);
+await client.deletePool(pool);
+```
+
+Pool names are globally unique across Cua accounts. If reconciliation returns
+HTTP 403, choose another pool name; changing the claim name does not resolve a
+pool namespace conflict.
+
+## Use autoscaling instead of one replica
+
+Replace `.replicas(1)` with an autoscaling policy and omit `replicas`:
+
+```ts
+import { WarmPoolAutoscalingBuilder } from '@trycua/fleet/node';
+
+const autoscaling = new WarmPoolAutoscalingBuilder()
+  .minPoolSize(0)
+  .initialPoolSize(2)
+  .maxPoolSize(10)
+  .build();
+
+const poolSpec = new OsGymSandboxWarmPoolSpecBuilder()
+  .autoscaling(autoscaling)
+  .sandboxTemplateRef(templateRef)
+  .build();
+```
+
+Use the matching `@trycua/fleet/browser` import in browser code. With a minimum
+size of zero, the first claim after an idle period cold-starts a sandbox.

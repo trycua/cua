@@ -31,7 +31,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::session::register_scoped_session_end_hook;
+use crate::session::register_scoped_fallible_session_end_hook;
 
 use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
@@ -42,7 +42,7 @@ use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
-    BrowserVisualActionKind,
+    BrowserVisualActionKind, ExistingProfileSetupRequest,
 };
 use super::prepare::ManagedBrowsers;
 use super::reconnect::ReconnectGates;
@@ -82,6 +82,7 @@ pub struct BrowserEngine {
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
     reconnect_gates: ReconnectGates,
+    pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
 }
 
@@ -409,6 +410,15 @@ pub(crate) struct BrowserTabScreenshot {
     pub pixel_to_css_scale_y: f64,
 }
 
+pub(crate) struct BrowserTabPreview {
+    pub screenshot: BrowserTabScreenshot,
+    pub title: String,
+    pub url: String,
+    pub cdp_target_id: String,
+    pub pid: i64,
+    pub window_id: u64,
+}
+
 #[derive(Debug, Clone, Copy)]
 struct BrowserScreenshotViewport {
     page_x: f64,
@@ -635,33 +645,70 @@ impl BrowserEngine {
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
             reconnect_gates: ReconnectGates::new(),
+            pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
             session_end_hook: Mutex::new(None),
         });
         let weak: Weak<Self> = Arc::downgrade(&engine);
-        let registration = register_scoped_session_end_hook(move |session_id| {
-            if let Some(engine) = weak.upgrade() {
-                engine.store.remove_session(session_id);
-                engine.cleanup_prepared_session(session_id);
-                for grant in engine.existing_profile_grants.remove_session(session_id) {
-                    engine.pool.release_claim_marker(&grant.endpoint_ws_url);
-                    if let Some(protected) = grant.protected_consent.as_ref() {
-                        protected.revoke();
-                    }
-                    if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-                        let engine = engine.clone();
-                        runtime.spawn(async move {
-                            engine
-                                .pool
-                                .release_existing(&grant.endpoint_ws_url, grant.generation)
-                                .await;
-                            if let Some(protected) = grant.protected_consent.as_ref() {
-                                engine.approval_broker.revoke(protected).await;
+        let registration =
+            register_scoped_fallible_session_end_hook("browser_state", move |session_id| {
+                let mut cleanup_errors = Vec::new();
+                if let Some(engine) = weak.upgrade() {
+                    engine.store.remove_session(session_id);
+                    engine.cleanup_prepared_session(session_id);
+                    let pending = {
+                        let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
+                        let mut requests = pending.remove(session_id).unwrap_or_default();
+                        for grant in engine.existing_profile_grants.remove_session(session_id) {
+                            engine.pool.release_claim_marker(&grant.endpoint_ws_url);
+                            if grant.cleanup_remote_debugging {
+                                requests.push(ExistingProfileSetupRequest {
+                                    pid: grant.pid,
+                                    window_id: grant.window_id,
+                                    browser: grant.browser_product,
+                                });
                             }
-                        });
+                            if let Some(protected) = grant.protected_consent.as_ref() {
+                                protected.revoke();
+                            }
+                            if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+                                let engine = engine.clone();
+                                runtime.spawn(async move {
+                                    engine
+                                        .pool
+                                        .release_existing(&grant.endpoint_ws_url, grant.generation)
+                                        .await;
+                                    if let Some(protected) = grant.protected_consent.as_ref() {
+                                        engine.approval_broker.revoke(protected).await;
+                                    }
+                                });
+                            }
+                        }
+                        requests
+                    };
+
+                    let mut failed = Vec::new();
+                    for request in pending {
+                        if let Err(error) = engine
+                            .platform
+                            .cleanup_existing_profile_setup(request.clone())
+                        {
+                            cleanup_errors.push(error.message);
+                            failed.push(request);
+                        }
+                    }
+                    let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
+                    if failed.is_empty() {
+                        pending.remove(session_id);
+                    } else {
+                        pending.insert(session_id.to_owned(), failed);
                     }
                 }
-            }
-        });
+                if cleanup_errors.is_empty() {
+                    Ok(())
+                } else {
+                    Err(cleanup_errors.join("; "))
+                }
+            });
         *engine.session_end_hook.lock().unwrap() = Some(registration);
         engine
     }
@@ -682,6 +729,25 @@ impl BrowserEngine {
             GrantLookup::Live(grant) => Ok(Some(grant)),
             GrantLookup::Expired(grant) => {
                 self.pool.release_claim_marker(&grant.endpoint_ws_url);
+                if grant.cleanup_remote_debugging {
+                    let request = ExistingProfileSetupRequest {
+                        pid: grant.pid,
+                        window_id: grant.window_id,
+                        browser: grant.browser_product,
+                    };
+                    if self
+                        .platform
+                        .cleanup_existing_profile_setup(request.clone())
+                        .is_err()
+                    {
+                        self.pending_existing_profile_cleanups
+                            .lock()
+                            .unwrap()
+                            .entry(session.to_owned())
+                            .or_default()
+                            .push(request);
+                    }
+                }
                 self.pool
                     .release_existing(&grant.endpoint_ws_url, grant.generation)
                     .await;
@@ -707,6 +773,25 @@ impl BrowserEngine {
             .revoke(session, transport_session, pid)
         {
             self.pool.release_claim_marker(&grant.endpoint_ws_url);
+            if grant.cleanup_remote_debugging {
+                let request = ExistingProfileSetupRequest {
+                    pid: grant.pid,
+                    window_id: grant.window_id,
+                    browser: grant.browser_product,
+                };
+                if self
+                    .platform
+                    .cleanup_existing_profile_setup(request.clone())
+                    .is_err()
+                {
+                    self.pending_existing_profile_cleanups
+                        .lock()
+                        .unwrap()
+                        .entry(session.to_owned())
+                        .or_default()
+                        .push(request);
+                }
+            }
             self.pool
                 .release_existing(&grant.endpoint_ws_url, grant.generation)
                 .await;
@@ -1935,6 +2020,36 @@ impl BrowserEngine {
             viewport_css_height: viewport.height,
             pixel_to_css_scale_x: viewport.width / f64::from(width),
             pixel_to_css_scale_y: viewport.height / f64::from(height),
+        })
+    }
+
+    /// Capture one exact tab for a trusted local presentation surface while
+    /// retaining the tab metadata already proved by the session-scoped store.
+    /// Like `capture_tab_screenshot`, this never activates the tab or brings
+    /// its native window to the foreground.
+    pub(crate) async fn capture_tab_preview(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+    ) -> Result<BrowserTabPreview, BrowserRefusal> {
+        let record = self.store.get_target(session, target_id)?;
+        let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
+            refuse(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        let screenshot = self
+            .capture_tab_screenshot(session, target_id, tab_id)
+            .await?;
+        Ok(BrowserTabPreview {
+            screenshot,
+            title: tab.title,
+            url: tab.url,
+            cdp_target_id: tab.cdp_target_id,
+            pid: record.pid,
+            window_id: record.window_id,
         })
     }
 

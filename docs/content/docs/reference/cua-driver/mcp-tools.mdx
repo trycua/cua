@@ -659,13 +659,13 @@ Caveats:
 
 ### `start_demonstration`
 
-Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground Windows or macOS window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.
+Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground macOS or Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.
 
 **Arguments:**
 
+- `output_dir` (string, optional): New or empty output directory. Defaults to a unique directory under the system temporary directory.
 - `pid` (integer, required): Process id returned by list_windows.
 - `window_id` (integer, required): Window id returned by list_windows.
-- `output_dir` (string, optional): New or empty output directory. Defaults to a unique directory under the system temporary directory.
 
 ```json
 {"pid":844,"window_id":10725}

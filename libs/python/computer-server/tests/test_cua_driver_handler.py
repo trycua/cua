@@ -116,7 +116,6 @@ class _Driver:
             session=input.session,
             capture_scope=_CaptureScope.AUTO,
             effective_scope=_EffectiveScope.WINDOW,
-            desktop_capture_authorized=False,
             desktop_unlocked=False,
             escalation_reason=None,
             escalation_detail=None,
@@ -128,7 +127,6 @@ class _Driver:
             session=input.session,
             capture_scope=_CaptureScope.AUTO,
             effective_scope=_EffectiveScope.DESKTOP,
-            desktop_capture_authorized=True,
             desktop_unlocked=True,
             escalation_reason=input.reason,
             escalation_detail=input.detail,
@@ -372,10 +370,8 @@ async def test_auto_scope_escalation_is_explicit_and_typed(sdk, fallback):
     )
 
     assert before["effective_scope"] == "window"
-    assert before["desktop_capture_authorized"] is False
     assert before["desktop_unlocked"] is False
     assert escalated["effective_scope"] == "desktop"
-    assert escalated["desktop_capture_authorized"] is True
     assert escalated["desktop_unlocked"] is True
     assert escalated["escalation_reason"] == "no_window_target"
     request = next(value for name, value in driver.calls if name == "escalate_session")

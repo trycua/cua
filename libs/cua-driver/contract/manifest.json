@@ -748,9 +748,6 @@
             ],
             "type": "string"
           },
-          "desktop_capture_authorized": {
-            "type": "boolean"
-          },
           "desktop_unlocked": {
             "type": "boolean"
           },
@@ -796,7 +793,6 @@
           "session",
           "capture_scope",
           "effective_scope",
-          "desktop_capture_authorized",
           "desktop_unlocked",
           "escalation_reason",
           "escalation_detail"
@@ -1367,9 +1363,6 @@
             ],
             "type": "string"
           },
-          "desktop_capture_authorized": {
-            "type": "boolean"
-          },
           "desktop_unlocked": {
             "type": "boolean"
           },
@@ -1415,7 +1408,6 @@
           "session",
           "capture_scope",
           "effective_scope",
-          "desktop_capture_authorized",
           "desktop_unlocked",
           "escalation_reason",
           "escalation_detail"
@@ -3178,9 +3170,6 @@
             ],
             "type": "string"
           },
-          "desktop_capture_authorized": {
-            "type": "boolean"
-          },
           "desktop_unlocked": {
             "type": "boolean"
           },
@@ -3229,7 +3218,6 @@
           "session",
           "capture_scope",
           "effective_scope",
-          "desktop_capture_authorized",
           "desktop_unlocked",
           "escalation_reason",
           "escalation_detail",

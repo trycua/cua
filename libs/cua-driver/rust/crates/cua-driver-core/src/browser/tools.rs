@@ -28,7 +28,6 @@ use super::types::BindingQuality;
 /// crates call this from their `register_all` after constructing the
 /// engine with their adapter.
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
-    registry.set_browser_engine(engine.clone());
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));

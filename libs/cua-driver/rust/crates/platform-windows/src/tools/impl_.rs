@@ -8031,8 +8031,7 @@ impl Tool for GetConfigTool {
         // and read it from the overlay deterministically — `all_states().first()`
         // was a nondeterministic HashMap read across sessions (macOS BUG 3).
         let cursor_enabled = crate::overlay::is_enabled(&resolve_cursor_key(&args));
-        let (agent_view_enabled, agent_view_geometry) =
-            pip_preview::read_agent_view_keys_from_file();
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
@@ -8041,8 +8040,8 @@ impl Tool for GetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
-            "agent_view":          agent_view_enabled,
-            "agent_view_geometry": agent_view_geometry,
+            "experimental_pip":    pip_enabled,
+            "experimental_pip_geometry": pip_geometry,
         });
         // Match Swift's text format 1:1: `"✅ <pretty JSON>"`.
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
@@ -8077,16 +8076,16 @@ impl Tool for SetConfigTool {
                   `get_window_state` always returns both the UIA tree and a screenshot. Still \
                   accepted/persisted for back-compat but has no effect.\n\
                 - `max_image_dimension` (integer)\n\
-                - `agent_view` (boolean; enables the multi-target Agent View after restart)\n\
-                - `agent_view_geometry` (Agent View size as `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
+                - `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)\n\
+                - `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)\n\n\
                 Returns the full updated config in the same shape as `get_config`.".into(),
             input_schema: json!({"type":"object","properties":{
                 "key":{"type":"string","description":"Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`."},
                 "value":{"description":"New value for `key`. JSON type depends on the key."},
                 "capture_mode":{"type":"string","enum":["ax","vision"],"description":"DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. (\"som\"/\"screenshot\" still decode as deprecated aliases.)"},
                 "max_image_dimension":{"type":"integer","description":"Legacy per-field shape."},
-                "agent_view":{"type":"boolean","description":"Per-field shape. Enables the multi-target Agent View (applies next restart)."},
-                "agent_view_geometry":{"type":"string","description":"Per-field shape. Agent View size + optional position."}
+                "experimental_pip":{"type":"boolean","description":"Legacy per-field shape. Enables PiP preview (applies next restart)."},
+                "experimental_pip_geometry":{"type":"string","description":"Legacy per-field shape. PiP window size + optional position."}
             },"additionalProperties":false}),
             read_only: false, destructive: false, idempotent: true, open_world: false,
         })
@@ -8131,31 +8130,31 @@ impl Tool for SetConfigTool {
                     }
                     None    => return ToolResult::error(format!("`max_image_dimension` must be an integer, got {val}.")),
                 },
-                "agent_view" => match val.as_bool() {
+                "experimental_pip" => match val.as_bool() {
                     Some(b) => {
-                        if let Err(e) = pip_preview::write_config_key("agent_view", Value::Bool(b)) {
-                            return ToolResult::error(format!("failed to persist agent_view: {e}"));
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(b)) {
+                            return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
                         }
                         applied = true;
                     }
-                    None => return ToolResult::error(format!("`agent_view` must be a boolean, got {val}.")),
+                    None => return ToolResult::error(format!("`experimental_pip` must be a boolean, got {val}.")),
                 },
-                "agent_view_geometry" => match val.as_str() {
+                "experimental_pip_geometry" => match val.as_str() {
                     Some(s) => {
                         if pip_preview::PipGeometry::parse(s).is_none() {
                             return ToolResult::error(format!(
-                                "agent_view_geometry `{s}` is not a valid WxH or WxH+X+Y string"
+                                "experimental_pip_geometry `{s}` is not a valid WxH or WxH+X+Y string"
                             ));
                         }
-                        if let Err(e) = pip_preview::write_config_key("agent_view_geometry", Value::String(s.to_owned())) {
-                            return ToolResult::error(format!("failed to persist agent_view_geometry: {e}"));
+                        if let Err(e) = pip_preview::write_config_key("experimental_pip_geometry", Value::String(s.to_owned())) {
+                            return ToolResult::error(format!("failed to persist experimental_pip_geometry: {e}"));
                         }
                         applied = true;
                     }
-                    None => return ToolResult::error(format!("`agent_view_geometry` must be a string, got {val}.")),
+                    None => return ToolResult::error(format!("`experimental_pip_geometry` must be a string, got {val}.")),
                 },
                 other => return ToolResult::error(format!(
-                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, agent_view, agent_view_geometry."
+                    "Unknown config key `{other}`. Known: capture_mode, max_image_dimension, experimental_pip, experimental_pip_geometry."
                 )),
             }
         }
@@ -8176,22 +8175,29 @@ impl Tool for SetConfigTool {
             }
             applied = true;
         }
-        if let Some(enabled) = args.get("agent_view").and_then(|v| v.as_bool()) {
-            if let Err(e) = pip_preview::write_config_key("agent_view", Value::Bool(enabled)) {
-                return ToolResult::error(format!("failed to persist agent_view: {e}"));
+        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
+            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
+            {
+                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
             }
             applied = true;
         }
-        if let Some(geom) = args.get("agent_view_geometry").and_then(|v| v.as_str()) {
+        if let Some(geom) = args
+            .get("experimental_pip_geometry")
+            .and_then(|v| v.as_str())
+        {
             if pip_preview::PipGeometry::parse(geom).is_none() {
                 return ToolResult::error(format!(
-                    "agent_view_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
+                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
                 ));
             }
-            if let Err(e) =
-                pip_preview::write_config_key("agent_view_geometry", Value::String(geom.to_owned()))
-            {
-                return ToolResult::error(format!("failed to persist agent_view_geometry: {e}"));
+            if let Err(e) = pip_preview::write_config_key(
+                "experimental_pip_geometry",
+                Value::String(geom.to_owned()),
+            ) {
+                return ToolResult::error(format!(
+                    "failed to persist experimental_pip_geometry: {e}"
+                ));
             }
             applied = true;
         }
@@ -8209,8 +8215,7 @@ impl Tool for SetConfigTool {
             .first()
             .map(|s| s.config.enabled)
             .unwrap_or(true);
-        let (agent_view_enabled, agent_view_geometry) =
-            pip_preview::read_agent_view_keys_from_file();
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         let payload = json!({
             "schema_version":      1,
             "version":             env!("CARGO_PKG_VERSION"),
@@ -8219,8 +8224,8 @@ impl Tool for SetConfigTool {
             "capture_mode":        cfg.capture_mode,
             "max_image_dimension": cfg.max_image_dimension,
             "agent_cursor":        { "enabled": cursor_enabled },
-            "agent_view":          agent_view_enabled,
-            "agent_view_geometry": agent_view_geometry,
+            "experimental_pip":    pip_enabled,
+            "experimental_pip_geometry": pip_geometry,
         });
         let pretty = serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
         ToolResult::text(format!("✅ {pretty}")).with_structured(payload)

@@ -1685,7 +1685,13 @@ impl ToolRegistry {
             && (should_record || is_exact_visual_snapshot(name, &args))
         {
             if let Some(frame) = self
-                .capture_pip_frame(name, &args, &public_args, runtime_session.as_deref())
+                .capture_pip_frame(
+                    name,
+                    &args,
+                    &public_args,
+                    runtime_session.as_deref(),
+                    &result,
+                )
                 .await
             {
                 pip_hook::push_pip_frame(frame);
@@ -1700,6 +1706,7 @@ impl ToolRegistry {
         args: &Value,
         public_args: &Value,
         runtime_session: Option<&str>,
+        result: &ToolResult,
     ) -> Option<pip_hook::PipHookFrame> {
         let workspace_id = runtime_session?.to_owned();
         let workspace_label = pip_workspace_label(public_args, runtime_session?);
@@ -1764,7 +1771,11 @@ impl ToolRegistry {
         let PipCaptureTarget::NativeWindow { pid, window_id } = pip_capture_target(args)? else {
             return None;
         };
-        let png_bytes = screenshot_for(Some(window_id), Some(pid))?;
+        // Exact state reads already paid for and validated a target screenshot.
+        // Reuse that image so a redundant post-tool capture cannot silently
+        // suppress an otherwise healthy Agent View card.
+        let png_bytes =
+            pip_result_png(result).or_else(|| screenshot_for(Some(window_id), Some(pid)))?;
         let cursor_position =
             pip_cursor_position(tool_name, args, &png_bytes, Some(window_id), Some(pid));
         Some(pip_hook::PipHookFrame {
@@ -4878,6 +4889,15 @@ fn pip_target_public_key(target: &PipCaptureTarget) -> String {
     }
 }
 
+fn pip_result_png(result: &ToolResult) -> Option<Vec<u8>> {
+    result.content.iter().find_map(|content| match content {
+        Content::Image {
+            data, mime_type, ..
+        } if mime_type == "image/png" => BASE64.decode(data).ok(),
+        _ => None,
+    })
+}
+
 fn pip_cursor_position(
     tool_name: &str,
     args: &Value,
@@ -5120,6 +5140,16 @@ mod pip_routing_tests {
             "get_browser_state",
             &serde_json::json!({"pid": 42, "window_id": 7})
         ));
+    }
+
+    #[test]
+    fn exact_state_image_is_reused_for_agent_view() {
+        let png = png_header(200, 100);
+        let result = ToolResult {
+            content: vec![Content::image_png(BASE64.encode(&png))],
+            ..Default::default()
+        };
+        assert_eq!(pip_result_png(&result), Some(png));
     }
 
     #[test]

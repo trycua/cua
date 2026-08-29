@@ -26,11 +26,31 @@ pub struct TauriPipBackend {
 
 impl PipBackend for TauriPipBackend {
     fn push_frame(&self, frame: PipFrame) {
-        let _ = self
+        static REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(10_000);
+        let request_id = REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let (response_tx, response_rx) = mpsc::channel();
+        if self
             .sender
-            .send(WorkerMessage::Send(AgentViewCommand::Upsert {
-                frame: frame.into(),
-            }));
+            .send(WorkerMessage::SendAndWait {
+                command: AgentViewCommand::Upsert {
+                    request_id,
+                    frame: frame.into(),
+                },
+                request_id,
+                response: response_tx,
+            })
+            .is_err()
+        {
+            tracing::warn!("Tauri Agent View process exited before accepting a frame");
+            return;
+        }
+        if let Err(error) = response_rx
+            .recv_timeout(ACK_TIMEOUT)
+            .map_err(|_| anyhow::anyhow!("timed out delivering a Tauri Agent View frame"))
+            .and_then(|result| result)
+        {
+            tracing::warn!(%error, "Tauri Agent View frame delivery failed");
+        }
     }
 
     fn remove_workspace(&self, workspace_id: &str) {
@@ -271,15 +291,17 @@ mod tests {
             cursor_position: Some((0.25, 0.75)),
         };
         let command = AgentViewCommand::Upsert {
+            request_id: 42,
             frame: frame.into(),
         };
         let encoded = serde_json::to_string(&command).unwrap();
         assert!(!encoded.contains("0,1,2,255"));
-        let AgentViewCommand::Upsert { frame } =
+        let AgentViewCommand::Upsert { request_id, frame } =
             serde_json::from_str::<AgentViewCommand>(&encoded).unwrap()
         else {
             panic!("expected upsert");
         };
+        assert_eq!(request_id, 42);
         assert_eq!(
             frame.into_pip_frame().unwrap().png_bytes,
             vec![0, 1, 2, 255]

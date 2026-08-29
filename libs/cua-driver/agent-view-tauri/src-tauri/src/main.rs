@@ -225,11 +225,22 @@ fn handle_command(app: &tauri::AppHandle, command: AgentViewCommand) -> bool {
             ok: false,
             error: Some("Agent View is already configured".to_owned()),
         }),
-        AgentViewCommand::Upsert { frame } => match frame.into_pip_frame() {
-            Ok(frame) => update_model(app, |model| {
-                model.upsert(frame);
+        AgentViewCommand::Upsert { request_id, frame } => match frame.into_pip_frame() {
+            Ok(frame) => {
+                update_model(app, |model| {
+                    model.upsert(frame);
+                });
+                write_ack(AgentViewAck {
+                    request_id,
+                    ok: true,
+                    error: None,
+                });
+            }
+            Err(error) => write_ack(AgentViewAck {
+                request_id,
+                ok: false,
+                error: Some(format!("invalid frame: {error}")),
             }),
-            Err(error) => eprintln!("cua-agent-view: invalid frame: {error}"),
         },
         AgentViewCommand::RemoveTarget {
             workspace_id,

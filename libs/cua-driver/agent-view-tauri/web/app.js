@@ -4,6 +4,7 @@ const listen = window.__TAURI__.event.listen;
 const sessions = document.querySelector("#sessions");
 const stage = document.querySelector("#stage");
 const status = document.querySelector("#status span:last-child");
+let lastRenderKey = "";
 
 function escapeHtml(value) {
   const node = document.createElement("span");
@@ -12,6 +13,21 @@ function escapeHtml(value) {
 }
 
 function render(snapshot) {
+  if (!snapshot || !Array.isArray(snapshot.workspaces) || !Array.isArray(snapshot.frames)) {
+    return;
+  }
+  const renderKey = JSON.stringify({
+    selectedWorkspaceId: snapshot.selectedWorkspaceId,
+    activeViewId: snapshot.activeViewId,
+    workspaces: snapshot.workspaces.map((workspace) => [
+      workspace.workspaceId,
+      workspace.targetCount,
+      workspace.updatedMs,
+    ]),
+    frames: snapshot.frames.map((frame) => [frame.viewId, frame.timestampMs]),
+  });
+  if (renderKey === lastRenderKey) return;
+  lastRenderKey = renderKey;
   const showTabs = snapshot.workspaces.length > 1;
   sessions.classList.toggle("visible", showTabs);
   sessions.innerHTML = snapshot.workspaces
@@ -71,5 +87,11 @@ document.querySelectorAll("[data-resize]").forEach((handle) => {
   });
 });
 
-listen("agent-view-state", (event) => render(event.payload));
-invoke("get_snapshot").then(render);
+function hydrate() {
+  invoke("get_snapshot").then(render).catch(() => {});
+}
+
+// Events are the fast path; periodic hydration also covers a WebView that
+// attaches its listener after the first Upsert event has already fired.
+listen("agent-view-state", (event) => render(event.payload)).then(hydrate).catch(hydrate);
+setInterval(hydrate, 1500);

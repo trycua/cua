@@ -358,6 +358,7 @@ pub enum AgentViewCommand {
         geometry: PipGeometry,
     },
     Upsert {
+        request_id: u64,
         frame: AgentViewFrame,
     },
     RemoveTarget {

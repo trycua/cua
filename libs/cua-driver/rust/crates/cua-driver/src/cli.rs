@@ -3209,7 +3209,7 @@ fn run_permissions_status(json: bool) {
     let bundle_id = crate::bundle::bundle_id();
 
     // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
-    // response (e.g. daemon mid-re-exec during the gate's recheck window) is
+    // response (e.g. daemon still inside its first-launch permission gate) is
     // treated the same as "no daemon" → unknown.
     let daemon_status: Option<serde_json::Value> = if crate::serve::is_daemon_listening(&socket) {
         let req = crate::serve::DaemonRequest {
@@ -3545,7 +3545,7 @@ fn run_permissions_grant() {
                  and Screen Recording in System Settings, then this command continues."
             );
             // Preserve explicit Computer History admission across the
-            // permission host's daemon launch/re-exec cycle.
+            // permission host's daemon launch cycle.
             if let Err(e) = launch_daemon_and_wait(
                 &socket,
                 180,
@@ -3568,11 +3568,10 @@ fn run_permissions_grant() {
         // ScreenCaptureKit access has its own Tahoe consent and is requested
         // explicitly below, after we explain the system dialog.
         //
-        // The gate re-execs the daemon (~every 25s) to pick up an
-        // Accessibility grant — `AXIsProcessTrusted` is cached per process
-        // and only a fresh process image sees a later grant. During each
-        // restart the socket briefly disappears, so tolerate transient
-        // connection failures rather than bailing on the first one.
+        // The gate uses short-lived probes because `AXIsProcessTrusted` is
+        // cached per process. While those probes are pending, the stable daemon
+        // rejects tool calls with a retryable response; tolerate that state
+        // rather than bailing on the first non-success response.
         let req = permission_status_request();
         // A dedicated LaunchServices child requests the grants under the
         // CuaDriver app identity. No prompt-capable method exists on the
@@ -3598,8 +3597,8 @@ fn run_permissions_grant() {
                     break;
                 }
             }
-            // `send_request` failing (None / !ok) means the daemon is
-            // mid-restart (re-exec) or briefly down — keep polling.
+            // `send_request` returning None / !ok means the daemon is still
+            // gated or briefly unavailable — keep polling.
             if std::time::Instant::now() >= poll_deadline {
                 break;
             }

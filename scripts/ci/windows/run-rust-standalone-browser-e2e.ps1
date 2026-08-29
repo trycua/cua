@@ -126,51 +126,70 @@ function Invoke-RestrictedBrowserTest {
 
     $exitPath = Join-Path $artifactDir ".restricted-$TestName.exit"
     $pidPath = Join-Path $artifactDir ".restricted-$TestName.pid"
+    $configPath = Join-Path $artifactDir ".restricted-$TestName.config.json"
     if (Test-Path -LiteralPath $exitPath) {
         throw "Restricted browser-test exit file already exists: $exitPath"
     }
 
-    $restrictedVariables = @(
-        "CUA_RESTRICTED_BROWSER_TEST_NAME",
-        "CUA_RESTRICTED_BROWSER_TEST_LOG",
-        "CUA_RESTRICTED_BROWSER_TEST_EXIT",
-        "CUA_RESTRICTED_BROWSER_TEST_PID",
-        "CUA_RESTRICTED_BROWSER_TEST_RUST_ROOT"
-    )
-    try {
-        $env:CUA_RESTRICTED_BROWSER_TEST_NAME = $TestName
-        $env:CUA_RESTRICTED_BROWSER_TEST_LOG = $LogPath
-        $env:CUA_RESTRICTED_BROWSER_TEST_EXIT = $exitPath
-        $env:CUA_RESTRICTED_BROWSER_TEST_PID = $pidPath
-        $env:CUA_RESTRICTED_BROWSER_TEST_RUST_ROOT = $rustRoot
-
-        $command = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$helper`""
-        & "$env:SystemRoot\System32\runas.exe" /env /trustlevel:0x20000 $command | Out-Host
-        if ($LASTEXITCODE -ne 0) {
-            return $LASTEXITCODE
-        }
-
-        $deadline = (Get-Date).AddMinutes(10)
-        while (-not (Test-Path -LiteralPath $exitPath)) {
-            if ((Get-Date) -ge $deadline) {
-                if (Test-Path -LiteralPath $pidPath) {
-                    $childPid = [int](Get-Content -LiteralPath $pidPath -Raw)
-                    & "$env:SystemRoot\System32\taskkill.exe" /PID $childPid /T /F | Out-Host
-                }
-                "Restricted browser test timed out after 10 minutes" |
-                    Set-Content -LiteralPath $LogPath -Encoding UTF8
-                return 124
-            }
-            Start-Sleep -Milliseconds 250
-        }
-        $result = [int](Get-Content -LiteralPath $exitPath -Raw)
-        Get-Content -LiteralPath $LogPath | Out-Host
-        return $result
-    } finally {
-        foreach ($name in $restrictedVariables) {
-            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+    $childEnvironment = [ordered]@{}
+    foreach ($item in @(Get-ChildItem Env:)) {
+        if ($item.Name -eq "PATH" -or
+            $item.Name.StartsWith("CUA_") -or
+            $item.Name.StartsWith("RUST") -or
+            $item.Name.StartsWith("CARGO_")) {
+            $childEnvironment[$item.Name] = $item.Value
         }
     }
+    [ordered]@{
+        test_name = $TestName
+        log_path = $LogPath
+        exit_path = $exitPath
+        pid_path = $pidPath
+        rust_root = $rustRoot
+        environment = $childEnvironment
+    } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
+    New-Item -ItemType File -Path $LogPath | Out-Null
+
+    $command = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$helper`" -ConfigPath `"$configPath`""
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $runasOutput = @(& "$env:SystemRoot\System32\runas.exe" /trustlevel:0x20000 $command 2>&1) |
+            ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_.ToString()
+                }
+            }
+        $runasExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    $runasOutput | Add-Content -LiteralPath $LogPath -Encoding UTF8
+    if ($runasExit -ne 0) {
+        "runas exited before launching the restricted test: $runasExit" |
+            Add-Content -LiteralPath $LogPath -Encoding UTF8
+        Get-Content -LiteralPath $LogPath | Out-Host
+        return $runasExit
+    }
+
+    $deadline = (Get-Date).AddMinutes(10)
+    while (-not (Test-Path -LiteralPath $exitPath)) {
+        if ((Get-Date) -ge $deadline) {
+            if (Test-Path -LiteralPath $pidPath) {
+                $childPid = [int](Get-Content -LiteralPath $pidPath -Raw)
+                & "$env:SystemRoot\System32\taskkill.exe" /PID $childPid /T /F | Out-Host
+            }
+            "Restricted browser test timed out after 10 minutes" |
+                Add-Content -LiteralPath $LogPath -Encoding UTF8
+            return 124
+        }
+        Start-Sleep -Milliseconds 250
+    }
+    $result = [int](Get-Content -LiteralPath $exitPath -Raw)
+    Get-Content -LiteralPath $LogPath | Out-Host
+    return $result
 }
 
 if (-not $NoBuild) {

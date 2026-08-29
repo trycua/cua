@@ -1,24 +1,20 @@
+param(
+    [Parameter(Mandatory = $true)][string]$ConfigPath
+)
+
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$required = @(
-    "CUA_RESTRICTED_BROWSER_TEST_NAME",
-    "CUA_RESTRICTED_BROWSER_TEST_LOG",
-    "CUA_RESTRICTED_BROWSER_TEST_EXIT",
-    "CUA_RESTRICTED_BROWSER_TEST_PID",
-    "CUA_RESTRICTED_BROWSER_TEST_RUST_ROOT"
-)
-foreach ($name in $required) {
-    if ([string]::IsNullOrWhiteSpace([Environment]::GetEnvironmentVariable($name))) {
-        throw "Missing required restricted-test environment variable: $name"
-    }
+$config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+foreach ($property in $config.environment.PSObject.Properties) {
+    [Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value, "Process")
 }
 
-$testName = $env:CUA_RESTRICTED_BROWSER_TEST_NAME
-$logPath = $env:CUA_RESTRICTED_BROWSER_TEST_LOG
-$exitPath = $env:CUA_RESTRICTED_BROWSER_TEST_EXIT
-$pidPath = $env:CUA_RESTRICTED_BROWSER_TEST_PID
-$rustRoot = $env:CUA_RESTRICTED_BROWSER_TEST_RUST_ROOT
+$testName = [string]$config.test_name
+$logPath = [string]$config.log_path
+$exitPath = [string]$config.exit_path
+$pidPath = [string]$config.pid_path
+$rustRoot = [string]$config.rust_root
 $exitTemp = "$exitPath.tmp-$PID"
 $exitCode = 1
 Set-Content -LiteralPath $pidPath -Value $PID -NoNewline
@@ -43,7 +39,7 @@ try {
         } finally {
             $ErrorActionPreference = $previousPreference
         }
-        $output | Set-Content -LiteralPath $logPath -Encoding UTF8
+        $output | Add-Content -LiteralPath $logPath -Encoding UTF8
     } finally {
         Pop-Location
     }

@@ -239,7 +239,7 @@ def fallback():
 
 
 @pytest.mark.asyncio
-async def test_desktop_actions_share_one_typed_session(sdk, fallback):
+async def test_desktop_actions_redeclare_one_typed_session(sdk, fallback):
     driver = _Driver()
     handler = CuaDriverAutomationHandler(
         fallback,
@@ -260,15 +260,31 @@ async def test_desktop_actions_share_one_typed_session(sdk, fallback):
     assert click["effect"] == "unverifiable"
     assert click["verified"] is False
     assert scroll["success"] is True
-    assert [name for name, _ in driver.calls].count("start_session") == 1
-    start = next(value for name, value in driver.calls if name == "start_session")
-    assert start.session == "server-a"
-    assert start.capture_scope is _CaptureScope.DESKTOP
-    assert start.cursor_theme is None
+    starts = [value for name, value in driver.calls if name == "start_session"]
+    assert len(starts) == 5
+    assert {start.session for start in starts} == {"server-a"}
+    assert {start.capture_scope for start in starts} == {_CaptureScope.DESKTOP}
+    assert all(start.cursor_theme is None for start in starts)
     clicked = next(value for name, value in driver.calls if name == "click")
     assert (clicked.x, clicked.y) == (12.0, 34.0)
     assert clicked.target.display_id == "primary"
     assert clicked.scope is None
+
+
+@pytest.mark.asyncio
+async def test_each_call_redeclares_the_session_after_possible_idle_expiry(sdk, fallback):
+    driver = _Driver()
+    handler = CuaDriverAutomationHandler(fallback, driver=driver, sdk=sdk, session_id="idle-server")
+
+    assert (await handler.get_screen_size())["success"] is True
+    assert (await handler.get_screen_size())["success"] is True
+
+    assert [name for name, _ in driver.calls] == [
+        "start_session",
+        "get_screen_size",
+        "start_session",
+        "get_screen_size",
+    ]
 
 
 @pytest.mark.asyncio
@@ -388,9 +404,12 @@ async def test_close_ends_owned_session_and_shuts_down_once(sdk, fallback):
 
     await handler.close()
     await handler.close()
+    closed = await handler.get_cursor_position()
 
     assert [value.session for value in driver.ended] == ["owned-session"]
     assert driver.shutdown_count == 1
+    assert closed["success"] is False
+    assert "closed" in closed["error"]
 
 
 @pytest.mark.asyncio

@@ -2,17 +2,16 @@
 
 Agent View is an optional, always-on-top miniature desktop that shows the exact
 application windows and browser tabs traversed by one Cua Driver agent session.
-It is disabled by default. Enable it for one daemon invocation with:
+It is enabled by default on supported interactive desktops. Disable it for one
+daemon invocation with:
 
 ```console
-cua-driver --agent-view
+cua-driver --no-agent-view
 ```
 
-The durable config equivalent is `{"agent_view": true}` in
+`--agent-view` remains accepted as an explicit enable for compatibility. The
+durable config equivalent is `{"agent_view": false}` in
 `~/.cua-driver/config.json`.
-
-`--no-agent-view` remains available to override a persisted enable for one
-daemon invocation.
 
 Use `--agent-view-geometry WxH[+X+Y]` to override its initial size and optional
 top-left position. The default is `640x420` near the top-right of the main

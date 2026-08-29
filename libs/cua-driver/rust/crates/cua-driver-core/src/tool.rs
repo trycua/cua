@@ -1778,6 +1778,8 @@ impl ToolRegistry {
             pip_result_png(result).or_else(|| screenshot_for(Some(window_id), Some(pid)))?;
         let cursor_position =
             pip_cursor_position(tool_name, args, &png_bytes, Some(window_id), Some(pid));
+        let target_label =
+            pip_result_target_label(result).unwrap_or_else(|| format!("Window {window_id}"));
         Some(pip_hook::PipHookFrame {
             target: pip_hook::PipHookTarget {
                 workspace_id,
@@ -1785,7 +1787,7 @@ impl ToolRegistry {
                 target_id: format!("window:{pid}:{window_id}"),
                 identity_key: format!("window:{pid}:{window_id}"),
                 target_kind: pip_hook::PipHookTargetKind::NativeWindow,
-                target_label: format!("Window {window_id}"),
+                target_label,
                 native_container: Some(pip_hook::PipHookNativeContainer { pid, window_id }),
             },
             png_bytes,
@@ -4898,6 +4900,39 @@ fn pip_result_png(result: &ToolResult) -> Option<Vec<u8>> {
     })
 }
 
+fn pip_result_target_label(result: &ToolResult) -> Option<String> {
+    let structured = result.structured_content.as_ref()?;
+    if let Some(elements) = structured.get("elements").and_then(Value::as_array) {
+        if let Some(label) = elements.iter().find_map(|element| {
+            let role = element.get("role").and_then(Value::as_str)?;
+            if !matches!(role.to_ascii_lowercase().as_str(), "window" | "frame") {
+                return None;
+            }
+            non_empty_pip_label(element.get("label").and_then(Value::as_str))
+                .or_else(|| non_empty_pip_label(element.get("value").and_then(Value::as_str)))
+        }) {
+            return Some(label);
+        }
+    }
+    structured
+        .get("tree_markdown")
+        .and_then(Value::as_str)
+        .and_then(|tree| tree.lines().find_map(quoted_pip_label))
+}
+
+fn non_empty_pip_label(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty() && *value != "\u{fffc}")
+        .map(str::to_owned)
+}
+
+fn quoted_pip_label(line: &str) -> Option<String> {
+    let (_, remainder) = line.split_once('"')?;
+    let (label, _) = remainder.split_once('"')?;
+    non_empty_pip_label(Some(label))
+}
+
 fn pip_cursor_position(
     tool_name: &str,
     args: &Value,
@@ -5150,6 +5185,31 @@ mod pip_routing_tests {
             ..Default::default()
         };
         assert_eq!(pip_result_png(&result), Some(png));
+    }
+
+    #[test]
+    fn agent_view_uses_the_native_window_label_from_structured_state() {
+        let result = ToolResult::text("state").with_structured(serde_json::json!({
+            "elements": [
+                {"role": "Button", "label": "Close"},
+                {"role": "Window", "label": "Calculator"}
+            ]
+        }));
+        assert_eq!(
+            pip_result_target_label(&result).as_deref(),
+            Some("Calculator")
+        );
+    }
+
+    #[test]
+    fn agent_view_falls_back_to_the_quoted_tree_root_label() {
+        let result = ToolResult::text("state").with_structured(serde_json::json!({
+            "tree_markdown": "- frame = \"Terminal - project\"\n  - menu = \"File\""
+        }));
+        assert_eq!(
+            pip_result_target_label(&result).as_deref(),
+            Some("Terminal - project")
+        );
     }
 
     #[test]

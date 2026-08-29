@@ -8,11 +8,11 @@
   </head>
   <body>
     <main class="shell" data-tauri-drag-region>
-      <div class="ambient ambient-one"></div>
-      <div class="ambient ambient-two"></div>
       <nav id="sessions" class="sessions" aria-label="Agent sessions"></nav>
       <section id="stage" class="stage" aria-live="polite">
-        <div class="empty-state">
+        <!-- The empty state is a persistent node toggled with `hidden`, so the
+             shell never repaints from an empty stage while cards hydrate. -->
+        <div id="empty" class="empty-state">
           <div class="empty-orbit"><span></span></div>
           <strong>Agent View</strong>
           <p>Used windows and tabs will appear here.</p>

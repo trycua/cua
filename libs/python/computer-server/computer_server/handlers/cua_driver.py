@@ -260,6 +260,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             "session": state.session,
             "capture_scope": cls._enum_name(state.capture_scope),
             "effective_scope": cls._enum_name(state.effective_scope),
+            "desktop_capture_authorized": state.desktop_capture_authorized,
             "desktop_unlocked": state.desktop_unlocked,
             "escalation_reason": cls._enum_name(state.escalation_reason),
             "escalation_detail": state.escalation_detail,

@@ -2814,6 +2814,7 @@ mod tests {
                     "session": "run-2",
                     "capture_scope": "auto",
                     "effective_scope": "window",
+                    "desktop_capture_authorized": false,
                     "desktop_unlocked": false,
                     "escalation_reason": null,
                     "escalation_detail": null,

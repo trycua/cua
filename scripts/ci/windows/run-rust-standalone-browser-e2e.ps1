@@ -305,6 +305,13 @@ $restrictedBrowserTests = @(
 $runRestricted = Test-IsAdministrator
 if ($runRestricted) {
     Write-Host "Administrator token detected; platform-selected browser tests will use Windows trust level 0x20000"
+    $testBuildExit = Invoke-CargoStep -Name "standalone browser test executable" -Arguments @(
+        "test", "--release", "-p", "cua-driver",
+        "--test", "standalone_browser_behavior_test", "--no-run"
+    ) -LogPath (Join-Path $artifactDir "build-standalone-browser-test.log")
+    if ($testBuildExit -ne 0) {
+        throw "standalone browser test executable build failed with exit code $testBuildExit"
+    }
 }
 $failureCount = 0
 foreach ($testName in $tests) {

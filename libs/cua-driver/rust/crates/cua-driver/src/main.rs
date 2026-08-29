@@ -456,22 +456,6 @@ mod mcp_runtime_selection_tests {
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
-fn continue_permission_probes_until_granted() {
-    let result = std::thread::Builder::new()
-        .name("cua-permission-monitor".into())
-        .spawn(|| loop {
-            if platform_macos::permissions::gate::check_required_permissions().is_empty() {
-                serve::set_permission_gate_pending(false);
-                return;
-            }
-            std::thread::sleep(std::time::Duration::from_secs(5));
-        });
-    if let Err(error) = result {
-        eprintln!("[cua-driver] cannot start permission monitor: {error}");
-    }
-}
-
-#[cfg(target_os = "macos")]
 fn main() {
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
@@ -699,8 +683,6 @@ fn main() {
             );
             if gate_result.is_ok() {
                 serve::set_permission_gate_pending(false);
-            } else {
-                continue_permission_probes_until_granted();
             }
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
@@ -719,8 +701,8 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] desktop tool calls remain gated until a fresh probe confirms \
-                     Accessibility and Screen Recording permissions."
+                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
+                     Screen Recording permissions, then restart the daemon."
                 );
             }
 

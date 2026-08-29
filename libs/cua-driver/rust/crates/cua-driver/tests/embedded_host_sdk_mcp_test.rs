@@ -60,11 +60,6 @@ fn write_test_shell_script(path: &std::path::Path, body: &str) {
             })
         })
         .expect("test environment must provide a shell");
-    // Write in a separate process. If this multithreaded test process opens the
-    // future executable for writing, a concurrent spawn can inherit that file
-    // descriptor before its exec closes CLOEXEC descriptors. Linux then rejects
-    // this fixture's exec with ETXTBSY while that short-lived child still holds
-    // the inherited writer.
     let script = format!("#!{}\n{body}\n", shell.display());
     let status = std::process::Command::new(&shell)
         .args([

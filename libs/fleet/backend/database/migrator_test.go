@@ -521,8 +521,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 9 {
-		t.Fatalf("expected exactly nine migrations, got %d", len(files))
+	if len(files) != 10 {
+		t.Fatalf("expected exactly ten migrations, got %d", len(files))
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -710,6 +710,21 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if remaining := strings.Trim(quotedLabel.ReplaceAllString(predicate[1], ""), " \t\r\n,"); remaining != "" {
 		t.Fatalf("version 9 filtered tenant predicate contains non-label content %q", remaining)
 	}
+	billingMeterAccess := files[9]
+	if billingMeterAccess.Version != 10 || billingMeterAccess.Name != "000010_grant_metabase_billing_meter_access.sql" {
+		t.Fatalf("expected version 10 Metabase billing meter access migration, got version=%d name=%q", billingMeterAccess.Version, billingMeterAccess.Name)
+	}
+	for _, expected := range []string{
+		"SET LOCAL ROLE billing_meter_owner",
+		"GRANT USAGE ON SCHEMA billing_meter TO k8s_metabase",
+		"GRANT SELECT ON ALL TABLES IN SCHEMA billing_meter TO k8s_metabase",
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA billing_meter GRANT SELECT ON TABLES TO k8s_metabase",
+	} {
+		if !strings.Contains(billingMeterAccess.SQL, expected) {
+			t.Errorf("Metabase billing meter access migration is missing contract %q", expected)
+		}
+	}
+
 }
 
 func TestReservationMeterMigrationRetainsRecordedChecksum(t *testing.T) {

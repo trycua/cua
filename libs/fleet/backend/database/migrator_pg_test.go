@@ -105,6 +105,7 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "billing_meter_owner", bootstrapGrantor)
 	assertNoQueryBroker(t, ctx, migrationURL)
 	assertOwnershipAndPublicACLs(t, ctx, inspectionURL, currentRole(t, ctx, migrationURL))
+	assertMetabaseBillingMeterAccess(t, ctx, migrationURL, credentials.Metabase)
 	assertRLSContract(t, ctx, inspectionURL)
 	assertSecurityDefinerContract(t, ctx, inspectionURL)
 	assertRuntimeLedgerAccess(t, ctx, credentials)
@@ -190,14 +191,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 9 || upgrade.Pending != 8 || upgrade.Applied != 8 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 10 || upgrade.Pending != 9 || upgrade.Applied != 9 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 9 || noOp.Target != 9 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 9 || noOp.Result != "success" {
+	if noOp.Current != 10 || noOp.Target != 10 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 10 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1593,8 +1594,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 9 {
-		t.Fatalf("migration ledger row count = %d, want 9", len(ledger))
+	if len(ledger) != 10 {
+		t.Fatalf("migration ledger row count = %d, want 10", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1609,6 +1610,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{7, "000007_metabase_hourly_reservation_usage.sql"},
 		{8, "000008_metabase_hourly_reservation_usage_excluding_tenants.sql"},
 		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
+		{10, "000010_grant_metabase_billing_meter_access.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1887,6 +1889,65 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	}
 }
 
+func assertMetabaseBillingMeterAccess(t *testing.T, ctx context.Context, adminURL, metabaseURL string) {
+	t.Helper()
+	admin := connect(t, ctx, adminURL)
+	defer admin.Close(ctx)
+
+	rows, err := admin.Query(ctx, `
+		select relation.relname
+		from pg_class relation
+		join pg_namespace namespace on namespace.oid = relation.relnamespace
+		where namespace.nspname = 'billing_meter'
+		  and relation.relkind in ('r', 'p', 'v', 'm', 'f')
+		order by relation.relname`)
+	if err != nil {
+		t.Fatal("list billing meter relations")
+	}
+	var relations []string
+	for rows.Next() {
+		var relation string
+		if err := rows.Scan(&relation); err != nil {
+			rows.Close()
+			t.Fatal("scan billing meter relation")
+		}
+		relations = append(relations, relation)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("iterate billing meter relations: %v", err)
+	}
+	rows.Close()
+	if len(relations) == 0 {
+		t.Fatal("expected billing meter relations")
+	}
+
+	metabase := connect(t, ctx, metabaseURL)
+	defer metabase.Close(ctx)
+	for _, relation := range relations {
+		query := "select 1 from " + pgx.Identifier{"billing_meter", relation}.Sanitize() + " limit 1"
+		if _, err := metabase.Exec(ctx, query); err != nil {
+			t.Errorf("Metabase cannot select billing_meter.%s: %v", relation, err)
+		}
+	}
+
+	const futureRelation = "metabase_default_privilege_probe"
+	if _, err := admin.Exec(ctx, `
+		set role billing_meter_owner;
+		drop table if exists billing_meter.metabase_default_privilege_probe;
+		create table billing_meter.metabase_default_privilege_probe (id integer);
+		reset role`); err != nil {
+		t.Fatal("create billing meter default privilege probe")
+	}
+	query := "select 1 from " + pgx.Identifier{"billing_meter", futureRelation}.Sanitize() + " limit 1"
+	if _, err := metabase.Exec(ctx, query); err != nil {
+		t.Fatalf("Metabase cannot select future billing meter table: %v", err)
+	}
+	if _, err := admin.Exec(ctx, `set role billing_meter_owner; drop table billing_meter.metabase_default_privilege_probe; reset role`); err != nil {
+		t.Fatalf("drop billing meter default privilege probe: %v", err)
+	}
+}
+
 func assertRLSContract(t *testing.T, ctx context.Context, adminURL string) {
 	t.Helper()
 	connection := connect(t, ctx, adminURL)
@@ -1943,7 +2004,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 9 {
+		if err != nil || count != 10 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
@@ -2434,6 +2495,11 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 				('schema:billing_meter', 'USAGE', 'k8s_reporting_owner', 'billing_meter_owner', false),
 				('relation:billing_meter.reservation_hour_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
 				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
+				('schema:billing_meter', 'USAGE', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_collection', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_fact', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_current', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
 				('relation:k8s_reporting.hourly_reservation_usage', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),

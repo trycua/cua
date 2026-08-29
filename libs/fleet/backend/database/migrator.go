@@ -790,6 +790,11 @@ func expectedReportingACLs() []reportingACL {
 		{object: reportingObject{kind: reportingObjectSchema, schema: "billing_meter"}, owner: "billing_meter_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_collection_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_reporting_owner", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectSchema, schema: "billing_meter"}, owner: "billing_meter_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_collection"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_fact"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
+		{object: reportingObject{kind: reportingObjectRelation, schema: "billing_meter", name: "reservation_hour_collection_current"}, owner: "billing_meter_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "billing_meter_owner"},
 		{object: reportingObject{kind: reportingObjectSchema, schema: "k8s_reporting"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeUsage, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "current_resources"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
 		{object: reportingObject{kind: reportingObjectRelation, schema: "k8s_reporting", name: "hourly_reservation_usage"}, owner: "k8s_reporting_owner", privilege: reportingPrivilegeSelect, grantee: "k8s_metabase", grantor: "k8s_reporting_owner"},
@@ -849,7 +854,7 @@ func isSafeReportingACLAuthority(acl reportingACL, migrationOwner string) bool {
 	if acl.grantor != acl.owner {
 		return false
 	}
-	return acl.owner == migrationOwner || acl.owner == "k8s_state_owner" || acl.owner == "k8s_reporting_owner"
+	return acl.owner == migrationOwner || acl.owner == "k8s_state_owner" || acl.owner == "k8s_reporting_owner" || acl.owner == "billing_meter_owner"
 }
 
 func validateNoPublicSecurityDefiner(ctx context.Context, transaction pgx.Tx) error {

@@ -2451,16 +2451,13 @@ fn run_prepare_isolated_launch() {
     );
 }
 
-fn run_prepare_automation_exposure() {
+fn run_prepare_automation_postures(action: &'static str, postures: &[(&'static str, bool)]) {
     let scenario = format!(
-        "{}-platform-selected-chromium-standalone-prepare-automation-exposure",
-        std::env::consts::OS
+        "{}-platform-selected-chromium-standalone-{action}",
+        std::env::consts::OS,
     );
     execute_case(
-        foreground_page_case(
-            "platform-selected-chromium",
-            "browser_prepare_automation_exposure",
-        ),
+        foreground_page_case("platform-selected-chromium", action),
         |evidence| {
             let target_server = BrowserFixtureServer::start(&standalone_automation_exposure_html());
             let driver_profiles = driver_profile_root();
@@ -2469,9 +2466,7 @@ fn run_prepare_automation_exposure() {
             *evidence = recording_evidence(driver.recording_dir());
             driver.start_behavior_recording();
 
-            for (posture, expected_exposure) in
-                [("standard", true), ("driver_selected_port", false)]
-            {
+            for &(posture, expected_exposure) in postures {
                 let session = format!("standalone-prepare-automation-platform-selected-{posture}");
                 let started =
                     driver.call("start_session", serde_json::json!({ "session": session }));
@@ -2575,6 +2570,20 @@ fn run_prepare_automation_exposure() {
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
+    );
+}
+
+fn run_prepare_automation_exposure() {
+    run_prepare_automation_postures(
+        "browser_prepare_automation_exposure",
+        &[("standard", true), ("driver_selected_port", false)],
+    );
+}
+
+fn run_prepare_driver_selected_port() {
+    run_prepare_automation_postures(
+        "browser_prepare_driver_selected_port",
+        &[("driver_selected_port", false)],
     );
 }
 
@@ -5012,6 +5021,12 @@ fn standalone_browser_prepare_isolated() {
 #[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
 fn standalone_browser_prepare_automation_exposure() {
     run_platform_selected_browser_scenario(run_prepare_automation_exposure);
+}
+
+#[test]
+#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
+fn standalone_browser_prepare_driver_selected_port() {
+    run_platform_selected_browser_scenario(run_prepare_driver_selected_port);
 }
 #[cfg(not(target_os = "macos"))]
 standalone_browser_test!(

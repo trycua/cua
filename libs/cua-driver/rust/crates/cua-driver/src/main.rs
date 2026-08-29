@@ -223,13 +223,27 @@ fn run_cursor_theme_command(args: &[String]) -> ! {
 /// per-call binaries don't keep an AppKit/event loop alive long
 /// enough to be useful).
 ///
-fn maybe_init_pip() -> bool {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AgentViewRuntime {
+    Unavailable,
+    TauriCompanion,
+    NativeFallback,
+}
+
+impl AgentViewRuntime {
+    #[cfg(target_os = "macos")]
+    fn requires_appkit_main_loop(self) -> bool {
+        self == Self::NativeFallback
+    }
+}
+
+fn maybe_init_pip() -> AgentViewRuntime {
     let cfg = match pip_preview::default_config_path() {
         Some(p) => pip_preview::PipConfig::from_args_and_file(&p),
         None => pip_preview::PipConfig::from_args(),
     };
     if !cfg.enabled {
-        return false;
+        return AgentViewRuntime::Unavailable;
     }
 
     // AppKit's shared application registration aborts the process when the
@@ -240,19 +254,35 @@ fn maybe_init_pip() -> bool {
     #[cfg(target_os = "macos")]
     if !platform_macos::session::has_graphic_access() {
         eprintln!("⚗️  Agent View requested but unavailable: no Window Server graphic session");
-        return false;
+        return AgentViewRuntime::Unavailable;
     }
 
-    // Register the platform factory. The set is idempotent so multiple
-    // entry points calling this in the same process is safe.
-    #[cfg(target_os = "macos")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_macos::pip::MacosPipBackendFactory));
-    #[cfg(target_os = "windows")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_windows::pip::WindowsPipBackendFactory));
-    #[cfg(target_os = "linux")]
-    pip_preview::set_pip_backend_factory(Box::new(platform_linux::pip::LinuxPipBackendFactory));
+    let (backend, runtime) = match pip_preview::start_tauri_companion(&cfg) {
+        Ok(backend) => (Ok(backend), AgentViewRuntime::TauriCompanion),
+        Err(companion_error) => {
+            tracing::info!(%companion_error, "Tauri Agent View unavailable; using native migration fallback");
+            // Register the temporary native fallback. The set is idempotent so
+            // multiple entry points calling this in the same process is safe.
+            #[cfg(target_os = "macos")]
+            pip_preview::set_pip_backend_factory(Box::new(
+                platform_macos::pip::MacosPipBackendFactory,
+            ));
+            #[cfg(target_os = "windows")]
+            pip_preview::set_pip_backend_factory(Box::new(
+                platform_windows::pip::WindowsPipBackendFactory,
+            ));
+            #[cfg(target_os = "linux")]
+            pip_preview::set_pip_backend_factory(Box::new(
+                platform_linux::pip::LinuxPipBackendFactory,
+            ));
+            (
+                pip_preview::start_pip(&cfg),
+                AgentViewRuntime::NativeFallback,
+            )
+        }
+    };
 
-    match pip_preview::start_pip(&cfg) {
+    match backend {
         Ok(backend) => {
             // Bridge: when the tool dispatcher in cua-driver-core wants
             // to push a frame, forward to the live backend handle.
@@ -320,12 +350,20 @@ fn maybe_init_pip() -> bool {
             cua_driver_core::session::register_session_end_hook(|workspace_id| {
                 cua_driver_core::pip_hook::remove_pip_workspace(workspace_id);
             });
-            eprintln!("⚗️  Agent View enabled (native macOS, Windows, and Linux presentation)");
-            true
+            match runtime {
+                AgentViewRuntime::TauriCompanion => {
+                    eprintln!("⚗️  Agent View enabled (Tauri companion)")
+                }
+                AgentViewRuntime::NativeFallback => {
+                    eprintln!("⚗️  Agent View enabled (native migration fallback)")
+                }
+                AgentViewRuntime::Unavailable => {}
+            }
+            runtime
         }
         Err(e) => {
             eprintln!("⚗️  Agent View requested but unavailable: {e}");
-            false
+            AgentViewRuntime::Unavailable
         }
     }
 }
@@ -428,13 +466,13 @@ enum MacosMainLoopHost {
 }
 
 #[cfg(target_os = "macos")]
-fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> MacosMainLoopHost {
+fn macos_main_loop_host(cursor_enabled: bool, native_agent_view: bool) -> MacosMainLoopHost {
     if cursor_enabled {
         // The cursor host also owns NSApplication's main run loop. Agent View
         // posts its window updates to that same queue, so both surfaces can
         // coexist without leaving cursor animations waiting forever.
         MacosMainLoopHost::CursorOverlay
-    } else if agent_view_enabled {
+    } else if native_agent_view {
         MacosMainLoopHost::AgentView
     } else {
         MacosMainLoopHost::ServeThread
@@ -697,7 +735,7 @@ fn main() {
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
             version_check::maybe_announce_update();
-            let pip_available = maybe_init_pip();
+            let agent_view_runtime = maybe_init_pip();
 
             // Agent-cursor overlay. The DAEMON is the process that actually
             // performs clicks / AX presses, so the overlay NSWindow + render
@@ -808,7 +846,10 @@ fn main() {
             // When both are enabled, the cursor host must drain its command
             // receiver as well as NSApplication events; the Agent View-only
             // loop would leave cursor-bearing actions waiting indefinitely.
-            match macos_main_loop_host(cursor_cfg.enabled, pip_available) {
+            match macos_main_loop_host(
+                cursor_cfg.enabled,
+                agent_view_runtime.requires_appkit_main_loop(),
+            ) {
                 MacosMainLoopHost::CursorOverlay => {
                     // `run_on_main_thread` self-guards on graphic-session
                     // access. If it returns, keep the daemon alive by joining

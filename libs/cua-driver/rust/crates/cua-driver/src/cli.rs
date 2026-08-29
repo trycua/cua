@@ -661,9 +661,14 @@ pub fn parse_command() -> Command {
             "                              presentation only; no claim/release API is involved."
         );
         println!(
-            "                              Native presentation is available on macOS, Windows,"
+            "                              A shared Tauri companion presents the view on macOS,"
         );
-        println!("                              and Linux (X11/XWayland).");
+        println!(
+            "                              Windows, X11, and Wayland; source builds temporarily"
+        );
+        println!(
+            "                              fall back to the native renderer when it is absent."
+        );
         println!("  --no-agent-view             Disable Agent View, including a persisted enable.");
         println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
         println!("                                          origin). Defaults to 640x420 in the top-right");

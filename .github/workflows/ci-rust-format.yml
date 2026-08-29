@@ -3,11 +3,13 @@ name: "CI: Rust format"
 on:
   pull_request:
     paths:
+      - "libs/cua-driver/agent-view-tauri/**"
       - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-rust-format.yml"
   push:
     branches: [main]
     paths:
+      - "libs/cua-driver/agent-view-tauri/**"
       - "libs/cua-driver/rust/**"
       - ".github/workflows/ci-rust-format.yml"
   workflow_dispatch:
@@ -37,3 +39,6 @@ jobs:
       - name: Check Rust formatting
         working-directory: libs/cua-driver/rust
         run: cargo fmt --all -- --check
+      - name: Check Agent View Rust formatting
+        working-directory: libs/cua-driver/agent-view-tauri/src-tauri
+        run: cargo fmt -- --check

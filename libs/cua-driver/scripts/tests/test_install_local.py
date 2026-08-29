@@ -31,6 +31,17 @@ def test_local_installers_stage_the_canonical_skill_pack() -> None:
     }
 
 
+def test_local_installers_build_and_stage_agent_view_companion() -> None:
+    unix = INSTALL_LOCAL.read_text(encoding="utf-8")
+    windows = WINDOWS_INSTALL_LOCAL.read_text(encoding="utf-8")
+
+    assert 'agent-view-tauri/src-tauri/Cargo.toml' in unix
+    assert 'stage_binary "$BUILT_AGENT_VIEW_BINARY" "$VERSIONED_DIR/cua-agent-view"' in unix
+    assert 'cp "$VERSIONED_DIR/cua-agent-view" "$APP_STAGE/Contents/MacOS/cua-agent-view"' in unix
+    assert 'agent-view-tauri\\src-tauri\\Cargo.toml' in windows
+    assert 'Copy-Item -LiteralPath $BuiltAgentViewBinary' in windows
+
+
 def _write_executable(path: Path, body: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
@@ -141,8 +152,10 @@ test "$CARGO_TARGET_DIR" = "$EXPECTED_CARGO_TARGET_DIR"
 mkdir -p "$CARGO_TARGET_DIR/release"
 printf 'fresh custom target\n' > "$CARGO_TARGET_DIR/release/cua-driver"
 printf 'fresh cursor theme compiler\n' > "$CARGO_TARGET_DIR/release/cua-cursor-theme"
+printf 'fresh agent view companion\n' > "$CARGO_TARGET_DIR/release/cua-agent-view"
 chmod +x "$CARGO_TARGET_DIR/release/cua-driver"
 chmod +x "$CARGO_TARGET_DIR/release/cua-cursor-theme"
+chmod +x "$CARGO_TARGET_DIR/release/cua-agent-view"
 """,
     )
     _write_executable(
@@ -197,6 +210,9 @@ esac
         local_home / "packages/current/cua-cursor-theme"
     ).read_text() == "fresh cursor theme compiler\n"
     assert (
+        local_home / "packages/current/cua-agent-view"
+    ).read_text() == "fresh agent view companion\n"
+    assert (
         local_home / "packages/current/wayland-helper/winrects@cua/metadata.json"
     ).read_text() == '{"version":5}\n'
     assert (installed_helper / "metadata.json").read_text() == '{"version":5}\n'
@@ -220,8 +236,10 @@ def _linux_fixture(tmp_path: Path) -> tuple[Path, Path, dict[str, str]]:
 mkdir -p "$CARGO_TARGET_DIR/debug"
 printf 'fresh driver\n' > "$CARGO_TARGET_DIR/debug/cua-driver"
 printf 'fresh cursor theme compiler\n' > "$CARGO_TARGET_DIR/debug/cua-cursor-theme"
+printf 'fresh agent view companion\n' > "$CARGO_TARGET_DIR/debug/cua-agent-view"
 chmod +x "$CARGO_TARGET_DIR/debug/cua-driver"
 chmod +x "$CARGO_TARGET_DIR/debug/cua-cursor-theme"
+chmod +x "$CARGO_TARGET_DIR/debug/cua-agent-view"
 """,
     )
     _write_executable(

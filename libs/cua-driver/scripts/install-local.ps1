@@ -61,10 +61,12 @@ $ScriptDir   = Split-Path -Parent $MyInvocation.MyCommand.Path
 # libs/cua-driver/scripts/; the Cargo workspace lives one level deeper
 # under libs/cua-driver/rust/.
 $RepoRoot    = (Resolve-Path "$ScriptDir\..\rust").Path
+$AgentViewManifest = Join-Path (Split-Path -Parent $RepoRoot) "agent-view-tauri\src-tauri\Cargo.toml"
 $BinaryName  = "cua-driver-local.exe"
 $BuiltBinaryName = "cua-driver.exe"
 $UiaBinaryName = "cua-driver-uia-local.exe"
 $ThemeBinaryName = "cua-cursor-theme.exe"
+$AgentViewBinaryName = "cua-agent-view.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
 
@@ -184,7 +186,7 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 # ---------- Build ----------------------------------------------------------
 
-Write-Step "cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli"
+Write-Step "cargo build --release for Cua Driver and the Tauri Agent View companion"
 Push-Location $RepoRoot
 try {
     # Windows PowerShell 5.1 promotes native stderr into ErrorRecord objects.
@@ -195,6 +197,10 @@ try {
     try {
         & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
         $buildExit = $LASTEXITCODE
+        if ($buildExit -eq 0) {
+            & cargo build --release --manifest-path $AgentViewManifest --target-dir (Join-Path $RepoRoot "target")
+            $buildExit = $LASTEXITCODE
+        }
     }
     finally {
         $ErrorActionPreference = $previousPreference
@@ -210,12 +216,17 @@ finally {
 $BuiltBinary = Join-Path $RepoRoot "target\$Config\$BuiltBinaryName"
 $BuiltUiaBinary = Join-Path $RepoRoot "target\$Config\cua-driver-uia.exe"
 $BuiltThemeBinary = Join-Path $RepoRoot "target\$Config\$ThemeBinaryName"
+$BuiltAgentViewBinary = Join-Path $RepoRoot "target\$Config\$AgentViewBinaryName"
 if (-not (Test-Path -LiteralPath $BuiltBinary)) {
     Write-Host "Error: build produced no binary at $BuiltBinary" -ForegroundColor Red
     exit 1
 }
 if (-not (Test-Path -LiteralPath $BuiltThemeBinary)) {
     Write-Host "Error: build produced no cursor-theme compiler at $BuiltThemeBinary" -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path -LiteralPath $BuiltAgentViewBinary)) {
+    Write-Host "Error: build produced no Agent View companion at $BuiltAgentViewBinary" -ForegroundColor Red
     exit 1
 }
 
@@ -261,6 +272,7 @@ Write-Step "staging into $VersionedDir"
 New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
 Copy-Item -LiteralPath $BuiltThemeBinary -Destination (Join-Path $VersionedDir $ThemeBinaryName) -Force
+Copy-Item -LiteralPath $BuiltAgentViewBinary -Destination (Join-Path $VersionedDir $AgentViewBinaryName) -Force
 $DestUiaBinary = Join-Path $VersionedDir $UiaBinaryName
 if (Test-Path -LiteralPath $BuiltUiaBinary) {
     Copy-Item -LiteralPath $BuiltUiaBinary -Destination $DestUiaBinary -Force

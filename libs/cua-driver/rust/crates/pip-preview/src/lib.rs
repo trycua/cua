@@ -5,21 +5,26 @@
 //! window or browser-tab identity. Platform backends can therefore keep
 //! several target cards visible without introducing target claims or leases.
 //!
-//! Native backends render the shared model on macOS, Windows, and Linux
-//! X11/XWayland while keeping platform-specific window-system code isolated.
-
-use std::sync::OnceLock;
+//! The preferred Tauri companion renders the shared model through a private
+//! process protocol. Native macOS, Windows, and Linux backends remain a
+//! temporary migration fallback while release packaging reaches parity.
 
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+use base64::Engine;
+use serde::{Deserialize, Serialize};
 
 mod desktop_layout;
 mod session_tabs;
+mod tauri_backend;
 
 pub use desktop_layout::{
     layout_desktop, layout_desktop_with_shell, png_dimensions, DesktopLayout, LayoutRect,
     ShellStyle, TargetLayout, TargetSize,
 };
 pub use session_tabs::{layout_session_tabs, session_accent, SessionTab, SessionTabsLayout};
+pub use tauri_backend::{companion_binary_candidates, start_tauri_companion};
 
 pub const AGENT_VIEW_DEFAULT_ENABLED: bool = false;
 
@@ -104,7 +109,7 @@ pub fn read_agent_view_keys_from_file() -> (bool, Option<String>) {
 /// optional; when `None` the platform backend picks a sensible
 /// "top-right corner with a small inset" default so a user enabling
 /// the feature without any geometry flags still sees a window.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PipGeometry {
     pub width: u32,
     pub height: u32,
@@ -265,7 +270,8 @@ impl PipConfig {
 }
 
 /// The exact surface represented by an Agent View card.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum PipTargetKind {
     NativeWindow,
     BrowserTab,
@@ -281,7 +287,7 @@ impl PipTargetKind {
 }
 
 /// Stable target metadata used to group frames in the Agent View.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PipTarget {
     /// Runtime-unique session key. This is grouping metadata, not an ownership
     /// or authorization claim.
@@ -313,7 +319,7 @@ fn view_id(workspace_id: &str, identity_key: &str) -> String {
     format!("{}:{workspace_id}{identity_key}", workspace_id.len())
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct PipNativeContainer {
     pub pid: i64,
     pub window_id: u64,
@@ -337,6 +343,78 @@ pub struct PipFrame {
     pub timestamp_ms: u64,
     /// Normalized location of the synthetic agent pointer within the target image.
     pub cursor_position: Option<(f64, f64)>,
+}
+
+/// Private process protocol used by the Tauri Agent View companion.
+///
+/// This protocol is not part of the CLI, MCP, SDK, or generated contract. The
+/// driver and its sibling companion ship together and evolve it in lockstep.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum AgentViewCommand {
+    Configure {
+        request_id: u64,
+        title: String,
+        geometry: PipGeometry,
+    },
+    Upsert {
+        request_id: u64,
+        frame: AgentViewFrame,
+    },
+    RemoveTarget {
+        workspace_id: String,
+        identity_key: String,
+    },
+    RemoveWorkspace {
+        workspace_id: String,
+    },
+    SetInputPassthrough {
+        request_id: u64,
+        passthrough: bool,
+    },
+    Shutdown,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentViewFrame {
+    pub target: PipTarget,
+    pub png_base64: String,
+    pub action_label: String,
+    pub timestamp_ms: u64,
+    pub cursor_position: Option<(f64, f64)>,
+}
+
+impl From<PipFrame> for AgentViewFrame {
+    fn from(frame: PipFrame) -> Self {
+        Self {
+            target: frame.target,
+            png_base64: base64::engine::general_purpose::STANDARD.encode(frame.png_bytes),
+            action_label: frame.action_label,
+            timestamp_ms: frame.timestamp_ms,
+            cursor_position: frame.cursor_position,
+        }
+    }
+}
+
+impl AgentViewFrame {
+    pub fn into_pip_frame(self) -> anyhow::Result<PipFrame> {
+        Ok(PipFrame {
+            target: self.target,
+            png_bytes: base64::engine::general_purpose::STANDARD
+                .decode(self.png_base64)
+                .map_err(|error| anyhow::anyhow!("invalid Agent View PNG payload: {error}"))?,
+            action_label: self.action_label,
+            timestamp_ms: self.timestamp_ms,
+            cursor_position: self.cursor_position,
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct AgentViewAck {
+    pub request_id: u64,
+    pub ok: bool,
+    pub error: Option<String>,
 }
 
 /// Platform-neutral latest-frame model with bounded target retention.

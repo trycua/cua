@@ -16,14 +16,14 @@ daemon invocation.
 
 Use `--agent-view-geometry WxH[+X+Y]` to override its initial size and optional
 top-left position. The default is `640x420` near the top-right of the main
-display. The view is resizable on macOS, Windows, and Linux X11/XWayland.
-Pure Wayland uses a native top-right layer surface when the compositor exposes
-`zwlr_layer_shell_v1`; its position and size are compositor-managed. GNOME
-sessions without layer-shell use the supported XWayland presentation path. A
-pure layer-shell view remains click-through and follows the most-recent session;
-local tab selection, dragging, and manual resizing require the X11/XWayland
-window path because standard Wayland does not expose those global window
-management operations to clients.
+display.
+
+The preferred presentation is the sibling `cua-agent-view` Tauri companion.
+It owns the always-on-top window and renders the same session/target model on
+macOS, Windows, X11, and Wayland. During migration, Cua Driver falls back to the
+existing native renderer when the matching companion is absent or cannot
+initialize. This fallback keeps older source builds and packages usable; it is
+not a separate public mode or contract.
 
 ## Session model
 
@@ -32,9 +32,9 @@ management operations to clients.
   same window; the tab strip is hidden when only one session has cards.
 - Until a person selects a session locally, Agent View follows the session with
   the most recent exact target activity.
-- When multiple sessions have cards, the native Agent View window exposes a
-  local session switcher. Selecting a session pins the view there until that
-  session ends or is removed. There is no agent-facing selection tool.
+- When multiple sessions have cards, Agent View exposes a local session
+  switcher. Selecting a session pins the view there until that session ends or
+  is removed. There is no agent-facing selection tool.
 - Public session names are display labels only. The private runtime session ID
   remains the isolation identity, so equal labels never combine sessions.
 - Ending, disconnecting, revoking, or idle-expiring a session removes its cards.
@@ -77,3 +77,9 @@ Agent View uses the existing daemon flag, geometry option, runtime sessions,
 and exact target arguments. This session-oriented behavior does not introduce
 new MCP tools, CLI flags, SDK types, capability IDs, claim tokens, or public
 target/session fields.
+
+The driver and Tauri companion communicate through a private newline-delimited
+JSON stream over the companion's stdin/stdout. It is local to the daemon-owned
+child process, does not open a port, and is intentionally excluded from the
+generated public contract. The stream carries presentation-only frame upserts,
+target/session removals, and synchronous input-passthrough acknowledgements.

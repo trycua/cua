@@ -1,0 +1,683 @@
+:root {
+  color-scheme: light dark;
+  font-family: -apple-system, "SF Pro Text", "Segoe UI Variable", "Noto Sans", sans-serif;
+  /* Blue-gray clear acrylic: an explicit, diffused copy of the host wallpaper
+     continues through the shell without exposing whichever app sits behind it. */
+  --shell: rgba(150, 190, 222, 0.42);
+  --shell-tint-top: rgba(214, 232, 246, 0.22);
+  --shell-tint-bottom: rgba(140, 170, 198, 0.16);
+  --shell-edge: rgba(255, 255, 255, 0.88);
+  --shell-edge-inner: rgba(255, 255, 255, 0.22);
+  --ink: #1b2836;
+  --muted: rgba(27, 40, 54, 0.55);
+  --ring: rgba(92, 196, 255, 1);
+  --ring-soft: rgba(110, 200, 255, 0.5);
+  --ring-halo: rgba(90, 180, 255, 0.4);
+  --card: rgba(216, 232, 246, 0.34);
+  --card-edge: rgba(255, 255, 255, 0.5);
+  --slot: rgba(212, 226, 240, 0.4);
+  --shell-radius: 32px;
+  --card-radius: 18px;
+  --card-inset: 7px;
+  --head-h: 0px;
+  --pad: 44px;
+  --gap: 28px;
+  /* Window-preview sizing: each card takes its screenshot's own aspect ratio.
+     Width is the smaller of the column width and the height budget scaled by
+     that ratio, so portrait and landscape shots both get a snug frame. */
+  --card-col-1: min(100%, 760px);
+  --card-col-2: calc(50% - var(--gap) / 2);
+  --card-col-3: calc(33.333% - var(--gap) * 2 / 3);
+  --card-max-h-1: 66vh;
+  --card-max-h-2: 56vh;
+  --card-max-h-few: 40vh;
+  --card-max-h-many: 32vh;
+  --wallpaper-image: none;
+}
+
+* {
+  box-sizing: border-box;
+  user-select: none;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+  background: transparent;
+  color: var(--ink);
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  padding: var(--pad);
+  overflow: hidden;
+  border: 1px solid var(--shell-edge);
+  border-radius: var(--shell-radius);
+  background: var(--shell);
+  box-shadow:
+    inset 0 0 0 1px var(--shell-edge-inner),
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 0 60px rgba(255, 255, 255, 0.1),
+    0 0 0 0.5px rgba(255, 255, 255, 0.5),
+    0 0 14px rgba(255, 255, 255, 0.28),
+    0 26px 64px rgba(10, 24, 42, 0.26);
+  backdrop-filter: blur(56px) saturate(125%);
+  -webkit-backdrop-filter: blur(56px) saturate(125%);
+}
+
+/* Keep the host wallpaper continuous inside the shell. This is an explicit
+   background layer because WKWebView cannot sample the desktop through a
+   transparent native window. */
+.shell::before {
+  content: "";
+  position: absolute;
+  inset: -48px;
+  z-index: 0;
+  background-image: var(--wallpaper-image);
+  background-position: center;
+  background-size: cover;
+  filter: blur(36px) saturate(105%);
+  transform: scale(1.04);
+  pointer-events: none;
+}
+
+/* The restrained blue wash turns the wallpaper into clear acrylic while
+   preserving enough detail to match the journey concept. */
+.shell::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  background: linear-gradient(180deg, var(--shell-tint-top), var(--shell-tint-bottom));
+  pointer-events: none;
+}
+
+.sessions {
+  position: relative;
+  z-index: 3;
+  display: none;
+  flex: none;
+  gap: 6px;
+  height: 26px;
+  margin: -6px 0 12px;
+}
+
+.sessions.visible {
+  display: flex;
+}
+
+.session-tab {
+  min-width: 0;
+  max-width: 160px;
+  padding: 3px 10px;
+  overflow: hidden;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.14);
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.session-tab.selected {
+  background: rgba(255, 255, 255, 0.42);
+  color: var(--ink);
+}
+
+/* The stage is a miniature desktop: cards flow from the top-left in MRU order
+   with fixed maximum sizes and generous empty canvas around them. */
+.stage {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-content: flex-start;
+  align-items: flex-start;
+  gap: var(--gap);
+  min-height: 0;
+}
+
+.stage.count-1 .target-card {
+  --col: var(--card-col-1);
+  --max-h: var(--card-max-h-1);
+}
+
+.stage.count-2 .target-card {
+  --col: var(--card-col-2);
+  --max-h: var(--card-max-h-2);
+}
+
+/* Three or four targets sit in a relaxed 2-up grid, like the PDF. */
+.stage.count-few .target-card {
+  --col: var(--card-col-2);
+  --max-h: var(--card-max-h-few);
+}
+
+.stage.count-many .target-card {
+  --col: var(--card-col-3);
+  --max-h: var(--card-max-h-many);
+}
+
+/* Each card is a floating window preview: the screenshot with a narrow clear
+   acrylic frame and no visible caption. Its size derives from the screenshot's
+   own ratio, so there are never wide opaque gutters around a portrait shot.
+   The slot is always painted so the host desktop never shows through while an
+   image is still decoding. */
+.target-card {
+  --ar: 4 / 3;
+  position: relative;
+  display: block;
+  flex: none;
+  width: min(var(--col), calc((var(--max-h) - var(--head-h)) * var(--ar)));
+  min-width: 0;
+  padding: var(--card-inset);
+  overflow: hidden;
+  border: 1px solid var(--card-edge);
+  border-radius: var(--card-radius);
+  background: var(--card);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 14px 34px rgba(14, 30, 50, 0.22),
+    0 2px 6px rgba(14, 30, 50, 0.1);
+  transition: box-shadow 220ms ease, border-color 220ms ease;
+}
+
+/* Single fine cyan line with a soft bloom — luminous, not a double frame. */
+.target-card.active {
+  border-color: var(--ring);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.45),
+    0 0 0 0.5px var(--ring-soft),
+    0 0 10px 1px var(--ring-halo),
+    0 0 26px 4px rgba(90, 180, 255, 0.2),
+    0 14px 34px rgba(14, 30, 50, 0.22);
+}
+
+.target-slot {
+  position: relative;
+  width: 100%;
+  aspect-ratio: var(--ar);
+  overflow: hidden;
+  border-radius: calc(var(--card-radius) - var(--card-inset) + 1px);
+  background: var(--slot);
+  /* Recessed screenshot well: a hairline dark rim separates the capture from
+     the acrylic frame so it reads as an inset, not a flat overlay. */
+  box-shadow: inset 0 0 0 1px rgba(20, 40, 62, 0.1);
+}
+
+.target-slot img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  pointer-events: none;
+  opacity: 1;
+}
+
+/* Label, kind and action stay in the DOM for reconciliation and assistive
+   tech, but the north star shows no caption on a preview. */
+.sr-only,
+.target-meta,
+.shell.populated .status {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+.synthetic-cursor {
+  position: absolute;
+  width: 18px;
+  height: 24px;
+  transform: translate(-2px, -2px);
+  filter: drop-shadow(0 2px 2px rgba(0, 0, 0, 0.42));
+  pointer-events: none;
+  transition: left 120ms linear, top 120ms linear;
+}
+
+.synthetic-cursor::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  clip-path: polygon(0 0, 0 88%, 24% 67%, 38% 100%, 56% 91%, 42% 60%, 72% 60%);
+  background: white;
+}
+
+.synthetic-cursor::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  clip-path: polygon(0 0, 0 84%, 24% 64%, 39% 98%, 52% 91%, 39% 58%, 68% 58%);
+  background: #17212b;
+}
+
+.empty-state {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-content: center;
+  justify-items: center;
+  color: var(--muted);
+  text-align: center;
+}
+
+.empty-state[hidden] {
+  display: none;
+}
+
+.empty-state strong {
+  margin-top: 14px;
+  color: var(--ink);
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.empty-state p {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.empty-orbit {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  place-items: center;
+  border: 1px solid rgba(98, 196, 255, 0.45);
+  border-radius: 50%;
+  animation: breathe 2.6s ease-in-out infinite;
+}
+
+.empty-orbit span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ring);
+  box-shadow: 0 0 14px var(--ring-halo);
+}
+
+.status {
+  position: absolute;
+  z-index: 3;
+  right: var(--pad);
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: 0.01em;
+  opacity: 0.6;
+}
+
+.status-pulse {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #36bd8a;
+  box-shadow: 0 0 6px rgba(54, 189, 138, 0.6);
+}
+
+.resize-edge {
+  position: absolute;
+  z-index: 10;
+}
+
+.north,
+.south {
+  left: 18px;
+  right: 18px;
+  height: 8px;
+}
+
+.north { top: 0; cursor: ns-resize; }
+.south { bottom: 0; cursor: ns-resize; }
+.east,
+.west { top: 18px; bottom: 18px; width: 8px; }
+.east { right: 0; cursor: ew-resize; }
+.west { left: 0; cursor: ew-resize; }
+.north-east,
+.north-west,
+.south-east,
+.south-west { width: 18px; height: 18px; }
+.north-east { top: 0; right: 0; cursor: nesw-resize; }
+.north-west { top: 0; left: 0; cursor: nwse-resize; }
+.south-east { right: 0; bottom: 0; cursor: nwse-resize; }
+.south-west { left: 0; bottom: 0; cursor: nesw-resize; }
+
+@keyframes breathe {
+  50% { transform: scale(1.06); opacity: 0.75; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .empty-orbit { animation: none; }
+  .synthetic-cursor { transition: none; }
+}
+
+@media (max-width: 720px) {
+  :root {
+    --pad: 26px;
+    --gap: 18px;
+    --card-col-3: calc(50% - var(--gap) / 2);
+    --card-max-h-many: 34vh;
+  }
+}
+
+@media (max-width: 520px) {
+  :root {
+    --pad: 18px;
+    --gap: 14px;
+    --shell-radius: 22px;
+    --card-radius: 14px;
+    --card-inset: 7px;
+    --card-col-2: 100%;
+    --card-col-3: calc(50% - var(--gap) / 2);
+    --card-max-h-1: 66vh;
+    --card-max-h-2: 42vh;
+    --card-max-h-few: 40vh;
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --shell: rgba(52, 78, 104, 0.4);
+    --shell-tint-top: rgba(96, 130, 164, 0.22);
+    --shell-tint-bottom: rgba(40, 62, 88, 0.2);
+    --shell-edge: rgba(255, 255, 255, 0.4);
+    --shell-edge-inner: rgba(255, 255, 255, 0.1);
+    --ink: #eef3f8;
+    --muted: rgba(226, 234, 242, 0.58);
+    --card: rgba(110, 140, 170, 0.32);
+    --card-edge: rgba(255, 255, 255, 0.3);
+    --slot: rgba(30, 40, 52, 0.5);
+  }
+}
+
+/* Windows 11: light Mica, compact tab rail, and labeled app previews. */
+html[data-platform="windows"] {
+  color-scheme: light;
+  font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  --shell: rgba(232, 239, 249, 0.76);
+  --shell-tint-top: rgba(255, 255, 255, 0.42);
+  --shell-tint-bottom: rgba(198, 214, 236, 0.28);
+  --shell-edge: rgba(255, 255, 255, 0.9);
+  --shell-edge-inner: rgba(255, 255, 255, 0.4);
+  --ink: #17243a;
+  --muted: rgba(23, 36, 58, 0.62);
+  --ring: #2b7cf6;
+  --ring-soft: rgba(43, 124, 246, 0.48);
+  --ring-halo: rgba(43, 124, 246, 0.32);
+  --card: rgba(240, 245, 252, 0.52);
+  --card-edge: rgba(255, 255, 255, 0.72);
+  --slot: rgba(218, 228, 241, 0.72);
+  --shell-radius: 16px;
+  --card-radius: 12px;
+  --card-inset: 8px;
+  --head-h: 36px;
+  --pad: 24px;
+  --gap: 20px;
+  --card-max-h-few: 62vh;
+}
+
+html[data-platform="windows"] .shell {
+  padding-top: 22px;
+  box-shadow:
+    inset 0 0 0 1px var(--shell-edge-inner),
+    inset 0 1px 0 rgba(255, 255, 255, 0.78),
+    0 18px 52px rgba(17, 40, 78, 0.24);
+  backdrop-filter: blur(80px) saturate(140%);
+  -webkit-backdrop-filter: blur(80px) saturate(140%);
+}
+
+html[data-platform="windows"] .shell::before {
+  filter: blur(44px) saturate(118%) brightness(1.06);
+}
+
+/* Never reveal live host windows if wallpaper discovery fails. Native
+   transparent WebViews cannot reliably blur pixels from the desktop behind
+   them, so the no-wallpaper state uses an intentionally opaque Mica fallback. */
+html[data-platform="windows"][data-wallpaper="none"] {
+  --shell: rgba(222, 231, 244, 0.96);
+  --shell-tint-top: rgba(255, 255, 255, 0.38);
+  --shell-tint-bottom: rgba(190, 207, 230, 0.26);
+}
+
+html[data-platform="windows"] .sessions,
+html[data-platform="linux"] .sessions {
+  align-items: flex-end;
+  gap: 4px;
+  height: 38px;
+  margin: -2px 0 10px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.22);
+}
+
+html[data-platform="windows"] .session-tab,
+html[data-platform="linux"] .session-tab {
+  height: 34px;
+  padding: 6px 14px;
+  border-radius: 9px 9px 0 0;
+  font-size: 12px;
+}
+
+html[data-platform="windows"] .session-tab {
+  border-color: rgba(72, 102, 142, 0.18);
+  background: rgba(225, 234, 246, 0.48);
+  color: var(--muted);
+}
+
+html[data-platform="windows"] .session-tab.selected {
+  background: rgba(247, 250, 255, 0.72);
+  color: var(--ink);
+}
+
+html[data-platform="windows"] .stage,
+html[data-platform="linux"] .stage {
+  padding-top: 38px;
+}
+
+html[data-platform="windows"] .stage.count-few .target-card,
+html[data-platform="linux"] .stage.count-few .target-card {
+  --col: var(--card-col-3);
+  --max-h: 62vh;
+}
+
+html[data-platform="windows"] .target-card,
+html[data-platform="linux"] .target-card {
+  display: flex;
+  flex-direction: column;
+}
+
+html[data-platform="windows"] .target-meta,
+html[data-platform="linux"] .target-meta {
+  position: static;
+  order: -1;
+  display: flex;
+  width: auto;
+  height: 28px;
+  margin: 0;
+  padding: 0 2px 7px;
+  overflow: hidden;
+  align-items: center;
+  gap: 8px;
+  clip: auto;
+  clip-path: none;
+  white-space: nowrap;
+}
+
+html[data-platform="windows"] .target-kind,
+html[data-platform="linux"] .target-kind {
+  display: grid;
+  flex: none;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+  color: white;
+  font-size: 0;
+  font-weight: 700;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.34);
+}
+
+html[data-platform="windows"] .target-kind {
+  background: linear-gradient(145deg, #3b93ff, #1766dc);
+}
+
+html[data-platform="windows"] .target-kind::before,
+html[data-platform="linux"] .target-kind::before {
+  content: "▣";
+  font-size: 13px;
+}
+
+html[data-platform="windows"] .target-card[data-kind="tab"] .target-kind::before,
+html[data-platform="linux"] .target-card[data-kind="tab"] .target-kind::before {
+  content: "↗";
+}
+
+html[data-platform="windows"] .target-label,
+html[data-platform="linux"] .target-label {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+}
+
+html[data-platform="windows"] .target-action,
+html[data-platform="linux"] .target-action {
+  display: none;
+}
+
+html[data-platform="windows"] .shell.populated .status,
+html[data-platform="linux"] .shell.populated .status {
+  position: absolute;
+  top: 24px;
+  right: auto;
+  bottom: auto;
+  left: var(--pad);
+  display: flex;
+  width: auto;
+  height: 18px;
+  margin: 0;
+  padding: 0;
+  overflow: visible;
+  clip: auto;
+  clip-path: none;
+  white-space: nowrap;
+  opacity: 0.82;
+}
+
+html[data-platform="windows"] .shell:has(.sessions.visible) .status,
+html[data-platform="linux"] .shell:has(.sessions.visible) .status {
+  top: 70px;
+}
+
+html[data-platform="windows"] .target-card.active {
+  border-color: var(--ring);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.62),
+    0 0 0 1px var(--ring-soft),
+    0 0 12px 2px var(--ring-halo),
+    0 12px 30px rgba(21, 49, 88, 0.18);
+}
+
+/* Linux: smoky GNOME acrylic with a cool cyan active target. */
+html[data-platform="linux"] {
+  color-scheme: dark;
+  font-family: Cantarell, "Noto Sans", sans-serif;
+  --shell: rgba(42, 50, 60, 0.54);
+  --shell-tint-top: rgba(122, 142, 158, 0.14);
+  --shell-tint-bottom: rgba(25, 31, 39, 0.24);
+  --shell-edge: rgba(235, 245, 250, 0.42);
+  --shell-edge-inner: rgba(255, 255, 255, 0.12);
+  --ink: #f2f7fa;
+  --muted: rgba(232, 241, 246, 0.64);
+  --ring: #6fe3e6;
+  --ring-soft: rgba(111, 227, 230, 0.48);
+  --ring-halo: rgba(72, 214, 220, 0.34);
+  --card: rgba(111, 127, 139, 0.34);
+  --card-edge: rgba(255, 255, 255, 0.24);
+  --slot: rgba(29, 36, 44, 0.72);
+  --shell-radius: 20px;
+  --card-radius: 13px;
+  --card-inset: 8px;
+  --head-h: 38px;
+  --pad: 28px;
+  --gap: 20px;
+  --card-max-h-few: 62vh;
+}
+
+html[data-platform="linux"] .shell {
+  padding-top: 24px;
+  box-shadow:
+    inset 0 0 0 1px var(--shell-edge-inner),
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 20px 56px rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(42px) saturate(112%);
+  -webkit-backdrop-filter: blur(42px) saturate(112%);
+}
+
+html[data-platform="linux"] .shell::before {
+  /* XFCE's stock SVG contains transparent regions. Paint the desktop base
+     beneath it so those regions cannot expose unrelated host windows. */
+  background-color: #1b2433;
+  filter: blur(38px) saturate(92%) brightness(0.72);
+}
+
+html[data-platform="linux"][data-wallpaper="none"] {
+  --shell: rgba(42, 50, 60, 0.94);
+  --shell-tint-top: rgba(122, 142, 158, 0.1);
+  --shell-tint-bottom: rgba(25, 31, 39, 0.22);
+}
+
+html[data-platform="linux"] .session-tab {
+  border-color: rgba(255, 255, 255, 0.1);
+  background: rgba(122, 140, 154, 0.18);
+  color: var(--muted);
+}
+
+html[data-platform="linux"] .session-tab.selected {
+  background: rgba(154, 175, 190, 0.28);
+  color: var(--ink);
+}
+
+html[data-platform="linux"] .target-kind {
+  background: linear-gradient(145deg, #3d9cf0, #1a65c7);
+}
+
+html[data-platform="linux"] .target-card {
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.14),
+    0 12px 30px rgba(0, 0, 0, 0.34);
+}
+
+html[data-platform="linux"] .target-card.active {
+  border-color: var(--ring);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 0 1px var(--ring-soft),
+    0 0 14px 3px var(--ring-halo),
+    0 12px 30px rgba(0, 0, 0, 0.36);
+}

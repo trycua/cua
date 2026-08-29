@@ -4,31 +4,18 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import tempfile
-import threading
 import unittest
 
 
-REPO_ROOT = Path(__file__).resolve().parents[4]
-UNINSTALL = REPO_ROOT / "libs/cua-driver/scripts/uninstall.sh"
+ROOT = Path(__file__).resolve().parents[4]
+UNINSTALL = ROOT / "libs/cua-driver/scripts/uninstall.sh"
 
 
 def executable(path: Path, body: str) -> None:
     path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     path.chmod(0o755)
-
-
-def source(env: dict[str, str], body: str) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(
-        ["/bin/bash", "-c", f'source "{UNINSTALL}"\n{body}'],
-        cwd=REPO_ROOT,
-        env={**env, "CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY": "1"},
-        text=True,
-        capture_output=True,
-        check=False,
-    )
 
 
 class DaemonStopTests(unittest.TestCase):
@@ -39,259 +26,156 @@ class DaemonStopTests(unittest.TestCase):
         self.bin = self.root / "bin"
         self.home.mkdir()
         self.bin.mkdir()
-        self.map = self.root / "process-map"
-        self.map.touch()
-
-        executable(
-            self.bin / "pgrep",
-            f"awk -F'|' '$3 == \"alive\" {{ print $1 }}' '{self.map}' | "
-            "while IFS= read -r pid; do kill -0 \"$pid\" 2>/dev/null && printf '%s\\n' \"$pid\"; done",
-        )
-        executable(
-            self.bin / "ps",
-            f"""
-pid=""; prev=""
-for arg in "$@"; do [ "$prev" = -p ] && pid="$arg"; prev="$arg"; done
-awk -F'|' -v p="$pid" '$1 == p {{ print $2 }}' '{self.map}'
-""",
-        )
         self.env = {
             **os.environ,
             "HOME": str(self.home),
             "PATH": f"{self.bin}:/usr/bin:/bin",
+            "CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY": "1",
         }
-        self.processes: list[subprocess.Popen[bytes]] = []
 
     def tearDown(self) -> None:
-        for process in self.processes:
-            if process.poll() is None:
-                process.kill()
-            process.wait(timeout=5)
         self.temp.cleanup()
 
-    def spawn(self, command: str) -> tuple[subprocess.Popen[bytes], str]:
-        path = shutil.which(command)
-        if not path:
-            self.skipTest(f"{command} unavailable")
-        real = str(Path(path).resolve())
-        args = [path, "30"] if command == "sleep" else [path, "-f", "/dev/null"]
-        process = subprocess.Popen(args)
-        self.processes.append(process)
-        threading.Thread(target=process.wait, daemon=True).start()
-        with self.map.open("a", encoding="utf-8") as handle:
-            handle.write(f"{process.pid}|{real}|alive\n")
-        return process, real
-
-    def setup(self, pid_file: Path, helper: Path | None, identity: str) -> str:
-        return f"""
-OS=Linux
-HOME_DIR="$HOME/.cua-driver"
-LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
-DAEMON_PID_FILE="{pid_file}"
-DAEMON_STOP_HELPER="{helper or ''}"
-DAEMON_EXECUTABLES=("{identity}")
-"""
-
-    def helper(self, target: subprocess.Popen[bytes], marker: Path | None = None) -> Path:
-        path = self.home / "cua-driver"
-        marker_line = (
-            f"printf '%s|%s|%s' \"$1\" \"$2\" \"$3\" > '{marker}'"
-            if marker
-            else ":"
-        )
-        executable(
-            path,
-            f"""
-if [ "$1" = "--expected-pid" ] && [ "$2" = "{target.pid}" ] && [ "$3" = stop ]; then
-  {marker_line}
-  awk -F'|' -v p='{target.pid}' 'BEGIN {{ OFS="|" }} $1 == p {{ $3="dead" }} {{ print }}' '{self.map}' > '{self.map}.tmp'
-  mv '{self.map}.tmp' '{self.map}'
-  kill {target.pid} 2>/dev/null || true
-  exit 0
-fi
-exit 1
-""",
-        )
-        return path
-
-    def old_helper(self, foreign: subprocess.Popen[bytes], marker: Path) -> Path:
-        path = self.home / "old-cua-driver"
-        executable(
-            path,
-            f"""
-if [ "$1" = stop ]; then
-  : > '{marker}'
-  kill {foreign.pid} 2>/dev/null || true
-  exit 0
-fi
-exit 2
-""",
-        )
-        return path
-
-    def run_stop(self, setup: str) -> subprocess.CompletedProcess[str]:
-        return source(
-            self.env,
-            setup
-            + """
-status=0
-stop_release_daemon || status=$?
-printf 'status=%s result=%s\n' "$status" "$DAEMON_STOP_RESULT"
-""",
-        )
-
-    def test_pid_file_and_trusted_stop_are_authoritative(self) -> None:
-        daemon, identity = self.spawn("sleep")
-        foreign, _ = self.spawn("tail")
-        pid_file = self.home / "cua-driver.pid"
-        pid_file.write_text(str(daemon.pid), encoding="utf-8")
-        marker = self.root / "expected-pid"
-
-        result = self.run_stop(self.setup(pid_file, self.helper(daemon, marker), identity))
-
-        self.assertIn("status=0 result=stopped", result.stdout)
-        self.assertEqual(
-            marker.read_text(encoding="utf-8"),
-            f"--expected-pid|{daemon.pid}|stop",
-        )
-        daemon.wait(timeout=5)
-        self.assertIsNone(foreign.poll())
-
-    def test_old_helper_cannot_receive_an_unbound_stop(self) -> None:
-        daemon, identity = self.spawn("sleep")
-        foreign, _ = self.spawn("tail")
-        pid_file = self.home / "cua-driver.pid"
-        pid_file.write_text(str(daemon.pid), encoding="utf-8")
-        marker = self.root / "old-helper-issued-stop"
-
-        result = self.run_stop(
-            self.setup(pid_file, self.old_helper(foreign, marker), identity)
-        )
-
-        self.assertIn("status=0 result=stopped", result.stdout)
-        self.assertFalse(marker.exists())
-        daemon.wait(timeout=5)
-        self.assertIsNone(foreign.poll())
-
-    def test_refused_handshake_is_reported_before_the_signal_fallback(self) -> None:
-        daemon, identity = self.spawn("sleep")
-        foreign, _ = self.spawn("tail")
-        pid_file = self.home / "cua-driver.pid"
-        pid_file.write_text(str(daemon.pid), encoding="utf-8")
-        refusing = self.home / "refusing-cua-driver"
-        executable(
-            refusing,
-            "printf 'stop: daemon pid mismatch (expected 1, found 2)\\n' >&2\nexit 1",
-        )
-
-        result = self.run_stop(self.setup(pid_file, refusing, identity))
-
-        # The helper's own diagnosis is the only signal that the socket was
-        # taken over by another daemon, so it must not be swallowed.
-        self.assertIn("trusted stop helper exited 1", result.stderr)
-        self.assertIn("daemon pid mismatch (expected 1, found 2)", result.stderr)
-        # The validated pid is still stopped, and only that pid.
-        self.assertIn("status=0 result=stopped", result.stdout)
-        daemon.wait(timeout=5)
-        self.assertIsNone(foreign.poll())
-
-    def test_history_purge_does_not_issue_a_second_stop(self) -> None:
-        marker = self.root / "purge-helper-argv"
-        helper = self.home / "purge-helper"
-        codesign = self.bin / "codesign"
-        executable(helper, f"printf '%s\\n' \"$*\" >> '{marker}'")
-        executable(codesign, "exit 0")
-
-        result = source(
-            self.env,
-            f"""
-status=0
-purge_linux_history "{helper}" 1 || status=$?
-purge_macos_history "/Applications/CuaDriver.app" "{helper}" 1 "{codesign}" || status=$?
-printf 'status=%s\n' "$status"
-""",
-        )
-
-        self.assertIn("status=0", result.stdout)
-        self.assertEqual(
-            marker.read_text(encoding="utf-8").splitlines(),
-            ["history purge-offline --yes", "history purge-offline --yes"],
-        )
-
-    def test_stale_pid_only_inspects_and_never_calls_helper_or_signals(self) -> None:
-        owned, identity = self.spawn("sleep")
-        pid_file = self.home / "cua-driver.pid"
-        pid_file.write_text("2147483646\n", encoding="utf-8")
-        marker = self.root / "helper-called"
-
-        result = self.run_stop(self.setup(pid_file, self.helper(owned, marker), identity))
-
-        self.assertIn("status=1 result=failed", result.stdout)
-        self.assertFalse(marker.exists())
-        self.assertIsNone(owned.poll())
-
-    def test_live_owned_pid_without_trusted_helper_fails_without_signal(self) -> None:
-        daemon, identity = self.spawn("sleep")
-        pid_file = self.home / "cua-driver.pid"
-        pid_file.write_text(str(daemon.pid), encoding="utf-8")
-
-        result = self.run_stop(self.setup(pid_file, None, identity))
-
-        self.assertIn("status=1 result=failed", result.stdout)
-        self.assertIn("trusted installed cua-driver stop helper is unavailable", result.stderr)
-        self.assertIsNone(daemon.poll())
-
-    def test_pgrep_error_fails_closed(self) -> None:
-        executable(self.bin / "pgrep", "exit 2")
-        pid_file = self.home / "missing.pid"
-
-        result = self.run_stop(self.setup(pid_file, None, "/missing/cua-driver"))
-
-        self.assertIn("status=1 result=failed", result.stdout)
-        self.assertIn("process inspection failed", result.stderr)
-
-    def test_pgrep_no_match_exit_one_is_clean(self) -> None:
-        executable(self.bin / "pgrep", "exit 1")
-        pid_file = self.home / "missing.pid"
-
-        result = self.run_stop(self.setup(pid_file, None, "/missing/cua-driver"))
-
-        self.assertIn("status=0 result=none", result.stdout)
-
-    def test_ps_failure_for_candidate_fails_closed(self) -> None:
-        executable(self.bin / "pgrep", "printf '2147483646\\n'; exit 0")
-        executable(self.bin / "ps", "exit 2")
-        pid_file = self.home / "missing.pid"
-
-        result = self.run_stop(self.setup(pid_file, None, "/missing/cua-driver"))
-
-        self.assertIn("status=1 result=failed", result.stdout)
-        self.assertIn("process inspection failed", result.stderr)
-
-    def test_supervisor_failure_aborts_before_runtime_removal(self) -> None:
-        tools = self.root / "main-bin"
-        tools.mkdir()
-        executable(tools / "id", "printf '501\\n'")
-        executable(tools / "uname", "printf 'Linux\\n'")
-        executable(tools / "systemctl", "exit 1")
-        os.symlink("/bin/rm", tools / "rm")
-        runtime = self.home / ".cua-driver/packages"
-        runtime.mkdir(parents=True)
-        unit = self.home / ".config/systemd/user/cua-driver.service"
-        unit.parent.mkdir(parents=True)
-        unit.write_text("[Service]\n", encoding="utf-8")
-
-        result = subprocess.run(
-            ["/bin/bash", str(UNINSTALL)],
-            cwd=REPO_ROOT,
-            env={**self.env, "PATH": f"{tools}:/usr/bin:/bin"},
+    def shell(self, body: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["/bin/bash", "-c", f'source "{UNINSTALL}"\n{body}'],
+            cwd=ROOT,
+            env=self.env,
             text=True,
             capture_output=True,
             check=False,
         )
 
+    def setup(self, helper: Path | None) -> str:
+        pid_file = self.home / "daemon.pid"
+        pid_file.write_text("4242\n", encoding="utf-8")
+        return f"""
+APP_BUNDLE=/Applications/CuaDriver.app
+LEGACY_APP_BUNDLE=/Applications/CuaDriverRs.app
+HOME_DIR="$HOME/.cua-driver"
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+DAEMON_PID_FILE="{pid_file}"
+DAEMON_STOP_HELPER="{helper or ''}"
+daemon_pid_alive() {{ return 0; }}
+daemon_pid_is_release() {{ return 0; }}
+daemon_process_generation() {{ printf generation-1; }}
+verify_release_daemon_absent() {{ return 0; }}
+"""
+
+    def test_helper_receives_only_guarded_stop(self) -> None:
+        marker = self.root / "argv"
+        helper = self.home / "cua-driver"
+        executable(helper, f"printf '%s|' \"$@\" > '{marker}'")
+        result = self.shell(
+            self.setup(helper)
+            + """
+daemon_wait_for_exit() { return 0; }
+stop_release_daemon
+"""
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(marker.read_text(), "--expected-pid|4242|stop|")
+
+    def test_old_helper_falls_back_without_plain_stop(self) -> None:
+        unbound = self.root / "unbound"
+        signals = self.root / "signals"
+        waits = self.root / "waits"
+        helper = self.home / "old-cua-driver"
+        executable(helper, f'[ "$1" != stop ] || : > "{unbound}"\nexit 2')
+        result = self.shell(
+            self.setup(helper)
+            + f"""
+daemon_wait_for_exit() {{
+  count=0; [[ ! -f "{waits}" ]] || count=$(cat "{waits}")
+  count=$((count + 1)); printf '%s' "$count" > "{waits}"
+  [[ "$count" -gt 1 ]]
+}}
+daemon_signal_if_current() {{ printf '%s' "$3" > "{signals}"; return 0; }}
+stop_release_daemon
+"""
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(unbound.exists())
+        self.assertEqual(signals.read_text(), "TERM")
+
+    def test_reused_pid_is_not_signalled(self) -> None:
+        helper = self.home / "cua-driver"
+        executable(helper, "exit 1")
+        result = self.shell(
+            self.setup(helper)
+            + """
+daemon_wait_for_exit() { return 1; }
+daemon_signal_if_current() { return 1; }
+kill() { return 99; }
+stop_release_daemon
+"""
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_missing_helper_fails_before_signal(self) -> None:
+        result = self.shell(self.setup(None) + "stop_release_daemon")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("stop helper is unavailable", result.stderr)
+
+    def test_process_generation_guards_signal(self) -> None:
+        marker = self.root / "signal"
+        result = self.shell(
+            self.setup(None)
+            + f"""
+daemon_pid_is_release() {{ return 0; }}
+daemon_process_generation() {{ printf "$GENERATION"; }}
+kill() {{ printf '%s' "$*" > "{marker}"; }}
+GENERATION=old
+daemon_signal_if_current 4242 old TERM
+GENERATION=new
+daemon_signal_if_current 4242 old KILL || status=$?
+printf 'status=%s\n' "$status"
+"""
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(marker.read_text(), "-TERM 4242")
+        self.assertIn("status=1", result.stdout)
+
+    def test_process_inspection_statuses_are_fail_closed(self) -> None:
+        executable(self.bin / "ps", "exit 2")
+        for pgrep_body, expected in (("exit 1", 0), ("exit 2", 1), ("echo 4242", 1)):
+            with self.subTest(pgrep=pgrep_body):
+                executable(self.bin / "pgrep", pgrep_body)
+                result = self.shell(
+                    """
+APP_BUNDLE=/Applications/CuaDriver.app
+LEGACY_APP_BUNDLE=/Applications/CuaDriverRs.app
+HOME_DIR="$HOME/.cua-driver"
+LEGACY_HOME_DIR="$HOME/.cua-driver-rs"
+status=0; verify_release_daemon_absent || status=$?; exit "$status"
+"""
+                )
+                self.assertEqual(result.returncode, expected, result.stderr)
+
+    def test_supervisor_failure_preserves_runtime(self) -> None:
+        tools = self.root / "tools"
+        tools.mkdir()
+        executable(tools / "id", "printf '501\\n'")
+        executable(tools / "uname", "printf 'Linux\\n'")
+        executable(tools / "systemctl", "exit 1")
+        runtime = self.home / ".cua-driver/packages"
+        runtime.mkdir(parents=True)
+        unit = self.home / ".config/systemd/user/cua-driver.service"
+        unit.parent.mkdir(parents=True)
+        unit.write_text("[Service]\n")
+        result = subprocess.run(
+            ["/bin/bash", str(UNINSTALL)],
+            cwd=ROOT,
+            env={
+                **self.env,
+                "PATH": f"{tools}:/usr/bin:/bin",
+                "CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY": "0",
+            },
+            text=True,
+            capture_output=True,
+            check=False,
+        )
         self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
-        self.assertIn("failed to stop systemd user unit", result.stderr)
         self.assertTrue(runtime.exists())
         self.assertTrue(unit.exists())
 

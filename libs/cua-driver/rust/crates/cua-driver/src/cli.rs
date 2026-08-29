@@ -78,11 +78,6 @@ pub enum Command {
     },
     Stop {
         socket: Option<String>,
-        /// `--expected-pid <pid>`: shut down only the daemon whose metadata
-        /// reports this PID. The release uninstaller validates a daemon's
-        /// executable identity and then asks this exact process to stop, so
-        /// an unrelated daemon that replaced the socket is never killed.
-        /// Absent for an ordinary `cua-driver stop`.
         expected_pid: Option<u32>,
     },
     Revoke {
@@ -228,7 +223,6 @@ const VALUE_FLAGS: &[&str] = &[
     "--session-policy",
     "--capability-manifest",
     "--pid-file",
-    // `stop --expected-pid <pid>` binds the shutdown to one daemon identity.
     "--expected-pid",
     "--type",
     "--host-bundle-id",
@@ -1039,14 +1033,6 @@ pub fn parse_command() -> Command {
     }
 }
 
-/// Return the value of `--flag value` from argv, or `None`.
-/// Parse the stop-only `--expected-pid <pid>` selector.
-///
-/// The flag is rejected for every other subcommand on purpose. The release
-/// uninstaller always invokes `cua-driver --expected-pid <pid> stop`, so a
-/// helper from an older install — which knows nothing about the flag — exits
-/// non-zero on the unfamiliar argv instead of falling back to an unbound stop
-/// against whatever daemon owns the default socket.
 fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32> {
     let raw = flag_value(args, "--expected-pid")?;
     if command != Some("stop") {
@@ -1062,6 +1048,7 @@ fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32
     }
 }
 
+/// Return the value of `--flag value` from argv, or `None`.
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -4800,8 +4787,6 @@ mod tests {
 
     #[test]
     fn expected_pid_does_not_shadow_other_subcommands() {
-        // `status` still parses as the subcommand; the stop-only rejection
-        // itself exits the process and is covered by the uninstaller tests.
         let argv = args(&["--expected-pid", "42", "status"]);
         assert_eq!(positional_args(&argv), vec!["status"]);
     }

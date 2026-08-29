@@ -131,6 +131,13 @@ function Invoke-RestrictedBrowserTest {
         throw "Restricted browser-test exit file already exists: $exitPath"
     }
 
+    $testExecutables = @(Get-ChildItem (Join-Path $rustRoot "target\release\deps") `
+        -Filter "standalone_browser_behavior_test-*.exe" -File)
+    if ($testExecutables.Count -ne 1) {
+        throw "Expected one compiled standalone-browser test executable, found $($testExecutables.Count)"
+    }
+    $testExecutable = $testExecutables[0].FullName
+
     $childEnvironment = [ordered]@{}
     foreach ($item in @(Get-ChildItem Env:)) {
         if ($item.Name -eq "PATH" -or
@@ -145,10 +152,12 @@ function Invoke-RestrictedBrowserTest {
         log_path = $LogPath
         exit_path = $exitPath
         pid_path = $pidPath
-        rust_root = $rustRoot
+        test_executable = $testExecutable
         environment = $childEnvironment
     } | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $configPath -Encoding UTF8
     New-Item -ItemType File -Path $LogPath | Out-Null
+    "Launching prebuilt test executable with Windows trust level 0x20000" |
+        Add-Content -LiteralPath $LogPath -Encoding UTF8
 
     $command = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$helper`" -ConfigPath `"$configPath`""
     $previousPreference = $ErrorActionPreference

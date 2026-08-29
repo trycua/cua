@@ -4827,6 +4827,32 @@ resources:
         assert!(registry
             .iter_defs()
             .any(|(name, _)| name == "stop_demonstration"));
+        for name in ["start_demonstration", "stop_demonstration"] {
+            let metadata = registry
+                .iter_defs()
+                .find(|(registered, _)| *registered == name)
+                .unwrap()
+                .1
+                .to_list_entry();
+            assert_eq!(metadata["risk"]["class"], "r3");
+            assert_eq!(metadata["risk"]["enforcement"], "active");
+        }
+
+        let self_target = registry
+            .invoke_with_context(
+                "start_demonstration",
+                serde_json::json!({
+                    "pid": std::process::id(),
+                    "window_id": 7,
+                }),
+                standard_context(),
+            )
+            .await;
+        assert_eq!(self_target.is_error, Some(true));
+        assert!(self_target.content.iter().any(|content| {
+            matches!(content, crate::protocol::Content::Text { text, .. }
+                if text.contains("authorization process"))
+        }));
 
         let args = serde_json::json!({
             "pid": 42,

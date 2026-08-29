@@ -20,6 +20,10 @@
 #   - Claude MCP registrations in ~/.claude.json (cua-driver / cua-computer-use)
 #
 # Rust uninstall removes:
+#   All hosts:
+#     - the release supervisor and daemon are proven stopped before any files
+#       are removed. A live PID must be owned by the installed release before
+#       the trusted installed `cua-driver stop` path may escalate that PID.
 #   Linux:
 #     - ~/.local/bin/cua-driver symlink (only when it resolves to a
 #       cua-driver path — a Swift-driver symlink is left in place)
@@ -119,7 +123,6 @@ purge_macos_history() {
         printf 'history_purge_incomplete: installed signed Cua Driver helper unavailable; preserved history state for retry\n' >&2
         return 1
     fi
-    "$helper" stop >/dev/null 2>&1 || true
     if ! "$helper" history purge-offline --yes; then
         printf 'history_purge_incomplete: exact-namespace key destruction was not verified; preserved history state and app for retry\n' >&2
         return 1
@@ -133,11 +136,179 @@ purge_linux_history() {
         printf 'history_purge_incomplete: installed Cua Driver helper unavailable; preserved history state for retry\n' >&2
         return 1
     fi
-    "$helper" stop >/dev/null 2>&1 || true
     if ! "$helper" history purge-offline --yes; then
         printf 'history_purge_incomplete: exact-namespace Secret Service key destruction was not verified; preserved history state and runtime for retry\n' >&2
         return 1
     fi
+}
+
+daemon_pid_file_path() {
+    case "$OS" in
+        Darwin) printf '%s/Library/Caches/cua-driver/cua-driver.pid' "$HOME" ;;
+        Linux)  printf '%s/.cache/cua-driver/cua-driver.pid' "$HOME" ;;
+        *)      printf '/tmp/cua-driver.pid' ;;
+    esac
+}
+
+read_daemon_pid() {
+    local pid
+    [[ -r "$1" ]] || return 1
+    IFS= read -r pid < "$1" || true
+    [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 1
+    printf '%s' "$pid"
+}
+
+daemon_pid_alive() { kill -0 "$1" 2>/dev/null; }
+
+daemon_wait_for_exit() {
+    local pid="$1" attempts=0
+    while daemon_pid_alive "$pid"; do
+        [[ "$attempts" -lt 20 ]] || return 1
+        sleep 0.1 2>/dev/null || sleep 1 || true
+        attempts=$((attempts + 1))
+    done
+}
+
+daemon_process_identity() {
+    local pid="$1" identity=""
+    if [[ -L "/proc/$pid/exe" ]]; then
+        identity="$(readlink "/proc/$pid/exe" 2>/dev/null || true)"
+        identity="${identity% (deleted)}"
+    fi
+    if [[ -z "$identity" ]]; then
+        command -v ps >/dev/null 2>&1 || return 2
+        identity="$(ps -ww -o command= -p "$pid" 2>/dev/null)" || return 2
+    fi
+    identity="${identity#"${identity%%[![:space:]]*}"}"
+    identity="${identity%"${identity##*[![:space:]]}"}"
+    [[ -n "$identity" ]] || return 1
+    printf '%s' "$identity"
+}
+
+daemon_identity_matches_install() {
+    local identity="$1" executable
+    for executable in "${DAEMON_EXECUTABLES[@]:-}"; do
+        [[ -n "$executable" ]] || continue
+        case "$identity" in
+            "$executable"|"$executable"[[:space:]]*) return 0 ;;
+        esac
+    done
+    case "$identity" in
+        "$HOME_DIR"/packages/releases/*/cua-driver|"$HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*) return 0 ;;
+        "$LEGACY_HOME_DIR"/packages/releases/*/cua-driver|"$LEGACY_HOME_DIR"/packages/releases/*/cua-driver[[:space:]]*) return 0 ;;
+    esac
+    return 1
+}
+
+daemon_pid_is_release() {
+    local identity
+    identity="$(daemon_process_identity "$1" 2>/dev/null)" || return 2
+    daemon_identity_matches_install "$identity"
+}
+
+# Missing/stale PID files never trigger a signal. This check only decides
+# whether uninstall can safely continue or must preserve the runtime and abort.
+release_daemon_fallback_pids() {
+    command -v pgrep >/dev/null 2>&1 || return 2
+    command -v ps >/dev/null 2>&1 || return 2
+    local uid pid identity candidates="" pgrep_status=0
+    uid="$(id -u 2>/dev/null || true)"
+    [[ "$uid" =~ ^[0-9]+$ ]] || return 2
+
+    candidates="$(pgrep -U "$uid" -f '(^|[[:space:]/])cua-driver([[:space:]]|$)' 2>/dev/null)" || pgrep_status=$?
+    case "$pgrep_status" in
+        0) ;;
+        1) return 0 ;;
+        *) return 2 ;;
+    esac
+
+    while IFS= read -r pid; do
+        [[ -n "$pid" ]] || continue
+        [[ "$pid" =~ ^[1-9][0-9]*$ ]] || return 2
+        identity="$(daemon_process_identity "$pid" 2>/dev/null)" || return 2
+        if daemon_identity_matches_install "$identity"; then
+            printf '%s\n' "$pid"
+        fi
+    done <<< "$candidates"
+}
+
+verify_release_daemon_absent() {
+    local pids="" status=0
+    pids="$(release_daemon_fallback_pids 2>/dev/null)" || status=$?
+    if [[ "$status" != "0" ]]; then
+        printf 'daemon_stop_incomplete: process inspection failed while verifying release daemon shutdown.\n' >&2
+        return 1
+    fi
+    if [[ -n "$pids" ]]; then
+        printf 'daemon_stop_incomplete: release cua-driver process remains but cannot be safely classified or signalled.\n' >&2
+        return 1
+    fi
+}
+
+stop_release_daemon() {
+    DAEMON_STOP_RESULT=none
+    local pid="" helper="${DAEMON_STOP_HELPER:-}" pid_file="${DAEMON_PID_FILE:-}" pid_identity_status=0
+    local helper_status=0 helper_stderr=""
+
+    if [[ -n "$pid_file" ]] && pid="$(read_daemon_pid "$pid_file" 2>/dev/null)" \
+        && daemon_pid_alive "$pid"; then
+        if daemon_pid_is_release "$pid"; then
+            if [[ -z "$helper" || ! -x "$helper" ]]; then
+                printf 'daemon_stop_incomplete: trusted installed cua-driver stop helper is unavailable for pid %s.\n' "$pid" >&2
+                DAEMON_STOP_RESULT=failed
+                return 1
+            fi
+            # Bind the graceful shutdown request to the exact PID whose
+            # executable identity was just validated. Keep the value-taking
+            # option before `stop` deliberately: an older helper does not know
+            # the option, so it treats the PID as the command/tool and fails
+            # instead of issuing an unbound shutdown to the default socket.
+            helper_stderr="$("$helper" --expected-pid "$pid" stop 2>&1 >/dev/null)" || helper_status=$?
+            if [[ "$helper_status" != "0" ]]; then
+                # Either an installed helper that predates --expected-pid, or a
+                # helper that refused because the socket no longer belongs to
+                # this PID. Both are expected outcomes, not script errors, so
+                # the fallback below still runs — but report why the graceful
+                # path was skipped instead of discarding the helper's own
+                # diagnosis. A pid mismatch here is the socket-replacement race
+                # this option exists to catch, and it must stay visible.
+                printf 'note: trusted stop helper exited %s for pid %s; falling back to signals.\n' \
+                    "$helper_status" "$pid" >&2
+                [[ -z "$helper_stderr" ]] || printf '%s\n' "$helper_stderr" >&2
+            fi
+            # Signals below target the PID whose executable identity was
+            # validated above, never whatever process currently owns the
+            # socket, so a failed handshake cannot redirect them.
+            if ! daemon_wait_for_exit "$pid"; then
+                kill -TERM "$pid" 2>/dev/null || true
+                if ! daemon_wait_for_exit "$pid"; then
+                    kill -KILL "$pid" 2>/dev/null || true
+                    if ! daemon_wait_for_exit "$pid"; then
+                        printf 'daemon_stop_incomplete: validated release daemon pid %s is still running.\n' "$pid" >&2
+                        DAEMON_STOP_RESULT=failed
+                        return 1
+                    fi
+                fi
+            fi
+            DAEMON_STOP_RESULT=stopped
+        else
+            pid_identity_status=$?
+            if [[ "$pid_identity_status" == "2" ]]; then
+                printf 'daemon_stop_incomplete: failed to identify live daemon pid %s safely.\n' "$pid" >&2
+                DAEMON_STOP_RESULT=failed
+                return 1
+            fi
+        fi
+    fi
+
+    # A stale/missing/foreign PID file reaches only this inspection path. The
+    # same check after a valid stop catches supervisor respawn before deletion.
+    sleep 0.2 2>/dev/null || true
+    if ! verify_release_daemon_absent; then
+        DAEMON_STOP_RESULT=failed
+        return 1
+    fi
+    return 0
 }
 
 reject_root_invocation() {
@@ -147,16 +318,6 @@ reject_root_invocation() {
         return 77
     fi
 }
-
-# Narrow source-only seam for the synthetic uninstall fixture. Production
-# execution never sets this variable and continues through the full script.
-if [[ "${CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY:-0}" == "1" ]]; then
-    return 0
-fi
-
-if ! reject_root_invocation "$(id -u)"; then
-    exit 77
-fi
 
 # TCC revocation is on by default so uninstall leaves the next macOS install
 # in a clean promptable state. The bundle id com.trycua.driver is shared with
@@ -222,6 +383,73 @@ resolve_link() {
     esac
 }
 
+select_daemon_stop_helper() {
+    local candidate resolved
+    for candidate in \
+        "$APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver" \
+        "$PACKAGES_DIR/current/cua-driver" \
+        "$LEGACY_HOME_DIR/packages/current/cua-driver"; do
+        [[ -x "$candidate" ]] || continue
+        resolved="$(realpath "$candidate" 2>/dev/null || true)"
+        [[ -n "$resolved" ]] || resolved="$candidate"
+        case "$resolved" in
+            "$APP_BUNDLE/Contents/MacOS/cua-driver"|"$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver"|\
+            "$HOME_DIR"/packages/releases/*/cua-driver|"$LEGACY_HOME_DIR"/packages/releases/*/cua-driver)
+                printf '%s' "$resolved"
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+# Stop the native supervisor without deleting its registration. A failure here
+# is fatal because deleting the runtime under a supervisor that may respawn the
+# daemon is unsafe.
+stop_release_supervisor() {
+    local path name
+    case "$OS" in
+        Linux)
+            for path in "$SYSTEMD_USER_UNIT" "$LEGACY_SYSTEMD_USER_UNIT"; do
+                [[ -f "$path" ]] || continue
+                command -v systemctl >/dev/null 2>&1 || {
+                    printf 'daemon_stop_incomplete: systemd user unit exists but systemctl is unavailable.\n' >&2
+                    return 1
+                }
+                name="${path##*/}"
+                if ! systemctl --user stop "$name" >/dev/null 2>&1; then
+                    printf 'daemon_stop_incomplete: failed to stop systemd user unit %s.\n' "$name" >&2
+                    return 1
+                fi
+            done
+            ;;
+        Darwin)
+            for path in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
+                [[ -f "$path" ]] || continue
+                command -v launchctl >/dev/null 2>&1 || {
+                    printf 'daemon_stop_incomplete: LaunchAgent exists but launchctl is unavailable.\n' >&2
+                    return 1
+                }
+                if ! launchctl unload "$path" >/dev/null 2>&1; then
+                    printf 'daemon_stop_incomplete: failed to unload LaunchAgent %s.\n' "$path" >&2
+                    return 1
+                fi
+            done
+            ;;
+    esac
+}
+
+# Narrow source-only seam for the synthetic uninstall fixture. Production
+# execution never sets this variable and continues through the full script.
+if [[ "${CUA_DRIVER_UNINSTALL_TEST_SOURCE_ONLY:-0}" == "1" ]]; then
+    return 0
+fi
+
+if ! reject_root_invocation "$(id -u)"; then
+    exit 77
+fi
+
 # ----------------------------------------------------------------------
 # Rust uninstall branch (default on Linux + macOS).
 # ----------------------------------------------------------------------
@@ -276,6 +504,46 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
+    DAEMON_PID_FILE="$(daemon_pid_file_path)"
+    DAEMON_STOP_HELPER="$(select_daemon_stop_helper || true)"
+    DAEMON_EXECUTABLES=(
+        "$APP_BUNDLE/Contents/MacOS/cua-driver"
+        "$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver"
+        "$PACKAGES_DIR/current/cua-driver"
+        "$LEGACY_HOME_DIR/packages/current/cua-driver"
+    )
+    if [[ -L "$USER_BIN_LINK" ]]; then
+        DAEMON_RESOLVED="$(resolve_link "$USER_BIN_LINK")"
+        case "$DAEMON_RESOLVED" in
+            "$APP_BUNDLE/Contents/MacOS/cua-driver"|"$LEGACY_APP_BUNDLE/Contents/MacOS/cua-driver"|\
+            "$HOME_DIR"/packages/releases/*/cua-driver|"$LEGACY_HOME_DIR"/packages/releases/*/cua-driver)
+                DAEMON_EXECUTABLES+=("$USER_BIN_LINK" "$DAEMON_RESOLVED")
+                ;;
+        esac
+        unset DAEMON_RESOLVED
+    fi
+
+    # Shutdown is the transaction boundary: supervisor + daemon must both be
+    # proven stopped before any symlink, service file, bundle, or runtime file
+    # is removed.
+    if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+        if ! stop_release_supervisor; then
+            log "could not stop the release supervisor; runtime preserved"
+            exit 1
+        fi
+        if ! stop_release_daemon; then
+            log "could not safely stop and verify the release daemon; runtime preserved"
+            exit 1
+        fi
+        if [[ "$DAEMON_STOP_RESULT" == "stopped" ]]; then
+            log "stopped and verified the running cua-driver daemon"
+        else
+            log "no running release cua-driver daemon"
+        fi
+    else
+        log "no Rust install marker; leaving any running cua-driver process untouched"
+    fi
+
     # --- CLI symlink ---
     # Only remove ~/.local/bin/cua-driver when it resolves into a
     # cua-driver-rs install. Pre-rename installs at
@@ -311,11 +579,8 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- Autostart (Linux systemd --user) ---
-    # install-local.sh --autostart registers
-    # ~/.config/systemd/user/cua-driver.service. Stop + disable + remove it,
-    # plus the pre-rename cua-driver-rs.service when present, so neither daemon
-    # comes back at next logon.
-    # systemctl --user no-ops gracefully on a non-systemd host.
+    # The stop phase already succeeded above. Disable and remove registrations
+    # only after daemon shutdown has been verified.
     if [[ "$OS" == "Linux" ]]; then
         FOUND_SYSTEMD_USER_UNIT=0
         for SYSTEMD_USER_UNIT_PATH in "$SYSTEMD_USER_UNIT" "$LEGACY_SYSTEMD_USER_UNIT"; do
@@ -323,12 +588,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
                 FOUND_SYSTEMD_USER_UNIT=1
                 SYSTEMD_USER_UNIT_NAME="${SYSTEMD_USER_UNIT_PATH##*/}"
                 if command -v systemctl >/dev/null 2>&1; then
-                    systemctl --user stop "$SYSTEMD_USER_UNIT_NAME" 2>/dev/null || true
                     systemctl --user disable "$SYSTEMD_USER_UNIT_NAME" 2>/dev/null || true
-                    log "stopped + disabled systemd --user unit $SYSTEMD_USER_UNIT_NAME"
                 fi
                 rm -f "$SYSTEMD_USER_UNIT_PATH"
-                log "removed $SYSTEMD_USER_UNIT_PATH"
+                log "disabled + removed systemd --user unit $SYSTEMD_USER_UNIT_NAME"
             fi
         done
         if [[ "$FOUND_SYSTEMD_USER_UNIT" == "0" ]]; then
@@ -339,16 +602,11 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- Autostart (macOS LaunchAgent) ---
-    # install-local.sh --autostart on macOS registers
-    # ~/Library/LaunchAgents/com.trycua.cua-driver.plist. Unload (so the
-    # running daemon stops) + remove it, plus the pre-rename
-    # com.trycua.cua-driver-rs.plist when present.
     if [[ "$OS" == "Darwin" ]]; then
         FOUND_LAUNCHAGENT_PLIST=0
         for LAUNCHAGENT_PLIST_PATH in "$LAUNCHAGENT_PLIST" "$LEGACY_LAUNCHAGENT_PLIST"; do
             if [[ -f "$LAUNCHAGENT_PLIST_PATH" ]]; then
                 FOUND_LAUNCHAGENT_PLIST=1
-                launchctl unload "$LAUNCHAGENT_PLIST_PATH" 2>/dev/null || true
                 rm -f "$LAUNCHAGENT_PLIST_PATH"
                 log "removed LaunchAgent $LAUNCHAGENT_PLIST_PATH"
             fi

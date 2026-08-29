@@ -31,6 +31,7 @@ mod responsibility;
 mod sdk_adapter;
 mod serve;
 mod skills;
+mod stop;
 mod telemetry;
 mod updater;
 mod version_check;
@@ -822,9 +823,15 @@ fn main() {
                 }
             }
         }
-        cli::Command::Stop { socket } => {
+        cli::Command::Stop {
+            socket,
+            expected_pid,
+        } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            serve::run_stop_cmd(&sp);
+            match expected_pid {
+                Some(pid) => stop::run_pid_bound_stop_cmd(&sp, pid),
+                None => serve::run_stop_cmd(&sp),
+            }
         }
         cli::Command::Revoke {
             socket,
@@ -1091,9 +1098,15 @@ fn main() -> anyhow::Result<()> {
             .ok();
             return Ok(());
         }
-        cli::Command::Stop { socket } => {
+        cli::Command::Stop {
+            socket,
+            expected_pid,
+        } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            serve::run_stop_cmd(&sp);
+            match expected_pid {
+                Some(pid) => stop::run_pid_bound_stop_cmd(&sp, pid),
+                None => serve::run_stop_cmd(&sp),
+            }
             return Ok(());
         }
         cli::Command::Revoke {

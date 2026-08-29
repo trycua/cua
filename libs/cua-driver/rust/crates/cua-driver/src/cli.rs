@@ -78,6 +78,12 @@ pub enum Command {
     },
     Stop {
         socket: Option<String>,
+        /// `--expected-pid <pid>`: shut down only the daemon whose metadata
+        /// reports this PID. The release uninstaller validates a daemon's
+        /// executable identity and then asks this exact process to stop, so
+        /// an unrelated daemon that replaced the socket is never killed.
+        /// Absent for an ordinary `cua-driver stop`.
+        expected_pid: Option<u32>,
     },
     Revoke {
         socket: Option<String>,
@@ -222,6 +228,8 @@ const VALUE_FLAGS: &[&str] = &[
     "--session-policy",
     "--capability-manifest",
     "--pid-file",
+    // `stop --expected-pid <pid>` binds the shutdown to one daemon identity.
+    "--expected-pid",
     "--type",
     "--host-bundle-id",
     "--pid",
@@ -708,6 +716,8 @@ pub fn parse_command() -> Command {
         }
     }
 
+    let expected_stop_pid = parse_expected_stop_pid(&args, positionals.first().copied());
+
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {
             eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");
@@ -780,7 +790,10 @@ pub fn parse_command() -> Command {
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
         },
-        Some("stop") => Command::Stop { socket },
+        Some("stop") => Command::Stop {
+            socket,
+            expected_pid: expected_stop_pid,
+        },
         Some("revoke") => {
             let all = args.iter().any(|a| a == "--all");
             if all == approval_session.is_some() {
@@ -1027,6 +1040,28 @@ pub fn parse_command() -> Command {
 }
 
 /// Return the value of `--flag value` from argv, or `None`.
+/// Parse the stop-only `--expected-pid <pid>` selector.
+///
+/// The flag is rejected for every other subcommand on purpose. The release
+/// uninstaller always invokes `cua-driver --expected-pid <pid> stop`, so a
+/// helper from an older install — which knows nothing about the flag — exits
+/// non-zero on the unfamiliar argv instead of falling back to an unbound stop
+/// against whatever daemon owns the default socket.
+fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32> {
+    let raw = flag_value(args, "--expected-pid")?;
+    if command != Some("stop") {
+        eprintln!("--expected-pid is valid only with `cua-driver stop`");
+        process::exit(64);
+    }
+    match raw.parse::<u32>() {
+        Ok(pid) if pid != 0 => Some(pid),
+        _ => {
+            eprintln!("--expected-pid requires a positive integer PID");
+            process::exit(64);
+        }
+    }
+}
+
 fn flag_value(args: &[String], flag: &str) -> Option<String> {
     let mut it = args.iter();
     while let Some(a) = it.next() {
@@ -4741,6 +4776,34 @@ mod tests {
             aliased_flag_value(&identical, "--capability-manifest", "--session-policy"),
             Some("/tmp/shared.yaml".to_owned())
         );
+    }
+
+    #[test]
+    fn expected_pid_keeps_stop_as_the_subcommand() {
+        let argv = args(&["--expected-pid", "42", "stop"]);
+        assert_eq!(positional_args(&argv), vec!["stop"]);
+        assert_eq!(parse_expected_stop_pid(&argv, Some("stop")), Some(42));
+
+        let with_socket = args(&["--socket", "/tmp/cua.sock", "--expected-pid", "42", "stop"]);
+        assert_eq!(positional_args(&with_socket), vec!["stop"]);
+        assert_eq!(
+            parse_expected_stop_pid(&with_socket, Some("stop")),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn expected_pid_is_absent_for_an_ordinary_stop() {
+        let argv = args(&["stop"]);
+        assert_eq!(parse_expected_stop_pid(&argv, Some("stop")), None);
+    }
+
+    #[test]
+    fn expected_pid_does_not_shadow_other_subcommands() {
+        // `status` still parses as the subcommand; the stop-only rejection
+        // itself exits the process and is covered by the uninstaller tests.
+        let argv = args(&["--expected-pid", "42", "status"]);
+        assert_eq!(positional_args(&argv), vec!["status"]);
     }
 
     #[test]

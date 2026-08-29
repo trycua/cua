@@ -470,12 +470,20 @@ fn metadata_json() -> Result<String, AbiFailure> {
 fn abi_executor() -> Result<&'static tokio::runtime::Runtime, AbiFailure> {
     static EXECUTOR: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
     match EXECUTOR.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
+        let mut builder = tokio::runtime::Builder::new_multi_thread();
+        builder
             .worker_threads(2)
             .thread_name("cua-driver-abi")
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())
+            .enable_all();
+        #[cfg(target_os = "windows")]
+        builder.on_thread_start(|| {
+            if !platform_windows::dpi::use_per_monitor_v2_for_current_thread() {
+                tracing::warn!(
+                    "Windows rejected the Per-Monitor V2 context for a Cua Driver ABI thread"
+                );
+            }
+        });
+        builder.build().map_err(|error| error.to_string())
     }) {
         Ok(executor) => Ok(executor),
         Err(error) => Err(AbiFailure::new(
@@ -1639,6 +1647,26 @@ mod tests {
         assert!(cua_driver_abi_is_compatible_v1(1, 1));
         assert!(!cua_driver_abi_is_compatible_v1(1, 2));
         assert!(!cua_driver_abi_is_compatible_v1(2, 0));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_executor_threads_use_per_monitor_v2() {
+        let executor = abi_executor().unwrap();
+        let (worker_is_per_monitor_v2, blocking_is_per_monitor_v2) = executor.block_on(async {
+            let worker = executor
+                .spawn(async { platform_windows::dpi::current_thread_uses_per_monitor_v2() })
+                .await
+                .unwrap();
+            let blocking = executor
+                .spawn_blocking(platform_windows::dpi::current_thread_uses_per_monitor_v2)
+                .await
+                .unwrap();
+            (worker, blocking)
+        });
+
+        assert!(worker_is_per_monitor_v2);
+        assert!(blocking_is_per_monitor_v2);
     }
 
     #[test]

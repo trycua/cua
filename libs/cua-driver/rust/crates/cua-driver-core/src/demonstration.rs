@@ -507,7 +507,22 @@ mod tests {
 
     #[test]
     fn writer_failure_stops_capture_and_allows_the_next_demonstration() {
-        let manager = DemonstrationManager::new();
+        let manager = Arc::new(DemonstrationManager::new());
+        let session = format!(
+            "demonstration-writer-failure-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        );
+        let hook_manager = manager.clone();
+        let _hook = crate::session::register_scoped_fallible_session_end_hook(
+            "injected_demonstration_writer",
+            move |session_id| {
+                hook_manager
+                    .stop_owner(session_id)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            },
+        );
         let stopped = Arc::new(AtomicBool::new(false));
         let failed_dir = temp_dir("writer-failure");
         manager
@@ -516,7 +531,7 @@ mod tests {
                     pid: 42,
                     window_id: 7,
                     output_dir: failed_dir.clone(),
-                    owner: Some("session-a".into()),
+                    owner: Some(session.clone()),
                 },
                 |config| {
                     Ok(DemonstrationSession {
@@ -534,11 +549,17 @@ mod tests {
             )
             .unwrap();
 
-        let error = manager.stop_owner("session-a").unwrap_err();
-        assert!(error.to_string().contains("injected writer failure"));
+        assert!(crate::session::fire_session_end(&session));
+        let cleanup = crate::session::session_cleanup_status(&session);
+        assert!(!cleanup.complete);
+        assert!(cleanup
+            .failures
+            .iter()
+            .any(|failure| failure.error.contains("injected writer failure")));
         assert!(stopped.load(Ordering::Acquire));
-        assert!(manager.output_dir(Some("session-a")).is_none());
+        assert!(manager.output_dir(Some(&session)).is_none());
         assert!(!failed_dir.join("DEMONSTRATION.json").exists());
+        assert!(crate::session::revive_session(&session));
 
         let next_dir = temp_dir("writer-failure-next");
         manager
@@ -547,7 +568,7 @@ mod tests {
                     pid: 42,
                     window_id: 7,
                     output_dir: next_dir.clone(),
-                    owner: Some("session-a".into()),
+                    owner: Some(session.clone()),
                 },
                 |config| {
                     Ok(DemonstrationSession {
@@ -564,7 +585,7 @@ mod tests {
                 },
             )
             .expect("terminal writer failure must release start eligibility");
-        assert!(manager.stop_owner("session-a").unwrap().is_some());
+        assert!(manager.stop_owner(&session).unwrap().is_some());
         assert!(next_dir.join("DEMONSTRATION.json").exists());
     }
 }

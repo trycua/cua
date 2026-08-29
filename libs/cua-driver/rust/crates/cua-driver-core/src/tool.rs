@@ -665,17 +665,10 @@ impl ToolRegistry {
         let demonstrations = Arc::new(crate::demonstration::DemonstrationManager::new());
         let weak_grants = Arc::downgrade(&protected_resource_grants);
         let weak_ownership = Arc::downgrade(&protected_resource_ownership);
-        let weak_demonstrations = Arc::downgrade(&demonstrations);
         let session_end_hook =
             crate::session::register_scoped_session_end_hook(move |session_id| {
                 if let Some(ownership) = weak_ownership.upgrade() {
                     ownership.remove_session(session_id);
-                }
-                if let Some(demonstrations) = weak_demonstrations.upgrade() {
-                    let session_id = session_id.to_owned();
-                    std::thread::spawn(move || {
-                        let _ = demonstrations.stop_owner(&session_id);
-                    });
                 }
                 let Some(grants) = weak_grants.upgrade() else {
                     return;
@@ -692,6 +685,25 @@ impl ToolRegistry {
                     });
                 }
             });
+        let weak_demonstrations = Arc::downgrade(&demonstrations);
+        let demonstration_end_hook = crate::session::register_scoped_fallible_session_end_hook(
+            "human_demonstration",
+            move |session_id| {
+                let Some(demonstrations) = weak_demonstrations.upgrade() else {
+                    return Ok(());
+                };
+                demonstrations
+                    .stop_owner(session_id)
+                    .map(|_| ())
+                    .map_err(|error| error.to_string())
+            },
+        );
+        let weak_demonstrations = Arc::downgrade(&demonstrations);
+        let demonstration_runtime_cleanup = RuntimeCleanup(Some(Box::new(move || {
+            if let Some(demonstrations) = weak_demonstrations.upgrade() {
+                let _ = demonstrations.stop(None);
+            }
+        })));
         let recording = Arc::new(RecordingSession::new());
         let weak_recording = Arc::downgrade(&recording);
         let recording_state_reader =
@@ -707,11 +719,11 @@ impl ToolRegistry {
             recording,
             history: None,
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
-            session_end_hooks: vec![session_end_hook],
+            session_end_hooks: vec![session_end_hook, demonstration_end_hook],
             session_revive_hooks: Vec::new(),
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
-            runtime_cleanups: Vec::new(),
+            runtime_cleanups: vec![demonstration_runtime_cleanup],
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -2225,6 +2237,31 @@ impl ToolRegistry {
                         .to_owned(),
                 )
             }
+            "start_demonstration" => {
+                let requested = args
+                    .get("output_dir")
+                    .and_then(Value::as_str)
+                    .filter(|path| !path.is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| {
+                        crate::demonstration_tools::default_demonstration_output_dir()
+                            .to_string_lossy()
+                            .into_owned()
+                    });
+                let output = canonical_proposed_path(&requested)?;
+                args["output_dir"] = Value::String(output.clone());
+                (
+                    serde_json::json!({
+                        "kind": "demonstration_output",
+                        "direction": "driver_to_local",
+                        "canonical_output_directory": output,
+                        "pid": args.get("pid").and_then(Value::as_i64),
+                        "window_id": args.get("window_id").and_then(Value::as_u64),
+                    }),
+                    "Allow Cua to write human demonstration evidence to the exact local directory"
+                        .to_owned(),
+                )
+            }
             "stop_recording" => {
                 let state = self.recording.current_state();
                 let Some(output_dir) = state.output_dir else {
@@ -2240,6 +2277,24 @@ impl ToolRegistry {
                         "canonical_output_directory": output,
                     }),
                     "Allow Cua to finalize the active recording in its exact local directory"
+                        .to_owned(),
+                )
+            }
+            "stop_demonstration" => {
+                let requester = args.get("_session_id").and_then(Value::as_str);
+                let Some(output_dir) = self.demonstrations.output_dir(requester) else {
+                    return Ok(());
+                };
+                let output = canonical_proposed_path(output_dir.to_str().ok_or_else(|| {
+                    protected_scope_refusal("the demonstration output path is not valid UTF-8")
+                })?)?;
+                (
+                    serde_json::json!({
+                        "kind": "demonstration_finalize",
+                        "direction": "driver_to_local",
+                        "canonical_output_directory": output,
+                    }),
+                    "Allow Cua to finalize the active human demonstration in its exact local directory"
                         .to_owned(),
                 )
             }
@@ -4760,6 +4815,47 @@ resources:
         assert_eq!(args["_session_id"], "default");
         assert_eq!(args["cursor_id"], "default");
         assert!(args.get("_public_session_label").is_none());
+    }
+
+    #[tokio::test]
+    async fn registered_demonstration_start_enforces_both_protected_resources() {
+        let mut registry = super::ToolRegistry::new();
+        registry.register_recording_tools();
+        assert!(registry
+            .iter_defs()
+            .any(|(name, _)| name == "start_demonstration"));
+        assert!(registry
+            .iter_defs()
+            .any(|(name, _)| name == "stop_demonstration"));
+
+        let args = serde_json::json!({
+            "pid": 42,
+            "window_id": 7,
+            "output_dir": "/tmp/cua-demonstration-missing/../escape",
+        });
+        let adapters =
+            crate::authorization::enforcement_adapters_for_call("start_demonstration", &args)
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>();
+        assert_eq!(
+            adapters,
+            ["private_observation", "file_transfer_and_output"]
+        );
+
+        let result = registry
+            .invoke_with_context("start_demonstration", args, standard_context())
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(
+            result
+                .structured_content
+                .as_ref()
+                .and_then(|value| value.pointer("/refusal/code"))
+                .and_then(serde_json::Value::as_str),
+            Some("protected_resource_scope_invalid")
+        );
+        assert!(registry.demonstrations.output_dir(None).is_none());
     }
 }
 

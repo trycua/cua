@@ -26,7 +26,7 @@ impl Tool for StartDemonstrationTool {
     fn def(&self) -> &ToolDef {
         START_DEF.get_or_init(|| ToolDef {
             name: "start_demonstration".into(),
-            description: "Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.".into(),
+            description: "Call only after the user explicitly asks to record a human demonstration. Start observing human input on one foreground macOS or Windows window. A red border is shown before capture starts. The border hides and input is ignored when the target loses foreground or rendering stops. Typed input content is never retained, but screenshots can contain text visible in the target window. Call stop_demonstration when the human finishes.".into(),
             input_schema: json!({
                 "type": "object",
                 "required": ["pid", "window_id"],
@@ -57,11 +57,7 @@ impl Tool for StartDemonstrationTool {
             .opt_str("output_dir")
             .filter(|path| !path.is_empty())
             .map(expand_tilde)
-            .unwrap_or_else(|| {
-                std::env::temp_dir()
-                    .join("cua-demonstrations")
-                    .join(format!("demo-{}", crate::recording::now_ms()))
-            });
+            .unwrap_or_else(default_demonstration_output_dir);
         let config = DemonstrationConfig {
             pid,
             window_id,
@@ -157,11 +153,17 @@ impl Tool for StopDemonstrationTool {
     }
 }
 
-fn expand_tilde(path: String) -> std::path::PathBuf {
+pub(crate) fn expand_tilde(path: String) -> std::path::PathBuf {
     if let Some(rest) = path.strip_prefix("~/") {
         if let Ok(home) = std::env::var("HOME") {
             return std::path::PathBuf::from(home).join(rest);
         }
     }
     path.into()
+}
+
+pub(crate) fn default_demonstration_output_dir() -> std::path::PathBuf {
+    std::env::temp_dir()
+        .join("cua-demonstrations")
+        .join(format!("demo-{}", crate::recording::now_ms()))
 }

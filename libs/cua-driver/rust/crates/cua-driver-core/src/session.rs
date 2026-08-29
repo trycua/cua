@@ -1568,7 +1568,7 @@ pub fn active_session_count() -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::sync::{Arc, Barrier};
 
     #[derive(Default)]
@@ -1995,18 +1995,20 @@ mod tests {
     }
 
     #[test]
-    fn partial_cleanup_retries_only_failed_hooks_then_allows_revival() {
+    fn partial_cleanup_blocks_revival_until_capture_is_inactive() {
         let sid = "test-partial-cleanup-retry-C8D9E0";
+        let capture_active = Arc::new(AtomicBool::new(true));
+        let capture_for_hook = capture_active.clone();
         let retryable_calls = Arc::new(AtomicUsize::new(0));
         let retryable_for_hook = retryable_calls.clone();
         let _retryable =
-            register_scoped_fallible_session_end_hook("retryable-test-hook", move |ended| {
+            register_scoped_fallible_session_end_hook("human_demonstration", move |ended| {
                 if ended != sid {
                     return Ok(());
                 }
-                let attempt = retryable_for_hook.fetch_add(1, Ordering::SeqCst);
-                if attempt == 0 {
-                    Err("synthetic first-attempt failure".into())
+                retryable_for_hook.fetch_add(1, Ordering::SeqCst);
+                if capture_for_hook.load(Ordering::SeqCst) {
+                    Err("capture is still active".into())
                 } else {
                     Ok(())
                 }
@@ -2024,17 +2026,40 @@ mod tests {
         assert!(is_session_ended(sid));
         assert_eq!(retryable_calls.load(Ordering::SeqCst), 1);
         assert_eq!(successful_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            activate_or_revive_session_for_owner(
+                sid,
+                Some(sid),
+                sid,
+                false,
+                SessionTransport::Daemon,
+                SessionClientKind::Direct,
+                None,
+            ),
+            Err("session cleanup is incomplete; retry end_session before revival")
+        );
+        assert!(is_session_ended(sid));
+        assert!(capture_active.load(Ordering::SeqCst));
 
-        let report = retry_session_cleanup(sid);
-        assert!(report.complete);
-        assert!(report.failures.is_empty());
-        assert_eq!(retryable_calls.load(Ordering::SeqCst), 2);
+        capture_active.store(false, Ordering::SeqCst);
+        assert_eq!(
+            activate_or_revive_session_for_owner(
+                sid,
+                Some(sid),
+                sid,
+                false,
+                SessionTransport::Daemon,
+                SessionClientKind::Direct,
+                None,
+            ),
+            Ok(true)
+        );
+        assert_eq!(retryable_calls.load(Ordering::SeqCst), 3);
         assert_eq!(
             successful_calls.load(Ordering::SeqCst),
             1,
             "successful cleanup hooks must not run twice"
         );
-        assert!(revive_session(sid));
     }
 
     #[test]

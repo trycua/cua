@@ -241,6 +241,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "escalate_session",
     "zoom",
     "start_recording",
+    "start_demonstration",
 ];
 const PRIVATE_OBSERVATION_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -305,6 +306,8 @@ const FILE_TRANSFER_OPERATIONS: &[&str] = &[
     "get_window_state[with_file_output]",
     "start_recording",
     "stop_recording",
+    "start_demonstration",
+    "stop_demonstration",
     "replay_trajectory",
     "install_ffmpeg",
 ];
@@ -745,6 +748,7 @@ pub fn enforcement_adapters_for_call(
             | "escalate_session"
             | "zoom"
             | "start_recording"
+            | "start_demonstration"
     ) || (tool == "page"
         && matches!(
             args.get("action").and_then(Value::as_str),
@@ -779,6 +783,8 @@ pub fn enforcement_adapters_for_call(
             | "browser_download"
             | "start_recording"
             | "stop_recording"
+            | "start_demonstration"
+            | "stop_demonstration"
             | "replay_trajectory"
     ) || writes_screenshot
         || (tool == "clipboard_write"
@@ -1890,6 +1896,14 @@ mod tests {
         assert_eq!(
             ids("start_recording", serde_json::json!({})),
             vec!["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("start_demonstration", serde_json::json!({})),
+            vec!["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("stop_demonstration", serde_json::json!({})),
+            vec!["file_transfer_and_output"]
         );
         assert_eq!(
             ids("escalate_session", serde_json::json!({})),

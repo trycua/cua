@@ -422,19 +422,23 @@ fn history_admission_requested(explicit: bool, persisted: bool) -> bool {
 #[derive(Debug, PartialEq, Eq)]
 enum MacosMainLoopHost {
     CursorOverlay,
-    AgentView,
+    SharedAppKit,
     ServeThread,
 }
 
 #[cfg(target_os = "macos")]
-fn macos_main_loop_host(cursor_enabled: bool, agent_view_enabled: bool) -> MacosMainLoopHost {
+fn macos_main_loop_host(
+    cursor_enabled: bool,
+    agent_view_enabled: bool,
+    demonstration_enabled: bool,
+) -> MacosMainLoopHost {
     if cursor_enabled {
         // The cursor host also owns NSApplication's main run loop. Agent View
         // posts its window updates to that same queue, so both surfaces can
         // coexist without leaving cursor animations waiting forever.
         MacosMainLoopHost::CursorOverlay
-    } else if agent_view_enabled {
-        MacosMainLoopHost::AgentView
+    } else if agent_view_enabled || demonstration_enabled {
+        MacosMainLoopHost::SharedAppKit
     } else {
         MacosMainLoopHost::ServeThread
     }
@@ -464,7 +468,7 @@ mod macos_main_loop_host_tests {
     #[test]
     fn cursor_overlay_hosts_the_shared_appkit_loop_when_agent_view_is_enabled() {
         assert_eq!(
-            macos_main_loop_host(true, true),
+            macos_main_loop_host(true, true, true),
             MacosMainLoopHost::CursorOverlay
         );
     }
@@ -472,12 +476,20 @@ mod macos_main_loop_host_tests {
     #[test]
     fn agent_view_hosts_appkit_only_when_the_cursor_is_disabled() {
         assert_eq!(
-            macos_main_loop_host(false, true),
-            MacosMainLoopHost::AgentView
+            macos_main_loop_host(false, true, false),
+            MacosMainLoopHost::SharedAppKit
         );
         assert_eq!(
-            macos_main_loop_host(false, false),
+            macos_main_loop_host(false, false, false),
             MacosMainLoopHost::ServeThread
+        );
+    }
+
+    #[test]
+    fn demonstrations_use_the_existing_shared_appkit_host() {
+        assert_eq!(
+            macos_main_loop_host(false, false, true),
+            MacosMainLoopHost::SharedAppKit
         );
     }
 }
@@ -806,7 +818,11 @@ fn main() {
             // When both are enabled, the cursor host must drain its command
             // receiver as well as NSApplication events; the Agent View-only
             // loop would leave cursor-bearing actions waiting indefinitely.
-            match macos_main_loop_host(cursor_cfg.enabled, pip_available) {
+            match macos_main_loop_host(
+                cursor_cfg.enabled,
+                pip_available,
+                platform_macos::session::has_graphic_access(),
+            ) {
                 MacosMainLoopHost::CursorOverlay => {
                     // `run_on_main_thread` self-guards on graphic-session
                     // access. If it returns, keep the daemon alive by joining
@@ -814,7 +830,7 @@ fn main() {
                     platform_macos::cursor::overlay::run_on_main_thread();
                     let _ = serve_handle.join();
                 }
-                MacosMainLoopHost::AgentView => {
+                MacosMainLoopHost::SharedAppKit => {
                     platform_macos::pip::run_appkit_main_loop();
                 }
                 MacosMainLoopHost::ServeThread => {

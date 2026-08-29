@@ -145,7 +145,7 @@ intended regression-diff workflow.
 
 ## Human demonstrations
 
-> **Windows only.** Human demonstrations are separate from ordinary tool-call
+> **macOS and Windows.** Human demonstrations are separate from ordinary tool-call
 > recording and are not automatically replayable.
 
 Call `start_demonstration` with the `pid` and `window_id` returned by

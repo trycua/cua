@@ -2233,8 +2233,8 @@ version = "0.22.2"
 dependencies = [
  "anyhow",
  "core-foundation",
- "objc2",
- "objc2-foundation",
+ "objc2 0.5.2",
+ "objc2-foundation 0.2.2",
  "serde",
  "serde_json",
  "thiserror 1.0.69",

@@ -54,29 +54,55 @@ impl DemonstrationManager {
     }
 
     pub fn stop(&self, requester: Option<&str>) -> anyhow::Result<Option<DemonstrationResult>> {
-        self.take_if(|session| requester_can_stop(session.owner.as_deref(), requester))
-            .map(|session| session.finish("requested"))
-            .transpose()
+        self.finish_if(
+            |session| requester_can_stop(session.owner.as_deref(), requester),
+            "requested",
+        )
     }
 
     pub fn stop_owner(&self, owner: &str) -> anyhow::Result<Option<DemonstrationResult>> {
-        self.take_if(|session| session.owner.as_deref() == Some(owner))
-            .map(|session| session.finish("owner_disconnected"))
-            .transpose()
+        self.finish_if(
+            |session| session.owner.as_deref() == Some(owner),
+            "owner_disconnected",
+        )
     }
 
-    fn take_if(
+    pub(crate) fn output_dir(&self, requester: Option<&str>) -> Option<PathBuf> {
+        self.active
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_ref()
+            .filter(|session| requester_can_stop(session.owner.as_deref(), requester))
+            .map(|session| session.output_dir.clone())
+    }
+
+    fn finish_if(
         &self,
         predicate: impl FnOnce(&DemonstrationSession) -> bool,
-    ) -> Option<DemonstrationSession> {
+        stop_reason: &'static str,
+    ) -> anyhow::Result<Option<DemonstrationResult>> {
         let mut active = self
             .active
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if active.as_ref().is_some_and(predicate) {
-            active.take()
-        } else {
-            None
+        let Some(session) = active.as_mut().filter(|session| predicate(session)) else {
+            return Ok(None);
+        };
+        let result = session.finish(stop_reason)?;
+        *active = None;
+        Ok(Some(result))
+    }
+}
+
+impl Drop for DemonstrationManager {
+    fn drop(&mut self) {
+        if let Some(session) = self
+            .active
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .as_mut()
+        {
+            let _ = session.finish("runtime_shutdown");
         }
     }
 }
@@ -92,8 +118,10 @@ impl Default for DemonstrationManager {
 }
 
 struct DemonstrationSession {
-    capture: input_capture::Demonstration,
-    writer: std::thread::JoinHandle<anyhow::Result<WriteSummary>>,
+    capture: Option<input_capture::Demonstration>,
+    writer: Option<std::thread::JoinHandle<anyhow::Result<WriteSummary>>>,
+    evidence: Option<CaptureEvidence>,
+    action_count: Option<usize>,
     output_dir: PathBuf,
     owner: Option<String>,
     pid: i64,
@@ -125,8 +153,10 @@ impl DemonstrationSession {
             .context("start demonstration writer")?;
 
         Ok(Self {
-            capture,
-            writer,
+            capture: Some(capture),
+            writer: Some(writer),
+            evidence: None,
+            action_count: None,
             output_dir: config.output_dir,
             owner: config.owner,
             pid,
@@ -135,20 +165,28 @@ impl DemonstrationSession {
         })
     }
 
-    fn finish(self, stop_reason: &'static str) -> anyhow::Result<DemonstrationResult> {
-        let capture = self.capture.stop();
-        let written = self
-            .writer
-            .join()
-            .map_err(|_| anyhow::anyhow!("demonstration writer panicked"))??;
-        let artifacts = demonstration_artifacts::write(
-            &self.output_dir,
-            CaptureEvidence {
+    fn finish(&mut self, stop_reason: &'static str) -> anyhow::Result<DemonstrationResult> {
+        if self.evidence.is_none() {
+            let capture = self
+                .capture
+                .take()
+                .context("demonstration capture is unavailable")?
+                .stop();
+            let written = self
+                .writer
+                .take()
+                .context("demonstration writer is unavailable")?
+                .join()
+                .map_err(|_| anyhow::anyhow!("demonstration writer panicked"))??;
+            self.evidence = Some(CaptureEvidence {
                 dropped_events: capture.dropped_events,
                 screenshot_failures: written.screenshot_failures,
-            },
-        )?;
-        debug_assert_eq!(artifacts.summary.action_count, written.action_count);
+            });
+            self.action_count = Some(written.action_count);
+        }
+        let evidence = self.evidence.expect("evidence set above");
+        let artifacts = demonstration_artifacts::write(&self.output_dir, evidence)?;
+        debug_assert_eq!(Some(artifacts.summary.action_count), self.action_count);
         let manifest = write_manifest(
             &self.output_dir,
             self.pid,
@@ -158,7 +196,7 @@ impl DemonstrationSession {
             &artifacts.summary,
         )?;
         Ok(DemonstrationResult {
-            output_dir: self.output_dir,
+            output_dir: self.output_dir.clone(),
             manifest,
             artifacts,
         })

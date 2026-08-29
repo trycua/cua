@@ -119,16 +119,9 @@ function Invoke-RestrictedBrowserTest {
         [Parameter(Mandatory = $true)][string]$LogPath
     )
 
-    $helper = Join-Path $PSScriptRoot "run-restricted-browser-test.ps1"
-    if (-not (Test-Path -LiteralPath $helper)) {
-        throw "Restricted browser-test helper not found: $helper"
-    }
-
-    $exitPath = Join-Path $artifactDir ".restricted-$TestName.exit"
-    $pidPath = Join-Path $artifactDir ".restricted-$TestName.pid"
-    $configPath = Join-Path $artifactDir ".restricted-$TestName.config.json"
-    if (Test-Path -LiteralPath $exitPath) {
-        throw "Restricted browser-test exit file already exists: $exitPath"
+    $sourceHelper = Join-Path $PSScriptRoot "run-restricted-browser-test.ps1"
+    if (-not (Test-Path -LiteralPath $sourceHelper)) {
+        throw "Restricted browser-test helper not found: $sourceHelper"
     }
 
     $testExecutables = @(Get-ChildItem (Join-Path $rustRoot "target\release\deps") `
@@ -136,7 +129,34 @@ function Invoke-RestrictedBrowserTest {
     if ($testExecutables.Count -ne 1) {
         throw "Expected one compiled standalone-browser test executable, found $($testExecutables.Count)"
     }
-    $testExecutable = $testExecutables[0].FullName
+
+    # A SAFER/restricted token keeps the runner user's primary SID but makes
+    # the Administrators group deny-only. GitHub's D:\a workspace is writable
+    # through that group, so the child could launch and then fail before it
+    # could write its pid/exit files. Stage the executable and all child-owned
+    # state under the user's LocalAppData instead. The parent copies only the
+    # finished evidence back into the workflow artifact directory.
+    $restrictedRoot = Join-Path $env:LOCALAPPDATA `
+        ("CuaDriverE2E\restricted-{0}-{1}" -f $TestName, [guid]::NewGuid().ToString("N"))
+    $restrictedEvidence = Join-Path $restrictedRoot "evidence"
+    $restrictedJournals = Join-Path $restrictedRoot "journals"
+    $restrictedRecordings = Join-Path $restrictedEvidence "recordings"
+    New-Item -ItemType Directory -Force -Path @(
+        $restrictedEvidence,
+        $restrictedJournals,
+        $restrictedRecordings
+    ) | Out-Null
+
+    $helper = Join-Path $restrictedRoot "run-restricted-browser-test.ps1"
+    $testExecutable = Join-Path $restrictedRoot "standalone_browser_behavior_test.exe"
+    $stagedDriver = Join-Path $restrictedRoot "cua-driver.exe"
+    $childLogPath = Join-Path $restrictedRoot "test.log"
+    $exitPath = Join-Path $restrictedRoot "test.exit"
+    $pidPath = Join-Path $restrictedRoot "test.pid"
+    $configPath = Join-Path $restrictedRoot "test.config.json"
+    Copy-Item -LiteralPath $sourceHelper -Destination $helper
+    Copy-Item -LiteralPath $testExecutables[0].FullName -Destination $testExecutable
+    Copy-Item -LiteralPath $env:CUA_TEST_DRIVER_BIN -Destination $stagedDriver
 
     $childEnvironment = [ordered]@{}
     foreach ($item in @(Get-ChildItem Env:)) {
@@ -147,9 +167,30 @@ function Invoke-RestrictedBrowserTest {
             $childEnvironment[$item.Name] = $item.Value
         }
     }
+    $childEnvironment["CUA_TEST_DRIVER_BIN"] = $stagedDriver
+    $childEnvironment["CUA_E2E_ARTIFACT_DIR"] = $restrictedEvidence
+    $childEnvironment["CUA_E2E_DECLARATIONS_FILE"] = Join-Path $restrictedJournals "cases.jsonl"
+    $childEnvironment["CUA_E2E_ENVIRONMENT_FILE"] = Join-Path $restrictedJournals "environment.jsonl"
+    $childEnvironment["CUA_E2E_BROWSER_PROVENANCE_FILE"] = Join-Path $restrictedJournals "browser-provenance.jsonl"
+    $childEnvironment["CUA_E2E_RESULTS_FILE"] = Join-Path $restrictedJournals "results.jsonl"
+    $childEnvironment["CUA_E2E_RECORDINGS_ROOT"] = $restrictedRecordings
+    foreach ($path in @(
+        $childEnvironment["CUA_E2E_DECLARATIONS_FILE"],
+        $childEnvironment["CUA_E2E_ENVIRONMENT_FILE"],
+        $childEnvironment["CUA_E2E_BROWSER_PROVENANCE_FILE"],
+        $childEnvironment["CUA_E2E_RESULTS_FILE"]
+    )) {
+        New-Item -ItemType File -Path $path | Out-Null
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:CUA_E2E_SOURCE_MARKER) -and
+        (Test-Path -LiteralPath $env:CUA_E2E_SOURCE_MARKER)) {
+        $stagedSourceMarker = Join-Path $restrictedRoot ".cua-e2e-source-sha"
+        Copy-Item -LiteralPath $env:CUA_E2E_SOURCE_MARKER -Destination $stagedSourceMarker
+        $childEnvironment["CUA_E2E_SOURCE_MARKER"] = $stagedSourceMarker
+    }
     [ordered]@{
         test_name = $TestName
-        log_path = $LogPath
+        log_path = $childLogPath
         exit_path = $exitPath
         pid_path = $pidPath
         test_executable = $testExecutable
@@ -159,46 +200,69 @@ function Invoke-RestrictedBrowserTest {
     "Launching prebuilt test executable with Windows trust level 0x20000" |
         Add-Content -LiteralPath $LogPath -Encoding UTF8
 
-    $command = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$helper`" -ConfigPath `"$configPath`""
-    $previousPreference = $ErrorActionPreference
-    $ErrorActionPreference = "Continue"
     try {
-        $runasOutput = @(& "$env:SystemRoot\System32\runas.exe" /trustlevel:0x20000 $command 2>&1) |
-            ForEach-Object {
-                if ($_ -is [System.Management.Automation.ErrorRecord]) {
-                    $_.Exception.Message
-                } else {
-                    $_.ToString()
+        $command = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$helper`" -ConfigPath `"$configPath`""
+        $previousPreference = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            $runasOutput = @(& "$env:SystemRoot\System32\runas.exe" /trustlevel:0x20000 $command 2>&1) |
+                ForEach-Object {
+                    if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                        $_.Exception.Message
+                    } else {
+                        $_.ToString()
+                    }
                 }
-            }
-        $runasExit = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $previousPreference
-    }
-    $runasOutput | Add-Content -LiteralPath $LogPath -Encoding UTF8
-    if ($runasExit -ne 0) {
-        "runas exited before launching the restricted test: $runasExit" |
-            Add-Content -LiteralPath $LogPath -Encoding UTF8
-        Get-Content -LiteralPath $LogPath | Out-Host
-        return $runasExit
-    }
-
-    $deadline = (Get-Date).AddMinutes(10)
-    while (-not (Test-Path -LiteralPath $exitPath)) {
-        if ((Get-Date) -ge $deadline) {
-            if (Test-Path -LiteralPath $pidPath) {
-                $childPid = [int](Get-Content -LiteralPath $pidPath -Raw)
-                & "$env:SystemRoot\System32\taskkill.exe" /PID $childPid /T /F | Out-Host
-            }
-            "Restricted browser test timed out after 10 minutes" |
-                Add-Content -LiteralPath $LogPath -Encoding UTF8
-            return 124
+            $runasExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $previousPreference
         }
-        Start-Sleep -Milliseconds 250
+        $runasOutput | Add-Content -LiteralPath $LogPath -Encoding UTF8
+        if ($runasExit -ne 0) {
+            "runas exited before launching the restricted test: $runasExit" |
+                Add-Content -LiteralPath $LogPath -Encoding UTF8
+            Get-Content -LiteralPath $LogPath | Out-Host
+            return $runasExit
+        }
+
+        $deadline = (Get-Date).AddMinutes(3)
+        while (-not (Test-Path -LiteralPath $exitPath)) {
+            if ((Get-Date) -ge $deadline) {
+                if (Test-Path -LiteralPath $pidPath) {
+                    $childPid = [int](Get-Content -LiteralPath $pidPath -Raw)
+                    & "$env:SystemRoot\System32\taskkill.exe" /PID $childPid /T /F | Out-Host
+                }
+                "Restricted browser test timed out after 3 minutes" |
+                    Add-Content -LiteralPath $LogPath -Encoding UTF8
+                return 124
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        return [int](Get-Content -LiteralPath $exitPath -Raw)
+    } finally {
+        if (Test-Path -LiteralPath $childLogPath) {
+            Get-Content -LiteralPath $childLogPath |
+                Add-Content -LiteralPath $LogPath -Encoding UTF8
+        }
+        $journalDestinations = [ordered]@{
+            "cases.jsonl" = $env:CUA_E2E_DECLARATIONS_FILE
+            "environment.jsonl" = $env:CUA_E2E_ENVIRONMENT_FILE
+            "browser-provenance.jsonl" = $env:CUA_E2E_BROWSER_PROVENANCE_FILE
+            "results.jsonl" = $env:CUA_E2E_RESULTS_FILE
+        }
+        foreach ($entry in $journalDestinations.GetEnumerator()) {
+            $source = Join-Path $restrictedJournals $entry.Key
+            if ((Test-Path -LiteralPath $source) -and (Get-Item $source).Length -gt 0) {
+                Get-Content -LiteralPath $source |
+                    Add-Content -LiteralPath $entry.Value -Encoding UTF8
+            }
+        }
+        foreach ($item in @(Get-ChildItem -Force $restrictedEvidence -ErrorAction SilentlyContinue)) {
+            Copy-Item -LiteralPath $item.FullName -Destination $artifactDir -Recurse -Force
+        }
+        Get-Content -LiteralPath $LogPath | Out-Host
+        Remove-Item -LiteralPath $restrictedRoot -Recurse -Force -ErrorAction SilentlyContinue
     }
-    $result = [int](Get-Content -LiteralPath $exitPath -Raw)
-    Get-Content -LiteralPath $LogPath | Out-Host
-    return $result
 }
 
 if (-not $NoBuild) {
@@ -212,6 +276,9 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 }
 
 $tests = @(
+    "standalone_browser_prepare_automation_exposure",
+    "standalone_browser_prepare_driver_selected_port",
+    "standalone_browser_prepare_isolated",
     "standalone_browser_background_type",
     "standalone_browser_type_replace",
     "standalone_browser_owned_permission_prompt",
@@ -222,9 +289,6 @@ $tests = @(
     "standalone_browser_frames",
     "standalone_browser_multi_tab",
     "standalone_browser_pointer_actions",
-    "standalone_browser_prepare_automation_exposure",
-    "standalone_browser_prepare_driver_selected_port",
-    "standalone_browser_prepare_isolated",
     "standalone_browser_roundtrip",
     "standalone_browser_semantic_state",
     "standalone_browser_stale_ref",
@@ -254,7 +318,14 @@ foreach ($testName in $tests) {
             "--ignored", "--exact", "--nocapture", "--test-threads=1"
         ) -LogPath $logPath
     }
-    if ($testExit -ne 0) { $failureCount++ }
+    if ($testExit -ne 0) {
+        $failureCount++
+        if ($runRestricted -and $restrictedBrowserTests -contains $testName) {
+            Write-Host "Restricted-token browser preflight failed; stopping before the ordinary matrix" `
+                -ForegroundColor Red
+            break
+        }
+    }
 }
 
 $reportExit = Invoke-CargoStep -Name "standalone browser report" -Arguments @(

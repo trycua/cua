@@ -107,6 +107,72 @@ function Invoke-CargoStep {
     }
 }
 
+function Test-IsAdministrator {
+    $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [System.Security.Principal.WindowsPrincipal]::new($identity)
+    return $principal.IsInRole([System.Security.Principal.WindowsBuiltInRole]::Administrator)
+}
+
+function Invoke-RestrictedBrowserTest {
+    param(
+        [Parameter(Mandatory = $true)][string]$TestName,
+        [Parameter(Mandatory = $true)][string]$LogPath
+    )
+
+    $helper = Join-Path $PSScriptRoot "run-restricted-browser-test.ps1"
+    if (-not (Test-Path -LiteralPath $helper)) {
+        throw "Restricted browser-test helper not found: $helper"
+    }
+
+    $exitPath = Join-Path $artifactDir ".restricted-$TestName.exit"
+    $pidPath = Join-Path $artifactDir ".restricted-$TestName.pid"
+    if (Test-Path -LiteralPath $exitPath) {
+        throw "Restricted browser-test exit file already exists: $exitPath"
+    }
+
+    $restrictedVariables = @(
+        "CUA_RESTRICTED_BROWSER_TEST_NAME",
+        "CUA_RESTRICTED_BROWSER_TEST_LOG",
+        "CUA_RESTRICTED_BROWSER_TEST_EXIT",
+        "CUA_RESTRICTED_BROWSER_TEST_PID",
+        "CUA_RESTRICTED_BROWSER_TEST_RUST_ROOT"
+    )
+    try {
+        $env:CUA_RESTRICTED_BROWSER_TEST_NAME = $TestName
+        $env:CUA_RESTRICTED_BROWSER_TEST_LOG = $LogPath
+        $env:CUA_RESTRICTED_BROWSER_TEST_EXIT = $exitPath
+        $env:CUA_RESTRICTED_BROWSER_TEST_PID = $pidPath
+        $env:CUA_RESTRICTED_BROWSER_TEST_RUST_ROOT = $rustRoot
+
+        $command = "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$helper`""
+        & "$env:SystemRoot\System32\runas.exe" /env /trustlevel:0x20000 $command | Out-Host
+        if ($LASTEXITCODE -ne 0) {
+            return $LASTEXITCODE
+        }
+
+        $deadline = (Get-Date).AddMinutes(10)
+        while (-not (Test-Path -LiteralPath $exitPath)) {
+            if ((Get-Date) -ge $deadline) {
+                if (Test-Path -LiteralPath $pidPath) {
+                    $childPid = [int](Get-Content -LiteralPath $pidPath -Raw)
+                    & "$env:SystemRoot\System32\taskkill.exe" /PID $childPid /T /F | Out-Host
+                }
+                "Restricted browser test timed out after 10 minutes" |
+                    Set-Content -LiteralPath $LogPath -Encoding UTF8
+                return 124
+            }
+            Start-Sleep -Milliseconds 250
+        }
+        $result = [int](Get-Content -LiteralPath $exitPath -Raw)
+        Get-Content -LiteralPath $LogPath | Out-Host
+        return $result
+    } finally {
+        foreach ($name in $restrictedVariables) {
+            Remove-Item "Env:$name" -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 if (-not $NoBuild) {
     $buildExit = Invoke-CargoStep -Name "source driver" -Arguments @(
         "build", "--release", "-p", "cua-driver"
@@ -139,13 +205,27 @@ $tests = @(
     "standalone_browser_upload",
     "standalone_browser_window_collision"
 )
+$restrictedBrowserTests = @(
+    "standalone_browser_prepare_automation_exposure",
+    "standalone_browser_prepare_driver_selected_port",
+    "standalone_browser_prepare_isolated"
+)
+$runRestricted = Test-IsAdministrator
+if ($runRestricted) {
+    Write-Host "Administrator token detected; platform-selected browser tests will use Windows trust level 0x20000"
+}
 $failureCount = 0
 foreach ($testName in $tests) {
-    $testExit = Invoke-CargoStep -Name $testName -Arguments @(
-        "test", "--release", "-p", "cua-driver",
-        "--test", "standalone_browser_behavior_test", $testName, "--",
-        "--ignored", "--exact", "--nocapture", "--test-threads=1"
-    ) -LogPath (Join-Path $artifactDir "$testName.log")
+    $logPath = Join-Path $artifactDir "$testName.log"
+    if ($runRestricted -and $restrictedBrowserTests -contains $testName) {
+        $testExit = Invoke-RestrictedBrowserTest -TestName $testName -LogPath $logPath
+    } else {
+        $testExit = Invoke-CargoStep -Name $testName -Arguments @(
+            "test", "--release", "-p", "cua-driver",
+            "--test", "standalone_browser_behavior_test", $testName, "--",
+            "--ignored", "--exact", "--nocapture", "--test-threads=1"
+        ) -LogPath $logPath
+    }
     if ($testExit -ne 0) { $failureCount++ }
 }
 

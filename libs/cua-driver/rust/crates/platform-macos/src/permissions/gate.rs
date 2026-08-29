@@ -43,6 +43,8 @@ use crate::permissions::status::{
 
 const PERMISSION_PROBE_ARG: &str = "--cua-internal-permission-probe";
 const PERMISSION_PROBE_REQUEST_ARG: &str = "--cua-internal-permission-probe-request";
+const PERMISSION_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
+const PERMISSION_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Which TCC grant is missing.  Each variant maps 1:1 to a System Settings
 /// pane URL via [`MissingPermission::settings_url`].
@@ -137,15 +139,44 @@ pub fn run_permission_probe_if_requested() -> Option<i32> {
     }
 }
 
+fn run_probe_command(
+    command: &mut std::process::Command,
+    timeout: Duration,
+) -> Result<std::process::Output> {
+    command
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let mut child = command.spawn()?;
+    let started = Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return child.wait_with_output().map_err(Into::into);
+        }
+        if started.elapsed() >= timeout {
+            let _ = child.kill();
+            let _ = child.wait();
+            anyhow::bail!("permission probe timed out after {timeout:?}");
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 fn fresh_status_with_request(request: bool) -> Result<PermissionsStatus> {
     let executable = std::env::current_exe()?;
-    let output = std::process::Command::new(executable)
-        .arg(if request {
-            PERMISSION_PROBE_REQUEST_ARG
+    let mut command = std::process::Command::new(executable);
+    command.arg(if request {
+        PERMISSION_PROBE_REQUEST_ARG
+    } else {
+        PERMISSION_PROBE_ARG
+    });
+    let output = run_probe_command(
+        &mut command,
+        if request {
+            PERMISSION_REQUEST_TIMEOUT
         } else {
-            PERMISSION_PROBE_ARG
-        })
-        .output()?;
+            PERMISSION_PROBE_TIMEOUT
+        },
+    )?;
     if !output.status.success() {
         anyhow::bail!(
             "permission probe exited with {}: {}",
@@ -647,6 +678,16 @@ mod tests {
     /// `CUA_DRIVER_EMBEDDED`, which the `check_permissions` tests mutate.
     fn env_lock() -> std::sync::MutexGuard<'static, ()> {
         crate::permissions::test_env_lock()
+    }
+
+    #[test]
+    fn permission_probe_process_is_bounded() {
+        let mut command = std::process::Command::new("/bin/sh");
+        command.args(["-c", "sleep 30"]);
+        let started = Instant::now();
+        let error = run_probe_command(&mut command, Duration::from_millis(20)).unwrap_err();
+        assert!(error.to_string().contains("timed out"));
+        assert!(started.elapsed() < Duration::from_secs(2));
     }
 
     fn clear_telemetry_env() {

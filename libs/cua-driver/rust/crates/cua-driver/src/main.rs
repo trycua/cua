@@ -456,6 +456,22 @@ mod mcp_runtime_selection_tests {
 // ── macOS entry-point ─────────────────────────────────────────────────────
 
 #[cfg(target_os = "macos")]
+fn continue_permission_probes_until_granted() {
+    let result = std::thread::Builder::new()
+        .name("cua-permission-monitor".into())
+        .spawn(|| loop {
+            if platform_macos::permissions::gate::check_required_permissions().is_empty() {
+                serve::set_permission_gate_pending(false);
+                return;
+            }
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        });
+    if let Err(error) = result {
+        eprintln!("[cua-driver] cannot start permission monitor: {error}");
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn main() {
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
@@ -663,10 +679,6 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
-            // Failures (e.g. deadline elapsed without grants) are logged
-            // and the daemon continues to serve — individual tool calls
-            // will then fail with the underlying TCC error, mirroring
-            // Swift's "user closed the panel" fallback.
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -685,7 +697,11 @@ fn main() {
                     }
                 },
             );
-            serve::set_permission_gate_pending(false);
+            if gate_result.is_ok() {
+                serve::set_permission_gate_pending(false);
+            } else {
+                continue_permission_probes_until_granted();
+            }
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -703,9 +719,8 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] continuing — tool calls touching AX or \
-                           Screen Recording fail until you grant the missing TCC \
-                           permissions."
+                    "[cua-driver] desktop tool calls remain gated until a fresh probe confirms \
+                     Accessibility and Screen Recording permissions."
                 );
             }
 

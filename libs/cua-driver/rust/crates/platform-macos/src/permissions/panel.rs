@@ -57,6 +57,8 @@
 
 use std::cell::RefCell;
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 use objc2::runtime::AnyObject;
 use objc2::{class, msg_send};
@@ -394,6 +396,10 @@ unsafe fn show_modal_unsafe(opts: &PanelOpts) -> PanelOutcome {
             last_status: opts.initial_status,
         });
     });
+    if let Ok(mut result) = PANEL_PROBE_RESULT.lock() {
+        *result = None;
+    }
+    request_panel_probe();
 
     // ---- Show window + start poll timer + run modal ----
     let _: () = msg_send![window, center];
@@ -447,6 +453,35 @@ struct PanelHandles {
 thread_local! {
     static OUTCOME: RefCell<Option<PanelOutcome>> = const { RefCell::new(None) };
     static HANDLES: RefCell<Option<PanelHandles>> = const { RefCell::new(None) };
+}
+
+static PANEL_PROBE_IN_FLIGHT: AtomicBool = AtomicBool::new(false);
+static PANEL_PROBE_RESULT: Mutex<Option<PermissionsStatus>> = Mutex::new(None);
+
+fn request_panel_probe() {
+    if PANEL_PROBE_IN_FLIGHT
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return;
+    }
+    if std::thread::Builder::new()
+        .name("cua-permission-panel-probe".into())
+        .spawn(|| {
+            let status = super::gate::fresh_status();
+            if let Ok(mut result) = PANEL_PROBE_RESULT.lock() {
+                *result = Some(status);
+            }
+            PANEL_PROBE_IN_FLIGHT.store(false, Ordering::Release);
+        })
+        .is_err()
+    {
+        PANEL_PROBE_IN_FLIGHT.store(false, Ordering::Release);
+    }
+}
+
+fn take_panel_probe_result() -> Option<PermissionsStatus> {
+    PANEL_PROBE_RESULT.lock().ok()?.take()
 }
 
 fn ptr_to_usize(p: *mut AnyObject) -> usize {
@@ -506,7 +541,11 @@ extern "C" fn on_poll_tick(
 }
 
 unsafe fn poll_tick_inner() {
-    let status = super::gate::fresh_status();
+    let status = take_panel_probe_result();
+    request_panel_probe();
+    let Some(status) = status else {
+        return;
+    };
     let mut should_stop = false;
     HANDLES.with(|cell| {
         let mut guard = cell.borrow_mut();

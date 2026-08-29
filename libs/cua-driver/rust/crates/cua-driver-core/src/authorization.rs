@@ -241,6 +241,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "escalate_session",
     "zoom",
     "start_recording",
+    "start_demonstration",
 ];
 const PRIVATE_OBSERVATION_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -305,6 +306,8 @@ const FILE_TRANSFER_OPERATIONS: &[&str] = &[
     "get_window_state[with_file_output]",
     "start_recording",
     "stop_recording",
+    "start_demonstration",
+    "stop_demonstration",
     "replay_trajectory",
     "install_ffmpeg",
 ];
@@ -745,6 +748,7 @@ pub fn enforcement_adapters_for_call(
             | "escalate_session"
             | "zoom"
             | "start_recording"
+            | "start_demonstration"
     ) || (tool == "page"
         && matches!(
             args.get("action").and_then(Value::as_str),
@@ -779,6 +783,8 @@ pub fn enforcement_adapters_for_call(
             | "browser_download"
             | "start_recording"
             | "stop_recording"
+            | "start_demonstration"
+            | "stop_demonstration"
             | "replay_trajectory"
     ) || writes_screenshot
         || (tool == "clipboard_write"
@@ -929,6 +935,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_window_state"
         | "kill_app"
         | "stop_recording"
+        | "start_demonstration"
+        | "stop_demonstration"
         | "replay_trajectory"
         | "install_ffmpeg"
         | "page"
@@ -1050,6 +1058,8 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "browser_download"
         | "start_recording"
         | "stop_recording"
+        | "start_demonstration"
+        | "stop_demonstration"
         | "replay_trajectory" => RiskAssessment {
             class: RiskClass::R3,
             enforcement: RiskEnforcement::Active,
@@ -1192,6 +1202,7 @@ fn enforce_hard_invariants(
             | "get_accessibility_tree"
             | "get_window_state"
             | "verify_state"
+            | "start_demonstration"
             | "page"
             | "browser_prepare"
     );
@@ -1641,6 +1652,33 @@ mod tests {
     }
 
     #[test]
+    fn demonstrations_are_active_r3_file_output_operations() {
+        for tool in ["start_demonstration", "stop_demonstration"] {
+            let advertised = advertised_risk_for(tool);
+            assert_eq!(advertised.class, RiskClass::R3);
+            assert_eq!(advertised.enforcement, RiskEnforcement::Active);
+
+            let exact = classify_tool_call(tool, &serde_json::json!({}));
+            assert_eq!(exact.class, RiskClass::R3);
+            assert_eq!(exact.enforcement, RiskEnforcement::Active);
+        }
+        assert_eq!(
+            enforcement_adapters_for_call("start_demonstration", &serde_json::json!({}))
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>(),
+            ["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            enforcement_adapters_for_call("stop_demonstration", &serde_json::json!({}))
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>(),
+            ["file_transfer_and_output"]
+        );
+    }
+
+    #[test]
     fn enforcement_inventory_is_unique_and_truthful() {
         let mut ids = std::collections::BTreeSet::new();
         for adapter in ENFORCEMENT_ADAPTERS {
@@ -1888,6 +1926,14 @@ mod tests {
         assert_eq!(
             ids("start_recording", serde_json::json!({})),
             vec!["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("start_demonstration", serde_json::json!({})),
+            vec!["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            ids("stop_demonstration", serde_json::json!({})),
+            vec!["file_transfer_and_output"]
         );
         assert_eq!(
             ids("escalate_session", serde_json::json!({})),

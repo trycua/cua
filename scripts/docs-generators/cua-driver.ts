@@ -691,7 +691,13 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     },
     {
       title: 'Recording tools',
-      tools: ['start_recording', 'stop_recording', 'replay_trajectory'],
+      tools: [
+        'start_recording',
+        'stop_recording',
+        'replay_trajectory',
+        'start_demonstration',
+        'stop_demonstration',
+      ],
     },
     {
       title: 'Configuration tools',

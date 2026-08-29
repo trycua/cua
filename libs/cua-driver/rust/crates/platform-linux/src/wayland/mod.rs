@@ -3242,18 +3242,35 @@ fn merge_atspi_windows(
 
 fn enrich_native_windows(mut native: Vec<WindowInfo>, atspi: Vec<WindowInfo>) -> Vec<WindowInfo> {
     let mut claimed = std::collections::HashSet::new();
-    for window in &mut native {
-        if window.pid.is_some() {
+    let needs_correlation: Vec<_> = native.iter().map(|window| window.pid.is_none()).collect();
+    for native_index in 0..native.len() {
+        if !needs_correlation[native_index] {
             continue;
         }
-        let native_title = undecorated_native_title(window);
+        let native_title = undecorated_native_title(&native[native_index]);
         let title_match = unique_unclaimed_match(&atspi, &claimed, |candidate| {
             !native_title.is_empty() && candidate.title == native_title
+        })
+        .filter(|&atspi_index| {
+            unique_native_match(&native, |index, window| {
+                let title = undecorated_native_title(window);
+                needs_correlation[index] && !title.is_empty() && title == atspi[atspi_index].title
+            }) == Some(native_index)
         });
         let app_match = title_match.or_else(|| {
+            let native_app_name = &native[native_index].app_name;
             unique_unclaimed_match(&atspi, &claimed, |candidate| {
-                !window.app_name.is_empty()
-                    && candidate.app_name.eq_ignore_ascii_case(&window.app_name)
+                !native_app_name.is_empty()
+                    && candidate.app_name.eq_ignore_ascii_case(native_app_name)
+            })
+            .filter(|&atspi_index| {
+                unique_native_match(&native, |index, window| {
+                    needs_correlation[index]
+                        && !window.app_name.is_empty()
+                        && window
+                            .app_name
+                            .eq_ignore_ascii_case(&atspi[atspi_index].app_name)
+                }) == Some(native_index)
             })
         });
         let Some(index) = app_match else { continue };
@@ -3262,6 +3279,7 @@ fn enrich_native_windows(mut native: Vec<WindowInfo>, atspi: Vec<WindowInfo>) ->
             continue;
         }
         claimed.insert(index);
+        let window = &mut native[native_index];
         window.pid = candidate.pid;
         let toplevel = Toplevel {
             title: undecorated_native_title(window).to_owned(),
@@ -3286,6 +3304,19 @@ fn enrich_native_windows(mut native: Vec<WindowInfo>, atspi: Vec<WindowInfo>) ->
         window.is_on_screen = candidate.is_on_screen;
     }
     native
+}
+
+fn unique_native_match(
+    windows: &[WindowInfo],
+    matches: impl Fn(usize, &WindowInfo) -> bool,
+) -> Option<usize> {
+    let mut matching = windows
+        .iter()
+        .enumerate()
+        .filter(|(index, window)| matches(*index, window))
+        .map(|(index, _)| index);
+    let index = matching.next()?;
+    matching.next().is_none().then_some(index)
 }
 
 fn unique_unclaimed_match(
@@ -3563,6 +3594,31 @@ mod tests {
             ),
             (0, 0, 0, 0)
         );
+    }
+
+    #[test]
+    fn native_enrichment_refuses_one_atspi_candidate_for_two_native_rows() {
+        let mut first = window(77, None, "First tab [chromium]");
+        first.app_name = "chromium".into();
+        let mut second = window(78, None, "Second tab [chromium]");
+        second.app_name = "chromium".into();
+        let mut accessible = window(41_005 << 16, Some(41_005), "Chromium");
+        accessible.app_name = "Chromium".into();
+        accessible.x = 20;
+        accessible.y = 30;
+        accessible.width = 800;
+        accessible.height = 600;
+
+        let enriched = enrich_native_windows(vec![first, second], vec![accessible]);
+
+        assert_eq!((enriched[0].xid, enriched[1].xid), (77, 78));
+        for window in enriched {
+            assert_eq!(window.pid, None);
+            assert_eq!(
+                (window.x, window.y, window.width, window.height),
+                (0, 0, 0, 0)
+            );
+        }
     }
 
     #[test]

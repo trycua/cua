@@ -41,6 +41,14 @@ impl DemonstrationManager {
     }
 
     pub fn start(&self, config: DemonstrationConfig) -> anyhow::Result<PathBuf> {
+        self.start_with(config, DemonstrationSession::start)
+    }
+
+    fn start_with(
+        &self,
+        config: DemonstrationConfig,
+        start: impl FnOnce(DemonstrationConfig) -> anyhow::Result<DemonstrationSession>,
+    ) -> anyhow::Result<PathBuf> {
         let mut active = self
             .active
             .lock()
@@ -49,7 +57,7 @@ impl DemonstrationManager {
             anyhow::bail!("a demonstration is already active");
         }
         let output_dir = config.output_dir.clone();
-        *active = Some(DemonstrationSession::start(config)?);
+        *active = Some(start(config)?);
         Ok(output_dir)
     }
 
@@ -88,9 +96,11 @@ impl DemonstrationManager {
         let Some(session) = active.as_mut().filter(|session| predicate(session)) else {
             return Ok(None);
         };
-        let result = session.finish(stop_reason)?;
-        *active = None;
-        Ok(Some(result))
+        let result = session.finish(stop_reason);
+        if result.is_ok() || session.is_terminal() {
+            *active = None;
+        }
+        result.map(Some)
     }
 }
 
@@ -118,15 +128,43 @@ impl Default for DemonstrationManager {
 }
 
 struct DemonstrationSession {
-    capture: Option<input_capture::Demonstration>,
-    writer: Option<std::thread::JoinHandle<anyhow::Result<WriteSummary>>>,
-    evidence: Option<CaptureEvidence>,
-    action_count: Option<usize>,
+    state: DemonstrationState,
     output_dir: PathBuf,
     owner: Option<String>,
     pid: i64,
     window_id: u64,
     started_at_ms: u64,
+}
+
+enum DemonstrationState {
+    Active {
+        capture: DemonstrationCapture,
+        writer: std::thread::JoinHandle<anyhow::Result<WriteSummary>>,
+    },
+    Artifacts {
+        evidence: CaptureEvidence,
+        action_count: usize,
+    },
+    Terminal(String),
+}
+
+enum DemonstrationCapture {
+    Physical(input_capture::Demonstration),
+    #[cfg(test)]
+    Injected(std::sync::Arc<std::sync::atomic::AtomicBool>),
+}
+
+impl DemonstrationCapture {
+    fn stop(self) -> input_capture::CaptureStats {
+        match self {
+            Self::Physical(capture) => capture.stop(),
+            #[cfg(test)]
+            Self::Injected(stopped) => {
+                stopped.store(true, std::sync::atomic::Ordering::Release);
+                input_capture::CaptureStats::default()
+            }
+        }
+    }
 }
 
 impl DemonstrationSession {
@@ -153,10 +191,10 @@ impl DemonstrationSession {
             .context("start demonstration writer")?;
 
         Ok(Self {
-            capture: Some(capture),
-            writer: Some(writer),
-            evidence: None,
-            action_count: None,
+            state: DemonstrationState::Active {
+                capture: DemonstrationCapture::Physical(capture),
+                writer,
+            },
             output_dir: config.output_dir,
             owner: config.owner,
             pid,
@@ -166,27 +204,46 @@ impl DemonstrationSession {
     }
 
     fn finish(&mut self, stop_reason: &'static str) -> anyhow::Result<DemonstrationResult> {
-        if self.evidence.is_none() {
-            let capture = self
-                .capture
-                .take()
-                .context("demonstration capture is unavailable")?
-                .stop();
-            let written = self
-                .writer
-                .take()
-                .context("demonstration writer is unavailable")?
-                .join()
-                .map_err(|_| anyhow::anyhow!("demonstration writer panicked"))??;
-            self.evidence = Some(CaptureEvidence {
-                dropped_events: capture.dropped_events,
-                screenshot_failures: written.screenshot_failures,
-            });
-            self.action_count = Some(written.action_count);
+        if matches!(self.state, DemonstrationState::Active { .. }) {
+            let state = std::mem::replace(
+                &mut self.state,
+                DemonstrationState::Terminal("demonstration finalization interrupted".into()),
+            );
+            let DemonstrationState::Active { capture, writer } = state else {
+                unreachable!();
+            };
+            let capture = capture.stop();
+            let written = match writer.join() {
+                Ok(Ok(written)) => written,
+                Ok(Err(error)) => {
+                    let message = format!("demonstration writer failed: {error:#}");
+                    self.state = DemonstrationState::Terminal(message.clone());
+                    anyhow::bail!(message);
+                }
+                Err(_) => {
+                    let message = "demonstration writer panicked".to_owned();
+                    self.state = DemonstrationState::Terminal(message.clone());
+                    anyhow::bail!(message);
+                }
+            };
+            self.state = DemonstrationState::Artifacts {
+                evidence: CaptureEvidence {
+                    dropped_events: capture.dropped_events,
+                    screenshot_failures: written.screenshot_failures,
+                },
+                action_count: written.action_count,
+            };
         }
-        let evidence = self.evidence.expect("evidence set above");
+        let (evidence, action_count) = match &self.state {
+            DemonstrationState::Artifacts {
+                evidence,
+                action_count,
+            } => (*evidence, *action_count),
+            DemonstrationState::Terminal(message) => anyhow::bail!(message.clone()),
+            DemonstrationState::Active { .. } => unreachable!(),
+        };
         let artifacts = demonstration_artifacts::write(&self.output_dir, evidence)?;
-        debug_assert_eq!(Some(artifacts.summary.action_count), self.action_count);
+        debug_assert_eq!(artifacts.summary.action_count, action_count);
         let manifest = write_manifest(
             &self.output_dir,
             self.pid,
@@ -200,6 +257,10 @@ impl DemonstrationSession {
             manifest,
             artifacts,
         })
+    }
+
+    fn is_terminal(&self) -> bool {
+        matches!(self.state, DemonstrationState::Terminal(_))
     }
 }
 
@@ -298,6 +359,8 @@ fn write_events(
 mod tests {
     use super::*;
     use input_capture::{Button, HumanEvent};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::Arc;
 
     fn temp_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -324,6 +387,56 @@ mod tests {
         assert!(!requester_can_stop(None, Some("session-a")));
         assert!(requester_can_stop(Some("session-a"), None));
         assert!(requester_can_stop(None, None));
+    }
+
+    #[test]
+    fn failed_artifact_finalization_is_retryable_after_capture_stops() {
+        let output_dir = temp_dir("retry-finalize").join("output");
+        std::fs::write(&output_dir, "blocks read_dir").unwrap();
+        let capture_stopped = Arc::new(AtomicBool::new(false));
+        let manager = DemonstrationManager::new();
+        let stopped = capture_stopped.clone();
+        manager
+            .start_with(
+                DemonstrationConfig {
+                    pid: 42,
+                    window_id: 7,
+                    output_dir: output_dir.clone(),
+                    owner: Some("session-a".into()),
+                },
+                move |config| {
+                    Ok(DemonstrationSession {
+                        state: DemonstrationState::Active {
+                            capture: DemonstrationCapture::Injected(stopped),
+                            writer: std::thread::spawn(|| {
+                                Ok(WriteSummary {
+                                    action_count: 0,
+                                    screenshot_failures: 0,
+                                })
+                            }),
+                        },
+                        output_dir: config.output_dir,
+                        owner: config.owner,
+                        pid: config.pid,
+                        window_id: config.window_id,
+                        started_at_ms: 10,
+                    })
+                },
+            )
+            .unwrap();
+
+        assert!(manager.stop_owner("session-a").is_err());
+        assert!(capture_stopped.load(Ordering::Acquire));
+        assert_eq!(
+            manager.output_dir(Some("session-a")),
+            Some(output_dir.clone())
+        );
+
+        std::fs::remove_file(&output_dir).unwrap();
+        std::fs::create_dir(&output_dir).unwrap();
+        let result = manager.stop_owner("session-a").unwrap().unwrap();
+        assert!(result.manifest.exists());
+        assert!(manager.output_dir(Some("session-a")).is_none());
     }
 
     #[test]
@@ -390,5 +503,68 @@ mod tests {
         assert_eq!(artifacts.summary.action_count, 0);
         assert!(artifacts.trajectory_md.exists());
         assert!(artifacts.summary_json.exists());
+    }
+
+    #[test]
+    fn writer_failure_stops_capture_and_allows_the_next_demonstration() {
+        let manager = DemonstrationManager::new();
+        let stopped = Arc::new(AtomicBool::new(false));
+        let failed_dir = temp_dir("writer-failure");
+        manager
+            .start_with(
+                DemonstrationConfig {
+                    pid: 42,
+                    window_id: 7,
+                    output_dir: failed_dir.clone(),
+                    owner: Some("session-a".into()),
+                },
+                |config| {
+                    Ok(DemonstrationSession {
+                        state: DemonstrationState::Active {
+                            capture: DemonstrationCapture::Injected(stopped.clone()),
+                            writer: std::thread::spawn(|| anyhow::bail!("injected writer failure")),
+                        },
+                        output_dir: config.output_dir,
+                        owner: config.owner,
+                        pid: config.pid,
+                        window_id: config.window_id,
+                        started_at_ms: 0,
+                    })
+                },
+            )
+            .unwrap();
+
+        let error = manager.stop_owner("session-a").unwrap_err();
+        assert!(error.to_string().contains("injected writer failure"));
+        assert!(stopped.load(Ordering::Acquire));
+        assert!(manager.output_dir(Some("session-a")).is_none());
+        assert!(!failed_dir.join("DEMONSTRATION.json").exists());
+
+        let next_dir = temp_dir("writer-failure-next");
+        manager
+            .start_with(
+                DemonstrationConfig {
+                    pid: 42,
+                    window_id: 7,
+                    output_dir: next_dir.clone(),
+                    owner: Some("session-a".into()),
+                },
+                |config| {
+                    Ok(DemonstrationSession {
+                        state: DemonstrationState::Artifacts {
+                            evidence: CaptureEvidence::default(),
+                            action_count: 0,
+                        },
+                        output_dir: config.output_dir,
+                        owner: config.owner,
+                        pid: config.pid,
+                        window_id: config.window_id,
+                        started_at_ms: 0,
+                    })
+                },
+            )
+            .expect("terminal writer failure must release start eligibility");
+        assert!(manager.stop_owner("session-a").unwrap().is_some());
+        assert!(next_dir.join("DEMONSTRATION.json").exists());
     }
 }

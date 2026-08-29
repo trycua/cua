@@ -903,8 +903,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "end_session"
         | "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"
-        | "set_agent_cursor_theme"
-        | "stop_demonstration" => RiskClass::R1,
+        | "set_agent_cursor_theme" => RiskClass::R1,
 
         "clipboard_write" => RiskClass::R1,
 
@@ -922,7 +921,6 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "set_config"
         | "escalate_session"
         | "start_recording"
-        | "start_demonstration"
         | "get_browser_state"
         | "browser_prepare"
         | "browser_navigate"
@@ -937,6 +935,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "get_window_state"
         | "kill_app"
         | "stop_recording"
+        | "start_demonstration"
+        | "stop_demonstration"
         | "replay_trajectory"
         | "install_ffmpeg"
         | "page"
@@ -1058,6 +1058,8 @@ pub fn classify_tool_call(tool: &str, args: &Value) -> RiskAssessment {
         | "browser_download"
         | "start_recording"
         | "stop_recording"
+        | "start_demonstration"
+        | "stop_demonstration"
         | "replay_trajectory" => RiskAssessment {
             class: RiskClass::R3,
             enforcement: RiskEnforcement::Active,
@@ -1200,6 +1202,7 @@ fn enforce_hard_invariants(
             | "get_accessibility_tree"
             | "get_window_state"
             | "verify_state"
+            | "start_demonstration"
             | "page"
             | "browser_prepare"
     );
@@ -1646,6 +1649,33 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.to_string().contains("authorization process"));
+    }
+
+    #[test]
+    fn demonstrations_are_active_r3_file_output_operations() {
+        for tool in ["start_demonstration", "stop_demonstration"] {
+            let advertised = advertised_risk_for(tool);
+            assert_eq!(advertised.class, RiskClass::R3);
+            assert_eq!(advertised.enforcement, RiskEnforcement::Active);
+
+            let exact = classify_tool_call(tool, &serde_json::json!({}));
+            assert_eq!(exact.class, RiskClass::R3);
+            assert_eq!(exact.enforcement, RiskEnforcement::Active);
+        }
+        assert_eq!(
+            enforcement_adapters_for_call("start_demonstration", &serde_json::json!({}))
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>(),
+            ["private_observation", "file_transfer_and_output"]
+        );
+        assert_eq!(
+            enforcement_adapters_for_call("stop_demonstration", &serde_json::json!({}))
+                .into_iter()
+                .map(|adapter| adapter.id)
+                .collect::<Vec<_>>(),
+            ["file_transfer_and_output"]
+        );
     }
 
     #[test]

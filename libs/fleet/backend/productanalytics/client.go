@@ -15,11 +15,13 @@ import (
 )
 
 const firstSeenProperty = "fleet_first_seen_at"
+const firstActivationProperty = "fleet_activated_at"
 
 type Config struct {
 	Enabled          bool
 	Host             string
 	ProjectToken     string
+	IdentityKey      string
 	Environment      string
 	ExcludedSubjects []string
 	QueueSize        int
@@ -61,7 +63,7 @@ func New(config Config) *Client {
 	for _, subject := range config.ExcludedSubjects {
 		client.excluded[subject] = struct{}{}
 	}
-	if config.Enabled && config.ProjectToken != "" && config.Host != "" {
+	if config.Enabled && config.ProjectToken != "" && config.Host != "" && config.IdentityKey != "" {
 		go client.run()
 	} else {
 		close(client.done)
@@ -70,7 +72,7 @@ func New(config Config) *Client {
 }
 
 func (client *Client) Capture(event Event) {
-	if !client.config.Enabled || client.config.ProjectToken == "" || client.config.Host == "" {
+	if !client.config.Enabled || client.config.ProjectToken == "" || client.config.Host == "" || client.config.IdentityKey == "" {
 		metrics.RecordProductAnalytics(event.Name, "disabled")
 		return
 	}
@@ -81,6 +83,11 @@ func (client *Client) Capture(event Event) {
 	if err := ValidateEvent(event); err != nil {
 		metrics.RecordProductAnalytics(event.Name, "invalid")
 		return
+	}
+	pseudonym := PseudonymForUserID(event.DistinctID, client.config.IdentityKey)
+	event.DistinctID = pseudonym
+	if event.Name == EventFleetActivation {
+		event.InsertID = "fleet-activation:" + pseudonym
 	}
 	copied := cloneEvent(event)
 	copied.Properties["environment"] = client.config.Environment
@@ -199,7 +206,7 @@ func cloneMap(input map[string]any) map[string]any {
 
 func (client *Client) Shutdown(ctx context.Context) error {
 	client.stopOnce.Do(func() {
-		if client.config.Enabled && client.config.ProjectToken != "" && client.config.Host != "" {
+		if client.config.Enabled && client.config.ProjectToken != "" && client.config.Host != "" && client.config.IdentityKey != "" {
 			close(client.queue)
 		}
 	})

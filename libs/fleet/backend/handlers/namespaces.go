@@ -115,9 +115,7 @@ func initK8sClient() {
 func (h Handlers) k8sImpersonate(
 	ctx context.Context, method, path string, body io.Reader, userSub string,
 ) (*http.Response, error) {
-	if k8sClient == nil {
-		initK8sClient()
-	}
+	initK8sClient()
 	if k8sClient == nil {
 		return nil, fmt.Errorf("k8s client not initialised (missing SA token)")
 	}

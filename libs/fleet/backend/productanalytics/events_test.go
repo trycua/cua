@@ -29,6 +29,38 @@ func TestSourceForUser(t *testing.T) {
 	}
 }
 
+func TestClassifyIdentity(t *testing.T) {
+	tests := []struct {
+		name string
+		user *auth.User
+		want IdentityClass
+	}{
+		{name: "verified internal domain", user: &auth.User{Email: "founder@trycua.com", EmailVerified: true}, want: IdentityInternal},
+		{name: "domain case is normalized", user: &auth.User{Email: "founder@TRYCUA.COM", EmailVerified: true}, want: IdentityInternal},
+		{name: "lookalike domain is external", user: &auth.User{Email: "founder@trycua.com.evil.test", EmailVerified: true}, want: IdentityExternal},
+		{name: "unverified internal-looking email is unknown", user: &auth.User{Email: "founder@trycua.com"}, want: IdentityUnknown},
+		{name: "missing email is unknown", user: &auth.User{ID: "user-1"}, want: IdentityUnknown},
+		{name: "verified external email", user: &auth.User{Email: "person@example.test", EmailVerified: true}, want: IdentityExternal},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := ClassifyIdentity(test.user); got != test.want {
+				t.Fatalf("ClassifyIdentity() = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
+func TestPseudonymForUserIDIsDeterministicAndKeyed(t *testing.T) {
+	first := PseudonymForUserID("user-1", "key-a")
+	if first == "" || first != PseudonymForUserID("user-1", "key-a") {
+		t.Fatalf("pseudonym is not deterministic: %q", first)
+	}
+	if first == PseudonymForUserID("user-1", "key-b") || first == PseudonymForUserID("user-2", "key-a") {
+		t.Fatalf("pseudonym is not keyed/input-bound: %q", first)
+	}
+}
+
 func TestValidateEventRejectsUnsafeProperties(t *testing.T) {
 	valid := Event{
 		Name:       EventPoolCreate,

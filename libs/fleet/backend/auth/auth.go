@@ -253,6 +253,7 @@ func validateKeycloak(raw string) (*User, error) {
 		ID:            str(claims, "sub"),
 		Name:          str(claims, "name"),
 		Email:         str(claims, "email"),
+		EmailVerified: boolean(claims, "email_verified"),
 		AZP:           str(claims, "azp"),
 		Namespace:     str(claims, "namespace"),
 		PrincipalType: PrincipalTypeUser,
@@ -372,4 +373,13 @@ func str(c jwt.MapClaims, k string) string {
 		}
 	}
 	return ""
+}
+
+func boolean(c jwt.MapClaims, k string) bool {
+	v, ok := c[k]
+	if !ok {
+		return false
+	}
+	value, ok := v.(bool)
+	return ok && value
 }

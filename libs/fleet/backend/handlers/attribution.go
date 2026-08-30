@@ -2,8 +2,15 @@ package handlers
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"net/url"
 	"strings"
+
+	"cyclops-cs-backend/auth"
+	"cyclops-cs-backend/productanalytics"
 )
 
 const FleetClaimHeader = "X-Cua-Fleet-Claim"
@@ -11,6 +18,77 @@ const FleetClaimHeader = "X-Cua-Fleet-Claim"
 type AttributionFactsReader interface {
 	ReadBoundClaim(context.Context, string, string) (BoundClaim, error)
 	PoolExists(context.Context, string, string) (bool, error)
+}
+
+func (h Handlers) FleetAttributionQualifier() productanalytics.SvcQualifier {
+	reader := fleetAttributionFactsReader{handlers: h}
+	return func(ctx context.Context, r *http.Request, status int) bool {
+		return QualifySvcRequest(ctx, r, status, reader)
+	}
+}
+
+type fleetAttributionFactsReader struct{ handlers Handlers }
+
+func (reader fleetAttributionFactsReader) userSubject(ctx context.Context) (string, error) {
+	user := auth.GetUser(ctx)
+	if user == nil || user.ID == "" {
+		return "", fmt.Errorf("missing authenticated user")
+	}
+	return user.ID, nil
+}
+
+func (reader fleetAttributionFactsReader) ReadBoundClaim(ctx context.Context, namespace, claim string) (BoundClaim, error) {
+	subject, err := reader.userSubject(ctx)
+	if err != nil {
+		return BoundClaim{}, err
+	}
+	path := fmt.Sprintf("/apis/osgym.cua.ai/v1alpha1/namespaces/%s/osgymsandboxclaims/%s", url.PathEscape(namespace), url.PathEscape(claim))
+	response, err := reader.handlers.k8sImpersonate(ctx, http.MethodGet, path, nil, subject)
+	if err != nil {
+		return BoundClaim{}, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return BoundClaim{}, fmt.Errorf("claim lookup returned HTTP %d", response.StatusCode)
+	}
+	var payload struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Status struct {
+			Phase   string `json:"phase"`
+			Sandbox struct {
+				Name string `json:"name"`
+			} `json:"sandbox"`
+		} `json:"status"`
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+		return BoundClaim{}, err
+	}
+	return BoundClaim{Claim: payload.Metadata.Name, Sandbox: payload.Status.Sandbox.Name, Bound: payload.Status.Phase == "Bound"}, nil
+}
+
+func (reader fleetAttributionFactsReader) PoolExists(ctx context.Context, namespace, pool string) (bool, error) {
+	subject, err := reader.userSubject(ctx)
+	if err != nil {
+		return false, err
+	}
+	if pool == "" {
+		return false, fmt.Errorf("missing pool")
+	}
+	path := fmt.Sprintf("/apis/cua.ai/v1/namespaces/%s/osgymworkspacepools/%s", url.PathEscape(namespace), url.PathEscape(pool))
+	response, err := reader.handlers.k8sImpersonate(ctx, http.MethodGet, path, nil, subject)
+	if err != nil {
+		return false, err
+	}
+	defer response.Body.Close()
+	if response.StatusCode == http.StatusNotFound {
+		return false, nil
+	}
+	if response.StatusCode != http.StatusOK {
+		return false, fmt.Errorf("pool lookup returned HTTP %d", response.StatusCode)
+	}
+	return true, nil
 }
 
 func QualifySvcRequest(ctx context.Context, r *http.Request, status int, reader AttributionFactsReader) bool {

@@ -147,6 +147,7 @@ type ProductAnalyticsConfiguration struct {
 	Enabled          bool
 	Host             string
 	ProjectToken     string
+	IdentityKey      string
 	Environment      string
 	ExcludedSubjects []string
 }
@@ -213,6 +214,7 @@ var specs = []flagSpec{
 	{"product-analytics.enabled", "fleet-analytics-enabled", "FLEET_ANALYTICS_ENABLED", "false", "Enable Fleet product analytics delivery"},
 	{"product-analytics.host", "posthog-host", "POSTHOG_HOST", "https://eu.i.posthog.com", "PostHog capture host"},
 	{"product-analytics.project-token", "posthog-project-token", "POSTHOG_PROJECT_TOKEN", "", "PostHog project token"},
+	{"product-analytics.identity-key", "posthog-identity-key", "POSTHOG_IDENTITY_KEY", "", "Key for pseudonymous product analytics identity"},
 	{"product-analytics.excluded-subjects", "fleet-analytics-excluded-subs", "FLEET_ANALYTICS_EXCLUDED_SUBS", "", "Comma-separated Keycloak subjects excluded from analytics"},
 	{"telemetry.endpoint", "otel-endpoint", "OTEL_EXPORTER_OTLP_ENDPOINT", "https://otel.cua.ai", "OTLP HTTP traces endpoint"},
 	{"telemetry.protocol", "otel-protocol", "OTEL_EXPORTER_OTLP_PROTOCOL", "http/protobuf", "OTLP exporter protocol"},
@@ -340,6 +342,7 @@ func LoadConfig() (*Configuration, error) {
 			Enabled:          viper.GetBool("product-analytics.enabled"),
 			Host:             strings.TrimSpace(viper.GetString("product-analytics.host")),
 			ProjectToken:     strings.TrimSpace(viper.GetString("product-analytics.project-token")),
+			IdentityKey:      strings.TrimSpace(viper.GetString("product-analytics.identity-key")),
 			Environment:      strings.TrimSpace(viper.GetString("telemetry.environment")),
 			ExcludedSubjects: splitCommaSeparated(viper.GetString("product-analytics.excluded-subjects")),
 		},

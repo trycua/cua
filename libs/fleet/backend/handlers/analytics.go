@@ -6,6 +6,7 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/middlewares"
 	"cyclops-cs-backend/productanalytics"
+	"go.opentelemetry.io/otel/trace"
 )
 
 func (h Handlers) RecordAnalyticsSession(w http.ResponseWriter, r *http.Request) {
@@ -19,7 +20,10 @@ func (h Handlers) RecordAnalyticsSession(w http.ResponseWriter, r *http.Request)
 		writeErr(w, http.StatusForbidden, "Fleet browser session is required")
 		return
 	}
-	traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
+	traceID := trace.SpanContextFromContext(r.Context()).TraceID().String()
+	if traceID == "00000000000000000000000000000000" {
+		traceID, _ = r.Context().Value(middlewares.ContextKey("traceId")).(string)
+	}
 	capturer := h.Analytics
 	if capturer == nil {
 		capturer = productanalytics.Nop()
@@ -30,6 +34,7 @@ func (h Handlers) RecordAnalyticsSession(w http.ResponseWriter, r *http.Request)
 			"outcome":        productanalytics.OutcomeSuccess,
 			"source":         source,
 			"principal_type": auth.PrincipalTypeUser,
+			"identity_class": productanalytics.ClassifyIdentity(user),
 		},
 	})
 	w.WriteHeader(http.StatusNoContent)

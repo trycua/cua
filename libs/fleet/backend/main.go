@@ -135,6 +135,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	auth.RegisterFactProvider(auth.CurrentMonthFactProvider, auth.CurrentMonthFacts(time.Now))
 
 	r := http.NewServeMux()
+	svcQualifier := c.FleetAttributionQualifier()
 
 	r.Handle("GET /healthz", onlyLog("/healthz", c.GetHealth))
 	r.Handle("GET /readyz", onlyLog("/readyz", c.GetReadiness))
@@ -227,10 +228,10 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// policy reads as a fact — see auth/authz_ownership.rego.
 	r.Handle("/api/svc/{namespace}/{service}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}", c.Svc,
-			productanalytics.RouteObserver("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID)))
+			productanalytics.RouteObserver("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 	r.Handle("/api/svc/{namespace}/{service}/{path...}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc,
-			productanalytics.RouteObserver("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID)))
+			productanalytics.RouteObserver("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 
 	// K8s API access replaces the unauthenticated /k8s-api nginx location.
 	r.Handle("/api/k8s/{path...}",
@@ -282,6 +283,7 @@ func initializeTelemetry(ctx context.Context, cfg config.TelemetryConfiguration)
 func productAnalyticsClientConfig(cfg config.ProductAnalyticsConfiguration) productanalytics.Config {
 	return productanalytics.Config{
 		Enabled: cfg.Enabled, Host: cfg.Host, ProjectToken: cfg.ProjectToken,
+		IdentityKey: cfg.IdentityKey,
 		Environment: cfg.Environment, ExcludedSubjects: cfg.ExcludedSubjects,
 	}
 }

@@ -2,16 +2,21 @@ package productanalytics
 
 import (
 	"bufio"
+	"context"
 	"fmt"
 	"net"
 	"net/http"
 	"strings"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/middlewares"
+	"go.opentelemetry.io/otel/trace"
 )
 
-func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Middleware {
+type SvcQualifier func(context.Context, *http.Request, int) bool
+
+func RouteObserver(route string, capturer Capturer, spaClientID string, qualifiers ...SvcQualifier) auth.Middleware {
 	if capturer == nil {
 		capturer = Nop()
 	}
@@ -27,6 +32,34 @@ func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Mid
 			rw := newAnalyticsResponseWriter(w)
 			next.ServeHTTP(rw, r)
 			status := rw.statusCode
+			traceID := trace.SpanContextFromContext(r.Context()).TraceID().String()
+			if traceID == "00000000000000000000000000000000" {
+				traceID, _ = r.Context().Value(middlewares.ContextKey("traceId")).(string)
+			}
+			if activation.eventName == EventHTTPProxyRequest && ClassifyIdentity(user) == IdentityExternal && len(qualifiers) > 0 {
+				qualifier := qualifiers[0]
+				go func() {
+					defer func() { _ = recover() }()
+					ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 250*time.Millisecond)
+					defer cancel()
+					if !qualifier(ctx, r, status) {
+						return
+					}
+					properties := map[string]any{
+						"outcome": OutcomeSuccess, "source": source, "principal_type": user.PrincipalType,
+						"status_code": status, "error_class": "", "identity_class": IdentityExternal,
+					}
+					capturer.Capture(Event{
+						Name: EventQualifyingWorkload, DistinctID: user.ID, InsertID: traceID,
+						Properties: properties,
+					})
+					capturer.Capture(Event{
+						Name: EventFleetActivation, DistinctID: user.ID, InsertID: "fleet-activation:" + user.ID,
+						SetOnce:    map[string]any{firstActivationProperty: time.Now().UTC().Format(time.RFC3339)},
+						Properties: properties,
+					})
+				}()
+			}
 			// Current pool creation finishes with the template request. Keep an
 			// earlier warm-pool success from counting a partially-created pool.
 			if activation.suppressSuccess && status >= 200 && status < 300 {
@@ -40,12 +73,12 @@ func RouteObserver(route string, capturer Capturer, spaClientID string) auth.Mid
 			if principalType == "" {
 				principalType = auth.PrincipalTypeUser
 			}
-			traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
 			capturer.Capture(Event{
 				Name: activation.eventName, DistinctID: user.ID, InsertID: traceID,
 				Properties: map[string]any{
 					"outcome": outcome, "source": source, "principal_type": principalType,
 					"status_code": status, "error_class": errorClass(status),
+					"identity_class": ClassifyIdentity(user),
 				},
 			})
 		})

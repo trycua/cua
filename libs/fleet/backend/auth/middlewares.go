@@ -662,9 +662,10 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 			if proxyUser := r.Header.Get("X-Auth-Request-User"); proxyUser != "" {
 				proxyEmail := r.Header.Get("X-Auth-Request-Email")
 				user := &User{
-					ID:    proxyUser,
-					Email: proxyEmail,
-					AZP:   "oauth2-proxy", // distinct from SPA/key clients for OPA
+					ID:            proxyUser,
+					Email:         proxyEmail,
+					EmailVerified: proxyEmail != "",
+					AZP:           "oauth2-proxy", // distinct from SPA/key clients for OPA
 				}
 				metrics.SetRequestUser(r.Context(), user.ID)
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))

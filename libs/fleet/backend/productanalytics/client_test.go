@@ -1,6 +1,7 @@
 package productanalytics
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -23,7 +24,7 @@ func TestClientDeliversAllowlistedEvent(t *testing.T) {
 	defer server.Close()
 
 	client := New(Config{
-		Enabled: true, Host: server.URL, ProjectToken: "phc_test", Environment: "production",
+		Enabled: true, Host: server.URL, ProjectToken: "phc_test", IdentityKey: "identity-test-key", Environment: "production",
 		QueueSize: 4, BatchSize: 1, FlushInterval: time.Hour, RequestTimeout: time.Second,
 	})
 	client.Capture(Event{
@@ -33,12 +34,16 @@ func TestClientDeliversAllowlistedEvent(t *testing.T) {
 
 	select {
 	case payload := <-requests:
+		encoded, err := json.Marshal(payload)
+		if err != nil || bytes.Contains(encoded, []byte("subject-1")) {
+			t.Fatalf("payload contains raw subject or failed to encode: %s, %v", encoded, err)
+		}
 		if payload["api_key"] != "phc_test" {
 			t.Fatalf("api_key = %#v", payload["api_key"])
 		}
 		batch := payload["batch"].([]any)
 		item := batch[0].(map[string]any)
-		if item["event"] != EventPoolCreate || item["distinct_id"] != "subject-1" {
+		if item["event"] != EventPoolCreate || item["distinct_id"] != PseudonymForUserID("subject-1", "identity-test-key") {
 			t.Fatalf("event payload = %#v", item)
 		}
 		properties := item["properties"].(map[string]any)
@@ -68,7 +73,7 @@ func TestClientSuppressesExcludedSubject(t *testing.T) {
 	defer server.Close()
 
 	client := New(Config{
-		Enabled: true, Host: server.URL, ProjectToken: "phc_test", Environment: "production",
+		Enabled: true, Host: server.URL, ProjectToken: "phc_test", IdentityKey: "identity-test-key", Environment: "production",
 		ExcludedSubjects: []string{"internal-1"}, QueueSize: 1, BatchSize: 1,
 		FlushInterval: 10 * time.Millisecond, RequestTimeout: time.Second,
 	})

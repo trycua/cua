@@ -1,11 +1,41 @@
 package productanalytics
 
 import (
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"cyclops-cs-backend/auth"
 )
+
+type IdentityClass string
+
+const (
+	IdentityInternal IdentityClass = "internal"
+	IdentityExternal IdentityClass = "external"
+	IdentityUnknown  IdentityClass = "unknown"
+)
+
+func ClassifyIdentity(user *auth.User) IdentityClass {
+	if user == nil || !user.EmailVerified || strings.TrimSpace(user.Email) == "" {
+		return IdentityUnknown
+	}
+	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), "@trycua.com") {
+		return IdentityInternal
+	}
+	return IdentityExternal
+}
+
+func PseudonymForUserID(userID, key string) string {
+	if userID == "" || key == "" {
+		return ""
+	}
+	mac := hmac.New(sha256.New, []byte(key))
+	_, _ = mac.Write([]byte(userID))
+	return "u_" + hex.EncodeToString(mac.Sum(nil))
+}
 
 const (
 	EventLoginSucceeded     = "fleet_login_succeeded"
@@ -13,6 +43,8 @@ const (
 	EventPoolCreate         = "fleet_pool_create"
 	EventClaimCreate        = "fleet_claim_create"
 	EventHTTPProxyRequest   = "fleet_http_proxy_request"
+	EventFleetActivation    = "first_pool_with_successful_request"
+	EventQualifyingWorkload = "fleet_qualifying_workload_succeeded"
 
 	OutcomeSuccess = "success"
 	OutcomeFailure = "failure"
@@ -24,11 +56,14 @@ const (
 var allowedEvents = map[string]struct{}{
 	EventLoginSucceeded: {}, EventPaymentMethodSetup: {}, EventPoolCreate: {},
 	EventClaimCreate: {}, EventHTTPProxyRequest: {},
+	EventFleetActivation:    {},
+	EventQualifyingWorkload: {},
 }
 
 var allowedProperties = map[string]struct{}{
 	"outcome": {}, "source": {}, "principal_type": {}, "status_code": {},
 	"error_class": {}, "environment": {}, "instrumentation_version": {},
+	"identity_class": {},
 }
 
 type Event struct {
@@ -75,7 +110,7 @@ func ValidateEvent(event Event) error {
 		}
 	}
 	for key := range event.SetOnce {
-		if key != firstSeenProperty {
+		if key != firstSeenProperty && key != firstActivationProperty {
 			return fmt.Errorf("unsupported analytics set-once property %q", key)
 		}
 	}

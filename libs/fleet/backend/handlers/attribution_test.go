@@ -4,7 +4,10 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+
+	"cyclops-cs-backend/auth"
 )
 
 type fakeAttributionFactsReader struct {
@@ -20,6 +23,44 @@ func (f *fakeAttributionFactsReader) ReadBoundClaim(context.Context, string, str
 func (f *fakeAttributionFactsReader) PoolExists(context.Context, string, string) (bool, error) {
 	f.calls++
 	return f.pool, nil
+}
+
+func TestFleetAttributionFactsReaderUsesBoundClaimAndExactPool(t *testing.T) {
+	var paths []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxclaims/claim-1":
+			_, _ = w.Write([]byte(`{"metadata":{"name":"claim-1"},"status":{"phase":"Bound","sandbox":{"name":"sandbox-1"}}}`))
+		case "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1":
+			_, _ = w.Write([]byte(`{"metadata":{"name":"pool-1"}}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	oldClient, oldServer, oldToken := k8sClient, k8sAPIServer, k8sSAToken
+	k8sClientOnce = sync.Once{}
+	overrideK8sClient(server.Client(), server.URL, "test-token")
+	t.Cleanup(func() {
+		k8sClientOnce = sync.Once{}
+		k8sClient, k8sAPIServer, k8sSAToken = oldClient, oldServer, oldToken
+	})
+
+	ctx := context.WithValue(context.Background(), auth.UserKey, &auth.User{ID: "user-1"})
+	reader := fleetAttributionFactsReader{handlers: Handlers{}}
+	claim, err := reader.ReadBoundClaim(ctx, "pool-1", "claim-1")
+	if err != nil || claim != (BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}) {
+		t.Fatalf("claim = %#v, err = %v", claim, err)
+	}
+	exists, err := reader.PoolExists(ctx, "pool-1", "pool-1")
+	if err != nil || !exists {
+		t.Fatalf("pool exists = %v, err = %v", exists, err)
+	}
+	if len(paths) != 2 || paths[1] != "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1" {
+		t.Fatalf("lookup paths = %#v", paths)
+	}
 }
 
 func TestQualifiesFleetAttribution(t *testing.T) {

@@ -7,21 +7,116 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"cyclops-cs-backend/auth"
-	"cyclops-cs-backend/middlewares"
+	"go.opentelemetry.io/otel/trace"
 )
 
 type captureSink struct{ events []Event }
 
 func (sink *captureSink) Capture(event Event) { sink.events = append(sink.events, event) }
 
+type eventChannel chan Event
+
+func (sink eventChannel) Capture(event Event) { sink <- event }
+
 func observedRequest(method, route, path string, user *auth.User) *http.Request {
 	request := httptest.NewRequest(method, "http://example.test/api", nil)
 	request.SetPathValue("path", path)
 	ctx := context.WithValue(request.Context(), auth.UserKey, user)
-	ctx = context.WithValue(ctx, middlewares.ContextKey("traceId"), "trace-123")
+	traceID, _ := trace.TraceIDFromHex("11111111111111111111111111111111")
+	spanID, _ := trace.SpanIDFromHex("2222222222222222")
+	ctx = trace.ContextWithSpanContext(ctx, trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID}))
 	return request.WithContext(ctx)
+}
+
+func TestRouteObserverEmitsActivationOnlyForExternalIdentity(t *testing.T) {
+	users := []struct {
+		name string
+		user *auth.User
+		want int
+	}{
+		{name: "external", user: &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
+		{name: "internal", user: &auth.User{ID: "internal-1", Email: "person@trycua.com", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "unknown", user: &auth.User{ID: "unknown-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+	}
+	for _, test := range users {
+		t.Run(test.name, func(t *testing.T) {
+			sink := make(eventChannel, 3)
+			handler := RouteObserver("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) bool { return true })(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+			handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodPost, "/api/svc/{namespace}/{service}/{path...}", "tools", test.user))
+			events := make([]Event, 0, test.want)
+			deadline := time.After(time.Second)
+			for len(events) < test.want {
+				select {
+				case event := <-sink:
+					events = append(events, event)
+				case <-deadline:
+					t.Fatalf("events = %d, want %d: %#v", len(events), test.want, events)
+				}
+			}
+			if test.want == 3 {
+				var workload, activation *Event
+				for i := range events {
+					switch events[i].Name {
+					case EventQualifyingWorkload:
+						workload = &events[i]
+					case EventFleetActivation:
+						activation = &events[i]
+					}
+				}
+				if workload == nil {
+					t.Fatalf("qualifying workload event missing: %#v", events)
+				}
+				if activation == nil || activation.InsertID != "fleet-activation:"+test.user.ID || activation.SetOnce[firstActivationProperty] == nil {
+					t.Fatalf("activation event = %#v", activation)
+				}
+			}
+		})
+	}
+}
+
+func TestRouteObserverDoesNotBlockOnQualification(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	sink := &captureSink{}
+	handler := RouteObserver("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) bool {
+		close(started)
+		<-release
+		return true
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	response := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		handler.ServeHTTP(response, observedRequest(http.MethodPost, "/api/svc/{namespace}/{service}/{path...}", "tools", &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}))
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("request blocked on qualification")
+	}
+	close(release)
+	<-started
+}
+
+func TestRouteObserverRecoversQualifierPanic(t *testing.T) {
+	started := make(chan struct{})
+	handler := RouteObserver("/api/svc/{namespace}/{service}/{path...}", &captureSink{}, "cyclops-cs-spa", func(context.Context, *http.Request, int) bool {
+		close(started)
+		panic("qualifier failed")
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, observedRequest(http.MethodPost, "/api/svc/{namespace}/{service}/{path...}", "tools", &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}))
+	select {
+	case <-started:
+	case <-time.After(time.Second):
+		t.Fatal("qualifier did not run")
+	}
+	if response.Code != http.StatusOK {
+		t.Fatalf("response status = %d", response.Code)
+	}
 }
 
 func TestRouteObserverCapturesActivationOutcomes(t *testing.T) {
@@ -48,7 +143,7 @@ func TestRouteObserverCapturesActivationOutcomes(t *testing.T) {
 				t.Fatalf("events = %#v", sink.events)
 			}
 			event := sink.events[0]
-			if event.Name != test.wantEvent || event.InsertID != "trace-123" {
+			if event.Name != test.wantEvent || event.InsertID != "11111111111111111111111111111111" {
 				t.Fatalf("event = %#v", event)
 			}
 			if event.Properties["outcome"] != test.wantOutcome || event.Properties["source"] != test.wantSource || event.Properties["error_class"] != test.wantClass {

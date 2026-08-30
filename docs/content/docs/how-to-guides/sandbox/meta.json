@@ -6,6 +6,7 @@
     "create-pool-with-typescript",
     "expire-pools-and-claims",
     "run-omarchy-on-cloud-fleet",
+    "connect-to-omarchy-with-novnc",
     "secrets",
     "scale-out",
     "tunneling",

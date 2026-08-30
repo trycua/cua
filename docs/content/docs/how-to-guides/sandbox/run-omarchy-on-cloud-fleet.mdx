@@ -16,7 +16,6 @@ as a KubeVirt `containerDisk`; the guest starts Hyprland and exposes both the
   does not run on Fleet.
 </Callout>
 
-
 ## Before you start
 
 You need:
@@ -151,11 +150,15 @@ uv run run_omarchy_fleet.py
 
 ## View the desktop
 
-The Fleet transport in `cua-sandbox==0.4.3` does not expose a browser or VNC
-display URL. Use `sandbox.screenshot()` to inspect the desktop and the mouse,
-keyboard, shell, clipboard, and window interfaces to control it. The image's
-WayVNC process is for image diagnostics and is not part of the public Fleet
-service contract.
+Use `sandbox.screenshot()` to inspect the desktop and the mouse, keyboard,
+shell, clipboard, and window interfaces to control it without a live display.
+
+For an interactive browser display, expose a Fleet service named `vnc` and
+configure the guest's existing WayVNC process with a noVNC bridge. Follow
+[Connect to an Omarchy Fleet desktop with
+noVNC](/how-to-guides/sandbox/connect-to-omarchy-with-novnc). Fleet carries the
+display through its authenticated HTTP and WebSocket service proxy; it does
+not expose a public raw VNC TCP socket.
 
 ## Connect an MCP client
 

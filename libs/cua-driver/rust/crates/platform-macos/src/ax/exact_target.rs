@@ -16,7 +16,7 @@ use super::bindings::{
     ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
     focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
-use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
+use crate::windows::{all_windows_with_space_snapshot, resolve_window_owner, WindowOwner};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -186,10 +186,21 @@ pub fn gather_background_facts(
     };
 
     let target = records.iter().find(|record| record.window_id == window_id);
+    // One layer-0 enumeration with the space snapshot serves two facts: the
+    // competing-destination census and the off-active-Space proof for the
+    // target (issue #3458) — `on_current_space` stays `None` when the space
+    // query cannot answer, and an unknown fact never changes a refusal code.
+    let enumerated = all_windows_with_space_snapshot();
+    let off_active_space = enumerated
+        .windows
+        .iter()
+        .find(|window| window.window_id == window_id)
+        .and_then(|window| window.on_current_space);
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        all_windows()
+        enumerated
+            .windows
             .iter()
             .map(|window| (window.pid, window.window_id)),
         &records,
@@ -198,6 +209,7 @@ pub fn gather_background_facts(
     BackgroundTargetFacts {
         window_server,
         ax_window_present: target.is_some(),
+        off_active_space,
         target_minimized: target.and_then(|record| record.minimized),
         app_hidden,
         competing_keyboard_destinations,

@@ -574,7 +574,7 @@ impl Tool for GetWindowStateTool {
             }
             Degradation::AxWindowUnresolved { ax_window_count } => {
                 structured["degraded"] = serde_json::json!(true);
-                structured["degraded_reason"] = serde_json::json!(format!(
+                let mut reason = format!(
                     "ax_window_unresolved: window_id {window_id} exists and is owned by \
                      pid {pid}, but none of the {ax_window_count} AXWindow element(s) \
                      under that pid reports this CGWindowID. The tree is returned EMPTY \
@@ -582,14 +582,33 @@ impl Tool for GetWindowStateTool {
                      belong to other surfaces (the menu bar, other windows), not to the \
                      requested window, so presenting them would misground the next \
                      action."
-                ));
+                );
+                // Issue #3458: when WindowServer space metadata PROVES the window
+                // is off the active Space, say so and name the remedy — the
+                // generic copy misattributes for apps like Safari that expose no
+                // AXWindows at all in this state. Lazy lookup: only the degraded
+                // path pays for the space-aware enumeration.
+                let off_space = crate::windows::window_space_facts(window_id)
+                    .and_then(|w| w.on_current_space)
+                    == Some(false);
+                let escalation_reason = if off_space {
+                    structured["off_space"] = serde_json::json!(true);
+                    reason.push_str(&off_space_degradation_suffix(ax_window_count));
+                    "the window is provably not on the active Space — move it there (or \
+                     switch Space) and re-snapshot; AX typically repopulates immediately. \
+                     Background input (including px) stays refused meanwhile; \
+                     delivery_mode:\"foreground\" remains the last-resort rung."
+                } else {
+                    "observation-only: the screenshot in this response IS the \
+                     requested window, but background input (including px) is \
+                     refused while its AX surface is unresolved — events could \
+                     reach a same-process sibling window. Re-snapshot after the \
+                     app settles, or act with delivery_mode:\"foreground\"."
+                };
+                structured["degraded_reason"] = serde_json::json!(reason);
                 structured["escalation"] = serde_json::json!({
                     "recommended": "foreground",
-                    "reason": "observation-only: the screenshot in this response IS the \
-                               requested window, but background input (including px) is \
-                               refused while its AX surface is unresolved — events could \
-                               reach a same-process sibling window. Re-snapshot after the \
-                               app settles, or act with delivery_mode:\"foreground\"."
+                    "reason": escalation_reason
                 });
             }
         }
@@ -753,6 +772,28 @@ fn degradation_for(
         return Degradation::AxTreeEmpty;
     }
     Degradation::None
+}
+
+/// Suffix appended to the `ax_window_unresolved` degradation text when the
+/// space-aware lookup proves the window is off the active Space (issue #3458).
+/// `ax_window_count == 0` is the variant observed on Safari/WebKit: the app
+/// publishes no AXWindow elements at all while every window is off the active
+/// Space. Pure so both diagnostic shapes stay unit-testable without a
+/// WindowServer.
+fn off_space_degradation_suffix(ax_window_count: usize) -> String {
+    let mut suffix = String::from(
+        " The window is provably not on the active Space of its display — move it \
+         to the active Space (or switch Space) and re-snapshot; background input \
+         (including px) is refused while it stays there.",
+    );
+    if ax_window_count == 0 {
+        suffix.push_str(
+            " The pid currently exposes 0 AXWindow elements at all — typical when \
+             every window of the app is off the active Space (observed with \
+             Safari/WebKit); AX repopulates immediately once the window returns.",
+        );
+    }
+    suffix
 }
 
 /// Render the actionable nodes from the AX walk into the
@@ -1013,6 +1054,21 @@ mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
     use cua_driver_core::element_query::project_elements_for_query;
+
+    /// Issue #3458: the off-Space suffix has two shapes — the zero-AXWindow
+    /// variant (Safari) additionally names the all-windows-off-Space cause and
+    /// the immediate AX repopulation.
+    #[test]
+    fn off_space_suffix_names_remedy_and_zero_window_variant() {
+        let nonzero = super::off_space_degradation_suffix(3);
+        assert!(nonzero.contains("not on the active Space"));
+        assert!(nonzero.contains("move it to the active Space"));
+        assert!(!nonzero.contains("0 AXWindow"));
+
+        let zero = super::off_space_degradation_suffix(0);
+        assert!(zero.contains("0 AXWindow"));
+        assert!(zero.contains("repopulates immediately"));
+    }
 
     fn node(
         idx: Option<usize>,

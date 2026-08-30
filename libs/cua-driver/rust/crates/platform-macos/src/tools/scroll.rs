@@ -789,6 +789,7 @@ mod tests {
         let facts = BackgroundTargetFacts {
             window_server: WindowServerOwnership::SamePid,
             ax_window_present: true,
+            off_active_space: None,
             target_minimized: Some(false),
             app_hidden: Some(false),
             competing_keyboard_destinations: 0,

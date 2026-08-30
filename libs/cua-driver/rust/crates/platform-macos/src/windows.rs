@@ -340,6 +340,21 @@ pub fn window_bounds_by_id(window_id: u32) -> Option<WindowBounds> {
     window_info_by_id(window_id).map(|w| w.bounds)
 }
 
+/// Look up a layer-0 window's record WITH space metadata, from the same
+/// enumeration `list_windows` reports (issue #3458).
+///
+/// Unlike [`window_info_by_id`] (any-layer, space fields always `None`),
+/// this variant runs the space query so callers can distinguish "window is
+/// provably off the active Space" (`on_current_space == Some(false)`) from
+/// "AX surface unresolved". Only for diagnostics that act on the degraded
+/// path — the happy path should not pay for the space query.
+pub fn window_space_facts(window_id: u32) -> Option<WindowInfo> {
+    all_windows_with_space_snapshot()
+        .windows
+        .into_iter()
+        .find(|w| w.window_id == window_id)
+}
+
 /// Who owns a requested CGWindowID, as seen by a caller that asked about `pid`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WindowOwner {

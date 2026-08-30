@@ -729,7 +729,7 @@ fn type_text_chars_tool() {
     if resp["result"]["isError"].as_bool().unwrap_or(false)
         && matches!(
             resp["result"]["structuredContent"]["code"].as_str(),
-            Some("off_space_or_ax_unresolved" | "window_target_not_found")
+            Some("off_space_or_ax_unresolved" | "off_space" | "window_target_not_found")
         )
     {
         eprintln!(

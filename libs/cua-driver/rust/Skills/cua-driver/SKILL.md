@@ -668,7 +668,7 @@ pixel addressing path, not a different capture.
 | backgrounded / visible     | ✅                                                                                             | ✅                           | ✅                                                    | ✅                             |
 | **minimized**              | ✅                                                                                             | ✅ (actions fire in place)   | ❌ silent no-op — use `set_value` or click equivalent | ❌ no on-screen bounds         |
 | hidden                     | ✅                                                                                             | ✅                           | depends                                               | ❌                             |
-| on another desktop / Space | ⚠️ tree may be stripped on some apps — response carries `off_space: true` so you can detect it | ✅                           | ✅                                                    | ❌ not in current-desktop list |
+| on another desktop / Space | ⚠️ tree may be stripped on some apps — response carries `off_space: true` so you can detect it. Apps whose windows are ALL off the active Space (Safari/WebKit) can expose **zero** AXWindows — the snapshot degrades to empty and ALL background routes refuse with `off_space`; move the window to the active Space and re-snapshot (AX repopulates immediately) | ✅                           | ✅                                                    | ❌ not in current-desktop list |
 
 **Critical cell — minimized + keyboard commit.** The keystroke
 reaches the app but accessibility focus doesn't propagate to renderer

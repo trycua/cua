@@ -11,6 +11,10 @@ import { HelmetProvider } from "react-helmet-async"
 import { App } from "./App"
 import { AuthProvider } from "./auth/AuthProvider"
 import "./shell.css"
+import { captureFleetAttribution } from "./auth/fleet-attribution"
+
+// Capture before React and Keycloak bootstrap so login-required preserves first touch.
+if (typeof window !== "undefined") captureFleetAttribution(window.location.href)
 
 applyMode(Mode.Dark)
 document.documentElement.classList.add("cua-dashboard-theme")

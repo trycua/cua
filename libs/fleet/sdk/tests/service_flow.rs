@@ -36,6 +36,12 @@ async fn routes_known_service_under_base_prefix_and_forwards_query() {
         "https://cyclops.example:8443/control/api/svc/pool-test/sandbox-1-mcp/tools?cursor=next"
     );
     assert_eq!(requests[1].method, "PATCH");
+    assert!(
+        requests[1]
+            .headers
+            .iter()
+            .any(|h| h.name == "X-Cua-Fleet-Claim" && h.value == "claim-1")
+    );
 }
 
 #[tokio::test]
@@ -203,6 +209,7 @@ async fn filters_hop_by_hop_and_connection_nominated_headers_without_reordering_
             header("X-Keep", "first"),
             header("x-keep", "second"),
             header("Cookie", "session=kept"),
+            header("X-Cua-Fleet-Claim", "claim-1"),
             header("authorization", "Bearer service-token"),
         ]
     );

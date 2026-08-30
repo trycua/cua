@@ -27,12 +27,28 @@ impl CyclopsClient {
         let request = HttpRequest {
             method: request.method,
             url: url.to_string(),
-            headers: filtered_headers(request.headers),
+            headers: fleet_headers(filtered_headers(request.headers), &sandbox.claim),
             body: request.body,
             timeout_secs: request.timeout_secs,
         };
         self.execute_authenticated_service(request).await
     }
+}
+
+fn fleet_headers(mut headers: Vec<HttpHeader>, claim: &str) -> Vec<HttpHeader> {
+    // Correlation is the exact claim returned in Sandbox; it is never inferred.
+    if !claim.is_empty()
+        && claim.len() <= 128
+        && claim
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._~-".contains(&b))
+    {
+        headers.push(HttpHeader {
+            name: "X-Cua-Fleet-Claim".into(),
+            value: claim.into(),
+        });
+    }
+    headers
 }
 
 fn filtered_headers(headers: Vec<HttpHeader>) -> Vec<HttpHeader> {
@@ -48,6 +64,7 @@ fn filtered_headers(headers: Vec<HttpHeader>) -> Vec<HttpHeader> {
         "transfer-encoding",
         "upgrade",
         "authorization",
+        "x-cua-fleet-claim",
     ]
     .into_iter()
     .map(str::to_owned)

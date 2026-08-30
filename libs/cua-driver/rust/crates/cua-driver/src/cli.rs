@@ -232,10 +232,10 @@ const VALUE_FLAGS: &[&str] = &[
     "--session",
     "--profile-mode",
     "--profile-name",
-    // Agent View value flag for the optional geometry override
-    // (`--agent-view` itself is a bare flag and doesn't
+    // Experimental PiP preview — value flag for the optional geometry
+    // override (--experimental-pip itself is a bare flag and doesn't
     // need to be listed here).
-    "--agent-view-geometry",
+    "--experimental-pip-geometry",
 ];
 
 /// Authorization selectors are trusted-daemon startup inputs. Direct MCP
@@ -634,7 +634,7 @@ pub fn parse_command() -> Command {
         println!("doctor options:");
         println!("  --json                  Emit the probe report as JSON for scripting.");
         println!();
-        println!("experimental options:");
+        println!("experimental options (default: off):");
         println!(
             "  --experimental-history      Admit encrypted local Computer History for this daemon."
         );
@@ -643,30 +643,17 @@ pub fn parse_command() -> Command {
         );
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
-        println!("  --agent-view                Enable the optional Agent View.");
-        println!("                              Exact native windows and");
+        println!("  --experimental-pip          Show a small always-on-top window with the latest");
         println!(
-            "                              Chrome tabs traversed through Cua Driver become cards."
+            "                              post-action screenshot + a 1-line label. macOS only"
         );
         println!(
-            "                              Recent activity is followed until you locally select"
+            "                              today; Win/Linux print a not-yet-implemented notice."
         );
         println!(
-            "                              another session in Agent View; sessions never mix."
+            "  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left"
         );
-        println!(
-            "                              Closed targets and ended sessions are removed. This is"
-        );
-        println!(
-            "                              presentation only; no claim/release API is involved."
-        );
-        println!(
-            "                              Native presentation is available on macOS, Windows,"
-        );
-        println!("                              and Linux (X11/XWayland).");
-        println!("  --no-agent-view             Disable Agent View, including a persisted enable.");
-        println!("  --agent-view-geometry WxH[+X+Y]   Override window size (and optional top-left");
-        println!("                                          origin). Defaults to 640x420 in the top-right");
+        println!("                                          origin). Defaults to 480x360 in the top-right");
         println!("                                          corner of the main display.");
         std::process::exit(0);
     }

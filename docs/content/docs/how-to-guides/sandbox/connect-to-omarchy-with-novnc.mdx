@@ -1,0 +1,32 @@
+---
+title: Connect to an Omarchy Fleet desktop with noVNC
+description: Add browser-based desktop access to an Omarchy VM running on Cua Fleet.
+---
+
+Use noVNC to view and control an Omarchy Fleet desktop from an authenticated
+browser. This guide configures WayVNC as the RFB server, websockify as the
+WebSocket bridge, and a Fleet service named `vnc` as the authenticated route.
+
+## Before you start
+
+You need a running Omarchy Fleet sandbox and shell access to the guest. Follow
+[Run Omarchy on Fleet](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet) to
+create one.
+
+## Configure noVNC in the guest
+
+Install noVNC and websockify, then run the bridge as a persistent user service.
+
+## Expose the noVNC service
+
+Add a Fleet service named `vnc` on port `5900`.
+
+## Connect from your browser
+
+Sign in through `https://cua.ai/auth`, then open the claim's Desktop pane or
+the sandbox's direct noVNC URL.
+
+## Verify the connection
+
+Confirm that the noVNC page loads and that the desktop accepts keyboard and
+mouse input.

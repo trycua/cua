@@ -13,11 +13,20 @@ use windows::Win32::UI::HiDpi::{
 /// Configure the current Cua-owned thread to use the physical-pixel coordinate
 /// contract expected by the Windows backend.
 ///
-/// Returns `false` only when Windows rejects the requested context.
-pub fn use_per_monitor_v2_for_current_thread() -> bool {
+/// Returns an error when Windows rejects the requested context. Callers that
+/// provide the physical-pixel desktop contract must not continue in that
+/// case, because Windows would virtualize capture and input coordinates.
+pub fn use_per_monitor_v2_for_current_thread() -> Result<(), String> {
     let previous =
         unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
-    !previous.0.is_null()
+    if previous.0.is_null() {
+        Err(format!(
+            "SetThreadDpiAwarenessContext(PER_MONITOR_AWARE_V2) failed: {}",
+            std::io::Error::last_os_error()
+        ))
+    } else {
+        Ok(())
+    }
 }
 
 /// Report whether the current thread is running with the Cua Windows DPI

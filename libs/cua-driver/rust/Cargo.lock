@@ -1250,6 +1250,7 @@ dependencies = [
  "tracing",
  "uniffi",
  "uuid",
+ "windows 0.58.0",
 ]
 
 [[package]]

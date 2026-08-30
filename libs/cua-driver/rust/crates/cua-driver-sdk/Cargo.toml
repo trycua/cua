@@ -43,3 +43,9 @@ portal-libei = ["portal-input", "portal-capture"]
 [dev-dependencies]
 tempfile = "3"
 uniffi = { workspace = true, features = ["bindgen"] }
+
+[target.'cfg(target_os = "windows")'.dev-dependencies]
+windows = { version = "0.58", features = [
+    "Win32_UI_HiDpi",
+    "Win32_UI_WindowsAndMessaging",
+] }

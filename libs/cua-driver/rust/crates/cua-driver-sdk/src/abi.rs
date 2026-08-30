@@ -469,28 +469,95 @@ fn metadata_json() -> Result<String, AbiFailure> {
 
 fn abi_executor() -> Result<&'static tokio::runtime::Runtime, AbiFailure> {
     static EXECUTOR: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
-    match EXECUTOR.get_or_init(|| {
-        let mut builder = tokio::runtime::Builder::new_multi_thread();
-        builder
-            .worker_threads(2)
-            .thread_name("cua-driver-abi")
-            .enable_all();
-        #[cfg(target_os = "windows")]
-        builder.on_thread_start(|| {
-            if !platform_windows::dpi::use_per_monitor_v2_for_current_thread() {
-                tracing::warn!(
-                    "Windows rejected the Per-Monitor V2 context for a Cua Driver ABI thread"
-                );
-            }
-        });
-        builder.build().map_err(|error| error.to_string())
-    }) {
+    initialized_abi_executor(&EXECUTOR, build_abi_executor)
+}
+
+fn initialized_abi_executor<'a>(
+    executor: &'a OnceLock<Result<tokio::runtime::Runtime, String>>,
+    initialize: impl FnOnce() -> Result<tokio::runtime::Runtime, String>,
+) -> Result<&'a tokio::runtime::Runtime, AbiFailure> {
+    match executor.get_or_init(initialize) {
         Ok(executor) => Ok(executor),
         Err(error) => Err(AbiFailure::new(
             CuaDriverStatus::RuntimeUnavailable,
             format!("create Cua Driver ABI executor: {error}"),
         )),
     }
+}
+
+fn build_abi_executor() -> Result<tokio::runtime::Runtime, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return build_windows_abi_executor(Arc::new(
+            platform_windows::dpi::use_per_monitor_v2_for_current_thread,
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("cua-driver-abi")
+            .enable_all()
+            .build()
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_abi_executor(
+    initialize_thread: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+) -> Result<tokio::runtime::Runtime, String> {
+    let initialization_failure = Arc::new(Mutex::new(None::<String>));
+    let callback_failure = initialization_failure.clone();
+    let callback_initializer = initialize_thread.clone();
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder
+        .worker_threads(2)
+        .thread_name("cua-driver-abi")
+        .enable_all()
+        .on_thread_start(move || {
+            if let Err(error) = callback_initializer() {
+                let mut failure = callback_failure
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner());
+                if failure.is_none() {
+                    *failure = Some(error);
+                }
+            }
+        });
+    let executor = builder.build().map_err(|error| error.to_string())?;
+
+    // Force both an async worker and a blocking-pool thread to start before
+    // exposing the executor. Desktop capture uses `spawn_blocking`, so merely
+    // validating a Tokio worker would leave the real screenshot path untested.
+    let (worker_started, worker_ready) = std::sync::mpsc::channel();
+    executor.spawn(async move {
+        let _ = worker_started.send(());
+    });
+    worker_ready
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("start Cua Driver ABI async worker: {error}"))?;
+
+    let (blocking_started, blocking_ready) = std::sync::mpsc::channel();
+    executor.spawn_blocking(move || {
+        let _ = blocking_started.send(());
+    });
+    blocking_ready
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("start Cua Driver ABI blocking worker: {error}"))?;
+
+    if let Some(error) = initialization_failure
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .clone()
+    {
+        return Err(format!(
+            "initialize Windows physical-pixel context for Cua Driver ABI threads: {error}"
+        ));
+    }
+
+    Ok(executor)
 }
 
 fn spawn_completion<F>(
@@ -623,6 +690,10 @@ pub unsafe extern "C" fn cua_driver_create_v1(
             })?
         };
         let runtime_options = runtime_options_from_abi(options)?;
+        // The embedded runtime promises physical-pixel capture and input on
+        // Windows. Refuse creation if its owned executor cannot establish
+        // that contract instead of returning virtualized results later.
+        abi_executor()?;
         let runtime = DriverRuntime::create(runtime_options).map_err(runtime_create_failure)?;
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
@@ -1260,6 +1331,9 @@ impl NativeAbiDriver {
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
+        abi_executor().map_err(|error| DriverError::Protocol {
+            reason: error.message,
+        })?;
         let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;
         let runtime_scope_key = runtime.runtime_scope_key();
         let handle = Box::into_raw(Box::new(CuaDriverHandle { runtime })).cast::<ffi::Handle>();
@@ -1667,6 +1741,22 @@ mod tests {
 
         assert!(worker_is_per_monitor_v2);
         assert!(blocking_is_per_monitor_v2);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_executor_refuses_a_rejected_windows_dpi_initializer() {
+        let executor = OnceLock::new();
+        let error = initialized_abi_executor(&executor, || {
+            build_windows_abi_executor(Arc::new(|| Err("simulated PMv2 rejection".to_owned())))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(error
+            .message
+            .contains("initialize Windows physical-pixel context"));
+        assert!(error.message.contains("simulated PMv2 rejection"));
     }
 
     #[test]

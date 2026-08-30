@@ -1895,6 +1895,124 @@ mod tests {
         .unwrap()
     }
 
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn embedded_abi_uses_physical_pixels_from_an_unaware_host_thread() {
+        use windows::Win32::UI::HiDpi::{
+            AreDpiAwarenessContextsEqual, GetDpiForSystem, GetThreadDpiAwarenessContext,
+            SetThreadDpiAwarenessContext, DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
+            DPI_AWARENESS_CONTEXT_UNAWARE,
+        };
+        use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+
+        if platform_windows::diagnostics::current_session_id() == Some(0) {
+            return;
+        }
+
+        struct RestoreThreadDpi(windows::Win32::UI::HiDpi::DPI_AWARENESS_CONTEXT);
+        impl Drop for RestoreThreadDpi {
+            fn drop(&mut self) {
+                unsafe {
+                    SetThreadDpiAwarenessContext(self.0);
+                }
+            }
+        }
+
+        let original =
+            unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2) };
+        assert!(!original.0.is_null(), "test thread could not enter PMv2");
+        let _restore = RestoreThreadDpi(original);
+        let expected_width = unsafe { GetSystemMetrics(SM_CXSCREEN) } as u64;
+        let expected_height = unsafe { GetSystemMetrics(SM_CYSCREEN) } as u64;
+        let system_dpi = unsafe { GetDpiForSystem() };
+        let expected_scale_factor = if system_dpi == 0 {
+            1.0
+        } else {
+            f64::from(system_dpi) / 96.0
+        };
+
+        let previous = unsafe { SetThreadDpiAwarenessContext(DPI_AWARENESS_CONTEXT_UNAWARE) };
+        assert!(
+            !previous.0.is_null(),
+            "test thread could not become DPI-unaware"
+        );
+        assert!(unsafe {
+            AreDpiAwarenessContextsEqual(
+                GetThreadDpiAwarenessContext(),
+                DPI_AWARENESS_CONTEXT_UNAWARE,
+            )
+            .as_bool()
+        });
+
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let driver = configured_standard_driver();
+        // Keep the temporary directory alive until after the screenshot has
+        // been read; the path itself is passed through the public ABI.
+        let directory = tempfile::tempdir().unwrap();
+        let output = directory.path().join("embedded-abi.png");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let (screen, desktop) = runtime.block_on(async {
+            let screen = driver
+                .get_screen_size(GetScreenSizeInput { session: None })
+                .await
+                .unwrap();
+            let desktop = driver
+                .get_desktop_state(GetDesktopStateInput {
+                    session: None,
+                    screenshot_out_file: Some(output.to_string_lossy().into_owned()),
+                })
+                .await
+                .unwrap();
+            driver.shutdown().await.unwrap();
+            (screen, desktop)
+        });
+
+        assert!(!screen.is_error, "get_screen_size failed: {}", screen.text);
+        assert!(
+            !desktop.is_error,
+            "get_desktop_state failed: {}",
+            desktop.text
+        );
+        let screen: Value =
+            serde_json::from_str(screen.structured_json.as_deref().unwrap()).unwrap();
+        let desktop: Value =
+            serde_json::from_str(desktop.structured_json.as_deref().unwrap()).unwrap();
+        assert_eq!(screen["width"].as_u64(), Some(expected_width));
+        assert_eq!(screen["height"].as_u64(), Some(expected_height));
+        assert_eq!(desktop["screen_width"].as_u64(), Some(expected_width));
+        assert_eq!(desktop["screen_height"].as_u64(), Some(expected_height));
+        assert_eq!(desktop["screenshot_width"].as_u64(), Some(expected_width));
+        assert_eq!(desktop["screenshot_height"].as_u64(), Some(expected_height));
+        let reported_scale_factor = desktop["scale_factor"]
+            .as_f64()
+            .expect("desktop state should report a numeric scale factor");
+        assert!(
+            (reported_scale_factor - expected_scale_factor).abs() < f64::EPSILON,
+            "desktop state scale factor should match the physical desktop DPI: expected {expected_scale_factor}, got {reported_scale_factor}"
+        );
+
+        let png = std::fs::read(&output).unwrap();
+        assert!(
+            png.len() >= 24,
+            "captured PNG is too short to contain an IHDR chunk: {} bytes",
+            png.len()
+        );
+        assert_eq!(&png[..8], b"\x89PNG\r\n\x1a\n");
+        let png_width = u32::from_be_bytes(png[16..20].try_into().unwrap()) as u64;
+        let png_height = u32::from_be_bytes(png[20..24].try_into().unwrap()) as u64;
+        assert_eq!((png_width, png_height), (expected_width, expected_height));
+        assert!(unsafe {
+            AreDpiAwarenessContextsEqual(
+                GetThreadDpiAwarenessContext(),
+                DPI_AWARENESS_CONTEXT_UNAWARE,
+            )
+            .as_bool()
+        });
+    }
+
     #[derive(Default)]
     struct RecordingActivityObserver {
         events: std::sync::Mutex<Vec<DriverActivityEvent>>,

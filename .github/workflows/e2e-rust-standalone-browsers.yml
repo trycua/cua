@@ -57,7 +57,7 @@ jobs:
       CUA_TEST_DRIVER_STDERR: "1"
       CUA_E2E_BROWSER_STDERR: "1"
       CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
-      CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER: ${{ runner.os == 'Windows' && '1' || '0' }}
+      CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER: ${{ matrix.label == 'Windows' && '1' || '0' }}
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4

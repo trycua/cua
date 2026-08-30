@@ -25,11 +25,14 @@ The plugin does not install or update the native `cua-driver` executable.
   embedding references
 - Manifests for Claude Code, Grok Build, and Codex CLI
 
+The plugin uses the bundled MCP server and does not fall back to shell commands
+or another computer-use provider when that server is unavailable.
+
 Start a new agent session after installing or updating the plugin. Begin with a
 read-only prompt such as:
 
 ```text
-Use Cua Driver to list the visible applications and windows. Do not interact
+Use $cua-driver to list the visible applications and windows. Do not interact
 with them yet.
 ```
 

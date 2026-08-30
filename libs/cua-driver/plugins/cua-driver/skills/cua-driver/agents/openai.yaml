@@ -1,0 +1,6 @@
+interface:
+  display_name: "Cua Driver"
+  short_description: "Drive native apps through bundled Cua Driver MCP"
+  default_prompt: "Use $cua-driver to inspect the selected app without interacting yet."
+policy:
+  allow_implicit_invocation: false

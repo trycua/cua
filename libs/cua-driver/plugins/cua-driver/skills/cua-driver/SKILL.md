@@ -1,6 +1,6 @@
 ---
 name: cua-driver
-description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
+description: Use the bundled Cua Driver MCP server only when explicitly invoked as `$cua-driver` or selected through the Cua Driver plugin. Do not use for generic or plain-language computer-use requests.
 metadata:
   openclaw:
     requires:
@@ -28,12 +28,16 @@ metadata:
     homepage: https://cua.ai/docs/cua-driver
 ---
 
+> **Plugin transport rule:** Use the bundled `cua-driver` MCP tools for every operation in this file.
+> Treat any `cua-driver ...` shell command as standalone documentation only; do not execute it from the plugin.
+> If a matching MCP tool is unavailable, stop instead of falling back to a shell command or another provider.
+
 # cua-driver
 
-Orchestrates cross-platform app automation via `cua-driver`. Whenever
-a user asks to drive a native app, follow the loop in this skill
-rather than calling tools ad-hoc — the snapshot-before-action
-invariant is not optional and silently breaks if you skip it.
+Orchestrates cross-platform app automation via the bundled `cua-driver`
+MCP server. After this Skill has been explicitly invoked, follow the loop below
+rather than calling tools ad-hoc — the snapshot-before-action invariant is not
+optional and silently breaks if you skip it.
 
 ## Consult recent Cua activity only for continuation
 
@@ -107,11 +111,10 @@ before stopping or advancing:
 5. **Desktop fallback.** Select an exact desktop target for that call only.
    Later calls may return to an exact window target in the same session.
 
-Use Cua Driver when the outcome lives in an application's UI or window state,
-or when the user explicitly asks to operate that GUI. Once the task crosses
-that boundary, do not replace Cua's targeted and verified actions with shell
-scripts that mutate the app UI. A shell is a capability of the calling agent,
-not of the Cua Driver MCP server; an MCP-only client must not assume one exists.
+After this Skill has been explicitly invoked, use Cua Driver for outcomes in
+an application's UI or window state. Do not treat a generic GUI request as
+authorization to load or route through this Skill. Do not replace Cua's
+targeted and verified actions with shell scripts that mutate the app UI.
 
 ### Filesystem outcomes and GUI fallbacks
 
@@ -182,23 +185,22 @@ window ladder has been attempted and verified. Permission policy must still
 admit the display resource. Never infer desktop permission from a failed action
 or a public session label.
 
-## GUI transport defaults — prefer cua-driver over GUI shell shims
+## GUI transport defaults — use the bundled MCP server
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name> '<JSON-args>'`. MCP tools (prefix
-`mcp__cua-driver__*`) only when the user explicitly asks for them.
-CLI wins because it picks up rebuilds instantly, failures are
-easier to diagnose, and there's no per-tool schema-load overhead.
+**Default transport is the bundled `cua-driver` MCP server.** Use its exposed
+tools for every Cua Driver operation in this skill.
+Do not shell out to `cua-driver`.
 
-Every reference to `click(...)`, `get_window_state(...)` etc. in this
-skill means `cua-driver click '{...}'` — translate to MCP form only
-when MCP is requested.
+If the bundled MCP tools are unavailable or the server cannot start, report the
+exact installation or connection failure and stop. Do not silently fall back
+to the host's built-in computer-use provider (including Codex Computer Use or
+`@oai/sky`), AppleScript, another MCP server, or any other provider.
 
 ### Claude Code computer-use compatibility mode
 
-For normal Claude Code use, keep the default CLI or `cua-driver` MCP
-server path above. If the user explicitly wants Claude Code's
-vision/computer-use-style flow, they can register:
+For normal Claude Code plugin use, keep the bundled `cua-driver` MCP server
+path above. The compatibility registration command below is standalone setup
+for users configuring Claude Code outside the plugin:
 
 ```bash
 cua-driver mcp-config --client claude   # then paste + run the printed line
@@ -219,7 +221,10 @@ still work as CuaDriver calls, but they do not expose the
 `mcp__cua-computer-use__screenshot` tool name that Claude Code
 appears to use as the image-grounding cue.
 
-## Using cua-driver from the shell
+## Standalone CLI reference — not for plugin execution
+
+The commands below document standalone Cua Driver use. Plugin workflows must
+use the bundled MCP tools and must not execute these shell forms.
 
 Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
@@ -556,7 +561,7 @@ Use the `effect`, `route`, optional `delivery`, `evidence`, and
 success” above. The old `verified`, `path`, coordinates, scope, and
 `escalation.recommended` response fields no longer exist.
 The full wire contract and 0.14 migration notes are in
-`../../../docs/action-result-contract.md`.
+[`action-result-contract.md`](action-result-contract.md).
 
 A successful accessibility value write can still return
 `effect:"unverifiable"` when the provider publishes its new value only after

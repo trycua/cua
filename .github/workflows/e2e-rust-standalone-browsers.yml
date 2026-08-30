@@ -63,6 +63,27 @@ jobs:
         with:
           ref: ${{ needs.source.outputs.sha }}
       - uses: dtolnay/rust-toolchain@stable
+      - name: Verify Windows Basic User launcher
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $runas = Join-Path $env:SystemRoot 'System32\runas.exe'
+          $preflight = Join-Path $env:RUNNER_TEMP 'cua-basic-user-preflight.ps1'
+          $preflightMarker = Join-Path $PWD 'cua-basic-user-preflight.txt'
+          @"
+          Set-StrictMode -Version Latest
+          Set-Content -LiteralPath '$preflightMarker' -Value 'ok'
+          "@ | Set-Content -LiteralPath $preflight
+          $command = "$powershell -NoLogo -NoProfile -NonInteractive -File $preflight"
+          Start-Process -FilePath $runas -ArgumentList "/trustlevel:0x20000 $command" | Out-Null
+          $deadline = [DateTime]::UtcNow.AddSeconds(30)
+          while (-not (Test-Path -LiteralPath $preflightMarker) -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Milliseconds 250
+          }
+          if (-not (Test-Path -LiteralPath $preflightMarker)) {
+            throw 'Windows Basic User trust-level preflight did not reach the repository'
+          }
       - name: Install Windows video tools
         if: runner.os == 'Windows'
         shell: pwsh
@@ -102,7 +123,44 @@ jobs:
         shell: pwsh
         run: |
           $env:CUA_E2E_ARTIFACT_DIR = Join-Path $PWD "artifacts\cua-driver\standalone-browser"
-          scripts\ci\windows\run-rust-standalone-browser-e2e.ps1 -NoBuild
+          $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'
+          $runas = Join-Path $env:SystemRoot 'System32\runas.exe'
+          $runner = Join-Path $PWD 'scripts\ci\windows\run-rust-standalone-browser-e2e.ps1'
+          $wrapper = Join-Path $env:RUNNER_TEMP 'cua-basic-user-browser-e2e.ps1'
+          $exitMarker = Join-Path $env:RUNNER_TEMP 'cua-basic-user-browser-e2e.exit'
+          $restrictedLog = Join-Path $env:RUNNER_TEMP 'cua-basic-user-browser-e2e.log'
+          @"
+          Set-StrictMode -Version Latest
+          `$ErrorActionPreference = 'Stop'
+          Start-Transcript -LiteralPath '$restrictedLog' -Force
+          `$exitCode = 0
+          try {
+            & '$runner' -NoBuild
+          } catch {
+            Write-Host (`$_ | Out-String)
+            `$exitCode = 1
+          } finally {
+            Stop-Transcript
+            Set-Content -LiteralPath '$exitMarker' -Value `$exitCode
+          }
+          exit `$exitCode
+          "@ | Set-Content -LiteralPath $wrapper
+          $restrictedCommand = "$powershell -NoLogo -NoProfile -NonInteractive -File $wrapper"
+          Start-Process -FilePath $runas -ArgumentList "/trustlevel:0x20000 $restrictedCommand" | Out-Null
+
+          $deadline = [DateTime]::UtcNow.AddMinutes(45)
+          while (-not (Test-Path -LiteralPath $exitMarker) -and [DateTime]::UtcNow -lt $deadline) {
+            Start-Sleep -Seconds 5
+          }
+          if (-not (Test-Path -LiteralPath $exitMarker)) {
+            if (Test-Path -LiteralPath $restrictedLog) { Get-Content -LiteralPath $restrictedLog }
+            throw 'Windows Basic User browser E2E did not finish within 45 minutes'
+          }
+          $exitCode = [int](Get-Content -Raw -LiteralPath $exitMarker)
+          if (Test-Path -LiteralPath $restrictedLog) { Get-Content -LiteralPath $restrictedLog }
+          if ($exitCode -ne 0) {
+            throw "Windows Basic User browser E2E exited with code $exitCode"
+          }
       - name: Run standalone browsers on Linux X11
         if: runner.os == 'Linux'
         shell: bash

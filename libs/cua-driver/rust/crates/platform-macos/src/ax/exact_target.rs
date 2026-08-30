@@ -16,7 +16,9 @@ use super::bindings::{
     ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
     focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
-use crate::windows::{all_windows_with_space_snapshot, resolve_window_owner, WindowOwner};
+use crate::windows::{
+    all_windows, all_windows_with_space_snapshot, resolve_window_owner, WindowOwner,
+};
 
 /// Bounded `AXParent` ascent used when an element does not expose `AXWindow`.
 const MAX_ANCESTRY_DEPTH: usize = 40;
@@ -186,21 +188,26 @@ pub fn gather_background_facts(
     };
 
     let target = records.iter().find(|record| record.window_id == window_id);
-    // One layer-0 enumeration with the space snapshot serves two facts: the
-    // competing-destination census and the off-active-Space proof for the
-    // target (issue #3458) — `on_current_space` stays `None` when the space
-    // query cannot answer, and an unknown fact never changes a refusal code.
-    let enumerated = all_windows_with_space_snapshot();
-    let off_active_space = enumerated
-        .windows
-        .iter()
-        .find(|window| window.window_id == window_id)
-        .and_then(|window| window.on_current_space);
+    // Issue #3458: only the AX-unresolved case consumes the off-active-Space
+    // fact, so the happy path (AX resolved) keeps the cheap enumeration and
+    // never pays the per-window space query. `on_current_space` stays `None`
+    // when the space query cannot answer, and an unknown fact never changes
+    // a refusal code.
+    let (window_census, off_active_space) = if target.is_some() {
+        (all_windows(), None)
+    } else {
+        let snapshot = all_windows_with_space_snapshot();
+        let off = snapshot
+            .windows
+            .iter()
+            .find(|window| window.window_id == window_id)
+            .and_then(|window| window.on_current_space);
+        (snapshot.windows, off)
+    };
     let competing_keyboard_destinations = count_competing_keyboard_destinations(
         pid,
         window_id,
-        enumerated
-            .windows
+        window_census
             .iter()
             .map(|window| (window.pid, window.window_id)),
         &records,

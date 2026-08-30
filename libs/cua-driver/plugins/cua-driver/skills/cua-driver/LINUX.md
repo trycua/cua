@@ -1,3 +1,7 @@
+> **Plugin transport rule:** Use the bundled `cua-driver` MCP tools for every operation in this file.
+> Treat any `cua-driver ...` shell command as standalone documentation only; do not execute it from the plugin.
+> If a matching MCP tool is unavailable, stop instead of falling back to a shell command or another provider.
+
 # cua-driver — Linux
 
 The Linux backend drives X11 apps **in the background**: clicks and

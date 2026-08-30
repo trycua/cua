@@ -1,9 +1,13 @@
+> **Plugin transport rule:** Use the bundled `cua-driver` MCP tools for every operation in this file.
+> Treat any `cua-driver ...` shell command as standalone documentation only; do not execute it from the plugin.
+> If a matching MCP tool is unavailable, stop instead of falling back to a shell command or another provider.
+
 # cua-driver — Windows
 
-Orchestrates Windows app automation via the `cua-driver` binary (`cua-driver.exe`). Whenever a user
-asks to drive a native Windows app, follow the loop in this doc
-rather than calling tools ad-hoc — the snapshot-before-action
-invariant is not optional and silently breaks if you skip it.
+Extends an explicitly invoked Cua Driver plugin task with Windows-specific
+automation guidance. Follow the loop in this document rather than calling tools
+ad-hoc — the snapshot-before-action invariant is not optional and silently
+breaks if you skip it.
 
 `SKILL.md` in this directory describes the cross-platform core;
 this file is the Windows-specific extension. Read both:
@@ -318,21 +322,16 @@ on a Chromium target falls through to `send_click_synthesized`
   so the tool response is not proof that the previous foreground has already
   been restored.
 
-## Defaults — always prefer cua-driver over shell shims
+## Defaults — use the bundled MCP server
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name>` with JSON piped via stdin (avoids
-PowerShell 5.1's argv quoting quirks for strings containing both
-quotes and spaces). MCP tools (prefix `mcp__cua-driver__*`) only when
-the user explicitly asks for them. CLI wins because it picks up
-rebuilds instantly, failures are easier to diagnose, and there's no
-per-tool schema-load overhead.
+The plugin's default transport is the bundled `cua-driver` MCP server. Use its
+exposed tools for every Cua Driver operation in this document. Do not shell out
+to `cua-driver`, and apply the same no-fallback rule from `SKILL.md`.
 
-Every reference to `click(...)`, `get_window_state(...)` etc. in this
-doc means `cua-driver <name>` with JSON piped via stdin — translate
-to MCP form only when MCP is requested.
+### Standalone CLI argument reference
 
-### CLI argument plumbing on Windows
+The forms below are for users configuring Cua Driver outside the plugin.
+Plugin workflows must keep using the bundled MCP tools.
 
 Three equivalent shapes for passing JSON to `cua-driver <tool>`:
 
@@ -497,7 +496,10 @@ your prior tool calls earned.
      may flag the unsigned binary on first run. Click "More info →
      Run anyway" once.
 
-## Using cua-driver from the shell
+## Standalone CLI reference — not for plugin execution
+
+The commands below document standalone Cua Driver use. Plugin workflows must
+use the bundled MCP tools and must not execute these shell forms.
 
 Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver call

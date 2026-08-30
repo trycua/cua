@@ -79,6 +79,12 @@ fn strip_schema_titles(value: &mut Value) {
         Value::Object(object) => {
             object.remove("title");
             object.remove("description");
+            if matches!(
+                object.get("format").and_then(Value::as_str),
+                Some("uint32" | "uint64" | "double")
+            ) {
+                object.remove("format");
+            }
             for child in object.values_mut() {
                 strip_schema_titles(child);
             }
@@ -606,6 +612,30 @@ fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schem
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn output_normalization_drops_only_schemars_numeric_formats() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "format": "uint32"},
+                "frame": {"type": "integer", "format": "uint64"},
+                "ratio": {"type": "number", "format": "double"},
+                "created_at": {"type": "string", "format": "date-time"},
+                "format": {"type": "string"}
+            },
+            "required": ["format"]
+        });
+
+        strip_schema_titles(&mut schema);
+
+        for property in ["count", "frame", "ratio"] {
+            assert!(schema["properties"][property].get("format").is_none());
+        }
+        assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+        assert_eq!(schema["properties"]["format"], json!({"type": "string"}));
+        assert_eq!(schema["required"], json!(["format"]));
+    }
 
     fn object_variant(schema: &Value) -> &Value {
         if schema.get("properties").is_some() {

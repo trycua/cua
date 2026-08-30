@@ -30,6 +30,12 @@ fn normalize_schema(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
+            if matches!(
+                object.get("format").and_then(Value::as_str),
+                Some("uint32" | "uint64" | "double")
+            ) {
+                object.remove("format");
+            }
             if object.get("type").and_then(Value::as_str) == Some("object") {
                 object
                     .entry("properties")
@@ -819,5 +825,29 @@ mod tests {
         }))
         .expect_err("portable input must reject runtime-only fields");
         assert!(error.to_string().contains("unknown field `pid`"));
+    }
+
+    #[test]
+    fn input_normalization_drops_only_schemars_numeric_formats() {
+        let mut schema = json!({
+            "type": "object",
+            "properties": {
+                "count": {"type": "integer", "format": "uint32"},
+                "frame": {"type": "integer", "format": "uint64"},
+                "ratio": {"type": "number", "format": "double"},
+                "created_at": {"type": "string", "format": "date-time"},
+                "format": {"type": "string"}
+            },
+            "required": ["format"]
+        });
+
+        normalize_schema(&mut schema);
+
+        for property in ["count", "frame", "ratio"] {
+            assert!(schema["properties"][property].get("format").is_none());
+        }
+        assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
+        assert_eq!(schema["properties"]["format"], json!({"type": "string"}));
+        assert_eq!(schema["required"], json!(["format"]));
     }
 }

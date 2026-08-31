@@ -21,7 +21,6 @@ use std::sync::OnceLock;
 /// platform backends pull both crates in).
 pub struct PipHookFrame {
     pub png_bytes: Vec<u8>,
-    pub action_label: String,
     pub timestamp_ms: u64,
 }
 

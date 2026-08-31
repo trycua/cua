@@ -3,8 +3,8 @@
 //!
 //! The PiP window is an opt-in, always-on-top floating window that
 //! shows what the cua-driver agent just did: a post-action screenshot
-//! of the target window plus a one-line label summarising the tool
-//! call. It mirrors the architecture used by `cursor-overlay` (shared
+//! of the target window. It mirrors the architecture used by
+//! `cursor-overlay` (shared
 //! config/types here, platform-specific renderer in each `platform-*`
 //! crate) and the registration pattern used by `cua_driver_core::video`
 //! (a `OnceLock` factory set once at startup by `main.rs`).
@@ -259,9 +259,6 @@ impl PipConfig {
 #[derive(Debug, Clone)]
 pub struct PipFrame {
     pub png_bytes: Vec<u8>,
-    /// One-line summary shown overlayed on the frame, e.g.
-    /// `click element_index=2` or `type_text "hello world"`.
-    pub action_label: String,
     /// Wall-clock timestamp (ms since Unix epoch) — used by backends
     /// that want to show "last update Xs ago" in the title bar.
     pub timestamp_ms: u64,

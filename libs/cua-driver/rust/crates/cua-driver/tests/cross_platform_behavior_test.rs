@@ -1247,6 +1247,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             | ("press_key" | "hotkey", _) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
+            ("left_click" | "child_window", Targeting::Px)
+                if cua_driver_testkit::e2e::DisplayServer::current()
+                    == cua_driver_testkit::e2e::DisplayServer::Wayland
+                    && !linux_real_pointer_input_available() =>
+            {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
             ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)
                 if !linux_real_pointer_input_available() =>
             {

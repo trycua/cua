@@ -735,7 +735,7 @@ pub fn list_all_apps() -> Vec<AppInfo> {
         }
         running_states.retain(|_, entries| !entries.is_empty());
     }
-    let installed = scan_installed_apps();
+    let installed = scan_installed_apps_cached();
     merge_app_lists(running, installed, &running_states)
 }
 
@@ -834,22 +834,75 @@ pub(crate) fn merge_app_lists(
     running
 }
 
-fn scan_installed_apps() -> Vec<AppInfo> {
-    let dirs = [
-        "/Applications",
-        "/Applications/Utilities",
-        "/System/Applications",
-        "/System/Applications/Utilities",
-    ];
+/// The app roots `scan_installed_apps` walks, in scan order.
+fn installed_scan_roots() -> Vec<String> {
     let home = std::env::var("HOME").unwrap_or_default();
-    let user_apps = format!("{home}/Applications");
+    vec![
+        "/Applications".to_owned(),
+        "/Applications/Utilities".to_owned(),
+        "/System/Applications".to_owned(),
+        "/System/Applications/Utilities".to_owned(),
+        format!("{home}/Applications"),
+    ]
+}
 
+/// How long a cached installed-app scan stays valid when the root
+/// mtimes still match. The mtime key catches an install/uninstall
+/// instantly (adding or removing a bundle touches its parent
+/// directory); the TTL bounds drift in the per-bundle `last_used`
+/// timestamps, which can change without any root directory noticing.
+const INSTALLED_CACHE_TTL: Duration = Duration::from_secs(30);
+
+/// Whether a cached scan may be served: the root-mtime key must match
+/// and the entry must be younger than the TTL. Pure for unit tests.
+fn installed_cache_is_fresh(
+    cached_key: &[Option<std::time::SystemTime>],
+    key: &[Option<std::time::SystemTime>],
+    age: Duration,
+) -> bool {
+    cached_key == key && age < INSTALLED_CACHE_TTL
+}
+
+/// The mtime of each scan root (`None` for an unreadable root — two
+/// `None`s compare equal, so a permanently missing root still caches).
+fn installed_scan_key(roots: &[String]) -> Vec<Option<std::time::SystemTime>> {
+    roots
+        .iter()
+        .map(|d| std::fs::metadata(d).and_then(|m| m.modified()).ok())
+        .collect()
+}
+
+/// `scan_installed_apps`, memoized. The uncached scan reads every
+/// bundle's Info.plist on every call — hundreds of file reads that
+/// dominate `list_apps` latency (seconds under load) for an answer that
+/// changes only when something is installed or removed.
+fn scan_installed_apps_cached() -> Vec<AppInfo> {
+    struct InstalledCache {
+        key: Vec<Option<std::time::SystemTime>>,
+        at: std::time::Instant,
+        apps: Vec<AppInfo>,
+    }
+    static CACHE: std::sync::Mutex<Option<InstalledCache>> = std::sync::Mutex::new(None);
+
+    let roots = installed_scan_roots();
+    let key = installed_scan_key(&roots);
+    if let Some(cached) = CACHE.lock().unwrap().as_ref() {
+        if installed_cache_is_fresh(&cached.key, &key, cached.at.elapsed()) {
+            return cached.apps.clone();
+        }
+    }
+    let apps = scan_installed_apps();
+    *CACHE.lock().unwrap() = Some(InstalledCache {
+        key,
+        at: std::time::Instant::now(),
+        apps: apps.clone(),
+    });
+    apps
+}
+
+fn scan_installed_apps() -> Vec<AppInfo> {
     let mut result = Vec::new();
-    let mut all_dirs: Vec<&str> = dirs.to_vec();
-    let user_apps_str: &str = user_apps.as_str();
-    all_dirs.push(user_apps_str);
-
-    for dir in all_dirs {
+    for dir in installed_scan_roots() {
         let Ok(entries) = std::fs::read_dir(dir) else {
             continue;
         };

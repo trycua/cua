@@ -52,11 +52,10 @@ fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Opti
 
 #[cfg(target_os = "linux")]
 pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
-    if crate::wayland::is_inject_mode() {
-        // A full-output frame is the strongest evidence for the nested
-        // compositor's background/focus guarantees and needs no slow AT-SPI
-        // geometry re-resolution. Per-window screenshots elsewhere retain the
-        // normal crop behavior.
+    if crate::wayland::is_wayland() {
+        // Wayland surface ids are connection-scoped, so a later recording hook
+        // cannot safely re-attest the action call's per-window crop. Preserve
+        // ownership by recording the compositor's complete rendered output.
         return crate::wayland::screenshot_display_dispatch().ok();
     }
     if let Some(window_id) = window_id {

@@ -147,12 +147,13 @@ cua-driver browser_prepare \
 ```
 
 This mode is still a separate driver-owned profile. It does not attach to the
-user's existing profile or accept a `pid`. The result reports
-`automation_exposed:false`: unlike the standard port-zero launch, the fixed
-nonzero-port launch reports `navigator.webdriver === false`. It applies no
-other browser identity or fingerprint overrides and does not guarantee that a
-site will accept the session. Treat any CAPTCHA or bot-detector result as site
-policy, not as a Cua guarantee.
+user's existing profile or accept a `pid`. The result reports the selected
+launch posture, but the driver does not infer `navigator.webdriver` from it
+because Chromium behavior can vary by version. Verify `navigator.webdriver`
+in-page if the value matters. This mode applies no other browser identity or
+fingerprint overrides and does not guarantee that a site will accept the
+session. Treat any CAPTCHA or bot-detector result as site policy, not as a Cua
+guarantee.
 
 ### Existing profile
 

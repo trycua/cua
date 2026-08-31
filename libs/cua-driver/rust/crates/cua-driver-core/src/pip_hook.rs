@@ -1,5 +1,5 @@
-//! Agent View event hook, registered once by `main.rs` when `--agent-view`
-//! is enabled.
+//! PiP frame-push hook — registered once by `main.rs` when the
+//! `--experimental-pip` flag is on argv.
 //!
 //! The trait + factory live in the `pip-preview` crate so the platform
 //! backends can implement them without depending on `cua-driver-core`.
@@ -19,114 +19,31 @@ use std::sync::OnceLock;
 /// to `pip_preview::PipFrame` — duplicated here to keep `cua-driver-core`
 /// from importing `pip-preview` (the dependency would be circular once
 /// platform backends pull both crates in).
-#[derive(Clone, Copy)]
-pub enum PipHookTargetKind {
-    NativeWindow,
-    BrowserTab,
-}
-
-pub struct PipHookTarget {
-    pub workspace_id: String,
-    pub workspace_label: String,
-    pub target_id: String,
-    pub identity_key: String,
-    pub target_kind: PipHookTargetKind,
-    pub target_label: String,
-    pub native_container: Option<PipHookNativeContainer>,
-}
-
-#[derive(Clone, Copy)]
-pub struct PipHookNativeContainer {
-    pub pid: i64,
-    pub window_id: u64,
-}
-
 pub struct PipHookFrame {
-    pub target: PipHookTarget,
     pub png_bytes: Vec<u8>,
     pub action_label: String,
     pub timestamp_ms: u64,
-    pub cursor_position: Option<(f64, f64)>,
 }
 
-pub enum PipHookEvent {
-    Upsert(PipHookFrame),
-    SetInputPassthrough {
-        passthrough: bool,
-    },
-    RemoveTarget {
-        workspace_id: String,
-        identity_key: String,
-    },
-    RemoveWorkspace {
-        workspace_id: String,
-    },
-}
-
-/// Restores Agent View interactivity even when an action exits early or
-/// unwinds. Physical desktop actions are serialized by the dispatcher, so one
-/// process-global passthrough scope is sufficient.
-pub struct PipInputPassthroughGuard;
-
-impl Drop for PipInputPassthroughGuard {
-    fn drop(&mut self) {
-        if let Some(f) = PIP_EVENT_FN.get() {
-            if let Err(error) = f(PipHookEvent::SetInputPassthrough { passthrough: false }) {
-                tracing::error!(%error, "failed to restore Agent View input handling");
-            }
-        }
-    }
-}
-
-type PipEventFnBox = Box<dyn Fn(PipHookEvent) -> Result<(), String> + Send + Sync>;
-static PIP_EVENT_FN: OnceLock<PipEventFnBox> = OnceLock::new();
+type PipPushFnBox = Box<dyn Fn(PipHookFrame) + Send + Sync>;
+static PIP_PUSH_FN: OnceLock<PipPushFnBox> = OnceLock::new();
 
 /// Register the platform-side push callback. `main.rs` calls this
 /// once after starting the PiP backend.
-pub fn set_pip_event_fn(f: impl Fn(PipHookEvent) -> Result<(), String> + Send + Sync + 'static) {
-    let _ = PIP_EVENT_FN.set(Box::new(f));
+pub fn set_pip_push_fn(f: impl Fn(PipHookFrame) + Send + Sync + 'static) {
+    let _ = PIP_PUSH_FN.set(Box::new(f));
 }
 
 /// True when a PiP backend is wired up. Tool dispatcher uses this to
 /// skip the screenshot-bytes path when nothing would consume the
-/// frame (avoiding wasted capture work when Agent View is disabled).
+/// frame (avoiding wasted capture work in the common --pip-off case).
 pub fn pip_enabled() -> bool {
-    PIP_EVENT_FN.get().is_some()
+    PIP_PUSH_FN.get().is_some()
 }
 
-/// Temporarily make Agent View input-transparent. The registered backend
-/// applies the native state synchronously before this returns.
-pub fn begin_pip_input_passthrough() -> Result<Option<PipInputPassthroughGuard>, String> {
-    let Some(f) = PIP_EVENT_FN.get() else {
-        return Ok(None);
-    };
-    f(PipHookEvent::SetInputPassthrough { passthrough: true })?;
-    Ok(Some(PipInputPassthroughGuard))
-}
-
-/// Upsert one exact-target frame. No-op when no backend is registered.
+/// Push a frame to the PiP window. No-op when no backend is registered.
 pub fn push_pip_frame(frame: PipHookFrame) {
-    if let Some(f) = PIP_EVENT_FN.get() {
-        let _ = f(PipHookEvent::Upsert(frame));
-    }
-}
-
-/// Remove one exact target card. Presentation only; never closes the target.
-pub fn remove_pip_target(workspace_id: impl Into<String>, identity_key: impl Into<String>) {
-    if let Some(f) = PIP_EVENT_FN.get() {
-        let _ = f(PipHookEvent::RemoveTarget {
-            workspace_id: workspace_id.into(),
-            identity_key: identity_key.into(),
-        });
-    }
-}
-
-/// Remove presentation state for an ended workspace. This never closes the
-/// workspace's native windows or browser tabs.
-pub fn remove_pip_workspace(workspace_id: impl Into<String>) {
-    if let Some(f) = PIP_EVENT_FN.get() {
-        let _ = f(PipHookEvent::RemoveWorkspace {
-            workspace_id: workspace_id.into(),
-        });
+    if let Some(f) = PIP_PUSH_FN.get() {
+        f(frame);
     }
 }

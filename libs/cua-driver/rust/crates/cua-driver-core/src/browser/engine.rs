@@ -410,15 +410,6 @@ pub(crate) struct BrowserTabScreenshot {
     pub pixel_to_css_scale_y: f64,
 }
 
-pub(crate) struct BrowserTabPreview {
-    pub screenshot: BrowserTabScreenshot,
-    pub title: String,
-    pub url: String,
-    pub cdp_target_id: String,
-    pub pid: i64,
-    pub window_id: u64,
-}
-
 #[derive(Debug, Clone, Copy)]
 struct BrowserScreenshotViewport {
     page_x: f64,
@@ -2020,36 +2011,6 @@ impl BrowserEngine {
             viewport_css_height: viewport.height,
             pixel_to_css_scale_x: viewport.width / f64::from(width),
             pixel_to_css_scale_y: viewport.height / f64::from(height),
-        })
-    }
-
-    /// Capture one exact tab for a trusted local presentation surface while
-    /// retaining the tab metadata already proved by the session-scoped store.
-    /// Like `capture_tab_screenshot`, this never activates the tab or brings
-    /// its native window to the foreground.
-    pub(crate) async fn capture_tab_preview(
-        &self,
-        session: &str,
-        target_id: &str,
-        tab_id: &str,
-    ) -> Result<BrowserTabPreview, BrowserRefusal> {
-        let record = self.store.get_target(session, target_id)?;
-        let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
-            refuse(
-                BrowserRefusalCode::BrowserTabNotFound,
-                format!("tab {tab_id} is not known for target {target_id}"),
-            )
-        })?;
-        let screenshot = self
-            .capture_tab_screenshot(session, target_id, tab_id)
-            .await?;
-        Ok(BrowserTabPreview {
-            screenshot,
-            title: tab.title,
-            url: tab.url,
-            cdp_target_id: tab.cdp_target_id,
-            pid: record.pid,
-            window_id: record.window_id,
         })
     }
 

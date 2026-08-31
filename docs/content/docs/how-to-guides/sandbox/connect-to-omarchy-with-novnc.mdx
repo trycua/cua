@@ -1,0 +1,215 @@
+---
+title: Connect to an Omarchy Fleet desktop with noVNC
+description: Add browser-based desktop access to an Omarchy VM running on Cua Fleet.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use noVNC to view and control an Omarchy Fleet desktop from an authenticated
+browser. This guide connects four components:
+
+```text
+Browser -> Fleet /api/svc proxy -> websockify :5900 -> WayVNC :5902 -> Hyprland
+```
+
+Fleet exposes the HTTP and WebSocket endpoint through a service named `vnc`.
+It does not expose the guest's raw VNC port to the internet.
+
+## Before you start
+
+You need:
+
+- an Omarchy pool definition that you can update;
+- an active Fleet claim with shell access to its guest; and
+- a browser that can sign in to Cua.
+
+Follow [Run Omarchy on Fleet](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet)
+to create the pool and claim.
+
+## Add the Fleet service
+
+Add a service named `vnc` on guest port `5900` to the pool definition:
+
+```python
+pool = await Pool.apply(
+    image,
+    name=POOL_NAME,
+    replicas=1,
+    cpu=4,
+    memory_mb=6144,
+    services={"server": 8000, "mcp": 3000, "vnc": 5900},
+    ttl_seconds_after_created=21600,
+)
+```
+
+Apply the pool definition, then create a claim. If you add the service while a
+sandbox is already bound, create a new claim if the current sandbox does not
+show `vnc` in its service list.
+
+<Callout type="warn">
+  Do not expose port `5902` as another Fleet service. WayVNC uses that raw RFB port inside the
+  guest. Only the noVNC bridge on port `5900` needs a Fleet service.
+</Callout>
+
+## Install noVNC and websockify
+
+Open a shell in the claimed Omarchy guest. Install noVNC `1.7.0` and
+websockify `0.13.0` under your user account:
+
+```bash
+NOVNC_VERSION="1.7.0"
+WEBSOCKIFY_VERSION="0.13.0"
+VNC_ROOT="$HOME/.local/share/omarchy-vnc"
+NOVNC_ARCHIVE="$VNC_ROOT/noVNC-v${NOVNC_VERSION}.tar.gz"
+WEBSOCKIFY_VENV="$VNC_ROOT/websockify-venv"
+
+install -d "$VNC_ROOT"
+curl --fail --location \
+  "https://github.com/novnc/noVNC/archive/refs/tags/v${NOVNC_VERSION}.tar.gz" \
+  --output "$NOVNC_ARCHIVE"
+tar --extract --gzip --file "$NOVNC_ARCHIVE" --directory "$VNC_ROOT"
+
+python3 -m venv "$WEBSOCKIFY_VENV"
+"$WEBSOCKIFY_VENV/bin/python" -m pip install \
+  "websockify==${WEBSOCKIFY_VERSION}"
+```
+
+The Omarchy Fleet image starts WayVNC with the Hyprland graphical session. The
+verified setup moves the raw RFB listener to loopback port `5902` and leaves
+port `5900` to the Fleet-facing bridge:
+
+```bash
+install -d "$HOME/.config/systemd/user/wayvnc.service.d"
+tee "$HOME/.config/systemd/user/wayvnc.service.d/override.conf" >/dev/null <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/bin/wayvnc 127.0.0.1 5902
+EOF
+
+systemctl --user daemon-reload
+systemctl --user restart wayvnc.service
+```
+
+websockify serves the noVNC files on port `5900` and bridges WebSocket traffic
+to the WayVNC listener on `5902`.
+
+## Run websockify as a user service
+
+Create a systemd user service:
+
+```bash
+install -d "$HOME/.config/systemd/user"
+tee "$HOME/.config/systemd/user/omarchy-websockify.service" >/dev/null <<'EOF'
+[Unit]
+Description=noVNC bridge for the Omarchy graphical session
+After=wayvnc.service
+Requires=wayvnc.service
+PartOf=graphical-session.target
+ConditionEnvironment=WAYLAND_DISPLAY
+
+[Service]
+Type=simple
+ExecStart=%h/.local/share/omarchy-vnc/websockify-venv/bin/websockify --web=%h/.local/share/omarchy-vnc/noVNC-1.7.0 0.0.0.0:5900 127.0.0.1:5902
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=graphical-session.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now omarchy-websockify.service
+```
+
+The service restarts with the graphical session and waits for the existing
+`wayvnc.service` unit.
+
+## Verify the guest services
+
+Check both services and request the noVNC page from inside the guest:
+
+```bash
+systemctl --user is-active wayvnc.service omarchy-websockify.service
+curl --fail --silent --show-error --output /dev/null \
+  http://127.0.0.1:5900/vnc.html
+```
+
+Both systemd checks must print `active`, and the HTTP request must return a
+successful response. To inspect a failure, run:
+
+```bash
+journalctl --user \
+  --unit wayvnc.service \
+  --unit omarchy-websockify.service \
+  --no-pager --lines 100
+```
+
+## Authenticate your browser
+
+Open [Cua authentication](https://cua.ai/auth) and sign in. Keep the same
+browser profile open when you connect to the Fleet service.
+
+<Callout type="info">
+  A Fleet access token or OAuth client ID and secret authenticate the Sandbox SDK. They do not
+  create a browser session. An unauthenticated browser request to `/api/svc` redirects to the
+  interactive sign-in flow.
+</Callout>
+
+## Open the desktop from the claim
+
+Open the claim details page in Fleet. When the bound sandbox is ready and the
+pool exposes a service named `vnc`, the page displays a **Desktop** pane. Wait
+for its status to change to **Connected**, then click or type in the desktop to
+confirm that input reaches Omarchy.
+
+If the pane disconnected while the sandbox was starting, select
+**Reconnect**.
+
+## Open the direct noVNC URL
+
+You can also open the noVNC page directly. Copy the namespace and bound
+sandbox name from the claim details page, then replace the placeholders in
+this URL:
+
+```text
+https://run.cua.ai/api/svc/<NAMESPACE>/<SANDBOX_NAME>-vnc/vnc.html?autoconnect=1&resize=scale&reconnect=1
+```
+
+The page connects to this WebSocket endpoint through the same authenticated
+service proxy:
+
+```text
+wss://run.cua.ai/api/svc/<NAMESPACE>/<SANDBOX_NAME>-vnc/websockify
+```
+
+Use the bound sandbox name, not the claim name. The `-vnc` suffix comes from
+the Fleet service name.
+
+## Troubleshoot the connection
+
+- **The URL redirects to sign-in:** sign in at
+  [Cua authentication](https://cua.ai/auth), then reopen the noVNC URL in the
+  same browser profile. SDK OAuth credentials do not replace this step.
+- **The service URL returns 404:** confirm that the namespace and bound sandbox
+  name match the claim details page and that the pool exposes a service named
+  `vnc` on port `5900`.
+- **The page loads but noVNC disconnects:** verify that both user services are
+  active and that ports `5900` and `5902` are listening inside the guest with
+  `ss --listening --tcp --numeric --processes`.
+- **The desktop is black or frozen:** confirm that Hyprland is running with
+  `pgrep -a Hyprland`, then restart `wayvnc.service` and
+  `omarchy-websockify.service`.
+- **A native VNC client cannot connect:** this is expected. Fleet's service
+  route carries authenticated HTTPS and WebSocket traffic, not a public raw
+  VNC TCP socket. Use the claim's Desktop pane or the noVNC page.
+
+## Stop browser access
+
+To stop the bridge in the guest, disable its user service:
+
+```bash
+systemctl --user disable --now omarchy-websockify.service
+```
+
+Remove the `vnc` entry from the pool's `services` mapping before you apply the
+next pool template. Delete the claim or pool when you no longer need the VM.

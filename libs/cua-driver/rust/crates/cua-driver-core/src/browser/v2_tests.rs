@@ -846,8 +846,6 @@ impl BrowserPlatform for FixturePlatform {
             message: "fixture: nothing to do".into(),
             prepared_pid: None,
             launch_posture: None,
-            automation_exposed: false,
-            launch_posture_notes: Vec::new(),
             side_effects: Default::default(),
             attachment: None,
         })

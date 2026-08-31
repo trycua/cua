@@ -6,6 +6,13 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $config = Get-Content -LiteralPath $ConfigPath -Raw | ConvertFrom-Json
+foreach ($item in @(Get-ChildItem Env:)) {
+    if ($item.Name.StartsWith("CUA_") -or
+        $item.Name.StartsWith("RUST") -or
+        $item.Name.StartsWith("CARGO_")) {
+        [Environment]::SetEnvironmentVariable($item.Name, $null, "Process")
+    }
+}
 foreach ($property in $config.environment.PSObject.Properties) {
     [Environment]::SetEnvironmentVariable($property.Name, [string]$property.Value, "Process")
 }
@@ -18,10 +25,19 @@ $testExecutable = [string]$config.test_executable
 $exitTemp = "$exitPath.tmp-$PID"
 $exitCode = 1
 Set-Content -LiteralPath $pidPath -Value $PID -NoNewline
-"Restricted child started; running prebuilt test executable" |
-    Add-Content -LiteralPath $logPath -Encoding UTF8
 
 try {
+    $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    $isAdministrator = $principal.IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator
+    )
+    if ($isAdministrator) {
+        throw "Restricted browser-test child still has an active Administrators token"
+    }
+    "Restricted child verified (Administrators role inactive); running prebuilt test executable" |
+        Add-Content -LiteralPath $logPath -Encoding UTF8
+
     $previousPreference = $ErrorActionPreference
     $ErrorActionPreference = "Continue"
     try {

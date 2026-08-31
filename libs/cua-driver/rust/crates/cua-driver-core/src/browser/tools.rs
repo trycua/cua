@@ -30,7 +30,6 @@ use super::types::BindingQuality;
 /// crates call this from their `register_all` after constructing the
 /// engine with their adapter.
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
-    registry.set_browser_engine(engine.clone());
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
@@ -606,8 +605,9 @@ impl BrowserPrepareTool {
                 endpoint, and close the temporary tab. Every visible effect is reported; \
                 ambiguity is refused. launch_posture=driver_selected_port is valid only for a \
                 standalone pid-free driver-owned isolated launch. It uses a driver-selected \
-                nonzero DevTools port instead of Chromium's port=0 launch path. The result \
-                reports whether that launch exposed navigator.webdriver; no other browser \
+                nonzero DevTools port instead of Chromium's port=0 launch path. \
+                navigator.webdriver is browser-version-dependent and is not reported as launch \
+                evidence; callers that depend on it must verify it in-page. No other browser \
                 identity or fingerprint overrides are applied, and detector bypass is not \
                 guaranteed."
                 .into(),
@@ -624,7 +624,7 @@ impl BrowserPrepareTool {
                         "type": "string",
                         "enum": ["standard", "driver_selected_port"],
                         "default": "standard",
-                        "description": "Standalone driver-owned isolated launch posture. 'driver_selected_port' is accepted only when pid is omitted and allow_launch=true plus an isolated profile are supplied. It uses a driver-selected nonzero DevTools port instead of Chromium's port=0 launch path. The prepare result reports automation_exposed=false for that launch and true for the standard port-zero launch. No other browser identity or fingerprint overrides are applied, and detector bypass is not guaranteed."
+                        "description": "Standalone driver-owned isolated launch posture. 'driver_selected_port' is accepted only when pid is omitted and allow_launch=true plus an isolated profile are supplied. It uses a driver-selected nonzero DevTools port instead of Chromium's port=0 launch path. navigator.webdriver is browser-version-dependent and is not reported as launch evidence; verify it in-page if it matters. No other browser identity or fingerprint overrides are applied, and detector bypass is not guaranteed."
                     },
                     "profile": {
                         "type": "object",
@@ -758,8 +758,6 @@ impl Tool for BrowserPrepareTool {
                     "endpoint_ownership": outcome.endpoint.map(|e| e.ownership),
                     "prepared_pid": outcome.prepared_pid,
                     "launch_posture": outcome.launch_posture,
-                    "automation_exposed": outcome.automation_exposed,
-                    "launch_posture_notes": outcome.launch_posture_notes,
                     "side_effects": outcome.side_effects,
                     "attachment": outcome.attachment,
                 }))

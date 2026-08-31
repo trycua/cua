@@ -163,11 +163,6 @@ pub struct PrepareOutcome {
     pub prepared_pid: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub launch_posture: Option<PrepareLaunchPosture>,
-    /// Whether this preparation used Chromium's port-zero launch path, which
-    /// exposes automation to page JavaScript through `navigator.webdriver`.
-    pub automation_exposed: bool,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub launch_posture_notes: Vec<String>,
     #[serde(default)]
     pub side_effects: PrepareSideEffects,
     #[serde(skip_serializing_if = "Option::is_none")]

@@ -646,7 +646,7 @@ fn capture_turn(window_id: Option<u64>, pid: Option<i64>) -> TurnCapture {
     }
 }
 
-pub(crate) fn resolve_click_point(
+fn resolve_click_point(
     tool_name: &str,
     args: &Value,
     window_id: Option<u64>,

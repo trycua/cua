@@ -460,6 +460,9 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
+    if let Some(response) = permission_gate_pending_response(&req) {
+        return response;
+    }
     let observation_transport = daemon_observation_transport(&req);
     let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
@@ -634,10 +637,79 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
     }
 }
 
+static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark whether the macOS first-launch gate is still waiting for TCC grants.
+/// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
+/// are rejected before execution until fresh child-process probes confirm grants.
+pub fn set_permission_gate_pending(pending: bool) {
+    PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
+}
+
+fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
+    permission_gate_response_for_state(
+        request,
+        PERMISSION_GATE_PENDING.load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
+fn permission_gate_response_for_state(
+    _request: &DaemonRequest,
+    pending: bool,
+) -> Option<DaemonResponse> {
+    if !pending {
+        return None;
+    }
+    Some(DaemonResponse::err(
+        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
+        75,
+    ))
+}
+
 fn daemon_metadata_response() -> DaemonResponse {
     DaemonResponse::ok(
         serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
             .expect("daemon metadata is serializable"),
+    )
+}
+
+fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
+    if request.method == "shutdown" {
+        return (
+            DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+            true,
+        );
+    }
+    let expected_pid = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("expected_pid"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid != 0);
+    let Some(expected_pid) = expected_pid else {
+        return (
+            DaemonResponse::err(
+                "shutdown_if_pid requires a positive integer expected_pid",
+                64,
+            ),
+            false,
+        );
+    };
+    let actual_pid = std::process::id();
+    if expected_pid != actual_pid {
+        return (
+            DaemonResponse::err(
+                format!("daemon pid mismatch (expected {expected_pid}, found {actual_pid})"),
+                1,
+            ),
+            false,
+        );
+    }
+    (
+        DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+        true,
     )
 }
 
@@ -757,7 +829,7 @@ fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Va
 mod peer_authentication_tests {
     use super::{
         authenticate_unix_peer, authenticate_unix_uid, history_relaunch_state_response,
-        DaemonRequest, ToolObservationOrigin,
+        shutdown_response, DaemonRequest, ToolObservationOrigin,
     };
 
     #[tokio::test]
@@ -790,6 +862,40 @@ mod peer_authentication_tests {
             Some("history_relaunch_state_requires_local_cli")
         );
         assert!(history_relaunch_state_response(&request, true).ok);
+    }
+
+    fn shutdown_request(expected_pid: serde_json::Value) -> DaemonRequest {
+        DaemonRequest {
+            method: "shutdown_if_pid".to_owned(),
+            name: None,
+            args: Some(serde_json::json!({"expected_pid": expected_pid})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pid_bound_shutdown_accepts_only_the_current_process() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(std::process::id().into()));
+        assert!(response.ok);
+        assert!(should_shutdown);
+
+        let wrong_pid = if std::process::id() == 1 { 2 } else { 1 };
+        let (response, should_shutdown) = shutdown_response(&shutdown_request(wrong_pid.into()));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert!(response.error.unwrap().contains("daemon pid mismatch"));
+    }
+
+    #[test]
+    fn pid_bound_shutdown_rejects_malformed_pid() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(serde_json::json!("1")));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert_eq!(response.exit_code, Some(64));
     }
 }
 
@@ -912,11 +1018,14 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() {
                                     let _ = tx.send(());
@@ -1650,11 +1759,14 @@ pub async fn run_serve(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() { let _ = tx.send(()); }
                                 return;
@@ -2607,6 +2719,40 @@ mod gate_tests {
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
+    }
+}
+
+#[cfg(test)]
+mod permission_gate_routing_tests {
+    use super::{permission_gate_response_for_state, DaemonRequest};
+
+    fn call(name: &str) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some(name.into()),
+            args: Some(serde_json::json!({})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pending_gate_rejects_desktop_calls_with_typed_retry() {
+        let response = permission_gate_response_for_state(&call("list_windows"), true)
+            .expect("pending gate must reject desktop calls");
+        assert!(!response.ok);
+        assert!(response
+            .error
+            .as_deref()
+            .is_some_and(|message| message.starts_with("permissions_pending:")));
+        assert_eq!(response.exit_code, Some(75));
+    }
+
+    #[test]
+    fn calls_resume_only_after_the_gate_completes() {
+        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_some());
+        assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
     }
 }
 

@@ -1208,8 +1208,6 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
                 launch_posture: None,
-                automation_exposed: false,
-                launch_posture_notes: Vec::new(),
                 side_effects: Default::default(),
                 attachment: None,
             });

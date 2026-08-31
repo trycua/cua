@@ -159,14 +159,24 @@ function Invoke-RestrictedBrowserTest {
     Copy-Item -LiteralPath $env:CUA_TEST_DRIVER_BIN -Destination $stagedDriver
 
     $childEnvironment = [ordered]@{}
-    foreach ($item in @(Get-ChildItem Env:)) {
-        if ($item.Name -eq "PATH" -or
-            $item.Name.StartsWith("CUA_") -or
-            $item.Name.StartsWith("RUST") -or
-            $item.Name.StartsWith("CARGO_")) {
-            $childEnvironment[$item.Name] = $item.Value
+    foreach ($name in @(
+        "PATH",
+        "RUST_BACKTRACE",
+        "CUA_E2E_SOURCE_SHA",
+        "CUA_E2E_FORBID_SKIPS",
+        "CUA_E2E_BROWSER_STDERR",
+        "CUA_TEST_APPS_ROOT",
+        "CUA_TEST_DRIVER_STDERR",
+        "CUA_TEST_REQUIRE_EXTERNAL_BROWSERS",
+        "CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER",
+        "CUA_TEST_WORKSPACE_ROOT"
+    )) {
+        $value = [Environment]::GetEnvironmentVariable($name, "Process")
+        if (-not [string]::IsNullOrWhiteSpace($value)) {
+            $childEnvironment[$name] = $value
         }
     }
+    $childEnvironment["CUA_E2E_WINDOWS_BROWSER_LIMITATION"] = "0"
     $childEnvironment["CUA_TEST_DRIVER_BIN"] = $stagedDriver
     $childEnvironment["CUA_E2E_ARTIFACT_DIR"] = $restrictedEvidence
     $childEnvironment["CUA_E2E_DECLARATIONS_FILE"] = Join-Path $restrictedJournals "cases.jsonl"
@@ -275,9 +285,25 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
     throw "Driver binary not found: $($env:CUA_TEST_DRIVER_BIN)"
 }
 
-$tests = @(
+$jobLifecycleExit = Invoke-CargoStep -Name "Windows browser job lifecycle" -Arguments @(
+    "test", "--release", "-p", "cua-driver-core",
+    "windows_job_reaps_descendant_after_clean_launcher_handoff", "--lib", "--",
+    "--nocapture"
+) -LogPath (Join-Path $artifactDir "windows-browser-job-lifecycle.log")
+if ($jobLifecycleExit -ne 0) {
+    throw "Windows browser Job Object lifecycle test failed with exit code $jobLifecycleExit"
+}
+
+$tests = @()
+$runRestricted = Test-IsAdministrator
+if ($runRestricted -and
+    $env:CUA_E2E_WINDOWS_BROWSER_LIMITATION -eq "hosted_runner_token") {
+    # Preserve the hosted administrator-token negative control before using a
+    # restricted child for the positive platform-selected rows.
+    $tests += "standalone_browser_prepare_isolated_hosted_token_refusal"
+}
+$tests += @(
     "standalone_browser_prepare_automation_exposure",
-    "standalone_browser_prepare_driver_selected_port",
     "standalone_browser_prepare_isolated",
     "standalone_browser_background_type",
     "standalone_browser_type_replace",
@@ -299,12 +325,13 @@ $tests = @(
 )
 $restrictedBrowserTests = @(
     "standalone_browser_prepare_automation_exposure",
-    "standalone_browser_prepare_driver_selected_port",
     "standalone_browser_prepare_isolated"
 )
-$runRestricted = Test-IsAdministrator
 if ($runRestricted) {
     Write-Host "Administrator token detected; platform-selected browser tests will use Windows trust level 0x20000"
+    Get-ChildItem (Join-Path $rustRoot "target\release\deps") `
+        -Filter "standalone_browser_behavior_test-*" -File -ErrorAction SilentlyContinue |
+        Remove-Item -Force
     $testBuildExit = Invoke-CargoStep -Name "standalone browser test executable" -Arguments @(
         "test", "--release", "-p", "cua-driver",
         "--test", "standalone_browser_behavior_test", "--no-run"
@@ -327,11 +354,6 @@ foreach ($testName in $tests) {
     }
     if ($testExit -ne 0) {
         $failureCount++
-        if ($runRestricted -and $restrictedBrowserTests -contains $testName) {
-            Write-Host "Restricted-token browser preflight failed; stopping before the ordinary matrix" `
-                -ForegroundColor Red
-            break
-        }
     }
 }
 

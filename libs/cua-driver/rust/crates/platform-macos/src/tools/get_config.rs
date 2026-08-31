@@ -63,12 +63,11 @@ impl Tool for GetConfigTool {
             .or_else(|| self.state.cursor_registry.get("default"))
             .map(|s| s.config.enabled)
             .unwrap_or(true);
-        // Agent View values aren't in DriverConfig — they're file-only since the
+        // PiP values aren't in DriverConfig — they're file-only since the
         // backend is initialised once at startup. Read fresh so the
         // response reflects whatever set_config (or a direct JSON edit)
         // last wrote.
-        let (agent_view_enabled, agent_view_geometry) =
-            pip_preview::read_agent_view_keys_from_file();
+        let (pip_enabled, pip_geometry) = pip_preview::read_pip_keys_from_file();
         ToolResult::text("cua-driver-rs configuration").with_structured(serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),
             // Maintainer E2E builds set this at compile time so the
@@ -83,8 +82,8 @@ impl Tool for GetConfigTool {
             "agent_cursor": {
                 "enabled": cursor_enabled,
             },
-            "agent_view": agent_view_enabled,
-            "agent_view_geometry": agent_view_geometry,
+            "experimental_pip": pip_enabled,
+            "experimental_pip_geometry": pip_geometry,
         }))
     }
 }

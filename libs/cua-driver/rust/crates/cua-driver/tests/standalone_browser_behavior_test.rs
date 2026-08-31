@@ -621,7 +621,8 @@ fn browser_product_from_executable(executable: &Path) -> String {
         .and_then(|name| name.to_str())
         .unwrap_or_default()
         .to_ascii_lowercase();
-    if name.contains("msedge") {
+    if name.contains("msedge") || name.contains("microsoft edge") || name.contains("microsoft-edge")
+    {
         "edge".to_owned()
     } else if name.contains("chromium") {
         "chromium".to_owned()
@@ -2451,6 +2452,75 @@ fn run_prepare_isolated_launch() {
     );
 }
 
+#[cfg(target_os = "windows")]
+fn run_prepare_isolated_hosted_token_refusal() {
+    let scenario = "windows-platform-selected-chromium-hosted-token-refusal";
+    let refusal = case(
+        "platform-selected-chromium",
+        "browser_prepare_isolated_hosted_token_refusal",
+    )
+    .expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable]);
+    execute_case(refusal, |evidence| {
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(scenario);
+        *evidence = recording_evidence(driver.recording_dir());
+
+        let session = "standalone-prepare-hosted-token-refusal";
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+        driver.start_behavior_recording();
+
+        let sentinel = ForegroundSentinel::launch(&mut driver);
+        let (prepared, passed) = sentinel
+            .observe_desktop(|| {
+                driver.call(
+                    "browser_prepare",
+                    serde_json::json!({
+                        "session": session,
+                        "allow_launch": true,
+                        "profile": {"mode": "isolated_new"},
+                    }),
+                )
+            })
+            .expect("observe hosted Windows browser limitation");
+        assert_eq!(
+            prepared.structured()["status"],
+            "refused",
+            "{}",
+            prepared.raw
+        );
+        assert_eq!(
+            prepared.structured()["refusal"]["code"],
+            "browser_route_unavailable",
+            "{}",
+            prepared.raw
+        );
+        assert!(
+            prepared.structured()["action"].is_null()
+                && prepared.structured()["prepared_pid"].is_null()
+                && prepared.structured()["side_effects"].is_null(),
+            "hosted Windows refusal must precede browser setup: {}",
+            prepared.raw
+        );
+        assert_eq!(
+            profile_entries(&driver_profiles),
+            profiles_before,
+            "hosted Windows refusal must not create an isolated profile"
+        );
+        let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+        assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+        let mut observation = Observation::refused(
+            RefusalCode::BrowserRouteUnavailable,
+            vec![OracleKind::FixtureState],
+            prepared.text(),
+            Evidence::default(),
+        );
+        observation.passed_oracles.extend(passed);
+        observation
+    });
+}
+
 fn run_prepare_automation_postures(action: &'static str, postures: &[(&'static str, bool)]) {
     let scenario = format!(
         "{}-platform-selected-chromium-standalone-{action}",
@@ -2493,13 +2563,6 @@ fn run_prepare_automation_postures(action: &'static str, postures: &[(&'static s
                     "{}",
                     prepared.raw
                 );
-                assert_eq!(
-                    prepared.structured()["automation_exposed"],
-                    expected_exposure,
-                    "the prepare result must report the page-visible automation indicator: {}",
-                    prepared.raw
-                );
-
                 let prepared_pid = prepared.structured()["prepared_pid"]
                     .as_u64()
                     .expect("prepared browser pid") as u32;
@@ -2577,13 +2640,6 @@ fn run_prepare_automation_exposure() {
     run_prepare_automation_postures(
         "browser_prepare_automation_exposure",
         &[("standard", true), ("driver_selected_port", false)],
-    );
-}
-
-fn run_prepare_driver_selected_port() {
-    run_prepare_automation_postures(
-        "browser_prepare_driver_selected_port",
-        &[("driver_selected_port", false)],
     );
 }
 
@@ -4957,21 +5013,8 @@ fn run_platform_selected_browser_scenario(run: fn()) {
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     write_environment_from_env(&EnvironmentRecord::ready(Duration::ZERO))
         .expect("write standalone-browser environment evidence");
-    let specs = browser_specs();
-    if specs.is_empty() {
-        if std::env::var_os("CUA_TEST_REQUIRE_EXTERNAL_BROWSERS").is_some() {
-            panic!("no standalone Chrome, Edge, or Chromium executable was found");
-        }
-        eprintln!("no standalone Chromium browser installed; optional suite skipped");
-        return;
-    }
     eprintln!(
-        "[standalone-browser] pid-free browser_prepare selects one trusted platform browser; installed candidates: {}",
-        specs
-            .iter()
-            .map(|spec| format!("{} at {}", spec.name, spec.executable.display()))
-            .collect::<Vec<_>>()
-            .join(", ")
+        "[standalone-browser] pid-free browser_prepare selects one platform-attested browser"
     );
     run();
     settle_between_browser_rows();
@@ -5017,17 +5060,19 @@ fn standalone_browser_prepare_isolated() {
     run_platform_selected_browser_scenario(run_prepare_isolated_launch);
 }
 
+#[cfg(target_os = "windows")]
+#[test]
+#[ignore = "requires the hosted Windows administrator-token limitation"]
+fn standalone_browser_prepare_isolated_hosted_token_refusal() {
+    run_platform_selected_browser_scenario(run_prepare_isolated_hosted_token_refusal);
+}
+
 #[test]
 #[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
 fn standalone_browser_prepare_automation_exposure() {
     run_platform_selected_browser_scenario(run_prepare_automation_exposure);
 }
 
-#[test]
-#[ignore = "requires an installed standalone Chromium browser and an interactive desktop"]
-fn standalone_browser_prepare_driver_selected_port() {
-    run_platform_selected_browser_scenario(run_prepare_driver_selected_port);
-}
 #[cfg(not(target_os = "macos"))]
 standalone_browser_test!(
     standalone_browser_existing_profile_standard_refusal,

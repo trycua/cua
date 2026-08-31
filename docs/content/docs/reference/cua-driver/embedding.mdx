@@ -89,7 +89,7 @@ cua-driver mcp --embedded --socket /tmp/yourapp-cua.sock \
   --host-bundle-id com.yourco.yourapp
 ```
 
-You can pass `--embedded --host-bundle-id com.yourco.yourapp` to `serve` instead of the environment variables. Only the exact value `CUA_DRIVER_EMBEDDED=1` enables environment-based embedded mode. The host bundle id is an advisory label echoed in `check_permissions`; trust still comes from macOS's responsibility chain.
+You can pass `--embedded --host-bundle-id com.yourco.yourapp` to `serve` instead of the environment variables. Only the exact value `CUA_DRIVER_EMBEDDED=1` enables environment-based embedded mode. The host bundle id declares the expected host: `health_report` compares it with the daemon's parent application, while trust still comes from macOS's responsibility chain.
 
 ## Node and Electron hosts
 
@@ -150,6 +150,8 @@ If macOS grants are added after the daemon has started, restart the daemon so TC
 ## App + gateway architectures
 
 `--embedded` does not transfer a GUI app's grants to the driver; it only keeps the daemon inside its spawner's macOS responsibility chain. If a separate gateway or Node process spawns the daemon, the daemon inherits the gateway's identity, not the app's. Spawn `cua-driver serve --embedded` from the app process.
+
+Call `health_report` with `{"include":["bundle_identity"]}` after connecting. The check passes only when macOS can resolve the direct parent as an application and, when configured, its observed bundle identifier matches `CUA_DRIVER_HOST_BUNDLE_ID`.
 
 Normal OpenClaw gateway and Hermes YAML MCP configurations remain standalone integrations; do not set embedded mode merely because one of those agents is the client. A signed Node or Electron desktop host may use `@trycua/cua-driver/embedded`, but only its permission-owning app process may start the daemon. The MCP client can then launch the proxy described by `connection.mcp`.
 

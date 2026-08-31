@@ -651,12 +651,12 @@ pub fn parse_command() -> Command {
         );
         println!("  cua-driver history enable   Opt in and initialize encrypted local history.");
         println!("  cua-driver history status|pause|resume|flush|list|show|disable|delete");
-        println!("  --experimental-pip          Show a small always-on-top window with the latest");
+        println!("  --experimental-pip          Show a small always-on-top live screen preview.");
         println!(
-            "                              post-action screenshot + a 1-line label. macOS only"
+            "                              The window is movable, resizable, minimizable, and closable."
         );
         println!(
-            "                              today; Win/Linux print a not-yet-implemented notice."
+            "                              macOS only today; Win/Linux print a not-yet-implemented notice."
         );
         println!(
             "  --experimental-pip-geometry WxH[+X+Y]   Override window size (and optional top-left"

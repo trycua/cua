@@ -1,7 +1,8 @@
 //! macOS picture-in-picture preview window.
 //!
-//! Floating NSWindow with an NSImageView showing the most recent
-//! post-action screenshot.
+//! Floating NSWindow with an NSImageView showing a low-frame-rate live
+//! preview of the main display. The preview window itself is excluded
+//! from ScreenCaptureKit so it never produces a recursive mirror.
 //!
 //! ## Threading model
 //!
@@ -10,11 +11,13 @@
 //! - The MCP/tokio server runs on a background thread.
 //! - AppKit MUST run on the main thread, which `cua-driver/src/main.rs`
 //!   parks in `NSApplication.run()` for the cursor overlay.
-//! - `push_frame()` is called from arbitrary tokio tasks. It packages
-//!   the frame into a heap-allocated `Box` and posts the actual UI
-//!   update onto the main queue via `dispatch_async_f`. The block
-//!   then constructs an `NSImage` from the PNG bytes and calls
-//!   `[imageView setImage:]`.
+//! - A ScreenCaptureKit stream runs on its own callback queue and sends
+//!   retained `CGImage`s to the AppKit main queue via `dispatch_async_f`.
+//! - At most one frame may be waiting for AppKit. Newer frames are dropped
+//!   while that slot is occupied so a busy main thread cannot accumulate
+//!   an unbounded queue.
+//! - `push_frame()` remains as a post-action PNG fallback when live capture
+//!   cannot start.
 //!
 //! ## Window properties
 //!
@@ -41,9 +44,15 @@
 //! `Mutex<Option<usize>>` and silently no-ops until init finishes.
 
 use std::ffi::c_void;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use pip_preview::{PipBackend, PipBackendFactory, PipConfig, PipFrame};
+use screencapturekit::prelude::{
+    CMSampleBufferExt, CMSampleBufferSCExt, CMTime, SCContentFilter, SCShareableContent, SCStream,
+    SCStreamConfiguration, SCStreamOutputType,
+};
 
 // ── CGColor objc2 encoding shim ────────────────────────────────────────────
 //
@@ -58,6 +67,11 @@ struct CGColor {
     _opaque: [u8; 0],
 }
 
+#[repr(C)]
+struct NativeCGImage {
+    _opaque: [u8; 0],
+}
+
 // RefEncode supplies an automatic Encode impl for `*mut CGColor` /
 // `*const CGColor` via objc2's blanket — that's the route msg_send! needs
 // for both setting layer.backgroundColor and reading [NSColor CGColor].
@@ -66,6 +80,11 @@ struct CGColor {
 unsafe impl objc2::RefEncode for CGColor {
     const ENCODING_REF: objc2::Encoding =
         objc2::Encoding::Pointer(&objc2::Encoding::Struct("CGColor", &[]));
+}
+
+unsafe impl objc2::RefEncode for NativeCGImage {
+    const ENCODING_REF: objc2::Encoding =
+        objc2::Encoding::Pointer(&objc2::Encoding::Struct("CGImage", &[]));
 }
 
 // ── Native AppKit pointer cell ─────────────────────────────────────────────
@@ -81,6 +100,19 @@ struct NativeHandles {
 }
 
 static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
+
+const LIVE_CAPTURE_FPS: i32 = 8;
+const LIVE_CAPTURE_MAX_SIDE: f64 = 1280.0;
+const LIVE_CAPTURE_WINDOW_LOOKUP_TIMEOUT: Duration = Duration::from_secs(3);
+
+static LIVE_STREAM: Mutex<Option<SCStream>> = Mutex::new(None);
+static LIVE_CAPTURE_ACTIVE: AtomicBool = AtomicBool::new(false);
+static LIVE_CAPTURE_CANCELLED: AtomicBool = AtomicBool::new(false);
+static LIVE_FRAME_PENDING: AtomicBool = AtomicBool::new(false);
+
+struct LiveFrame {
+    image: screencapturekit::CGImage,
+}
 
 // ── libdispatch glue — same shape as cursor::overlay ──────────────────────
 
@@ -108,6 +140,12 @@ pub struct MacosPipBackend;
 
 impl PipBackend for MacosPipBackend {
     fn push_frame(&self, frame: PipFrame) {
+        // A live ScreenCaptureKit stream is the primary presentation path on
+        // macOS. Keep the existing post-action PNG bridge as a fallback for
+        // machines where live capture could not be established.
+        if LIVE_CAPTURE_ACTIVE.load(Ordering::Acquire) {
+            return;
+        }
         // No window yet? Drop the frame silently — start() dispatches
         // the create block onto the main queue and the very first
         // tool call can race that block.
@@ -118,7 +156,178 @@ impl PipBackend for MacosPipBackend {
     }
 
     fn shutdown(self: Box<Self>) {
+        stop_live_capture();
         dispatch_to_main((), shutdown_cb);
+    }
+}
+
+fn live_capture_dimensions(width_points: u32, height_points: u32, scale: f64) -> (u32, u32) {
+    let mut width = (f64::from(width_points) * scale.max(1.0)).max(1.0);
+    let mut height = (f64::from(height_points) * scale.max(1.0)).max(1.0);
+    let longest = width.max(height);
+    if longest > LIVE_CAPTURE_MAX_SIDE {
+        let shrink = LIVE_CAPTURE_MAX_SIDE / longest;
+        width *= shrink;
+        height *= shrink;
+    }
+    (width.round() as u32, height.round() as u32)
+}
+
+fn stop_live_capture() {
+    LIVE_CAPTURE_CANCELLED.store(true, Ordering::Release);
+    LIVE_CAPTURE_ACTIVE.store(false, Ordering::Release);
+    LIVE_FRAME_PENDING.store(false, Ordering::Release);
+    let stream = LIVE_STREAM
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .take();
+    if let Some(stream) = stream {
+        if let Err(error) = stream.stop_capture() {
+            tracing::debug!(target: "pip", %error, "failed to stop live PiP capture cleanly");
+        }
+    }
+}
+
+fn start_live_capture(window_id: u32, output_width: u32, output_height: u32) {
+    LIVE_CAPTURE_CANCELLED.store(false, Ordering::Release);
+    if let Err(error) = std::thread::Builder::new()
+        .name("cua-pip-live-capture".into())
+        .spawn(move || match build_live_capture(window_id, output_width, output_height) {
+            Ok(stream) => {
+                if LIVE_CAPTURE_CANCELLED.load(Ordering::Acquire) {
+                    let _ = stream.stop_capture();
+                    return;
+                }
+                *LIVE_STREAM
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(stream);
+                LIVE_CAPTURE_ACTIVE.store(true, Ordering::Release);
+                tracing::info!(
+                    target: "pip",
+                    fps = LIVE_CAPTURE_FPS,
+                    width = output_width,
+                    height = output_height,
+                    "live PiP capture started"
+                );
+            }
+            Err(error) => {
+                tracing::warn!(target: "pip", %error, "live PiP capture unavailable; using post-action screenshots");
+            }
+        })
+    {
+        tracing::warn!(target: "pip", %error, "failed to spawn live PiP capture worker");
+    }
+}
+
+fn build_live_capture(
+    window_id: u32,
+    output_width: u32,
+    output_height: u32,
+) -> anyhow::Result<SCStream> {
+    let deadline = Instant::now() + LIVE_CAPTURE_WINDOW_LOOKUP_TIMEOUT;
+    let (display, pip_window) = loop {
+        let content = SCShareableContent::get()
+            .map_err(|error| anyhow::anyhow!("SCShareableContent::get failed: {error}"))?;
+        let main_display_id = unsafe { core_graphics::display::CGMainDisplayID() };
+        let display = content
+            .displays()
+            .into_iter()
+            .find(|display| display.display_id() == main_display_id)
+            .or_else(|| content.displays().into_iter().next())
+            .ok_or_else(|| anyhow::anyhow!("no displays available for live PiP capture"))?;
+        if let Some(window) = content
+            .windows()
+            .into_iter()
+            .find(|window| window.window_id() == window_id)
+        {
+            break (display, window);
+        }
+        if Instant::now() >= deadline {
+            anyhow::bail!("PiP window {window_id} was not visible to ScreenCaptureKit");
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    };
+
+    let filter = SCContentFilter::create()
+        .with_display(&display)
+        .with_excluding_windows(&[&pip_window])
+        .build();
+    let frame_interval = CMTime::new(1, LIVE_CAPTURE_FPS);
+    let config = SCStreamConfiguration::new()
+        .with_width(output_width)
+        .with_height(output_height)
+        .with_scales_to_fit(true)
+        .with_preserves_aspect_ratio(true)
+        .with_queue_depth(3)
+        .with_minimum_frame_interval(&frame_interval)
+        .with_shows_cursor(true);
+
+    let mut stream = SCStream::new(&filter, &config);
+    stream
+        .add_output_handler(
+            |sample: screencapturekit::cm::CMSampleBuffer, output_type: SCStreamOutputType| {
+                if output_type != SCStreamOutputType::Screen
+                    || LIVE_CAPTURE_CANCELLED.load(Ordering::Acquire)
+                    || sample
+                        .frame_status()
+                        .is_some_and(|status| !status.has_content())
+                    || LIVE_FRAME_PENDING.swap(true, Ordering::AcqRel)
+                {
+                    return;
+                }
+
+                match sample.cg_image() {
+                    Ok(image) => dispatch_to_main(LiveFrame { image }, push_live_frame_cb),
+                    Err(error) => {
+                        LIVE_FRAME_PENDING.store(false, Ordering::Release);
+                        tracing::debug!(target: "pip", error, "live PiP frame had no image");
+                    }
+                }
+            },
+            SCStreamOutputType::Screen,
+        )
+        .ok_or_else(|| anyhow::anyhow!("ScreenCaptureKit rejected the PiP output handler"))?;
+    stream
+        .start_capture()
+        .map_err(|error| anyhow::anyhow!("SCStream::start_capture failed: {error}"))?;
+    Ok(stream)
+}
+
+unsafe extern "C" fn push_live_frame_cb(ctx: *mut c_void) {
+    use objc2::runtime::AnyObject;
+    use objc2::{class, msg_send};
+    use objc2_foundation::NSSize;
+
+    let frame: LiveFrame = *Box::from_raw(ctx as *mut LiveFrame);
+    LIVE_FRAME_PENDING.store(false, Ordering::Release);
+
+    let (window_ptr, image_view_ptr) = {
+        let guard = HANDLES.lock().unwrap();
+        match guard.as_ref() {
+            Some(handles) => (handles.window, handles.image_view),
+            None => return,
+        }
+    };
+    let window = window_ptr as *mut AnyObject;
+    let minimized: bool = msg_send![window, isMiniaturized];
+    if minimized {
+        return;
+    }
+    let visible: bool = msg_send![window, isVisible];
+    if !visible {
+        stop_live_capture();
+        return;
+    }
+
+    let cg_image = frame.image.as_ptr() as *mut NativeCGImage;
+    let image: *mut AnyObject = {
+        let alloc: *mut AnyObject = msg_send![class!(NSImage), alloc];
+        msg_send![alloc, initWithCGImage: cg_image size: NSSize::new(0.0, 0.0)]
+    };
+    if !image.is_null() {
+        let image_view = image_view_ptr as *mut AnyObject;
+        let _: () = msg_send![image_view, setImage: image];
+        let _: () = msg_send![image, release];
     }
 }
 
@@ -156,6 +365,7 @@ unsafe extern "C" fn push_frame_cb(ctx: *mut c_void) {
     if !img.is_null() {
         let image_view = image_view_ptr as *mut AnyObject;
         let _: () = msg_send![image_view, setImage: img];
+        let _: () = msg_send![img, release];
     }
 }
 
@@ -243,6 +453,7 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
         return;
     }
     let screen_frame: NSRect = msg_send![screen, frame];
+    let backing_scale: f64 = msg_send![screen, backingScaleFactor];
 
     let w = cfg.geometry.width as f64;
     let h = cfg.geometry.height as f64;
@@ -332,10 +543,36 @@ unsafe extern "C" fn init_cb(ctx: *mut c_void) {
     // Show the window without making it key or activating the app.
     let _: () = msg_send![win, orderFrontRegardless];
 
+    let window_number: i64 = msg_send![win, windowNumber];
+
     *HANDLES.lock().unwrap() = Some(NativeHandles {
         window: win as usize,
         image_view: image_view as usize,
     });
 
+    if let Ok(window_id) = u32::try_from(window_number) {
+        let (output_width, output_height) =
+            live_capture_dimensions(cfg.geometry.width, cfg.geometry.height, backing_scale);
+        start_live_capture(window_id, output_width, output_height);
+    } else {
+        tracing::warn!(target: "pip", window_number, "cannot start live PiP capture without a valid window id");
+    }
+
     tracing::info!(target: "pip", "PiP window initialised ({}x{})", cfg.geometry.width, cfg.geometry.height);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn live_capture_dimensions_follow_backing_scale() {
+        assert_eq!(live_capture_dimensions(320, 200, 2.0), (640, 400));
+        assert_eq!(live_capture_dimensions(320, 200, 1.0), (320, 200));
+    }
+
+    #[test]
+    fn live_capture_dimensions_bound_large_windows_without_changing_aspect_ratio() {
+        assert_eq!(live_capture_dimensions(4000, 2000, 2.0), (1280, 640));
+    }
 }

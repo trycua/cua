@@ -1,9 +1,9 @@
 //! pip-preview — shared types + trait for the experimental
 //! picture-in-picture agent preview window.
 //!
-//! The PiP window is an opt-in, always-on-top floating window that
-//! shows what the cua-driver agent just did: a post-action screenshot
-//! of the target window. It mirrors the architecture used by
+//! The PiP window is an opt-in, always-on-top floating window. Platform
+//! backends may provide a live preview; the shared post-action frame hook
+//! remains available as a compatibility fallback. It mirrors the architecture used by
 //! `cursor-overlay` (shared
 //! config/types here, platform-specific renderer in each `platform-*`
 //! crate) and the registration pattern used by `cua_driver_core::video`
@@ -250,12 +250,12 @@ impl PipConfig {
     }
 }
 
-/// A single frame pushed into the PiP window after a tool call lands.
+/// A single fallback frame pushed into the PiP window after a tool call lands.
 ///
 /// `png_bytes` are the raw PNG bytes produced by the platform
 /// screenshot callback — the same path that powers `screenshot.png`
-/// in the recording pipeline, so PiP shows exactly what the recorder
-/// sees.
+/// in the recording pipeline. Platforms with native live capture may
+/// ignore these frames while their stream is active.
 #[derive(Debug, Clone)]
 pub struct PipFrame {
     pub png_bytes: Vec<u8>,

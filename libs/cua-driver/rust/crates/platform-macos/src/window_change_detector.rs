@@ -147,14 +147,16 @@ impl Changes {
 }
 
 /// Default poll deadline — new windows triggered by a click typically
-/// appear within ~200ms on macOS. A detected change returns
-/// immediately, so the deadline is only ever paid in full on QUIET
-/// actions — which is nearly every action, making it a flat per-click
-/// tax. 300ms covers the typical appearance window plus two poll
-/// intervals of slack; `CUA_DRIVER_RS_WINDOW_WATCH_MS` overrides it
-/// (1000 restores the previous flat deadline and the wildcard
-/// suppressor's old settle window).
-const DEFAULT_TIMEOUT: Duration = Duration::from_millis(300);
+/// appear within ~200ms on macOS; 1.0s gives the wildcard suppressor
+/// time to fire and settle, and covers delayed windows (slow launches,
+/// system load, remote desktop sessions).
+///
+/// A detected change returns immediately, so the deadline is only ever
+/// paid in full on QUIET actions — which is nearly every action. A
+/// deployment that accepts trading late-window detection for ~700ms per
+/// quiet action can lower it via `CUA_DRIVER_RS_WINDOW_WATCH_MS`
+/// (300 covers the typical appearance window plus two poll intervals).
+const DEFAULT_TIMEOUT: Duration = Duration::from_millis(1000);
 
 /// The watch deadline for `env_value`, falling back to
 /// `DEFAULT_TIMEOUT` when unset or unparseable. Pure so the fallback
@@ -562,13 +564,35 @@ mod tests {
     /// falls back to the default on unset or unparseable values.
     #[test]
     fn watch_deadline_parses_and_falls_back() {
+        // Explicit 1000 and the unset default are the same deadline — the
+        // override changes nothing unless a deployment opts in.
         assert_eq!(
             watch_deadline_from(Some("1000")),
             Duration::from_millis(1000)
         );
+        assert_eq!(watch_deadline_from(None), DEFAULT_TIMEOUT);
+        assert_eq!(watch_deadline_from(Some("1000")), DEFAULT_TIMEOUT);
+        // Opt-in shorter deadline.
+        assert_eq!(watch_deadline_from(Some("300")), Duration::from_millis(300));
+        // Zero is honored (detect degenerates to a single poll).
         assert_eq!(watch_deadline_from(Some("0")), Duration::from_millis(0));
+        // Very large values are honored as given...
+        assert_eq!(
+            watch_deadline_from(Some("86400000")),
+            Duration::from_millis(86_400_000)
+        );
+        assert_eq!(
+            watch_deadline_from(Some(&u64::MAX.to_string())),
+            Duration::from_millis(u64::MAX)
+        );
+        // ...and anything unparseable (junk, empty, negative, overflow)
+        // falls back to the default.
         assert_eq!(watch_deadline_from(Some("junk")), DEFAULT_TIMEOUT);
         assert_eq!(watch_deadline_from(Some("")), DEFAULT_TIMEOUT);
-        assert_eq!(watch_deadline_from(None), DEFAULT_TIMEOUT);
+        assert_eq!(watch_deadline_from(Some("-1")), DEFAULT_TIMEOUT);
+        assert_eq!(
+            watch_deadline_from(Some("99999999999999999999999")),
+            DEFAULT_TIMEOUT
+        );
     }
 }

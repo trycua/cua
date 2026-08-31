@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.23.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.23.0...cua-driver-rs-v0.23.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cua-driver:** harden cross-platform e2e evidence ([99f27ee](https://github.com/trycua/cua/commit/99f27eeb96481a155fe10f6dee6a131cc0de8b9e))
+
 ## [0.23.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.2...cua-driver-rs-v0.23.0) (2026-08-30)
 
 

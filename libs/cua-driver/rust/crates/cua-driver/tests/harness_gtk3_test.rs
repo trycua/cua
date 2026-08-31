@@ -713,7 +713,15 @@ fn invoke_operation(
             count,
             expected,
         } => {
-            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
+            // A native Wayland refusal is expected when compositor-attested
+            // capture geometry is unavailable. Use harmless coordinates so
+            // the driver can return its typed refusal without requiring a
+            // screenshot oracle that the compositor cannot prove.
+            let (x, y, width, height) = if expect_refusal {
+                (0.0, 0.0, 1.0, 1.0)
+            } else {
+                element_rect(driver, pid, window_id, &pre, target)
+            };
             let tool = if count == 2 {
                 "double_click"
             } else if button == "right" {
@@ -737,7 +745,11 @@ fn invoke_operation(
             text,
             expected,
         } => {
-            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
+            let (x, y, width, height) = if expect_refusal {
+                (0.0, 0.0, 1.0, 1.0)
+            } else {
+                element_rect(driver, pid, window_id, &pre, target)
+            };
             (
                 driver.call(
                     "type_text",
@@ -780,7 +792,11 @@ fn invoke_operation(
                 "direction": "down", "amount": 6, "delivery_mode": mode
             });
             if pixel {
-                let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
+                let (x, y, width, height) = if expect_refusal {
+                    (0.0, 0.0, 1.0, 1.0)
+                } else {
+                    element_rect(driver, pid, window_id, &pre, target)
+                };
                 args["x"] = serde_json::json!(x + width / 2.0);
                 args["y"] = serde_json::json!(y + height / 2.0);
             } else {
@@ -801,7 +817,11 @@ fn invoke_operation(
             return false;
         }
         Operation::Drag { target, state_key } => {
-            let (x, y, width, height) = element_rect(driver, pid, window_id, &pre, target);
+            let (x, y, width, height) = if expect_refusal {
+                (0.0, 0.0, 1.0, 1.0)
+            } else {
+                element_rect(driver, pid, window_id, &pre, target)
+            };
             let response = driver.call(
                 "drag",
                 serde_json::json!({

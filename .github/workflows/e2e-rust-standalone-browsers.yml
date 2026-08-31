@@ -68,37 +68,6 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: .\scripts\ci\windows\setup-ffmpeg.ps1
-      - name: Harden Windows browser trees for isolated launch
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
-          $accountSid = $identity.User.Value
-          $browserRoots = @(
-            (Join-Path ${env:ProgramFiles} 'Google\Chrome'),
-            (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge')
-          )
-
-          foreach ($root in $browserRoots) {
-            if (-not (Test-Path -LiteralPath $root)) {
-              Write-Host "[browser-trust] absent: $root"
-              continue
-            }
-            Write-Host "[browser-trust] protecting: $root"
-            # Hosted runners are disposable. Preserve SYSTEM and Administrators
-            # control, grant the test token read/execute, and deny its write
-            # and delete rights so the product trust probe is meaningful.
-            & icacls.exe $root /inheritance:r | Out-Host
-            & icacls.exe $root /grant:r "*S-1-5-18:(OI)(CI)(RX)" "*S-1-5-32-544:(OI)(CI)(RX)" "*$($accountSid):(OI)(CI)(RX)" | Out-Host
-            & icacls.exe $root /deny "*$($accountSid):(OI)(CI)(W,D,DC,WDAC,WO)" | Out-Host
-            if ($LASTEXITCODE -ne 0) {
-              throw "failed to harden browser ACLs for $root"
-            }
-          }
-          if (-not ($browserRoots | Where-Object { Test-Path -LiteralPath $_ })) {
-            throw 'neither supported vendor browser tree is installed on this runner'
-          }
       - name: Install Linux desktop dependencies
         if: runner.os == 'Linux'
         shell: bash
@@ -125,6 +94,47 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: cargo build --release -p cua-driver --manifest-path libs/cua-driver/rust/Cargo.toml
+      - name: Harden Windows browser trees for isolated launch
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $identity = [System.Security.Principal.WindowsIdentity]::GetCurrent()
+          $accountSid = $identity.User.Value
+          $trustedRoots = @(${env:ProgramFiles}, ${env:ProgramFiles(x86)})
+          $browserInstallations = @(
+            @{ Root = (Join-Path ${env:ProgramFiles} 'Google\Chrome'); Executable = (Join-Path ${env:ProgramFiles} 'Google\Chrome\Application\chrome.exe') },
+            @{ Root = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge'); Executable = (Join-Path ${env:ProgramFiles(x86)} 'Microsoft\Edge\Application\msedge.exe') }
+          )
+          foreach ($root in $trustedRoots) {
+            Write-Host "[browser-trust] protecting trusted root: $root"
+            & icacls.exe $root /deny `
+              "*$($accountSid):(WD,AD,DC,WEA,WA,D,WDAC,WO)" /Q | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              throw "failed to harden trusted browser root $root"
+            }
+          }
+          foreach ($browser in $browserInstallations) {
+            if (-not (Test-Path -LiteralPath $browser.Executable -PathType Leaf)) {
+              throw "required vendor browser executable is absent: $($browser.Executable)"
+            }
+            Write-Host "[browser-trust] protecting vendor tree: $($browser.Root)"
+            # Keep read/execute access for the test token and deny only the
+            # write capabilities the product trust probe checks. Avoid the
+            # generic W right, which can make discovery fail closed.
+            & icacls.exe $browser.Root /inheritance:r /grant:r `
+              "*S-1-5-18:(OI)(CI)(F)" `
+              "*S-1-5-32-544:(OI)(CI)(RX)" `
+              "*$($accountSid):(OI)(CI)(RX)" /T /C /Q | Out-Host
+            & icacls.exe $browser.Root /deny `
+              "*$($accountSid):(OI)(CI)(WD,AD,DC,WEA,WA,D,WDAC,WO)" /T /C /Q | Out-Host
+            if ($LASTEXITCODE -ne 0) {
+              throw "failed to harden browser ACLs for $($browser.Root)"
+            }
+            if (-not (Test-Path -LiteralPath $browser.Executable -PathType Leaf)) {
+              throw "browser executable became unreadable after hardening: $($browser.Executable)"
+            }
+          }
       - name: Build source driver on Linux
         if: runner.os == 'Linux'
         shell: bash

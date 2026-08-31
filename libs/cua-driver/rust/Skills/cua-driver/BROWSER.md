@@ -266,11 +266,11 @@ only to scope later reads. A content ref is not an action capability.
 `semantic_v2` snapshots include an advisory `challenge` object. When
 `challenge.required` is `true`, the page looks like a CAPTCHA or
 bot-verification challenge. The report does not halt the session or choose a
-policy. Route its bounded evidence through the caller's configured challenge
-handler; that handler may use a local vision model and feed a bounded answer
-back into the agent loop. Then call `get_browser_state` again before continuing.
-Provider guesses such as reCAPTCHA, hCaptcha, Turnstile, or generic verification
-are heuristic evidence only.
+policy. Pause actions to that origin and require either explicit caller resume
+or user handoff, then call `get_browser_state` again before continuing. Signals
+contain fixed source/reason classifications rather than copied URL paths,
+queries, or page text. Provider guesses such as reCAPTCHA, hCaptcha, Turnstile,
+or generic verification are heuristic evidence only.
 
 The snapshot ranks active dialogs and visible controls before near-viewport
 and offscreen content. It excludes CSS-hidden retained state before applying

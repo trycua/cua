@@ -1,21 +1,19 @@
 //! Conservative CAPTCHA / bot-challenge detection for semantic browser snapshots.
 //!
-//! The detector reports visible challenge evidence for caller policy. It does
-//! not act on the challenge, and it deliberately ignores a lone occurrence of
-//! words such as "captcha" or "turnstile" in ordinary page content.
+//! The detector reports fixed challenge classifications for explicit caller
+//! resume or user handoff. It does not copy page text into the classification,
+//! act on the challenge, or treat a lone word such as "captcha" or "turnstile"
+//! in ordinary page content as a blocker.
 
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
-
-const MAX_EVIDENCE_CHARS: usize = 96;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct BrowserChallengeSignal {
     source: &'static str,
     provider: &'static str,
     reason: &'static str,
-    evidence: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,8 +32,9 @@ impl BrowserChallengeObservation {
             "origin": self.origin,
             "provider": self.provider,
             "confidence": self.confidence,
-            "handling": "caller_policy",
-            "message": "A CAPTCHA or bot-verification challenge appears to be present. Route it through the caller's configured challenge handler before issuing another browser action.",
+            "requires_user": true,
+            "handling": "explicit_resume_or_user_handoff",
+            "message": "A CAPTCHA or bot-verification challenge appears to be present. Do not issue another action to this origin until the caller explicitly resumes or a user takes over.",
             "signals": self.signals,
         })
     }
@@ -48,7 +47,8 @@ pub(crate) fn no_browser_challenge(origin: &str) -> Value {
         "origin": origin,
         "provider": Value::Null,
         "confidence": Value::Null,
-        "handling": "caller_policy",
+        "requires_user": false,
+        "handling": "none",
         "message": Value::Null,
         "signals": [],
     })
@@ -80,16 +80,14 @@ pub(crate) fn detect_browser_challenge<'a>(
                         provider: &'static str,
                         rank: u8,
                         reason: &'static str,
-                        evidence: Option<String>| {
-        let Some(evidence) = evidence else { return };
-        if !seen_signals.insert((source, provider, reason, evidence.clone())) {
+                        matched: bool| {
+        if !matched || !seen_signals.insert((source, provider, reason)) {
             return;
         }
         signals.push(BrowserChallengeSignal {
             source,
             provider,
             reason,
-            evidence,
         });
         strongest_signal = strongest_signal.max(rank);
         if provider != "generic"
@@ -113,42 +111,24 @@ pub(crate) fn detect_browser_challenge<'a>(
                 "url",
                 "cloudflare_turnstile",
                 60,
-                "URL identifies Cloudflare challenge infrastructure",
-                Some(truncate_evidence(url)),
+                "challenge_infrastructure",
+                true,
             );
         }
         if host == "www.google.com" && parsed.path().starts_with("/recaptcha/")
             || host == "www.recaptcha.net" && parsed.path().starts_with("/recaptcha/")
         {
-            consider(
-                "url",
-                "recaptcha",
-                60,
-                "URL identifies reCAPTCHA challenge infrastructure",
-                Some(truncate_evidence(url)),
-            );
+            consider("url", "recaptcha", 60, "challenge_infrastructure", true);
         }
         if host == "hcaptcha.com" || host.ends_with(".hcaptcha.com") {
-            consider(
-                "url",
-                "hcaptcha",
-                60,
-                "URL identifies hCaptcha challenge infrastructure",
-                Some(truncate_evidence(url)),
-            );
+            consider("url", "hcaptcha", 60, "challenge_infrastructure", true);
         }
         if host == "funcaptcha.com"
             || host.ends_with(".funcaptcha.com")
             || host == "arkoselabs.com"
             || host.ends_with(".arkoselabs.com")
         {
-            consider(
-                "url",
-                "arkose",
-                60,
-                "URL identifies Arkose challenge infrastructure",
-                Some(truncate_evidence(url)),
-            );
+            consider("url", "arkose", 60, "challenge_infrastructure", true);
         }
     }
 
@@ -162,8 +142,8 @@ pub(crate) fn detect_browser_challenge<'a>(
             "title",
             "generic",
             45,
-            "page title matches common challenge copy",
-            context_evidence(&title, phrase),
+            "challenge_copy",
+            title.contains(phrase),
         );
     }
 
@@ -173,7 +153,7 @@ pub(crate) fn detect_browser_challenge<'a>(
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
     let combined_text = texts.join(" ");
-    let challenge_copy = [
+    let challenge_copy_present = [
         "i'm not a robot",
         "i’m not a robot",
         "verify you are human",
@@ -186,44 +166,22 @@ pub(crate) fn detect_browser_challenge<'a>(
         "review the security of your connection",
     ]
     .iter()
-    .find_map(|phrase| context_evidence(&combined_text, phrase));
+    .any(|phrase| combined_text.contains(phrase));
 
-    if let Some(evidence) = challenge_copy {
-        consider(
-            "page_text",
-            "generic",
-            45,
-            "visible page text contains challenge instructions",
-            Some(evidence),
-        );
+    if challenge_copy_present {
+        consider("page_text", "generic", 45, "challenge_copy", true);
         for (provider, marker, reason) in [
-            (
-                "recaptcha",
-                "recaptcha",
-                "challenge copy also identifies reCAPTCHA",
-            ),
-            (
-                "hcaptcha",
-                "hcaptcha",
-                "challenge copy also identifies hCaptcha",
-            ),
-            (
-                "cloudflare_turnstile",
-                "turnstile",
-                "challenge copy also identifies Cloudflare Turnstile",
-            ),
-            (
-                "arkose",
-                "funcaptcha",
-                "challenge copy also identifies Arkose / FunCaptcha",
-            ),
+            ("recaptcha", "recaptcha", "provider_marker"),
+            ("hcaptcha", "hcaptcha", "provider_marker"),
+            ("cloudflare_turnstile", "turnstile", "provider_marker"),
+            ("arkose", "funcaptcha", "provider_marker"),
         ] {
             consider(
                 "page_text",
                 provider,
                 50,
                 reason,
-                context_evidence(&combined_text, marker),
+                combined_text.contains(marker),
             );
         }
     }
@@ -267,23 +225,6 @@ fn normalize_text(text: &str) -> String {
         .to_ascii_lowercase()
 }
 
-fn context_evidence(haystack: &str, needle: &str) -> Option<String> {
-    let match_start = haystack.find(needle)?;
-    let mut start = match_start.saturating_sub(MAX_EVIDENCE_CHARS / 2);
-    while !haystack.is_char_boundary(start) {
-        start += 1;
-    }
-    let mut end = (match_start + needle.len() + MAX_EVIDENCE_CHARS / 2).min(haystack.len());
-    while !haystack.is_char_boundary(end) {
-        end -= 1;
-    }
-    Some(truncate_evidence(haystack[start..end].trim()))
-}
-
-fn truncate_evidence(text: &str) -> String {
-    text.chars().take(MAX_EVIDENCE_CHARS).collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -317,7 +258,8 @@ mod tests {
         assert_eq!(value["required"], true);
         assert_eq!(value["origin"], "https://example.test");
         assert_eq!(value["provider"], "generic");
-        assert_eq!(value["handling"], "caller_policy");
+        assert_eq!(value["requires_user"], true);
+        assert_eq!(value["handling"], "explicit_resume_or_user_handoff");
     }
 
     #[test]
@@ -356,15 +298,20 @@ mod tests {
     }
 
     #[test]
-    fn evidence_contains_page_context_instead_of_only_the_matcher_needle() {
+    fn signals_do_not_echo_page_content_or_url_details() {
         let value = browser_challenge_value(
-            "https://example.test/login",
+            "https://example.test/login?secret=do-not-copy",
             "Account login",
-            ["Before continuing, please verify you are human using the widget below."],
+            ["Private account name: Alice. Please verify you are human."],
         );
-        let evidence = value["signals"][0]["evidence"].as_str().unwrap();
+        let signals = value["signals"].as_array().unwrap();
+        let serialized = serde_json::to_string(signals).unwrap();
 
-        assert!(evidence.contains("before continuing"));
-        assert!(evidence.contains("widget below"));
+        assert!(!serialized.contains("Alice"));
+        assert!(!serialized.contains("secret"));
+        assert!(signals
+            .iter()
+            .all(|signal| signal.get("evidence").is_none()));
+        assert_eq!(value["origin"], "https://example.test");
     }
 }

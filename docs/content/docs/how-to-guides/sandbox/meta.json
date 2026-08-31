@@ -5,6 +5,7 @@
     "create-pool-with-python",
     "create-pool-with-typescript",
     "expire-pools-and-claims",
+    "run-openclaw-on-cloud-fleet",
     "run-omarchy-on-cloud-fleet",
     "connect-to-omarchy-with-novnc",
     "secrets",

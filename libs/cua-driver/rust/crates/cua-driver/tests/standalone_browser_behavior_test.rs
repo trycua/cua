@@ -1529,6 +1529,20 @@ fn foreground_page_case(browser: &str, action: &str) -> CaseSpec {
     )
 }
 
+fn browser_read_case(browser: &str, action: &str) -> CaseSpec {
+    CaseSpec::delivered(
+        format!("{}-{browser}-standalone-{action}", std::env::consts::OS),
+        browser,
+        "standalone-chromium",
+        action,
+        Targeting::Page,
+        Delivery::NotApplicable,
+        Scope::Window,
+        DriverRoute::CdpRead,
+        vec![OracleKind::FixtureState],
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn generic_type_text_case(browser: &str) -> CaseSpec {
     CaseSpec::delivered(
@@ -1843,13 +1857,14 @@ fn run_challenge_article_false_positive(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(
-        foreground_page_case(&spec.name, "browser_challenge_article_false_positive"),
+        browser_read_case(&spec.name, "browser_challenge_article_false_positive"),
         |evidence| {
             let mut fixture =
                 launch_browser_with_html(spec, &scenario, CAPTCHA_ARTICLE_HTML.to_owned());
             *evidence = recording_evidence(fixture.driver.recording_dir());
             let session = format!("standalone-challenge-article-{}", fixture.pid);
             let (target, tab, _) = bind(&mut fixture, &session);
+            fixture.driver.start_behavior_recording();
             let snapshot = fixture.driver.call(
                 "get_browser_state",
                 serde_json::json!({
@@ -1893,13 +1908,14 @@ fn run_challenge_positive(spec: &BrowserSpec) {
         spec.name
     );
     execute_case(
-        foreground_page_case(&spec.name, "browser_challenge_positive"),
+        browser_read_case(&spec.name, "browser_challenge_positive"),
         |evidence| {
             let mut fixture =
                 launch_browser_with_html(spec, &scenario, CAPTCHA_CHALLENGE_HTML.to_owned());
             *evidence = recording_evidence(fixture.driver.recording_dir());
             let session = format!("standalone-challenge-positive-{}", fixture.pid);
             let (target, tab, _) = bind(&mut fixture, &session);
+            fixture.driver.start_behavior_recording();
             let snapshot = fixture.driver.call(
                 "get_browser_state",
                 serde_json::json!({

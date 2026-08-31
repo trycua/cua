@@ -7,7 +7,7 @@ const SOURCE: &str = "permissions_grant";
 const CONSENT_TRANSITION: &str = "unknown";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub struct DirectCaptureVerification {
+pub(crate) struct DirectCaptureVerification {
     pub source: String,
     pub verified_at: String,
     pub bundle_id: String,
@@ -23,26 +23,26 @@ struct PersistedVerification {
 }
 
 #[derive(Debug, Clone)]
-pub struct DirectCaptureEvidenceStore {
+pub(crate) struct DirectCaptureEvidenceStore {
     path: PathBuf,
     bundle_id: String,
 }
 
 impl DirectCaptureEvidenceStore {
-    pub fn new(path: PathBuf, bundle_id: impl Into<String>) -> Self {
+    pub(crate) fn new(path: PathBuf, bundle_id: impl Into<String>) -> Self {
         Self {
             path,
             bundle_id: bundle_id.into(),
         }
     }
 
-    pub fn record_now(&self) -> Result<DirectCaptureVerification, String> {
+    pub(crate) fn record_now(&self) -> Result<DirectCaptureVerification, String> {
         self.record_at(time::OffsetDateTime::now_utc().unix_timestamp())?;
         self.load()
             .ok_or_else(|| "recorded direct-capture verification did not validate".to_owned())
     }
 
-    pub fn load(&self) -> Option<DirectCaptureVerification> {
+    pub(crate) fn load(&self) -> Option<DirectCaptureVerification> {
         let bytes = std::fs::read(&self.path).ok()?;
         let record: PersistedVerification = serde_json::from_slice(&bytes).ok()?;
         if record.schema_version != SCHEMA_VERSION
@@ -65,7 +65,7 @@ impl DirectCaptureEvidenceStore {
         })
     }
 
-    pub fn clear(&self) -> Result<(), String> {
+    pub(crate) fn clear(&self) -> Result<(), String> {
         match std::fs::remove_file(&self.path) {
             Ok(()) => Ok(()),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -107,11 +107,6 @@ fn write_json_atomic(path: &Path, value: &PersistedVerification) -> Result<(), S
         file.write_all(&bytes)
             .and_then(|_| file.sync_all())
             .map_err(|error| format!("write {}: {error}", temporary.display()))?;
-        #[cfg(windows)]
-        if path.exists() {
-            std::fs::remove_file(path)
-                .map_err(|error| format!("replace {}: {error}", path.display()))?;
-        }
         std::fs::rename(&temporary, path)
             .map_err(|error| format!("replace {}: {error}", path.display()))
     })();

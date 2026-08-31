@@ -1,6 +1,5 @@
 use async_trait::async_trait;
 use cua_driver_core::{
-    permission_observation::DirectCaptureEvidenceStore,
     protocol::ToolResult,
     tool::{ProtectedResourceOwnership, Tool, ToolDef},
 };
@@ -8,6 +7,7 @@ use serde_json::Value;
 use std::{future::Future, path::Path, sync::Arc, time::Duration};
 
 use super::ToolState;
+use crate::permission_observation::DirectCaptureEvidenceStore;
 use crate::permissions::status::{
     accessibility_granted, request_accessibility, request_screen_recording,
     screen_recording_granted,

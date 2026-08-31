@@ -101,7 +101,7 @@ pub struct CheckData {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub identity_source: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub responsible_process_id: Option<u32>,
+    pub parent_process_id: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub os_version: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -121,7 +121,7 @@ impl CheckData {
             && self.configured_bundle_identifier.is_none()
             && self.executable_path.is_none()
             && self.identity_source.is_none()
-            && self.responsible_process_id.is_none()
+            && self.parent_process_id.is_none()
             && self.os_version.is_none()
             && self.architecture.is_none()
             && self.display_count.is_none()

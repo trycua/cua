@@ -447,13 +447,13 @@ log("embedded cua-driver daemon + proxy started (\(driverPath)) — no driver pr
 let health = call("health_report", ["include": ["bundle_identity"]])
 let healthStructured = health["structuredContent"] as? [String: Any] ?? [:]
 let healthChecks = healthStructured["checks"] as? [[String: Any]] ?? []
-let identity = healthChecks.first ?? [:]
+let identity = healthChecks.first { $0["name"] as? String == "bundle_identity" } ?? [:]
 let identityData = identity["data"] as? [String: Any] ?? [:]
 let hostBundleId = Bundle.main.bundleIdentifier ?? ""
 let identityOk = identity["status"] as? String == "pass" &&
     identityData["bundle_identifier"] as? String == hostBundleId &&
     identityData["identity_source"] as? String == "parent_application" &&
-    identityData["responsible_process_id"] as? Int == ProcessInfo.processInfo.processIdentifier
+    (identityData["parent_process_id"] as? Int) == Int(ProcessInfo.processInfo.processIdentifier)
 log("health_report — bundle_identity: \(identity["status"] ?? "?"), " +
     "observed host: \(identityData["bundle_identifier"] ?? "?") (want: \(hostBundleId))")
 

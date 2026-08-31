@@ -111,16 +111,15 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
         .unwrap_or_default();
 
     if cua_driver_core::embedded_mode() {
-        let responsible_process_id = unsafe { libc::getppid() } as u32;
-        let observed_host_bundle_id =
-            crate::apps::bundle_id_for_pid(responsible_process_id as libc::pid_t);
+        let parent_process_id = unsafe { libc::getppid() } as u32;
+        let observed_host_bundle_id = application_bundle_identifier_for_pid(parent_process_id);
         let configured_host_bundle_id = std::env::var(cua_driver_core::HOST_BUNDLE_ID_ENV)
             .ok()
             .filter(|id| !id.trim().is_empty());
         return check_embedded_bundle_identity(
             observed_host_bundle_id,
             configured_host_bundle_id,
-            responsible_process_id,
+            parent_process_id,
             exe,
         );
     }
@@ -161,7 +160,7 @@ pub(crate) fn check_bundle_identity() -> CheckEntry {
 fn check_embedded_bundle_identity(
     observed_host_bundle_id: Option<String>,
     configured_host_bundle_id: Option<String>,
-    responsible_process_id: u32,
+    parent_process_id: u32,
     executable_path: String,
 ) -> CheckEntry {
     let data = CheckData {
@@ -173,7 +172,7 @@ fn check_embedded_bundle_identity(
             Some(executable_path)
         },
         identity_source: Some("parent_application".to_owned()),
-        responsible_process_id: Some(responsible_process_id),
+        parent_process_id: Some(parent_process_id),
         ..Default::default()
     };
 
@@ -279,13 +278,43 @@ fn check_screen_capture_capability() -> CheckEntry {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
+fn application_bundle_identifier_for_pid(pid: u32) -> Option<String> {
+    use core_foundation::url::kCFURLPOSIXPathStyle;
+    use security_framework::os::macos::code_signing::{Flags, GuestAttributes, SecCode};
+
+    let mut attributes = GuestAttributes::new();
+    attributes.set_pid(pid as libc::pid_t);
+    let code = SecCode::copy_guest_with_attribues(None, &attributes, Flags::NONE).ok()?;
+    let url = code.path(Flags::NONE).ok()?;
+    let path = std::path::PathBuf::from(url.get_file_system_path(kCFURLPOSIXPathStyle).to_string());
+    let bundle_path = path
+        .ancestors()
+        .find(|candidate| candidate.extension().is_some_and(|ext| ext == "app"))?;
+    let bundle_url = core_foundation::url::CFURL::from_path(bundle_path, true)?;
+    let bundle = core_foundation::bundle::CFBundle::new(bundle_url)?;
+    bundle_identifier(&bundle)
+}
+
+fn bundle_identifier(bundle: &core_foundation::bundle::CFBundle) -> Option<String> {
+    use core_foundation::base::TCFType;
+    use core_foundation::string::CFString;
+
+    unsafe {
+        let id_ref = core_foundation::bundle::CFBundleGetIdentifier(bundle.as_concrete_TypeRef());
+        if id_ref.is_null() {
+            return None;
+        }
+        let id = CFString::wrap_under_get_rule(id_ref).to_string();
+        (!id.is_empty()).then_some(id)
+    }
+}
+
 /// Read the running process's `CFBundleIdentifier` via CoreFoundation.
 /// Returns `None` when the process has no associated bundle (e.g.
 /// running the bare binary outside `CuaDriver.app`).
 fn current_bundle_identifier() -> Option<String> {
     use core_foundation::base::TCFType;
     use core_foundation::bundle::{CFBundle, CFBundleGetMainBundle};
-    use core_foundation::string::CFString;
 
     unsafe {
         let raw = CFBundleGetMainBundle();
@@ -296,17 +325,7 @@ fn current_bundle_identifier() -> Option<String> {
         // without retaining and read the bundle identifier. `bundle`
         // intentionally doesn't drop the underlying CF object.
         let bundle = CFBundle::wrap_under_get_rule(raw);
-        let id_ref = core_foundation::bundle::CFBundleGetIdentifier(bundle.as_concrete_TypeRef());
-        if id_ref.is_null() {
-            return None;
-        }
-        let id = CFString::wrap_under_get_rule(id_ref);
-        let s = id.to_string();
-        if s.is_empty() {
-            None
-        } else {
-            Some(s)
-        }
+        bundle_identifier(&bundle)
     }
 }
 
@@ -450,7 +469,7 @@ mod tests {
             Some("com.example.host")
         );
         assert_eq!(data.identity_source.as_deref(), Some("parent_application"));
-        assert_eq!(data.responsible_process_id, Some(1234));
+        assert_eq!(data.parent_process_id, Some(1234));
     }
 
     #[test]

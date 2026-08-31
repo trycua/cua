@@ -7,12 +7,15 @@
 //! fallback), and synthesises pointer / scroll / drag input via
 //! `zwlr_virtual_pointer_v1`. Per-window image capture is deferred until
 //! `ext-foreign-toplevel-image-capture-source-v1` lands in
-//! `wayland-protocols-wlr`; until then window-scoped screenshot dispatch returns
-//! a typed error on Wayland rather than presenting an output crop as that
-//! window's pixels.
+//! `wayland-protocols-wlr`. Hyprland uses its compositor-owned
+//! `hyprland-toplevel-export-v1` protocol for identified per-window capture;
+//! unresolved Hyprland identities fail closed rather than presenting an output
+//! crop as that window's pixels.
 
 pub mod ext_screencopy;
 pub mod ext_toplevel;
+pub mod hyprland;
+pub mod hyprland_capture;
 pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
@@ -570,6 +573,32 @@ impl Dispatch<ZwlrForeignToplevelHandleV1, ()> for State {
     }
 }
 
+fn unique_hyprland_address(
+    windows: &[hyprland::Window],
+    used: &HashSet<u64>,
+    title: &str,
+    app_id: &str,
+) -> Option<u64> {
+    let matches = windows
+        .iter()
+        .filter(|window| !used.contains(&window.address))
+        .filter(|window| {
+            let title_matches = !title.is_empty() && window.title == title;
+            let app_matches = !app_id.is_empty() && window.app_id == app_id;
+            if !title.is_empty() && !app_id.is_empty() {
+                title_matches && app_matches
+            } else {
+                title_matches || app_matches
+            }
+        })
+        .map(|window| window.address)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [address] => Some(*address),
+        _ => None,
+    }
+}
+
 /// Enumerate native Wayland toplevels via wlr-foreign-toplevel-management.
 /// `xid` begins as the foreign-toplevel handle's connection-scoped protocol id.
 /// The dispatcher replaces it with a stable compositor or AT-SPI identity when
@@ -593,6 +622,8 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         queue.roundtrip(&mut state)?;
     }
 
+    let mut hyprland_windows = hyprland::list_windows().unwrap_or_default();
+    let mut used_hyprland_addresses = HashSet::new();
     let sway_windows = sway_ipc::list_windows().unwrap_or_default();
     let mut used_sway_ids = HashSet::new();
     let mut out = Vec::new();
@@ -605,36 +636,96 @@ pub fn list_windows() -> anyhow::Result<Vec<WindowInfo>> {
         } else {
             format!("{} [{}]", tl.title, tl.app_id)
         };
-        let sway = sway_windows
-            .iter()
-            .find(|window| {
-                !used_sway_ids.contains(&window.id)
-                    && !tl.title.is_empty()
-                    && window.title == tl.title
+        let mut hyprland_address = unique_hyprland_address(
+            &hyprland_windows,
+            &used_hyprland_addresses,
+            &tl.title,
+            &tl.app_id,
+        );
+        // A foreign-toplevel event can arrive a few milliseconds before the
+        // same just-mapped client appears in Hyprland IPC. Never expose the
+        // connection-scoped protocol object as if it were a stable window id;
+        // briefly retry the compositor-owned identity correlation instead.
+        if hyprland_address.is_none() && hyprland::is_session() {
+            for _ in 0..4 {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+                hyprland_windows = hyprland::list_windows().unwrap_or_default();
+                hyprland_address = unique_hyprland_address(
+                    &hyprland_windows,
+                    &used_hyprland_addresses,
+                    &tl.title,
+                    &tl.app_id,
+                );
+                if hyprland_address.is_some() {
+                    break;
+                }
+            }
+        }
+        let hyprland = hyprland_address.and_then(|address| {
+            hyprland_windows
+                .iter()
+                .find(|window| window.address == address)
+        });
+        if let Some(window) = hyprland {
+            used_hyprland_addresses.insert(window.address);
+        }
+
+        let sway = hyprland
+            .is_none()
+            .then(|| {
+                sway_windows
+                    .iter()
+                    .find(|window| {
+                        !used_sway_ids.contains(&window.id)
+                            && !tl.title.is_empty()
+                            && window.title == tl.title
+                    })
+                    .or_else(|| {
+                        sway_windows.iter().find(|window| {
+                            !used_sway_ids.contains(&window.id)
+                                && !tl.app_id.is_empty()
+                                && window.app_id == tl.app_id
+                        })
+                    })
             })
-            .or_else(|| {
-                sway_windows.iter().find(|window| {
-                    !used_sway_ids.contains(&window.id)
-                        && !tl.app_id.is_empty()
-                        && window.app_id == tl.app_id
-                })
-            });
-        let stable_id = sway.map(|window| window.id).unwrap_or(*id as u64);
+            .flatten();
         if let Some(window) = sway {
             used_sway_ids.insert(window.id);
         }
+
+        let stable_id = hyprland
+            .map(|window| window.address)
+            .or_else(|| sway.map(|window| window.id))
+            .unwrap_or(*id as u64);
         remember_identity(stable_id, tl);
         out.push(WindowInfo {
             xid: stable_id,
-            pid: sway.map(|window| window.pid),
+            pid: hyprland
+                .map(|window| window.pid)
+                .or_else(|| sway.map(|window| window.pid)),
             app_name: tl.app_id.clone(),
             title,
-            is_on_screen: sway.map(|window| window.visible).unwrap_or(true),
+            is_on_screen: hyprland
+                .map(|window| window.visible)
+                .or_else(|| sway.map(|window| window.visible))
+                .unwrap_or(true),
             z_index: None,
-            x: sway.map(|window| window.x).unwrap_or(0),
-            y: sway.map(|window| window.y).unwrap_or(0),
-            width: sway.map(|window| window.width).unwrap_or(0),
-            height: sway.map(|window| window.height).unwrap_or(0),
+            x: hyprland
+                .map(|window| window.x)
+                .or_else(|| sway.map(|window| window.x))
+                .unwrap_or(0),
+            y: hyprland
+                .map(|window| window.y)
+                .or_else(|| sway.map(|window| window.y))
+                .unwrap_or(0),
+            width: hyprland
+                .map(|window| window.width)
+                .or_else(|| sway.map(|window| window.width))
+                .unwrap_or(0),
+            height: hyprland
+                .map(|window| window.height)
+                .or_else(|| sway.map(|window| window.height))
+                .unwrap_or(0),
         });
     }
     Ok(out)
@@ -879,14 +970,24 @@ pub(crate) unsafe fn borrowed_fd(fd: i32) -> std::os::fd::OwnedFd {
 #[derive(Debug)]
 pub struct SurfaceIdentityUnproven {
     window_id: u64,
+    reason: String,
+}
+
+impl SurfaceIdentityUnproven {
+    fn new(window_id: u64, reason: impl Into<String>) -> Self {
+        Self {
+            window_id,
+            reason: reason.into(),
+        }
+    }
 }
 
 impl std::fmt::Display for SurfaceIdentityUnproven {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             formatter,
-            "surface_identity_unproven: Wayland output capture cannot prove pixels belong to window {}; per-window compositor capture is unavailable",
-            self.window_id
+            "surface_identity_unproven: cannot prove pixels belong to Wayland window {}: {}",
+            self.window_id, self.reason
         )
     }
 }
@@ -897,27 +998,113 @@ pub fn is_surface_identity_unproven(error: &anyhow::Error) -> bool {
     error.downcast_ref::<SurfaceIdentityUnproven>().is_some()
 }
 
+#[cfg(test)]
 fn screenshot_window_bytes_with_dispatch(
     wayland: bool,
     xid: u64,
     x11_capture: impl FnOnce(u64) -> anyhow::Result<Vec<u8>>,
 ) -> anyhow::Result<Vec<u8>> {
     if wayland {
-        return Err(SurfaceIdentityUnproven { window_id: xid }.into());
+        return Err(SurfaceIdentityUnproven::new(
+            xid,
+            "per-window compositor capture is unavailable",
+        )
+        .into());
     }
     x11_capture(xid)
 }
 
-/// Window capture dispatcher. X11 uses its per-window capture path. Wayland
-/// fails closed until the compositor can return pixels for an identified
-/// surface; output-level capture remains available through
-/// [`screenshot_display_dispatch`].
+fn crop_png_to_rect(
+    output_png: &[u8],
+    rect_x: i32,
+    rect_y: i32,
+    rect_width: u32,
+    rect_height: u32,
+    label: &str,
+) -> anyhow::Result<Vec<u8>> {
+    let image = image::load_from_memory(output_png)?;
+    let image_width = image.width();
+    let image_height = image.height();
+    let x = rect_x.max(0) as u32;
+    let y = rect_y.max(0) as u32;
+    if x >= image_width || y >= image_height {
+        anyhow::bail!(
+            "{label} origin ({x},{y}) is outside captured output {image_width}x{image_height}"
+        );
+    }
+    let width = rect_width.min(image_width - x);
+    let height = rect_height.min(image_height - y);
+    if width == 0 || height == 0 {
+        anyhow::bail!("{label} has empty capture geometry");
+    }
+    let cropped = image.crop_imm(x, y, width, height);
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    cropped.write_to(&mut cursor, image::ImageFormat::Png)?;
+    Ok(cursor.into_inner())
+}
+
+fn legacy_wayland_window_capture(xid: u64) -> anyhow::Result<Vec<u8>> {
+    let bytes = screenshot_display_dispatch()?;
+    if let Some((x, y, width, height)) = window_geometry(xid) {
+        crop_png_to_rect(
+            &bytes,
+            x,
+            y,
+            width,
+            height,
+            &format!("Wayland window {xid}"),
+        )
+    } else {
+        Ok(bytes)
+    }
+}
+
+fn capture_hyprland_toplevel_bounded(address: u64) -> anyhow::Result<Vec<u8>> {
+    let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+    std::thread::Builder::new()
+        .name("hyprland-toplevel-capture".to_owned())
+        .spawn(move || {
+            let _ = sender.send(hyprland_capture::capture_toplevel_png(address));
+        })?;
+    receiver
+        .recv_timeout(std::time::Duration::from_secs(6))
+        .map_err(|_| anyhow::anyhow!("Hyprland toplevel-export capture timed out"))?
+}
+
+fn screenshot_dispatch_for_target(xid: u64, target_pid: Option<u32>) -> anyhow::Result<Vec<u8>> {
+    if !is_wayland() {
+        return crate::capture::screenshot_window_bytes(xid);
+    }
+
+    if hyprland::is_session() {
+        let identity = identity_for(xid).ok_or_else(|| {
+            SurfaceIdentityUnproven::new(xid, "no Wayland title/app-id identity was cached")
+        })?;
+        let address =
+            hyprland::resolve_capture_address(xid, target_pid, &identity.title, &identity.app_id)
+                .map_err(|error| SurfaceIdentityUnproven::new(xid, error.to_string()))?;
+        return capture_hyprland_toplevel_bounded(address).map_err(|error| {
+            SurfaceIdentityUnproven::new(
+                xid,
+                format!("Hyprland toplevel-export capture failed: {error:#}"),
+            )
+            .into()
+        });
+    }
+
+    // Preserve the accepted Sway/GNOME/KDE behavior in this focused Hyprland
+    // fix. Their capture contracts require separate compositor-specific work.
+    legacy_wayland_window_capture(xid)
+}
+
+/// Window capture dispatcher for callers that do not carry process identity.
 pub fn screenshot_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
-    screenshot_window_bytes_with_dispatch(
-        is_wayland(),
-        xid,
-        crate::capture::screenshot_window_bytes,
-    )
+    screenshot_dispatch_for_target(xid, None)
+}
+
+/// Window capture dispatcher with the PID proven by the public tool target.
+pub fn screenshot_dispatch_with_pid(xid: u64, pid: u32) -> anyhow::Result<Vec<u8>> {
+    screenshot_dispatch_for_target(xid, Some(pid))
 }
 
 /// Display-level capture dispatcher. Cascade:
@@ -989,11 +1176,7 @@ fn checked_shell_helper_capture(
 /// point for callers outside `get_window_state`; it shares the same fail-closed
 /// Wayland contract as [`screenshot_dispatch`].
 pub fn screenshot_window_dispatch(xid: u64) -> anyhow::Result<Vec<u8>> {
-    screenshot_window_bytes_with_dispatch(
-        is_wayland(),
-        xid,
-        crate::capture::screenshot_window_bytes,
-    )
+    screenshot_dispatch(xid)
 }
 
 // ── Input session helper ─────────────────────────────────────────────────────
@@ -1050,8 +1233,45 @@ pub struct VptrSession {
     state: State,
     pub seat: WlSeat,
     pub vptr: ZwlrVirtualPointerV1,
+    pub output_x: i32,
+    pub output_y: i32,
     pub output_w: u32,
     pub output_h: u32,
+}
+
+impl VptrSession {
+    fn absolute_point(&self, x: i32, y: i32) -> (u32, u32) {
+        let px = (i64::from(x) - i64::from(self.output_x))
+            .clamp(0, i64::from(self.output_w.saturating_sub(1))) as u32;
+        let py = (i64::from(y) - i64::from(self.output_y))
+            .clamp(0, i64::from(self.output_h.saturating_sub(1))) as u32;
+        (px, py)
+    }
+
+    fn compositor_point(&self, x: u32, y: u32) -> (i32, i32) {
+        (
+            self.output_x.saturating_add_unsigned(x),
+            self.output_y.saturating_add_unsigned(y),
+        )
+    }
+
+    fn position_pointer(&mut self, x: i32, y: i32) -> anyhow::Result<(i32, i32)> {
+        let (px, py) = self.absolute_point(x, y);
+        let (global_x, global_y) = self.compositor_point(px, py);
+        if hyprland::is_session() {
+            // Hyprland has known multi-output normalization defects for
+            // virtual-pointer absolute motion. Its compositor dispatcher uses
+            // the exact same global logical coordinates as client geometry;
+            // keep virtual-pointer for the subsequent button/axis event only.
+            hyprland::move_cursor(global_x, global_y)?;
+        } else {
+            self.vptr
+                .motion_absolute(event_time_ms(), px, py, self.output_w, self.output_h);
+            self.vptr.frame();
+            self.queue.roundtrip(&mut self.state)?;
+        }
+        Ok((global_x, global_y))
+    }
 }
 
 /// Bind manager + seat + virtual-pointer + first output, optionally activate a
@@ -1120,13 +1340,25 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
     }
 
     let vptr = mgr.create_virtual_pointer(Some(&seat), &qh, ());
-    let (output_w, output_h) = (state.output_w.max(1), state.output_h.max(1));
+    let (output_x, output_y, output_w, output_h) = if hyprland::is_session() {
+        let layout = hyprland::output_layout()?;
+        (
+            layout.x,
+            layout.y,
+            layout.width.max(1),
+            layout.height.max(1),
+        )
+    } else {
+        (0, 0, state.output_w.max(1), state.output_h.max(1))
+    };
     Ok(VptrSession {
         conn,
         queue,
         state,
         seat,
         vptr,
+        output_x,
+        output_y,
         output_w,
         output_h,
     })
@@ -1296,22 +1528,18 @@ fn click_vptr(
     let mut sess = open_vptr_session(window_id)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
     let (w, h) = (sess.output_w, sess.output_h);
-    let (px, py) = if x == 0 && y == 0 {
-        ((w / 2) as i32, (h / 2) as i32)
+    let (target_x, target_y) = if x == 0 && y == 0 {
+        sess.compositor_point(w / 2, h / 2)
     } else {
         (x, y)
     };
-    let px = px.clamp(0, w as i32 - 1) as u32;
-    let py = py.clamp(0, h as i32 - 1) as u32;
+    let (global_x, global_y) = sess.position_pointer(target_x, target_y)?;
     let btn = evdev_pointer_button(button);
     for i in 0..count.max(1) {
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
-        sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-        std::thread::sleep(std::time::Duration::from_millis(15));
+        std::thread::sleep(std::time::Duration::from_millis(20));
         sess.vptr.button(event_time_ms(), btn, ButtonState::Pressed);
         sess.vptr.frame();
         sess.queue.roundtrip(&mut sess.state)?;
@@ -1323,7 +1551,7 @@ fn click_vptr(
     }
     // Keep the synthetic-cursor registry in sync with the warp we just
     // performed so a subsequent `get_cursor_position` reflects reality.
-    record_synth_cursor(px as i32, py as i32);
+    record_synth_cursor(global_x, global_y);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -1349,12 +1577,20 @@ pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> (i32, i32) {
 /// object ID came from an earlier Wayland connection. Protocol object IDs are
 /// connection-local, so direct equality is only a fast path.
 pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
+    if let Some(window) = hyprland::window_for_address(window_id) {
+        return Some((window.x, window.y, window.width, window.height));
+    }
     if let Some(window) = sway_ipc::window_for_id(window_id) {
         return Some((window.x, window.y, window.width, window.height));
     }
 
     let identity = identity_for(window_id);
     if let Some(identity) = identity.as_ref() {
+        if let Some(window) = hyprland::window_for_title(&identity.title)
+            .or_else(|| hyprland::window_for_app_id(&identity.app_id))
+        {
+            return Some((window.x, window.y, window.width, window.height));
+        }
         if let Some(windows) = sway_ipc::list_windows() {
             let title_matches = windows
                 .iter()
@@ -1459,14 +1695,9 @@ fn scroll_vptr(
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(window_id)?;
     if let Some((x, y)) = point {
-        let px = x.clamp(0, (sess.output_w as i32).saturating_sub(1)) as u32;
-        let py = y.clamp(0, (sess.output_h as i32).saturating_sub(1)) as u32;
-        sess.vptr
-            .motion_absolute(event_time_ms(), px, py, sess.output_w, sess.output_h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
-        record_synth_cursor(px as i32, py as i32);
-        std::thread::sleep(std::time::Duration::from_millis(15));
+        let (global_x, global_y) = sess.position_pointer(x, y)?;
+        record_synth_cursor(global_x, global_y);
+        std::thread::sleep(std::time::Duration::from_millis(20));
     }
     let (axis, sign): (Axis, i32) = match direction.to_ascii_lowercase().as_str() {
         "up" => (Axis::VerticalScroll, -1),
@@ -1476,8 +1707,10 @@ fn scroll_vptr(
         other => anyhow::bail!("unknown scroll direction: {other}"),
     };
     // axis_discrete: `value` is logical units (the wayland-rs wrapper
-    // converts to wl_fixed internally); `discrete` is the tick count.
-    let value: f64 = (sign as f64) * 10.0;
+    // converts to wl_fixed internally); `discrete` is the tick count. Sixteen
+    // units matches a conventional wheel notch and advances Chromium/WebKit by
+    // at least one 128 px fixture viewport across two requested ticks.
+    let value: f64 = (sign as f64) * 16.0;
     for i in 0..amount.max(1) {
         if i > 0 {
             std::thread::sleep(std::time::Duration::from_millis(25));
@@ -1536,13 +1769,8 @@ pub fn move_cursor_absolute(window_id: Option<u64>, x: i32, y: i32) -> anyhow::R
 /// wlroots virtual-pointer implementation of [`move_cursor_absolute`].
 fn move_cursor_absolute_vptr(window_id: Option<u64>, x: i32, y: i32) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(window_id)?;
-    let (w, h) = (sess.output_w, sess.output_h);
-    let px = x.clamp(0, (w as i32).saturating_sub(1)) as u32;
-    let py = y.clamp(0, (h as i32).saturating_sub(1)) as u32;
-    sess.vptr.motion_absolute(event_time_ms(), px, py, w, h);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
-    record_synth_cursor(px as i32, py as i32);
+    let (global_x, global_y) = sess.position_pointer(x, y)?;
+    record_synth_cursor(global_x, global_y);
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
     Ok(())
@@ -1605,18 +1833,8 @@ fn drag_vptr(
 ) -> anyhow::Result<()> {
     let mut sess = open_vptr_session(window_id)?;
     std::thread::sleep(std::time::Duration::from_millis(40));
-    let (w, h) = (sess.output_w, sess.output_h);
     let btn = evdev_pointer_button(button);
-    let clamp_xy = |x: i32, y: i32| -> (u32, u32) {
-        (
-            x.clamp(0, w as i32 - 1) as u32,
-            y.clamp(0, h as i32 - 1) as u32,
-        )
-    };
-    let (fx, fy) = clamp_xy(from_x, from_y);
-    sess.vptr.motion_absolute(event_time_ms(), fx, fy, w, h);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
+    sess.position_pointer(from_x, from_y)?;
     std::thread::sleep(std::time::Duration::from_millis(15));
     sess.vptr.button(event_time_ms(), btn, ButtonState::Pressed);
     sess.vptr.frame();
@@ -1626,22 +1844,16 @@ fn drag_vptr(
         let t = s as f64 / n as f64;
         let ix = (from_x as f64 + (to_x - from_x) as f64 * t).round() as i32;
         let iy = (from_y as f64 + (to_y - from_y) as f64 * t).round() as i32;
-        let (cx, cy) = clamp_xy(ix, iy);
-        sess.vptr.motion_absolute(event_time_ms(), cx, cy, w, h);
-        sess.vptr.frame();
-        sess.queue.roundtrip(&mut sess.state)?;
+        sess.position_pointer(ix, iy)?;
         std::thread::sleep(std::time::Duration::from_millis(8));
     }
-    let (tx, ty) = clamp_xy(to_x, to_y);
-    sess.vptr.motion_absolute(event_time_ms(), tx, ty, w, h);
-    sess.vptr.frame();
-    sess.queue.roundtrip(&mut sess.state)?;
+    let (global_x, global_y) = sess.position_pointer(to_x, to_y)?;
     sess.vptr
         .button(event_time_ms(), btn, ButtonState::Released);
     sess.vptr.frame();
     // Sync the synthetic-cursor registry with the drag endpoint so a
     // subsequent `get_cursor_position` reports where we left the pointer.
-    record_synth_cursor(tx as i32, ty as i32);
+    record_synth_cursor(global_x, global_y);
     sess.queue.roundtrip(&mut sess.state)?;
     sess.vptr.destroy();
     sess.queue.roundtrip(&mut sess.state)?;
@@ -2846,10 +3058,24 @@ pub fn inject_drag(
 fn wayland_atspi_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     let mut windows = crate::atspi::list_windows(filter_pid);
     // AT-SPI can retain a toolkit's default placement (commonly 120,120)
-    // after Sway has placed the real toplevel at another origin. Reconcile the
+    // after a compositor has placed the real toplevel elsewhere. Reconcile the
     // fallback records with compositor-owned metadata before exposing them to
-    // callers; element bounds already use this same authoritative Sway tree.
+    // callers; element bounds use these same authoritative origins.
+    let hyprland_windows = hyprland::list_windows().unwrap_or_default();
     for window in &mut windows {
+        let hyprland = window.pid.and_then(|pid| {
+            hyprland::matching_window(&hyprland_windows, pid, &window.title, &window.app_name)
+        });
+        if let Some(hyprland) = hyprland {
+            window.xid = hyprland.address;
+            window.x = hyprland.x;
+            window.y = hyprland.y;
+            window.width = hyprland.width;
+            window.height = hyprland.height;
+            window.is_on_screen = hyprland.visible && hyprland.width > 0 && hyprland.height > 0;
+            continue;
+        }
+
         let sway = window
             .pid
             .and_then(sway_ipc::window_for_pid)

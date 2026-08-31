@@ -426,6 +426,28 @@ impl<T> ApplicationSelection<T> {
     }
 }
 
+/// Run an application-level accessibility probe before inspecting its tree.
+///
+/// Chromium-family embeddings lazily build the renderer accessibility tree on
+/// Linux. Reading `Accessible.GetAttributes` is one of the ATK calls Chromium
+/// treats as evidence that a real assistive technology is inspecting the
+/// process. The follow-up child read must therefore happen strictly after that
+/// probe. Browser processes that publish no application child at all still need
+/// their documented `--force-renderer-accessibility` launch precondition.
+async fn prime_application_then<Prime, PrimeFuture, Check, CheckFuture, T>(
+    prime: Prime,
+    check: Check,
+) -> T
+where
+    Prime: FnOnce() -> PrimeFuture,
+    PrimeFuture: std::future::Future,
+    Check: FnOnce() -> CheckFuture,
+    CheckFuture: std::future::Future<Output = T>,
+{
+    let _ = prime().await;
+    check().await
+}
+
 /// Locate the application accessible whose backing process is `pid`.
 async fn app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
@@ -495,7 +517,10 @@ async fn app_for_pid<'a>(
                 continue;
             }
         };
-        let has_children = match call(app.get_children()).await {
+        let children =
+            prime_application_then(|| call(app.get_attributes()), || call(app.get_children()))
+                .await;
+        let has_children = match children {
             Some(Ok(children)) => !children.is_empty(),
             Some(Err(error)) => {
                 dlog!("  get_children failed for pid {pid}: {error:#}");
@@ -2401,53 +2426,22 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+            let xid = if crate::wayland::is_wayland() {
+                crate::wayland::hyprland::window_for_pid(pid)
+                    .map(|window| window.address)
+                    .or_else(|| {
+                        crate::wayland::sway_ipc::window_for_pid(pid).map(|window| window.id)
+                    })
+                    .unwrap_or(0)
+            } else {
+                entry_find_window_xid(pid).await.unwrap_or(0)
+            };
+            element_bounds_for_visited(&visited, pid, xid)
                 .await
-                .unwrap_or((0, 0));
-            let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
-            let target = action_nodes
-                .get(idx)
-                .ok_or_else(|| anyhow!("element {idx} not found"))?;
-            if !target.has_component {
-                return Err(anyhow!("element {idx} exposes no Component interface"));
-            }
-            let comp = target
-                .acc
-                .proxies()
-                .await
-                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?
-                .component()
-                .await
-                .map_err(|e| anyhow!("Component unavailable: {e}"))?;
-            // Prefer WINDOW coords + a deterministic screen offset — fixes GTK4,
-            // whose CoordType::Screen collapses every element to (0,0). Fall back to
-            // Screen on Wayland / when no X11 window resolves (offset is None).
-            match window_to_screen_offset(pid, 0, None) {
-                Some((ox, oy)) => {
-                    let (x, y, w, h) = comp
-                        .get_extents(CoordType::Window)
-                        .await
-                        .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    let (document_x, document_y) = if target.in_web_doc {
-                        web_document_origin
-                    } else {
-                        (0, 0)
-                    };
-                    Ok((
-                        x + ox + document_x,
-                        y + oy + document_y,
-                        w.max(0) as u32,
-                        h.max(0) as u32,
-                    ))
-                }
-                None => {
-                    let (x, y, w, h) = comp
-                        .get_extents(CoordType::Screen)
-                        .await
-                        .map_err(|e| anyhow!("getExtents failed: {e}"))?;
-                    Ok((x, y, w.max(0) as u32, h.max(0) as u32))
-                }
-            }
+                .into_iter()
+                .find(|(element_index, _, _, _, _)| *element_index == idx)
+                .map(|(_, x, y, width, height)| (x, y, width, height))
+                .ok_or_else(|| anyhow!("element {idx} exposes no usable Component bounds"))
         },
         || {
             Err(anyhow!(
@@ -2584,6 +2578,9 @@ fn authoritative_wayland_origin(pid: u32, xid: u64, title: Option<&str>) -> Opti
         return None;
     }
     crate::wayland::inject_accessibility_offset(pid)
+        .or_else(|| {
+            crate::wayland::hyprland::window_for_pid(pid).map(|window| (window.x, window.y))
+        })
         .or_else(|| crate::wayland::sway_ipc::window_origin_for_pid(pid))
         .or_else(|| {
             (xid != 0)
@@ -2602,6 +2599,11 @@ fn authoritative_wayland_origin(pid: u32, xid: u64, title: Option<&str>) -> Opti
                 .flatten()
         })
         .or_else(|| crate::wayland::shell_helper::window_origin_for_pid(pid))
+        .or_else(|| {
+            title
+                .and_then(crate::wayland::hyprland::window_for_title)
+                .map(|window| (window.x, window.y))
+        })
         .or_else(|| title.and_then(crate::wayland::sway_ipc::window_origin_for_title))
 }
 
@@ -2635,6 +2637,20 @@ fn combine_wayland_content_offsets(
 /// Compositor decorations and toolkit document offsets are independent and
 /// therefore additive: choosing one or the other leaves WebKit controls one
 /// title bar away from the pixels shown to the caller.
+async fn web_document_extent_for_visited(visited: &[Visited<'_>]) -> Option<(i32, i32, i32, i32)> {
+    let document = visited
+        .iter()
+        .filter(|node| node.has_component)
+        .filter(|node| is_document_role(&node.role) || node.in_web_doc)
+        .min_by_key(|node| node.depth)?;
+    let proxies = call(document.acc.proxies()).await?.ok()?;
+    let component = call(proxies.component()).await?.ok()?;
+    match call(component.get_extents(CoordType::Window)).await {
+        Some(Ok(extent @ (_, _, width, height))) if width > 0 && height > 0 => Some(extent),
+        _ => None,
+    }
+}
+
 async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> Option<(i32, i32)> {
     if !crate::wayland::is_wayland() {
         return None;
@@ -2700,6 +2716,62 @@ fn screen_extent_rebase(
     } else {
         None
     }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct WaylandExtentScale {
+    frame_x: i32,
+    frame_y: i32,
+    x: f64,
+    y: f64,
+}
+
+fn wayland_extent_scale(
+    frame: Option<(i32, i32, i32, i32)>,
+    compositor: Option<(i32, i32, u32, u32)>,
+) -> Option<WaylandExtentScale> {
+    let ((frame_x, frame_y, frame_width, frame_height), (_, _, width, height)) =
+        (frame?, compositor?);
+    if frame_width <= 0 || frame_height <= 0 || width == 0 || height == 0 {
+        return None;
+    }
+    let x = f64::from(width) / f64::from(frame_width);
+    let y = f64::from(height) / f64::from(frame_height);
+    // Compositor decorations can differ from toolkit frame extents by a few
+    // pixels. Scale only a material, uniform mismatch, such as Chromium
+    // publishing physical-pixel AT-SPI extents on a fractionally scaled output.
+    if (x - y).abs() > 0.03 || ((0.95..=1.05).contains(&x) && (0.95..=1.05).contains(&y)) {
+        return None;
+    }
+    Some(WaylandExtentScale {
+        frame_x,
+        frame_y,
+        x,
+        y,
+    })
+}
+
+fn scale_wayland_extent(
+    x: i32,
+    y: i32,
+    width: i32,
+    height: i32,
+    document: (i32, i32),
+    offset: (i32, i32),
+    scale: WaylandExtentScale,
+) -> (i32, i32, u32, u32) {
+    let local_x = x.saturating_add(document.0).saturating_sub(scale.frame_x);
+    let local_y = y.saturating_add(document.1).saturating_sub(scale.frame_y);
+    (
+        offset
+            .0
+            .saturating_add((f64::from(local_x) * scale.x).round() as i32),
+        offset
+            .1
+            .saturating_add((f64::from(local_y) * scale.y).round() as i32),
+        (f64::from(width) * scale.x).round().max(0.0) as u32,
+        (f64::from(height) * scale.y).round().max(0.0) as u32,
+    )
 }
 
 fn rebase_renderer_window_offset(
@@ -2800,7 +2872,7 @@ async fn element_bounds_for_visited(
     // title-bar offset). Normalize that frame to the compositor window origin
     // before adding the screen offset. Native GTK reports (0,0), so this is a
     // no-op there.
-    let window_frame_origin = if offset.is_some() {
+    let window_frame_extent = if offset.is_some() {
         let frame = visited.iter().find(|node| {
             node.has_component
                 && matches!(
@@ -2813,7 +2885,7 @@ async fn element_bounds_for_visited(
                 Some(Ok(proxies)) => match call(proxies.component()).await {
                     Some(Ok(component)) => {
                         match call(component.get_extents(CoordType::Window)).await {
-                            Some(Ok((x, y, _, _))) => Some((x, y)),
+                            Some(Ok(extent)) => Some(extent),
                             _ => None,
                         }
                     }
@@ -2824,6 +2896,23 @@ async fn element_bounds_for_visited(
         } else {
             None
         }
+    } else {
+        None
+    };
+    let window_frame_origin = window_frame_extent.map(|(x, y, _, _)| (x, y));
+    let compositor_geometry = crate::wayland::is_wayland()
+        .then(|| crate::wayland::window_geometry(xid))
+        .flatten();
+    let wayland_scale = wayland_extent_scale(window_frame_extent, compositor_geometry);
+    // Chromium can publish its native top-level in compositor-logical units
+    // while the renderer subtree uses device pixels. Compare the document
+    // frame independently so web descendants are normalized without scaling
+    // already-correct native controls.
+    let web_wayland_scale = if compositor_geometry.is_some() {
+        wayland_extent_scale(
+            web_document_extent_for_visited(visited).await,
+            compositor_geometry,
+        )
     } else {
         None
     };
@@ -2889,13 +2978,23 @@ async fn element_bounds_for_visited(
             } else {
                 (0, 0)
             };
-            out.push((
-                idx,
-                x + offset_x + document_x,
-                y + offset_y + document_y,
-                w as u32,
-                h as u32,
-            ));
+            let node_scale = if node.in_web_doc {
+                web_wayland_scale.or(wayland_scale)
+            } else {
+                wayland_scale
+            };
+            let (screen_x, screen_y, width, height) = match (node_scale, offset) {
+                (Some(scale), Some(offset)) => {
+                    scale_wayland_extent(x, y, w, h, (document_x, document_y), offset, scale)
+                }
+                _ => (
+                    x + offset_x + document_x,
+                    y + offset_y + document_y,
+                    w as u32,
+                    h as u32,
+                ),
+            };
+            out.push((idx, screen_x, screen_y, width, height));
         }
     }
     out
@@ -3010,8 +3109,9 @@ mod coord_tests {
     use super::{
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
         is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_web_process_bus, prefer_authoritative_wayland_origin, rebase_renderer_window_offset,
-        screen_extent_rebase, select_click_target, ApplicationSelection,
+        is_web_process_bus, prefer_authoritative_wayland_origin, prime_application_then,
+        rebase_renderer_window_offset, scale_wayland_extent, screen_extent_rebase,
+        select_click_target, wayland_extent_scale, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -3068,6 +3168,28 @@ mod coord_tests {
         selection.consider_matching("second-live-tree", true);
 
         assert_eq!(selection.into_selected(), Err(2));
+    }
+
+    #[tokio::test]
+    async fn application_probe_primes_lazy_renderer_before_checking_children() {
+        use std::sync::{
+            atomic::{AtomicBool, Ordering},
+            Arc,
+        };
+
+        let primed = Arc::new(AtomicBool::new(false));
+        let primed_by_probe = Arc::clone(&primed);
+        let primed_seen_by_children = Arc::clone(&primed);
+
+        let has_children = prime_application_then(
+            move || async move {
+                primed_by_probe.store(true, Ordering::SeqCst);
+            },
+            move || async move { primed_seen_by_children.load(Ordering::SeqCst) },
+        )
+        .await;
+
+        assert!(has_children);
     }
 
     #[tokio::test(start_paused = true)]
@@ -3224,6 +3346,23 @@ mod coord_tests {
         assert_eq!(
             rebase_renderer_window_offset((100, 50), Some((0, 29))),
             (100, 50)
+        );
+    }
+
+    #[test]
+    fn fractionally_scaled_wayland_extents_use_compositor_logical_geometry() {
+        let scale = wayland_extent_scale(Some((0, 0, 1892, 2085)), Some((3207, 38, 1261, 1390)))
+            .expect("physical-pixel AT-SPI frame should be scaled");
+        assert_eq!(
+            scale_wayland_extent(718, 491, 421, 56, (0, 0), (3207, 38), scale),
+            (3686, 365, 281, 37)
+        );
+    }
+
+    #[test]
+    fn minor_wayland_frame_decoration_mismatch_is_not_scaled() {
+        assert!(
+            wayland_extent_scale(Some((0, 0, 1260, 1380)), Some((3207, 38, 1261, 1390))).is_none()
         );
     }
 

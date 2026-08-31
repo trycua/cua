@@ -91,6 +91,20 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
+fn screenshot_to_window_ratio(
+    compositor_width: Option<u32>,
+    original_capture_width: Option<u32>,
+    screenshot_width: u32,
+) -> Option<f64> {
+    if screenshot_width == 0 {
+        return None;
+    }
+    compositor_width
+        .filter(|width| *width > 0)
+        .or(original_capture_width.filter(|width| *width > 0))
+        .map(|width| width as f64 / screenshot_width as f64)
+}
+
 pub struct ResizeRegistry {
     ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
 }
@@ -558,6 +572,16 @@ mod list_windows_tests {
         assert!(chromium_family_program("chromium-browser"));
         assert!(!chromium_family_program("/usr/bin/gnome-text-editor"));
     }
+
+    #[test]
+    fn chromium_process_detection_uses_executable_argv0() {
+        assert!(chromium_process_cmdline(
+            b"/nix/store/example-electron/libexec/electron\0--user-data-dir=/tmp/profile\0"
+        ));
+        assert!(!chromium_process_cmdline(
+            b"/usr/bin/gnome-calculator\0--mode=basic\0"
+        ));
+    }
 }
 
 // ── get_window_state ─────────────────────────────────────────────────────────
@@ -594,10 +618,11 @@ impl Tool for GetWindowStateTool {
                 modality at ACTION time: an element ax action \
                 (element_index/element_token → accessibility rung) or an element px \
                 action (x,y → pixel rung off this screenshot). capture_mode is \
-                deprecated and ignored. On Wayland, where output capture cannot prove \
-                the requested surface's identity, the truthful tree is returned without \
-                a screenshot and `screenshot_error.code` is \
-                `surface_identity_unproven`.\n\n\
+                deprecated and ignored. When a Wayland compositor cannot prove the \
+                requested surface's identity, the truthful tree is returned without a \
+                screenshot and `screenshot_error.code` is \
+                `surface_identity_unproven`. Hyprland uses compositor-owned per-toplevel \
+                capture when exact PID/title/app-id correlation succeeds.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
@@ -718,7 +743,7 @@ impl Tool for GetWindowStateTool {
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
             let mut screenshot_error = None;
             let screenshot = if should_capture {
-                match crate::wayland::screenshot_dispatch(xid) {
+                match crate::wayland::screenshot_dispatch_with_pid(xid, pid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw)
                             .map(|(w, _)| w)
@@ -912,9 +937,17 @@ impl Tool for GetWindowStateTool {
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
                     if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                        let compositor_width = crate::wayland::is_wayland()
+                            .then(|| crate::wayland::window_geometry(xid))
+                            .flatten()
+                            .map(|(_, _, width, _)| width)
+                            .filter(|width| *width > 0);
+                        if let Some(ratio) = screenshot_to_window_ratio(compositor_width, orig_w, w)
+                        {
+                            if (ratio - 1.0).abs() > f64::EPSILON {
+                                state.resize_registry.set_ratio(pid, ratio);
+                            } else {
+                                state.resize_registry.clear_ratio(pid);
                             }
                         } else {
                             state.resize_registry.clear_ratio(pid);
@@ -980,6 +1013,19 @@ mod get_window_state_capture_tests {
         assert!(error["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+
+    #[test]
+    fn screenshot_coordinates_prefer_compositor_geometry_over_buffer_scale() {
+        assert_eq!(
+            screenshot_to_window_ratio(Some(1261), Some(1423), 1423),
+            Some(1261.0 / 1423.0)
+        );
+        assert_eq!(
+            screenshot_to_window_ratio(None, Some(2536), 1567),
+            Some(2536.0 / 1567.0)
+        );
+        assert_eq!(screenshot_to_window_ratio(Some(800), None, 0), None);
     }
 }
 
@@ -1336,6 +1382,14 @@ fn chromium_family_program(program: &str) -> bool {
         .any(|needle| basename.contains(needle))
 }
 
+fn chromium_process_cmdline(raw: &[u8]) -> bool {
+    raw.split(|byte| *byte == 0)
+        .next()
+        .filter(|argv0| !argv0.is_empty())
+        .map(|argv0| chromium_family_program(&String::from_utf8_lossy(argv0)))
+        .unwrap_or(false)
+}
+
 // ── shared helpers ────────────────────────────────────────────────────────────
 
 /// Resolve an AT-SPI element's center in window-local coordinates.
@@ -1543,6 +1597,14 @@ fn is_chromium_embedder(pid: u32) -> bool {
             Err(_) => false,
         }
     }
+    // Renderer helpers may be reparented or briefly absent while an embedder
+    // transitions views, so first use the executable identity of the target.
+    if fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|raw| chromium_process_cmdline(&raw))
+        .unwrap_or(false)
+    {
+        return true;
+    }
     // Single-process / the embedder itself carrying a Chromium switch.
     if argv_is_chromium_helper(pid) {
         return true;
@@ -1658,6 +1720,22 @@ fn unavailable_webkit_background(
         crate::input::delivery::background_unavailable_error(
             crate::input::delivery::BackgroundUnavailable::WebKitSyntheticInput,
         )
+    })
+}
+
+fn unavailable_webkit_hyprland_pointer(pid: u32) -> Option<ToolResult> {
+    (is_webkitgtk_embedder(pid)
+        && crate::wayland::hyprland::is_session()
+        && !crate::wayland::is_inject_mode())
+    .then(|| {
+        ToolResult::error(
+            "Foreground pointer delivery is unavailable: WebKitGTK ignores Hyprland's virtual-pointer button events. Use an element-addressed left click when possible; right-click, double-click, and drag require a target-local compositor input backend.",
+        )
+        .with_structured(json!({
+            "code": "foreground_unavailable",
+            "reason": "webkitgtk_hyprland_virtual_pointer_buttons",
+            "delivery_mode": "foreground"
+        }))
     })
 }
 
@@ -2327,12 +2405,25 @@ impl Tool for ClickTool {
                 cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
             );
 
-            // Chromium can execute a genuine AT-SPI action without focus. Try
-            // that route before applying its background synthetic-input gate.
+            // A genuine AT-SPI action can execute without focus. Chromium-family
+            // applications still need a bounded Hyprland guard because they can
+            // replace or activate their toplevel after Action.DoAction.
             if modifiers.is_empty() {
-                let ax_result =
-                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
-                        .await;
+                let preserve_hyprland_focus = !delivery.is_foreground()
+                    && crate::wayland::hyprland::is_session()
+                    && fs::read(format!("/proc/{pid}/cmdline"))
+                        .map(|raw| chromium_process_cmdline(&raw))
+                        .unwrap_or(false);
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    if preserve_hyprland_focus {
+                        crate::wayland::hyprland::with_preserved_background_focus(xid, pid, || {
+                            crate::atspi::perform_action(pid, idx)
+                        })
+                    } else {
+                        crate::atspi::perform_action(pid, idx)
+                    }
+                })
+                .await;
                 if let Ok(Ok((_action, suspected_noop))) = ax_result {
                     let mut structured = json!({
                         "path": "ax",
@@ -2492,7 +2583,17 @@ impl Tool for ClickTool {
                 // `element_index` — the coordinate-free path already verified
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
-                if !delivery.is_foreground() && button == 1 && count == 1 {
+                let webkitgtk = is_webkitgtk_embedder(pid);
+                if button == 1
+                    && count == 1
+                    // Chromium's proven background AT-SPI fallback and
+                    // WebKitGTK's proven foreground AT-SPI fallback are
+                    // deliberately disjoint. Treating WebKitGTK background PX
+                    // coordinates as element-local delivered clicks violated
+                    // the compositor-global pixel contract.
+                    && ((!delivery.is_foreground() && !webkitgtk)
+                        || (delivery.is_foreground() && webkitgtk))
+                {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
@@ -4010,7 +4111,9 @@ impl Tool for SetValueTool {
 
 // ── scroll ────────────────────────────────────────────────────────────────────
 
-pub struct ScrollTool;
+pub struct ScrollTool {
+    state: Arc<ToolState>,
+}
 static SCROLL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4105,9 +4208,9 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let xid_opt: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
-                .map(|v| v as u64)
-                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
 
@@ -4170,7 +4273,14 @@ impl Tool for ScrollTool {
             args.get("x").and_then(|value| value.as_f64()),
             args.get("y").and_then(|value| value.as_f64()),
         ) {
-            (Some(x), Some(y)) => Some((x, y)),
+            (Some(x), Some(y)) => {
+                // Pixel targets are expressed in the latest screenshot's
+                // coordinate space. Apply the same buffer-to-window ratio as
+                // click/drag so fractional-scale Wayland captures land on the
+                // intended logical surface point rather than below it.
+                let ratio = self.state.resize_registry.ratio(pid).unwrap_or(1.0);
+                Some((x * ratio, y * ratio))
+            }
             (None, None) => None,
             _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
         };
@@ -4466,6 +4576,11 @@ impl Tool for DoubleClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -4700,6 +4815,11 @@ impl Tool for RightClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -4979,6 +5099,11 @@ impl Tool for DragTool {
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
+        }
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
         }
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
@@ -6235,7 +6360,13 @@ impl Tool for GetDesktopStateTool {
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
             let (screen_w, screen_h) = if crate::wayland::is_wayland() {
-                (shot_w, shot_h)
+                // Window and input coordinates are compositor-logical on
+                // Hyprland. Preserve the native-resolution PNG, but report the
+                // uniquely matching output's logical dimensions so callers can
+                // map coordinates using screenshot/logical scale just as they
+                // do for fractional-scale window captures.
+                crate::wayland::hyprland::logical_output_size_for_capture(shot_w, shot_h)
+                    .unwrap_or((shot_w, shot_h))
             } else {
                 x11_screen_size()?
             };
@@ -7085,7 +7216,10 @@ impl Tool for ZoomTool {
             // pure-Wayland sessions surface a typed "per-window capture not
             // supported yet" error instead of accidentally calling the
             // X11-only path with a foreign-toplevel id.
-            let png = crate::wayland::screenshot_window_dispatch(xid)?;
+            let png = match pid {
+                Some(pid) => crate::wayland::screenshot_dispatch_with_pid(xid, pid)?,
+                None => crate::wayland::screenshot_window_dispatch(xid)?,
+            };
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
         })
         .await;
@@ -7859,7 +7993,12 @@ pub fn build_registry_with_provider(
         &pid_window_candidates,
     ));
     r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
-    r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
+    r.register(pid_window_guarded(
+        ScrollTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     cua_driver_core::clipboard::register_clipboard_tools(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),

@@ -135,6 +135,7 @@ pub enum DriverRoute {
     LinuxXTest,
     LinuxLibei,
     LinuxWaylandVirtualPointer,
+    LinuxHyprlandToplevelExport,
     LinuxCuaCompositorInject,
     Cdp,
     Composite,
@@ -300,6 +301,7 @@ pub enum OracleKind {
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
     BackgroundUnavailable,
+    ForegroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
     BrowserRouteUnavailable,
@@ -322,6 +324,7 @@ impl RefusalCode {
     pub fn from_driver_code(code: &str) -> Option<Self> {
         match code {
             "background_unavailable" => Some(Self::BackgroundUnavailable),
+            "foreground_unavailable" => Some(Self::ForegroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),
             "browser_route_unavailable" => Some(Self::BrowserRouteUnavailable),
@@ -439,6 +442,8 @@ fn compositor_from_env() -> Option<String> {
                 .to_ascii_lowercase();
             if desktop.contains("sway") {
                 Some("sway".to_owned())
+            } else if desktop.contains("hyprland") {
+                Some("hyprland".to_owned())
             } else if desktop.contains("gnome") {
                 Some("gnome-mutter".to_owned())
             } else if desktop.contains("kde") || desktop.contains("plasma") {
@@ -572,24 +577,37 @@ impl CaseSpec {
             return Err(format!("{}: no external oracle declared", self.cell_id));
         }
         if let ContractExpectation::Refuse { allowed_codes } = &self.expected_behavior {
-            if self.delivery != Delivery::Background {
-                return Err(format!(
-                    "{}: only background delivery may declare refusal",
-                    self.cell_id
-                ));
-            }
             if allowed_codes.is_empty() {
                 return Err(format!("{}: refusal has no allowed code", self.cell_id));
             }
-            for required in [
-                OracleKind::Focus,
-                OracleKind::ZOrder,
-                OracleKind::NoLeakedInput,
-            ] {
-                if !self.oracles.contains(&required) {
+            match self.delivery {
+                Delivery::Background => {
+                    for required in [
+                        OracleKind::Focus,
+                        OracleKind::ZOrder,
+                        OracleKind::NoLeakedInput,
+                    ] {
+                        if !self.oracles.contains(&required) {
+                            return Err(format!(
+                                "{}: refusal is missing {:?} oracle",
+                                self.cell_id, required
+                            ));
+                        }
+                    }
+                }
+                Delivery::Foreground
+                    if allowed_codes.as_slice() == [RefusalCode::ForegroundUnavailable]
+                        && self.oracles.contains(&OracleKind::FixtureState) => {}
+                Delivery::Foreground => {
                     return Err(format!(
-                        "{}: refusal is missing {:?} oracle",
-                        self.cell_id, required
+                        "{}: foreground refusal must declare only foreground_unavailable and the fixture-state oracle",
+                        self.cell_id
+                    ));
+                }
+                Delivery::NotApplicable => {
+                    return Err(format!(
+                        "{}: not-applicable delivery may not declare refusal",
+                        self.cell_id
                     ));
                 }
             }
@@ -1364,7 +1382,10 @@ impl CatalogPolicy {
 fn case_requires_action_turn(case: &CaseSpec) -> bool {
     !matches!(
         case.driver_route,
-        DriverRoute::CaptureScopeGate | DriverRoute::AxRead | DriverRoute::WindowState
+        DriverRoute::CaptureScopeGate
+            | DriverRoute::AxRead
+            | DriverRoute::WindowState
+            | DriverRoute::LinuxHyprlandToplevelExport
     ) && case.action != "screenshot"
 }
 
@@ -1608,6 +1629,24 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             }
             return;
         }
+        let semantic_target_without_geometry = action.as_ref().is_some_and(|value| {
+            value["result_error"].as_bool() == Some(false)
+                && value.get("click_point").is_none()
+                && (value["arguments"].get("element_index").is_some()
+                    || value["arguments"].get("element_token").is_some())
+        });
+        if semantic_target_without_geometry {
+            let click = manifest.as_ref().map(|value| &value["click"]);
+            if !click.is_some_and(|value| {
+                value["status"].as_str() == Some("not_applicable")
+                    && value["classification"].as_str() == Some("target_geometry_unavailable")
+            }) {
+                errors.push(format!(
+                    "invalid geometry-free click evidence for {cell_id}/{turn_name}: expected not_applicable/target_geometry_unavailable"
+                ));
+            }
+            return;
+        }
         validate_capture_status(
             manifest.as_ref(),
             &["click"],
@@ -1809,6 +1848,21 @@ mod tests {
     }
 
     #[test]
+    fn foreground_limitation_requires_its_typed_code_and_fixture_oracle() {
+        let mut case = delivered_case("foreground-limitation");
+        case.delivery = Delivery::Foreground;
+        case.expected_behavior = ContractExpectation::Refuse {
+            allowed_codes: vec![RefusalCode::ForegroundUnavailable],
+        };
+        assert!(case.validate().is_ok());
+
+        case.expected_behavior = ContractExpectation::Refuse {
+            allowed_codes: vec![RefusalCode::BackgroundUnavailable],
+        };
+        assert!(case.validate().is_err());
+    }
+
+    #[test]
     fn refusal_requires_explicit_code_and_side_effect_oracles() {
         let case = delivered_case("expected-refusal")
             .expecting_refusal(vec![RefusalCode::BackgroundUnavailable]);
@@ -1988,6 +2042,18 @@ mod tests {
     }
 
     #[test]
+    fn strict_hyprland_capture_does_not_invent_an_action_turn() {
+        let case = native_readonly_case(
+            "electron",
+            "hyprland_off_workspace_xwayland_capture",
+            Targeting::NotApplicable,
+            DriverRoute::LinuxHyprlandToplevelExport,
+            vec![OracleKind::AxState, OracleKind::Pixels],
+        );
+        assert!(!case_requires_action_turn(&case));
+    }
+
+    #[test]
     fn strict_background_screenshot_does_not_invent_an_action_turn() {
         let case = CaseSpec::delivered(
             "windows-wpf-screenshot-px-background",
@@ -2109,6 +2175,34 @@ mod tests {
 
         validate_catalog(&[case], &[result], Some(root.path()), true)
             .expect("a pre-target refusal must not invent click evidence");
+    }
+
+    #[test]
+    fn validator_accepts_semantic_click_without_pixel_geometry() {
+        let (root, case, result, turn) = complete_turn_fixture();
+        std::fs::write(
+            turn.join("action.json"),
+            br#"{
+                "tool":"click",
+                "arguments":{"pid":1,"window_id":2,"element_index":16},
+                "result_error":false
+            }"#,
+        )
+        .expect("write geometry-free semantic action");
+        std::fs::write(
+            turn.join("evidence.json"),
+            br#"{
+                "schema":"cua-turn-evidence/v1",
+                "before":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "after":{"state":{"status":"captured"},"screenshot":{"status":"captured"}},
+                "click":{"status":"not_applicable","classification":"target_geometry_unavailable"}
+            }"#,
+        )
+        .expect("write geometry-free semantic evidence");
+        std::fs::remove_file(turn.join("click.png")).expect("remove impossible click marker");
+
+        validate_catalog(&[case], &[result], Some(root.path()), true)
+            .expect("semantic element delivery need not invent pixel geometry");
     }
 
     #[test]

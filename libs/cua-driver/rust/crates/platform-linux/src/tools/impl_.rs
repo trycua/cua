@@ -572,6 +572,16 @@ mod list_windows_tests {
         assert!(chromium_family_program("chromium-browser"));
         assert!(!chromium_family_program("/usr/bin/gnome-text-editor"));
     }
+
+    #[test]
+    fn chromium_process_detection_uses_executable_argv0() {
+        assert!(chromium_process_cmdline(
+            b"/nix/store/example-electron/libexec/electron\0--user-data-dir=/tmp/profile\0"
+        ));
+        assert!(!chromium_process_cmdline(
+            b"/usr/bin/gnome-calculator\0--mode=basic\0"
+        ));
+    }
 }
 
 // ── get_window_state ─────────────────────────────────────────────────────────
@@ -1372,6 +1382,14 @@ fn chromium_family_program(program: &str) -> bool {
         .any(|needle| basename.contains(needle))
 }
 
+fn chromium_process_cmdline(raw: &[u8]) -> bool {
+    raw.split(|byte| *byte == 0)
+        .next()
+        .filter(|argv0| !argv0.is_empty())
+        .map(|argv0| chromium_family_program(&String::from_utf8_lossy(argv0)))
+        .unwrap_or(false)
+}
+
 // ── shared helpers ────────────────────────────────────────────────────────────
 
 /// Resolve an AT-SPI element's center in window-local coordinates.
@@ -1578,6 +1596,14 @@ fn is_chromium_embedder(pid: u32) -> bool {
             }),
             Err(_) => false,
         }
+    }
+    // Renderer helpers may be reparented or briefly absent while an embedder
+    // transitions views, so first use the executable identity of the target.
+    if fs::read(format!("/proc/{pid}/cmdline"))
+        .map(|raw| chromium_process_cmdline(&raw))
+        .unwrap_or(false)
+    {
+        return true;
     }
     // Single-process / the embedder itself carrying a Chromium switch.
     if argv_is_chromium_helper(pid) {
@@ -2379,12 +2405,25 @@ impl Tool for ClickTool {
                 cursor_overlay::OverlayCommand::ClickPulse { x: sx, y: sy },
             );
 
-            // Chromium can execute a genuine AT-SPI action without focus. Try
-            // that route before applying its background synthetic-input gate.
+            // A genuine AT-SPI action can execute without focus. Chromium-family
+            // applications still need a bounded Hyprland guard because they can
+            // replace or activate their toplevel after Action.DoAction.
             if modifiers.is_empty() {
-                let ax_result =
-                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
-                        .await;
+                let preserve_hyprland_focus = !delivery.is_foreground()
+                    && crate::wayland::hyprland::is_session()
+                    && fs::read(format!("/proc/{pid}/cmdline"))
+                        .map(|raw| chromium_process_cmdline(&raw))
+                        .unwrap_or(false);
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    if preserve_hyprland_focus {
+                        crate::wayland::hyprland::with_preserved_background_focus(xid, pid, || {
+                            crate::atspi::perform_action(pid, idx)
+                        })
+                    } else {
+                        crate::atspi::perform_action(pid, idx)
+                    }
+                })
+                .await;
                 if let Ok(Ok((_action, suspected_noop))) = ax_result {
                     let mut structured = json!({
                         "path": "ax",

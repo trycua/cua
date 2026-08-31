@@ -21,5 +21,14 @@
       </p>
     </article>
   </main>
+  <script>
+    window.addEventListener('load', () => {
+      fetch(window.__CUA_E2E_FIXTURE_JOURNAL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ ready: { text: 'WEB_HARNESS_MARKER_v1' } }),
+      });
+    }, { once: true });
+  </script>
 </body>
 </html>

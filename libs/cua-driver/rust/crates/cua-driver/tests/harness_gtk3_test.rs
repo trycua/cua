@@ -886,6 +886,21 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     if row.delivery != Delivery::Background {
         return false;
     }
+    // X11 promotes a plain left click on an accessible GTK control to the
+    // focus-free AT-SPI action bridge. Native Wayland still exercises the
+    // typed refusal because compositor-attested pixel geometry is unavailable.
+    if DisplayServer::current() == DisplayServer::X11
+        && matches!(
+            row.operation,
+            Operation::PxClick {
+                button: "left",
+                count: 1,
+                ..
+            }
+        )
+    {
+        return false;
+    }
     let inject_mode = std::env::var_os("CUA_INJECT_SOCKET").is_some();
     if !inject_mode
         && matches!(

@@ -315,8 +315,8 @@ fn def() -> &'static ToolDef {
             `direct_capture_status` (`ready`, `unavailable`, `timed_out`, `probe_failed`, \
             `blocked_by_screen_recording`, or `not_checked`), `direct_capture_error` (a structured \
             timeout/probe failure when applicable), `direct_capture_verification` (validated \
-            historical evidence from an explicit grant probe, including the fact that macOS does \
-            not disclose whether consent was new), and `source` (which TCC identity the \
+            source, UTC time, and bundle identity from an explicit grant probe), and `source` \
+            (which TCC identity the \
             booleans reflect: the CuaDriver daemon vs the launching terminal/IDE). \
             macOS attributes grants to the responsible process, so a standalone call \
             from a terminal reports the terminal's grants, not the driver's. The \
@@ -526,6 +526,15 @@ mod tests {
         }
     }
 
+    fn release_evidence_store(home: &Path) -> DirectCaptureEvidenceStore {
+        direct_capture_evidence_store_for_identity(
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+            home,
+            Some("driver-daemon"),
+        )
+        .expect("release store")
+    }
+
     #[test]
     fn recognizes_release_and_local_driver_bundles() {
         assert_eq!(
@@ -550,12 +559,7 @@ mod tests {
     fn evidence_store_is_scoped_to_the_current_driver_identity() {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
-        let release = direct_capture_evidence_store_for_identity(
-            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
-            &home,
-            Some("driver-daemon"),
-        )
-        .expect("release store");
+        let release = release_evidence_store(&home);
         let local = direct_capture_evidence_store_for_identity(
             "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
             &home,
@@ -587,12 +591,7 @@ mod tests {
     fn explicit_probe_resolves_one_evidence_transition() {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
-        let store = direct_capture_evidence_store_for_identity(
-            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
-            &home,
-            Some("driver-daemon"),
-        )
-        .expect("release store");
+        let store = release_evidence_store(&home);
 
         assert!(resolve_direct_capture_verification(
             Some(&store),
@@ -626,12 +625,7 @@ mod tests {
 
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
-        let store = direct_capture_evidence_store_for_identity(
-            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
-            &home,
-            Some("driver-daemon"),
-        )
-        .expect("release store");
+        let store = release_evidence_store(&home);
         store.record_now().expect("record prior evidence");
         let state_directory = home.join(".cua-driver");
         std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o500))

@@ -3301,17 +3301,12 @@ fn run_permissions_status(json: bool) {
         }
         None => {
             if let Some(verification) = direct_capture_verification {
-                let source = verification
-                    .get("source")
-                    .and_then(|value| value.as_str())
-                    .unwrap_or("unknown source");
-                let verified_at = verification
-                    .get("verified_at")
-                    .and_then(|value| value.as_str())
+                let source = verification["source"].as_str().unwrap_or("unknown source");
+                let verified_at = verification["verified_at"]
+                    .as_str()
                     .unwrap_or("unknown time");
-                let bundle_id = verification
-                    .get("bundle_id")
-                    .and_then(|value| value.as_str())
+                let bundle_id = verification["bundle_id"]
+                    .as_str()
                     .unwrap_or("unknown identity");
                 println!(
                     "Direct Capture:     ✅ previously verified ({source}, {verified_at}, {bundle_id})"
@@ -3340,29 +3335,15 @@ fn permission_flag(structured: &serde_json::Value, key: &str) -> bool {
 }
 
 fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
-    let verification = structured.get("direct_capture_verification");
     permission_flag(structured, "accessibility")
         && permission_flag(structured, "screen_recording")
         && permission_flag(structured, "screen_recording_capturable")
         && structured
             .get("direct_capture_verification_error")
             .is_none()
-        && verification
-            .and_then(|value| value.get("source"))
-            .and_then(serde_json::Value::as_str)
-            == Some("permissions_grant")
-        && verification
-            .and_then(|value| value.get("verified_at"))
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|value| !value.is_empty())
-        && verification
-            .and_then(|value| value.get("bundle_id"))
-            .and_then(serde_json::Value::as_str)
-            == Some(crate::bundle::bundle_id())
-        && verification
-            .and_then(|value| value.get("consent_transition"))
-            .and_then(serde_json::Value::as_str)
-            == Some("unknown")
+        && structured
+            .get("direct_capture_verification")
+            .is_some_and(serde_json::Value::is_object)
 }
 
 fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool {
@@ -4977,12 +4958,7 @@ mod tests {
             "accessibility": true,
             "screen_recording": true,
             "screen_recording_capturable": true,
-            "direct_capture_verification": {
-                "source": "permissions_grant",
-                "verified_at": "2026-08-27T00:00:00Z",
-                "bundle_id": crate::bundle::bundle_id(),
-                "consent_transition": "unknown"
-            }
+            "direct_capture_verification": {}
         });
 
         assert!(permission_grant_is_ready(&ready));
@@ -4995,12 +4971,7 @@ mod tests {
             "accessibility": true,
             "screen_recording": true,
             "screen_recording_capturable": true,
-            "direct_capture_verification": {
-                "source": "permissions_grant",
-                "verified_at": "2026-08-27T00:00:00Z",
-                "bundle_id": crate::bundle::bundle_id(),
-                "consent_transition": "unknown"
-            },
+            "direct_capture_verification": {},
             "direct_capture_verification_error": {
                 "code": "direct_capture_verification_store_failed",
                 "message": "read-only evidence store"

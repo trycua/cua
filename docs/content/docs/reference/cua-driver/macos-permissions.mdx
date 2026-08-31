@@ -35,10 +35,10 @@ private-window-picker bypass dialog when ScreenCaptureKit is queried,
 `direct_capture_status: "not_checked"`. This preserves the command's read-only,
 no-prompt contract. After `permissions grant` completes a successful live
 probe, status also returns `direct_capture_verification` with the
-`permissions_grant` source, the UTC verification time, the macOS bundle ID
-whose probe succeeded, and `consent_transition: "unknown"`. ScreenCaptureKit
-confirms that the explicit probe succeeded but does not report whether consent
-was newly granted or already present. The permission service validates the
+`permissions_grant` source, the UTC verification time, and the macOS bundle ID
+whose probe succeeded. ScreenCaptureKit confirms that the explicit probe
+succeeded but does not report whether consent was newly granted or already
+present. The permission service validates the
 stored schema, source, timestamp, and bundle ID, and only loads the record when
 the live status belongs to the driver daemon identity. The CLI only renders the
 complete live and historical observation. Historical evidence does not turn the

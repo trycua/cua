@@ -4,17 +4,15 @@ use std::path::{Path, PathBuf};
 
 const SCHEMA_VERSION: u8 = 1;
 const SOURCE: &str = "permissions_grant";
-const CONSENT_TRANSITION: &str = "unknown";
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct DirectCaptureVerification {
     pub source: String,
     pub verified_at: String,
     pub bundle_id: String,
-    pub consent_transition: String,
 }
 
-#[derive(Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct PersistedVerification {
     schema_version: u8,
     source: String,
@@ -61,7 +59,6 @@ impl DirectCaptureEvidenceStore {
             source: record.source,
             verified_at,
             bundle_id: record.bundle_id,
-            consent_transition: CONSENT_TRANSITION.to_owned(),
         })
     }
 
@@ -139,7 +136,6 @@ mod tests {
                 source: SOURCE.to_owned(),
                 verified_at: "2025-08-05T00:00:00Z".to_owned(),
                 bundle_id: RELEASE_BUNDLE_ID.to_owned(),
-                consent_transition: CONSENT_TRANSITION.to_owned(),
             })
         );
     }
@@ -149,31 +145,29 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let path = temp.path().join("verification.json");
         let store = store(path.clone());
+        let valid = PersistedVerification {
+            schema_version: SCHEMA_VERSION,
+            source: SOURCE.to_owned(),
+            verified_at_unix_seconds: VERIFIED_AT,
+            bundle_id: RELEASE_BUNDLE_ID.to_owned(),
+        };
         let invalid_records = [
-            serde_json::json!({
-                "schema_version": SCHEMA_VERSION + 1,
-                "source": SOURCE,
-                "verified_at_unix_seconds": VERIFIED_AT,
-                "bundle_id": RELEASE_BUNDLE_ID,
-            }),
-            serde_json::json!({
-                "schema_version": SCHEMA_VERSION,
-                "source": "unknown",
-                "verified_at_unix_seconds": VERIFIED_AT,
-                "bundle_id": RELEASE_BUNDLE_ID,
-            }),
-            serde_json::json!({
-                "schema_version": SCHEMA_VERSION,
-                "source": SOURCE,
-                "verified_at_unix_seconds": 0,
-                "bundle_id": RELEASE_BUNDLE_ID,
-            }),
-            serde_json::json!({
-                "schema_version": SCHEMA_VERSION,
-                "source": SOURCE,
-                "verified_at_unix_seconds": VERIFIED_AT,
-                "bundle_id": "com.trycua.driver.local",
-            }),
+            PersistedVerification {
+                schema_version: SCHEMA_VERSION + 1,
+                ..valid.clone()
+            },
+            PersistedVerification {
+                source: "unknown".to_owned(),
+                ..valid.clone()
+            },
+            PersistedVerification {
+                verified_at_unix_seconds: 0,
+                ..valid.clone()
+            },
+            PersistedVerification {
+                bundle_id: "com.trycua.driver.local".to_owned(),
+                ..valid
+            },
         ];
 
         for record in invalid_records {

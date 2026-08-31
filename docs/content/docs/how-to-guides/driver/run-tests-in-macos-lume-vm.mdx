@@ -230,7 +230,6 @@ Verify the app-owned grants, signature, capture result, and SIP state:
   and .direct_capture_verification.source == "permissions_grant"
   and (.direct_capture_verification.verified_at | endswith("Z"))
   and .direct_capture_verification.bundle_id == "com.trycua.driver"
-  and .direct_capture_verification.consent_transition == "unknown"
 '
 
 jq -e '

@@ -21,9 +21,17 @@ type AttributionFactsReader interface {
 }
 
 func (h Handlers) FleetAttributionQualifier() productanalytics.SvcQualifier {
-	reader := fleetAttributionFactsReader{handlers: h}
+	qualification := h.FleetAttributionQualification()
 	return func(ctx context.Context, r *http.Request, status int) bool {
-		return QualifySvcRequest(ctx, r, status, reader)
+		return qualification(ctx, r, status).Qualifies
+	}
+}
+
+func (h Handlers) FleetAttributionQualification() productanalytics.SvcQualification {
+	reader := fleetAttributionFactsReader{handlers: h}
+	return func(ctx context.Context, r *http.Request, status int) productanalytics.SvcQualificationResult {
+		result := QualifySvcRequestResult(ctx, r, status, reader)
+		return productanalytics.SvcQualificationResult{Qualifies: result.Qualifies, Reason: result.Reason}
 	}
 }
 
@@ -92,24 +100,69 @@ func (reader fleetAttributionFactsReader) PoolExists(ctx context.Context, namesp
 }
 
 func QualifySvcRequest(ctx context.Context, r *http.Request, status int, reader AttributionFactsReader) bool {
+	return QualifySvcRequestResult(ctx, r, status, reader).Qualifies
+}
+
+type QualificationResult struct {
+	Qualifies bool
+	Reason    string
+}
+
+func QualifySvcRequestResult(ctx context.Context, r *http.Request, status int, reader AttributionFactsReader) QualificationResult {
 	upgrade := isUpgradeRequest(r)
-	if reader == nil || r.Pattern == "" || !strings.HasPrefix(r.Pattern, "/api/svc/") || r.Method == "HEAD" || r.Method == "OPTIONS" || upgrade {
-		return false
+	if reader == nil {
+		return QualificationResult{Reason: "facts_unavailable"}
+	}
+	if r.Pattern == "" || !strings.HasPrefix(r.Pattern, "/api/svc/") {
+		return QualificationResult{Reason: "not_svc_route"}
+	}
+	if r.Method == "HEAD" || r.Method == "OPTIONS" {
+		return QualificationResult{Reason: "invalid_method"}
+	}
+	if upgrade {
+		return QualificationResult{Reason: "upgrade_request"}
 	}
 	claim := r.Header.Get(FleetClaimHeader)
-	if claim == "" || len(r.Header.Values(FleetClaimHeader)) != 1 || len(claim) > 128 || !validAttributionClaim(claim) {
-		return false
+	if len(r.Header.Values(FleetClaimHeader)) > 1 {
+		return QualificationResult{Reason: "multiple_claims"}
+	}
+	if claim == "" {
+		return QualificationResult{Reason: "missing_claim"}
+	}
+	if len(claim) > 128 || !validAttributionClaim(claim) {
+		return QualificationResult{Reason: "invalid_claim"}
 	}
 	ns, service := r.PathValue("namespace"), r.PathValue("service")
 	bound, err := reader.ReadBoundClaim(ctx, ns, claim)
-	if err != nil || bound.Claim != claim || !bound.Bound || bound.Sandbox == "" || service != bound.Sandbox+"-server" {
-		return false
+	if err != nil {
+		return QualificationResult{Reason: "claim_lookup_failed"}
+	}
+	if bound.Claim != claim {
+		return QualificationResult{Reason: "claim_mismatch"}
+	}
+	if !bound.Bound {
+		return QualificationResult{Reason: "claim_not_bound"}
+	}
+	if bound.Sandbox == "" {
+		return QualificationResult{Reason: "sandbox_missing"}
+	}
+	if service != bound.Sandbox+"-server" {
+		return QualificationResult{Reason: "service_mismatch"}
 	}
 	pool, err := reader.PoolExists(ctx, ns, ns)
-	if err != nil || !pool || status < 200 || status >= 300 {
-		return false
+	if err != nil {
+		return QualificationResult{Reason: "pool_lookup_failed"}
 	}
-	return QualifiesFleetAttribution(AttributionFacts{AuthenticatedNamespace: true, SDKClaim: claim, Claim: bound, Service: service, Namespace: ns, Route: r.Pattern, Path: r.PathValue("path"), Method: r.Method, NamespacePoolExists: pool, UpstreamStatus: status, Upgrade: upgrade})
+	if !pool {
+		return QualificationResult{Reason: "pool_missing"}
+	}
+	if status < 200 || status >= 300 {
+		return QualificationResult{Reason: "non_2xx"}
+	}
+	if !QualifiesFleetAttribution(AttributionFacts{AuthenticatedNamespace: true, SDKClaim: claim, Claim: bound, Service: service, Namespace: ns, Route: r.Pattern, Path: r.PathValue("path"), Method: r.Method, NamespacePoolExists: pool, UpstreamStatus: status, Upgrade: upgrade}) {
+		return QualificationResult{Reason: "probe_request"}
+	}
+	return QualificationResult{Qualifies: true}
 }
 
 func isUpgradeRequest(r *http.Request) bool {

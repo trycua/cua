@@ -88,3 +88,46 @@ func TestClientSuppressesExcludedSubject(t *testing.T) {
 	defer cancel()
 	_ = client.Shutdown(ctx)
 }
+
+func TestClientPseudonymizesAttributionIdentityAndStableInsertID(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		requests <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := New(Config{
+		Enabled: true, Host: server.URL, ProjectToken: "phc_test", IdentityKey: "identity-test-key", Environment: "production",
+		QueueSize: 2, BatchSize: 1, FlushInterval: time.Hour, RequestTimeout: time.Second,
+	})
+	client.Capture(Event{
+		Name: EventAttributionBound, DistinctID: "subject-1",
+		Properties: map[string]any{"outcome": OutcomeSuccess, "source": SourceSPA, "principal_type": "user", "identity_class": IdentityExternal},
+		SetOnce:    map[string]any{FirstTouchUTMCampaignProperty: "openclaw-2-launch"},
+	})
+	select {
+	case payload := <-requests:
+		encoded, _ := json.Marshal(payload)
+		if bytes.Contains(encoded, []byte("subject-1")) {
+			t.Fatalf("payload contains raw subject: %s", encoded)
+		}
+		item := payload["batch"].([]any)[0].(map[string]any)
+		pseudonym := PseudonymForUserID("subject-1", "identity-test-key")
+		properties := item["properties"].(map[string]any)
+		if item["distinct_id"] != pseudonym || properties["$insert_id"] != "fleet-attribution:"+pseudonym {
+			t.Fatalf("item = %#v", item)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for attribution capture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := client.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

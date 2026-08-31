@@ -2,6 +2,7 @@ package productanalytics
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"net"
 	"net/http"
@@ -139,7 +140,11 @@ func TestRouteObserverCapturesActivationOutcomes(t *testing.T) {
 			sink := &captureSink{}
 			handler := RouteObserver(test.route, sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(test.status) }))
 			handler.ServeHTTP(httptest.NewRecorder(), observedRequest(test.method, test.route, test.path, test.user))
-			if len(sink.events) != 1 {
+			wantEvents := 1
+			if (test.status < 200 || test.status >= 300) && test.wantEvent != EventHTTPProxyRequest {
+				wantEvents = 2
+			}
+			if len(sink.events) != wantEvents {
 				t.Fatalf("events = %#v", sink.events)
 			}
 			event := sink.events[0]
@@ -148,6 +153,12 @@ func TestRouteObserverCapturesActivationOutcomes(t *testing.T) {
 			}
 			if event.Properties["outcome"] != test.wantOutcome || event.Properties["source"] != test.wantSource || event.Properties["error_class"] != test.wantClass {
 				t.Fatalf("properties = %#v", event.Properties)
+			}
+			if wantEvents == 2 {
+				blocked := sink.events[1]
+				if blocked.Name != EventResourceBlocked || blocked.Properties["resource_type"] == "" || blocked.Properties["reason"] == "" {
+					t.Fatalf("blocked event = %#v", blocked)
+				}
 			}
 		})
 	}
@@ -226,5 +237,44 @@ func TestAnalyticsResponseWriterPreservesProxyInterfaces(t *testing.T) {
 	}
 	if _, ok := any(wrapped).(http.Hijacker); !ok {
 		t.Fatal("missing http.Hijacker")
+	}
+}
+
+func TestRouteObserverClassifiesPaymentRequiredWithoutChangingResponse(t *testing.T) {
+	sink := &captureSink{}
+	handler := RouteObserver("/api/k8s/{path...}", sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"A payment method is required to create this resource. Add one in Billing and try again."}`))
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, observedRequest(http.MethodPost, "/api/k8s/{path...}", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", &auth.User{ID: "u-1", AZP: "cyclops-cs-spa"}))
+	if response.Code != http.StatusForbidden || !bytes.Contains(response.Body.Bytes(), []byte("A payment method is required")) {
+		t.Fatalf("response changed: status=%d body=%q", response.Code, response.Body.String())
+	}
+	if len(sink.events) != 2 || sink.events[1].Name != EventResourceBlocked || sink.events[1].Properties["reason"] != "payment_required" {
+		t.Fatalf("events = %#v", sink.events)
+	}
+}
+
+func TestRouteObserverEmitsBoundedQualificationRejectionForExternalUsers(t *testing.T) {
+	sink := make(eventChannel, 2)
+	handler := RouteObserverWithQualification("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) SvcQualificationResult {
+		return SvcQualificationResult{Reason: "claim_mismatch"}
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	user := &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}
+	handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/svc/{namespace}/{service}/{path...}", "tools", user))
+	var events []Event
+	deadline := time.After(time.Second)
+	for len(events) < 2 {
+		select {
+		case event := <-sink:
+			events = append(events, event)
+		case <-deadline:
+			t.Fatalf("events = %#v", events)
+		}
+	}
+	if events[1].Name != EventQualificationRejected || events[1].Properties["reason"] != "claim_mismatch" || events[1].DistinctID != user.ID {
+		t.Fatalf("event = %#v", events[1])
 	}
 }

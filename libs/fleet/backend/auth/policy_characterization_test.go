@@ -173,6 +173,7 @@ func characterizationCases() map[string][]routeCase {
 	}
 	simple("/api/config", "/api/config")
 	simple("/api/analytics/session", "/api/analytics/session")
+	simple("/api/analytics/attribution", "/api/analytics/attribution")
 	simple("/api/state/query", "/api/state/query")
 	simple("/api/usage/overview", "/api/usage/overview")
 	simple("/api/usage/pool", "/api/usage/pool")

@@ -92,4 +92,20 @@ func TestValidateEventRejectsUnsafeProperties(t *testing.T) {
 			}
 		})
 	}
+
+	attribution := Event{
+		Name: EventAttributionBound, DistinctID: "subject-1",
+		Properties: map[string]any{"outcome": OutcomeSuccess, "source": SourceSPA, "principal_type": auth.PrincipalTypeUser, "identity_class": IdentityExternal},
+		SetOnce:    map[string]any{FirstTouchUTMCampaignProperty: "openclaw-2-launch"},
+	}
+	if err := ValidateEvent(attribution); err != nil {
+		t.Fatalf("ValidateEvent(attribution) error = %v", err)
+	}
+	for _, value := range []any{"has space", "", 42} {
+		invalid := attribution
+		invalid.SetOnce = map[string]any{FirstTouchUTMCampaignProperty: value}
+		if err := ValidateEvent(invalid); err == nil {
+			t.Fatalf("ValidateEvent() accepted attribution value %#v", value)
+		}
+	}
 }

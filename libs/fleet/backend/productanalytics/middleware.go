@@ -2,6 +2,7 @@ package productanalytics
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"fmt"
 	"net"
@@ -15,8 +16,27 @@ import (
 )
 
 type SvcQualifier func(context.Context, *http.Request, int) bool
+type SvcQualificationResult struct {
+	Qualifies bool
+	Reason    string
+}
+type SvcQualification func(context.Context, *http.Request, int) SvcQualificationResult
 
 func RouteObserver(route string, capturer Capturer, spaClientID string, qualifiers ...SvcQualifier) auth.Middleware {
+	var qualifier SvcQualification
+	if len(qualifiers) > 0 && qualifiers[0] != nil {
+		qualifier = func(ctx context.Context, r *http.Request, status int) SvcQualificationResult {
+			return SvcQualificationResult{Qualifies: qualifiers[0](ctx, r, status)}
+		}
+	}
+	return routeObserver(route, capturer, spaClientID, qualifier)
+}
+
+func RouteObserverWithQualification(route string, capturer Capturer, spaClientID string, qualifier SvcQualification) auth.Middleware {
+	return routeObserver(route, capturer, spaClientID, qualifier)
+}
+
+func routeObserver(route string, capturer Capturer, spaClientID string, qualifier SvcQualification) auth.Middleware {
 	if capturer == nil {
 		capturer = Nop()
 	}
@@ -36,13 +56,19 @@ func RouteObserver(route string, capturer Capturer, spaClientID string, qualifie
 			if traceID == "00000000000000000000000000000000" {
 				traceID, _ = r.Context().Value(middlewares.ContextKey("traceId")).(string)
 			}
-			if activation.eventName == EventHTTPProxyRequest && ClassifyIdentity(user) == IdentityExternal && len(qualifiers) > 0 {
-				qualifier := qualifiers[0]
+			if activation.eventName == EventHTTPProxyRequest && ClassifyIdentity(user) == IdentityExternal && qualifier != nil {
 				go func() {
 					defer func() { _ = recover() }()
 					ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 250*time.Millisecond)
 					defer cancel()
-					if !qualifier(ctx, r, status) {
+					result := qualifier(ctx, r, status)
+					if !result.Qualifies {
+						if result.Reason != "" {
+							capturer.Capture(Event{Name: EventQualificationRejected, DistinctID: user.ID, InsertID: traceID + ":qualification-rejected", Properties: map[string]any{
+								"outcome": OutcomeFailure, "source": source, "principal_type": user.PrincipalType, "status_code": status,
+								"error_class": errorClass(status), "identity_class": IdentityExternal, "reason": result.Reason,
+							}})
+						}
 						return
 					}
 					properties := map[string]any{
@@ -81,6 +107,13 @@ func RouteObserver(route string, capturer Capturer, spaClientID string, qualifie
 					"identity_class": ClassifyIdentity(user),
 				},
 			})
+			if activation.resourceType != "" && (status < 200 || status >= 300) {
+				reason := blockedReason(status, rw.paymentRequired)
+				capturer.Capture(Event{Name: EventResourceBlocked, DistinctID: user.ID, InsertID: traceID + ":resource-blocked", Properties: map[string]any{
+					"outcome": OutcomeFailure, "source": source, "principal_type": principalType, "status_code": status,
+					"error_class": errorClass(status), "identity_class": ClassifyIdentity(user), "resource_type": activation.resourceType, "reason": reason,
+				}})
+			}
 		})
 	}
 }
@@ -88,6 +121,7 @@ func RouteObserver(route string, capturer Capturer, spaClientID string, qualifie
 type activationTarget struct {
 	eventName       string
 	suppressSuccess bool
+	resourceType    string
 }
 
 func activationEvent(route string, r *http.Request) (activationTarget, bool) {
@@ -103,15 +137,35 @@ func activationEvent(route string, r *http.Request) (activationTarget, bool) {
 	}
 	switch {
 	case parts[1] == "cua.ai" && parts[2] == "v1" && parts[5] == "osgymworkspacepools":
-		return activationTarget{eventName: EventPoolCreate}, true
+		return activationTarget{eventName: EventPoolCreate, resourceType: "pool"}, true
 	case parts[1] == "osgym.cua.ai" && parts[2] == "v1alpha1" && parts[5] == "osgymsandboxwarmpools":
-		return activationTarget{eventName: EventPoolCreate, suppressSuccess: true}, true
+		return activationTarget{eventName: EventPoolCreate, suppressSuccess: true, resourceType: "pool"}, true
 	case parts[1] == "osgym.cua.ai" && parts[2] == "v1alpha1" && parts[5] == "osgymsandboxtemplates":
-		return activationTarget{eventName: EventPoolCreate}, true
+		return activationTarget{eventName: EventPoolCreate, resourceType: "template"}, true
 	case parts[1] == "osgym.cua.ai" && parts[2] == "v1alpha1" && parts[5] == "osgymsandboxclaims":
-		return activationTarget{eventName: EventClaimCreate}, true
+		return activationTarget{eventName: EventClaimCreate, resourceType: "claim"}, true
 	default:
 		return activationTarget{}, false
+	}
+}
+
+func blockedReason(status int, paymentRequired bool) string {
+	if paymentRequired {
+		return "payment_required"
+	}
+	switch {
+	case status == http.StatusBadRequest || status == http.StatusUnprocessableEntity:
+		return "validation"
+	case status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return "authorization"
+	case status == http.StatusTooManyRequests:
+		return "quota"
+	case status == http.StatusRequestTimeout || status == http.StatusGatewayTimeout:
+		return "timeout"
+	case status >= 500:
+		return "internal"
+	default:
+		return "authorization"
 	}
 }
 
@@ -145,8 +199,10 @@ func errorClass(status int) string {
 
 type analyticsResponseWriter struct {
 	http.ResponseWriter
-	statusCode int
-	written    bool
+	statusCode      int
+	written         bool
+	paymentRequired bool
+	bodySample      []byte
 }
 
 func newAnalyticsResponseWriter(w http.ResponseWriter) *analyticsResponseWriter {
@@ -162,6 +218,16 @@ func (rw *analyticsResponseWriter) WriteHeader(status int) {
 }
 
 func (rw *analyticsResponseWriter) Write(body []byte) (int, error) {
+	if len(rw.bodySample) < 512 {
+		remaining := 512 - len(rw.bodySample)
+		if len(body) < remaining {
+			remaining = len(body)
+		}
+		rw.bodySample = append(rw.bodySample, body[:remaining]...)
+		if bytes.Contains(rw.bodySample, []byte("A payment method is required to create this resource")) {
+			rw.paymentRequired = true
+		}
+	}
 	if !rw.written {
 		rw.WriteHeader(http.StatusOK)
 	}

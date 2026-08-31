@@ -135,7 +135,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	auth.RegisterFactProvider(auth.CurrentMonthFactProvider, auth.CurrentMonthFacts(time.Now))
 
 	r := http.NewServeMux()
-	svcQualifier := c.FleetAttributionQualifier()
+	svcQualifier := c.FleetAttributionQualification()
 
 	r.Handle("GET /healthz", onlyLog("/healthz", c.GetHealth))
 	r.Handle("GET /readyz", onlyLog("/readyz", c.GetReadiness))
@@ -145,6 +145,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withAuthenticatedMiddlewares("/api/config", c.GetConfig))
 	r.Handle("POST /api/analytics/session",
 		withAuthenticatedMiddlewares("/api/analytics/session", c.RecordAnalyticsSession))
+	r.Handle("POST /api/analytics/attribution",
+		withAuthenticatedMiddlewares("/api/analytics/attribution", c.RecordFleetAttribution))
 
 	r.Handle("POST /api/chat/conversations",
 		withAuthenticatedMiddlewares("/api/chat/conversations", c.CreateConversation))
@@ -228,10 +230,10 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// policy reads as a fact — see auth/authz_ownership.rego.
 	r.Handle("/api/svc/{namespace}/{service}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}", c.Svc,
-			productanalytics.RouteObserver("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
+			productanalytics.RouteObserverWithQualification("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 	r.Handle("/api/svc/{namespace}/{service}/{path...}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc,
-			productanalytics.RouteObserver("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
+			productanalytics.RouteObserverWithQualification("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 
 	// K8s API access replaces the unauthenticated /k8s-api nginx location.
 	r.Handle("/api/k8s/{path...}",

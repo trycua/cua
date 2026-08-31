@@ -5,7 +5,7 @@
 
 import { useEffect, useLayoutEffect, useState } from "react"
 import { initKc, kc } from "./keycloak"
-import { recordFleetLogin } from "./analytics"
+import { bindFleetAttribution, recordFleetLogin } from "./analytics"
 import { isLocalVisualPreview } from "../local-visual-preview"
 
 interface Props {
@@ -30,7 +30,10 @@ export function AuthProvider({ children }: Props) {
           return
         }
         setReady(true)
-        void recordFleetLogin(kc.sessionId).catch(() => undefined)
+        void Promise.allSettled([
+          bindFleetAttribution(),
+          recordFleetLogin(kc.sessionId),
+        ])
       })
       .catch(e => setError(String(e)))
   }, [visualPreview])

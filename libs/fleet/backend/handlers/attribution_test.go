@@ -139,6 +139,20 @@ func TestQualifySvcRequestUsesOnlyValidatedExactClaimAndSvcRoutes(t *testing.T) 
 	}
 }
 
+func TestQualifySvcRequestResultReportsBoundedReasons(t *testing.T) {
+	reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}, pool: true}
+	r := httptest.NewRequest("GET", "/api/svc/pool-1/sandbox-1-server/health", nil)
+	r.Pattern = "/api/svc/{namespace}/{service}/{path...}"
+	r.SetPathValue("namespace", "pool-1")
+	r.SetPathValue("service", "sandbox-1-server")
+	r.SetPathValue("path", "health")
+	r.Header.Set(FleetClaimHeader, "claim-1")
+	result := QualifySvcRequestResult(r.Context(), r, http.StatusOK, reader)
+	if result.Qualifies || result.Reason != "probe_request" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
 func TestQualifySvcRequestRejectsUpgradeSignalsBeforeReadingFacts(t *testing.T) {
 	for _, headers := range []http.Header{
 		{"Upgrade": {"websocket"}},

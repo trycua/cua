@@ -9,5 +9,7 @@ test("public contract is channel-neutral and says unknown query keys are ignored
   assert.match(contract, /utm_source=x.*utm_medium=paid-social/s)
   assert.match(contract, /unknown query keys are ignored/i)
   assert.match(contract, /pixels.*optional downstream adapters/i)
+  assert.match(contract, /keyed-HMAC pseudonym/i)
+  assert.match(contract, /internal and unknown identities are discarded/i)
   assert.doesNotMatch(contract, /Unknown keys.*rejected/i)
 })

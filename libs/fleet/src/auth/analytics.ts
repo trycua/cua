@@ -1,6 +1,9 @@
+import { bindStoredFleetAttribution, type AttributionBinder } from "./fleet-attribution"
+
 interface SessionStorageLike {
   getItem(key: string): string | null
   setItem(key: string, value: string): void
+  removeItem?(key: string): void
 }
 
 interface AnalyticsDependencies {
@@ -39,4 +42,28 @@ export async function recordFleetLogin(
     throw new Error(`Fleet login analytics request failed: ${response.status}`)
   }
   dependencies.storage.setItem(marker, "true")
+}
+
+export async function bindFleetAttribution(
+  dependencies: AnalyticsDependencies = defaultDependencies(),
+): Promise<void> {
+  const binder: AttributionBinder = {
+    bind: async (record, accessToken) => {
+      const response = await dependencies.fetch("/api/analytics/attribution", {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(record),
+      })
+      if (!response.ok) {
+        throw new Error(`Fleet attribution request failed: ${response.status}`)
+      }
+    },
+  }
+  await bindStoredFleetAttribution(binder, {
+    storage: dependencies.storage,
+    getAccessToken: dependencies.getToken,
+  })
 }

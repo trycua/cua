@@ -278,6 +278,7 @@ var surfacePolicies = map[string]surfacePolicy{
 var routeSurfaces = map[string]string{
 	"/api/config":                "config",
 	"/api/analytics/session":     "config",
+	"/api/analytics/attribution": "config",
 	"/api/state/query":           "state-query",
 	"/api/usage/overview":        "usage",
 	"/api/usage/pool":            "usage",

@@ -1,6 +1,6 @@
 # Fleet Attribution Phase 1
 
-This public contract defines a deliberately default-off qualification seam.
+This public contract defines bounded first-touch campaign binding and workload qualification.
 
 ## Browser capture
 
@@ -10,6 +10,8 @@ The five stable fields are acquisition-channel neutral. They can represent email
 
 ## Binding and qualification
 
-The binder accepts only a validated, unexpired record and is disabled when no binder is supplied. It has no production endpoint or analytics emitter. `QualifiesFleetAttribution` is a deterministic, side-effect-free predicate over explicit facts. Qualification requires authenticated namespace authorization, an exact SDK-provided claim matching a Bound claim with a sandbox identity, service exactly `<sandbox>-server`, an exact namespace pool, and a 2xx upstream response. Probe paths, redirects, upgrades, HEAD/OPTIONS, non-service routes, and Kubernetes/orchestration routes are excluded.
+After Keycloak authentication, the SPA submits the validated record to the authenticated `/api/analytics/attribution` endpoint. The backend repeats the version, size, age, key, and value checks and accepts only the Fleet SPA principal. Verified external identities emit `fleet_attribution_bound`; internal and unknown identities are discarded. PostHog receives the five fields only as set-once first-touch person properties under the keyed-HMAC pseudonym. The endpoint never accepts a URL, referrer, email, raw identity, arbitrary property, or provider payload, and attribution delivery cannot affect authentication or application readiness.
+
+`QualifiesFleetAttribution` is a deterministic, side-effect-free predicate over explicit facts. Qualification requires authenticated namespace authorization, an exact SDK-provided claim matching a Bound claim with a sandbox identity, service exactly `<sandbox>-server`, an exact namespace pool, and a 2xx upstream response. Probe paths, redirects, upgrades, HEAD/OPTIONS, non-service routes, and Kubernetes/orchestration routes are excluded.
 
 The SDK supplies correlation using the exact claim already present on `Sandbox` in the `X-Cua-Fleet-Claim` request header. No claim lookup, user identity, cohort, recipient, or timestamp inference is performed. `qualifies` is a qualification verdict only; it is not an activation claim or emission.

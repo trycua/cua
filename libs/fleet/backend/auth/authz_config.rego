@@ -22,3 +22,9 @@ allow {
 	input.route == "/api/analytics/session"
 	input.user.azp == "cyclops-cs-spa"
 }
+
+allow {
+	input.route == "/api/analytics/attribution"
+	input.method == "POST"
+	input.user.azp == "cyclops-cs-spa"
+}

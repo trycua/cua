@@ -89,6 +89,9 @@ func (client *Client) Capture(event Event) {
 	if event.Name == EventFleetActivation {
 		event.InsertID = "fleet-activation:" + pseudonym
 	}
+	if event.Name == EventAttributionBound {
+		event.InsertID = "fleet-attribution:" + pseudonym
+	}
 	copied := cloneEvent(event)
 	copied.Properties["environment"] = client.config.Environment
 	copied.Properties["instrumentation_version"] = Version

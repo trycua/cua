@@ -832,6 +832,7 @@ fn main() {
             direct,
             claude_code_compat,
             grants,
+            experimental_pip,
         } => {
             let startup_started = std::time::Instant::now();
             // Long-running MCP proxy — kick off the background update check
@@ -858,6 +859,7 @@ fn main() {
                     socket,
                     claude_code_compat,
                     &grants,
+                    experimental_pip,
                     |daemon, success| {
                         telemetry::capture_mcp_startup_completed(
                             "daemon_proxy",
@@ -1122,6 +1124,7 @@ fn main() -> anyhow::Result<()> {
             direct,
             claude_code_compat,
             grants,
+            experimental_pip,
         } => {
             let startup_started = std::time::Instant::now();
             // Long-running MCP proxy — kick off the background update check
@@ -1143,6 +1146,7 @@ fn main() -> anyhow::Result<()> {
                     socket,
                     claude_code_compat,
                     &grants,
+                    experimental_pip,
                     |daemon, success| {
                         telemetry::capture_mcp_startup_completed(
                             "daemon_proxy",

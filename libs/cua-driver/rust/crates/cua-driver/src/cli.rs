@@ -33,6 +33,9 @@ pub enum Command {
         /// Repeatable trusted launch grants for residual standard-mode
         /// boundaries, for example `--grant existing-profile`.
         grants: Vec<String>,
+        /// Forward the process-local experimental PiP request to a daemon
+        /// launched by the MCP proxy.
+        experimental_pip: bool,
     },
     ListTools,
     Describe(String),
@@ -475,6 +478,11 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
     }
 }
 
+fn experimental_pip_requested(args: &[String]) -> bool {
+    args.iter()
+        .any(|arg| arg == "--experimental-pip" || arg == "--pip")
+}
+
 /// Parse the first non-flag positional argument from argv to determine which
 /// subcommand to run.  Cursor-overlay flags are consumed by `CursorConfig`
 /// independently; we only care about the first non-`--` arg here.
@@ -711,6 +719,7 @@ pub fn parse_command() -> Command {
     let claude_code_compat = args
         .iter()
         .any(|a| a == "--claude-code-computer-use-compat");
+    let experimental_pip = experimental_pip_requested(&args);
 
     let mut pos = positionals.into_iter();
     match pos.next() {
@@ -741,6 +750,7 @@ pub fn parse_command() -> Command {
                 direct: args.iter().any(|a| a == "--direct"),
                 claude_code_compat,
                 grants: grants.clone(),
+                experimental_pip,
             }
         }
         Some("mcp") => Command::Mcp {
@@ -748,6 +758,7 @@ pub fn parse_command() -> Command {
             direct: args.iter().any(|a| a == "--direct"),
             claude_code_compat,
             grants: grants.clone(),
+            experimental_pip,
         },
         Some("list-tools") => Command::ListTools,
         Some("mcp-config") => Command::McpConfig { client: mcp_client },
@@ -1205,6 +1216,7 @@ pub fn launch_daemon_and_wait(
     claude_code_compat: bool,
     grants: &[String],
     experimental_history: bool,
+    experimental_pip: bool,
 ) -> Result<(), LaunchDaemonError> {
     let state = crate::history_runtime::DaemonLaunchState {
         claude_code_compat,
@@ -1216,6 +1228,7 @@ pub fn launch_daemon_and_wait(
         timeout_secs,
         &state,
         experimental_history,
+        experimental_pip,
         true,
     )
 }
@@ -1226,6 +1239,7 @@ fn launch_daemon_with_state_and_wait(
     timeout_secs: u64,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
+    experimental_pip: bool,
     _allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
     use std::process::{Command as Cmd, Stdio};
@@ -1241,7 +1255,13 @@ fn launch_daemon_with_state_and_wait(
     let app_name = crate::bundle::app_name();
     let app_path = crate::bundle::app_bundle_path();
     let pass_socket = socket_path != crate::serve::default_socket_path();
-    let open_args = daemon_launch_arguments(app_name, socket_path, state, experimental_history);
+    let open_args = daemon_launch_arguments(
+        app_name,
+        socket_path,
+        state,
+        experimental_history,
+        experimental_pip,
+    );
     // Thread the Claude-Code compat flag through to the daemon. Without this
     // the proxy-spawned daemon always called build_macos_registry() (compat
     // hardcoded false), so `cua-driver mcp --claude-code-computer-use-compat`
@@ -1313,6 +1333,7 @@ pub fn launch_daemon_and_wait(
     claude_code_compat: bool,
     grants: &[String],
     experimental_history: bool,
+    experimental_pip: bool,
 ) -> Result<(), LaunchDaemonError> {
     let state = crate::history_runtime::DaemonLaunchState {
         claude_code_compat,
@@ -1324,6 +1345,7 @@ pub fn launch_daemon_and_wait(
         timeout_secs,
         &state,
         experimental_history,
+        experimental_pip,
         true,
     )
 }
@@ -1334,6 +1356,7 @@ fn launch_daemon_with_state_and_wait(
     timeout_secs: u64,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
+    experimental_pip: bool,
     allow_managed_restart: bool,
 ) -> Result<(), LaunchDaemonError> {
     use std::time::{Duration, Instant};
@@ -1346,7 +1369,8 @@ fn launch_daemon_with_state_and_wait(
         && socket_path == crate::serve::default_socket_path()
         && restart_managed_daemon_if_present(&executable);
     if !managed {
-        let arguments = daemon_process_arguments(socket_path, state, experimental_history);
+        let arguments =
+            daemon_process_arguments(socket_path, state, experimental_history, experimental_pip);
         #[cfg(unix)]
         {
             use std::os::unix::process::CommandExt as _;
@@ -1484,12 +1508,13 @@ fn daemon_process_arguments(
     socket_path: &str,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
+    experimental_pip: bool,
 ) -> Vec<String> {
     let mut args = vec!["serve".to_owned()];
     if socket_path != crate::serve::default_socket_path() {
         args.extend(["--socket".to_owned(), socket_path.to_owned()]);
     }
-    append_daemon_launch_state(&mut args, state, experimental_history);
+    append_daemon_launch_state(&mut args, state, experimental_history, experimental_pip);
     args
 }
 
@@ -1541,6 +1566,7 @@ fn daemon_launch_arguments(
     socket_path: &str,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
+    experimental_pip: bool,
 ) -> Vec<String> {
     let mut args = vec![
         "-n".to_owned(),
@@ -1553,7 +1579,7 @@ fn daemon_launch_arguments(
     if socket_path != crate::serve::default_socket_path() {
         args.extend(["--socket".to_owned(), socket_path.to_owned()]);
     }
-    append_daemon_launch_state(&mut args, state, experimental_history);
+    append_daemon_launch_state(&mut args, state, experimental_history, experimental_pip);
     args
 }
 
@@ -1561,6 +1587,7 @@ fn append_daemon_launch_state(
     args: &mut Vec<String>,
     state: &crate::history_runtime::DaemonLaunchState,
     experimental_history: bool,
+    experimental_pip: bool,
 ) {
     if let Some(mode) = &state.permission_mode {
         args.extend(["--permission-mode".to_owned(), mode.clone()]);
@@ -1582,6 +1609,9 @@ fn append_daemon_launch_state(
     }
     if experimental_history {
         args.push("--experimental-history".to_owned());
+    }
+    if experimental_pip {
+        args.push("--experimental-pip".to_owned());
     }
     for grant in &state.grants {
         args.extend(["--grant".to_owned(), grant.clone()]);
@@ -1620,6 +1650,7 @@ pub fn run_mcp_via_daemon_proxy<F>(
     socket: Option<String>,
     claude_code_compat: bool,
     grants: &[String],
+    experimental_pip: bool,
     on_startup: F,
 ) -> anyhow::Result<()>
 where
@@ -1662,9 +1693,14 @@ where
             } else {
                 String::new()
             };
+            let pip_suffix = if experimental_pip {
+                " --experimental-pip"
+            } else {
+                ""
+            };
             eprintln!(
                 "{}: mcp launched without {app_name}.app's TCC grants; \
-                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}` \
+                 auto-launching the daemon via `open -n -g -a {app_name} --args serve{socket_suffix}{pip_suffix}` \
                  and proxying MCP requests through it.",
                 crate::bundle::cli_name()
             );
@@ -1674,6 +1710,7 @@ where
                 claude_code_compat,
                 grants,
                 crate::history_runtime::preview_admitted_preference(),
+                experimental_pip,
             ) {
                 if let Some(on_startup) = on_startup.take() {
                     on_startup(
@@ -1703,9 +1740,14 @@ where
                      Then re-run `cua-driver mcp`."
                 );
             }
-            if let Err(error) =
-                launch_daemon_and_wait(&socket_path, 10, claude_code_compat, grants, true)
-            {
+            if let Err(error) = launch_daemon_and_wait(
+                &socket_path,
+                10,
+                claude_code_compat,
+                grants,
+                true,
+                experimental_pip,
+            ) {
                 if let Some(on_startup) = on_startup.take() {
                     on_startup(
                         if error.kind == LaunchDaemonErrorKind::Timeout {
@@ -2500,6 +2542,7 @@ pub fn run_history_cmd(
                 &prior_daemon_state,
                 true,
                 false,
+                false,
             ) {
                 rollback_history_preview(
                     &socket_path,
@@ -2645,8 +2688,14 @@ fn rollback_history_preview(
         crate::history_runtime::set_preview_admitted_preference(prior_preview_admitted_preference);
     let _ = stop_history_daemon(socket_path);
     if prior_daemon_was_running && !crate::serve::is_daemon_listening(socket_path) {
-        let _ =
-            launch_daemon_with_state_and_wait(socket_path, 15, prior_daemon_state, false, false);
+        let _ = launch_daemon_with_state_and_wait(
+            socket_path,
+            15,
+            prior_daemon_state,
+            false,
+            false,
+            false,
+        );
     }
 }
 
@@ -3564,6 +3613,7 @@ fn run_permissions_grant() {
                 false,
                 &[],
                 crate::history_runtime::preview_admitted_preference(),
+                false,
             ) {
                 eprintln!("\nDidn't detect the {app_name} daemon: {e}");
                 eprintln!(
@@ -4738,9 +4788,10 @@ mod tests {
             grants,
         };
         #[cfg(target_os = "macos")]
-        let launch = daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true);
+        let launch =
+            daemon_launch_arguments("CuaDriver", "/tmp/history-test.sock", &state, true, false);
         #[cfg(not(target_os = "macos"))]
-        let launch = daemon_process_arguments("history-test.sock", &state, true);
+        let launch = daemon_process_arguments("history-test.sock", &state, true, false);
         assert!(launch
             .windows(2)
             .any(|pair| pair == ["--permission-mode", "bounded"]));
@@ -4771,11 +4822,44 @@ mod tests {
             ..Default::default()
         };
         let mut launch = vec!["serve".to_owned()];
-        append_daemon_launch_state(&mut launch, &state, true);
+        append_daemon_launch_state(&mut launch, &state, true, false);
         assert!(launch
             .windows(2)
             .any(|pair| { pair == ["--permission-mode", "unrestricted"] }));
         assert!(launch.contains(&"--dangerously-bypass-approvals".to_owned()));
+    }
+
+    #[test]
+    fn fresh_daemon_launch_forwards_only_an_explicit_pip_request() {
+        let state = crate::history_runtime::DaemonLaunchState::default();
+        #[cfg(target_os = "macos")]
+        let enabled =
+            daemon_launch_arguments("CuaDriver", "/tmp/pip-test.sock", &state, false, true);
+        #[cfg(not(target_os = "macos"))]
+        let enabled = daemon_process_arguments("pip-test.sock", &state, false, true);
+        assert!(enabled.contains(&"--experimental-pip".to_owned()));
+
+        #[cfg(target_os = "macos")]
+        let disabled =
+            daemon_launch_arguments("CuaDriver", "/tmp/pip-test.sock", &state, false, false);
+        #[cfg(not(target_os = "macos"))]
+        let disabled = daemon_process_arguments("pip-test.sock", &state, false, false);
+        assert!(!disabled.contains(&"--experimental-pip".to_owned()));
+    }
+
+    #[test]
+    fn pip_request_parser_accepts_only_the_two_explicit_flags() {
+        assert!(experimental_pip_requested(&args(&[
+            "mcp",
+            "--experimental-pip"
+        ])));
+        assert!(experimental_pip_requested(&args(&["--pip", "mcp"])));
+        assert!(!experimental_pip_requested(&args(&["mcp"])));
+        assert!(!experimental_pip_requested(&args(&[
+            "mcp",
+            "--experimental-pip-geometry",
+            "480x360"
+        ])));
     }
 
     #[test]

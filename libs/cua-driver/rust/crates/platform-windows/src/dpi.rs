@@ -16,7 +16,8 @@ use windows::Win32::UI::HiDpi::{
 };
 
 /// Sticky failure state shared by every thread in one embedded executor.
-/// A late thread failure poisons that executor, not another SDK/host runtime.
+/// All SDK handles using that executor share its failure state; unrelated host
+/// runtimes and independently-started owned threads do not.
 pub struct OwnedThreadDpi {
     failure: Mutex<Option<String>>,
     initialize: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
@@ -70,9 +71,12 @@ impl OwnedThreadDpi {
     }
 }
 
-/// Carry the owner into explicitly-created Windows threads (UIA, package
-/// enumeration, overlay). Those threads are not covered by Tokio's callback.
-/// The caller/host thread's context is never changed.
+/// Initialize explicitly-created Windows threads outside Tokio's callback.
+/// Inherit an owner when the submitting thread has one (e.g. UIA work inside
+/// the ABI executor). Otherwise create an independent owner: registry creation
+/// can start the overlay synchronously on a host thread before entering the
+/// executor. That overlay uses the same initializer, not the executor's sticky
+/// failure state. The caller/host thread's DPI context is never changed.
 pub fn owned_thread<F, T>(work: F) -> impl FnOnce() -> Result<T, String> + Send + 'static
 where
     F: FnOnce() -> T + Send + 'static,
@@ -168,5 +172,57 @@ pub fn current_thread_uses_per_monitor_v2() -> bool {
             DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
         )
         .as_bool()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn current_owner() -> Arc<OwnedThreadDpi> {
+        OWNED_THREAD_DPI.with(|slot| slot.borrow().clone().expect("owned thread"))
+    }
+
+    #[test]
+    fn host_started_threads_have_independent_owners_without_changing_host_dpi() {
+        // A fresh OS thread models the synchronous host-side registry builder,
+        // not an ABI worker. It must not acquire an executor owner implicitly.
+        std::thread::spawn(|| {
+            assert!(OWNED_THREAD_DPI.with(|slot| slot.borrow().is_none()));
+            let host_dpi = unsafe { GetThreadDpiAwarenessContext() };
+            let start = || {
+                std::thread::spawn(owned_thread(|| {
+                    assert!(current_thread_uses_per_monitor_v2());
+                    current_owner()
+                }))
+                .join()
+                .unwrap()
+                .unwrap()
+            };
+            let first = start();
+            let second = start();
+            assert!(!Arc::ptr_eq(&first, &second));
+            assert!(OWNED_THREAD_DPI.with(|slot| slot.borrow().is_none()));
+            assert!(unsafe {
+                AreDpiAwarenessContextsEqual(host_dpi, GetThreadDpiAwarenessContext()).as_bool()
+            });
+        })
+        .join()
+        .unwrap();
+    }
+
+    #[test]
+    fn owned_thread_inherits_the_submitting_threads_owner() {
+        std::thread::spawn(owned_thread(|| {
+            let parent = current_owner();
+            let child = std::thread::spawn(owned_thread(current_owner))
+                .join()
+                .unwrap()
+                .unwrap();
+            assert!(Arc::ptr_eq(&parent, &child));
+        }))
+        .join()
+        .unwrap()
+        .unwrap();
     }
 }

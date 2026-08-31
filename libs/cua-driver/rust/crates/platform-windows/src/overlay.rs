@@ -527,6 +527,8 @@ pub fn run_on_thread() {
 
     let work = move || run_overlay_thread(cfg, rx);
     #[cfg(target_os = "windows")]
+    // Registry construction can run on the host thread. In that case this
+    // starts an independent owner, not the ABI executor's shared failure state.
     let work = crate::dpi::owned_thread(work);
     std::thread::Builder::new()
         .name("cua-overlay-win".into())

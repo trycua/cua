@@ -329,17 +329,34 @@ fn current_bundle_identifier() -> Option<String> {
     }
 }
 
-/// `sw_vers -productVersion` — e.g. "14.5". Used in the
+/// The macOS product version — e.g. "14.5". Used in the
 /// `platform_supported` message; failure falls back to "unknown".
+///
+/// Read in-process from the `kern.osproductversion` sysctl. The previous
+/// implementation spawned `/usr/bin/sw_vers` — a full fork/exec (several
+/// ms) on every health_report call — to read the same value.
 fn sw_vers_product_version() -> Option<String> {
-    let output = std::process::Command::new("/usr/bin/sw_vers")
-        .arg("-productVersion")
-        .output()
-        .ok()?;
-    if !output.status.success() {
+    let name = std::ffi::CString::new("kern.osproductversion").ok()?;
+    let mut buf = [0u8; 64];
+    let mut len = buf.len();
+    // SAFETY: name is a valid NUL-terminated C string, buf/len describe a
+    // real writable buffer, and sysctlbyname writes at most `len` bytes.
+    let rc = unsafe {
+        libc::sysctlbyname(
+            name.as_ptr(),
+            buf.as_mut_ptr().cast(),
+            &mut len,
+            std::ptr::null_mut(),
+            0,
+        )
+    };
+    if rc != 0 || len == 0 {
         return None;
     }
-    let v = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    // `len` includes the trailing NUL when present.
+    let bytes = &buf[..len];
+    let end = bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+    let v = std::str::from_utf8(&bytes[..end]).ok()?.trim().to_owned();
     if v.is_empty() {
         None
     } else {
@@ -525,5 +542,22 @@ mod tests {
         // Every documented macOS check appears, in declared order.
         let expected: Vec<&str> = MACOS_CHECK_NAMES.to_vec();
         assert_eq!(names, expected);
+    }
+
+    /// The in-process sysctl read must report exactly what `sw_vers`
+    /// reports — it replaced a per-call fork/exec of that binary.
+    #[test]
+    fn product_version_matches_sw_vers() {
+        let ours = sw_vers_product_version().expect("kern.osproductversion should be readable");
+        assert!(
+            ours.chars().all(|c| c.is_ascii_digit() || c == '.'),
+            "{ours:?}"
+        );
+        let output = std::process::Command::new("/usr/bin/sw_vers")
+            .arg("-productVersion")
+            .output()
+            .expect("sw_vers should run on a macOS test host");
+        let reference = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        assert_eq!(ours, reference);
     }
 }

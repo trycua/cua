@@ -435,14 +435,22 @@ impl Tool for HealthReportTool {
 
         // Every canonical check appears in the output, even if filtered
         // out — consumers get a complete map of what was considered.
-        let mut checks: Vec<CheckEntry> = Vec::with_capacity(all.len());
-        for name in all {
-            if !to_run.contains(*name) {
-                checks.push(CheckEntry::skip(*name, "Skipped by include/skip filter."));
-                continue;
-            }
-            checks.push(self.provider.run_check(name).await);
-        }
+        //
+        // Checks run concurrently: each is an independent probe, and the
+        // sequential version paid the sum of their latencies (the slowest
+        // probes dominate a full report). `join_all` polls every future
+        // within this one task — no extra threads, no new Send/Sync
+        // requirements on the provider — and returns results in input
+        // order, so the report keeps its canonical check order.
+        let checks: Vec<CheckEntry> =
+            futures_util::future::join_all(all.iter().map(|name| async {
+                if !to_run.contains(*name) {
+                    CheckEntry::skip(*name, "Skipped by include/skip filter.")
+                } else {
+                    self.provider.run_check(name).await
+                }
+            }))
+            .await;
 
         let report = Report {
             schema_version: "1".to_owned(),

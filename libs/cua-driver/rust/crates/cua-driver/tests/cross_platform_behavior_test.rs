@@ -656,12 +656,25 @@ fn action_target_args(
         let (x, y) = element_center(state, index);
         let local_x = (x - origin.0) * scale;
         let local_y = (y - origin.1) * scale;
-        let width = state.structured()["screenshot_width"]
-            .as_f64()
-            .expect("PX action requires screenshot_width");
-        let height = state.structured()["screenshot_height"]
-            .as_f64()
-            .expect("PX action requires screenshot_height");
+        let width = state.structured()["screenshot_width"].as_f64();
+        let height = state.structured()["screenshot_height"].as_f64();
+        if width.is_none() || height.is_none() {
+            // Native Wayland may intentionally omit a per-window crop size.
+            // Background pixel rows are typed refusals in that environment;
+            // use inert coordinates so the driver can publish that refusal
+            // without requiring an unverifiable screenshot oracle.
+            if delivery == "background"
+                && cua_driver_testkit::e2e::DisplayServer::current()
+                    == cua_driver_testkit::e2e::DisplayServer::Wayland
+            {
+                object.insert("x".to_owned(), serde_json::json!(0.0));
+                object.insert("y".to_owned(), serde_json::json!(0.0));
+                return args;
+            }
+            panic!("PX action requires screenshot dimensions for {delivery} delivery");
+        }
+        let width = width.unwrap();
+        let height = height.unwrap();
         eprintln!(
             "[shared-px] {} target={id} screen=({x:.1},{y:.1}) origin=({:.1},{:.1}) scale={scale:.3} local=({local_x:.1},{local_y:.1}) capture=({width:.1}x{height:.1})",
             fixture.name, origin.0, origin.1
@@ -1232,6 +1245,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             ("type_text" | "type_submit", _)
             | ("editor_save", Targeting::Ax)
             | ("press_key" | "hotkey", _) => {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
+            ("left_click" | "child_window", Targeting::Px)
+                if cua_driver_testkit::e2e::DisplayServer::current()
+                    == cua_driver_testkit::e2e::DisplayServer::Wayland
+                    && !linux_real_pointer_input_available() =>
+            {
                 vec![RefusalCode::BackgroundUnavailable]
             }
             ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)

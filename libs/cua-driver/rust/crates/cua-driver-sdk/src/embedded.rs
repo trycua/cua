@@ -834,6 +834,9 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "WAYLAND_DISPLAY"
                 | "XDG_RUNTIME_DIR"
                 | "XDG_SESSION_TYPE"
+                | "XDG_CURRENT_DESKTOP"
+                | "HYPRLAND_INSTANCE_SIGNATURE"
+                | "CUA_DRIVER_RS_ENABLE_WAYLAND"
                 | "DBUS_SESSION_BUS_ADDRESS"
                 | "XAUTHORITY"
                 | "CUA_LOG"
@@ -1153,6 +1156,9 @@ mod tests {
     fn environment_is_allowlisted_and_driver_controls_are_reserved() {
         assert!(allowed_environment_name("PATH"));
         assert!(allowed_environment_name("WAYLAND_DISPLAY"));
+        assert!(allowed_environment_name("XDG_CURRENT_DESKTOP"));
+        assert!(allowed_environment_name("HYPRLAND_INSTANCE_SIGNATURE"));
+        assert!(allowed_environment_name("CUA_DRIVER_RS_ENABLE_WAYLAND"));
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
@@ -1200,6 +1206,12 @@ mod tests {
                 ("WAYLAND_DISPLAY".into(), "wayland-7".into()),
                 ("XDG_RUNTIME_DIR".into(), "/run/user/1000".into()),
                 ("XDG_SESSION_TYPE".into(), "wayland".into()),
+                ("XDG_CURRENT_DESKTOP".into(), "Hyprland".into()),
+                (
+                    "HYPRLAND_INSTANCE_SIGNATURE".into(),
+                    "fixture-signature".into(),
+                ),
+                ("CUA_DRIVER_RS_ENABLE_WAYLAND".into(), "1".into()),
                 (
                     "DBUS_SESSION_BUS_ADDRESS".into(),
                     "unix:path=/run/user/1000/bus".into(),
@@ -1213,6 +1225,9 @@ mod tests {
             ("WAYLAND_DISPLAY", "wayland-7"),
             ("XDG_RUNTIME_DIR", "/run/user/1000"),
             ("XDG_SESSION_TYPE", "wayland"),
+            ("XDG_CURRENT_DESKTOP", "Hyprland"),
+            ("HYPRLAND_INSTANCE_SIGNATURE", "fixture-signature"),
+            ("CUA_DRIVER_RS_ENABLE_WAYLAND", "1"),
             ("DBUS_SESSION_BUS_ADDRESS", "unix:path=/run/user/1000/bus"),
         ] {
             assert!(values

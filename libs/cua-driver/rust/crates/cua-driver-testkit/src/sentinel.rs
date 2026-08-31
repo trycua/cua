@@ -5,9 +5,20 @@ use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::e2e::OracleKind;
+use crate::e2e::{native_cursor_oracle_required, OracleKind};
 use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
 use crate::{harness_app, spawn_in_job, BehaviorRecording, ChildReaper, Driver};
+
+fn cursor_canary_target((x, y): (f64, f64)) -> (f64, f64) {
+    let offset = |value: f64| {
+        if value >= 16.0 {
+            value - 16.0
+        } else {
+            value + 16.0
+        }
+    };
+    (offset(x), offset(y))
+}
 
 /// A foreground Electron window that journals focus and leaked input while it
 /// fully occludes the background target.
@@ -104,6 +115,11 @@ impl ForegroundSentinel {
             std::thread::sleep(Duration::from_millis(100));
         };
         reaper.track_pid(target.pid);
+
+        #[cfg(target_os = "linux")]
+        if wayland_e2e_session_is("hyprland") {
+            prepare_hyprland_sentinel(target)?;
+        }
 
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
@@ -211,6 +227,11 @@ impl ForegroundSentinel {
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
 
+        #[cfg(target_os = "linux")]
+        if wayland_e2e_session_is("hyprland") {
+            self.assert_cursor_guard_canary(driver, background_target)?;
+        }
+
         let canary_key = if std::env::var("CUA_E2E_WAYLAND_SESSION")
             .is_ok_and(|session| session == "cua-compositor")
         {
@@ -249,7 +270,7 @@ impl ForegroundSentinel {
         reset_journal(&self.journal_path)?;
 
         #[cfg(target_os = "linux")]
-        set_sway_fullscreen(driver, self.target, false)?;
+        set_wayland_fullscreen(driver, self.target, false)?;
         let raised = driver.call(
             "bring_to_front",
             serde_json::json!({
@@ -264,7 +285,7 @@ impl ForegroundSentinel {
             ));
         }
         #[cfg(target_os = "linux")]
-        focus_sway_target(driver, background_target)?;
+        focus_wayland_target(driver, background_target)?;
         if is_wayland_session() {
             wait_for_native_focus_lost(self.target)?;
         } else {
@@ -282,13 +303,105 @@ impl ForegroundSentinel {
 
         activate_native_foreground(driver, self.target);
         #[cfg(target_os = "linux")]
-        set_sway_fullscreen(driver, self.target, true)?;
+        set_wayland_fullscreen(driver, self.target, true)?;
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(150));
         reset_journal(&self.journal_path)?;
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
         self.assert_background_posture(background_target)
+    }
+
+    fn assert_cursor_guard_canary(
+        &self,
+        driver: &mut impl Driver,
+        background_target: TargetWindow,
+    ) -> Result<(), String> {
+        let observer = DesktopObserver::new(NativeObserver::new(), background_target);
+        let before = observer.snapshot().map_err(|error| error.to_string())?;
+        let read_only = observer.snapshot().map_err(|error| error.to_string())?;
+        if before.foreground != read_only.foreground
+            || before.input_focus != read_only.input_focus
+            || before.target_z != read_only.target_z
+        {
+            return Err(format!(
+                "Hyprland cursor query changed desktop posture: {before:?} -> {read_only:?}"
+            ));
+        }
+        let original = before
+            .cursor_pos
+            .ok_or_else(|| "Hyprland cursor observer returned no position".to_owned())?;
+        let target = cursor_canary_target(original);
+
+        let moved_response = driver.call(
+            "move_cursor",
+            serde_json::json!({
+                "x": target.0,
+                "y": target.1,
+                "scope": "desktop",
+            }),
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        let moved = observer.snapshot().map_err(|error| error.to_string());
+
+        // Always attempt restoration, including when the move or observation
+        // failed, so a preflight failure does not strand the user's cursor.
+        let restored_response = driver.call(
+            "move_cursor",
+            serde_json::json!({
+                "x": original.0,
+                "y": original.1,
+                "scope": "desktop",
+            }),
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        let restored = observer.snapshot().map_err(|error| error.to_string());
+
+        if moved_response.is_error() {
+            return Err(format!(
+                "Hyprland cursor canary could not move the cursor: {}",
+                moved_response.text()
+            ));
+        }
+        if restored_response.is_error() {
+            return Err(format!(
+                "Hyprland cursor canary could not restore the cursor: {}",
+                restored_response.text()
+            ));
+        }
+        let moved = moved?;
+        let restored = restored?;
+        let moved_position = moved
+            .cursor_pos
+            .ok_or_else(|| "Hyprland cursor observer lost the moved position".to_owned())?;
+        let restored_position = restored
+            .cursor_pos
+            .ok_or_else(|| "Hyprland cursor observer lost the restored position".to_owned())?;
+        if (original.0 - moved_position.0).abs() <= 1.0
+            && (original.1 - moved_position.1).abs() <= 1.0
+        {
+            return Err(format!(
+                "Hyprland cursor canary was not detected: {original:?} -> {moved_position:?}"
+            ));
+        }
+        if (original.0 - restored_position.0).abs() > 1.0
+            || (original.1 - restored_position.1).abs() > 1.0
+        {
+            return Err(format!(
+                "Hyprland cursor canary was not restored: {original:?} -> {restored_position:?}"
+            ));
+        }
+        for (stage, snapshot) in [("move", &moved), ("restore", &restored)] {
+            if before.foreground != snapshot.foreground
+                || before.input_focus != snapshot.input_focus
+                || before.target_z != snapshot.target_z
+            {
+                return Err(format!(
+                    "Hyprland cursor canary changed desktop posture during {stage}: {before:?} -> {snapshot:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn target(&self) -> TargetWindow {
@@ -378,10 +491,7 @@ impl ForegroundSentinel {
             ));
         }
         let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
-        if std::env::var("XDG_SESSION_TYPE")
-            .map(|session| !session.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(true)
-        {
+        if native_cursor_oracle_required() {
             native_oracles.push(OracleKind::Cursor);
         }
         let (result, delta) = observer
@@ -491,8 +601,8 @@ fn try_activate_native_foreground(
         return Err(response.text().to_owned());
     }
     #[cfg(target_os = "linux")]
-    focus_sway_target(driver, target).map_err(|error| {
-        format!("could not focus foreground sentinel through Sway IPC: {error}")
+    focus_wayland_target(driver, target).map_err(|error| {
+        format!("could not focus foreground sentinel through compositor IPC: {error}")
     })?;
     #[cfg(target_os = "windows")]
     physically_focus_windows_sentinel(target);
@@ -530,41 +640,145 @@ fn focus_macos_sentinel_contents(
 }
 
 #[cfg(target_os = "linux")]
-fn focus_sway_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {
-    let is_sway = is_wayland_session()
-        && std::env::var("CUA_E2E_WAYLAND_SESSION").is_ok_and(|session| session == "sway");
-    if !is_sway {
-        return Ok(());
-    }
-
-    let (_, con_id) = sway_tree_and_container_for_target(driver, target)?;
-    run_sway_container_command(con_id, &["focus"], "focus canary")
+fn wayland_e2e_session_is(expected: &str) -> bool {
+    is_wayland_session()
+        && std::env::var("CUA_E2E_WAYLAND_SESSION")
+            .is_ok_and(|session| session.eq_ignore_ascii_case(expected))
 }
 
 #[cfg(target_os = "linux")]
-fn set_sway_fullscreen(
+fn focus_wayland_target(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {
+    if wayland_e2e_session_is("sway") {
+        let (_, con_id) = sway_tree_and_container_for_target(driver, target)?;
+        run_sway_container_command(con_id, &["focus"], "focus canary")
+    } else if wayland_e2e_session_is("hyprland") {
+        focus_hyprland_target(target)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn set_wayland_fullscreen(
     driver: &mut impl Driver,
     target: TargetWindow,
     enabled: bool,
 ) -> Result<(), String> {
-    let is_sway = is_wayland_session()
-        && std::env::var("CUA_E2E_WAYLAND_SESSION").is_ok_and(|session| session == "sway");
-    if !is_sway {
+    if wayland_e2e_session_is("sway") {
+        let (tree, view_id) = sway_tree_and_container_for_target(driver, target)?;
+        let con_id = if enabled {
+            view_id
+        } else {
+            sway_fullscreen_holder_id(&tree, view_id).unwrap_or(view_id)
+        };
+        let state = if enabled { "enable" } else { "disable" };
+        run_sway_container_command(con_id, &["fullscreen", state], "fullscreen canary")?;
+        if !enabled {
+            wait_for_sway_fullscreen_cleared(view_id)?;
+        }
+        Ok(())
+    } else if wayland_e2e_session_is("hyprland") {
+        set_hyprland_fullscreen(target, enabled)
+    } else {
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn focus_hyprland_target(target: TargetWindow) -> Result<(), String> {
+    let address = crate::observer::linux::hyprland_client_address(target.pid)
+        .map_err(|error| error.to_string())?;
+    run_hyprland_dispatch("focuswindow", &format!("address:{address}"))
+}
+
+#[cfg(target_os = "linux")]
+fn prepare_hyprland_sentinel(target: TargetWindow) -> Result<(), String> {
+    let address = crate::observer::linux::hyprland_client_address(target.pid)
+        .map_err(|error| error.to_string())?;
+    // Keep the long-lived oracle window out of Hyprland's tiling tree. If it
+    // consumes half the output, otherwise-correct fixture controls below that
+    // reduced viewport are unmapped and cannot provide representative PX
+    // evidence. Fullscreen canaries still temporarily expand this surface.
+    // User rules may initially fullscreen Electron, so clear that state before
+    // asking Hyprland to resize the floating sentinel.
+    set_hyprland_fullscreen(target, false)?;
+    run_hyprland_dispatch("setfloating", &format!("address:{address}"))?;
+    run_hyprland_dispatch(
+        "resizewindowpixel",
+        &format!("exact 960 720,address:{address}"),
+    )?;
+    set_hyprland_fullscreen(target, true)
+}
+
+#[cfg(target_os = "linux")]
+fn hyprland_fullscreen_state(address: &str) -> Result<bool, String> {
+    let output = Command::new("hyprctl")
+        .args(["-j", "clients"])
+        .output()
+        .map_err(|error| format!("read Hyprland clients for fullscreen canary: {error}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "read Hyprland clients for fullscreen canary: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+    let clients: serde_json::Value = serde_json::from_slice(&output.stdout)
+        .map_err(|error| format!("parse Hyprland clients for fullscreen canary: {error}"))?;
+    clients
+        .as_array()
+        .and_then(|clients| {
+            clients.iter().find(|client| {
+                client["address"]
+                    .as_str()
+                    .is_some_and(|candidate| candidate.eq_ignore_ascii_case(address))
+            })
+        })
+        .and_then(|client| client["fullscreen"].as_i64())
+        .map(|state| state != 0)
+        .ok_or_else(|| format!("Hyprland fullscreen canary lost client {address}"))
+}
+
+#[cfg(target_os = "linux")]
+fn set_hyprland_fullscreen(target: TargetWindow, enabled: bool) -> Result<(), String> {
+    let address = crate::observer::linux::hyprland_client_address(target.pid)
+        .map_err(|error| error.to_string())?;
+    run_hyprland_dispatch("focuswindow", &format!("address:{address}"))?;
+    if hyprland_fullscreen_state(&address)? == enabled {
         return Ok(());
     }
-
-    let (tree, view_id) = sway_tree_and_container_for_target(driver, target)?;
-    let con_id = if enabled {
-        view_id
-    } else {
-        sway_fullscreen_holder_id(&tree, view_id).unwrap_or(view_id)
-    };
-    let state = if enabled { "enable" } else { "disable" };
-    run_sway_container_command(con_id, &["fullscreen", state], "fullscreen canary")?;
-    if !enabled {
-        wait_for_sway_fullscreen_cleared(view_id)?;
+    // Hyprland's `fullscreen 0` dispatcher toggles the focused client's
+    // compositor fullscreen state. Read before and after so this helper has
+    // set semantics rather than accidentally toggling an already-correct state.
+    run_hyprland_dispatch("fullscreen", "0")?;
+    let deadline = Instant::now() + Duration::from_secs(1);
+    loop {
+        if hyprland_fullscreen_state(&address)? == enabled {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "Hyprland fullscreen canary did not reach enabled={enabled} for {address}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(25));
     }
-    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn run_hyprland_dispatch(dispatcher: &str, argument: &str) -> Result<(), String> {
+    let output = Command::new("hyprctl")
+        .args(["dispatch", dispatcher, argument])
+        .output()
+        .map_err(|error| format!("run Hyprland {dispatcher} {argument}: {error}"))?;
+    if output.status.success() && String::from_utf8_lossy(&output.stdout).trim() == "ok" {
+        Ok(())
+    } else {
+        Err(format!(
+            "Hyprland {dispatcher} {argument} failed: stdout={} stderr={}",
+            String::from_utf8_lossy(&output.stdout).trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -794,6 +1008,17 @@ fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
                 .find_map(|child| sway_container_id(child, title))
         })
     })
+}
+
+#[cfg(test)]
+mod cursor_canary_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_canary_target_moves_a_detectable_distance_without_crossing_zero() {
+        assert_eq!(cursor_canary_target((100.0, 80.0)), (84.0, 64.0));
+        assert_eq!(cursor_canary_target((4.0, 0.0)), (20.0, 16.0));
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

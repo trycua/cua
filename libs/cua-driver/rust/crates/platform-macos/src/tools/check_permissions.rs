@@ -7,7 +7,7 @@ use serde_json::Value;
 use std::{future::Future, path::Path, sync::Arc, time::Duration};
 
 use super::ToolState;
-use crate::permission_observation::DirectCaptureEvidenceStore;
+use crate::permission_observation::{DirectCaptureEvidenceStore, DirectCaptureVerification};
 use crate::permissions::status::{
     accessibility_granted, request_accessibility, request_screen_recording,
     screen_recording_granted,
@@ -171,33 +171,44 @@ fn should_prompt_permissions(requested: bool, host_owns_permission_ux: bool) -> 
     requested && !cua_driver_core::embedded_mode() && !host_owns_permission_ux
 }
 
-fn update_direct_capture_evidence(
+fn resolve_direct_capture_verification(
     store: Option<&DirectCaptureEvidenceStore>,
     probe: Option<DirectCaptureProbeResult>,
-) -> Option<Value> {
-    let probe = probe?;
-    let Some(store) = store else {
-        return (probe == DirectCaptureProbeResult::Ready).then(|| {
-            serde_json::json!({
-                "code": "direct_capture_verification_store_unavailable",
-                "message": "the installed product identity or user home directory is unavailable",
+) -> Result<Option<DirectCaptureVerification>, Value> {
+    match probe {
+        None => Ok(store.and_then(DirectCaptureEvidenceStore::load)),
+        Some(DirectCaptureProbeResult::Ready) => {
+            let Some(store) = store else {
+                return Err(serde_json::json!({
+                    "code": "direct_capture_verification_store_unavailable",
+                    "message": "the installed product identity or user home directory is unavailable",
+                }));
+            };
+            store.record_now().map(Some).map_err(|error| {
+                let message = match store.clear() {
+                    Ok(()) => error,
+                    Err(clear_error) => {
+                        format!("{error}; clear prior direct-capture verification: {clear_error}")
+                    }
+                };
+                serde_json::json!({
+                    "code": "direct_capture_verification_store_failed",
+                    "message": message,
+                })
             })
-        });
-    };
-    let result = if probe == DirectCaptureProbeResult::Ready {
-        store.record_now().map(|_| ())
-    } else {
-        store.clear()
-    };
-    result.err().map(|error| {
-        if probe == DirectCaptureProbeResult::Ready {
-            let _ = store.clear();
         }
-        serde_json::json!({
-            "code": "direct_capture_verification_store_failed",
-            "message": error,
-        })
-    })
+        Some(_) => {
+            let Some(store) = store else {
+                return Ok(None);
+            };
+            store.clear().map(|()| None).map_err(|error| {
+                serde_json::json!({
+                    "code": "direct_capture_verification_store_failed",
+                    "message": error,
+                })
+            })
+        }
+    }
 }
 
 /// (B) Which TCC identity the booleans in this response reflect.
@@ -404,9 +415,12 @@ impl Tool for CheckPermissionsTool {
             self.state.host_bundle_id.as_deref(),
         );
         let evidence_store = current_direct_capture_evidence_store(&source);
-        let direct_capture_verification_error =
-            update_direct_capture_evidence(evidence_store.as_ref(), direct_capture_probe);
-        let direct_capture_verification = evidence_store.and_then(|store| store.load());
+        let (direct_capture_verification, direct_capture_verification_error) =
+            match resolve_direct_capture_verification(evidence_store.as_ref(), direct_capture_probe)
+            {
+                Ok(verification) => (verification, None),
+                Err(error) => (None, Some(error)),
+            };
         let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
 
         // Text format mirrors Swift 1:1:
@@ -427,7 +441,9 @@ impl Tool for CheckPermissionsTool {
             "{ax_prefix} Accessibility: {ax_state}.\n{sr_prefix} Screen Recording: {sr_state}."
         );
         // Flag a preflight/probe disagreement (the false-positive tell).
-        if screen_recording_capturable == Some(false) {
+        if direct_capture_verification_error.is_some() {
+            summary.push_str("\n⚠️  Direct-capture verification evidence could not be updated.");
+        } else if screen_recording_capturable == Some(false) {
             summary.push_str(
                 "\n⚠️  Screen Recording reads granted but a live capture probe failed — \
                  the grant likely belongs to a different process, not this one.",
@@ -441,10 +457,6 @@ impl Tool for CheckPermissionsTool {
             summary.push_str(
                 "\n⚠️  The direct ScreenCaptureKit readiness probe failed; see \
                  direct_capture_error for the bounded failure code.",
-            );
-        } else if direct_capture_verification_error.is_some() {
-            summary.push_str(
-                "\n⚠️  Direct capture worked, but its verification evidence could not be stored.",
             );
         } else if screen_recording_capturable.is_none() && (!should_prompt || !probe_direct_capture)
         {
@@ -572,7 +584,7 @@ mod tests {
     }
 
     #[test]
-    fn explicit_probe_updates_evidence_in_the_permission_service() {
+    fn explicit_probe_resolves_one_evidence_transition() {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
         let store = direct_capture_evidence_store_for_identity(
@@ -582,24 +594,61 @@ mod tests {
         )
         .expect("release store");
 
+        assert!(resolve_direct_capture_verification(
+            Some(&store),
+            Some(DirectCaptureProbeResult::Ready)
+        )
+        .expect("record evidence")
+        .is_some());
+        assert!(resolve_direct_capture_verification(Some(&store), None)
+            .expect("load evidence")
+            .is_some());
         assert_eq!(
-            update_direct_capture_evidence(Some(&store), Some(DirectCaptureProbeResult::Ready)),
-            None
-        );
-        assert!(store.load().is_some());
-        assert_eq!(
-            update_direct_capture_evidence(
+            resolve_direct_capture_verification(
                 Some(&store),
                 Some(DirectCaptureProbeResult::Unavailable)
-            ),
+            )
+            .expect("clear evidence"),
             None
         );
         assert!(store.load().is_none());
         assert_eq!(
-            update_direct_capture_evidence(None, Some(DirectCaptureProbeResult::Ready))
-                .expect("missing-store error")["code"],
+            resolve_direct_capture_verification(None, Some(DirectCaptureProbeResult::Ready))
+                .expect_err("missing-store error")["code"],
             "direct_capture_verification_store_unavailable"
         );
+        std::fs::remove_dir_all(home).expect("remove test home");
+    }
+
+    #[test]
+    fn failed_record_and_clear_returns_only_error() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let home =
+            std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
+        let store = direct_capture_evidence_store_for_identity(
+            "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+            &home,
+            Some("driver-daemon"),
+        )
+        .expect("release store");
+        store.record_now().expect("record prior evidence");
+        let state_directory = home.join(".cua-driver");
+        std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o500))
+            .expect("make evidence directory read-only");
+
+        let result = resolve_direct_capture_verification(
+            Some(&store),
+            Some(DirectCaptureProbeResult::Ready),
+        );
+
+        std::fs::set_permissions(&state_directory, std::fs::Permissions::from_mode(0o700))
+            .expect("restore evidence directory permissions");
+        assert_eq!(
+            result.expect_err("record and clear must fail")["code"],
+            "direct_capture_verification_store_failed"
+        );
+        assert!(store.load().is_some());
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 

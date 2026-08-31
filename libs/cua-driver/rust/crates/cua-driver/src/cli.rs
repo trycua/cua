@@ -3344,6 +3344,9 @@ fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
     permission_flag(structured, "accessibility")
         && permission_flag(structured, "screen_recording")
         && permission_flag(structured, "screen_recording_capturable")
+        && structured
+            .get("direct_capture_verification_error")
+            .is_none()
         && verification
             .and_then(|value| value.get("source"))
             .and_then(serde_json::Value::as_str)
@@ -3664,19 +3667,6 @@ fn run_permissions_grant() {
         println!("Choose Allow to request and verify direct capture now…");
 
         let direct_status = request_permissions_via_launchservices(true).ok();
-        if direct_status
-            .as_ref()
-            .is_some_and(permission_grant_is_ready)
-        {
-            println!(
-                "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
-            );
-            println!(
-                "macOS verified the explicit request but does not report whether consent was newly granted or already present."
-            );
-            return;
-        }
-
         if let Some((status, error)) = direct_status.as_ref().and_then(|status| {
             status
                 .get("direct_capture_verification_error")
@@ -3694,6 +3684,19 @@ fn run_permissions_grant() {
                 );
             }
             process::exit(1);
+        }
+
+        if direct_status
+            .as_ref()
+            .is_some_and(permission_grant_is_ready)
+        {
+            println!(
+                "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
+            );
+            println!(
+                "macOS verified the explicit request but does not report whether consent was newly granted or already present."
+            );
+            return;
         }
 
         eprintln!("\n❌ {app_name} still cannot use direct ScreenCaptureKit capture.");
@@ -4984,6 +4987,27 @@ mod tests {
 
         assert!(permission_grant_is_ready(&ready));
         assert!(!permission_grant_needs_direct_capture(&ready));
+    }
+
+    #[test]
+    fn permission_grant_rejects_verification_errors_with_stale_evidence() {
+        let failed = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true,
+            "direct_capture_verification": {
+                "source": "permissions_grant",
+                "verified_at": "2026-08-27T00:00:00Z",
+                "bundle_id": crate::bundle::bundle_id(),
+                "consent_transition": "unknown"
+            },
+            "direct_capture_verification_error": {
+                "code": "direct_capture_verification_store_failed",
+                "message": "read-only evidence store"
+            }
+        });
+
+        assert!(!permission_grant_is_ready(&failed));
     }
 
     #[test]

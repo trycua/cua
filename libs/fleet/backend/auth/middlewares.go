@@ -718,6 +718,10 @@ func applyUserKeyIdentity(user *User, userKeyPfx string) error {
 	}
 	user.ID = userSub
 	user.PrincipalType = PrincipalTypeUserKey
+	// Ignore any service-account email claims. Only the creation-time owner
+	// evidence stamped by the backend may classify a user-key request.
+	user.Email = strings.TrimSpace(user.Claims["user_email"])
+	user.EmailVerified = user.Email != "" && user.Claims["user_email_verified"] == "true"
 	if userGroups := user.Claims["user_groups"]; userGroups != "" {
 		user.Groups = strings.Split(userGroups, ",")
 	}

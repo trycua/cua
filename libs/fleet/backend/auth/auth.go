@@ -261,6 +261,10 @@ func validateKeycloak(raw string) (*User, error) {
 			"preferred_username": str(claims, "preferred_username"),
 			"user_sub":           str(claims, "user_sub"),
 			"user_groups":        str(claims, "user_groups"),
+			"user_email":         str(claims, "user_email"),
+			"user_email_verified": fmt.Sprint(
+				boolean(claims, "user_email_verified"),
+			),
 		},
 	}, nil
 }

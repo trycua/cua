@@ -202,56 +202,6 @@ pub fn sanitize_session_label(input: &str) -> Option<String> {
     Some(result)
 }
 
-/// Tightly cropped 8-bit coverage mask for one line of rasterized text.
-#[derive(Debug, Clone, PartialEq)]
-pub struct TextRaster {
-    pub width: u32,
-    pub height: u32,
-    /// Row-major coverage, exactly `width * height` bytes.
-    pub coverage: Vec<u8>,
-}
-
-/// Rasterize one line of UI text with the bundled Inter face.
-///
-/// Renderers that do not draw through `tiny_skia` — the Windows Agent View
-/// canvas paints straight into a DIB — can compose the returned mask themselves
-/// and still share one typeface with the cursor badge, so no second font asset
-/// or drawing dependency is needed. Returns `None` for text that rasterizes to
-/// nothing, such as an empty or whitespace-only string.
-pub fn rasterize_inter_text(text: &str, font_size: f32) -> Option<TextRaster> {
-    let font = font()?;
-    let layout = text_layout(font, text, font_size.max(1.0));
-    let bounds = text_bounds(&layout)?;
-    let width = bounds.width.ceil().max(1.0) as u32;
-    let height = bounds.height.ceil().max(1.0) as u32;
-    let mut coverage = vec![0u8; width as usize * height as usize];
-    for glyph in layout.glyphs() {
-        let (metrics, bitmap) = font.rasterize_config(glyph.key);
-        if metrics.width == 0 || metrics.height == 0 {
-            continue;
-        }
-        let origin_x = (glyph.x - bounds.min_x).round() as i32;
-        let origin_y = (glyph.y - bounds.min_y).round() as i32;
-        for row in 0..metrics.height {
-            for column in 0..metrics.width {
-                let x = origin_x + column as i32;
-                let y = origin_y + row as i32;
-                if x < 0 || y < 0 || x >= width as i32 || y >= height as i32 {
-                    continue;
-                }
-                let at = y as usize * width as usize + x as usize;
-                coverage[at] = coverage[at].max(bitmap[row * metrics.width + column]);
-            }
-        }
-    }
-    let has_ink = coverage.iter().any(|&sample| sample > 0);
-    has_ink.then_some(TextRaster {
-        width,
-        height,
-        coverage,
-    })
-}
-
 fn rounded_rect(rect: Rect, radius: f32) -> Option<Path> {
     const K: f32 = 0.552_284_8;
     let x = rect.x();
@@ -632,28 +582,6 @@ mod tests {
         let long = sanitize_session_label("abcdefghijklmnopqrstuvwxyz0123456789").unwrap();
         assert_eq!(long.chars().count(), MAX_SESSION_LABEL_CHARS);
         assert!(long.ends_with('…'));
-    }
-
-    #[test]
-    fn rasterized_ui_text_is_cropped_and_reuses_the_badge_typeface() {
-        let raster = rasterize_inter_text("10:42 AM", 12.0).unwrap();
-        assert_eq!(
-            raster.coverage.len(),
-            raster.width as usize * raster.height as usize
-        );
-        assert!(raster.width > raster.height);
-        assert!(raster.coverage.iter().any(|&coverage| coverage > 128));
-        // A tight crop means the first and last columns both carry ink.
-        let column_has_ink = |column: u32| {
-            (0..raster.height)
-                .any(|row| raster.coverage[(row * raster.width + column) as usize] > 0)
-        };
-        assert!(column_has_ink(0));
-        assert!((raster.width.saturating_sub(2)..raster.width).any(column_has_ink));
-
-        let larger = rasterize_inter_text("10:42 AM", 20.0).unwrap();
-        assert!(larger.width > raster.width);
-        assert!(rasterize_inter_text("   ", 12.0).is_none());
     }
 
     #[test]

@@ -119,9 +119,20 @@ if [[ "${BUILD_FIXTURES}" == 1 ]]; then
     --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
-    native) FIXTURE_TARGETS="electron,gtk3,gtk4" ;;
+    native)
+      if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+        FIXTURE_TARGETS="electron,gtk3"
+      else
+        FIXTURE_TARGETS="electron,gtk3,gtk4"
+      fi
+      ;;
     capture) FIXTURE_TARGETS="electron,gtk3" ;;
-    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3,gtk4" ;;
+    *)
+      FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3"
+      if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+        FIXTURE_TARGETS+=",gtk4"
+      fi
+      ;;
   esac
   bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
 fi
@@ -141,8 +152,10 @@ fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
   required_fixtures+=(
     "${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3"
-    "${CUA_TEST_APPS_ROOT}/harness-gtk4/CuaTestHarness.Gtk4"
   )
+  if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+    required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk4/CuaTestHarness.Gtk4")
+  fi
 fi
 for fixture in "${required_fixtures[@]}"; do
   if [[ ! -x "${fixture}" ]]; then
@@ -299,10 +312,29 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
       --test harness_gtk3_test -- \
       --ignored --nocapture --test-threads=1
-  run_test gtk4-target-selection \
-    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
-      --test harness_gtk4_test -- \
-      --ignored --nocapture --test-threads=1
+  if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+    run_test gtk4-target-selection \
+      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test harness_gtk4_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    # The GTK4 selection fixture is explicitly X11-only. Native Sway runs
+    # headless pixman and cannot initialize its EGL renderer, so record the
+    # typed environment limitation instead of manufacturing a pass/failure.
+    limitation="X11-only GTK4 fixture is not run in native Wayland/Sway; GTK4 coverage runs in the canonical X11 lane."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "gtk4",
+        test: "gtk4-target-selection",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/gtk4-target-selection-limitation.json"
+    echo "[LIMITATION] gtk4-target-selection: ${limitation}"
+  fi
 fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then

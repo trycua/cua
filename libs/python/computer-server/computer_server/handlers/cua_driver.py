@@ -147,7 +147,6 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
         if selected_scope not in {"auto", "window", "desktop"}:
             raise ValueError("CUA_DRIVER_CAPTURE_SCOPE must be auto, window, or desktop")
         self._capture_scope = selected_scope
-        self._session_started = False
         self._session_lock = asyncio.Lock()
         self._closed = False
 
@@ -183,13 +182,11 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
         return target_type.DESKTOP(display_id="primary"), None
 
     async def _ensure_session(self) -> None:
-        if self._closed:
-            raise RuntimeError("Cua Driver automation handler is closed")
-        if self._session_started:
-            return
+        """Declare or revive the process-owned session before each driver call."""
+
         async with self._session_lock:
-            if self._session_started:
-                return
+            if self._closed:
+                raise RuntimeError("Cua Driver automation handler is closed")
             started = await self._driver.start_session(
                 self._sdk.StartSessionInput(
                     session=self._session_id,
@@ -203,7 +200,6 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             )
             if not started.active:
                 raise RuntimeError("Cua Driver did not activate the compatibility session")
-            self._session_started = True
 
     @staticmethod
     def _structured(result: DriverResult) -> Dict[str, Any]:
@@ -285,11 +281,7 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
             if self._closed:
                 return
             try:
-                if self._session_started:
-                    await self._driver.end_session(
-                        self._sdk.EndSessionInput(session=self._session_id)
-                    )
-                    self._session_started = False
+                await self._driver.end_session(self._sdk.EndSessionInput(session=self._session_id))
             finally:
                 await self._driver.shutdown()
                 self._closed = True
@@ -362,8 +354,8 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
         self, x: Optional[int], y: Optional[int], *, button: str, count: int
     ) -> Dict[str, Any]:
         try:
-            await self._ensure_session()
             px, py = await self._point(x, y)
+            await self._ensure_session()
             target, scope = self._desktop_target()
             result = await self._driver.click(
                 self._sdk.ClickInput(
@@ -547,8 +539,8 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
 
     async def _scroll(self, direction: str, amount: int) -> Dict[str, Any]:
         try:
-            await self._ensure_session()
             x, y = await self._point(None, None)
+            await self._ensure_session()
             target, scope = self._desktop_target()
             result = await self._driver.scroll(
                 self._sdk.ScrollInput(

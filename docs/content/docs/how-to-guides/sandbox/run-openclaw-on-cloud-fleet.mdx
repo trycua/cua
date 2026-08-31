@@ -1,0 +1,271 @@
+---
+title: Run OpenClaw on Cloud Fleet
+description: Run OpenClaw's bundled CUA computer-use provider in an isolated Linux desktop on Cua Cloud Fleet.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide provisions one Linux desktop on [Cua Cloud Fleet](/tutorials/your-first-cloud-fleet), installs OpenClaw, and connects a local Gateway and node runtime in the same VM. The node's bundled `cua-computer` plugin calls the pinned `@trycua/cua-driver` SDK directly, so the normal OpenClaw `computer` tool can control the VM's graphical desktop.
+
+```text
+OpenClaw agent
+  -> Gateway
+  -> paired local node
+  -> computer.act / screen.snapshot
+  -> bundled cua-computer provider
+  -> @trycua/cua-driver SDK
+  -> X11 desktop in the same Fleet VM
+```
+
+<Callout type="warn">
+  The supported Linux proof path is a glibc-based Linux x64 or ARM64 guest with an X11 desktop. Do
+  not use native Wayland as evidence for this integration: OpenClaw documents it as unsupported for
+  the bundled Linux provider.
+</Callout>
+
+## Before you start
+
+You need:
+
+- Python `>=3.11,<3.14` and [`uv`](https://docs.astral.sh/uv/);
+- Node.js and npm in the guest image (the public image used below includes both);
+- Fleet credentials that can create pools and claims; and
+- a vision-capable model credential for the OpenClaw agent.
+
+The example uses this immutable, public KubeVirt containerDisk:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e4f1a89ce40989d5f4475d
+```
+
+It boots Ubuntu 24.04 with XFCE on X11 and exposes the Cua computer server as
+the Fleet `server` service on port `8000`. Use an image with the same properties
+if you substitute your own image.
+
+## Authenticate with Fleet
+
+The SDK connects to `https://run.cua.ai` by default. Export either a Fleet
+access token or OAuth client credentials:
+
+```bash
+export FLEETS_TOKEN="<your-access-token>"
+# Or:
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+Keep credentials in the environment or a secret manager. Never put them in an
+image definition or commit them to source control. Choose a globally unique,
+lowercase pool name:
+
+```bash
+export CUA_POOL_NAME="<unique-lowercase-name>"
+```
+
+## Provision and claim a desktop
+
+Save this script as `run_openclaw_fleet.py`:
+
+```python title="run_openclaw_fleet.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox",
+# ]
+# ///
+
+import asyncio
+import os
+from pathlib import Path
+
+from cua_sandbox import Image, Pool
+
+
+IMAGE = (
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
+)
+POOL_NAME = os.environ["CUA_POOL_NAME"]
+
+
+async def run(sandbox, command: str) -> None:
+    result = await sandbox.shell.run(command)
+    if not result.success:
+        raise RuntimeError(f"{command}\n{result.stderr}")
+    if result.stdout.strip():
+        print(result.stdout.strip())
+
+
+async def main() -> None:
+    pool = await Pool.apply(
+        Image.from_registry(IMAGE, os_type="linux", kind="vm"),
+        name=POOL_NAME,
+        replicas=1,
+        cpu=4,
+        memory_mb=8192,
+        services={"server": 8000},
+        ttl_seconds_after_created=21600,
+    )
+
+    try:
+        async with pool.claim(service="server", time_to_start=1800) as sandbox:
+            print(f"Sandbox: {sandbox.name}")
+            await run(sandbox, "uname -a")
+            await run(sandbox, "printf 'DISPLAY=%s\\n' \"$DISPLAY\"")
+            await run(sandbox, "test -S /tmp/.X11-unix/X1")
+
+            # Install OpenClaw in the disposable VM. Pin the version you tested.
+            await run(sandbox, "npm install --global openclaw@2026.8.1")
+            await run(sandbox, "openclaw plugins enable cua-computer")
+            await run(
+                sandbox,
+                "openclaw doctor --lint --only cua-computer/driver-artifacts",
+            )
+
+            print("Desktop preflight and bundled CUA artifact check passed")
+            screenshot = Path("openclaw-fleet-preflight.png")
+            screenshot.write_bytes(await sandbox.screenshot())
+            print(f"Screenshot: {screenshot.resolve()}")
+    finally:
+        await pool.delete()
+
+
+asyncio.run(main())
+```
+
+Run it with `uv`:
+
+```bash
+uv run run_openclaw_fleet.py
+```
+
+`Pool.apply()` reconciles the named pool and its VM template. `pool.claim()`
+waits for the `server` service and releases the VM when its context exits. The
+`finally` block deletes the pool, including warm replicas, even when setup
+fails. Save any screenshots or files you need before cleanup.
+
+The script is a disposable preflight. To continue into an agent session, keep
+the claim open and run the Gateway, node, pairing, and agent commands in the
+same `async with pool.claim(...)` block (or remove the `finally` deletion and
+use a second controller that holds the claim). Do not let the claim exit before
+the Gateway and node have finished their work.
+
+## Configure the Gateway and node
+
+For a disposable single-VM setup, keep the Gateway on loopback and run the
+node in the same user session. Set a temporary Gateway token and configure the
+tool policy:
+
+```bash
+export OPENCLAW_GATEWAY_TOKEN="<random-long-token>"
+
+openclaw config set gateway.mode local
+openclaw config set gateway.bind loopback
+openclaw config set gateway.auth.mode token
+openclaw config set gateway.auth.token "$OPENCLAW_GATEWAY_TOKEN"
+openclaw config set tools.alsoAllow '["computer"]'
+```
+
+Start both processes from the X11 session. Keep the logs so you can inspect
+pairing and provider advertisements:
+
+```bash
+nohup openclaw gateway run --token "$OPENCLAW_GATEWAY_TOKEN" \
+  > ~/openclaw-gateway.log 2>&1 &
+
+DISPLAY="$DISPLAY" nohup openclaw node run \
+  --host 127.0.0.1 --port 18789 \
+  --token "$OPENCLAW_GATEWAY_TOKEN" \
+  --display-name "Fleet Linux node" \
+  > ~/openclaw-node.log 2>&1 &
+```
+
+The node must advertise both `computer.act` and `screen.snapshot`. Approve the
+new command surface on the Gateway:
+
+```bash
+openclaw nodes pending
+openclaw nodes approve <requestId>
+openclaw nodes status
+```
+
+Repeat `openclaw nodes status` after approval and confirm that the connected
+node reports provider id `cua-computer`. If you change the node's advertised
+capabilities, approve the new pending request again.
+
+## Run an agent turn
+
+Configure a model using the normal OpenClaw onboarding or provider setup, then
+run a Gateway-backed agent turn:
+
+```bash
+openclaw agent --message \
+  "Use the computer tool to open a visible desktop message that says OPENCLAW CUA FLEET PASSED." \
+  --json
+```
+
+The agent should make a fresh `computer` screenshot, perform input through
+`computer.act`, and observe the resulting screen. Verify the effect in the VM
+with the Cua Sandbox screenshot API or your image's desktop viewer. A passing
+run has all of these properties:
+
+- the model request includes the normal `computer` tool;
+- the node is paired and connected with `computer.act` and `screen.snapshot`;
+- the node provider is `cua-computer`;
+- the OpenClaw agent completes the turn without a `COMPUTER_*` error; and
+- the requested text is visible in an X11 window in the Fleet VM.
+
+The external `cua-driver mcp` server is not part of this path. The bundled
+provider uses the npm SDK in-process on Linux; do not install a standalone
+driver executable or configure an MCP server for this proof.
+
+## Troubleshoot
+
+- **No `DISPLAY` or an empty screenshot:** run the node from the interactive
+  X11 session and confirm `/tmp/.X11-unix/X1` exists. A headless shell without
+  the desktop session cannot provide computer use.
+- **Wayland session:** switch the image to X11. Native Wayland is not a
+  supported proof path for the bundled Linux provider.
+- **`computer` is missing:** add `computer` to `tools.alsoAllow`. Sandboxed
+  agents also need `tools.sandbox.tools.alsoAllow: ["computer"]`.
+- **Node is connected but has no computer commands:** run
+  `openclaw plugins enable cua-computer`, rerun the focused doctor check, and
+  restart `openclaw node run`. Approve the resulting request with
+  `openclaw nodes approve`.
+- **Driver artifact errors:** run
+  `openclaw doctor --lint --only cua-computer/driver-artifacts`. Reinstall the
+  same OpenClaw version; do not replace native package files manually.
+- **Fleet claim timeout or HTTP 403:** verify that the image is an admitted,
+  immutable KubeVirt containerDisk and that your credentials can create pools.
+  Pool names are globally unique, so choose another name if the name is taken.
+
+## Validated configuration
+
+This procedure was exercised end to end with:
+
+| Component      | Tested value                                                  |
+| -------------- | ------------------------------------------------------------- |
+| OpenClaw       | `2026.8.1`, commit `6dc72d7ee21947f8bec897f76de5214e3830ffd4` |
+| Cua            | commit `e7295472e196b22e1d02a69441b315a3776d50fb`             |
+| Cua Driver SDK | `@trycua/cua-driver` `0.21.0`                                 |
+| Guest          | Ubuntu `24.04.4`, Linux x86_64                                |
+| Desktop        | XFCE on X11, `DISPLAY=:1`                                     |
+| Fleet          | KubeVirt, BIOS, 4 vCPU, 8192 MB, one replica, `server:8000`   |
+| Image          | Ubuntu 24.04 containerDisk pinned by the digest above         |
+
+The exercised agent session completed five `computer` calls with zero failures
+and produced a visible desktop result. The pool was deleted after the run.
+
+## Clean up an interrupted run
+
+If the process is interrupted after `Pool.apply()`, rerun it with the same
+`CUA_POOL_NAME`. `Pool.apply()` reconciles the existing pool, and the `finally`
+block reaches the deletion path when connectivity returns. You can also delete
+the pool explicitly after reconnecting:
+
+```python
+await pool.delete()
+```
+
+For reusable warm capacity, omit the deletion and set a suitable pool and claim
+TTL. See [Create a reusable sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python).

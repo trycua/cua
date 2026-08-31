@@ -1286,8 +1286,10 @@ fn perform_ax_click(
             // every peer that was selected before delivery.
             std::thread::sleep(SELECTION_READBACK_SETTLE);
             let deadline = std::time::Instant::now() + SELECTION_READBACK_TIMEOUT;
+            let mut last_observation = None;
             loop {
                 if let Some((after, peers_preserved)) = selection.observe() {
+                    last_observation = Some((after, peers_preserved));
                     let verified = selection_readback_confirms(
                         before,
                         after,
@@ -1297,6 +1299,7 @@ fn perform_ax_click(
                     if verified {
                         std::thread::sleep(SELECTION_READBACK_STABILITY);
                         if let Some((stable_after, stable_peers_preserved)) = selection.observe() {
+                            last_observation = Some((stable_after, stable_peers_preserved));
                             if stable_after == after
                                 && selection_readback_confirms(
                                     before,
@@ -1329,13 +1332,14 @@ fn perform_ax_click(
             if modifiers.is_empty() {
                 anyhow::bail!(
                     "coordinate click did not produce a stable AXSelected transition; \
-                     retry after a fresh snapshot"
+                     last_readback={last_observation:?}; retry after a fresh snapshot"
                 );
             }
             anyhow::bail!(
                 "foreground modified coordinate click did not produce a stable AXSelected \
-                 transition while preserving the prior selection; take a fresh snapshot \
-                 before retrying"
+                 transition while preserving the prior selection; \
+                 before_selected={before}, last_readback={last_observation:?}; \
+                 take a fresh snapshot before retrying"
             );
         }
     }

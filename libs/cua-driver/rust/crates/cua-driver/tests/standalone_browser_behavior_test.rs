@@ -1497,6 +1497,18 @@ fn case(browser: &str, action: &str) -> CaseSpec {
     )
 }
 
+fn prepare_isolated_case(browser: &str) -> CaseSpec {
+    let case = case(browser, "browser_prepare_isolated_launch");
+    if cfg!(target_os = "windows")
+        && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
+            == Ok("hosted_runner_token")
+    {
+        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+    } else {
+        case
+    }
+}
+
 fn refusal_case(browser: &str, action: &str, code: RefusalCode) -> CaseSpec {
     case(browser, action).expecting_refusal(vec![code])
 }
@@ -2289,19 +2301,70 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    execute_case(
-        case(&spec.name, "browser_prepare_isolated_launch"),
-        |evidence| {
-            let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
-            let driver_profiles = driver_profile_root();
-            let profiles_before = profile_entries(&driver_profiles);
-            let mut driver = spawn_driver(&scenario);
-            *evidence = recording_evidence(driver.recording_dir());
+    execute_case(prepare_isolated_case(&spec.name), |evidence| {
+        let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(&scenario);
+        *evidence = recording_evidence(driver.recording_dir());
 
-            let session = format!("standalone-prepare-{}", spec.name);
-            let started = driver.call("start_session", serde_json::json!({ "session": session }));
-            assert!(!started.is_error(), "start_session failed: {}", started.raw);
-            driver.start_behavior_recording();
+        let session = format!("standalone-prepare-{}", spec.name);
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+        driver.start_behavior_recording();
+
+        if cfg!(target_os = "windows")
+            && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
+                == Ok("hosted_runner_token")
+        {
+            let sentinel = ForegroundSentinel::launch(&mut driver);
+            let (prepared, passed) = sentinel
+                .observe_desktop(|| {
+                    driver.call(
+                        "browser_prepare",
+                        serde_json::json!({
+                            "session": session,
+                            "allow_launch": true,
+                            "profile": {"mode": "isolated_new"},
+                        }),
+                    )
+                })
+                .expect("observe hosted Windows browser limitation");
+            assert_eq!(
+                prepared.structured()["status"],
+                "refused",
+                "{}",
+                prepared.raw
+            );
+            assert_eq!(
+                prepared.structured()["refusal"]["code"],
+                "browser_route_unavailable",
+                "{}",
+                prepared.raw
+            );
+            assert!(
+                prepared.structured()["action"].is_null()
+                    && prepared.structured()["prepared_pid"].is_null()
+                    && prepared.structured()["side_effects"].is_null(),
+                "hosted Windows refusal must precede browser setup: {}",
+                prepared.raw
+            );
+            assert_eq!(
+                profile_entries(&driver_profiles),
+                profiles_before,
+                "hosted Windows refusal must not create an isolated profile"
+            );
+            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+            let mut observation = Observation::refused(
+                RefusalCode::BrowserRouteUnavailable,
+                vec![OracleKind::FixtureState],
+                prepared.text(),
+                Evidence::default(),
+            );
+            observation.passed_oracles.extend(passed);
+            observation
+        } else {
             let prepared = driver.call(
                 "browser_prepare",
                 serde_json::json!({
@@ -2419,8 +2482,8 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 thread::sleep(Duration::from_millis(100));
             }
             observation
-        },
-    );
+        }
+    });
 }
 
 #[test]

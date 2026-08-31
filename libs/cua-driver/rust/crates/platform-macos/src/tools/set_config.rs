@@ -25,8 +25,8 @@ fn def() -> &'static ToolDef {
         name: "set_config".into(),
         description: "Update cua-driver-rs configuration. Changes to \
             max_image_dimension take effect immediately. The \
-            agent_view keys are persisted to ~/.cua-driver/config.json and \
-            take effect on the next daemon restart (Agent View is \
+            experimental_pip keys are persisted to ~/.cua-driver/config.json and \
+            take effect on the next daemon restart (the PiP backend is \
             initialised once at startup).\n\nNote: capture_mode is a per-call \
             param (on get_window_state / click), not a stored setting. Capture \
             modality is selected by each action's target; the old \
@@ -47,16 +47,15 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "description": "Max dimension for screenshot resizing (0 = no limit)."
                 },
-                "agent_view": {
+                "experimental_pip": {
                     "type": "boolean",
-                    "description": "Enable the multi-target Agent View. Exact native \
-                        windows and Chrome tabs are grouped automatically by session; no target \
-                        claiming is involved. Applies on next daemon restart."
+                    "description": "Enable the experimental picture-in-picture preview window. \
+                        Applies on next daemon restart."
                 },
-                "agent_view_geometry": {
+                "experimental_pip_geometry": {
                     "type": "string",
-                    "description": "Agent View size + optional position in `WxH` or `WxH+X+Y` \
-                        form (e.g. `640x420+24+24`). Applies on next daemon restart."
+                    "description": "PiP window size + optional position in `WxH` or `WxH+X+Y` \
+                        form (e.g. `320x200+24+24`). Applies on next daemon restart."
                 }
             },
             "additionalProperties": false
@@ -105,17 +104,6 @@ impl Tool for SetConfigTool {
                 .filter(|(k, _)| k == name)
                 .and_then(|(_, v)| v.as_u64())
         };
-        let kv_bool = |name: &str| -> Option<bool> {
-            kv.as_ref()
-                .filter(|(k, _)| k == name)
-                .and_then(|(_, v)| v.as_bool())
-        };
-        let kv_str = |name: &str| -> Option<String> {
-            kv.as_ref()
-                .filter(|(k, _)| k == name)
-                .and_then(|(_, v)| v.as_str())
-                .map(ToOwned::to_owned)
-        };
 
         // Validate max_image_dimension up front so both branches share the
         // u32 check and we never half-apply.
@@ -157,38 +145,36 @@ impl Tool for SetConfigTool {
             }
             cfg.max_image_dimension
         };
-        // Agent View keys persist to the same config.json but take effect only on
+        // PiP keys persist to the same config.json but take effect only on
         // next daemon restart — the backend is initialised once at startup.
-        let mut agent_view_note = String::new();
-        if let Some(enabled) = args
-            .get("agent_view")
-            .and_then(|v| v.as_bool())
-            .or_else(|| kv_bool("agent_view"))
-        {
-            if let Err(e) = pip_preview::write_config_key("agent_view", Value::Bool(enabled)) {
-                return ToolResult::error(format!("failed to persist agent_view: {e}"));
+        let mut pip_note = String::new();
+        if let Some(enabled) = args.get("experimental_pip").and_then(|v| v.as_bool()) {
+            if let Err(e) = pip_preview::write_config_key("experimental_pip", Value::Bool(enabled))
+            {
+                return ToolResult::error(format!("failed to persist experimental_pip: {e}"));
             }
-            agent_view_note =
-                format!(" — restart cua-driver for agent_view={enabled} to take effect");
+            pip_note =
+                format!(" — restart cua-driver for experimental_pip={enabled} to take effect");
         }
-        if let Some(geom) = args
-            .opt_str("agent_view_geometry")
-            .or_else(|| kv_str("agent_view_geometry"))
-        {
+        if let Some(geom) = args.opt_str("experimental_pip_geometry") {
             // Validate before persisting so the user gets an immediate error.
             if pip_preview::PipGeometry::parse(&geom).is_none() {
                 return ToolResult::error(format!(
-                    "agent_view_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
+                    "experimental_pip_geometry `{geom}` is not a valid WxH or WxH+X+Y string"
                 ));
             }
-            if let Err(e) =
-                pip_preview::write_config_key("agent_view_geometry", Value::String(geom.clone()))
-            {
-                return ToolResult::error(format!("failed to persist agent_view_geometry: {e}"));
+            if let Err(e) = pip_preview::write_config_key(
+                "experimental_pip_geometry",
+                Value::String(geom.clone()),
+            ) {
+                return ToolResult::error(format!(
+                    "failed to persist experimental_pip_geometry: {e}"
+                ));
             }
-            if agent_view_note.is_empty() {
-                agent_view_note =
-                    format!(" — restart cua-driver for agent_view_geometry={geom} to take effect");
+            if pip_note.is_empty() {
+                pip_note = format!(
+                    " — restart cua-driver for experimental_pip_geometry={geom} to take effect"
+                );
             }
         }
         let scope_note = if session_id.is_some() {
@@ -198,7 +184,7 @@ impl Tool for SetConfigTool {
         };
         ToolResult::text(format!(
             "Config updated: max_image_dimension={}{}{}",
-            effective_dim, scope_note, agent_view_note
+            effective_dim, scope_note, pip_note
         ))
         .with_structured(serde_json::json!({
             "version": env!("CARGO_PKG_VERSION"),

@@ -237,7 +237,22 @@ fn assert_cursor_and_badge_pixels_changed(
         pointer_pixels >= 12 && badge_pixels >= 24,
         "agent cursor overlay was incomplete near ({logical_x:.0},{logical_y:.0}): \
          pointer region changed {pointer_pixels} pixels (minimum 12), \
-         badge region changed {badge_pixels} pixels (minimum 24)"
+         badge region changed {badge_pixels} pixels (minimum 24); \
+         image={}x{}, logical={}x{}, scale={scale_x:.3}x{scale_y:.3}, \
+         pointer_rect=({},{}..{},{}), badge_rect=({},{}..{},{}), \
+         badge_exclusion={badge_cursor_exclusion}",
+        baseline.width(),
+        baseline.height(),
+        logical_width,
+        logical_height,
+        center_x - pointer_radius_x,
+        center_y - pointer_radius_y,
+        center_x,
+        center_y + (f64::from(BADGE_CURSOR_GAP) * scale_y).floor() as i64,
+        center_x - badge_half_width,
+        badge_top,
+        center_x + badge_half_width,
+        badge_bottom,
     );
 }
 
@@ -303,7 +318,12 @@ fn capture_desktop_png(driver: &mut McpDriver) -> (Vec<u8>, f64, f64) {
 fn capture_cursor_oracle_png(driver: &mut McpDriver, width: f64, height: f64) -> Vec<u8> {
     #[cfg(target_os = "linux")]
     {
-        let _ = driver;
+        // Native Wayland has no X11 DISPLAY to hand to x11grab. The driver's
+        // display capture is the composed-screen oracle for that lane; keep
+        // ffmpeg only for the canonical X11 path where it is available.
+        if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+            return capture_desktop_png(driver).0;
+        }
         // XGetImage root reads can omit a shaped overlay client's pixels on a
         // compositor-less X11 server. Capture the composed display exactly as
         // the behavioral recording does so the oracle observes what a user sees.

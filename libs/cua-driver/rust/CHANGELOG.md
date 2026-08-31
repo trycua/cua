@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.23.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.2...cua-driver-rs-v0.23.0) (2026-08-30)
+
+
+### Features
+
+* **cua-driver:** add session-based Agent View across desktops ([#3431](https://github.com/trycua/cua/issues/3431)) ([57981a1](https://github.com/trycua/cua/commit/57981a16f8c16a72955ac06d3a98dbcc0f9ca4b6))
+* **cua-driver:** add trusted KDE KWin Wayland target identity adapter ([#3336](https://github.com/trycua/cua/issues/3336)) ([9596fb3](https://github.com/trycua/cua/commit/9596fb334f3eeec541979ccf5f0ef9ef360da0c6))
+* **cua-driver:** advertise native Wayland build features ([#2669](https://github.com/trycua/cua/issues/2669)) ([31c61dd](https://github.com/trycua/cua/commit/31c61dd161ea4a27a5e719e71a2eb469b89d924d))
+
+
+### Bug Fixes
+
+* **cua-driver:** bind uninstall signals to process generation ([#3446](https://github.com/trycua/cua/issues/3446)) ([63c700d](https://github.com/trycua/cua/commit/63c700d78aec868e7151c8d982263a4f7f146ade))
+* **cua-driver:** keep macOS daemon stable during permission setup ([#3314](https://github.com/trycua/cua/issues/3314)) ([dbf0d3a](https://github.com/trycua/cua/commit/dbf0d3a450d9c4fc3a0a768faf0ce9b3283f908e))
+* **cua-driver:** make Agent View opt-in by default ([8d94261](https://github.com/trycua/cua/commit/8d942610dc6c43b97d0ca54761a998ae21ee1fed))
+* **cua-driver:** stop the serve daemon in the Unix release uninstaller ([#3340](https://github.com/trycua/cua/issues/3340)) ([45c256b](https://github.com/trycua/cua/commit/45c256bc826c13e6c0667b9891c4ce4ab0e635af))
+
+
+### Reverts
+
+* **cua-driver:** remove native Agent View presentation ([#3452](https://github.com/trycua/cua/issues/3452)) ([47452be](https://github.com/trycua/cua/commit/47452be2da82cbfe71d6a13bb0d5afd83502eef5))
+
 ## [0.22.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.1...cua-driver-rs-v0.22.2) (2026-08-27)
 
 

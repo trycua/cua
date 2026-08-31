@@ -886,20 +886,6 @@ fn row_expects_refusal(row: CatalogRow) -> bool {
     if row.delivery != Delivery::Background {
         return false;
     }
-    // A plain left single-click on an accessible GTK control is intentionally
-    // promoted from pixel targeting to the focus-free AT-SPI action bridge.
-    // The fixture target is accessible, so this catalog row must exercise the
-    // delivered bridge instead of the focus-bound pointer refusal path.
-    if matches!(
-        row.operation,
-        Operation::PxClick {
-            button: "left",
-            count: 1,
-            ..
-        }
-    ) {
-        return false;
-    }
     let inject_mode = std::env::var_os("CUA_INJECT_SOCKET").is_some();
     if !inject_mode
         && matches!(

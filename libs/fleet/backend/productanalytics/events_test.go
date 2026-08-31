@@ -35,12 +35,15 @@ func TestClassifyIdentity(t *testing.T) {
 		user *auth.User
 		want IdentityClass
 	}{
-		{name: "verified internal domain", user: &auth.User{Email: "founder@trycua.com", EmailVerified: true}, want: IdentityInternal},
-		{name: "domain case is normalized", user: &auth.User{Email: "founder@TRYCUA.COM", EmailVerified: true}, want: IdentityInternal},
-		{name: "lookalike domain is external", user: &auth.User{Email: "founder@trycua.com.evil.test", EmailVerified: true}, want: IdentityExternal},
-		{name: "unverified internal-looking email is unknown", user: &auth.User{Email: "founder@trycua.com"}, want: IdentityUnknown},
-		{name: "missing email is unknown", user: &auth.User{ID: "user-1"}, want: IdentityUnknown},
-		{name: "verified external email", user: &auth.User{Email: "person@example.test", EmailVerified: true}, want: IdentityExternal},
+		{name: "missing user", user: nil, want: IdentityUnknown},
+		{name: "missing stable id", user: &auth.User{Email: "person@example.test", EmailVerified: true}, want: IdentityUnknown},
+		{name: "verified internal domain", user: &auth.User{ID: "user-1", Email: "founder@trycua.com", EmailVerified: true}, want: IdentityInternal},
+		{name: "domain case is normalized", user: &auth.User{ID: "user-1", Email: "founder@TRYCUA.COM", EmailVerified: true}, want: IdentityInternal},
+		{name: "lookalike domain is external", user: &auth.User{ID: "user-1", Email: "founder@trycua.com.evil.test", EmailVerified: true}, want: IdentityExternal},
+		{name: "unverified internal-looking email is external", user: &auth.User{ID: "user-1", Email: "founder@trycua.com"}, want: IdentityExternal},
+		{name: "missing email is external", user: &auth.User{ID: "user-1"}, want: IdentityExternal},
+		{name: "unverified external email is external", user: &auth.User{ID: "user-1", Email: "person@example.test"}, want: IdentityExternal},
+		{name: "verified external email", user: &auth.User{ID: "user-1", Email: "person@example.test", EmailVerified: true}, want: IdentityExternal},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

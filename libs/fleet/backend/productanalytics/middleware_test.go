@@ -32,15 +32,17 @@ func observedRequest(method, route, path string, user *auth.User) *http.Request 
 	return request.WithContext(ctx)
 }
 
-func TestRouteObserverEmitsActivationOnlyForExternalIdentity(t *testing.T) {
+func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *testing.T) {
 	users := []struct {
 		name string
 		user *auth.User
 		want int
 	}{
-		{name: "external", user: &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
+		{name: "verified external", user: &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
+		{name: "missing email", user: &auth.User{ID: "external-2", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
+		{name: "missing email user key", user: &auth.User{ID: "external-3", AZP: "ukey-proof", PrincipalType: auth.PrincipalTypeUserKey}, want: 3},
+		{name: "unverified internal-looking email", user: &auth.User{ID: "external-4", Email: "person@trycua.com", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
 		{name: "internal", user: &auth.User{ID: "internal-1", Email: "person@trycua.com", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
-		{name: "unknown", user: &auth.User{ID: "unknown-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
 	}
 	for _, test := range users {
 		t.Run(test.name, func(t *testing.T) {

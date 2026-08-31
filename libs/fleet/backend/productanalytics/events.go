@@ -19,10 +19,11 @@ const (
 )
 
 func ClassifyIdentity(user *auth.User) IdentityClass {
-	if user == nil || !user.EmailVerified || strings.TrimSpace(user.Email) == "" {
+	if user == nil || strings.TrimSpace(user.ID) == "" {
 		return IdentityUnknown
 	}
-	if strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), "@trycua.com") {
+	// Only verified company-domain evidence excludes an authenticated user from growth counts.
+	if user.EmailVerified && strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), "@trycua.com") {
 		return IdentityInternal
 	}
 	return IdentityExternal

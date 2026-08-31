@@ -54,10 +54,24 @@ func TestRecordFleetAttributionBindsExternalFirstTouch(t *testing.T) {
 	}
 }
 
-func TestRecordFleetAttributionExcludesInternalAndUnknownIdentities(t *testing.T) {
+func TestRecordFleetAttributionBindsMissingEmailIdentity(t *testing.T) {
+	capture := &analyticsCapture{}
+	h := Handlers{Analytics: capture, AuthCfg: configAuthForAnalytics()}
+	response := httptest.NewRecorder()
+	h.RecordFleetAttribution(response, attributionRequest(t, fleetAttributionRecord{
+		Version: 1, CapturedAt: time.Now().UnixMilli(), Values: map[string]string{"utm_source": "x"},
+	}, &auth.User{ID: "subject-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}))
+	if response.Code != http.StatusNoContent || len(capture.events) != 1 {
+		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
+	}
+	if capture.events[0].Properties["identity_class"] != productanalytics.IdentityExternal {
+		t.Fatalf("properties = %#v", capture.events[0].Properties)
+	}
+}
+
+func TestRecordFleetAttributionExcludesVerifiedInternalIdentity(t *testing.T) {
 	for _, user := range []*auth.User{
 		{ID: "internal-1", Email: "person@trycua.com", EmailVerified: true, AZP: "cyclops-cs-spa"},
-		{ID: "unknown-1", AZP: "cyclops-cs-spa"},
 	} {
 		capture := &analyticsCapture{}
 		h := Handlers{Analytics: capture, AuthCfg: configAuthForAnalytics()}

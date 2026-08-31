@@ -114,6 +114,10 @@ fn try_send_x11_message(
     sender.is_some_and(|tx| tx.try_send(msg).is_ok())
 }
 
+fn should_start_x11_overlay(wayland_display_present: bool) -> bool {
+    !wayland_display_present
+}
+
 #[cfg(target_os = "linux")]
 struct X11OverlayThreadCleanup {
     receiver: Option<std::sync::mpsc::Receiver<OverlayMsg>>,
@@ -197,6 +201,12 @@ fn apply_msg(map: &mut RenderMap, msg: OverlayMsg) -> Option<CursorKey> {
                     map.last_active = None;
                 }
                 map.ended.insert(key);
+            }
+            None
+        }
+        OverlayMsg::Revive(key) => {
+            if key != "default" {
+                map.ended.remove(&key);
             }
             None
         }
@@ -292,13 +302,16 @@ fn try_send_command_for(key: CursorKey, cmd: OverlayCommand) -> bool {
         key: key.clone(),
         cmd: cmd.clone(),
     });
-    let x11_queued = try_send_x11_message(CMD_TX.get(), msg.clone());
+    let native_wayland = crate::wayland::is_wayland();
+    let x11_overlay_allowed =
+        should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some());
+    let x11_queued = x11_overlay_allowed && try_send_x11_message(CMD_TX.get(), msg.clone());
     // Also forward to the native-Wayland layer-shell overlay when Wayland
     // is opted in. The wayland overlay's `forward` is a no-op when its
     // owner thread isn't started yet (which is the normal X11-only case).
     #[cfg(target_os = "linux")]
     {
-        if crate::wayland::is_wayland() {
+        if native_wayland {
             if crate::wayland::shell_helper::semantic_cursor_available() {
                 crate::wayland::shell_helper::set_cursor_color(&cursor_overlay::session_fill_hex(
                     &key,
@@ -509,6 +522,23 @@ pub fn remove_cursor(key: CursorKey) {
     }
 }
 
+/// Clear the X11 render-side tombstone after a successful explicit session
+/// revival. Wayland has no keyed tombstone, so forwarding this lifecycle
+/// signal there is an accepted no-op.
+pub fn revive_cursor(key: CursorKey) {
+    if key.is_empty() {
+        return;
+    }
+    let msg = OverlayMsg::Revive(key);
+    if let Some(tx) = CMD_TX.get() {
+        let _ = tx.try_send(msg.clone());
+    }
+    #[cfg(target_os = "linux")]
+    if crate::wayland::is_wayland() && !crate::wayland::shell_helper::available() {
+        let _ = crate::wayland::overlay::forward(&msg);
+    }
+}
+
 /// Spawn the overlay on a dedicated thread.  Non-blocking.
 pub fn run_on_thread() {
     let rx = match CMD_RX_CELL.lock().unwrap().take() {
@@ -525,6 +555,17 @@ pub fn run_on_thread() {
     };
 
     if !cfg.enabled {
+        return;
+    }
+
+    // A Wayland session normally also exposes DISPLAY through XWayland, but
+    // that does not make the legacy full-root X11 overlay safe. This decision
+    // must be independent of the experimental native-Wayland feature opt-in:
+    // without that opt-in there is no layer-shell fallback, but showing no
+    // overlay is preferable to mapping an opaque black X11 root window over
+    // the Wayland desktop. With the opt-in enabled, commands are forwarded to
+    // the native layer-shell backend below.
+    if !should_start_x11_overlay(std::env::var_os("WAYLAND_DISPLAY").is_some()) {
         return;
     }
 
@@ -2616,6 +2657,12 @@ fn bgra_and_visible_shape(
 mod tests {
     use super::*;
 
+    #[test]
+    fn wayland_display_does_not_start_legacy_x11_overlay() {
+        assert!(!should_start_x11_overlay(true));
+        assert!(should_start_x11_overlay(false));
+    }
+
     fn drain_x11_test_events(conn: &impl x11rb::connection::Connection) -> anyhow::Result<()> {
         while conn.poll_for_event()?.is_some() {}
         Ok(())
@@ -3021,6 +3068,32 @@ mod tests {
             ended: HashSet::new(),
             last_active: None,
         }
+    }
+
+    #[test]
+    fn explicit_revival_clears_tombstone_and_recreates_lazily() {
+        let move_msg = |x, y| {
+            OverlayMsg::Cmd(KeyedOverlayCommand {
+                key: "sessA".to_owned(),
+                cmd: OverlayCommand::MoveTo {
+                    x,
+                    y,
+                    end_heading_radians: 0.0,
+                },
+            })
+        };
+        let mut map = default_render_map();
+        apply_msg(&mut map, move_msg(10.0, 10.0));
+        apply_msg(&mut map, OverlayMsg::Remove("sessA".to_owned()));
+        assert!(apply_msg(&mut map, move_msg(20.0, 20.0)).is_none());
+
+        apply_msg(&mut map, OverlayMsg::Revive("sessA".to_owned()));
+        assert!(!map.cursors.contains_key("sessA"));
+        assert!(!map.ended.contains("sessA"));
+
+        let resolved = apply_msg(&mut map, move_msg(30.0, 30.0));
+        assert_eq!(resolved.as_deref(), Some("sessA"));
+        assert!(map.cursors.contains_key("sessA"));
     }
 
     fn test_message() -> OverlayMsg {

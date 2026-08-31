@@ -91,6 +91,20 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
+fn screenshot_to_window_ratio(
+    compositor_width: Option<u32>,
+    original_capture_width: Option<u32>,
+    screenshot_width: u32,
+) -> Option<f64> {
+    if screenshot_width == 0 {
+        return None;
+    }
+    compositor_width
+        .filter(|width| *width > 0)
+        .or(original_capture_width.filter(|width| *width > 0))
+        .map(|width| width as f64 / screenshot_width as f64)
+}
+
 pub struct ResizeRegistry {
     ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
 }
@@ -594,10 +608,11 @@ impl Tool for GetWindowStateTool {
                 modality at ACTION time: an element ax action \
                 (element_index/element_token → accessibility rung) or an element px \
                 action (x,y → pixel rung off this screenshot). capture_mode is \
-                deprecated and ignored. On Wayland, where output capture cannot prove \
-                the requested surface's identity, the truthful tree is returned without \
-                a screenshot and `screenshot_error.code` is \
-                `surface_identity_unproven`.\n\n\
+                deprecated and ignored. When a Wayland compositor cannot prove the \
+                requested surface's identity, the truthful tree is returned without a \
+                screenshot and `screenshot_error.code` is \
+                `surface_identity_unproven`. Hyprland uses compositor-owned per-toplevel \
+                capture when exact PID/title/app-id correlation succeeds.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
@@ -718,7 +733,7 @@ impl Tool for GetWindowStateTool {
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
             let mut screenshot_error = None;
             let screenshot = if should_capture {
-                match crate::wayland::screenshot_dispatch(xid) {
+                match crate::wayland::screenshot_dispatch_with_pid(xid, pid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw)
                             .map(|(w, _)| w)
@@ -912,9 +927,17 @@ impl Tool for GetWindowStateTool {
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = shot_opt {
                     if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                        let compositor_width = crate::wayland::is_wayland()
+                            .then(|| crate::wayland::window_geometry(xid))
+                            .flatten()
+                            .map(|(_, _, width, _)| width)
+                            .filter(|width| *width > 0);
+                        if let Some(ratio) = screenshot_to_window_ratio(compositor_width, orig_w, w)
+                        {
+                            if (ratio - 1.0).abs() > f64::EPSILON {
+                                state.resize_registry.set_ratio(pid, ratio);
+                            } else {
+                                state.resize_registry.clear_ratio(pid);
                             }
                         } else {
                             state.resize_registry.clear_ratio(pid);
@@ -980,6 +1003,19 @@ mod get_window_state_capture_tests {
         assert!(error["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+
+    #[test]
+    fn screenshot_coordinates_prefer_compositor_geometry_over_buffer_scale() {
+        assert_eq!(
+            screenshot_to_window_ratio(Some(1261), Some(1423), 1423),
+            Some(1261.0 / 1423.0)
+        );
+        assert_eq!(
+            screenshot_to_window_ratio(None, Some(2536), 1567),
+            Some(2536.0 / 1567.0)
+        );
+        assert_eq!(screenshot_to_window_ratio(Some(800), None, 0), None);
     }
 }
 
@@ -1661,6 +1697,22 @@ fn unavailable_webkit_background(
     })
 }
 
+fn unavailable_webkit_hyprland_pointer(pid: u32) -> Option<ToolResult> {
+    (is_webkitgtk_embedder(pid)
+        && crate::wayland::hyprland::is_session()
+        && !crate::wayland::is_inject_mode())
+    .then(|| {
+        ToolResult::error(
+            "Foreground pointer delivery is unavailable: WebKitGTK ignores Hyprland's virtual-pointer button events. Use an element-addressed left click when possible; right-click, double-click, and drag require a target-local compositor input backend.",
+        )
+        .with_structured(json!({
+            "code": "foreground_unavailable",
+            "reason": "webkitgtk_hyprland_virtual_pointer_buttons",
+            "delivery_mode": "foreground"
+        }))
+    })
+}
+
 fn unavailable_webkit_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
@@ -1934,9 +1986,12 @@ fn overlay_move_to_for(cursor_id: &str, sx: f64, sy: f64, heading: Option<f64>) 
 }
 
 async fn overlay_glide_to_for(cursor_id: &str, sx: f64, sy: f64) {
-    if !crate::overlay::is_enabled_for(cursor_id) {
-        return;
-    }
+    // Input always revives its agent cursor. Hiding it is useful while idle,
+    // but a hidden cursor must not make pointer or keyboard control invisible.
+    crate::overlay::send_command_for(
+        cursor_id.to_owned(),
+        cursor_overlay::OverlayCommand::SetEnabled(true),
+    );
     // Wayland (Mutter/KDE, no layer-shell): glide the agent cursor via the
     // WinRects shell extension. It eases to the target itself, so send the
     // destination once here rather than the interpolated stream the X11 render
@@ -1963,9 +2018,10 @@ async fn track_overlay_drag_for(
     duration_ms: u64,
     steps: usize,
 ) {
-    if !crate::overlay::is_enabled_for(&cursor_id) {
-        return;
-    }
+    crate::overlay::send_command_for(
+        cursor_id.clone(),
+        cursor_overlay::OverlayCommand::SetEnabled(true),
+    );
     crate::overlay::send_command_for(
         cursor_id.clone(),
         cursor_overlay::OverlayCommand::SetPressed(true),
@@ -2492,7 +2548,17 @@ impl Tool for ClickTool {
                 // `element_index` — the coordinate-free path already verified
                 // working. (x,y) are screen coords here, matching the frames in
                 // `get_window_state`. Miss → fall through to the injection paths.
-                if !delivery.is_foreground() && button == 1 && count == 1 {
+                let webkitgtk = is_webkitgtk_embedder(pid);
+                if button == 1
+                    && count == 1
+                    // Chromium's proven background AT-SPI fallback and
+                    // WebKitGTK's proven foreground AT-SPI fallback are
+                    // deliberately disjoint. Treating WebKitGTK background PX
+                    // coordinates as element-local delivered clicks violated
+                    // the compositor-global pixel contract.
+                    && ((!delivery.is_foreground() && !webkitgtk)
+                        || (delivery.is_foreground() && webkitgtk))
+                {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
@@ -4010,7 +4076,9 @@ impl Tool for SetValueTool {
 
 // ── scroll ────────────────────────────────────────────────────────────────────
 
-pub struct ScrollTool;
+pub struct ScrollTool {
+    state: Arc<ToolState>,
+}
 static SCROLL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -4105,9 +4173,9 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let xid_opt: Option<u64> = match &resolved {
-            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => window_id
-                .map(|v| v as u64)
-                .or_else(|| args.opt_u64("window_id")),
+            cua_driver_core::element_token::ResolvedElement::Element { window_id, .. } => args
+                .opt_u64("window_id")
+                .or_else(|| window_id.map(|v| v as u64)),
             cua_driver_core::element_token::ResolvedElement::None => args.opt_u64("window_id"),
         };
 
@@ -4170,7 +4238,14 @@ impl Tool for ScrollTool {
             args.get("x").and_then(|value| value.as_f64()),
             args.get("y").and_then(|value| value.as_f64()),
         ) {
-            (Some(x), Some(y)) => Some((x, y)),
+            (Some(x), Some(y)) => {
+                // Pixel targets are expressed in the latest screenshot's
+                // coordinate space. Apply the same buffer-to-window ratio as
+                // click/drag so fractional-scale Wayland captures land on the
+                // intended logical surface point rather than below it.
+                let ratio = self.state.resize_registry.ratio(pid).unwrap_or(1.0);
+                Some((x * ratio, y * ratio))
+            }
             (None, None) => None,
             _ => return ToolResult::error("Pass both x and y to pixel-target scroll."),
         };
@@ -4466,6 +4541,11 @@ impl Tool for DoubleClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -4700,6 +4780,11 @@ impl Tool for RightClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
+        }
         let elem_idx_resolved = match &resolved {
             cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } => {
                 Some(*element_index)
@@ -4979,6 +5064,11 @@ impl Tool for DragTool {
         }
         if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
             return refusal;
+        }
+        if delivery.is_foreground() {
+            if let Some(refusal) = unavailable_webkit_hyprland_pointer(pid) {
+                return refusal;
+            }
         }
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
@@ -6235,7 +6325,13 @@ impl Tool for GetDesktopStateTool {
             // Only fall back to the X11 root-window geometry off Wayland, so
             // the X11 / XWayland path is unchanged. See #2017 / Sway testing.
             let (screen_w, screen_h) = if crate::wayland::is_wayland() {
-                (shot_w, shot_h)
+                // Window and input coordinates are compositor-logical on
+                // Hyprland. Preserve the native-resolution PNG, but report the
+                // uniquely matching output's logical dimensions so callers can
+                // map coordinates using screenshot/logical scale just as they
+                // do for fractional-scale window captures.
+                crate::wayland::hyprland::logical_output_size_for_capture(shot_w, shot_h)
+                    .unwrap_or((shot_w, shot_h))
             } else {
                 x11_screen_size()?
             };
@@ -6366,12 +6462,44 @@ pub struct MoveCursorTool {
 
 static MCURSOR_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum CursorControlScope {
+    Agent,
+    Desktop,
+}
+
+fn cursor_control_scope(args: &Value) -> CursorControlScope {
+    match args.get("scope").and_then(Value::as_str) {
+        Some("desktop") => CursorControlScope::Desktop,
+        _ => CursorControlScope::Agent,
+    }
+}
+
+#[cfg(test)]
+mod cursor_control_scope_tests {
+    use super::{cursor_control_scope, CursorControlScope};
+    use serde_json::json;
+
+    #[test]
+    fn real_pointer_control_requires_explicit_desktop_scope() {
+        assert_eq!(cursor_control_scope(&json!({})), CursorControlScope::Agent);
+        assert_eq!(
+            cursor_control_scope(&json!({"scope": "window"})),
+            CursorControlScope::Agent
+        );
+        assert_eq!(
+            cursor_control_scope(&json!({"scope": "desktop"})),
+            CursorControlScope::Desktop
+        );
+    }
+}
+
 #[async_trait]
 impl Tool for MoveCursorTool {
     fn def(&self) -> &ToolDef {
         MCURSOR_DEF.get_or_init(|| ToolDef {
             name: "move_cursor".into(),
-            description: "Move the agent cursor overlay, or with scope=desktop move the real OS pointer in get_desktop_state coordinates.".into(),
+            description: "Move the synthetic agent cursor without changing the user's pointer. Only an explicit scope=desktop request moves the real OS pointer in get_desktop_state coordinates.".into(),
             input_schema: json!({"type":"object","required":["x","y"],"properties":{
                 "x":{"type":"number"},"y":{"type":"number"},"session": cua_driver_core::tool_schema::session_schema(),"cursor_id":{"type":"string"},"scope":{"type":"string","enum":["window","desktop"],"default":"window"}
             },"additionalProperties":false}),
@@ -6380,7 +6508,7 @@ impl Tool for MoveCursorTool {
     }
     async fn invoke(&self, args: Value) -> ToolResult {
         use cua_driver_core::tool_args::ArgsExt;
-        if args.opt_str("scope").as_deref() == Some("desktop") {
+        if cursor_control_scope(&args) == CursorControlScope::Desktop {
             let input = match parse_typed_projection::<MoveCursorInput>("move_cursor", &args) {
                 Ok(input) => input,
                 Err(result) => return result,
@@ -6416,9 +6544,13 @@ impl Tool for MoveCursorTool {
         }
         let x = args.f64_or("x", 0.0);
         let y = args.f64_or("y", 0.0);
-        let window_id = args.get("window_id").and_then(|v| v.as_u64());
         let cursor_id = resolve_cursor_key(&args);
+        self.state.cursor_registry.set_enabled(&cursor_id, true);
         self.state.cursor_registry.update_position(&cursor_id, x, y);
+        crate::overlay::send_command_for(
+            cursor_id.clone(),
+            cursor_overlay::OverlayCommand::SetEnabled(true),
+        );
         // End pointing upper-left (45°) — matches Swift's
         // `AgentCursor.animateAndWait(endAngleDegrees: 45)` convention so the
         // overlay arrow settles to the natural macOS-style pose.
@@ -6430,26 +6562,8 @@ impl Tool for MoveCursorTool {
                 end_heading_radians: std::f64::consts::FRAC_PI_4,
             },
         );
-        // Native Wayland: also warp the real cursor via zwlr_virtual_pointer.
-        // Off-thread because the wayland-client roundtrip is blocking. Best-effort
-        // — overlay update + registry write already succeeded; surface a warning
-        // only if the warp itself failed.
-        let real_warp_note = if crate::wayland::wayland_input_enabled() {
-            let xi = x.round() as i32;
-            let yi = y.round() as i32;
-            match tokio::task::spawn_blocking(move || {
-                crate::wayland::move_cursor_absolute(window_id, xi, yi)
-            })
-            .await
-            {
-                Ok(Ok(())) => " (real cursor warped via virtual-pointer)",
-                Ok(Err(_)) | Err(_) => " (overlay updated; real-cursor warp failed)",
-            }
-        } else {
-            ""
-        };
         ToolResult::text(format!(
-            "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}).{real_warp_note}"
+            "Agent cursor '{cursor_id}' moved to ({x:.1}, {y:.1}); the user pointer was unchanged."
         ))
     }
 }
@@ -7085,7 +7199,10 @@ impl Tool for ZoomTool {
             // pure-Wayland sessions surface a typed "per-window capture not
             // supported yet" error instead of accidentally calling the
             // X11-only path with a foreign-toplevel id.
-            let png = crate::wayland::screenshot_window_dispatch(xid)?;
+            let png = match pid {
+                Some(pid) => crate::wayland::screenshot_dispatch_with_pid(xid, pid)?,
+                None => crate::wayland::screenshot_window_dispatch(xid)?,
+            };
             cursor_overlay::capture_utils::crop_png_to_jpeg(&png, x1, y1, x2, y2, 500)
         })
         .await;
@@ -7757,9 +7874,14 @@ pub fn build_registry_with_provider(
             crate::input::forget_master_pointer(session_id);
         })
     };
+    let session_revive_hook =
+        cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
+            crate::overlay::revive_cursor(session_id.to_owned());
+        });
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
+    r.retain_session_revive_hook(session_revive_hook);
     if let Some(runtime_scope) = cua_driver_core::tool::current_dispatch_runtime_scope() {
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();
@@ -7859,7 +7981,12 @@ pub fn build_registry_with_provider(
         &pid_window_candidates,
     ));
     r.register(pid_window_guarded(SetValueTool, &pid_window_candidates));
-    r.register(pid_window_guarded(ScrollTool, &pid_window_candidates));
+    r.register(pid_window_guarded(
+        ScrollTool {
+            state: state.clone(),
+        },
+        &pid_window_candidates,
+    ));
     cua_driver_core::clipboard::register_clipboard_tools(
         &mut r,
         Arc::new(crate::clipboard::LinuxClipboard::new()),

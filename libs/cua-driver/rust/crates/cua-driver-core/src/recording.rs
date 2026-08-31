@@ -532,7 +532,10 @@ impl RecordingSession {
             if let Ok((resolved_window, resolved_index)) =
                 crate::element_token::global().resolve(pid, token)
             {
-                window_id = Some(u64::from(resolved_window));
+                // Preserve an explicit compositor-stable 64-bit window id.
+                // Element tokens retain the cross-platform 32-bit identity and
+                // cannot reconstruct a Hyprland client address after truncation.
+                window_id = window_id.or(Some(u64::from(resolved_window)));
                 element_index = u64::try_from(resolved_index).ok();
             }
         }
@@ -795,8 +798,15 @@ fn write_turn(
     // resolved point in action.json is useful diagnostic context, but a
     // crosshair would falsely imply that a click was delivered.
     let refused_before_dispatch = click_family && result_is_error && action_refused;
-    let click_expected =
-        click_family && !refused_before_target_resolution && !refused_before_dispatch;
+    // Semantic element actions can dispatch successfully without usable pixel
+    // geometry (for example, an off-screen GTK control). Do not invent a click
+    // point or classify the impossible marker as a capture failure; the
+    // before/after screenshots and fixture-state oracle remain authoritative.
+    let target_geometry_unavailable = click_family && !result_is_error && click_point.is_none();
+    let click_expected = click_family
+        && !refused_before_target_resolution
+        && !refused_before_dispatch
+        && !target_geometry_unavailable;
 
     let mut payload = serde_json::json!({
         "tool": tool_name,
@@ -851,6 +861,8 @@ fn write_turn(
             "action_refused_before_target_resolution"
         } else if refused_before_dispatch {
             "action_refused_before_dispatch"
+        } else if target_geometry_unavailable {
+            "target_geometry_unavailable"
         } else {
             "not_a_click_action"
         },
@@ -975,7 +987,7 @@ mod tests {
         });
         set_click_marker_fn(|_, _, _| Some(b"click".to_vec()));
         set_element_bounds_fn(|window_id, pid, element_index| {
-            Some((window_id as f64 + element_index as f64, pid as f64))
+            (element_index != 999).then_some((window_id as f64 + element_index as f64, pid as f64))
         });
 
         let output_dir = std::env::temp_dir().join(format!(
@@ -1119,6 +1131,31 @@ mod tests {
             "action_refused_before_dispatch"
         );
 
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({
+                    "pid": 1,
+                    "window_id": 2,
+                    "element_index": 999
+                }),
+                now_ms(),
+            )
+            .expect("geometry-free semantic click should reserve an evidence turn");
+        session.finish_turn(pending, "semantic click");
+        let geometry_free_turn = output_dir.join("turn-00005");
+        let geometry_free_manifest: Value = serde_json::from_slice(
+            &std::fs::read(geometry_free_turn.join("evidence.json"))
+                .expect("read geometry-free click evidence"),
+        )
+        .expect("parse geometry-free click evidence");
+        assert_eq!(geometry_free_manifest["click"]["status"], "not_applicable");
+        assert_eq!(
+            geometry_free_manifest["click"]["classification"],
+            "target_geometry_unavailable"
+        );
+        assert!(!geometry_free_turn.join("click.png").exists());
+
         let files = [
             "action.json",
             "app_state.json",
@@ -1136,7 +1173,7 @@ mod tests {
             }
             std::fs::remove_dir(directory).expect("remove turn fixture directory");
         }
-        for directory in [&refused_turn, &resolved_refusal_turn] {
+        for directory in [&refused_turn, &resolved_refusal_turn, &geometry_free_turn] {
             for file in files.iter().copied().filter(|file| *file != "click.png") {
                 std::fs::remove_file(directory.join(file))
                     .expect("remove refused turn fixture file");

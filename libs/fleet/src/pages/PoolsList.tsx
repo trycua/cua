@@ -24,7 +24,6 @@ interface PoolRow {
   namespace: string
   replicas: number
   status: PoolSummary["status"]
-  availableCount: number
   statusText: string
 }
 
@@ -259,8 +258,6 @@ export function PoolsList() {
         columnDisplay={[
           { id: "name", visible: true },
           { id: "replicas", visible: !compactTable },
-          { id: "available", visible: !compactTable },
-          { id: "capacity", visible: compactTable },
           { id: "status", visible: true },
         ]}
         columnDefinitions={[
@@ -292,21 +289,6 @@ export function PoolsList() {
             cell: p => p.replicas,
             sortingField: "replicas",
             minWidth: 96,
-          },
-          {
-            id: "available",
-            header: "Available",
-            cell: p => p.availableCount,
-            sortingField: "availableCount",
-            minWidth: 96,
-          },
-          {
-            id: "capacity",
-            header: "Available",
-            cell: p => `${p.availableCount}/${p.replicas}`,
-            minWidth: 72,
-            width: 72,
-            maxWidth: 72,
           },
           {
             id: "status",

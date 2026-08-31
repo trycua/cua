@@ -58,10 +58,14 @@ fn current_executable() -> String {
         .unwrap_or_default()
 }
 
-fn direct_capture_evidence_store_for_executable(
+fn direct_capture_evidence_store_for_identity(
     executable: &str,
     home: &Path,
+    attribution: Option<&str>,
 ) -> Option<DirectCaptureEvidenceStore> {
+    if attribution != Some("driver-daemon") {
+        return None;
+    }
     let bundle_id = driver_bundle_id_for_executable(executable)?;
     let state_directory = match bundle_id {
         "com.trycua.driver.local" => ".cua-driver-local",
@@ -75,9 +79,10 @@ fn direct_capture_evidence_store_for_executable(
     ))
 }
 
-fn current_direct_capture_evidence_store() -> Option<DirectCaptureEvidenceStore> {
+fn current_direct_capture_evidence_store(source: &Value) -> Option<DirectCaptureEvidenceStore> {
     let home = std::env::var_os("HOME")?;
-    direct_capture_evidence_store_for_executable(&current_executable(), Path::new(&home))
+    let attribution = source.get("attribution").and_then(Value::as_str);
+    direct_capture_evidence_store_for_identity(&current_executable(), Path::new(&home), attribution)
 }
 
 /// (A) Real ScreenCaptureKit capability probe — what THIS process can
@@ -393,15 +398,15 @@ impl Tool for CheckPermissionsTool {
                     .expect("eligible direct-capture probe must run")
                     .response_fields()
             };
-        let evidence_store = current_direct_capture_evidence_store();
-        let direct_capture_verification_error =
-            update_direct_capture_evidence(evidence_store.as_ref(), direct_capture_probe);
-        let direct_capture_verification = evidence_store.and_then(|store| store.load());
         // (B) Which identity the booleans above belong to.
         let source = permission_source(
             self.state.host_owns_permission_ux,
             self.state.host_bundle_id.as_deref(),
         );
+        let evidence_store = current_direct_capture_evidence_store(&source);
+        let direct_capture_verification_error =
+            update_direct_capture_evidence(evidence_store.as_ref(), direct_capture_probe);
+        let direct_capture_verification = evidence_store.and_then(|store| store.load());
         let is_caller = source.get("attribution").and_then(|v| v.as_str()) == Some("caller");
 
         // Text format mirrors Swift 1:1:
@@ -530,27 +535,39 @@ mod tests {
     }
 
     #[test]
-    fn evidence_store_is_scoped_to_the_installed_product_identity() {
+    fn evidence_store_is_scoped_to_the_current_driver_identity() {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
-        let release = direct_capture_evidence_store_for_executable(
+        let release = direct_capture_evidence_store_for_identity(
             "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
             &home,
+            Some("driver-daemon"),
         )
         .expect("release store");
-        let local = direct_capture_evidence_store_for_executable(
+        let local = direct_capture_evidence_store_for_identity(
             "/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local",
             &home,
+            Some("driver-daemon"),
         )
         .expect("local store");
 
         release.record_now().expect("record release verification");
         assert!(release.load().is_some());
         assert!(local.load().is_none());
-        assert!(
-            direct_capture_evidence_store_for_executable("/usr/local/bin/cua-driver", &home,)
-                .is_none()
-        );
+        assert!(direct_capture_evidence_store_for_identity(
+            "/usr/local/bin/cua-driver",
+            &home,
+            Some("driver-daemon"),
+        )
+        .is_none());
+        for attribution in [Some("caller"), Some("host"), None] {
+            assert!(direct_capture_evidence_store_for_identity(
+                "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
+                &home,
+                attribution,
+            )
+            .is_none());
+        }
         std::fs::remove_dir_all(home).expect("remove test home");
     }
 
@@ -558,9 +575,10 @@ mod tests {
     fn explicit_probe_updates_evidence_in_the_permission_service() {
         let home =
             std::env::temp_dir().join(format!("cua-direct-capture-test-{}", uuid::Uuid::new_v4()));
-        let store = direct_capture_evidence_store_for_executable(
+        let store = direct_capture_evidence_store_for_identity(
             "/Applications/CuaDriver.app/Contents/MacOS/cua-driver",
             &home,
+            Some("driver-daemon"),
         )
         .expect("release store");
 

@@ -39,9 +39,10 @@ probe, status also returns `direct_capture_verification` with the
 whose probe succeeded, and `consent_transition: "unknown"`. ScreenCaptureKit
 confirms that the explicit probe succeeded but does not report whether consent
 was newly granted or already present. The permission service validates the
-stored schema, source, timestamp, and bundle ID before returning the complete
-live and historical observation. The CLI only renders that result. Historical
-evidence does not turn the read-only status call into a claim about current
+stored schema, source, timestamp, and bundle ID, and only loads the record when
+the live status belongs to the driver daemon identity. The CLI only renders the
+complete live and historical observation. Historical evidence does not turn the
+read-only status call into a claim about current
 ScreenCaptureKit readiness.
 
 `permissions grant` never sends a prompt-capable request over the daemon

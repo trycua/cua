@@ -58,6 +58,7 @@ jobs:
       CUA_E2E_BROWSER_STDERR: "1"
       CUA_E2E_BROWSER_PRODUCTS: ${{ matrix.products }}
       CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER: ${{ matrix.label == 'Windows' && '1' || '0' }}
+      CUA_E2E_WINDOWS_BROWSER_LIMITATION: ${{ matrix.label == 'Windows' && 'hosted_runner_token' || '0' }}
       RUST_BACKTRACE: "1"
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -107,56 +108,24 @@ jobs:
             if (-not (Test-Path -LiteralPath $browser.Executable -PathType Leaf)) {
               throw "required vendor browser executable is absent: $($browser.Executable)"
             }
-            Write-Host "[browser-trust] found signed-browser candidate: $($browser.Executable)"
+            $signature = Get-AuthenticodeSignature -FilePath $browser.Executable
+            if ($signature.Status -ne 'Valid') {
+              throw "vendor browser signature is not valid: $($browser.Executable) ($($signature.Status))"
+            }
+            Write-Host "[browser-trust] verified vendor-signed candidate: $($browser.Executable)"
           }
-      - name: Run standalone browsers on Windows under restricted token
+      - name: Run standalone browsers on Windows with hosted-token limitation
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $artifactDir = Join-Path $PWD 'artifacts\cua-driver\standalone-browser'
           $scriptPath = Join-Path $PWD 'scripts\ci\windows\run-rust-standalone-browser-e2e.ps1'
-          $wrapperPath = Join-Path $env:RUNNER_TEMP 'run-cua-standalone-browser-restricted.ps1'
-          $statusPath = Join-Path $env:RUNNER_TEMP 'cua-standalone-browser-restricted.status'
-          $logPath = Join-Path $env:RUNNER_TEMP 'cua-standalone-browser-restricted.log'
-          @(
-            "`$ErrorActionPreference = 'Stop'"
-            "`$env:CUA_TEST_REQUIRE_PROTECTED_WINDOWS_BROWSER = '1'"
-            "`$env:CUA_E2E_ARTIFACT_DIR = '$artifactDir'"
-            "try { & '$scriptPath' -NoBuild *>&1 | Tee-Object -FilePath '$logPath'; `$status = if (`$?) { 0 } else { 1 } } catch { `$_ | Out-String | Add-Content -Path '$logPath'; `$status = 1 }"
-            "Set-Content -Path '$statusPath' -Value `$status"
-          ) | Set-Content -Path $wrapperPath -Encoding UTF8
-
-          # SAFER's Basic User level disables the administrator group in the
-          # current runner identity without mutating the signed browser trees.
-          $trustLevels = (& "$env:SystemRoot\System32\runas.exe" /showtrustlevels 2>&1) -join "`n"
-          if ($trustLevels -notmatch '0x20000') {
-            throw "Windows runner does not expose the Basic User SAFER level: $trustLevels"
-          }
-          $restrictedCommand = "powershell.exe -NoLogo -NoProfile -ExecutionPolicy Bypass -File `"$wrapperPath`""
-          & "$env:SystemRoot\System32\runas.exe" /env /trustlevel:0x20000 $restrictedCommand
-          if ($LASTEXITCODE -ne 0) {
-            throw "failed to launch restricted-token browser suite: runas exit $LASTEXITCODE"
-          }
-          $deadline = [DateTime]::UtcNow.AddMinutes(55)
-          $heartbeat = [DateTime]::UtcNow
-          while (-not (Test-Path -LiteralPath $statusPath)) {
-            if ([DateTime]::UtcNow -ge $deadline) {
-              throw 'restricted-token browser suite did not publish completion status'
-            }
-            if ([DateTime]::UtcNow -ge $heartbeat) {
-              Write-Host '[browser-trust] restricted-token suite is still running'
-              $heartbeat = [DateTime]::UtcNow.AddSeconds(30)
-            }
-            Start-Sleep -Seconds 2
-          }
-          if (Test-Path -LiteralPath $logPath) {
-            Get-Content -LiteralPath $logPath
-          }
-          $status = [int](Get-Content -Raw -LiteralPath $statusPath)
-          if ($status -ne 0) {
-            throw "restricted-token standalone-browser E2E failed with exit code $status"
-          }
+          # Hosted Windows does not expose a restricted token. The suite records
+          # the driver's typed refusal and proves it has no setup side effects.
+          $env:CUA_E2E_ARTIFACT_DIR = $artifactDir
+          & $scriptPath -NoBuild
+          if ($LASTEXITCODE -ne 0) { throw "standalone-browser E2E failed with exit code $LASTEXITCODE" }
       - name: Build source driver on Linux
         if: runner.os == 'Linux'
         shell: bash

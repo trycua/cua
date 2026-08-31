@@ -157,14 +157,19 @@ pub fn move_cursor(x: i32, y: i32) -> Result<()> {
         bail!("not a Hyprland session");
     }
     let binary = hyprctl_binary();
+    let dispatch = cursor_move_dispatch(x, y);
     let output = Command::new(binary)
-        .args(["dispatch", "movecursor", &x.to_string(), &y.to_string()])
+        .args(["dispatch", &dispatch])
         .output()
-        .context("launch hyprctl dispatch movecursor")?;
+        .context("launch Hyprland cursor move dispatcher")?;
     if !output.status.success() || !output.stdout.starts_with(b"ok") {
-        bail!("hyprctl dispatch movecursor failed");
+        bail!("Hyprland cursor move dispatcher failed");
     }
     Ok(())
+}
+
+fn cursor_move_dispatch(x: i32, y: i32) -> String {
+    format!("hl.dsp.cursor.move({{ x = {x}, y = {y} }})")
 }
 
 fn monitor_physical_and_logical_size(monitor: &Monitor) -> Option<((u32, u32), (u32, u32))> {
@@ -430,6 +435,14 @@ mod tests {
     fn parses_full_hyprland_pointer_address() {
         assert_eq!(parse_address("0x55b5cd9af330"), Some(0x55b5cd9af330));
         assert_eq!(parse_address("invalid"), None);
+    }
+
+    #[test]
+    fn cursor_move_dispatch_uses_hyprland_lua_api() {
+        assert_eq!(
+            cursor_move_dispatch(4194, -982),
+            "hl.dsp.cursor.move({ x = 4194, y = -982 })"
+        );
     }
 
     #[test]

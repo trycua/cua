@@ -924,9 +924,39 @@ pub mod linux {
 
     pub struct LinuxObserver {
         session: SessionKind,
+        cursor_supported: bool,
         stop: Arc<AtomicBool>,
         events: Arc<Mutex<Vec<FocusEvent>>>,
         sampler: Option<JoinHandle<()>>,
+    }
+
+    fn capabilities_for_session(
+        session: SessionKind,
+        cursor_supported: bool,
+    ) -> ObserverCapabilities {
+        match session {
+            SessionKind::X11 => ObserverCapabilities {
+                focus: true,
+                z_order: true,
+                cursor: true,
+                leaked_input: false,
+            },
+            SessionKind::Hyprland => ObserverCapabilities {
+                focus: true,
+                z_order: true,
+                cursor: cursor_supported,
+                leaked_input: false,
+            },
+            SessionKind::Sway | SessionKind::Gnome | SessionKind::CuaCompositor => {
+                ObserverCapabilities {
+                    focus: true,
+                    z_order: true,
+                    cursor: false,
+                    leaked_input: false,
+                }
+            }
+            SessionKind::Missing => ObserverCapabilities::default(),
+        }
     }
 
     impl LinuxObserver {
@@ -956,8 +986,14 @@ pub mod linux {
             } else {
                 SessionKind::Missing
             };
+            let cursor_supported = match session {
+                SessionKind::X11 => true,
+                SessionKind::Hyprland => hyprland_cursor_position().is_ok(),
+                _ => false,
+            };
             Self {
                 session,
+                cursor_supported,
                 stop: Arc::new(AtomicBool::new(false)),
                 events: Arc::new(Mutex::new(Vec::new())),
                 sampler: None,
@@ -973,24 +1009,7 @@ pub mod linux {
 
     impl ObserverBackend for LinuxObserver {
         fn capabilities(&self) -> ObserverCapabilities {
-            match self.session {
-                SessionKind::X11 => ObserverCapabilities {
-                    focus: true,
-                    z_order: true,
-                    cursor: true,
-                    leaked_input: false,
-                },
-                SessionKind::Sway
-                | SessionKind::Hyprland
-                | SessionKind::Gnome
-                | SessionKind::CuaCompositor => ObserverCapabilities {
-                    focus: true,
-                    z_order: true,
-                    cursor: false,
-                    leaked_input: false,
-                },
-                SessionKind::Missing => ObserverCapabilities::default(),
-            }
+            capabilities_for_session(self.session, self.cursor_supported)
         }
 
         fn snapshot(&self, target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
@@ -1132,7 +1151,13 @@ pub mod linux {
         active_workspace: HyprlandWorkspace,
     }
 
-    fn hyprctl_json<T: serde::de::DeserializeOwned>(query: &str) -> Result<T, ObserverError> {
+    #[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+    struct HyprlandCursorPosition {
+        x: f64,
+        y: f64,
+    }
+
+    fn hyprctl_output(query: &str) -> Result<Vec<u8>, ObserverError> {
         let output = Command::new("hyprctl")
             .args(["-j", query])
             .output()
@@ -1144,8 +1169,23 @@ pub mod linux {
                 String::from_utf8_lossy(&output.stderr)
             )));
         }
-        serde_json::from_slice(&output.stdout)
+        Ok(output.stdout)
+    }
+
+    fn hyprctl_json<T: serde::de::DeserializeOwned>(query: &str) -> Result<T, ObserverError> {
+        serde_json::from_slice(&hyprctl_output(query)?)
             .map_err(|error| ObserverError::new(format!("invalid hyprctl {query} JSON: {error}")))
+    }
+
+    fn parse_hyprland_cursor_position(bytes: &[u8]) -> Result<(f64, f64), ObserverError> {
+        let cursor: HyprlandCursorPosition = serde_json::from_slice(bytes).map_err(|error| {
+            ObserverError::new(format!("invalid hyprctl cursorpos JSON: {error}"))
+        })?;
+        Ok((cursor.x, cursor.y))
+    }
+
+    fn hyprland_cursor_position() -> Result<(f64, f64), ObserverError> {
+        parse_hyprland_cursor_position(&hyprctl_output("cursorpos")?)
     }
 
     fn parse_hyprland_address(address: &str) -> Option<u64> {
@@ -1255,7 +1295,7 @@ pub mod linux {
             foreground: active,
             input_focus: active,
             target_z,
-            cursor_pos: None,
+            cursor_pos: Some(hyprland_cursor_position()?),
         })
     }
 
@@ -2025,6 +2065,23 @@ pub mod linux {
                 hyprland_client("0x11", 100, 1, [940, 780], 0),
             ];
             assert!(select_hyprland_pid_client(&tied, 100).is_err());
+        }
+
+        #[test]
+        fn hyprland_cursor_position_uses_compositor_global_coordinates() {
+            assert_eq!(
+                parse_hyprland_cursor_position(br#"{"x":4367,"y":-964}"#)
+                    .expect("valid Hyprland cursor position"),
+                (4367.0, -964.0)
+            );
+        }
+
+        #[test]
+        fn only_hyprland_wayland_observer_advertises_probed_cursor_support() {
+            assert!(capabilities_for_session(SessionKind::Hyprland, true).cursor);
+            assert!(!capabilities_for_session(SessionKind::Hyprland, false).cursor);
+            assert!(!capabilities_for_session(SessionKind::Sway, true).cursor);
+            assert!(!capabilities_for_session(SessionKind::Gnome, true).cursor);
         }
 
         #[test]

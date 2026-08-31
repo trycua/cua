@@ -5,9 +5,20 @@ use std::net::TcpListener;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-use crate::e2e::OracleKind;
+use crate::e2e::{native_cursor_oracle_required, OracleKind};
 use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
 use crate::{harness_app, spawn_in_job, BehaviorRecording, ChildReaper, Driver};
+
+fn cursor_canary_target((x, y): (f64, f64)) -> (f64, f64) {
+    let offset = |value: f64| {
+        if value >= 16.0 {
+            value - 16.0
+        } else {
+            value + 16.0
+        }
+    };
+    (offset(x), offset(y))
+}
 
 /// A foreground Electron window that journals focus and leaked input while it
 /// fully occludes the background target.
@@ -216,6 +227,11 @@ impl ForegroundSentinel {
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
 
+        #[cfg(target_os = "linux")]
+        if wayland_e2e_session_is("hyprland") {
+            self.assert_cursor_guard_canary(driver, background_target)?;
+        }
+
         let canary_key = if std::env::var("CUA_E2E_WAYLAND_SESSION")
             .is_ok_and(|session| session == "cua-compositor")
         {
@@ -294,6 +310,98 @@ impl ForegroundSentinel {
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
         self.assert_background_posture(background_target)
+    }
+
+    fn assert_cursor_guard_canary(
+        &self,
+        driver: &mut impl Driver,
+        background_target: TargetWindow,
+    ) -> Result<(), String> {
+        let observer = DesktopObserver::new(NativeObserver::new(), background_target);
+        let before = observer.snapshot().map_err(|error| error.to_string())?;
+        let read_only = observer.snapshot().map_err(|error| error.to_string())?;
+        if before.foreground != read_only.foreground
+            || before.input_focus != read_only.input_focus
+            || before.target_z != read_only.target_z
+        {
+            return Err(format!(
+                "Hyprland cursor query changed desktop posture: {before:?} -> {read_only:?}"
+            ));
+        }
+        let original = before
+            .cursor_pos
+            .ok_or_else(|| "Hyprland cursor observer returned no position".to_owned())?;
+        let target = cursor_canary_target(original);
+
+        let moved_response = driver.call(
+            "move_cursor",
+            serde_json::json!({
+                "x": target.0,
+                "y": target.1,
+                "scope": "desktop",
+            }),
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        let moved = observer.snapshot().map_err(|error| error.to_string());
+
+        // Always attempt restoration, including when the move or observation
+        // failed, so a preflight failure does not strand the user's cursor.
+        let restored_response = driver.call(
+            "move_cursor",
+            serde_json::json!({
+                "x": original.0,
+                "y": original.1,
+                "scope": "desktop",
+            }),
+        );
+        std::thread::sleep(Duration::from_millis(100));
+        let restored = observer.snapshot().map_err(|error| error.to_string());
+
+        if moved_response.is_error() {
+            return Err(format!(
+                "Hyprland cursor canary could not move the cursor: {}",
+                moved_response.text()
+            ));
+        }
+        if restored_response.is_error() {
+            return Err(format!(
+                "Hyprland cursor canary could not restore the cursor: {}",
+                restored_response.text()
+            ));
+        }
+        let moved = moved?;
+        let restored = restored?;
+        let moved_position = moved
+            .cursor_pos
+            .ok_or_else(|| "Hyprland cursor observer lost the moved position".to_owned())?;
+        let restored_position = restored
+            .cursor_pos
+            .ok_or_else(|| "Hyprland cursor observer lost the restored position".to_owned())?;
+        if (original.0 - moved_position.0).abs() <= 1.0
+            && (original.1 - moved_position.1).abs() <= 1.0
+        {
+            return Err(format!(
+                "Hyprland cursor canary was not detected: {original:?} -> {moved_position:?}"
+            ));
+        }
+        if (original.0 - restored_position.0).abs() > 1.0
+            || (original.1 - restored_position.1).abs() > 1.0
+        {
+            return Err(format!(
+                "Hyprland cursor canary was not restored: {original:?} -> {restored_position:?}"
+            ));
+        }
+        for (stage, snapshot) in [("move", &moved), ("restore", &restored)] {
+            if before.foreground != snapshot.foreground
+                || before.input_focus != snapshot.input_focus
+                || before.target_z != snapshot.target_z
+            {
+                return Err(format!(
+                    "Hyprland cursor canary changed desktop posture during {stage}: {before:?} -> {snapshot:?}"
+                ));
+            }
+        }
+        Ok(())
     }
 
     pub fn target(&self) -> TargetWindow {
@@ -383,10 +491,7 @@ impl ForegroundSentinel {
             ));
         }
         let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
-        if std::env::var("XDG_SESSION_TYPE")
-            .map(|session| !session.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(true)
-        {
+        if native_cursor_oracle_required() {
             native_oracles.push(OracleKind::Cursor);
         }
         let (result, delta) = observer
@@ -903,6 +1008,17 @@ fn sway_container_id(node: &serde_json::Value, title: &str) -> Option<i64> {
                 .find_map(|child| sway_container_id(child, title))
         })
     })
+}
+
+#[cfg(test)]
+mod cursor_canary_tests {
+    use super::*;
+
+    #[test]
+    fn cursor_canary_target_moves_a_detectable_distance_without_crossing_zero() {
+        assert_eq!(cursor_canary_target((100.0, 80.0)), (84.0, 64.0));
+        assert_eq!(cursor_canary_target((4.0, 0.0)), (20.0, 16.0));
+    }
 }
 
 #[cfg(all(test, target_os = "linux"))]

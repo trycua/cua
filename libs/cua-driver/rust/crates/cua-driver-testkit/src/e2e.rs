@@ -635,6 +635,16 @@ fn native_cell_id(toolkit: &str, action: &str, targeting: Targeting, delivery: D
     .replace('_', "-")
 }
 
+fn cursor_oracle_required(display_server: DisplayServer, wayland_session: Option<&str>) -> bool {
+    display_server != DisplayServer::Wayland
+        || wayland_session.is_some_and(|session| session.eq_ignore_ascii_case("hyprland"))
+}
+
+pub fn native_cursor_oracle_required() -> bool {
+    let wayland_session = std::env::var("CUA_E2E_WAYLAND_SESSION").ok();
+    cursor_oracle_required(DisplayServer::current(), wayland_session.as_deref())
+}
+
 pub fn native_background_case(
     toolkit: &str,
     action: &str,
@@ -647,7 +657,7 @@ pub fn native_background_case(
         OracleKind::ZOrder,
         OracleKind::NoLeakedInput,
     ];
-    if DisplayServer::current() != DisplayServer::Wayland {
+    if native_cursor_oracle_required() {
         oracles.push(OracleKind::Cursor);
     }
     CaseSpec::delivered(
@@ -1751,6 +1761,20 @@ mod tests {
         )
     }
 
+    #[test]
+    fn cursor_oracle_is_required_only_for_hyprland_wayland() {
+        assert!(cursor_oracle_required(
+            DisplayServer::Wayland,
+            Some("hyprland")
+        ));
+        assert!(!cursor_oracle_required(
+            DisplayServer::Wayland,
+            Some("sway")
+        ));
+        assert!(!cursor_oracle_required(DisplayServer::Wayland, None));
+        assert!(cursor_oracle_required(DisplayServer::X11, None));
+    }
+
     fn coverage_case(
         id: &str,
         harness: &str,
@@ -2643,11 +2667,14 @@ mod tests {
             OracleKind::FixtureState,
             OracleKind::Focus,
             OracleKind::ZOrder,
-            OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ] {
             assert!(background.oracles.contains(&oracle));
         }
+        assert_eq!(
+            background.oracles.contains(&OracleKind::Cursor),
+            native_cursor_oracle_required()
+        );
         background.validate().expect("background case is valid");
 
         let foreground = native_foreground_case(

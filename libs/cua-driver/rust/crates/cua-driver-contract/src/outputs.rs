@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{CaptureScope, EscalationReason, Platform};
-use schemars::{generate::SchemaSettings, JsonSchema};
+use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -56,11 +56,12 @@ pub fn advertised_output_schema(success: Value) -> Value {
 }
 
 fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {
-    let mut settings = SchemaSettings::draft2020_12();
-    settings.inline_subschemas = true;
-    settings.meta_schema = None;
-    let mut schema = serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
-        .expect("JSON Schema serializes");
+    let mut schema = serde_json::to_value(
+        schema_settings()
+            .into_generator()
+            .into_root_schema_for::<T>(),
+    )
+    .expect("JSON Schema serializes");
     strip_schema_titles(&mut schema);
     if let Some(object) = schema.as_object_mut() {
         object.insert(
@@ -79,12 +80,6 @@ fn strip_schema_titles(value: &mut Value) {
         Value::Object(object) => {
             object.remove("title");
             object.remove("description");
-            if matches!(
-                object.get("format").and_then(Value::as_str),
-                Some("uint32" | "uint64" | "double")
-            ) {
-                object.remove("format");
-            }
             for child in object.values_mut() {
                 strip_schema_titles(child);
             }
@@ -612,30 +607,6 @@ fn nullable_escalation_reason_schema(_: &mut schemars::SchemaGenerator) -> schem
 mod tests {
     use super::*;
     use serde_json::json;
-
-    #[test]
-    fn output_normalization_drops_only_schemars_numeric_formats() {
-        let mut schema = json!({
-            "type": "object",
-            "properties": {
-                "count": {"type": "integer", "format": "uint32"},
-                "frame": {"type": "integer", "format": "uint64"},
-                "ratio": {"type": "number", "format": "double"},
-                "created_at": {"type": "string", "format": "date-time"},
-                "format": {"type": "string"}
-            },
-            "required": ["format"]
-        });
-
-        strip_schema_titles(&mut schema);
-
-        for property in ["count", "frame", "ratio"] {
-            assert!(schema["properties"][property].get("format").is_none());
-        }
-        assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
-        assert_eq!(schema["properties"]["format"], json!({"type": "string"}));
-        assert_eq!(schema["required"], json!(["format"]));
-    }
 
     fn object_variant(schema: &Value) -> &Value {
         if schema.get("properties").is_some() {

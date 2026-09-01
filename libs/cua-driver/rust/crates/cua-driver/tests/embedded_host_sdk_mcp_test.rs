@@ -330,7 +330,7 @@ async fn concurrent_start_coalesces_and_restart_rotates_generation() {
 async fn stop_cancels_startup_and_unblocks_every_waiter() {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("never-ready-driver");
-    write_test_shell_script(&binary, "printf 'cancelled-startup\\n' >&2\nread _");
+    write_test_shell_script(&binary, "printf 'cancelled-startup\\n' >&2\nread _\nexit 9");
     let host = capturing_host(&binary, "com.trycua.embedded-cancel-test");
 
     let starting = tokio::spawn(host.clone().start());
@@ -362,10 +362,9 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
         cua_driver_sdk::EmbeddedDriverError::StartupCancelled
     ));
     assert_eq!(host.state(), EmbeddedDriverHostState::Stopped);
-    assert_eq!(
-        host.last_diagnostics().unwrap().stderr_tail,
-        "cancelled-startup\n"
-    );
+    let diagnostics = host.last_diagnostics().unwrap();
+    assert_eq!(diagnostics.stderr_tail, "cancelled-startup\n");
+    assert_eq!(diagnostics.exit_code, Some(9));
 }
 
 #[cfg(unix)]

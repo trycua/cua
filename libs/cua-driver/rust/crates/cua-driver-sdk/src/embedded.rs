@@ -196,10 +196,10 @@ impl DiagnosticCapture {
 
     fn append(&mut self, bytes: &[u8]) {
         if bytes.len() >= STDERR_TAIL_LIMIT_BYTES {
+            self.truncated |= bytes.len() > STDERR_TAIL_LIMIT_BYTES || !self.stderr.is_empty();
             self.stderr.clear();
             self.stderr
                 .extend_from_slice(&bytes[bytes.len() - STDERR_TAIL_LIMIT_BYTES..]);
-            self.truncated = true;
             return;
         }
         let overflow = self
@@ -227,12 +227,21 @@ impl DiagnosticCapture {
 struct StderrPump {
     reader: Option<JoinHandle<()>>,
     tee: Option<JoinHandle<()>>,
+    diagnostics: Arc<Mutex<Option<DiagnosticCapture>>>,
+    generation: String,
 }
 
 impl StderrPump {
-    async fn finish(mut self) {
-        finish_stderr_task(self.reader.take()).await;
-        finish_stderr_task(self.tee.take()).await;
+    async fn finish(mut self, exit_code: Option<i32>) {
+        tokio::join!(
+            finish_stderr_task(self.reader.take()),
+            finish_stderr_task(self.tee.take())
+        );
+        if let Some(capture) = self.diagnostics.lock().unwrap().as_mut() {
+            if capture.generation == self.generation {
+                capture.exit_code = exit_code;
+            }
+        }
     }
 }
 
@@ -560,13 +569,15 @@ impl EmbeddedCuaDriverHost {
             binary_path: self.options.binary_path.clone(),
             reason: "spawned process has no pid".into(),
         })?;
-        let mut liveness = child
-            .stdin
-            .take()
-            .ok_or_else(|| EmbeddedDriverError::Spawn {
-                binary_path: self.options.binary_path.clone(),
-                reason: "failed to create parent-liveness stdin pipe".into(),
-            })?;
+        let mut liveness = Some(
+            child
+                .stdin
+                .take()
+                .ok_or_else(|| EmbeddedDriverError::Spawn {
+                    binary_path: self.options.binary_path.clone(),
+                    reason: "failed to create parent-liveness stdin pipe".into(),
+                })?,
+        );
         let mut stderr_pump = if self.options.capture_stderr {
             let stderr = child
                 .stderr
@@ -598,8 +609,7 @@ impl EmbeddedCuaDriverHost {
                         reason: format!("inspect startup child: {error}"),
                     })?
             {
-                finish_stderr_pump(&mut stderr_pump).await;
-                set_diagnostic_exit_code(&self.diagnostics, &generation, status.code());
+                finish_stderr_pump(&mut stderr_pump, status.code()).await;
                 return Err(EmbeddedDriverError::ExitedBeforeReady {
                     code: status.code(),
                 });
@@ -669,7 +679,7 @@ impl EmbeddedCuaDriverHost {
         let mut pending = Some(RunningProcess {
             connection: connection.clone(),
             child,
-            liveness: Some(liveness),
+            liveness,
             stderr_pump,
             endpoint_identity,
         });
@@ -687,9 +697,12 @@ impl EmbeddedCuaDriverHost {
         };
         if !still_starting {
             let mut running = pending.unwrap();
-            let mut liveness = running.liveness.take().unwrap();
-            terminate_startup_child(&mut running.child, &mut liveness, &mut running.stderr_pump)
-                .await;
+            terminate_startup_child(
+                &mut running.child,
+                &mut running.liveness,
+                &mut running.stderr_pump,
+            )
+            .await;
             cleanup_owned_endpoint(&socket_path, &running.endpoint_identity);
             return Err(EmbeddedDriverError::StartupCancelled);
         }
@@ -735,7 +748,9 @@ impl EmbeddedCuaDriverHost {
         };
         let mut running = transition_guard.disarm();
         if let Some(stderr_pump) = running.stderr_pump.take() {
-            stderr_pump.finish().await;
+            stderr_pump
+                .finish(status.as_ref().ok().and_then(|status| status.code()))
+                .await;
         }
         cleanup_owned_endpoint(&running.connection.socket_path, &running.endpoint_identity);
         {
@@ -1272,6 +1287,8 @@ fn spawn_stderr_pump(
         (None, None)
     };
 
+    let reader_diagnostics = diagnostics.clone();
+    let reader_generation = generation.clone();
     let reader = tokio::spawn(async move {
         let mut buffer = [0_u8; 8192];
         loop {
@@ -1282,8 +1299,8 @@ fn spawn_stderr_pump(
                 break;
             }
             capture_and_queue_stderr(
-                &diagnostics,
-                &generation,
+                &reader_diagnostics,
+                &reader_generation,
                 &buffer[..count],
                 tee_sender.as_ref(),
             );
@@ -1293,6 +1310,8 @@ fn spawn_stderr_pump(
     StderrPump {
         reader: Some(reader),
         tee,
+        diagnostics,
+        generation,
     }
 }
 
@@ -1322,18 +1341,6 @@ fn append_diagnostic_bytes(
     }
 }
 
-fn set_diagnostic_exit_code(
-    diagnostics: &Arc<Mutex<Option<DiagnosticCapture>>>,
-    generation: &str,
-    exit_code: Option<i32>,
-) {
-    if let Some(capture) = diagnostics.lock().unwrap().as_mut() {
-        if capture.generation == generation {
-            capture.exit_code = exit_code;
-        }
-    }
-}
-
 fn clear_diagnostics(diagnostics: &Arc<Mutex<Option<DiagnosticCapture>>>, generation: &str) {
     let mut current = diagnostics.lock().unwrap();
     if current
@@ -1357,26 +1364,32 @@ async fn finish_stderr_task(task: Option<JoinHandle<()>>) {
     }
 }
 
-async fn finish_stderr_pump(stderr_pump: &mut Option<StderrPump>) {
+async fn finish_stderr_pump(stderr_pump: &mut Option<StderrPump>, exit_code: Option<i32>) {
     if let Some(stderr_pump) = stderr_pump.take() {
-        stderr_pump.finish().await;
+        stderr_pump.finish(exit_code).await;
     }
 }
 
 async fn terminate_startup_child(
     child: &mut Child,
-    liveness: &mut ChildStdin,
+    liveness: &mut Option<ChildStdin>,
     stderr_pump: &mut Option<StderrPump>,
 ) {
-    let _ = liveness.shutdown().await;
-    if tokio::time::timeout(Duration::from_millis(250), child.wait())
-        .await
-        .is_err()
-    {
-        let _ = child.start_kill();
-        let _ = child.wait().await;
+    if let Some(mut liveness) = liveness.take() {
+        let _ = liveness.shutdown().await;
     }
-    finish_stderr_pump(stderr_pump).await;
+    let status = match tokio::time::timeout(Duration::from_millis(250), child.wait()).await {
+        Ok(Ok(status)) => Some(status),
+        Ok(Err(_)) | Err(_) => {
+            let _ = child.start_kill();
+            child.wait().await.ok()
+        }
+    };
+    finish_stderr_pump(
+        stderr_pump,
+        status.as_ref().and_then(|status| status.code()),
+    )
+    .await;
 }
 
 #[cfg(test)]
@@ -1471,15 +1484,24 @@ mod tests {
     }
 
     #[test]
-    fn diagnostic_capture_retains_a_bounded_stderr_tail() {
-        let mut capture = DiagnosticCapture::new("generation-1".into());
-        capture.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
-        capture.append(b"final-error");
+    fn diagnostic_capture_reports_only_discarded_bytes_as_truncated() {
+        let mut under = DiagnosticCapture::new("under".into());
+        under.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES - 1]);
+        assert!(!under.snapshot().stderr_truncated);
 
-        let diagnostics = capture.snapshot();
-        assert!(diagnostics.stderr_truncated);
-        assert_eq!(diagnostics.stderr_tail.len(), STDERR_TAIL_LIMIT_BYTES);
-        assert!(diagnostics.stderr_tail.ends_with("final-error"));
+        let mut exact = DiagnosticCapture::new("exact".into());
+        exact.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
+        assert!(!exact.snapshot().stderr_truncated);
+
+        let mut over = DiagnosticCapture::new("over".into());
+        over.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES + 1]);
+        assert!(over.snapshot().stderr_truncated);
+        assert_eq!(over.snapshot().stderr_tail.len(), STDERR_TAIL_LIMIT_BYTES);
+
+        let mut replaced = DiagnosticCapture::new("replaced".into());
+        replaced.append(b"discarded");
+        replaced.append(&vec![b'a'; STDERR_TAIL_LIMIT_BYTES]);
+        assert!(replaced.snapshot().stderr_truncated);
     }
 
     #[test]
@@ -1490,12 +1512,9 @@ mod tests {
 
         append_diagnostic_bytes(&diagnostics, "generation-1", b"stale");
         append_diagnostic_bytes(&diagnostics, "generation-2", b"current");
-        set_diagnostic_exit_code(&diagnostics, "generation-1", Some(7));
-        set_diagnostic_exit_code(&diagnostics, "generation-2", Some(8));
 
         let snapshot = diagnostics.lock().unwrap().as_ref().unwrap().snapshot();
         assert_eq!(snapshot.stderr_tail, "current");
-        assert_eq!(snapshot.exit_code, Some(8));
 
         clear_diagnostics(&diagnostics, "generation-1");
         assert!(diagnostics.lock().unwrap().is_some());

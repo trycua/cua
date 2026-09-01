@@ -1,4 +1,4 @@
-# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
+﻿# cua-driver-rs uninstaller (Windows) — removes the runtime installed by install.ps1
 # laid down: the Scheduled Task autostart entry, running daemon
 # processes, the directory junctions wiring the visible bin dir back to
 # a per-version release dir, the entire package home tree, and any skill
@@ -39,7 +39,9 @@
 # Conservative on Claude MCP cleanup: we DON'T auto-edit %USERPROFILE%\
 # .claude.json on Windows (mirrors the macOS uninstall.sh's stance for
 # environments without python3). The closing message prints the
-# `claude mcp remove cua-driver-rs` command for the user to run.
+# `claude mcp remove cua-computer-use` command for the user to run —
+# that is the name `mcp-config --client claude` registers — plus the
+# legacy cua-driver-rs name for older installs.
 #
 # Env overrides (mirror install.ps1's variable names):
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   visible bin dir to remove
@@ -496,8 +498,13 @@ if (-not $Purge) {
     Write-Host ""
 }
 Write-Host "Claude Code MCP registrations:" -ForegroundColor Yellow
-Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver-rs"
-Write-Host "  with Claude Code, remove it manually:"
+Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver"
+Write-Host "  with Claude Code, remove it manually. mcp-config --client claude registers"
+Write-Host "  the server under the name cua-computer-use:"
+Write-Host ""
+Write-Host "    claude mcp remove cua-computer-use"
+Write-Host ""
+Write-Host "  Installs from v0.2.13 and earlier used the name cua-driver-rs:"
 Write-Host ""
 Write-Host "    claude mcp remove cua-driver-rs"
 Write-Host ""

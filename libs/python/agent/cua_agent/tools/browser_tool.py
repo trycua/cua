@@ -15,6 +15,28 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Map lowercase modifier names (as emitted by Yutori n1.5 and pynput-style callers)
+# to the Playwright key names the computer-server's browser commands expect.
+_PLAYWRIGHT_MODIFIERS = {
+    "ctrl": "Control",
+    "control": "Control",
+    "shift": "Shift",
+    "alt": "Alt",
+    "cmd": "Meta",
+    "command": "Meta",
+    "meta": "Meta",
+    "super": "Meta",
+    "win": "Meta",
+}
+
+
+def _to_playwright_modifiers(modifier) -> list:
+    """Convert a modifier key (or list of them) to Playwright key names."""
+    if not modifier:
+        return []
+    mods = modifier if isinstance(modifier, (list, tuple)) else [modifier]
+    return [_PLAYWRIGHT_MODIFIERS.get(str(m).lower(), str(m)) for m in mods]
+
 
 @register_tool("computer_use")
 class BrowserTool(BaseComputerTool):
@@ -375,8 +397,12 @@ class BrowserTool(BaseComputerTool):
 
     async def _action_history_back(self, params: dict) -> dict:
         """Go back in browser history."""
-        # Press Alt+Left arrow key combination
         try:
+            result = await self.interface.playwright_exec("go_back", {})
+            if isinstance(result, dict) and result.get("success"):
+                return result
+            # Older computer-server versions lack the go_back command;
+            # fall back to the Alt+Left arrow key combination.
             await self.automation.hotkey("Alt", "ArrowLeft")
             return {"success": True, "message": "Navigated back in history"}
         except Exception as e:
@@ -433,26 +459,28 @@ class BrowserTool(BaseComputerTool):
         """Navigate to a URL."""
         return await self._action_visit_url({"url": url})
 
-    async def click(self, x: int = None, y: int = None, button: str = "left", **kwargs) -> dict:
+    async def click(
+        self, x: int = None, y: int = None, button: str = "left", modifier=None, **kwargs
+    ) -> dict:
         """Click at coordinates. Supports both positional (x, y) and kwargs (button, x, y).
 
         This is compatible with the normalized format from OperatorNormalizerCallback
         which transforms actions like {"type": "left_click", "coordinate": [x, y]}
         into {"type": "click", "button": "left", "x": x, "y": y}.
+
+        modifier optionally holds a modifier key (e.g. "ctrl") during the click.
         """
         if x is None or y is None:
             return {"success": False, "error": "x and y coordinates are required"}
+        params = {"x": x, "y": y}
         if button == "right":
-            return await self.interface.playwright_exec(
-                "click", {"x": x, "y": y, "button": "right"}
-            )
+            params["button"] = "right"
         elif button == "middle" or button == "wheel":
-            return await self.interface.playwright_exec(
-                "click", {"x": x, "y": y, "button": "middle"}
-            )
-        else:
-            # Default to left click
-            return await self._action_left_click({"coordinate": [x, y]})
+            params["button"] = "middle"
+        modifiers = _to_playwright_modifiers(modifier)
+        if modifiers:
+            params["modifiers"] = modifiers
+        return await self.interface.playwright_exec("click", params)
 
     async def type(self, text: str) -> dict:
         """Type text into the focused element."""
@@ -538,18 +566,30 @@ class BrowserTool(BaseComputerTool):
         result = await self.interface.playwright_exec("click", {"x": x, "y": y, "button": "middle"})
         return result
 
-    async def double_click(self, coordinate=None, x: int = None, y: int = None, **kwargs) -> dict:
+    async def double_click(
+        self, coordinate=None, x: int = None, y: int = None, modifier=None, **kwargs
+    ) -> dict:
         """Double click at coordinates. Supports coordinate array or x/y kwargs."""
         # Accept either coordinate array or x/y kwargs
         if coordinate and len(coordinate) >= 2:
             x, y = coordinate[0], coordinate[1]
         if x is None or y is None:
             return {"success": False, "error": "coordinate parameter [x, y] or x/y kwargs required"}
-        result = await self.interface.playwright_exec("dblclick", {"x": x, "y": y})
+        params = {"x": x, "y": y, "click_count": 2}
+        modifiers = _to_playwright_modifiers(modifier)
+        if modifiers:
+            params["modifiers"] = modifiers
+        result = await self.interface.playwright_exec("click", params)
         return result
 
     async def triple_click(
-        self, coordinate=None, x: int = None, y: int = None, button: str = None, **kwargs
+        self,
+        coordinate=None,
+        x: int = None,
+        y: int = None,
+        button: str = None,
+        modifier=None,
+        **kwargs,
     ) -> dict:
         """Triple click at coordinates. Supports coordinate array or x/y kwargs."""
         # Accept either coordinate array or x/y kwargs
@@ -557,8 +597,12 @@ class BrowserTool(BaseComputerTool):
             x, y = coordinate[0], coordinate[1]
         if x is None or y is None:
             return {"success": False, "error": "coordinate parameter [x, y] or x/y kwargs required"}
-        # Triple click is approximated as double click
-        return await self.double_click(x=x, y=y)
+        params = {"x": x, "y": y, "click_count": 3}
+        modifiers = _to_playwright_modifiers(modifier)
+        if modifiers:
+            params["modifiers"] = modifiers
+        result = await self.interface.playwright_exec("click", params)
+        return result
 
     async def mouse_move(self, coordinate=None, x: int = None, y: int = None, **kwargs) -> dict:
         """Move mouse to coordinates. Supports coordinate array or x/y kwargs."""
@@ -618,6 +662,86 @@ class BrowserTool(BaseComputerTool):
     async def history_back(self, **kwargs) -> dict:
         """Go back in browser history. FARA-compatible."""
         return await self._action_history_back({})
+
+    async def history_forward(self, **kwargs) -> dict:
+        """Go forward in browser history."""
+        try:
+            result = await self.interface.playwright_exec("go_forward", {})
+            if isinstance(result, dict) and result.get("success"):
+                return result
+            # Older computer-server versions lack the go_forward command;
+            # fall back to the Alt+Right arrow key combination.
+            await self.automation.hotkey("alt", "right")
+            return {"success": True, "message": "Navigated forward in history"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def refresh(self, **kwargs) -> dict:
+        """Reload the current page."""
+        try:
+            result = await self.interface.playwright_exec("refresh", {})
+            if isinstance(result, dict) and result.get("success"):
+                return result
+            # Older computer-server versions lack the refresh command;
+            # fall back to pressing F5.
+            await self.automation.press_key("f5")
+            return {"success": True, "message": "Refreshed the page"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def mouse_down(
+        self, coordinate=None, x: int = None, y: int = None, button: str = "left", **kwargs
+    ) -> dict:
+        """Press and hold a mouse button, optionally moving to coordinates first."""
+        if coordinate and len(coordinate) >= 2:
+            x, y = coordinate[0], coordinate[1]
+        try:
+            if x is not None and y is not None:
+                await self.automation.move_cursor(x, y)
+            await self.automation.mouse_down(x, y, button=button)
+            return {"success": True, "message": f"Mouse down ({button}) at ({x}, {y})"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def mouse_up(
+        self, coordinate=None, x: int = None, y: int = None, button: str = "left", **kwargs
+    ) -> dict:
+        """Release a mouse button, optionally moving to coordinates first."""
+        if coordinate and len(coordinate) >= 2:
+            x, y = coordinate[0], coordinate[1]
+        try:
+            if x is not None and y is not None:
+                await self.automation.move_cursor(x, y)
+            await self.automation.mouse_up(x, y, button=button)
+            return {"success": True, "message": f"Mouse up ({button}) at ({x}, {y})"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def hold_key(self, key: str = None, duration: float = None, **kwargs) -> dict:
+        """Hold a key down for a duration (in seconds), then release it."""
+        if not key:
+            return {"success": False, "error": "key parameter is required"}
+        duration = 1.0 if duration is None else float(duration)
+        try:
+            await self.automation.key_down(key)
+            try:
+                await asyncio.sleep(duration)
+            finally:
+                await self.automation.key_up(key)
+            return {"success": True, "message": f"Held key {key} for {duration} seconds"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    async def evaluate_js(self, expression: str) -> dict:
+        """Evaluate a JavaScript expression in the current page.
+
+        Requires a computer-server with the 'evaluate' browser command; older
+        versions return {"success": False, "error": "Unknown command: evaluate"}.
+        """
+        try:
+            return await self.interface.playwright_exec("evaluate", {"expression": expression})
+        except Exception as e:
+            return {"success": False, "error": str(e)}
 
     async def terminate(self, status=None, **kwargs) -> dict:
         """Terminate and report status. FARA-compatible."""

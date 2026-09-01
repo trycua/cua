@@ -192,9 +192,10 @@ class QMPTransport(Transport):
         ppm_file = Path(ppm_path)
         if not ppm_file.exists():
             raise RuntimeError(f"screendump failed — {ppm_path} not created")
-        png_bytes = _ppm_to_png(ppm_file.read_bytes())
+        ppm_data = ppm_file.read_bytes()
+        png_bytes = _ppm_to_png(ppm_data)
         # Update screen dimensions from the PPM
-        w, h = _ppm_dimensions(ppm_file.read_bytes())
+        w, h = _ppm_dimensions(ppm_data)
         if w and h:
             self._screen_w = w
             self._screen_h = h

@@ -1,0 +1,13 @@
+# Runtime-import dependencies pinned from libs/python/cua-sandbox/uv.lock.
+# cua-sandbox itself is deliberately not installed: its Hatch build hook builds
+# the excluded Fleet/Cyclops native binding, while this generator imports source.
+# cua-auto is intentionally absent: it is not imported by the documented
+# runtime surface and its Linux evdev extra requires native Python headers.
+httpx==0.28.1
+websockets==16.0
+oras==0.2.42
+vncdotool==1.2.0
+paramiko==5.0.0
+grpcio==1.78.0
+protobuf==6.33.6
+pycdlib==1.14.0

@@ -58,6 +58,15 @@ VNC_REMOTE_MCP_TOOLS = frozenset(
 )
 
 
+_TRUTHY_ENV_VALUES = frozenset({"1", "true", "yes", "on"})
+
+
+def env_flag(name: str) -> bool:
+    """Return True when an environment variable holds a truthy value."""
+
+    return os.environ.get(name, "").strip().lower() in _TRUTHY_ENV_VALUES
+
+
 def configured_backend() -> str:
     """Return the effective backend using the same selection rule as the factory."""
 
@@ -69,6 +78,19 @@ def configured_backend() -> str:
 
 def is_vnc_backend() -> bool:
     return configured_backend() == "vnc"
+
+
+def vnc_force_caps() -> bool:
+    """Return True when the VNC client must send Shift itself.
+
+    RFB expects the server to derive the physical key and modifiers from the
+    keysym, so a compliant server types ``_`` when it receives the ``underscore``
+    keysym. QEMU only synthesises Shift for uppercase letters, so shifted
+    punctuation arrives unshifted (``_`` becomes ``-``). This opt-in makes the
+    client send ``shift-<key>`` instead of relying on the server.
+    """
+
+    return env_flag("CUA_VNC_FORCE_CAPS")
 
 
 def vnc_unsupported_result() -> Dict[str, Any]:

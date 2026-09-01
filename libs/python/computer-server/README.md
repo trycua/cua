@@ -24,6 +24,9 @@ pip install cua-computer-server[mcp]
 
 # With the generated native Cua Driver SDK backend
 pip install cua-computer-server[driver]
+
+# With the VNC backend
+pip install cua-computer-server[vnc]
 ```
 
 ## Usage
@@ -57,6 +60,34 @@ This provides:
 - MCP server at `/mcp` endpoint (requires `fastmcp` package)
 
 MCP clients can connect via streamable HTTP at `http://localhost:8000/mcp`.
+
+### VNC backend
+
+`--backend vnc` drives a remote target over RFB instead of the local OS, so it
+covers screen, pointer, scroll, and keyboard only. Host-scoped surfaces (shell,
+files, PTY, browser, windows) are refused rather than silently executed against
+the server's own machine.
+
+```bash
+python -m computer_server --backend vnc \
+  --vnc-host 127.0.0.1 --vnc-port 5900 --vnc-password secret
+```
+
+The equivalent environment variables are `CUA_VNC_HOST`, `CUA_VNC_PORT`,
+`CUA_VNC_PASSWORD`, and `CUA_VNC_FORCE_CAPS`.
+
+#### Shift and non-compliant servers
+
+RFB sends a keysym and leaves it to the server to work out which physical key
+and modifiers produce it, so a compliant server presses Shift itself when it
+receives `underscore`. QEMU only does that for uppercase letters: shifted
+punctuation arrives unshifted, and `Hello_World (a>b)` is typed as
+`Hello-World 9a.b0`.
+
+Pass `--vnc-force-caps` (or set `CUA_VNC_FORCE_CAPS=1`) to send `shift-<key>`
+from the client instead. It stays off by default: vncdotool documents it as a
+workaround for non-compliant servers, and it changes what every uppercase and
+shifted-punctuation keystroke puts on the wire.
 
 ### Cua Driver backend
 

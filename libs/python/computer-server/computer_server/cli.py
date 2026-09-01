@@ -8,6 +8,8 @@ import os
 import sys
 from typing import List, Optional
 
+from .backend_policy import env_flag
+
 logger = logging.getLogger(__name__)
 
 
@@ -97,6 +99,16 @@ def parse_args(args: Optional[List[str]] = None) -> argparse.Namespace:
         default="",
         help="VNC server password",
     )
+    parser.add_argument(
+        "--vnc-force-caps",
+        action="store_true",
+        default=env_flag("CUA_VNC_FORCE_CAPS"),
+        help=(
+            "Send Shift from the client for uppercase letters and US-layout "
+            "shifted punctuation, for servers such as QEMU that do not "
+            "synthesise it from the keysym (default: CUA_VNC_FORCE_CAPS)"
+        ),
+    )
 
     return parser.parse_args(args)
 
@@ -126,8 +138,13 @@ def main() -> None:
             os.environ["CUA_VNC_PORT"] = str(args.vnc_port)
         if args.vnc_password:
             os.environ["CUA_VNC_PASSWORD"] = args.vnc_password
+        if args.vnc_force_caps:
+            os.environ["CUA_VNC_FORCE_CAPS"] = "true"
         vnc_host = args.vnc_host or os.environ.get("CUA_VNC_HOST")
-        logger.info(f"VNC backend enabled → {vnc_host}:{args.vnc_port}")
+        logger.info(
+            f"VNC backend enabled → {vnc_host}:{args.vnc_port} "
+            f"(force_caps={args.vnc_force_caps})"
+        )
     elif args.backend == "cua-driver":
         os.environ["CUA_BACKEND"] = "cua-driver"
         if args.driver_mode:

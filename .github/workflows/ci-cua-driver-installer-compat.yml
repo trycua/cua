@@ -41,7 +41,7 @@ jobs:
               "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/files?per_page=100" \
               --jq '.[].filename')
             if ! grep -Eq \
-              '^(\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/install\.ps1|release-please-config\.json)$' \
+              '^(\.github/scripts/verify_cua_driver_release_archives\.py|\.github/scripts/tests/test_verify_cua_driver_release_archives\.py|\.github/workflows/(cd-rust-cua-driver|ci-cua-driver-installer-compat)\.yml|libs/cua-driver/scripts/(_install-common|_install-rust|install)\.sh|libs/cua-driver/scripts/install\.ps1|libs/cua-driver/scripts/tests/install-junction-fallback\.ps1|release-please-config\.json)$' \
               <<< "$CHANGED_FILES"; then
               SHOULD_RUN=false
             fi
@@ -128,6 +128,11 @@ jobs:
               /Applications/CuaDriver.app/Contents/Info.plist |
               grep -Fx com.trycua.driver
           fi
+
+      - name: Validate the locale-safe junction rollback
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: .\libs\cua-driver\scripts\tests\install-junction-fallback.ps1
 
       - name: Run the current Windows installer against the release
         if: runner.os == 'Windows'

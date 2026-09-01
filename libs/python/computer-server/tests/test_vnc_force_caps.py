@@ -7,6 +7,8 @@ that for uppercase letters, so shifted punctuation arrives unshifted and
 modifier to the client.
 """
 
+import os
+
 import pytest
 from computer_server.backend_policy import env_flag, vnc_force_caps
 from computer_server.cli import parse_args
@@ -16,11 +18,24 @@ from computer_server.handlers.vnc import VNCAutomationHandler, _VNCConnection
 SHIFTED_PUNCTUATION = "_(>)&{|}#~$"
 
 
+def _require_vncdotool() -> None:
+    """Require the `vnc` extra, except when running outside CI without it.
+
+    CI installs `cua-computer-server[vnc]` for this package, so a missing import
+    there is a packaging regression and must fail rather than quietly skip.
+    """
+
+    if os.environ.get("CI"):
+        import vncdotool  # noqa: F401
+    else:
+        pytest.importorskip("vncdotool", reason="requires cua-computer-server[vnc]")
+
+
 @pytest.fixture
 def vnc_client_factory():
     """Return a builder for a real vncdotool client bound to a cua-built factory."""
 
-    pytest.importorskip("vncdotool", reason="requires cua-computer-server[vnc]")
+    _require_vncdotool()
     from vncdotool.client import VNCDoToolClient
 
     def build(force_caps: bool):
@@ -81,13 +96,13 @@ def test_force_caps_preserves_the_password(vnc_client_factory):
 
 
 def test_handler_defaults_to_server_side_shift():
-    pytest.importorskip("vncdotool", reason="requires cua-computer-server[vnc]")
+    _require_vncdotool()
 
     assert VNCAutomationHandler(host="127.0.0.1")._conn._build_factory().force_caps is False
 
 
 def test_handler_forwards_force_caps_to_every_connection():
-    pytest.importorskip("vncdotool", reason="requires cua-computer-server[vnc]")
+    _require_vncdotool()
 
     handler = VNCAutomationHandler(host="127.0.0.1", force_caps=True)
 
@@ -95,7 +110,7 @@ def test_handler_forwards_force_caps_to_every_connection():
 
 
 def test_factory_builds_a_force_caps_handler_from_the_environment(monkeypatch):
-    pytest.importorskip("vncdotool", reason="requires cua-computer-server[vnc]")
+    _require_vncdotool()
     monkeypatch.setenv("CUA_BACKEND", "vnc")
     monkeypatch.setenv("CUA_VNC_HOST", "127.0.0.1")
     monkeypatch.setenv("CUA_VNC_FORCE_CAPS", "true")

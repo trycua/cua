@@ -268,6 +268,9 @@ fn harness_wpf_smoke() {
             let snap = snapshot(driver, pid, wid);
             assert!(!snap.is_error(), "WPF AX snapshot failed: {}", snap.text());
             let text = snap.text();
+            let elements = snap.structured()["elements"]
+                .as_array()
+                .expect("WPF snapshot needs structured elements");
             for aid in [
                 "btn-increment",
                 "btn-reset",
@@ -282,7 +285,17 @@ fn harness_wpf_smoke() {
                     ax::has_id(text, aid),
                     "missing AutomationId {aid} in WPF UIA snapshot"
                 );
+                assert!(
+                    elements.iter().any(|element| element["id"] == aid),
+                    "missing structured ID {aid} in WPF UIA snapshot"
+                );
             }
+            assert!(
+                elements
+                    .iter()
+                    .any(|element| element["id"] == "lbl-counter"),
+                "ID-only WPF text control was not indexed in structured elements"
+            );
             for marker in ["HARNESS_TEXT_MARKER_v1", "counter=0", "accel_fired=0"] {
                 assert!(text.contains(marker), "missing WPF AX marker {marker}");
             }

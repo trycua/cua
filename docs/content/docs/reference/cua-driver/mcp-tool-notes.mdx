@@ -61,6 +61,14 @@ Action tools (`click`, `double_click`, `right_click`, `drag`, `scroll`, `type_te
 
 ## Per-tool notes
 
+### `get_window_state` developer-assigned IDs
+
+On Windows, a structured `elements` row may include `id`, populated from a
+non-empty native UIA `AutomationId`. Renderer-owned web content never exposes
+this field. A native control with an ID can remain indexed even when it has no
+UIA action pattern; the ID identifies the control but does not imply that an
+action will succeed. Other platforms currently omit `id`.
+
 ### `get_window_state` degraded results
 
 On Linux (and macOS/Windows), the structured result may include `degraded: true` alongside a `degraded_reason` string when the accessibility walk completed but found no actionable elements. This distinguishes "a11y bridge not up, daemon not on the session D-Bus, or non-AX surface" from a window that genuinely has no controls. Treat `elements: []` as incomplete when `degraded: true` is set, and act by `px` off the screenshot returned in the same response.

@@ -151,6 +151,9 @@ fn harness_winui3_smoke() {
                 snap.text()
             );
             let text = snap.text();
+            let elements = snap.structured()["elements"]
+                .as_array()
+                .expect("WinUI3 snapshot needs structured elements");
             for aid in [
                 "btn-increment",
                 "btn-reset",
@@ -162,7 +165,17 @@ fn harness_winui3_smoke() {
                     text.contains(&format!("id={aid}")),
                     "missing AutomationId {aid} in WinUI3 UIA snapshot"
                 );
+                assert!(
+                    elements.iter().any(|element| element["id"] == aid),
+                    "missing structured ID {aid} in WinUI3 UIA snapshot"
+                );
             }
+            assert!(
+                elements
+                    .iter()
+                    .any(|element| element["id"] == "lbl-counter"),
+                "ID-only WinUI3 text control was not indexed in structured elements"
+            );
             assert!(
                 text.contains("HARNESS_TEXT_MARKER_v1"),
                 "WinUI3 text_body marker not in snapshot"

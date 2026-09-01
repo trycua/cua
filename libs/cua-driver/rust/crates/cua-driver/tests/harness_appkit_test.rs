@@ -65,7 +65,15 @@ impl Harness {
         Self::launch_with_command_oracle(None)
     }
 
+    fn launch_with_accessibility_only_surface() -> Self {
+        Self::launch_with_options(None, true)
+    }
+
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, false)
+    }
+
+    fn launch_with_options(command_oracle: Option<&Path>, ax_only_surface: bool) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -78,6 +86,9 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if ax_only_surface {
+            command.env("CUA_HARNESS_AX_ONLY_SURFACE", "1");
         }
         let app = command
             .spawn()
@@ -207,6 +218,21 @@ fn run_background_case_targeting(
     );
 }
 
+fn json_contains_key(value: &serde_json::Value, forbidden: &str) -> bool {
+    match value {
+        serde_json::Value::Object(object) => {
+            object.contains_key(forbidden)
+                || object
+                    .values()
+                    .any(|child| json_contains_key(child, forbidden))
+        }
+        serde_json::Value::Array(array) => array
+            .iter()
+            .any(|child| json_contains_key(child, forbidden)),
+        _ => false,
+    }
+}
+
 // ── tests ────────────────────────────────────────────────────────────────────
 
 #[test]
@@ -273,6 +299,151 @@ fn harness_appkit_smoke() {
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_accessibility_only_surface_contract() {
+    let case = native_readonly_case(
+        "appkit",
+        "accessibility_only_surface",
+        Targeting::Ax,
+        DriverRoute::AxRead,
+        vec![OracleKind::AxState, OracleKind::FixtureState],
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let harness = Harness::launch_with_accessibility_only_surface();
+        let (window_id, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+        driver.start_behavior_recording();
+
+        let exact = snapshot_elements(&mut driver, harness.pid, window_id);
+        assert!(!exact.is_error(), "exact snapshot failed: {}", exact.text());
+        assert!(has_id(exact.tree_text(), "btn-increment"));
+        assert!(
+            !exact.tree_text().contains("AX_ONLY_SURFACE_MARKER_v1"),
+            "exact-window snapshot leaked the AX-only surface:\n{}",
+            exact.tree_text()
+        );
+        let cached_button = element_token_by_id(&exact, "btn-increment");
+
+        let observed = driver.call(
+            "get_accessibility_surfaces",
+            serde_json::json!({"pid": harness.pid as i64}),
+        );
+        assert!(
+            !observed.is_error(),
+            "AX-only observation failed: {}",
+            observed.text()
+        );
+        assert_eq!(observed.structured()["surface_count"], 1);
+        assert_eq!(observed.structured()["actions_supported"], false);
+        assert_eq!(observed.structured()["screenshot_supported"], false);
+        let serialized = observed.structured().to_string();
+        assert!(serialized.contains("AX_ONLY_SURFACE_MARKER_v1"));
+        assert!(serialized.contains("ax-only-surface"));
+        for forbidden in [
+            "window_id",
+            "surface_token",
+            "element_index",
+            "element_token",
+            "actions",
+        ] {
+            assert!(
+                !json_contains_key(observed.structured(), forbidden),
+                "AX-only response exposed forbidden key {forbidden}: {}",
+                observed.structured()
+            );
+        }
+
+        let element_bounded = driver.call(
+            "get_accessibility_surfaces",
+            serde_json::json!({
+                "pid": harness.pid as i64,
+                "max_elements": 3
+            }),
+        );
+        assert!(!element_bounded.is_error(), "bounded observation failed");
+        assert_eq!(element_bounded.structured()["node_count"], 3);
+        assert_eq!(element_bounded.structured()["truncated"], true);
+
+        let depth_bounded = driver.call(
+            "get_accessibility_surfaces",
+            serde_json::json!({
+                "pid": harness.pid as i64,
+                "max_depth": 1
+            }),
+        );
+        assert!(
+            !depth_bounded.is_error(),
+            "depth-bounded observation failed"
+        );
+        assert_eq!(depth_bounded.structured()["truncated"], true);
+        let depth_nodes = depth_bounded.structured()["surfaces"][0]["nodes"]
+            .as_array()
+            .expect("depth-bounded nodes");
+        assert!(depth_nodes
+            .iter()
+            .all(|node| node["depth"].as_u64().unwrap() <= 1));
+        assert!(!depth_bounded
+            .structured()
+            .to_string()
+            .contains("AX_ONLY_DEEP_MARKER_v1"));
+
+        // These calls must not replace the exact-window action cache. A token
+        // captured before them remains live and still targets the exact fixture
+        // button. The single deliberate press also proves observation itself
+        // did not mutate the counter.
+        let press = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid as i64,
+                "window_id": window_id,
+                "element_token": cached_button
+            }),
+        );
+        assert!(
+            !press.is_error(),
+            "observation replaced action cache: {}",
+            press.text()
+        );
+        std::thread::sleep(Duration::from_millis(200));
+        let post = snapshot_elements(&mut driver, harness.pid, window_id);
+        assert!(
+            post.tree_text().contains("counter=1"),
+            "cached exact-window button did not increment exactly once:\n{}",
+            post.tree_text()
+        );
+        let mut exited = Command::new("/usr/bin/true")
+            .spawn()
+            .expect("spawn dead-process AX fixture");
+        let exited_pid = exited.id();
+        exited.wait().expect("wait for dead-process AX fixture");
+        let failed = driver.call(
+            "get_accessibility_surfaces",
+            serde_json::json!({"pid": exited_pid as i64}),
+        );
+        assert!(
+            failed.is_error(),
+            "dead process collapsed to successful empty discovery"
+        );
+        assert_eq!(failed.structured()["code"], "ax_observation_failed");
+        assert!(
+            failed.structured()["failure"]["operation"].is_string(),
+            "typed AX failure missing: {}",
+            failed.structured()
+        );
+
+        Observation::delivered(
+            vec![OracleKind::AxState, OracleKind::FixtureState],
+            Evidence::default(),
+        )
+    });
 }
 
 #[test]

@@ -188,6 +188,7 @@ fn tool_scope(tool_name: &str, args: &Value) -> ToolScope {
     if matches!(
         tool_name,
         "get_window_state"
+            | "get_accessibility_surfaces"
             | "verify_state"
             | "get_accessibility_tree"
             | "get_app_state"

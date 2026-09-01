@@ -54,6 +54,9 @@ let kMenuItemTitle = "Harness Test Item"
 let kSecondaryWindowTitle = "CuaTestHarness AppKit Secondary"
 let kSheetWindowTitle = "CuaTestHarness AppKit Sheet"
 let kFloatingWindowTitle = "CuaTestHarness AppKit Floating"
+let kAxOnlySurfaceTitle = "CuaTestHarness AX-only Surface"
+let kAxOnlySurfaceAID = "ax-only-surface"
+let kAxOnlySurfaceMarker = "AX_ONLY_SURFACE_MARKER_v1"
 
 // MARK: - Controller
 
@@ -541,6 +544,56 @@ final class BringToFrontMatrixWindows {
     }
 }
 
+// Opt-in synthetic AXWindow for the accessibility-only surface contract. It is
+// published through AXWindows but has no backing NSWindow, so the accessibility
+// server owns it under this process while _AXUIElementGetWindow has no native
+// window number to return. Ordinary harness launches do not install it.
+final class AccessibilityOnlySurfaceFixture {
+    let root = NSAccessibilityElement()
+    private var retainedElements: [NSAccessibilityElement] = []
+
+    init(application: NSApplication, exactWindow: NSWindow) {
+        root.setAccessibilityRole(.window)
+        root.setAccessibilitySubrole(.standardWindow)
+        root.setAccessibilityTitle(kAxOnlySurfaceTitle)
+        root.setAccessibilityIdentifier(kAxOnlySurfaceAID)
+        root.setAccessibilityFrame(NSRect(x: 40, y: 40, width: 360, height: 260))
+        root.setAccessibilityParent(application)
+
+        let marker = element(.staticText, "ax-only-marker", kAxOnlySurfaceMarker, root)
+        let wide = (0..<8).map { index in
+            element(.staticText, "ax-only-wide-\(index)", "ax-only-wide-value-\(index)", root)
+        }
+        let depthOne = element(.group, "ax-only-depth-1", "depth-one", root)
+        let depthTwo = element(.group, "ax-only-depth-2", "depth-two", depthOne)
+        let depthThree = element(
+            .staticText, "ax-only-depth-3", "AX_ONLY_DEEP_MARKER_v1", depthTwo)
+        depthTwo.setAccessibilityChildren([depthThree])
+        depthOne.setAccessibilityChildren([depthTwo])
+        root.setAccessibilityChildren([marker] + wide + [depthOne])
+
+        // Put the synthetic surface first so a small global query budget can
+        // observe and truncate it without scanning unrelated native windows.
+        application.setAccessibilityWindows([root, exactWindow])
+    }
+
+    private func element(
+        _ role: NSAccessibility.Role,
+        _ identifier: String,
+        _ label: String,
+        _ parent: Any
+    ) -> NSAccessibilityElement {
+        let element = NSAccessibilityElement()
+        element.setAccessibilityRole(role)
+        element.setAccessibilityIdentifier(identifier)
+        element.setAccessibilityLabel(label)
+        element.setAccessibilityFrame(NSRect(x: 60, y: 60, width: 240, height: 20))
+        element.setAccessibilityParent(parent)
+        retainedElements.append(element)
+        return element
+    }
+}
+
 func writeBringToFrontWindowReport(
     main: NSWindow,
     matrix: BringToFrontMatrixWindows?
@@ -616,9 +669,16 @@ struct CuaAppKitHarness {
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
         }
+        var accessibilityOnlySurface: AccessibilityOnlySurfaceFixture?
+        if ProcessInfo.processInfo.environment["CUA_HARNESS_AX_ONLY_SURFACE"] == "1" {
+            accessibilityOnlySurface = AccessibilityOnlySurfaceFixture(
+                application: app,
+                exactWindow: controller.window)
+        }
         app.activate(ignoringOtherApps: true)
         writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
         app.run()
         _ = matrixWindows
+        _ = accessibilityOnlySurface
     }
 }

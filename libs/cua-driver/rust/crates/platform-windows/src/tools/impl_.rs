@@ -1217,23 +1217,23 @@ impl Tool for GetWindowStateTool {
             .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
-        let do_tree = true;
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
 
         let state = self.state.clone();
+        // UIA providers are implemented by the target process and can stop
+        // responding entirely. Keep capture in its own Tokio blocking job while
+        // UIA runs on the dedicated single-flight worker; the screenshot is the
+        // visual fallback precisely when the UIA job reaches its timeout.
         let q = query.clone();
+        let tree_task = crate::uia::windows_enum::run_uia_with_deadline_async(
+            "window tree",
+            std::time::Duration::from_secs(4),
+            "screenshot fallback",
+            move |_| crate::uia::walk_tree_bounded(hwnd, q.as_deref(), max_elements, max_depth),
+        );
+
         let out_file = screenshot_out_file.clone();
-        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let tree_result = if do_tree {
-                Some(crate::uia::walk_tree_bounded(
-                    hwnd,
-                    q.as_deref(),
-                    max_elements,
-                    max_depth,
-                ))
-            } else {
-                None
-            };
+        let screenshot_task = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture screenshot AND any error message so the response can
             // surface *why* there's no image (the iconic-window guard from
             // #1973 / PR #1974 is the load-bearing case: minimized windows
@@ -1266,252 +1266,273 @@ impl Tool for GetWindowStateTool {
             } else {
                 (None, None)
             };
-            Ok((tree_result, screenshot, screenshot_err))
+            Ok((screenshot, screenshot_err))
         });
-        // Timeout: Chrome's UIA provider can block indefinitely on property reads.
-        let result: Result<anyhow::Result<_>, _> =
-            match tokio::time::timeout(std::time::Duration::from_secs(4), blocking).await {
-                Ok(join_result) => join_result.map_err(|e| anyhow::anyhow!("task panic: {e}")),
-                Err(_elapsed) => {
-                    // Surface the target's window class + an actionable hint
-                    // instead of just "UIA provider unresponsive". The class
-                    // points the caller at the right workaround (e.g. SALFRAME
-                    // → screenshot + pixel coords + delivery_mode:"foreground"; UWP
-                    // class → re-call with a depth-limited scan and act by pixel
-                    // off the screenshot if the tree stays unusable).
-                    let class = crate::input::delivery::read_class_name(hwnd);
-                    Err(anyhow::anyhow!(
+
+        // Timeout: Chrome and game UIA providers can block indefinitely on
+        // property reads. The dedicated UIA worker is single-flight and does
+        // not consume Tokio's shared blocking pool after this timeout.
+        let (tree_opt, tree_error) = match tree_task.await {
+            Ok(tree) => (Some(tree), None),
+            Err(crate::uia::windows_enum::UiaDeadlineError::Timeout) => {
+                let class = crate::input::delivery::read_class_name(hwnd);
+                (
+                    None,
+                    Some(format!(
                         "get_window_state timed out after 4s (UIA provider unresponsive on \
-                     hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
-                     (a) re-call this tool with a depth-limited scan \
-                     (`max_elements` / `max_depth`) — if the tree stays unusable, act \
-                     by pixel `click(x, y)` off the screenshot in the response; \
-                     (b) if the target is a transient VCL / message-box dialog, send \
-                     `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
-                     default accelerator (Esc / Enter / Y / N) without needing the tree."
-                    ))
-                }
+                         hwnd 0x{hwnd:x}, class '{class}'). Act by pixel `click(x, y)` off \
+                         the screenshot in this response, or send `press_key` with \
+                         `delivery_mode:\"foreground\"` for a transient native dialog."
+                    )),
+                )
+            }
+            Err(crate::uia::windows_enum::UiaDeadlineError::Busy) => (
+                None,
+                Some(
+                    "UIA provider is busy with an earlier timed-out call; use the screenshot fallback."
+                        .to_owned(),
+                ),
+            ),
+            Err(crate::uia::windows_enum::UiaDeadlineError::Unavailable) => (
+                None,
+                Some("UIA worker unavailable; use the screenshot fallback.".to_owned()),
+            ),
+        };
+
+        let (screenshot_opt, screenshot_err) =
+            match tokio::time::timeout(std::time::Duration::from_secs(4), screenshot_task).await {
+                Ok(Ok(Ok(capture))) => capture,
+                Ok(Ok(Err(error))) => (None, Some(format!("{error}"))),
+                Ok(Err(error)) => (None, Some(format!("screenshot task panic: {error}"))),
+                Err(_elapsed) => (None, Some("screenshot capture timed out after 4s".into())),
             };
-        let result = result.and_then(|r| r);
 
-        match result {
-            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
-                let mut content = Vec::new();
-                let mut structured = json!({ "window_id": hwnd, "pid": pid });
+        let mut content = Vec::new();
+        let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
-                if let Some(tr) = tree_opt {
-                    let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
-                    let count = tr
-                        .nodes
-                        .iter()
-                        .filter(|n| n.element_index.is_some())
-                        .count();
-                    let header = format!("window_id={hwnd} pid={pid} elements={count}\n\n");
-                    content.push(cua_driver_core::protocol::Content::text(
-                        header + &tr.tree_markdown,
-                    ));
-                    // Route the cache to the matching dispatch path: any
-                    // node whose msaa_role is Some came from the MSAA
-                    // walker, so the entire snapshot must Drop via
-                    // IAccessible and click must dispatch through MSAA.
-                    if !observation_only {
-                        if is_msaa {
-                            state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
-                        } else {
-                            state.element_cache.update(pid, hwnd, &tr.nodes);
-                        }
-                    }
-                    structured["element_count"] = json!(count);
-                    // UIA currently does not expose whether a bounded walk
-                    // exhausted every subtree. Keep negative existence
-                    // conservative until that proof is available.
-                    structured["elements_complete"] = json!(false);
-                    structured["tree_markdown"] = json!(tr.tree_markdown);
+        if let Some(tr) = tree_opt {
+            let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
+            let count = tr
+                .nodes
+                .iter()
+                .filter(|n| n.element_index.is_some())
+                .count();
+            let header = format!("window_id={hwnd} pid={pid} elements={count}\n\n");
+            content.push(cua_driver_core::protocol::Content::text(
+                header + &tr.tree_markdown,
+            ));
+            // Route the cache to the matching dispatch path: any
+            // node whose msaa_role is Some came from the MSAA
+            // walker, so the entire snapshot must Drop via
+            // IAccessible and click must dispatch through MSAA.
+            if !observation_only {
+                if is_msaa {
+                    state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
+                } else {
+                    state.element_cache.update(pid, hwnd, &tr.nodes);
+                }
+            }
+            structured["element_count"] = json!(count);
+            // UIA currently does not expose whether a bounded walk
+            // exhausted every subtree. Keep negative existence
+            // conservative until that proof is available.
+            structured["elements_complete"] = json!(false);
+            structured["tree_markdown"] = json!(tr.tree_markdown);
 
-                    // Surface 6: register a snapshot in the global token
-                    // registry. Windows uses u64 HWND but the registry
-                    // stores u32 — truncate (HWND fits in 32-bit on
-                    // every supported edition; the upper 32 bits are
-                    // zero in user-space).
-                    let snapshot_id = (!observation_only).then(|| {
-                        cua_driver_core::element_token::global().register_snapshot(
-                            pid as i32,
-                            hwnd as u32,
-                            count,
-                        )
+            // Surface 6: register a snapshot in the global token
+            // registry. Windows uses u64 HWND but the registry
+            // stores u32 — truncate (HWND fits in 32-bit on
+            // every supported edition; the upper 32 bits are
+            // zero in user-space).
+            let snapshot_id = (!observation_only).then(|| {
+                cua_driver_core::element_token::global().register_snapshot(
+                    pid as i32,
+                    hwnd as u32,
+                    count,
+                )
+            });
+
+            // Structured `elements` array — preferred consumption
+            // path. Shape matches the cross-platform spec:
+            // `{element_index, element_token, role, label, depth,
+            // parent_index?, frame?: {x,y,w,h}}`. Frame is
+            // included when UIA reported a usable BoundingRectangle.
+            let elements: Vec<serde_json::Value> = tr
+                .nodes
+                .iter()
+                .filter_map(|n| {
+                    let idx = n.element_index?;
+                    // `label`: name → value → automation_id → help_text.
+                    let label = n
+                        .name
+                        .clone()
+                        .or_else(|| n.value.clone())
+                        .or_else(|| n.automation_id.clone())
+                        .or_else(|| n.help_text.clone());
+                    let mut entry = json!({
+                        "element_index": idx,
+                        "role": n.control_type,
+                        "depth": n.depth,
                     });
-
-                    // Structured `elements` array — preferred consumption
-                    // path. Shape matches the cross-platform spec:
-                    // `{element_index, element_token, role, label, depth,
-                    // parent_index?, frame?: {x,y,w,h}}`. Frame is
-                    // included when UIA reported a usable BoundingRectangle.
-                    let elements: Vec<serde_json::Value> = tr
-                        .nodes
-                        .iter()
-                        .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label`: name → value → automation_id → help_text.
-                            let label = n
-                                .name
-                                .clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.automation_id.clone())
-                                .or_else(|| n.help_text.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                "role": n.control_type,
-                                "depth": n.depth,
-                            });
-                            if let Some(snapshot_id) = snapshot_id {
-                                entry["element_token"] = json!(
-                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
-                                );
-                            }
-                            if n.in_web_content {
-                                entry["in_web_content"] = json!(true);
-                            }
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            // Surface the element's value separately from `label`
-                            // (which collapses name→value→automation_id→help): a
-                            // control with both a name AND text (a ValuePattern
-                            // edit holding typed content) would otherwise hide the
-                            // text from a caller reading the structured side. See
-                            // the macOS get_window_state builder for the rationale.
-                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
-                                entry["value"] = json!(value);
-                            }
-                            if let Some(enabled) = n.enabled {
-                                entry["enabled"] = json!(enabled);
-                            }
-                            if let Some(selected) = n.selected {
-                                entry["selected"] = json!(selected);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((l, t, r, b)) = n.rect {
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
-                                });
-                            }
-                            Some(entry)
-                        })
-                        .collect();
-                    let elements = cua_driver_core::element_query::project_elements_for_query(
-                        elements,
-                        query.as_deref(),
-                        &tr.tree_markdown,
-                    );
-                    structured["total_element_count"] = json!(count);
-                    structured["returned_element_count"] = json!(elements.len());
-                    structured["elements"] = json!(elements);
-                    // Surface 6: snapshot id mirror for debug correlation.
                     if let Some(snapshot_id) = snapshot_id {
-                        structured["snapshot_id"] =
-                            json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
-                                .trim_end_matches(":0")
-                                .to_string());
+                        entry["element_token"] =
+                            json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
                     }
-                    structured["_note"] = json!(
-                        "Prefer `elements` — `tree_markdown` will continue to work \
+                    if n.in_web_content {
+                        entry["in_web_content"] = json!(true);
+                    }
+                    if let Some(label) = label {
+                        entry["label"] = json!(label);
+                    }
+                    // Surface the element's value separately from `label`
+                    // (which collapses name→value→automation_id→help): a
+                    // control with both a name AND text (a ValuePattern
+                    // edit holding typed content) would otherwise hide the
+                    // text from a caller reading the structured side. See
+                    // the macOS get_window_state builder for the rationale.
+                    if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+                        entry["value"] = json!(value);
+                    }
+                    if let Some(enabled) = n.enabled {
+                        entry["enabled"] = json!(enabled);
+                    }
+                    if let Some(selected) = n.selected {
+                        entry["selected"] = json!(selected);
+                    }
+                    if let Some(parent) = n.parent_element_index {
+                        entry["parent_index"] = json!(parent);
+                    }
+                    if let Some((l, t, r, b)) = n.rect {
+                        entry["frame"] = json!({
+                            "x": l,
+                            "y": t,
+                            "w": (r - l).max(0),
+                            "h": (b - t).max(0),
+                        });
+                    }
+                    Some(entry)
+                })
+                .collect();
+            let elements = cua_driver_core::element_query::project_elements_for_query(
+                elements,
+                query.as_deref(),
+                &tr.tree_markdown,
+            );
+            structured["total_element_count"] = json!(count);
+            structured["returned_element_count"] = json!(elements.len());
+            structured["elements"] = json!(elements);
+            // Surface 6: snapshot id mirror for debug correlation.
+            if let Some(snapshot_id) = snapshot_id {
+                structured["snapshot_id"] =
+                    json!(cua_driver_core::element_token::token_for(snapshot_id, 0)
+                        .trim_end_matches(":0")
+                        .to_string());
+            }
+            structured["_note"] = json!(
+                "Prefer `elements` — `tree_markdown` will continue to work \
                          but new fields will only be added to the structured side. \
                          Issue #22865: use `max_elements` / `max_depth` to bound the \
                          UIA walk on apps with very large trees."
-                    );
-                    // Best-effort-background ladder: a UIA walk that ran but found
-                    // zero actionable elements is NOT a clean snapshot — the window
-                    // may be a non-UIA surface (canvas/WebGL/custom-drawn) or its
-                    // tree wasn't ready (Chromium/Electron need an enable + settle).
-                    // Mark it degraded so callers don't read `elements: []` as "this
-                    // window has no controls", and point at the next rung. An empty
-                    // UIA tree means element_index has nothing to bind to, so the
-                    // deliberate move is an element px action — read the screenshot
-                    // already in this response and click by pixel (x,y).
-                    if is_msaa {
-                        structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(
-                            "msaa_fallback_partial: the UIA provider was unavailable and \
+            );
+            // Best-effort-background ladder: a UIA walk that ran but found
+            // zero actionable elements is NOT a clean snapshot — the window
+            // may be a non-UIA surface (canvas/WebGL/custom-drawn) or its
+            // tree wasn't ready (Chromium/Electron need an enable + settle).
+            // Mark it degraded so callers don't read `elements: []` as "this
+            // window has no controls", and point at the next rung. An empty
+            // UIA tree means element_index has nothing to bind to, so the
+            // deliberate move is an element px action — read the screenshot
+            // already in this response and click by pixel (x,y).
+            if is_msaa {
+                structured["degraded"] = json!(true);
+                structured["degraded_reason"] = json!(
+                    "msaa_fallback_partial: the UIA provider was unavailable and \
                              Cua Driver used a partial MSAA tree. Treat it as discovery \
                              evidence only; it cannot prove checked state."
-                        );
-                    } else if count == 0 {
-                        structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(
-                            "ax_tree_empty: the UIA walk returned no actionable elements. \
+                );
+            } else if count == 0 {
+                structured["degraded"] = json!(true);
+                structured["degraded_reason"] = json!(
+                    "ax_tree_empty: the UIA walk returned no actionable elements. \
                              The window may be a non-UIA surface (canvas/WebGL/custom-drawn) \
                              or its accessibility tree was not ready (Chromium/Electron \
                              require a UIA-enable + settle). Do not treat element data as \
                              authoritative — re-snapshot if the app just launched, otherwise \
                              switch to the visual path."
-                        );
-                        structured["escalation"] = json!({
-                            "recommended": "px",
-                            "reason": "non-AX surface — act by pixel (x,y) off the \
-                                       screenshot in this response (an element px action)."
-                        });
-                    }
-                }
-
-                if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
-                    if !observation_only {
-                        if let Some(ow) = orig_w {
-                            if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
-                            }
-                        } else {
-                            state.resize_registry.clear_ratio(pid);
-                        }
-                    }
-                    // base64 is embedded only when no out_file was given (vision
-                    // path). With `screenshot_out_file` the bytes went to disk and
-                    // we surface the path instead — never both.
-                    if let Some(b64) = b64_opt {
-                        content.push(cua_driver_core::protocol::Content::image_png(b64));
-                    }
-                    structured["screenshot_width"] = json!(w);
-                    structured["screenshot_height"] = json!(h);
-                    // Surface 7: mirror the MCP image part's `mimeType` onto
-                    // the structured payload so consumers don't have to sniff
-                    // magic bytes off the base64 to know the format.
-                    structured["screenshot_mime_type"] = json!("image/png");
-                    if let Some(fp) = file_path {
-                        structured["screenshot_file_path"] = json!(fp);
-                    }
-                } else if let Some(err) = screenshot_err {
-                    // Capture failed (most commonly because the target is
-                    // minimized — see #1973). Surface the reason in BOTH the
-                    // human-readable content stream (so the model sees it
-                    // alongside the UIA tree it does get) AND structuredContent
-                    // (so MCP clients with structured-only parsing can detect
-                    // and act on it). Without this the caller saw an empty
-                    // response with no clue why and burned turns retrying.
-                    content.push(cua_driver_core::protocol::Content::text(format!(
-                        "screenshot unavailable: {err}"
-                    )));
-                    structured["screenshot_error"] = json!(err);
-                }
-
-                cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
-                    &mut structured,
-                    is_standalone_chromium_browser_process(pid).then_some(
-                        cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
-                    ),
                 );
+                structured["escalation"] = json!({
+                    "recommended": "px",
+                    "reason": "non-AX surface — act by pixel (x,y) off the \
+                               screenshot in this response (an element px action)."
+                });
+            }
+        }
 
-                ToolResult {
-                    content,
-                    is_error: None,
-                    structured_content: Some(structured),
-                    action_record: None,
+        if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
+            if !observation_only {
+                if let Some(ow) = orig_w {
+                    if w > 0 {
+                        state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                    }
+                } else {
+                    state.resize_registry.clear_ratio(pid);
                 }
             }
-            Err(e) => ToolResult::error(format!("Error: {e}")),
+            // base64 is embedded only when no out_file was given (vision
+            // path). With `screenshot_out_file` the bytes went to disk and
+            // we surface the path instead — never both.
+            if let Some(b64) = b64_opt {
+                content.push(cua_driver_core::protocol::Content::image_png(b64));
+            }
+            structured["screenshot_width"] = json!(w);
+            structured["screenshot_height"] = json!(h);
+            // Surface 7: mirror the MCP image part's `mimeType` onto
+            // the structured payload so consumers don't have to sniff
+            // magic bytes off the base64 to know the format.
+            structured["screenshot_mime_type"] = json!("image/png");
+            if let Some(fp) = file_path {
+                structured["screenshot_file_path"] = json!(fp);
+            }
+        } else if let Some(err) = screenshot_err {
+            // Capture failed (most commonly because the target is
+            // minimized — see #1973). Surface the reason in BOTH the
+            // human-readable content stream (so the model sees it
+            // alongside the UIA tree it does get) AND structuredContent
+            // (so MCP clients with structured-only parsing can detect
+            // and act on it). Without this the caller saw an empty
+            // response with no clue why and burned turns retrying.
+            content.push(cua_driver_core::protocol::Content::text(format!(
+                "screenshot unavailable: {err}"
+            )));
+            structured["screenshot_error"] = json!(err);
+        }
+
+        cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
+            &mut structured,
+            is_standalone_chromium_browser_process(pid).then_some(
+                cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
+            ),
+        );
+
+        if let Some(error) = tree_error.as_deref() {
+            content.insert(
+                0,
+                cua_driver_core::protocol::Content::text(format!("Error: {error}")),
+            );
+            structured["degraded"] = json!(true);
+            structured["degraded_reason"] = json!("uia_provider_unresponsive");
+            structured["uia_error"] = json!(error);
+            structured["escalation"] = json!({
+                "recommended": "px",
+                "reason": "The accessibility provider did not respond. Act in the screenshot coordinate space."
+            });
+        }
+
+        ToolResult {
+            content,
+            is_error: tree_error.map(|_| true),
+            structured_content: Some(structured),
+            action_record: None,
         }
     }
 }

@@ -164,6 +164,14 @@ browser was started and for closing remote debugging when it is no longer
 needed.
 
 Chromium applies its own protections to remote debugging on default profiles.
+Concretely, Chrome and Edge ignore `--remote-debugging-port` when the browser
+runs on its default user-data directory: no listener opens and no
+`DevToolsActivePort` file is written. The flag takes effect only alongside a
+non-default `--user-data-dir`, which is a different, unauthenticated profile.
+This is a browser-side protection, not a Cua Driver restriction, and it is why
+the browser's own remote-debugging toggle is the only sanctioned route into a
+real profile — the route `browser_prepare` drives under explicit approval.
+
 Cua Driver does not bypass those protections, copy a profile, or weaken the
 browser's data encryption. See Chromium's
 [remote-debugging security guidance](https://developer.chrome.com/blog/remote-debugging-port)

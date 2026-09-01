@@ -38,6 +38,48 @@ pub fn refusal_envelope_schema() -> Value {
     })
 }
 
+/// Marker code for structured error envelopes that carry no tool-specific
+/// refusal shape.
+///
+/// The transport and daemon failure paths answer with diagnostics like
+/// `{"exit_code": 1}` rather than a tool refusal. That payload satisfies
+/// neither arm of [`advertised_output_schema`]: it is missing the success
+/// arm's required keys while carrying a key the success arm does not allow,
+/// and it has none of the refusal arm's marker keys. Strict MCP clients then
+/// reject the whole response, so the error text in `content` never reaches the
+/// agent.
+pub const TOOL_INVOCATION_FAILED_CODE: &str = "tool_invocation_failed";
+
+/// Guarantee a structured error payload is recognisable as a refusal.
+///
+/// Inserts [`TOOL_INVOCATION_FAILED_CODE`] when the payload carries none of the
+/// refusal marker keys, so any diagnostic an error path invents still validates
+/// against the advertised `outputSchema`. Payloads that already carry a marker
+/// are returned untouched.
+pub fn conforming_error_envelope(structured: Value) -> Value {
+    // Both arms require `type: object`, so a non-object diagnostic is kept as a
+    // value inside the envelope rather than being emitted as the envelope.
+    let mut object = match structured {
+        Value::Object(object) => object,
+        Value::Null => Map::new(),
+        other => {
+            let mut object = Map::new();
+            object.insert("detail".into(), other);
+            object
+        }
+    };
+    if !["refusal", "status", "code"]
+        .iter()
+        .any(|marker| object.contains_key(*marker))
+    {
+        object.insert(
+            "code".into(),
+            Value::String(TOOL_INVOCATION_FAILED_CODE.into()),
+        );
+    }
+    Value::Object(object)
+}
+
 /// Wrap a success schema into the shape advertised as the MCP `outputSchema`.
 ///
 /// MCP requires every `structuredContent` a tool emits to validate against its
@@ -813,5 +855,48 @@ mod tests {
         );
         result.evidence = None;
         assert_eq!(result.validate_invariants(), Ok(()));
+    }
+}
+
+#[cfg(test)]
+mod error_envelope_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_diagnostic_without_a_marker_gains_one() {
+        let envelope = conforming_error_envelope(json!({"exit_code": 1}));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["exit_code"], 1);
+    }
+
+    #[test]
+    fn each_existing_marker_is_left_alone() {
+        for marker in ["refusal", "status", "code"] {
+            let envelope = conforming_error_envelope(json!({marker: "already-named"}));
+
+            assert_eq!(
+                envelope,
+                json!({marker: "already-named"}),
+                "guard rewrote a payload that already carries `{marker}`"
+            );
+        }
+    }
+
+    #[test]
+    fn a_non_object_diagnostic_becomes_an_object() {
+        let envelope = conforming_error_envelope(json!("daemon transport closed"));
+
+        assert_eq!(envelope["code"], TOOL_INVOCATION_FAILED_CODE);
+        assert_eq!(envelope["detail"], "daemon transport closed");
+    }
+
+    #[test]
+    fn an_absent_diagnostic_still_produces_a_refusal() {
+        assert_eq!(
+            conforming_error_envelope(Value::Null),
+            json!({"code": TOOL_INVOCATION_FAILED_CODE})
+        );
     }
 }

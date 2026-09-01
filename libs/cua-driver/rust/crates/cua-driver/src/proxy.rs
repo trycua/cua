@@ -793,10 +793,16 @@ async fn forward_tool_call(
             .error
             .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
+        // MCP validates this payload against the tool's advertised
+        // `outputSchema`, so the bare `exit_code` diagnostic is normalized into
+        // the refusal arm. Otherwise a strict client rejects the response and
+        // `msg` never reaches the agent.
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
             "isError": true,
-            "structuredContent": { "exit_code": exit_code }
+            "structuredContent": cua_driver_core::conforming_error_envelope(
+                serde_json::json!({ "exit_code": exit_code })
+            )
         });
         return Response::ok(id, result);
     }
@@ -887,7 +893,9 @@ mod tests {
         let result = serde_json::json!({
             "content": [{ "type": "text", "text": msg }],
             "isError": true,
-            "structuredContent": { "exit_code": exit_code }
+            "structuredContent": cua_driver_core::conforming_error_envelope(
+                serde_json::json!({ "exit_code": exit_code })
+            )
         });
         Response::ok(id, result)
     }
@@ -921,6 +929,13 @@ mod tests {
         assert_eq!(result["content"][0]["type"], "text");
         assert_eq!(result["content"][0]["text"], "missing required field `pid`");
         assert_eq!(result["structuredContent"]["exit_code"], 64);
+        // Strict MCP clients validate this payload against the tool's
+        // advertised `outputSchema`. The refusal marker is what keeps the
+        // response readable instead of being discarded as `-32602`.
+        assert_eq!(
+            result["structuredContent"]["code"],
+            cua_driver_core::TOOL_INVOCATION_FAILED_CODE
+        );
     }
 
     #[test]
@@ -939,6 +954,10 @@ mod tests {
             "daemon reported failure"
         );
         assert_eq!(value["result"]["structuredContent"]["exit_code"], 1);
+        assert_eq!(
+            value["result"]["structuredContent"]["code"],
+            cua_driver_core::TOOL_INVOCATION_FAILED_CODE
+        );
     }
 
     #[test]

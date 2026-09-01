@@ -90,5 +90,7 @@ pub mod video_ffmpeg;
 pub mod window_inspection;
 pub mod window_target;
 
-pub use cua_driver_contract::{CaptureScope, EscalationReason};
+pub use cua_driver_contract::{
+    conforming_error_envelope, CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE,
+};
 pub use recording::RecordingSession;

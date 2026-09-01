@@ -944,12 +944,121 @@ async fn handle_request_inner(
     }
 }
 
+/// Build the `isError: true` result for a call that never produced a tool
+/// payload.
+///
+/// MCP holds every `structuredContent` to the tool's advertised `outputSchema`,
+/// refusals included, so the diagnostic is normalized into the refusal arm
+/// before it goes on the wire. Without that, a strict client rejects the whole
+/// response and the message below never reaches the agent.
 fn tool_error_result(message: String, structured: serde_json::Value) -> serde_json::Value {
     serde_json::json!({
         "content": [{"type": "text", "text": message}],
         "isError": true,
-        "structuredContent": structured,
+        "structuredContent": cua_driver_contract::conforming_error_envelope(structured),
     })
+}
+
+#[cfg(test)]
+mod error_envelope_tests {
+    //! Every `structuredContent` the driver emits — refusals and transport
+    //! failures included — is validated by strict MCP clients against the
+    //! tool's advertised `outputSchema`. A payload matching neither arm makes
+    //! the client raise `-32602` and discard the response, so the error text
+    //! the driver put in `content` never reaches the agent.
+
+    use super::*;
+    use cua_driver_contract::{
+        advertised_output_schema, ActionResult, ToolOutput, TOOL_INVOCATION_FAILED_CODE,
+    };
+
+    struct FailingProvider;
+
+    #[async_trait::async_trait]
+    impl ToolProvider for FailingProvider {
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": []})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            Err("daemon transport closed".to_owned())
+        }
+    }
+
+    fn advertised_action_schema() -> serde_json::Value {
+        advertised_output_schema(ActionResult::output_schema())
+    }
+
+    fn call_request(name: &str) -> Request {
+        serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "tools/call",
+            "params": { "name": name, "arguments": {} }
+        }))
+        .expect("request parses")
+    }
+
+    fn structured_content(response: Response) -> serde_json::Value {
+        match response.body {
+            ResponseBody::Result { result } => result["structuredContent"].clone(),
+            ResponseBody::Error { error } => panic!("expected a result, got {}", error.message),
+        }
+    }
+
+    /// The shape this guard exists for: a bare diagnostic satisfies neither
+    /// arm, so advertising it is what produced the `-32602` reports.
+    #[test]
+    fn a_bare_exit_code_diagnostic_does_not_validate() {
+        let compiled =
+            jsonschema::validator_for(&advertised_action_schema()).expect("schema compiles");
+
+        assert!(!compiled.is_valid(&serde_json::json!({"exit_code": 1})));
+    }
+
+    #[tokio::test]
+    async fn invocation_failure_emits_a_payload_the_advertised_schema_accepts() {
+        let response = handle_request(
+            call_request("click"),
+            serde_json::json!(1),
+            &FailingProvider,
+        )
+        .await;
+        let structured = structured_content(response);
+        let compiled =
+            jsonschema::validator_for(&advertised_action_schema()).expect("schema compiles");
+
+        assert!(
+            compiled.is_valid(&structured),
+            "advertised schema rejected {structured}"
+        );
+        // The diagnostic survives the normalization; only the marker is added.
+        assert_eq!(structured["exit_code"], 1);
+        assert_eq!(structured["code"], TOOL_INVOCATION_FAILED_CODE);
+    }
+
+    /// A payload that already names its own refusal keeps it: the guard adds a
+    /// marker, it does not relabel diagnostics that have one.
+    #[test]
+    fn an_existing_refusal_code_is_preserved() {
+        let result = tool_error_result(
+            "denied".to_owned(),
+            serde_json::json!({"code": "permission_denied"}),
+        );
+        let structured = &result["structuredContent"];
+
+        assert_eq!(structured["code"], "permission_denied");
+        assert!(
+            jsonschema::validator_for(&advertised_action_schema())
+                .expect("schema compiles")
+                .is_valid(structured),
+            "advertised schema rejected {structured}"
+        );
+    }
 }
 
 #[cfg(test)]

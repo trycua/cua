@@ -45,6 +45,11 @@ test_per_key_client_recognised_by_prefix if {
 	not authz.is_per_key_client with input as {"user": {"azp": "ukey-foo"}}
 }
 
+test_per_key_client_uses_configured_prefix if {
+	authz.is_per_key_client with input as {"user": {"azp": "poolkey-foo", "key_client_prefix": "poolkey-"}}
+	not authz.is_per_key_client with input as {"user": {"azp": "key-foo", "key_client_prefix": "poolkey-"}}
+}
+
 test_user_key_client_recognised_by_prefix if {
 	authz.is_user_key_client with input as {"user": {"azp": "ukey-foo"}}
 	not authz.is_user_key_client with input as {"user": {"azp": "key-foo"}}

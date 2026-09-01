@@ -10,24 +10,31 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
+	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/githubtrust"
 	"cyclops-cs-backend/handlers"
 	"cyclops-cs-backend/metrics"
+	"cyclops-cs-backend/productanalytics"
 	"cyclops-cs-backend/statequery"
+	"cyclops-cs-backend/usage"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -35,6 +42,90 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/trycua/cloud/pkg/featureflags"
 )
+
+type auditWiringLock struct{}
+
+func (auditWiringLock) WithLock(ctx context.Context, callback func(context.Context) error) error {
+	return callback(ctx)
+}
+
+func TestFeatureFlagAdminServiceWiresMutationAuditLogger(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	service := newFeatureFlagAdminService(nil, auditWiringLock{})
+	_, err := service.Create(context.Background(), featureflagadmin.Actor{Subject: "admin-1"}, featureflagadmin.CreateInput{Key: "INVALID"})
+	if err == nil {
+		t.Fatal("Create() error = nil, want invalid key rejection")
+	}
+	if !strings.Contains(output.String(), `"event":"feature_flag_admin"`) || !strings.Contains(output.String(), `"reason":"invalid_key"`) {
+		t.Fatalf("production mutation audit missing: %s", output.String())
+	}
+}
+
+func TestUnsupportedFeatureFlagAdminServiceWiresMutationAuditLogger(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	service := newUnsupportedFeatureFlagAdminService()
+	_, err := service.Create(context.Background(), featureflagadmin.Actor{Subject: "admin-1"}, featureflagadmin.CreateInput{
+		Key: "enabled", ValueType: featureflags.ValueBoolean, Value: true,
+	})
+	var serviceError *featureflagadmin.ServiceError
+	if !errors.As(err, &serviceError) || serviceError.HTTPStatus != http.StatusNotImplemented {
+		t.Fatalf("Create() error = %#v, want 501", err)
+	}
+	if !strings.Contains(output.String(), `"event":"feature_flag_admin"`) || !strings.Contains(output.String(), `"reason":"unsupported_provider"`) {
+		t.Fatalf("fallback mutation audit missing: %s", output.String())
+	}
+}
+
+func TestFeatureFlagAdminSwaggerDocumentsReachableResponses(t *testing.T) {
+	data, err := os.ReadFile("docs/swagger.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	type swaggerResponse struct {
+		Schema struct {
+			Ref string `json:"$ref"`
+		} `json:"schema"`
+	}
+	var document struct {
+		Paths map[string]map[string]struct {
+			Responses map[string]swaggerResponse `json:"responses"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(data, &document); err != nil {
+		t.Fatal(err)
+	}
+	wants := map[string]map[string][]string{
+		"/api/admin/feature-flags":       {"get": {"200", "401", "403", "501", "502"}, "post": {"201", "400", "401", "403", "409", "422", "500", "501", "502", "503"}},
+		"/api/admin/feature-flags/{key}": {"put": {"200", "400", "401", "403", "404", "409", "422", "500", "501", "502", "503"}, "delete": {"204", "400", "401", "403", "404", "409", "422", "500", "501", "502", "503"}},
+	}
+	for path, methods := range wants {
+		for method, statuses := range methods {
+			operation := document.Paths[path][method]
+			for _, status := range statuses {
+				response, ok := operation.Responses[status]
+				if !ok {
+					t.Errorf("%s %s missing Swagger response %s", method, path, status)
+					continue
+				}
+				wantRef := "#/definitions/handlers.AdminAPIError"
+				if status == "401" {
+					wantRef = "#/definitions/handlers.ErrorResponse"
+				}
+				if status != "200" && status != "201" && status != "204" && response.Schema.Ref != wantRef {
+					t.Errorf("%s %s response %s schema = %q, want %q", method, path, status, response.Schema.Ref, wantRef)
+				}
+			}
+		}
+	}
+}
 
 func TestGatewayRoutesAreRemoved(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})
@@ -114,6 +205,9 @@ func TestSwaggerUsesBillingSetupSessionRoute(t *testing.T) {
 	}
 	if _, ok := spec.Paths["/api/billing/setup-session"]; !ok {
 		t.Fatal("swagger.json missing /api/billing/setup-session")
+	}
+	if _, ok := spec.Paths["/api/billing/usage"]; !ok {
+		t.Fatal("swagger.json missing /api/billing/usage")
 	}
 	if _, ok := spec.Paths["/api/billing/checkout-session"]; ok {
 		t.Fatal("swagger.json still contains /api/billing/checkout-session")
@@ -282,6 +376,10 @@ func (routerBillingService) Summary(context.Context, string) (billing.Summary, e
 	return billing.Summary{}, nil
 }
 
+func (routerBillingService) Usage(context.Context, string, int, time.Time) (billing.Usage, error) {
+	return billing.Usage{Currency: "usd", Trend: []billing.UsagePoint{}, Breakdown: []billing.UsageBreakdownItem{}}, nil
+}
+
 func (routerBillingService) CreateSetupSession(context.Context, string, billing.SetupOptions) (string, error) {
 	return "https://checkout.stripe.test/session", nil
 }
@@ -317,6 +415,18 @@ func TestBillingRouterAuthorizationBoundaries(t *testing.T) {
 	router.ServeHTTP(authorized, authorizedRequest(t, http.MethodGet, "/api/billing/summary", nil))
 	if authorized.Code != http.StatusOK {
 		t.Fatalf("authenticated summary status = %d, want 200; body = %s", authorized.Code, authorized.Body.String())
+	}
+
+	unauthorizedUsage := httptest.NewRecorder()
+	router.ServeHTTP(unauthorizedUsage, httptest.NewRequest(http.MethodGet, "/api/billing/usage", nil))
+	if unauthorizedUsage.Code != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated usage status = %d, want 401; body = %s", unauthorizedUsage.Code, unauthorizedUsage.Body.String())
+	}
+
+	authorizedUsage := httptest.NewRecorder()
+	router.ServeHTTP(authorizedUsage, authorizedRequest(t, http.MethodGet, "/api/billing/usage", nil))
+	if authorizedUsage.Code != http.StatusOK {
+		t.Fatalf("authenticated usage status = %d, want 200; body = %s", authorizedUsage.Code, authorizedUsage.Body.String())
 	}
 
 	for _, tc := range []struct {
@@ -377,7 +487,7 @@ func TestBillingSummaryGeneratedContract(t *testing.T) {
 		t.Fatalf("unmarshal swagger.json: %v", err)
 	}
 	summary := document.Definitions["billing.Summary"]
-	if !slices.Contains(summary.Required, "payment_method_present") || !slices.Contains(summary.Required, "card") {
+	if !slices.Contains(summary.Required, "payment_method_present") || !slices.Contains(summary.Required, "card") || !slices.Contains(summary.Required, "pool_create_card_required") {
 		t.Fatalf("billing summary required fields = %#v", summary.Required)
 	}
 	var card struct {
@@ -463,24 +573,59 @@ func TestK8sRouteRejectsDisallowedPoolBeforeProxy(t *testing.T) {
 	}
 }
 
+func TestChatConversationRouteRegistersPatch(t *testing.T) {
+	router := setupRouter(handlers.Handlers{})
+	request := httptest.NewRequest(http.MethodPatch, "/api/chat/conversations/id-1", nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("PATCH status = %d, want 401; body = %s", response.Code, response.Body.String())
+	}
+}
+
 func TestSwaggerIncludesChatRoutes(t *testing.T) {
 	data, err := os.ReadFile("docs/swagger.json")
 	if err != nil {
 		t.Fatal(err)
 	}
+	type swaggerParameter struct {
+		In   string `json:"in"`
+		Name string `json:"name"`
+	}
+	type swaggerOperation struct {
+		Parameters []swaggerParameter `json:"parameters"`
+	}
+	type swaggerSchema struct {
+		Required []string `json:"required"`
+	}
 	var spec struct {
-		Paths map[string]map[string]struct{} `json:"paths"`
+		Definitions map[string]swaggerSchema               `json:"definitions"`
+		Paths       map[string]map[string]swaggerOperation `json:"paths"`
 	}
 	if err := json.Unmarshal(data, &spec); err != nil {
 		t.Fatalf("unmarshal swagger.json: %v", err)
 	}
 	for _, tc := range []struct{ path, method string }{
 		{"/api/chat/conversations", "post"}, {"/api/chat/conversations", "get"},
-		{"/api/chat/conversations/{id}", "get"}, {"/api/chat/conversations/{id}/turns", "post"},
+		{"/api/chat/conversations/{id}", "get"}, {"/api/chat/conversations/{id}", "patch"},
+		{"/api/chat/conversations/{id}/turns", "post"},
 	} {
 		if _, ok := spec.Paths[tc.path][tc.method]; !ok {
 			t.Fatalf("swagger.json missing %s %s", strings.ToUpper(tc.method), tc.path)
 		}
+	}
+	archivedQueryFound := false
+	for _, parameter := range spec.Paths["/api/chat/conversations"]["get"].Parameters {
+		if parameter.In == "query" && parameter.Name == "archived" {
+			archivedQueryFound = true
+			break
+		}
+	}
+	if !archivedQueryFound {
+		t.Fatal("swagger.json GET /api/chat/conversations missing archived query parameter")
+	}
+	if !slices.Contains(spec.Definitions["handlers.ArchiveConversationRequest"].Required, "archived") {
+		t.Fatal("swagger.json ArchiveConversationRequest missing required archived field")
 	}
 }
 
@@ -590,6 +735,110 @@ func TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy(t *testing.T)
 	}
 }
 
+func TestInitializeSignedServiceURLs_BaseOnlyConfigurationDisablesFeature(t *testing.T) {
+	const baseURL = "https://run.cua.ai"
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	service, closeStore, err := initializeSignedServiceURLs(context.Background(), "postgres://application@db.example/cyclops", config.SignedServiceURLConfiguration{BaseURL: baseURL})
+	defer closeStore()
+	if err != nil {
+		t.Fatalf("initializeSignedServiceURLs() error = %v, want disabled feature", err)
+	}
+	if service != nil {
+		t.Fatal("initializeSignedServiceURLs() service = non-nil, want disabled feature")
+	}
+	if got := logged.String(); !strings.Contains(got, "SIGNED_SERVICE_URL_SECRET") || strings.Contains(got, baseURL) || strings.Contains(got, "DATABASE_URL") {
+		t.Fatalf("signed URL disabled log = %s, want only the missing secret key name", got)
+	}
+}
+
+func TestInitializeSignedServiceURLs_RecoversWhenSecretFileMaterializes(t *testing.T) {
+	const secret = "12345678901234567890123456789012"
+
+	secretFile := t.TempDir() + "/hmac_secret"
+	cfg := config.SignedServiceURLConfiguration{
+		BaseURL:    "https://run.cua.ai",
+		SecretFile: secretFile,
+	}
+
+	service, closeStore, err := initializeSignedServiceURLs(context.Background(), "", cfg)
+	defer closeStore()
+	if err == nil || !strings.Contains(err.Error(), "SIGNED_SERVICE_URL_SECRET_FILE") {
+		t.Fatalf("initializeSignedServiceURLs() error = %v, want retryable missing secret file error", err)
+	}
+	if service != nil {
+		t.Fatal("initializeSignedServiceURLs() service = non-nil with missing secret file")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("missing secret file error exposed secret: %v", err)
+	}
+
+	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service, closeStore, err = initializeSignedServiceURLs(context.Background(), "", cfg)
+	defer closeStore()
+	if err != nil {
+		t.Fatalf("initializeSignedServiceURLs() error after secret file materialized = %v", err)
+	}
+	if service != nil {
+		t.Fatal("initializeSignedServiceURLs() service = non-nil without database configuration")
+	}
+}
+
+func TestInitializeSignedServiceURLs_SecretFileValidation(t *testing.T) {
+	const secret = "12345678901234567890123456789012"
+
+	tests := []struct {
+		name      string
+		contents  string
+		secret    string
+		wantError string
+	}{
+		{name: "empty file", wantError: "SIGNED_SERVICE_URL_SECRET_FILE must not be empty"},
+		{name: "whitespace-only file", contents: "\n \t\n", wantError: "SIGNED_SERVICE_URL_SECRET_FILE must not be empty"},
+		{name: "short file", contents: "too-short\n", wantError: "SIGNED_SERVICE_URL_SECRET_FILE must be at least 32 bytes"},
+		{name: "valid file trims trailing newline", contents: secret + "\n"},
+		{name: "environment secret takes precedence over file", contents: "too-short", secret: secret},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			secretFile := t.TempDir() + "/hmac_secret"
+			if err := os.WriteFile(secretFile, []byte(test.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			service, closeStore, err := initializeSignedServiceURLs(context.Background(), "", config.SignedServiceURLConfiguration{
+				BaseURL:    "https://run.cua.ai",
+				Secret:     test.secret,
+				SecretFile: secretFile,
+			})
+			defer closeStore()
+
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("initializeSignedServiceURLs() error = %v, want containing %q", err, test.wantError)
+				}
+				if service != nil {
+					t.Fatal("initializeSignedServiceURLs() service = non-nil with invalid secret file")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("initializeSignedServiceURLs() error = %v", err)
+			}
+			if service != nil {
+				t.Fatal("initializeSignedServiceURLs() service = non-nil without database configuration")
+			}
+		})
+	}
+}
+
 func TestInitializeDatabaseFeatures(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -664,16 +913,20 @@ func TestInitializeDatabaseFeatures(t *testing.T) {
 				},
 				newStateQueryExecutor: func(_ string, _ string) (handlers.StateQueryExecutor, error) {
 					newExecutorCalls++
-					if test.newExecutorError != nil {
-						return nil, test.newExecutorError
+					newExecutorError := test.newExecutorError
+					if newExecutorError != nil {
+						return nil, newExecutorError
+
 					}
 					return stateQueryExecutorStub{}, nil
 				},
 				newGitHubTrustStore: func(ctx context.Context, _ string) (githubtrust.Store, error) {
 					newStoreCalls++
 					storeContext = ctx
-					if test.newStoreError != nil {
-						return nil, test.newStoreError
+					newStoreError := test.newStoreError
+					if newStoreError != nil {
+						return nil, newStoreError
+
 					}
 					return githubTrustStoreStub{}, nil
 				},
@@ -700,6 +953,80 @@ func TestInitializeDatabaseFeatures(t *testing.T) {
 			}
 			assertStartupContext(t, requireVersionContext, test.wantRequireVersion)
 			assertStartupContext(t, storeContext, test.wantNewStore)
+		})
+	}
+}
+
+func TestInitializeDatabaseFeaturesDoesNotLogDatabaseCauses(t *testing.T) {
+	const secret = "postgres://user:secret-password@db.internal/cyclops"
+	tests := []struct {
+		name         string
+		config       config.DatabaseConfiguration
+		dependencies databaseFeatureDependencies
+		wantMessage  string
+		wantClass    string
+	}{
+		{
+			name: "state query",
+			config: config.DatabaseConfiguration{
+				StateQueryDSN:            "postgres://state-query/state-query",
+				StateQueryTenantPassword: "tenant-password",
+			},
+			dependencies: databaseFeatureDependencies{
+				requireVersion: func(context.Context, string, int64) error { return nil },
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
+					return nil, errors.New(secret)
+				},
+				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) { return nil, nil },
+			},
+			wantMessage: "kubernetes state query: executor init failed",
+			wantClass:   "state_query_initialization_failed",
+		},
+		{
+			name:   "schema",
+			config: config.DatabaseConfiguration{URL: "postgres://application/application"},
+			dependencies: databaseFeatureDependencies{
+				requireVersion:        func(context.Context, string, int64) error { return errors.New(secret) },
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) { return nil, nil },
+				newGitHubTrustStore:   func(context.Context, string) (githubtrust.Store, error) { return nil, nil },
+			},
+			wantMessage: "postgres database schema unavailable",
+			wantClass:   "internal",
+		},
+		{
+			name:   "trust store",
+			config: config.DatabaseConfiguration{URL: "postgres://application/application"},
+			dependencies: databaseFeatureDependencies{
+				requireVersion:        func(context.Context, string, int64) error { return nil },
+				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) { return nil, nil },
+				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
+					return nil, errors.New(secret)
+				},
+			},
+			wantMessage: "github trust policies: init failed",
+			wantClass:   "internal",
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			var logged bytes.Buffer
+			restore := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+			t.Cleanup(func() { slog.SetDefault(restore) })
+
+			h := handlers.Handlers{Features: handlers.NewFeatures()}
+			initializeDatabaseFeatures(context.Background(), testCase.config, &h, testCase.dependencies)
+
+			if strings.Contains(logged.String(), secret) || strings.Contains(logged.String(), "secret-password") {
+				t.Fatalf("database startup log leaked cause:\n%s", logged.String())
+			}
+			if !strings.Contains(logged.String(), testCase.wantMessage) {
+				t.Fatalf("database startup log omitted event message %q:\n%s", testCase.wantMessage, logged.String())
+			}
+			if !strings.Contains(logged.String(), `"class":"`+testCase.wantClass+`"`) {
+				t.Fatalf("database startup log omitted class %q:\n%s", testCase.wantClass, logged.String())
+			}
 		})
 	}
 }
@@ -824,14 +1151,18 @@ func TestInitializeDatabaseFeaturesReportsReadinessMetric(t *testing.T) {
 					return test.requireVersionError
 				},
 				newStateQueryExecutor: func(string, string) (handlers.StateQueryExecutor, error) {
-					if test.newExecutorError != nil {
-						return nil, test.newExecutorError
+					newExecutorError := test.newExecutorError
+					if newExecutorError != nil {
+						return nil, newExecutorError
+
 					}
 					return stateQueryExecutorStub{}, nil
 				},
 				newGitHubTrustStore: func(context.Context, string) (githubtrust.Store, error) {
-					if test.newStoreError != nil {
-						return nil, test.newStoreError
+					newStoreError := test.newStoreError
+					if newStoreError != nil {
+						return nil, newStoreError
+
 					}
 					return githubTrustStoreStub{}, nil
 				},
@@ -995,5 +1326,118 @@ func TestRetryDatabaseFeaturesStopsOnceReady(t *testing.T) {
 	time.Sleep(50 * time.Millisecond) // many ticks' worth at a 1ms interval
 	if attempts != settled {
 		t.Fatalf("attempts kept climbing after recovery (%d -> %d); the loop did not stop", settled, attempts)
+	}
+}
+
+func TestInitializeUsageProviderDoesNotGateReadiness(t *testing.T) {
+	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
+		DatabaseURL:       "postgres://cyclops_usage_reader:secret@127.0.0.1:1/cyclops?sslmode=disable",
+		QueryWebhookURL:   "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query",
+		QueryHMACSecret:   "secret",
+		QueryResultBucket: "nanoclaw-telemetry-files",
+		QueryResultPrefix: "cyclops/usage-query",
+		QueryCluster:      "kopf-k3s",
+		QueryEnvironment:  "production",
+		QueryTimeout:      time.Second,
+		QueryPollInterval: time.Second,
+		MaxResponseBytes:  64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("initializeUsageProvider() error = %v", err)
+	}
+	defer closeProvider()
+	if provider == nil {
+		t.Fatal("initializeUsageProvider() provider = nil")
+	}
+
+	router := setupRouter(handlers.Handlers{Usage: provider})
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if response.Code != http.StatusOK {
+		t.Fatalf("readyz status = %d, want %d", response.Code, http.StatusOK)
+	}
+
+	_, err = provider.Overview(context.Background(), usage.Query{ActorSubject: "user", Subject: "user", Timeframe: usage.Timeframe24H})
+	if err == nil {
+		t.Fatal("Overview() error = nil, want unavailable dependency error")
+	}
+}
+
+func TestInitializeUsageProviderQueryTransportOnlyIsDisabled(t *testing.T) {
+	provider, closeProvider, err := initializeUsageProvider(context.Background(), config.UsageConfiguration{
+		QueryWebhookURL:   "https://cua-temporal-webhook.tail204509.ts.net/hooks/opencost-query",
+		QueryHMACSecret:   "secret",
+		QueryResultBucket: "nanoclaw-telemetry-files",
+		QueryResultPrefix: "cyclops/usage-query",
+		QueryCluster:      "kopf-k3s",
+		QueryEnvironment:  "production",
+		QueryTimeout:      time.Second,
+		QueryPollInterval: time.Second,
+		MaxResponseBytes:  64 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("initializeUsageProvider() error = %v", err)
+	}
+	defer closeProvider()
+	if provider != nil {
+		t.Fatal("initializeUsageProvider() provider != nil, want disabled provider")
+	}
+}
+
+func TestProductAnalyticsClientConfigPreservesRuntimeSettings(t *testing.T) {
+	cfg := productAnalyticsClientConfig(config.ProductAnalyticsConfiguration{
+		Enabled: true, Host: "https://eu.i.posthog.com", ProjectToken: "phc_test",
+		Environment: "production", ExcludedSubjects: []string{"internal-1"},
+	})
+	want := productanalytics.Config{
+		Enabled: true, Host: "https://eu.i.posthog.com", ProjectToken: "phc_test",
+		Environment: "production", ExcludedSubjects: []string{"internal-1"},
+	}
+	if !reflect.DeepEqual(cfg, want) {
+		t.Fatalf("config = %#v, want %#v", cfg, want)
+	}
+}
+
+func TestServeUntilCanceledShutsDownServer(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	server := &http.Server{Addr: "127.0.0.1:0", Handler: http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })}
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	if err := serveUntilCanceled(ctx, server); err != nil {
+		t.Fatalf("serveUntilCanceled() error = %v", err)
+	}
+}
+
+func TestShutdownSignedServiceURLsCancelsAndJoinsBeforeClosingOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var retry sync.WaitGroup
+	var mu sync.RWMutex
+	retryStarted := make(chan struct{})
+	retryStopped := make(chan struct{})
+	retry.Add(1)
+	go func() {
+		defer retry.Done()
+		close(retryStarted)
+		<-ctx.Done()
+		close(retryStopped)
+	}()
+	<-retryStarted
+	closeCalls := 0
+	closeStore := func() {
+		select {
+		case <-retryStopped:
+		default:
+			t.Fatal("store closed before retry goroutine stopped")
+		}
+		closeCalls++
+	}
+
+	shutdownSignedServiceURLs(cancel, &retry, &mu, &closeStore)
+	shutdownSignedServiceURLs(cancel, &retry, &mu, &closeStore)
+
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", closeCalls)
 	}
 }

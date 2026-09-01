@@ -18,10 +18,10 @@ test.describe("SDK builders", () => {
   test("builds client, claim, and user-key records", async ({ page }) => {
     const result = await page.evaluate(async () => {
       const { buildClientConfiguration, ensureSdkInitialized } = await import(
-        "/src/sdk/client.ts"
+        "/src/auth/cyclops-client.ts"
       )
-      const { buildClaimRequest } = await import("/src/sdk/claims.ts")
-      const { buildUserApiKeyRequest } = await import("/src/sdk/userKeys.ts")
+      const { buildClaimRequest } = await import("/src/fleet/claims.ts")
+      const { buildUserApiKeyRequest } = await import("/src/fleet/userKeys.ts")
       await ensureSdkInitialized()
       const pool = {
         apiVersion: "osgym.cua.ai/v1alpha1",
@@ -65,9 +65,9 @@ test.describe("SDK builders", () => {
 
   test("builds nested pool and template requests", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const { ensureSdkInitialized } = await import("/src/sdk/client.ts")
-      const { buildPoolRequest, buildTemplateRequest } = await import("/src/sdk/pools.ts")
-      const { Firmware, ServiceProtocol } = await import("/src/sdk/generated.ts")
+      const { ensureSdkInitialized } = await import("/src/auth/cyclops-client.ts")
+      const { buildPoolRequest, buildTemplateRequest } = await import("/src/fleet/pools.ts")
+      const { Firmware, ServiceProtocol } = await import("/sdk-bindings/ts-uniffi-browser/ts/index.web.ts")
       await ensureSdkInitialized()
       const values = {
         cpu: 4,
@@ -126,8 +126,8 @@ test.describe("SDK builders", () => {
 
   test("rebuilds template services without mutation", async ({ page }) => {
     const result = await page.evaluate(async () => {
-      const { ensureSdkInitialized } = await import("/src/sdk/client.ts")
-      const { rebuildTemplateWithServices } = await import("/src/sdk/pools.ts")
+      const { ensureSdkInitialized } = await import("/src/auth/cyclops-client.ts")
+      const { rebuildTemplateWithServices } = await import("/src/fleet/pools.ts")
       const {
         Firmware,
         ImagePullPolicy,
@@ -135,7 +135,7 @@ test.describe("SDK builders", () => {
         PreservedJson,
         RuntimeKind,
         SandboxServiceBuilder,
-      } = await import("/src/sdk/generated.ts")
+      } = await import("/sdk-bindings/ts-uniffi-browser/ts/index.web.ts")
       await ensureSdkInitialized()
       const originalService = new SandboxServiceBuilder()
         .name("old")
@@ -308,8 +308,8 @@ test.describe("SDK builders", () => {
     })
 
     const result = await page.evaluate(async () => {
-      const { createPool } = await import("/src/sdk/pools.ts")
-      const { SdkError } = await import("/src/sdk/generated.ts")
+      const { createPool } = await import("/src/fleet/pools.ts")
+      const { SdkError } = await import("/sdk-bindings/ts-uniffi-browser/ts/index.web.ts")
       try {
         await createPool("rollback-pool", {
           cpu: 1,

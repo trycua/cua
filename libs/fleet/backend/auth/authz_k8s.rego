@@ -166,12 +166,11 @@ is_event_k8s_path(path) {
 
 # ── Fleet CRDs, native group ────────────────────────────────────────────────
 #
-# apis/osgym.cua.ai/v1alpha1/namespaces/{ns}/{claims,warmpools,templates}
+# apis/osgym.cua.ai/v1alpha1/namespaces/{ns}/{claims,warmpools,templates,sandboxes}
 #
 # The resources this system exists to manage, and 99% of all observed traffic.
-# Attested by all four sources: the SDK builds exactly these paths, the GitHub
-# allowlist already names the same three, and production shows the full CRUD
-# matrix succeeding.
+# Claims, warm pools, and templates use the existing CRUD matrix. Sandboxes are
+# exposed separately as read-only instance state for the pool detail page.
 native_fleet_resources := {
 	"osgymsandboxclaims",
 	"osgymsandboxwarmpools",
@@ -183,6 +182,16 @@ k8s_request_allowed {
 	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
 	native_fleet_resources[parts[5]]
 	fleet_crud_shape(parts)
+}
+
+# Sandboxes are the instances behind a warm pool. The pool detail page lists
+# them to show both available and claim-owned capacity, but never mutates them.
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	apis_namespaced_group(parts, "osgym.cua.ai", "v1alpha1")
+	parts[5] == "osgymsandboxes"
+	apis_read_shape(parts)
+	input.method == "GET"
 }
 
 # ── Fleet CRDs, legacy group ────────────────────────────────────────────────

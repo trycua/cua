@@ -6,10 +6,14 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"strconv"
 	"strings"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
+	"cyclops-cs-backend/middlewares"
+	"cyclops-cs-backend/productanalytics"
 )
 
 type BillingService interface {
@@ -18,6 +22,10 @@ type BillingService interface {
 	CreateSetupSession(ctx context.Context, subject string, options billing.SetupOptions) (string, error)
 	CreatePortalSession(ctx context.Context, subject, returnURL string) (string, error)
 	SetDefaultPaymentMethodForSetupGeneration(ctx context.Context, customerID, paymentMethodID, generation string) (bool, error)
+}
+
+type BillingUsageService interface {
+	Usage(ctx context.Context, subject string, months int, now time.Time) (billing.Usage, error)
 }
 
 type BillingSessionResponse struct {
@@ -72,9 +80,25 @@ func requireEmptyBillingBody(w http.ResponseWriter, r *http.Request) bool {
 	return true
 }
 
+// poolCreateCardRequired resolves the advisory pool_create_card_required
+// summary field from the same admission policy /api/k8s enforces. The field
+// only pre-warns the dashboard — the policy still denies bypassing creates —
+// so evaluation failures fail open to not-required instead of erroring the
+// whole summary.
+func (h Handlers) poolCreateCardRequired(r *http.Request, user *auth.User) bool {
+	required, err := auth.EvalPoolCreateCardRequired(r.Context(), user, func(ctx context.Context) (auth.FactSet, error) {
+		return StripeCardFacts(h).LoadFacts(ctx, r)
+	})
+	if err != nil {
+		slog.WarnContext(r.Context(), "billing: card requirement eval failed; reporting not required", "err", err)
+		return false
+	}
+	return required
+}
+
 // GetBillingSummary godoc
 // @Summary Billing summary
-// @Description Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.
+// @Description Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject, including whether creating pools currently requires adding a payment card.
 // @Tags billing
 // @Produce json
 // @Success 200 {object} billing.Summary
@@ -96,7 +120,49 @@ func (h Handlers) GetBillingSummary(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadGateway, "could not load billing summary")
 		return
 	}
+	summary.PoolCreateCardRequired = h.poolCreateCardRequired(r, user)
 	writeJSON(w, http.StatusOK, summary)
+}
+
+// GetBillingUsage godoc
+// @Summary Billing usage
+// @Description Returns Stripe-backed invoice spend, trend, and current-period line-item breakdown for the authenticated Fleet subject.
+// @Tags billing
+// @Produce json
+// @Param months query int false "History window in months" Enums(3, 6, 12) default(6)
+// @Success 200 {object} billing.Usage
+// @Failure 400 {object} map[string]string
+// @Failure 401 {object} map[string]string
+// @Failure 403 {object} map[string]string
+// @Failure 502 {object} map[string]string
+// @Failure 503 {object} map[string]string
+// @Security BearerAuth
+// @Router /api/billing/usage [get]
+func (h Handlers) GetBillingUsage(w http.ResponseWriter, r *http.Request) {
+	user, ok := requireBillingEnabled(w, r)
+	if !ok || !h.billingAvailable(w) {
+		return
+	}
+	months := 6
+	if raw := r.URL.Query().Get("months"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || (parsed != 3 && parsed != 6 && parsed != 12) {
+			writeErr(w, http.StatusBadRequest, "months must be 3, 6, or 12")
+			return
+		}
+		months = parsed
+	}
+	usageService, ok := h.Billing.(BillingUsageService)
+	if !ok {
+		writeErr(w, http.StatusServiceUnavailable, "billing usage is not configured")
+		return
+	}
+	usage, err := usageService.Usage(r.Context(), user.ID, months, time.Now())
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "could not load billing usage")
+		return
+	}
+	writeJSON(w, http.StatusOK, usage)
 }
 
 // CreateBillingSetupSession godoc
@@ -120,11 +186,28 @@ func (h Handlers) CreateBillingSetupSession(w http.ResponseWriter, r *http.Reque
 		writeErr(w, http.StatusServiceUnavailable, "Stripe card setup is not configured; redirect URLs are required")
 		return
 	}
+	source, sourceOK := productanalytics.SourceForUser(user, h.AuthCfg.SPAClientID)
 	url, err := h.Billing.CreateSetupSession(r.Context(), user.ID, billing.SetupOptions{
 		SuccessURL: h.Stripe.CheckoutSuccessURL,
 		CancelURL:  h.Stripe.CheckoutCancelURL,
+		Source:     source,
 	})
 	if err != nil {
+		if sourceOK {
+			traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
+			capturer := h.Analytics
+			if capturer == nil {
+				capturer = productanalytics.Nop()
+			}
+			capturer.Capture(productanalytics.Event{
+				Name: productanalytics.EventPaymentMethodSetup, DistinctID: user.ID, InsertID: traceID,
+				Properties: map[string]any{
+					"outcome": productanalytics.OutcomeFailure, "source": source,
+					"principal_type": user.PrincipalType, "status_code": http.StatusBadGateway,
+					"error_class": "payment_provider",
+				},
+			})
+		}
 		writeErr(w, http.StatusBadGateway, "could not create Stripe card setup Session")
 		return
 	}

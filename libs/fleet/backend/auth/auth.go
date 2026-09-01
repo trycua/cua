@@ -107,7 +107,8 @@ func ClassifyDatabaseError(err error) error {
 		return err
 	}
 	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
-		return DatabaseUnavailable(err)
+		return errors.Join(DatabaseUnavailable(err), err)
+
 	}
 
 	var postgresError *pgconn.PgError
@@ -116,11 +117,13 @@ func ClassifyDatabaseError(err error) error {
 	}
 	var connectError *pgconn.ConnectError
 	if errors.As(err, &connectError) {
-		return DatabaseUnavailable(err)
+		return errors.Join(DatabaseUnavailable(err), err)
+
 	}
 	var networkError net.Error
 	if errors.As(err, &networkError) || errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-		return DatabaseUnavailable(err)
+		return errors.Join(DatabaseUnavailable(err), err)
+
 	}
 	return err
 }
@@ -250,6 +253,7 @@ func validateKeycloak(raw string) (*User, error) {
 		ID:            str(claims, "sub"),
 		Name:          str(claims, "name"),
 		Email:         str(claims, "email"),
+		EmailVerified: boolean(claims, "email_verified"),
 		AZP:           str(claims, "azp"),
 		Namespace:     str(claims, "namespace"),
 		PrincipalType: PrincipalTypeUser,
@@ -257,6 +261,10 @@ func validateKeycloak(raw string) (*User, error) {
 			"preferred_username": str(claims, "preferred_username"),
 			"user_sub":           str(claims, "user_sub"),
 			"user_groups":        str(claims, "user_groups"),
+			"user_email":         str(claims, "user_email"),
+			"user_email_verified": fmt.Sprint(
+				boolean(claims, "user_email_verified"),
+			),
 		},
 	}, nil
 }
@@ -341,7 +349,8 @@ func validateGitHub(ctx context.Context, raw string) (*User, error) {
 func validateGitHubAudience(claims jwt.MapClaims, primary string, legacy []string) error {
 	audiences, err := claims.GetAudience()
 	if err != nil || len(audiences) == 0 {
-		return fmt.Errorf("missing or invalid github oidc audience")
+		return errors.Join(fmt.Errorf("missing or invalid github oidc audience"), err)
+
 	}
 	accepted := append([]string{primary}, legacy...)
 	for _, audience := range audiences {
@@ -368,4 +377,13 @@ func str(c jwt.MapClaims, k string) string {
 		}
 	}
 	return ""
+}
+
+func boolean(c jwt.MapClaims, k string) bool {
+	v, ok := c[k]
+	if !ok {
+		return false
+	}
+	value, ok := v.(bool)
+	return ok && value
 }

@@ -14,6 +14,7 @@ import (
 
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/productanalytics"
 )
 
 func stripeTestSignature(payload []byte, secret string, timestamp int64) string {
@@ -191,5 +192,56 @@ func TestBillingWebhookIgnoresMissingSetupGeneration(t *testing.T) {
 	})
 	if response.Code != http.StatusNoContent || service.defaultCalls != 0 {
 		t.Fatalf("status/calls = %d/%d, want 204/0", response.Code, service.defaultCalls)
+	}
+}
+
+func runBillingWebhookWithAnalytics(t *testing.T, service *fakeBillingService, event billing.WebhookEvent, capture *analyticsCapture) *httptest.ResponseRecorder {
+	t.Helper()
+	h := Handlers{Billing: service, Analytics: capture, Stripe: config.StripeConfiguration{WebhookSecret: "whsec_test"}, WebhookVerifier: fakeWebhookVerifier{event: event}}
+	request := httptest.NewRequest(http.MethodPost, "/api/billing/webhook", strings.NewReader("{}"))
+	response := httptest.NewRecorder()
+	h.HandleBillingWebhook(response, request)
+	return response
+}
+
+func TestBillingWebhookEmitsAppliedPaymentSuccess(t *testing.T) {
+	service := &fakeBillingService{defaultApplied: true}
+	capture := &analyticsCapture{}
+	response := runBillingWebhookWithAnalytics(t, service, billing.WebhookEvent{ID: "evt_123", Type: "setup_intent.succeeded", Purpose: billing.SetupPurpose, Subject: "subject-1", Source: productanalytics.SourceSPA, CustomerID: "cus_owned", PaymentMethodID: "pm_card", SetupGeneration: "current"}, capture)
+	if response.Code != http.StatusNoContent || len(capture.events) != 1 {
+		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
+	}
+	event := capture.events[0]
+	if event.Name != productanalytics.EventPaymentMethodSetup || event.DistinctID != "subject-1" || event.InsertID != "evt_123" || event.Properties["outcome"] != productanalytics.OutcomeSuccess {
+		t.Fatalf("event = %#v", event)
+	}
+}
+
+func TestBillingWebhookDoesNotEmitForStaleGeneration(t *testing.T) {
+	service := &fakeBillingService{defaultApplied: false}
+	capture := &analyticsCapture{}
+	runBillingWebhookWithAnalytics(t, service, billing.WebhookEvent{ID: "evt_stale", Type: "setup_intent.succeeded", Purpose: billing.SetupPurpose, Subject: "subject-1", Source: productanalytics.SourceSPA, CustomerID: "cus_owned", PaymentMethodID: "pm_card", SetupGeneration: "old"}, capture)
+	if len(capture.events) != 0 {
+		t.Fatalf("events = %#v", capture.events)
+	}
+}
+
+func TestBillingWebhookEmitsTrustedTerminalPaymentFailure(t *testing.T) {
+	capture := &analyticsCapture{}
+	response := runBillingWebhookWithAnalytics(t, &fakeBillingService{}, billing.WebhookEvent{ID: "evt_failed", Type: "setup_intent.setup_failed", Purpose: billing.SetupPurpose, Subject: "subject-1", Source: productanalytics.SourceSPA, SetupGeneration: "current"}, capture)
+	if response.Code != http.StatusNoContent || len(capture.events) != 1 {
+		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
+	}
+	event := capture.events[0]
+	if event.InsertID != "evt_failed" || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
+		t.Fatalf("event = %#v", event)
+	}
+}
+
+func TestBillingWebhookMissingSubjectEmitsNothing(t *testing.T) {
+	capture := &analyticsCapture{}
+	runBillingWebhookWithAnalytics(t, &fakeBillingService{}, billing.WebhookEvent{ID: "evt_failed", Type: "setup_intent.setup_failed", Purpose: billing.SetupPurpose, Source: productanalytics.SourceSPA, SetupGeneration: "current"}, capture)
+	if len(capture.events) != 0 {
+		t.Fatalf("events = %#v", capture.events)
 	}
 }

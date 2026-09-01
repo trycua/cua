@@ -6,8 +6,8 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@ubjs/core": "latest",
-    "@ubjs/node": "latest",
+    "@ubjs/core": "0.31.0-3",
+    "@ubjs/node": "0.31.0-3",
     "tsx": "latest",
     "typescript": "latest"
   },

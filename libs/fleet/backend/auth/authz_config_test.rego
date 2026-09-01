@@ -24,3 +24,43 @@ test_user_api_key_config_allowed if {
 		"user": {"sub": "user-123", "azp": "ukey-test123abc", "namespace": "", "email": ""},
 	}
 }
+
+test_spa_analytics_session_allowed if {
+	route_allow with input as {
+		"route": "/api/analytics/session",
+		"method": "POST",
+		"path": "/api/analytics/session",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": ""},
+	}
+}
+
+test_user_key_analytics_session_denied if {
+	not route_allow with input as {
+		"route": "/api/analytics/session",
+		"method": "POST",
+		"path": "/api/analytics/session",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "ukey-test", "namespace": "", "email": ""},
+	}
+}
+
+test_spa_analytics_attribution_allowed if {
+	route_allow with input as {
+		"route": "/api/analytics/attribution",
+		"method": "POST",
+		"path": "/api/analytics/attribution",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": ""},
+	}
+}
+
+test_user_key_analytics_attribution_denied if {
+	not route_allow with input as {
+		"route": "/api/analytics/attribution",
+		"method": "POST",
+		"path": "/api/analytics/attribution",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "ukey-test", "namespace": "", "email": ""},
+	}
+}

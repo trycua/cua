@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -68,6 +69,21 @@ var (
 		Name: "cyclops_cs_billing_webhook_events_total",
 		Help: "Total Stripe billing webhook requests by processing result and event type.",
 	}, []string{"result", "event_type"})
+
+	ProductAnalyticsEventsTotal = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cyclops_cs_product_analytics_events_total",
+		Help: "Fleet product analytics events by event name and delivery result.",
+	}, []string{"event", "result"})
+
+	ProductAnalyticsQueueDepth = promauto.NewGauge(prometheus.GaugeOpts{
+		Name: "cyclops_cs_product_analytics_queue_depth",
+		Help: "Current Fleet product analytics delivery queue depth.",
+	})
+
+	ProductAnalyticsDeliveryDuration = promauto.NewHistogram(prometheus.HistogramOpts{
+		Name: "cyclops_cs_product_analytics_delivery_duration_seconds",
+		Help: "Fleet product analytics batch delivery duration.",
+	})
 
 	// DatabaseFeaturesReady reports whether the PostgreSQL-backed features
 	// came up at startup. The serving tier deliberately does NOT gate
@@ -220,6 +236,11 @@ func normalizePath(p string) string {
 		return "/api/keys/:id"
 	case len(p) > 13 && p[:13] == "/api/gateway/":
 		return "/api/gateway/:name/:path"
+	case len(p) > 16 && p[:16] == "/api/signed-svc/":
+		if strings.Contains(p[16:], "/") {
+			return "/api/signed-svc/:token/:path"
+		}
+		return "/api/signed-svc/:token"
 	case len(p) > 9 && p[:9] == "/api/svc/":
 		return "/api/svc/:namespace/:service/:path"
 	case len(p) > 9 && p[:9] == "/api/k8s/":
@@ -266,4 +287,16 @@ func StartMetricsServer(addr string) error {
 
 func RecordBillingWebhook(result, eventType string) {
 	BillingWebhookEventsTotal.WithLabelValues(result, eventType).Inc()
+}
+
+func RecordProductAnalytics(event, result string) {
+	ProductAnalyticsEventsTotal.WithLabelValues(event, result).Inc()
+}
+
+func SetProductAnalyticsQueueDepth(depth int) {
+	ProductAnalyticsQueueDepth.Set(float64(depth))
+}
+
+func ObserveProductAnalyticsDelivery(duration time.Duration) {
+	ProductAnalyticsDeliveryDuration.Observe(duration.Seconds())
 }

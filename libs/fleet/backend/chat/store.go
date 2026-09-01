@@ -14,6 +14,7 @@ import (
 var (
 	ErrConversationNotFound = errors.New("conversation not found")
 	ErrConversationLimit    = errors.New("conversation storage limit reached")
+	ErrConversationArchived = errors.New("conversation is archived")
 )
 
 const (
@@ -23,8 +24,9 @@ const (
 
 type ConversationStore interface {
 	Create(ctx context.Context, ownerID string) (*Conversation, error)
-	List(ctx context.Context, ownerID string) ([]ConversationSummary, error)
+	List(ctx context.Context, ownerID string, archived bool) ([]ConversationSummary, error)
 	Get(ctx context.Context, ownerID, conversationID string) (*Conversation, error)
+	SetArchived(ctx context.Context, ownerID, conversationID string, archived bool) (*Conversation, error)
 	Append(ctx context.Context, ownerID, conversationID string, messages ...Message) error
 }
 
@@ -81,23 +83,27 @@ func (store *MemoryConversationStore) Create(_ context.Context, ownerID string) 
 	return cloneConversation(record.Conversation), nil
 }
 
-func (store *MemoryConversationStore) List(_ context.Context, ownerID string) ([]ConversationSummary, error) {
+func (store *MemoryConversationStore) List(_ context.Context, ownerID string, archived bool) ([]ConversationSummary, error) {
 	store.mu.RLock()
 	summaries := make([]ConversationSummary, 0)
 	for _, record := range store.conversations {
-		if record.OwnerID != ownerID {
+		if record.OwnerID != ownerID || (record.ArchivedAt != nil) != archived {
 			continue
 		}
 		summaries = append(summaries, ConversationSummary{
-			ID:        record.ID,
-			Title:     record.Title,
-			CreatedAt: record.CreatedAt,
-			UpdatedAt: record.UpdatedAt,
+			ID:         record.ID,
+			Title:      record.Title,
+			CreatedAt:  record.CreatedAt,
+			UpdatedAt:  record.UpdatedAt,
+			ArchivedAt: cloneTime(record.ArchivedAt),
 		})
 	}
 	store.mu.RUnlock()
 
 	sort.Slice(summaries, func(left, right int) bool {
+		if archived {
+			return summaries[left].ArchivedAt.After(*summaries[right].ArchivedAt)
+		}
 		return summaries[left].UpdatedAt.After(summaries[right].UpdatedAt)
 	})
 	return summaries, nil
@@ -116,6 +122,26 @@ func (store *MemoryConversationStore) Get(_ context.Context, ownerID, conversati
 	return conversation, nil
 }
 
+func (store *MemoryConversationStore) SetArchived(_ context.Context, ownerID, conversationID string, archived bool) (*Conversation, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+
+	record, ok := store.conversations[conversationID]
+	if !ok || record.OwnerID != ownerID {
+		return nil, ErrConversationNotFound
+	}
+
+	now := time.Now().UTC()
+	if archived {
+		record.ArchivedAt = &now
+	} else {
+		record.ArchivedAt = nil
+	}
+	record.UpdatedAt = now
+
+	return cloneConversation(record.Conversation), nil
+}
+
 func (store *MemoryConversationStore) Append(_ context.Context, ownerID, conversationID string, messages ...Message) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -123,6 +149,9 @@ func (store *MemoryConversationStore) Append(_ context.Context, ownerID, convers
 	record, ok := store.conversations[conversationID]
 	if !ok || record.OwnerID != ownerID {
 		return ErrConversationNotFound
+	}
+	if record.ArchivedAt != nil {
+		return ErrConversationArchived
 	}
 	if len(messages) == 0 {
 		return nil
@@ -193,6 +222,7 @@ func titleFromFirstUserMessage(messages []Message) string {
 
 func cloneConversation(conversation Conversation) *Conversation {
 	cloned := conversation
+	cloned.ArchivedAt = cloneTime(conversation.ArchivedAt)
 	cloned.Messages = make([]Message, len(conversation.Messages))
 	for index, message := range conversation.Messages {
 		cloned.Messages[index] = cloneMessage(message)
@@ -204,4 +234,12 @@ func cloneMessage(message Message) Message {
 	cloned := message
 	cloned.ToolCalls = append([]ToolCall(nil), message.ToolCalls...)
 	return cloned
+}
+
+func cloneTime(value *time.Time) *time.Time {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
 }

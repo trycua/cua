@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestMemoryStoreTitlesAndOrdersConversations(t *testing.T) {
@@ -26,12 +27,160 @@ func TestMemoryStoreTitlesAndOrdersConversations(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := store.List(context.Background(), "owner-a")
+	got, err := store.List(context.Background(), "owner-a", false)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 || got[0].ID != second.ID || got[1].Title != "First useful question" {
 		t.Fatalf("unexpected summaries: %#v", got)
+	}
+}
+
+func TestMemoryConversationStoreArchivesAndRestores(t *testing.T) {
+	store := NewMemoryConversationStore()
+	conversation, err := store.Create(context.Background(), "owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	archived, err := store.SetArchived(context.Background(), "owner-a", conversation.ID, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatalf("archive = %#v, want archived timestamp", archived)
+	}
+	if !archived.UpdatedAt.After(conversation.UpdatedAt) {
+		t.Fatalf("archive UpdatedAt = %v, creation UpdatedAt = %v", archived.UpdatedAt, conversation.UpdatedAt)
+	}
+	if !archived.UpdatedAt.Equal(*archived.ArchivedAt) {
+		t.Fatalf("archive UpdatedAt = %v, ArchivedAt = %v", archived.UpdatedAt, archived.ArchivedAt)
+	}
+	if archived.UpdatedAt.Location() != time.UTC || archived.ArchivedAt.Location() != time.UTC {
+		t.Fatalf("archive timestamps must be UTC: UpdatedAt=%v ArchivedAt=%v", archived.UpdatedAt.Location(), archived.ArchivedAt.Location())
+	}
+	archiveTimestamp := *archived.ArchivedAt
+	*archived.ArchivedAt = time.Time{}
+
+	stored, err := store.Get(context.Background(), "owner-a", conversation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.ArchivedAt == nil || stored.ArchivedAt.IsZero() {
+		t.Fatalf("stored archive timestamp = %v, want non-zero", stored.ArchivedAt)
+	}
+	if !stored.ArchivedAt.Equal(archiveTimestamp) {
+		t.Fatalf("stored archive timestamp = %v, want %v", stored.ArchivedAt, archiveTimestamp)
+	}
+
+	active, err := store.List(context.Background(), "owner-a", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedSummaries, err := store.List(context.Background(), "owner-a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 0 || len(archivedSummaries) != 1 {
+		t.Fatalf("active=%#v archived=%#v", active, archivedSummaries)
+	}
+	if archivedSummaries[0].ArchivedAt == nil || archivedSummaries[0].ArchivedAt.IsZero() {
+		t.Fatalf("archived summary timestamp = %v, want non-zero", archivedSummaries[0].ArchivedAt)
+	}
+
+	restored, err := store.SetArchived(context.Background(), "owner-a", conversation.ID, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.ArchivedAt != nil {
+		t.Fatalf("restored archive timestamp = %v, want nil", restored.ArchivedAt)
+	}
+	if !restored.UpdatedAt.After(archiveTimestamp) {
+		t.Fatalf("restored UpdatedAt = %v, archive timestamp = %v", restored.UpdatedAt, archiveTimestamp)
+	}
+	if restored.UpdatedAt.Location() != time.UTC {
+		t.Fatalf("restored UpdatedAt location = %v, want UTC", restored.UpdatedAt.Location())
+	}
+
+	active, err = store.List(context.Background(), "owner-a", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	archivedSummaries, err = store.List(context.Background(), "owner-a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(active) != 1 || active[0].ID != conversation.ID || len(archivedSummaries) != 0 {
+		t.Fatalf("restored active=%#v archived=%#v", active, archivedSummaries)
+	}
+}
+
+func TestMemoryConversationStoreFiltersArchivedByOwner(t *testing.T) {
+	store := NewMemoryConversationStore()
+	active, err := store.Create(context.Background(), "owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstArchived, err := store.Create(context.Background(), "owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondArchived, err := store.Create(context.Background(), "owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherOwner, err := store.Create(context.Background(), "owner-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetArchived(context.Background(), "owner-a", firstArchived.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetArchived(context.Background(), "owner-a", secondArchived.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetArchived(context.Background(), "owner-b", otherOwner.ID, true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetArchived(context.Background(), "owner-b", firstArchived.ID, false); !errors.Is(err, ErrConversationNotFound) {
+		t.Fatalf("SetArchived error = %v, want ErrConversationNotFound", err)
+	}
+
+	activeSummaries, err := store.List(context.Background(), "owner-a", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(activeSummaries) != 1 || activeSummaries[0].ID != active.ID {
+		t.Fatalf("active summaries = %#v", activeSummaries)
+	}
+
+	archivedSummaries, err := store.List(context.Background(), "owner-a", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(archivedSummaries) != 2 || archivedSummaries[0].ID != secondArchived.ID || archivedSummaries[1].ID != firstArchived.ID {
+		t.Fatalf("archived summaries = %#v", archivedSummaries)
+	}
+	for _, summary := range archivedSummaries {
+		if summary.ArchivedAt == nil {
+			t.Fatalf("archived summary = %#v, want archived timestamp", summary)
+		}
+	}
+}
+
+func TestMemoryConversationStoreRejectsAppendToArchived(t *testing.T) {
+	store := NewMemoryConversationStore()
+	conversation, err := store.Create(context.Background(), "owner-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetArchived(context.Background(), "owner-a", conversation.ID, true); err != nil {
+		t.Fatal(err)
+	}
+
+	err = store.Append(context.Background(), "owner-a", conversation.ID, Message{Role: RoleUser, Content: "blocked"})
+	if !errors.Is(err, ErrConversationArchived) {
+		t.Fatalf("Append error = %v, want ErrConversationArchived", err)
 	}
 }
 
@@ -138,7 +287,7 @@ func TestMemoryStoreCreateDoesNotRaceWithDiscoveryAndAppend(t *testing.T) {
 			default:
 			}
 
-			summaries, err := store.List(ctx, "owner-a")
+			summaries, err := store.List(ctx, "owner-a", false)
 			if err != nil {
 				t.Errorf("List() error = %v", err)
 				return

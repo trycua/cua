@@ -26,7 +26,7 @@ func TestVerifyParsesFleetSetupIntentSucceeded(t *testing.T) {
 	    "object":"setup_intent",
 	    "customer":"cus_owned",
 	    "payment_method":"pm_card",
-	    "metadata":{"purpose":"fleet_default_card"}
+	    "metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-1","fleet_source":"spa"}
 	  }}
 	}`)
 	signature := billingStripeSignature(payload, secret, time.Now().Unix())
@@ -37,7 +37,7 @@ func TestVerifyParsesFleetSetupIntentSucceeded(t *testing.T) {
 	}
 	want := WebhookEvent{
 		ID: "evt_setup", Type: "setup_intent.succeeded",
-		Purpose: SetupPurpose, CustomerID: "cus_owned", PaymentMethodID: "pm_card",
+		Purpose: SetupPurpose, Subject: "subject-1", Source: "spa", CustomerID: "cus_owned", PaymentMethodID: "pm_card",
 	}
 	if event != want {
 		t.Fatalf("event = %#v, want %#v", event, want)
@@ -84,5 +84,32 @@ func TestVerifyParsesServerSetupGeneration(t *testing.T) {
 	}
 	if event.SetupGeneration != "server-generated-token" {
 		t.Fatalf("setup generation = %q, want server-generated-token", event.SetupGeneration)
+	}
+}
+
+func TestVerifyParsesFleetSetupIntentFailedAttribution(t *testing.T) {
+	secret := "whsec_test"
+	payload := []byte(`{"id":"evt_failed","type":"setup_intent.setup_failed","data":{"object":{"id":"seti_123","object":"setup_intent","metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-1","fleet_source":"spa","fleet_setup_generation":"generation-1"}}}}`)
+	signature := billingStripeSignature(payload, secret, time.Now().Unix())
+	event, err := NewStripeWebhookVerifier().Verify(payload, signature, secret)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	want := WebhookEvent{ID: "evt_failed", Type: "setup_intent.setup_failed", Purpose: SetupPurpose, Subject: "subject-1", Source: "spa", SetupGeneration: "generation-1"}
+	if event != want {
+		t.Fatalf("event = %#v, want %#v", event, want)
+	}
+}
+
+func TestVerifyDropsUnsupportedSetupSource(t *testing.T) {
+	secret := "whsec_test"
+	payload := []byte(`{"id":"evt_failed","type":"setup_intent.setup_failed","data":{"object":{"id":"seti_123","object":"setup_intent","metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-1","fleet_source":"github"}}}}`)
+	signature := billingStripeSignature(payload, secret, time.Now().Unix())
+	event, err := NewStripeWebhookVerifier().Verify(payload, signature, secret)
+	if err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	if event.Subject != "" || event.Source != "" {
+		t.Fatalf("untrusted attribution = subject %q source %q", event.Subject, event.Source)
 	}
 }

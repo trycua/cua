@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -151,6 +152,19 @@ type routeCase struct {
 // characterizationCases lists the parameter cases for every route. A route with
 // no entry fails the test rather than being skipped — an unlisted route is one
 // whose verdicts nobody recorded.
+func TestChatConversationPatchUsesExistingAuthorizationSurface(t *testing.T) {
+	const route = "/api/chat/conversations/{id}"
+	if surface, ok := RouteSurface(route); !ok || surface != "chat" {
+		t.Fatalf("RouteSurface(%q) = (%q, %t), want (chat, true)", route, surface, ok)
+	}
+	if !slices.Contains(characterizationMethods, http.MethodPatch) {
+		t.Fatalf("characterizationMethods = %v, missing PATCH", characterizationMethods)
+	}
+	if len(characterizationCases()[route]) == 0 {
+		t.Fatalf("characterizationCases missing %q", route)
+	}
+}
+
 func characterizationCases() map[string][]routeCase {
 	cases := map[string][]routeCase{}
 
@@ -158,15 +172,23 @@ func characterizationCases() map[string][]routeCase {
 		cases[route] = []routeCase{{name: "plain", params: map[string]string{}, path: path}}
 	}
 	simple("/api/config", "/api/config")
+	simple("/api/analytics/session", "/api/analytics/session")
+	simple("/api/analytics/attribution", "/api/analytics/attribution")
 	simple("/api/state/query", "/api/state/query")
+	simple("/api/usage/overview", "/api/usage/overview")
+	simple("/api/usage/pool", "/api/usage/pool")
+	simple("/api/usage/browser-timings", "/api/usage/browser-timings")
 	simple("/api/chat/conversations", "/api/chat/conversations")
 	simple("/api/billing/summary", "/api/billing/summary")
+	simple("/api/billing/usage", "/api/billing/usage")
 	simple("/api/billing/setup-session", "/api/billing/setup-session")
 	simple("/api/billing/portal-session", "/api/billing/portal-session")
 	simple("/api/keys", "/api/keys")
 	simple("/api/namespaces", "/api/namespaces")
 	simple("/api/user-keys", "/api/user-keys")
 	simple("/api/github-trust-policies", "/api/github-trust-policies")
+	simple("/api/admin/feature-flags", "/api/admin/feature-flags")
+	cases["/api/admin/feature-flags/{key}"] = []routeCase{{name: "key", params: map[string]string{"key": "example"}, path: "/api/admin/feature-flags/example"}}
 
 	withID := func(route, prefix string) {
 		cases[route] = []routeCase{{
@@ -234,6 +256,24 @@ func characterizationCases() map[string][]routeCase {
 	}
 	cases["/api/svc/{namespace}/{service}"] = proxyCases(false)
 	cases["/api/svc/{namespace}/{service}/{path...}"] = proxyCases(true)
+
+	// /api/signed-service-urls mirrors the /api/svc parameter logic: DNS-label shape,
+	// the per-key namespace binding, and the RBAC fact for everyone else —
+	// its handler acts with the pod ServiceAccount, so the ownership conjunct
+	// is the boundary and all three fact answers matter here too.
+	cases["/api/signed-service-urls/{namespace}"] = []routeCase{
+		{name: "owned-ns", params: map[string]string{"namespace": characterizationOwnedNamespace}, path: "/api/signed-service-urls/ns-a"},
+		{name: "other-ns", params: map[string]string{"namespace": characterizationUnownedNamespace}, path: "/api/signed-service-urls/ns-b"},
+		{name: "unreachable-ns", params: map[string]string{"namespace": characterizationUnreachableNamespace}, path: "/api/signed-service-urls/ns-err"},
+		{name: "invalid-ns", params: map[string]string{"namespace": "Not_A_Label"}, path: "/api/signed-service-urls/Not_A_Label"},
+		{name: "empty-ns", params: map[string]string{"namespace": ""}, path: "/api/signed-service-urls/"},
+	}
+	cases["/api/signed-service-urls/{namespace}/{id}"] = []routeCase{
+		{name: "owned-ns", params: map[string]string{"namespace": characterizationOwnedNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-a/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "other-ns", params: map[string]string{"namespace": characterizationUnownedNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-b/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "unreachable-ns", params: map[string]string{"namespace": characterizationUnreachableNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-err/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "empty-id", params: map[string]string{"namespace": characterizationOwnedNamespace, "id": ""}, path: "/api/signed-service-urls/ns-a/"},
+	}
 
 	// /api/k8s carries the richest parameter logic in the policy: the infra-path
 	// list, the admin escape hatch over it, the GitHub namespace grant, and the

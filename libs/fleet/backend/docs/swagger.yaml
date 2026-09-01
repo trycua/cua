@@ -19,12 +19,72 @@ definitions:
         x-nullable: true
       payment_method_present:
         type: boolean
+      pool_create_card_required:
+        description: |-
+          PoolCreateCardRequired is advisory admission state the API handler
+          fills in (Service.Summary always leaves it false): true when creating
+          a pool or any other custom resource would be denied because the
+          account has no qualifying payment card. The dashboard reads it to gate
+          create flows before a request ever reaches the enforcing policy.
+        type: boolean
     required:
     - card
     - payment_method_present
+    - pool_create_card_required
+    type: object
+  billing.Usage:
+    properties:
+      breakdown:
+        items:
+          $ref: '#/definitions/billing.UsageBreakdownItem'
+        type: array
+      currency:
+        type: string
+      current_estimate:
+        type: integer
+      current_period_end:
+        type: string
+      current_period_start:
+        type: string
+      previous_period_amount:
+        type: integer
+      range_end:
+        type: string
+      range_start:
+        type: string
+      trend:
+        items:
+          $ref: '#/definitions/billing.UsagePoint'
+        type: array
+    type: object
+  billing.UsageBreakdownItem:
+    properties:
+      amount:
+        type: integer
+      name:
+        type: string
+      period_end:
+        type: string
+      period_start:
+        type: string
+      quantity:
+        type: integer
+    type: object
+  billing.UsagePoint:
+    properties:
+      amount:
+        type: integer
+      estimate:
+        type: boolean
+      period_end:
+        type: string
+      period_start:
+        type: string
     type: object
   chat.Conversation:
     properties:
+      archived_at:
+        type: string
       created_at:
         type: string
       id:
@@ -40,6 +100,8 @@ definitions:
     type: object
   chat.ConversationSummary:
     properties:
+      archived_at:
+        type: string
       created_at:
         type: string
       id:
@@ -92,6 +154,72 @@ definitions:
       name:
         type: string
     type: object
+  featureflagadmin.Flag:
+    properties:
+      deletable:
+        type: boolean
+      description:
+        type: string
+      key:
+        type: string
+      managed_by:
+        type: string
+      modified_at:
+        type: string
+      ownership:
+        $ref: '#/definitions/featureflagadmin.Ownership'
+      path:
+        type: string
+      raw_value:
+        type: string
+      tags:
+        additionalProperties:
+          type: string
+        type: object
+      value: {}
+      value_type:
+        $ref: '#/definitions/featureflags.ValueType'
+      version:
+        type: integer
+    type: object
+  featureflagadmin.Ownership:
+    enum:
+    - terraform
+    - ad_hoc
+    - external
+    type: string
+    x-enum-varnames:
+    - OwnershipTerraform
+    - OwnershipAdHoc
+    - OwnershipExternal
+  featureflags.ValueType:
+    enum:
+    - boolean
+    - number
+    - string
+    - json
+    type: string
+    x-enum-varnames:
+    - ValueBoolean
+    - ValueNumber
+    - ValueString
+    - ValueJSON
+  handlers.AdminAPIError:
+    properties:
+      code:
+        type: string
+      current:
+        $ref: '#/definitions/featureflagadmin.Flag'
+      message:
+        type: string
+    type: object
+  handlers.ArchiveConversationRequest:
+    properties:
+      archived:
+        type: boolean
+    required:
+    - archived
+    type: object
   handlers.BillingSessionResponse:
     properties:
       url:
@@ -110,6 +238,20 @@ definitions:
         type: boolean
       chat:
         type: boolean
+      usage:
+        type: boolean
+      usage_pricing:
+        $ref: '#/definitions/handlers.UsagePricingConfig'
+    type: object
+  handlers.CreateFeatureFlagRequest:
+    properties:
+      description:
+        type: string
+      key:
+        type: string
+      value: {}
+      value_type:
+        $ref: '#/definitions/featureflags.ValueType'
     type: object
   handlers.CreateKeyRequest:
     properties:
@@ -139,6 +281,33 @@ definitions:
         example: my-workspace
         type: string
     type: object
+  handlers.CreateSignedServiceURLRequest:
+    properties:
+      claim:
+        type: string
+      expiresInSeconds:
+        maximum: 86400
+        minimum: 60
+        type: integer
+      label:
+        description: |-
+          Label is optional and limited to 120 UTF-8 bytes. OpenAPI maxLength is a
+          character upper bound; backend byte validation remains authoritative.
+        maxLength: 120
+        type: string
+      logicalService:
+        type: string
+      sandbox:
+        type: string
+      service:
+        type: string
+    required:
+    - claim
+    - expiresInSeconds
+    - logicalService
+    - sandbox
+    - service
+    type: object
   handlers.CreateUserKeyRequest:
     properties:
       name:
@@ -166,6 +335,11 @@ definitions:
         type: array
       token_url:
         type: string
+    type: object
+  handlers.DeleteFeatureFlagRequest:
+    properties:
+      expected_version:
+        type: integer
     type: object
   handlers.ErrorResponse:
     properties:
@@ -204,12 +378,52 @@ definitions:
       status:
         type: string
     type: object
+  handlers.SignedServiceURLResponse:
+    properties:
+      claim:
+        type: string
+      createdAt:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: string
+      label:
+        type: string
+      logicalService:
+        type: string
+      namespace:
+        type: string
+      revokedAt:
+        type: string
+      sandbox:
+        type: string
+      service:
+        type: string
+      url:
+        type: string
+    type: object
   handlers.TurnRequest:
     properties:
       messages:
         items:
           $ref: '#/definitions/chat.Message'
         type: array
+    type: object
+  handlers.UpdateFeatureFlagRequest:
+    properties:
+      expected_version:
+        type: integer
+      value: {}
+      value_type:
+        $ref: '#/definitions/featureflags.ValueType'
+    type: object
+  handlers.UsagePricingConfig:
+    properties:
+      memory_gib_hour_usd:
+        type: number
+      vcpu_hour_usd:
+        type: number
     type: object
   handlers.UserKeyResponse:
     properties:
@@ -254,6 +468,237 @@ info:
   title: Cyclops CS Backend API
   version: "0.1"
 paths:
+  /api/admin/feature-flags:
+    get:
+      description: Lists direct non-SecureString parameters under /feature-flags/cyclops-cs/
+        with typed values, ownership, and SSM versions.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/featureflagadmin.Flag'
+            type: array
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: List Cyclops feature flags
+      tags:
+      - admin feature flags
+    post:
+      consumes:
+      - application/json
+      description: Creates a String parameter under /feature-flags/cyclops-cs/ with
+        cyclops-cs-admin ownership and a typed logical value.
+      parameters:
+      - description: Feature flag to create
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/featureflagadmin.Flag'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: Create an ad hoc Cyclops feature flag
+      tags:
+      - admin feature flags
+  /api/admin/feature-flags/{key}:
+    delete:
+      consumes:
+      - application/json
+      description: Deletes only cyclops-cs-admin-owned flags when expected_version
+        matches. Terraform and external keys are protected.
+      parameters:
+      - description: Flat feature flag key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Expected SSM version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.DeleteFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: Delete an ad hoc Cyclops feature flag
+      tags:
+      - admin feature flags
+    put:
+      consumes:
+      - application/json
+      description: Updates the typed value when expected_version matches. Terraform
+        and external ownership protect the key from deletion, not value edits.
+      parameters:
+      - description: Flat feature flag key
+        in: path
+        name: key
+        required: true
+        type: string
+      - description: Typed value and expected SSM version
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.UpdateFeatureFlagRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/featureflagadmin.Flag'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "403":
+          description: Forbidden
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "409":
+          description: Conflict
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "422":
+          description: Unprocessable Entity
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "501":
+          description: Not Implemented
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "502":
+          description: Bad Gateway
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.AdminAPIError'
+      security:
+      - BearerAuth: []
+      summary: Update a Cyclops feature flag value
+      tags:
+      - admin feature flags
   /api/billing/portal-session:
     post:
       description: Creates a Stripe-hosted Billing Portal Session for the customer
@@ -343,7 +788,8 @@ paths:
   /api/billing/summary:
     get:
       description: Returns a sanitized Stripe-backed billing summary for the authenticated
-        Cyclops subject.
+        Cyclops subject, including whether creating pools currently requires adding
+        a payment card.
       produces:
       - application/json
       responses:
@@ -372,6 +818,62 @@ paths:
       security:
       - BearerAuth: []
       summary: Billing summary
+      tags:
+      - billing
+  /api/billing/usage:
+    get:
+      description: Returns Stripe-backed invoice spend, trend, and current-period
+        line-item breakdown for the authenticated Fleet subject.
+      parameters:
+      - default: 6
+        description: History window in months
+        enum:
+        - 3
+        - 6
+        - 12
+        in: query
+        name: months
+        type: integer
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/billing.Usage'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Billing usage
       tags:
       - billing
   /api/billing/webhook:
@@ -412,6 +914,11 @@ paths:
       - billing
   /api/chat/conversations:
     get:
+      parameters:
+      - description: Whether to list archived conversations
+        in: query
+        name: archived
+        type: boolean
       produces:
       - application/json
       responses:
@@ -421,6 +928,10 @@ paths:
             items:
               $ref: '#/definitions/chat.ConversationSummary'
             type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
         "401":
           description: Unauthorized
           schema:
@@ -499,6 +1010,53 @@ paths:
       summary: Get a chat conversation
       tags:
       - chat
+    patch:
+      consumes:
+      - application/json
+      parameters:
+      - description: Conversation ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Archive state
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.ArchiveConversationRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/chat.Conversation'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "413":
+          description: Request Entity Too Large
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Archive or restore a chat conversation
+      tags:
+      - chat
   /api/chat/conversations/{id}/turns:
     post:
       consumes:
@@ -532,6 +1090,10 @@ paths:
             $ref: '#/definitions/handlers.ErrorResponse'
         "404":
           description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "409":
+          description: Conflict
           schema:
             $ref: '#/definitions/handlers.ErrorResponse'
         "503":
@@ -827,6 +1389,138 @@ paths:
       summary: Get a namespace owned by the calling user
       tags:
       - namespaces
+  /api/signed-service-urls/{namespace}:
+    get:
+      parameters:
+      - description: K8s namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Claim name
+        in: query
+        name: claim
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.SignedServiceURLResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List signed URLs for a sandbox claim
+      tags:
+      - signed-service-urls
+    post:
+      consumes:
+      - application/json
+      description: Creates a temporary bearer link for one logical sandbox service.
+      parameters:
+      - description: K8s namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Signed service URL details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateSignedServiceURLRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.SignedServiceURLResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a signed URL for a sandbox service
+      tags:
+      - signed-service-urls
+  /api/signed-service-urls/{namespace}/{id}:
+    delete:
+      parameters:
+      - description: K8s namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Signed URL ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke a signed URL
+      tags:
+      - signed-service-urls
   /api/svc/{namespace}/{service}/{path}:
     get:
       description: Proxies to {service}.{namespace}.svc.cluster.local:80. Per-key

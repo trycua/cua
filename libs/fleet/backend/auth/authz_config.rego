@@ -17,3 +17,14 @@ allow {
 	input.route == "/api/config"
 	authz.is_user_key_client
 }
+
+allow {
+	input.route == "/api/analytics/session"
+	input.user.azp == "cyclops-cs-spa"
+}
+
+allow {
+	input.route == "/api/analytics/attribution"
+	input.method == "POST"
+	input.user.azp == "cyclops-cs-spa"
+}

@@ -10,6 +10,17 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+const hourlyReservationMeterOriginalSHA256 = "fabda9a67ab9323b70a6d189a89be4194e1a76778a8c3afc77a0f1763f82bf4e"
+
+const hourlyReservationMeterPrivilegeSequence = `CREATE SCHEMA billing_meter AUTHORIZATION billing_meter_owner;
+REVOKE CREATE ON SCHEMA billing_meter FROM PUBLIC;
+
+SET LOCAL ROLE billing_meter_owner;`
+
+const hourlyReservationMeterCompatiblePrivilegeSequence = `CREATE SCHEMA billing_meter AUTHORIZATION billing_meter_owner;
+SET LOCAL ROLE billing_meter_owner;
+REVOKE CREATE ON SCHEMA billing_meter FROM PUBLIC;`
+
 const createAppliedMigrationsTableStatement = `create table if not exists cyclops_migrations.applied_migrations (
 	application_order bigint generated always as identity unique,
 	version bigint primary key,
@@ -222,10 +233,7 @@ func postgresBoolean(value bool) string {
 }
 
 func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAttributes) (string, error) {
-	unsafeAttributes := make([]string, 0, 4)
-	if attributes.createDB {
-		unsafeAttributes = append(unsafeAttributes, "rolcreatedb=true")
-	}
+	unsafeAttributes := make([]string, 0, 3)
 	if attributes.super {
 		unsafeAttributes = append(unsafeAttributes, "rolsuper=true")
 	}
@@ -238,11 +246,14 @@ func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAt
 	if len(unsafeAttributes) != 0 {
 		return "", fmt.Errorf("static role %s has unsafe privileged drift: %s; the migration owner cannot safely repair these attributes", contract.role, strings.Join(unsafeAttributes, ", "))
 	}
+	if contract.createDB {
+		return "", fmt.Errorf("static role %s has unsupported CREATEDB contract; the migrator only reconciles roles to NOCREATEDB", contract.role)
+	}
 	if contract.validUntil != staticRoleValidUntilInfinity {
 		return "", fmt.Errorf("static role %s has unsupported valid-until contract %d; only infinity is supported", contract.role, contract.validUntil)
 	}
 
-	clauses := make([]string, 0, 6)
+	clauses := make([]string, 0, 7)
 	if attributes.login != contract.login {
 		clauses = append(clauses, map[bool]string{true: "LOGIN", false: "NOLOGIN"}[contract.login])
 	}
@@ -252,6 +263,9 @@ func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAt
 	if attributes.createRole != contract.createRole {
 		clauses = append(clauses, map[bool]string{true: "CREATEROLE", false: "NOCREATEROLE"}[contract.createRole])
 	}
+	if attributes.createDB {
+		clauses = append(clauses, "NOCREATEDB")
+	}
 	if attributes.connectionLimit != contract.connectionLimit {
 		clauses = append(clauses, "CONNECTION LIMIT "+strconv.Itoa(contract.connectionLimit))
 	}
@@ -259,6 +273,20 @@ func staticRoleAlterClauses(contract staticRoleContract, attributes staticRoleAt
 		clauses = append(clauses, "VALID UNTIL 'infinity'")
 	}
 	return strings.Join(clauses, " "), nil
+}
+
+func prepareMigrationExecution(file migrationFile) (migrationFile, error) {
+	if file.SHA256 != hourlyReservationMeterOriginalSHA256 {
+		return file, nil
+	}
+	if file.Name != "000005_hourly_reservation_meter.sql" {
+		return migrationFile{}, fmt.Errorf("legacy reservation meter checksum belongs to unexpected migration %s", file.Name)
+	}
+	if strings.Count(file.SQL, hourlyReservationMeterPrivilegeSequence) != 1 {
+		return migrationFile{}, fmt.Errorf("legacy reservation meter privilege sequence is missing or ambiguous")
+	}
+	file.SQL = strings.Replace(file.SQL, hourlyReservationMeterPrivilegeSequence, hourlyReservationMeterCompatiblePrivilegeSequence, 1)
+	return file, nil
 }
 
 func newRuntimeDDL(transaction pgx.Tx) runtimeDDL {

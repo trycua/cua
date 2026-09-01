@@ -1,9 +1,13 @@
 package database
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
+	"log/slog"
 	"net/url"
 	"os"
 	"reflect"
@@ -11,7 +15,9 @@ import (
 	"testing"
 	"time"
 
+	"cyclops-cs-backend/chat"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const migratorIntegrationOptIn = "CYCLOPS_TEST_DATABASE_MIGRATOR_ISOLATED_CLUSTER"
@@ -20,6 +26,8 @@ const tenantCredentialFingerprintLookup = `select credential_fingerprint from k8
 
 var staticMigrationRoles = []string{
 	"cyclops_app",
+	"cyclops_usage_reader",
+	"cyclops_meter_writer",
 	"k8s_state_owner",
 	"k8s_state_writer",
 	"k8s_state_exporter",
@@ -27,6 +35,7 @@ var staticMigrationRoles = []string{
 	"k8s_query_admin",
 	"k8s_role_admin",
 	"k8s_reporting_owner",
+	"billing_meter_owner",
 	"k8s_metabase",
 }
 
@@ -79,12 +88,18 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	inspectionURL := maintenanceURLForDatabase(t, maintenanceURL, migrationURL)
 	assertMigrationOwnerFixture(t, ctx, migrationURL)
 	assertInitialMigrationRejectsPublicSecurityDefiner(t, ctx, migrationURL, credentials)
-	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
-		t.Fatal(err)
+	firstSummary := captureRunSummary(t, func() error {
+		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	})
+	if firstSummary.Pending != 11 || firstSummary.Applied != 11 {
+		t.Fatalf("initial migration summary = %+v, want pending=11 applied=11", firstSummary)
 	}
 	before := migrationLedgerRows(t, ctx, migrationURL)
-	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
-		t.Fatalf("second migration run must be a no-op: %v", err)
+	secondSummary := captureRunSummary(t, func() error {
+		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	})
+	if secondSummary.Pending != 0 || secondSummary.Applied != 0 {
+		t.Fatalf("second migration summary = %+v, want pending=0 applied=0", secondSummary)
 	}
 	if after := migrationLedgerRows(t, ctx, migrationURL); !reflect.DeepEqual(after, before) {
 		t.Fatalf("second migration run changed migration ledger: before=%+v after=%+v", before, after)
@@ -95,8 +110,11 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	bootstrapGrantor := currentRole(t, ctx, maintenanceURL)
 	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "k8s_state_owner", bootstrapGrantor)
 	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "k8s_reporting_owner", bootstrapGrantor)
+	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "billing_meter_owner", bootstrapGrantor)
 	assertNoQueryBroker(t, ctx, migrationURL)
 	assertOwnershipAndPublicACLs(t, ctx, inspectionURL, currentRole(t, ctx, migrationURL))
+	assertSignedServiceURLContract(t, ctx, inspectionURL, credentials.Application, currentRole(t, ctx, migrationURL))
+	assertMetabaseBillingMeterAccess(t, ctx, migrationURL, credentials.Metabase)
 	assertRLSContract(t, ctx, inspectionURL)
 	assertSecurityDefinerContract(t, ctx, inspectionURL)
 	assertRuntimeLedgerAccess(t, ctx, credentials)
@@ -109,12 +127,89 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	})
 	tenantURL := createTenantRolePath(t, ctx, credentials.RoleAdmin, tenantRole, tenantPassword, "tenant-alice")
 	seedStateBoundaryData(t, ctx, inspectionURL)
+	assertFilteredReservationUsageTenantContract(t, ctx, migrationURL, credentials.Metabase)
 
 	assertWriterBoundary(t, ctx, credentials.Writer)
 	assertExporterBoundary(t, ctx, credentials.Exporter)
 	assertTenantReadPath(t, ctx, tenantURL)
 	assertMetabaseBoundary(t, ctx, inspectionURL, credentials.Metabase)
+	assertUsageReaderBoundary(t, ctx, inspectionURL, credentials.Usage)
 	assertApplicationBoundary(t, ctx, credentials.Application)
+	assertChatConversationStore(t, ctx, credentials.Application)
+}
+
+func assertChatConversationStore(t *testing.T, ctx context.Context, applicationURL string) {
+	t.Helper()
+	first, err := chat.NewPostgresConversationStore(ctx, applicationURL)
+	if err != nil {
+		t.Fatalf("create first chat store: %v", err)
+	}
+	defer first.Close()
+	second, err := chat.NewPostgresConversationStore(ctx, applicationURL)
+	if err != nil {
+		t.Fatalf("create second chat store: %v", err)
+	}
+	defer second.Close()
+
+	conversation, err := first.Create(ctx, "owner-1")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+	if err := first.Append(ctx, "owner-1", conversation.ID, chat.Message{Role: chat.RoleUser, Content: "list pools"}); err != nil {
+		t.Fatalf("append through first store: %v", err)
+	}
+	loaded, err := second.Get(ctx, "owner-1", conversation.ID)
+	if err != nil {
+		t.Fatalf("load through second store: %v", err)
+	}
+	if loaded.Title != "list pools" || len(loaded.Messages) != 1 {
+		t.Fatalf("second store loaded conversation = %+v", loaded)
+	}
+	if err := second.Append(ctx, "owner-1", conversation.ID, chat.Message{Role: chat.RoleAssistant, Content: "ready"}); err != nil {
+		t.Fatalf("append through second store: %v", err)
+	}
+	loaded, err = first.Get(ctx, "owner-1", conversation.ID)
+	if err != nil {
+		t.Fatalf("reload through first store: %v", err)
+	}
+	if len(loaded.Messages) != 2 || loaded.Messages[1].Content != "ready" {
+		t.Fatalf("first store did not observe second store append: %+v", loaded.Messages)
+	}
+	archived, err := second.SetArchived(ctx, "owner-1", conversation.ID, true)
+	if err != nil {
+		t.Fatalf("archive through second store: %v", err)
+	}
+	if archived.ArchivedAt == nil {
+		t.Fatal("archived conversation has nil ArchivedAt")
+	}
+	restored, err := first.SetArchived(ctx, "owner-1", conversation.ID, false)
+	if err != nil {
+		t.Fatalf("restore through first store: %v", err)
+	}
+	if restored.ArchivedAt != nil {
+		t.Fatalf("restored conversation ArchivedAt = %v, want nil", restored.ArchivedAt)
+	}
+}
+
+func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	applyOnlyMigrationOne(t, ctx, migrationURL)
+
+	upgrade := captureRunSummary(t, func() error {
+		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	})
+	if upgrade.Current != 1 || upgrade.Target != 11 || upgrade.Pending != 10 || upgrade.Applied != 10 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+		t.Fatalf("version-one upgrade summary = %+v", upgrade)
+	}
+
+	noOp := captureRunSummary(t, func() error {
+		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	})
+	if noOp.Current != 11 || noOp.Target != 11 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 11 || noOp.Result != "success" {
+		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
+	}
 }
 
 func TestRunReconcilesReportingDirectACLDrift(t *testing.T) {
@@ -361,6 +456,29 @@ func TestRunRechecksPublicSecurityDefinerBeforeMutations(t *testing.T) {
 	}
 }
 
+func TestRunReconcilesPublicExecuteOnExpectedUsageRoutine(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `set role k8s_reporting_owner; grant execute on function k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) to public; reset role`); err != nil {
+		t.Fatal("introduce PUBLIC usage routine execute drift")
+	}
+
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatalf("Run() reconcile PUBLIC usage routine execute drift: %v", err)
+	}
+	inspection := connect(t, ctx, maintenanceURLForDatabase(t, maintenanceURL, migrationURL))
+	defer inspection.Close(ctx)
+	assertNoPublicFunctionExecute(t, ctx, inspection, "k8s_reporting.usage_sandbox_events(text,timestamptz,timestamptz)")
+	assertExactReportingACLContract(t, ctx, inspection)
+}
+
 func TestRunDeniesMetabaseProcedureWriteAfterReadOnlyGUCBypass(t *testing.T) {
 	maintenanceURL := requireMigratorIntegration(t)
 	ctx := context.Background()
@@ -535,7 +653,7 @@ func TestRunFailsClosedForUnsafeStaticRoleAttributeDrift(t *testing.T) {
 	}
 }
 
-func TestRunFailsClosedForStaticRoleCreateDBDrift(t *testing.T) {
+func TestRunReconcilesStaticRoleCreateDBDrift(t *testing.T) {
 	maintenanceURL := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
 	if maintenanceURL == "" {
 		t.Skip("set CYCLOPS_TEST_DATABASE_URL to run PostgreSQL migration tests")
@@ -551,22 +669,48 @@ func TestRunFailsClosedForStaticRoleCreateDBDrift(t *testing.T) {
 	}
 	maintenance := connect(t, ctx, maintenanceURL)
 	defer maintenance.Close(ctx)
-	if _, err := maintenance.Exec(ctx, `alter role cyclops_app nologin createdb`); err != nil {
+	migrationOwner := currentRole(t, ctx, migrationURL)
+	if _, err := maintenance.Exec(ctx, "alter role "+pgx.Identifier{migrationOwner}.Sanitize()+` createdb; alter role cyclops_app nologin createdb`); err != nil {
 		t.Fatal("introduce static role createdb drift")
 	}
 
-	err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
-	const want = "static role cyclops_app has unsafe privileged drift: rolcreatedb=true; the migration owner cannot safely repair these attributes"
-	if err == nil || err.Error() != want {
-		t.Fatalf("Run() error = %v, want %q", err, want)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatalf("Run() reconcile static role createdb drift: %v", err)
 	}
 
 	var login, createDB bool
 	if err := maintenance.QueryRow(ctx, `select rolcanlogin, rolcreatedb from pg_roles where rolname = 'cyclops_app'`).Scan(&login, &createDB); err != nil {
 		t.Fatal("read static role after rejected createdb drift")
 	}
+	if !login || createDB {
+		t.Fatalf("static role after createdb reconciliation: login:%t createdb:%t", login, createDB)
+	}
+}
+
+func TestRunFailsClosedForStaticRoleCreateDBDriftWithoutAuthority(t *testing.T) {
+	maintenanceURL := requireMigratorIntegration(t)
+	ctx := context.Background()
+	migrationURL, credentials := isolatedMigrationDatabase(t, ctx, maintenanceURL)
+	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
+		t.Fatal(err)
+	}
+	maintenance := connect(t, ctx, maintenanceURL)
+	defer maintenance.Close(ctx)
+	if _, err := maintenance.Exec(ctx, `alter role cyclops_app nologin createdb`); err != nil {
+		t.Fatal("introduce static role createdb drift without migrator authority")
+	}
+
+	err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	if err == nil || !strings.Contains(err.Error(), "permission denied to alter role") {
+		t.Fatalf("Run() error = %v, want fail-closed role authority error", err)
+	}
+
+	var login, createDB bool
+	if err := maintenance.QueryRow(ctx, `select rolcanlogin, rolcreatedb from pg_roles where rolname = 'cyclops_app'`).Scan(&login, &createDB); err != nil {
+		t.Fatal("read static role after unauthorized createdb reconciliation")
+	}
 	if login || !createDB {
-		t.Fatalf("static role changed after rejected createdb drift: login:%t createdb:%t", login, createDB)
+		t.Fatalf("static role changed after unauthorized createdb reconciliation: login:%t createdb:%t", login, createDB)
 	}
 }
 
@@ -1117,6 +1261,7 @@ func TestRunReconcilesStaticRoleSettingsContract(t *testing.T) {
 		`alter role k8s_metabase set default_transaction_read_only = off`,
 		`alter role k8s_metabase set search_path = public`,
 		`alter role k8s_metabase in database ` + pgx.Identifier{connection.Config().Database}.Sanitize() + ` set work_mem = '64MB'`,
+		`alter role cyclops_usage_reader set statement_timeout = '1ms'`,
 	} {
 		if _, err := connection.Exec(ctx, statement); err != nil {
 			t.Fatalf("introduce static role setting drift %q: %v", statement, err)
@@ -1130,8 +1275,13 @@ func TestRunReconcilesStaticRoleSettingsContract(t *testing.T) {
 		"statement_timeout":                   "20000ms",
 		"idle_in_transaction_session_timeout": "20000ms",
 	})
+	assertStaticRoleSettings(t, ctx, connection, "cyclops_usage_reader", map[string]string{
+		"default_transaction_read_only":       "on",
+		"statement_timeout":                   "10000ms",
+		"idle_in_transaction_session_timeout": "10000ms",
+	})
 	for _, role := range staticMigrationRoles {
-		if role == "k8s_metabase" {
+		if role == "k8s_metabase" || role == "cyclops_usage_reader" {
 			continue
 		}
 		assertStaticRoleSettings(t, ctx, connection, role, map[string]string{})
@@ -1230,6 +1380,75 @@ type ledgerRow struct {
 	Filename         string
 	SHA256           string
 	AppliedAt        time.Time
+}
+
+func applyOnlyMigrationOne(t *testing.T, ctx context.Context, migrationURL string) {
+	t.Helper()
+	files, err := embeddedMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(files) < 2 || files[0].Version != 1 {
+		t.Fatalf("embedded migrations = %+v, want immutable version one followed by current migrations", files)
+	}
+
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	transaction, err := connection.Begin(ctx)
+	if err != nil {
+		t.Fatal("begin version-one migration fixture")
+	}
+	defer transaction.Rollback(ctx)
+	if err := newRuntimeDDL(transaction).ensureMigrationLedger(ctx); err != nil {
+		t.Fatalf("prepare version-one migration ledger: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, files[0].SQL); err != nil {
+		t.Fatalf("apply immutable migration one: %v", err)
+	}
+	if _, err := transaction.Exec(ctx, insertAppliedMigrationStatement, files[0].Version, files[0].Name, files[0].SHA256); err != nil {
+		t.Fatalf("record immutable migration one: %v", err)
+	}
+	if err := transaction.Commit(ctx); err != nil {
+		t.Fatalf("commit immutable migration one: %v", err)
+	}
+}
+
+func captureRunSummary(t *testing.T, run func() error) migrationSummary {
+	t.Helper()
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, nil)))
+	defer slog.SetDefault(previous)
+
+	if err := run(); err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(output.String()), "\n") {
+		var entry struct {
+			Message string `json:"msg"`
+			Current int64  `json:"current_version"`
+			Target  int64  `json:"target_version"`
+			Pending int    `json:"pending"`
+			Applied int    `json:"applied"`
+			Skipped int    `json:"skipped"`
+			Result  string `json:"result"`
+		}
+		if err := json.Unmarshal([]byte(line), &entry); err != nil {
+			t.Fatalf("decode migration log entry: %v", err)
+		}
+		if entry.Message == "database migration summary" {
+			return migrationSummary{
+				Current: entry.Current,
+				Target:  entry.Target,
+				Pending: entry.Pending,
+				Applied: entry.Applied,
+				Skipped: entry.Skipped,
+				Result:  entry.Result,
+			}
+		}
+	}
+	t.Fatalf("migration summary missing from logs: %s", output.String())
+	return migrationSummary{}
 }
 
 func isolatedMigrationDatabase(t *testing.T, ctx context.Context, maintenanceURL string) (string, CredentialURLs) {
@@ -1350,6 +1569,8 @@ func testCredentialURLs(t *testing.T, adminURL string) CredentialURLs {
 		Exporter:    withRole("k8s_state_exporter"),
 		RoleAdmin:   withRole("k8s_role_admin"),
 		Metabase:    withRole("k8s_metabase"),
+		Usage:       withRole("cyclops_usage_reader"),
+		Meter:       withRole("cyclops_meter_writer"),
 	}
 }
 
@@ -1382,8 +1603,28 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 1 {
-		t.Fatalf("migration ledger row count = %d, want 1", len(ledger))
+	if len(ledger) != 11 {
+		t.Fatalf("migration ledger row count = %d, want 11", len(ledger))
+	}
+	for index, want := range []struct {
+		version  int64
+		filename string
+	}{
+		{1, "000001_initial_schema.sql"},
+		{2, "000002_usage_sandbox_events.sql"},
+		{3, "000003_usage_claimed_sandbox_pool.sql"},
+		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
+		{5, "000005_hourly_reservation_meter.sql"},
+		{6, "000006_chat_conversations.sql"},
+		{7, "000007_metabase_hourly_reservation_usage.sql"},
+		{8, "000008_metabase_hourly_reservation_usage_excluding_tenants.sql"},
+		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
+		{10, "000010_grant_metabase_billing_meter_access.sql"},
+		{11, "000011_signed_service_urls.sql"},
+	} {
+		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
+			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
+		}
 	}
 	return ledger
 }
@@ -1441,7 +1682,7 @@ func assertStaticCreatorAdminMemberships(t *testing.T, ctx context.Context, migr
 			t.Fatalf("iterate static creator memberships for %s: %v", role, err)
 		}
 		rows.Close()
-		allowOwnerGrant := role == "k8s_state_owner" || role == "k8s_reporting_owner"
+		allowOwnerGrant := role == "k8s_state_owner" || role == "k8s_reporting_owner" || role == "billing_meter_owner"
 		if !staticCreatorAdminMembershipsAreExact(migrationOwner, grants, allowOwnerGrant, nil) {
 			t.Fatalf("static creator memberships for %s = %+v", role, grants)
 		}
@@ -1506,15 +1747,18 @@ func assertRoleContract(t *testing.T, ctx context.Context, adminURL string) {
 	defer connection.Close(ctx)
 
 	expected := map[string]struct{ login, inherit, createRole bool }{
-		"cyclops_app":         {true, false, false},
-		"k8s_state_owner":     {false, true, false},
-		"k8s_state_writer":    {true, false, false},
-		"k8s_state_exporter":  {true, false, false},
-		"k8s_query_tenant":    {false, true, false},
-		"k8s_query_admin":     {false, true, false},
-		"k8s_role_admin":      {true, false, true},
-		"k8s_reporting_owner": {false, true, false},
-		"k8s_metabase":        {true, false, false},
+		"cyclops_app":          {true, false, false},
+		"k8s_state_owner":      {false, true, false},
+		"k8s_state_writer":     {true, false, false},
+		"k8s_state_exporter":   {true, false, false},
+		"k8s_query_tenant":     {false, true, false},
+		"k8s_query_admin":      {false, true, false},
+		"k8s_role_admin":       {true, false, true},
+		"k8s_reporting_owner":  {false, true, false},
+		"billing_meter_owner":  {false, true, false},
+		"k8s_metabase":         {true, false, false},
+		"cyclops_usage_reader": {true, false, false},
+		"cyclops_meter_writer": {true, false, false},
 	}
 	for role, want := range expected {
 		var login, inherit, createRole, super, createDB, replication, bypassRLS bool
@@ -1615,10 +1859,15 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	defer connection.Close(ctx)
 	for _, want := range []struct{ schema, name, owner string }{
 		{"public", "github_trust_policies", migrationOwner},
+		{"public", "chat_conversations", migrationOwner},
+		{"public", "signed_service_urls", migrationOwner},
 		{"k8s_state", "resource_state", "k8s_state_owner"},
 		{"k8s_state", "resource_event_outbox", "k8s_state_owner"},
+		{"k8s_state", "resource_event_outbox_usage_lookup_idx", "k8s_state_owner"},
 		{"k8s_api", "current_resources", "k8s_state_owner"},
 		{"k8s_reporting", "current_resources", "k8s_reporting_owner"},
+		{"k8s_reporting", "hourly_reservation_usage", "k8s_reporting_owner"},
+		{"k8s_reporting", "hourly_reservation_usage_excluding_tenants", "k8s_reporting_owner"},
 	} {
 		var owner string
 		if err := connection.QueryRow(ctx, `select relation.relowner::regrole::text from pg_class relation join pg_namespace namespace on namespace.oid = relation.relnamespace where namespace.nspname = $1 and relation.relname = $2`, want.schema, want.name).Scan(&owner); err != nil {
@@ -1646,8 +1895,144 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	for _, schema := range []string{"k8s_state", "k8s_api", "k8s_reporting", "cyclops_migrations"} {
 		assertNoPublicSchemaPrivilege(t, ctx, connection, schema, "USAGE")
 	}
-	for _, relation := range []string{"public.github_trust_policies", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "cyclops_migrations.applied_migrations"} {
+	for _, relation := range []string{"public.github_trust_policies", "public.chat_conversations", "public.signed_service_urls", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "k8s_reporting.hourly_reservation_usage", "k8s_reporting.hourly_reservation_usage_excluding_tenants", "cyclops_migrations.applied_migrations"} {
 		assertNoPublicTablePrivilege(t, ctx, connection, relation)
+	}
+}
+
+func assertSignedServiceURLContract(t *testing.T, ctx context.Context, inspectionURL, applicationURL, migrationOwner string) {
+	t.Helper()
+	inspection := connect(t, ctx, inspectionURL)
+	defer inspection.Close(ctx)
+	assertRelationOwner(t, inspection, "public", "signed_service_urls", migrationOwner)
+	assertTablePrivileges(t, inspection, "cyclops_app", "public", "signed_service_urls", []string{"SELECT", "INSERT", "UPDATE"})
+
+	application := connect(t, ctx, applicationURL)
+	defer application.Close(ctx)
+	createdAt := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
+	insert := func(id string, expiresAt time.Time) error {
+		_, err := application.Exec(ctx, `
+			insert into public.signed_service_urls
+				(id, namespace, claim_name, sandbox_name, service_name, logical_service, label, creator_sub, created_at, expires_at)
+			values ($1, 'tenant-a', 'claim-a', 'sandbox-a', 'service-a', 'desktop', 'Desktop', 'user-a', $2, $3)`,
+			id, createdAt, expiresAt)
+		return err
+	}
+	if err := insert("00000000-0000-0000-0000-000000000001", createdAt.Add(time.Minute)); err != nil {
+		t.Fatalf("insert one-minute signed URL: %v", err)
+	}
+	if err := insert("00000000-0000-0000-0000-000000000002", createdAt.Add(24*time.Hour)); err != nil {
+		t.Fatalf("insert 24-hour signed URL: %v", err)
+	}
+	assertCheckViolation(t, insert("00000000-0000-0000-0000-000000000003", createdAt.Add(59*time.Second)))
+	assertCheckViolation(t, insert("00000000-0000-0000-0000-000000000004", createdAt.Add(24*time.Hour+time.Second)))
+
+	var count int
+	if err := application.QueryRow(ctx, `select count(*) from public.signed_service_urls`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("signed URL row count = %d, err=%v, want 2", count, err)
+	}
+	if _, err := application.Exec(ctx, `update public.signed_service_urls set revoked_at = $1 where id = $2`, createdAt, "00000000-0000-0000-0000-000000000001"); err != nil {
+		t.Fatalf("revoke signed URL: %v", err)
+	}
+}
+
+func assertRelationOwner(t *testing.T, connection *pgx.Conn, schema, relation, wantOwner string) {
+	t.Helper()
+	var owner string
+	if err := connection.QueryRow(context.Background(), `
+		select relation.relowner::regrole::text
+		from pg_class relation
+		join pg_namespace namespace on namespace.oid = relation.relnamespace
+		where namespace.nspname = $1 and relation.relname = $2`, schema, relation).Scan(&owner); err != nil {
+		t.Fatalf("read owner for %s.%s: %v", schema, relation, err)
+	}
+	if owner != wantOwner {
+		t.Fatalf("owner for %s.%s = %s, want %s", schema, relation, owner, wantOwner)
+	}
+}
+
+func assertTablePrivileges(t *testing.T, connection *pgx.Conn, role, schema, table string, want []string) {
+	t.Helper()
+	qualified := pgx.Identifier{schema, table}.Sanitize()
+	var got []string
+	for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+		var allowed bool
+		if err := connection.QueryRow(context.Background(), `select has_table_privilege($1, $2, $3)`, role, qualified, privilege).Scan(&allowed); err != nil {
+			t.Fatalf("read %s privilege for %s on %s: %v", privilege, role, qualified, err)
+		}
+		if allowed {
+			got = append(got, privilege)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("table privileges for %s on %s = %v, want %v", role, qualified, got, want)
+	}
+}
+
+func assertCheckViolation(t *testing.T, err error) {
+	t.Helper()
+	var pgError *pgconn.PgError
+	if !errors.As(err, &pgError) || pgError.Code != "23514" {
+		t.Fatalf("insert error = %v, want PostgreSQL check violation", err)
+	}
+}
+
+func assertMetabaseBillingMeterAccess(t *testing.T, ctx context.Context, adminURL, metabaseURL string) {
+	t.Helper()
+	admin := connect(t, ctx, adminURL)
+	defer admin.Close(ctx)
+
+	rows, err := admin.Query(ctx, `
+		select relation.relname
+		from pg_class relation
+		join pg_namespace namespace on namespace.oid = relation.relnamespace
+		where namespace.nspname = 'billing_meter'
+		  and relation.relkind in ('r', 'p', 'v', 'm', 'f')
+		order by relation.relname`)
+	if err != nil {
+		t.Fatal("list billing meter relations")
+	}
+	var relations []string
+	for rows.Next() {
+		var relation string
+		if err := rows.Scan(&relation); err != nil {
+			rows.Close()
+			t.Fatal("scan billing meter relation")
+		}
+		relations = append(relations, relation)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatalf("iterate billing meter relations: %v", err)
+	}
+	rows.Close()
+	if len(relations) == 0 {
+		t.Fatal("expected billing meter relations")
+	}
+
+	metabase := connect(t, ctx, metabaseURL)
+	defer metabase.Close(ctx)
+	for _, relation := range relations {
+		query := "select 1 from " + pgx.Identifier{"billing_meter", relation}.Sanitize() + " limit 1"
+		if _, err := metabase.Exec(ctx, query); err != nil {
+			t.Errorf("Metabase cannot select billing_meter.%s: %v", relation, err)
+		}
+	}
+
+	const futureRelation = "metabase_default_privilege_probe"
+	if _, err := admin.Exec(ctx, `
+		set role billing_meter_owner;
+		drop table if exists billing_meter.metabase_default_privilege_probe;
+		create table billing_meter.metabase_default_privilege_probe (id integer);
+		reset role`); err != nil {
+		t.Fatal("create billing meter default privilege probe")
+	}
+	query := "select 1 from " + pgx.Identifier{"billing_meter", futureRelation}.Sanitize() + " limit 1"
+	if _, err := metabase.Exec(ctx, query); err != nil {
+		t.Fatalf("Metabase cannot select future billing meter table: %v", err)
+	}
+	if _, err := admin.Exec(ctx, `set role billing_meter_owner; drop table billing_meter.metabase_default_privilege_probe; reset role`); err != nil {
+		t.Fatalf("drop billing meter default privilege probe: %v", err)
 	}
 }
 
@@ -1707,7 +2092,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 1 {
+		if err != nil || count != 11 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
@@ -1718,6 +2103,112 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 	assertStatementFails(t, ctx, credentials.Metabase, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)
 	assertStatementFails(t, ctx, credentials.Metabase, `update cyclops_migrations.applied_migrations set filename = 'invalid.sql' where version = 1`)
 	assertStatementFails(t, ctx, credentials.Metabase, `delete from cyclops_migrations.applied_migrations where version = 1`)
+	assertStatementFails(t, ctx, credentials.Usage, `select 1 from cyclops_migrations.applied_migrations limit 1`)
+}
+
+func assertUsageReaderBoundary(t *testing.T, ctx context.Context, inspectionURL, usageURL string) {
+	t.Helper()
+	inspection := connect(t, ctx, inspectionURL)
+	defer inspection.Close(ctx)
+	var owner, volatility, config string
+	var securityDefiner bool
+	if err := inspection.QueryRow(ctx, `
+		select routine.proowner::regrole::text, routine.provolatile::text, routine.prosecdef, coalesce(array_to_string(routine.proconfig, ','), '')
+		from pg_proc as routine
+		join pg_namespace as namespace on namespace.oid = routine.pronamespace
+		where namespace.nspname = 'k8s_reporting'
+		  and routine.proname = 'usage_sandbox_events'
+		  and routine.proargtypes = '25 1184 1184'::oidvector`).Scan(&owner, &volatility, &securityDefiner, &config); err != nil {
+		t.Fatalf("read usage reporting function contract: %v", err)
+	}
+	if owner != "k8s_reporting_owner" || volatility != "s" || !securityDefiner || config != "search_path=k8s_state, pg_catalog" {
+		t.Fatalf("usage reporting function = owner:%s volatility:%s definer:%t config:%q", owner, volatility, securityDefiner, config)
+	}
+	assertNoPublicFunctionExecute(t, ctx, inspection, "k8s_reporting.usage_sandbox_events(text,timestamptz,timestamptz)")
+	for privilege, want := range map[string]bool{"SELECT": false, "DELETE": false} {
+		var allowed bool
+		if err := inspection.QueryRow(ctx, `select has_table_privilege('cyclops_usage_reader', 'k8s_state.resource_event_outbox', $1)`, privilege).Scan(&allowed); err != nil || allowed != want {
+			t.Fatalf("usage reader outbox %s privilege = %t err=%v, want %t", privilege, allowed, err, want)
+		}
+	}
+	_, err := inspection.Exec(ctx, `
+		insert into k8s_state.resource_event_outbox
+		(event_id, cluster_id, api_group, resource, namespace, name, capsule_tenant, uid, schema_hash, event_type, watch_epoch, observed_sequence, object, observed_at)
+		values
+		('10000000-0000-0000-0000-000000000010', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'ADDED', 2, 100, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-old"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-old"}}', '2026-08-17T00:00:00Z'),
+		('10000000-0000-0000-0000-000000000011', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'MODIFIED', 2, 101, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-a"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-a"}}', '2026-08-17T23:00:00Z'),
+		('10000000-0000-0000-0000-000000000012', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'MODIFIED', 2, 102, '{"metadata":{"labels":{},"annotations":{"osgym.cua.ai/origin-warmpool":"pool-a"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-a-2"}}', '2026-08-18T06:00:00Z'),
+		('10000000-0000-0000-0000-000000000013', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'DELETED', 2, 103, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-a"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-a-2"}}', '2026-08-18T12:00:00Z'),
+		('10000000-0000-0000-0000-000000000014', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'bob-ns', 'sandbox-b', 'user-bob', 'sandbox-uid-b', 'schema', 'ADDED', 2, 104, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-b"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-b"}}', '2026-08-18T08:00:00Z'),
+		('10000000-0000-0000-0000-000000000015', 'migration-test', '', 'pods', 'alice-ns', 'sandbox-pod', 'user-alice', 'pod-uid', 'schema', 'ADDED', 2, 105, '{}', '2026-08-18T09:00:00Z'),
+		('10000000-0000-0000-0000-000000000016', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-after', 'user-alice', 'sandbox-uid-after', 'schema', 'ADDED', 2, 106, '{}', '2026-08-19T00:00:00Z'),
+		('10000000-0000-0000-0000-000000000017', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-b', 'user-alice', 'sandbox-uid-b', 'schema', 'ADDED', 2, 107, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-b-old"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-b-old"}}', '2026-08-17T20:00:00Z'),
+		('10000000-0000-0000-0000-000000000018', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'sandbox-b', 'user-alice', 'sandbox-uid-b', 'schema', 'MODIFIED', 2, 108, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-b"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-b"}}', '2026-08-17T22:00:00Z'),
+		('10000000-0000-0000-0000-000000000019', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-other', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'ADDED', 2, 109, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-other-old"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-other-old"}}', '2026-08-17T19:00:00Z'),
+		('10000000-0000-0000-0000-000000000020', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-other', 'sandbox-a', 'user-alice', 'sandbox-uid-a', 'schema', 'MODIFIED', 2, 110, '{"metadata":{"labels":{"osgym.cua.ai/warmpool":"pool-other"}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"vm-other"}}', '2026-08-17T21:00:00Z'),
+		('10000000-0000-0000-0000-000000000021', 'migration-test', 'osgym.cua.ai', 'osgymsandboxes', 'alice-ns', 'legacy-unlabeled', 'user-alice', 'legacy-unlabeled-uid', 'schema', 'ADDED', 1, 1, '{"metadata":{"labels":{}},"spec":{"vmTemplate":{"runtime":"qemu"}},"status":{"vmName":"legacy-vm"}}', '2026-08-18T10:00:00Z')`)
+	if err != nil {
+		t.Fatal("seed usage sandbox events")
+	}
+
+	type usageEvent struct {
+		eventID, namespace, name, uid, pool, runtime, vmName, eventType string
+		observedAt                                                      time.Time
+	}
+	connection := connect(t, ctx, usageURL)
+	defer connection.Close(ctx)
+	for setting, want := range map[string]string{
+		"default_transaction_read_only":       "on",
+		"statement_timeout":                   "10s",
+		"idle_in_transaction_session_timeout": "10s",
+	} {
+		var got string
+		if err := connection.QueryRow(ctx, "show "+setting).Scan(&got); err != nil || got != want {
+			t.Fatalf("usage reader %s = %q err=%v, want %q", setting, got, err, want)
+		}
+	}
+	rows, err := connection.Query(ctx, `select event_id, namespace, sandbox_name, sandbox_uid, pool_name, runtime, vm_name, event_type, observed_at from k8s_reporting.usage_sandbox_events($1, $2, $3)`, "user-alice", time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC), time.Date(2026, 8, 19, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("query usage sandbox events: %v", err)
+	}
+	defer rows.Close()
+	var got []usageEvent
+	for rows.Next() {
+		var event usageEvent
+		if err := rows.Scan(&event.eventID, &event.namespace, &event.name, &event.uid, &event.pool, &event.runtime, &event.vmName, &event.eventType, &event.observedAt); err != nil {
+			t.Fatal("scan usage sandbox event")
+		}
+		event.observedAt = event.observedAt.UTC()
+		got = append(got, event)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("read usage sandbox events: %v", err)
+	}
+	want := []usageEvent{
+		{"10000000-0000-0000-0000-000000000011", "alice-ns", "sandbox-a", "sandbox-uid-a", "pool-a", "qemu", "vm-a", "MODIFIED", time.Date(2026, 8, 17, 23, 0, 0, 0, time.UTC)},
+		{"10000000-0000-0000-0000-000000000012", "alice-ns", "sandbox-a", "sandbox-uid-a", "pool-a", "qemu", "vm-a-2", "MODIFIED", time.Date(2026, 8, 18, 6, 0, 0, 0, time.UTC)},
+		{"10000000-0000-0000-0000-000000000013", "alice-ns", "sandbox-a", "sandbox-uid-a", "pool-a", "qemu", "vm-a-2", "DELETED", time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)},
+		{"10000000-0000-0000-0000-000000000018", "alice-ns", "sandbox-b", "sandbox-uid-b", "pool-b", "qemu", "vm-b", "MODIFIED", time.Date(2026, 8, 17, 22, 0, 0, 0, time.UTC)},
+		{"10000000-0000-0000-0000-000000000020", "alice-other", "sandbox-a", "sandbox-uid-a", "pool-other", "qemu", "vm-other", "MODIFIED", time.Date(2026, 8, 17, 21, 0, 0, 0, time.UTC)},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("usage sandbox events = %#v, want %#v", got, want)
+	}
+
+	for _, statement := range []string{
+		`select * from k8s_reporting.usage_sandbox_events('', '2026-08-18T00:00:00Z', '2026-08-19T00:00:00Z')`,
+		`select * from k8s_reporting.usage_sandbox_events('user-alice', '2026-08-19T00:00:00Z', '2026-08-18T00:00:00Z')`,
+		`select * from k8s_reporting.usage_sandbox_events('user-alice', '2026-07-18T00:00:00Z', '2026-08-19T00:00:00Z')`,
+		`select * from k8s_state.resource_event_outbox`,
+	} {
+		assertStatementFails(t, ctx, usageURL, statement)
+	}
+	if _, err := connection.Exec(ctx, `set default_transaction_read_only = off`); err != nil {
+		t.Fatal("disable usage read-only default for ACL test")
+	}
+	if _, err := connection.Exec(ctx, `delete from k8s_state.resource_event_outbox`); err == nil || !strings.Contains(strings.ToLower(err.Error()), "permission denied") {
+		t.Fatalf("usage outbox delete error = %v, want permission denied", err)
+	}
 }
 
 func createTenantRolePath(t *testing.T, ctx context.Context, roleAdminURL, tenantRole, tenantPassword, tenant string) string {
@@ -1792,6 +2283,49 @@ func seedStateBoundaryData(t *testing.T, ctx context.Context, adminURL string) {
 		values ('00000000-0000-0000-0000-000000000001', 'migration-test', '', 'pods', 'alice-ns', 'pod-a', 'tenant-alice', 'schema', 'ADDED', 1, 2, '{}', clock_timestamp())`)
 	if err != nil {
 		t.Fatal("seed access-boundary state")
+	}
+}
+
+func assertFilteredReservationUsageTenantContract(t *testing.T, ctx context.Context, migrationURL, metabaseURL string) {
+	t.Helper()
+	connection := connect(t, ctx, migrationURL)
+	defer connection.Close(ctx)
+	if _, err := connection.Exec(ctx, `
+		set role billing_meter_owner;
+		insert into billing_meter.reservation_hour_collection
+			(collection_run_id, logical_key, revision, cluster_id, hour_start, hour_end, covered_seconds, discovered_sandboxes, inserted_facts, unchanged_facts, source_sha256)
+		values
+			('00000000-0000-0000-0000-000000000101', 'filtered-tenant-contract', 1, 'filtered-tenant-contract', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 3600, 5, 5, 0, repeat('a', 64));
+		insert into billing_meter.reservation_hour_fact
+			(fact_id, logical_key, revision, cluster_id, capsule_tenant, namespace, sandbox_uid, sandbox_name, pool_name, runtime, hour_start, hour_end, virtual_cpu_core_seconds, virtual_memory_byte_seconds, ready_seconds, covered_seconds, scrape_interval_seconds, source_sha256, collection_run_id)
+		values
+			('00000000-0000-0000-0000-000000000102', 'filtered-tenant-contract-1', 1, 'filtered-tenant-contract', 'user-f039fe89-9b5f-43dc-8ccd-d100ae732246', 'contract', 'excluded-1', 'excluded-1', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 10, 100, 10, 3600, 60, repeat('b', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000103', 'filtered-tenant-contract-2', 1, 'filtered-tenant-contract', 'user-30a53246-881d-4f1a-8005-979f2a07933e', 'contract', 'excluded-2', 'excluded-2', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 20, 200, 20, 3600, 60, repeat('c', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000104', 'filtered-tenant-contract-3', 1, 'filtered-tenant-contract', 'user-0ea07f31-b7bd-4e99-b29a-2376f6fde1be', 'contract', 'excluded-3', 'excluded-3', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 30, 300, 30, 3600, 60, repeat('d', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000105', 'filtered-tenant-contract-4', 1, 'filtered-tenant-contract', 'user-a89b2628-9656-4ef0-bf01-e925b120ed1d', 'contract', 'excluded-4', 'excluded-4', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 40, 400, 40, 3600, 60, repeat('e', 64), '00000000-0000-0000-0000-000000000101'),
+			('00000000-0000-0000-0000-000000000106', 'filtered-tenant-contract-5', 1, 'filtered-tenant-contract', 'included-tenant', 'contract', 'included', 'included', 'pool', 'runtime', '2026-08-27 00:00:00+00', '2026-08-27 01:00:00+00', 50, 500, 50, 3600, 60, repeat('f', 64), '00000000-0000-0000-0000-000000000101');
+		reset role`); err != nil {
+		t.Fatal("seed filtered reservation usage contract: ", err)
+	}
+
+	metabase := connect(t, ctx, metabaseURL)
+	defer metabase.Close(ctx)
+	var discoveredSandboxes, reservationFacts int
+	var includedCPU, includedMemory, includedReady bool
+	if err := metabase.QueryRow(ctx, `
+		select
+			discovered_sandboxes,
+			reservation_fact_count,
+			virtual_cpu_core_seconds = 50,
+			virtual_memory_byte_seconds = 500,
+			ready_seconds = 50
+		from k8s_reporting.hourly_reservation_usage_excluding_tenants
+		where cluster_id = 'filtered-tenant-contract'
+		  and hour_start = '2026-08-27 00:00:00+00'`).Scan(&discoveredSandboxes, &reservationFacts, &includedCPU, &includedMemory, &includedReady); err != nil {
+		t.Fatal("query filtered reservation usage view: ", err)
+	}
+	if discoveredSandboxes != 1 || reservationFacts != 1 || !includedCPU || !includedMemory || !includedReady {
+		t.Fatalf("filtered reservation usage = sandboxes:%d facts:%d cpu:%t memory:%t ready:%t, want only included tenant", discoveredSandboxes, reservationFacts, includedCPU, includedMemory, includedReady)
 	}
 }
 
@@ -1881,6 +2415,12 @@ func assertMetabaseBoundary(t *testing.T, ctx context.Context, inspectionURL, me
 	if err := connection.QueryRow(ctx, `select count(*) from k8s_reporting.current_resources where cluster_id = 'migration-test'`).Scan(&count); err != nil || count != 4 {
 		t.Errorf("metabase cannot read reporting view: count=%d err=%v", count, err)
 	}
+	if err := connection.QueryRow(ctx, `select count(*) from k8s_reporting.hourly_reservation_usage`).Scan(&count); err != nil {
+		t.Errorf("metabase cannot read hourly reservation usage view: err=%v", err)
+	}
+	if err := connection.QueryRow(ctx, `select count(*) from k8s_reporting.hourly_reservation_usage_excluding_tenants`).Scan(&count); err != nil {
+		t.Errorf("metabase cannot read filtered hourly reservation usage view: err=%v", err)
+	}
 	var readOnly string
 	if err := connection.QueryRow(ctx, `show default_transaction_read_only`).Scan(&readOnly); err != nil || readOnly != "on" {
 		t.Errorf("metabase default_transaction_read_only = %q err=%v, want on", readOnly, err)
@@ -1903,6 +2443,8 @@ func assertMetabaseBoundary(t *testing.T, ctx context.Context, inspectionURL, me
 		`select 1 from k8s_api.current_resources limit 1`,
 		`select 1 from public.github_trust_policies limit 1`,
 		`delete from k8s_reporting.current_resources`,
+		`delete from k8s_reporting.hourly_reservation_usage`,
+		`delete from k8s_reporting.hourly_reservation_usage_excluding_tenants`,
 	} {
 		assertStatementFails(t, ctx, metabaseURL, statement)
 	}
@@ -2017,7 +2559,7 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 			from pg_namespace as namespace
 			join lateral aclexplode(namespace.nspacl) as acl on true
 			where acl.grantee <> namespace.nspowner
-			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
 			union all
 			select 'relation:' || namespace.nspname || '.' || relation.relname, acl.privilege_type, acl.grantee::regrole::text, acl.grantor::regrole::text, acl.is_grantable
 			from pg_class as relation
@@ -2025,20 +2567,35 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 			join lateral aclexplode(relation.relacl) as acl on true
 			where relation.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
 			  and acl.grantee <> relation.relowner
-			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
 			union all
-			select 'routine:' || namespace.nspname || '.' || routine.oid::regprocedure::text, acl.privilege_type, acl.grantee::regrole::text, acl.grantor::regrole::text, acl.is_grantable
+			select 'routine:' || routine.oid::regprocedure::text, acl.privilege_type, acl.grantee::regrole::text, acl.grantor::regrole::text, acl.is_grantable
 			from pg_proc as routine
 			join pg_namespace as namespace on namespace.oid = routine.pronamespace
 			join lateral aclexplode(routine.proacl) as acl on true
 			where acl.grantee <> routine.proowner
-			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole)
+			  and acl.grantee in ('k8s_reporting_owner'::regrole, 'k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole)
 		), expected as (
 			values
 				('schema:k8s_state', 'USAGE', 'k8s_reporting_owner', 'k8s_state_owner', false),
 				('relation:k8s_state.resource_state', 'SELECT', 'k8s_reporting_owner', 'k8s_state_owner', false),
+				('relation:k8s_state.resource_event_outbox', 'SELECT', 'k8s_reporting_owner', 'k8s_state_owner', false),
+				('schema:billing_meter', 'USAGE', 'k8s_reporting_owner', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_reporting_owner', 'billing_meter_owner', false),
+				('schema:billing_meter', 'USAGE', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_collection', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_fact', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_current', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
+				('relation:billing_meter.reservation_hour_collection_current', 'SELECT', 'k8s_metabase', 'billing_meter_owner', false),
 				('schema:k8s_reporting', 'USAGE', 'k8s_metabase', 'k8s_reporting_owner', false),
-				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false)
+				('relation:k8s_reporting.current_resources', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
+				('relation:k8s_reporting.hourly_reservation_usage', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
+				('relation:k8s_reporting.hourly_reservation_usage_excluding_tenants', 'SELECT', 'k8s_metabase', 'k8s_reporting_owner', false),
+				('schema:k8s_reporting', 'USAGE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
+				('routine:k8s_reporting.usage_sandbox_events(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
+				('routine:k8s_reporting.reservation_hour_facts(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false),
+				('routine:k8s_reporting.reservation_meter_status(text,timestamp with time zone,timestamp with time zone)', 'EXECUTE', 'cyclops_usage_reader', 'k8s_reporting_owner', false)
 		)
 		select count(*) from (
 			(select * from actual except select * from expected)
@@ -2059,15 +2616,25 @@ func assertExactReportingACLContract(t *testing.T, ctx context.Context, connecti
 			join lateral aclexplode(namespace.nspacl) as acl on true
 			where namespace.nspname = 'k8s_reporting'
 			  and acl.grantee <> namespace.nspowner
-			  and (acl.grantee <> 'k8s_metabase'::regrole or acl.privilege_type <> 'USAGE' or acl.is_grantable)
+			  and (acl.grantee not in ('k8s_metabase'::regrole, 'cyclops_usage_reader'::regrole) or acl.privilege_type <> 'USAGE' or acl.is_grantable)
 			union all
 			select 1
 			from pg_class as relation
 			join pg_namespace as namespace on namespace.oid = relation.relnamespace
 			join lateral aclexplode(relation.relacl) as acl on true
-			where namespace.nspname = 'k8s_reporting' and relation.relname = 'current_resources'
+			where namespace.nspname = 'k8s_reporting' and relation.relname in ('current_resources', 'hourly_reservation_usage', 'hourly_reservation_usage_excluding_tenants')
 			  and acl.grantee <> relation.relowner
 			  and (acl.grantee <> 'k8s_metabase'::regrole or acl.privilege_type <> 'SELECT' or acl.is_grantable)
+			union all
+			select 1
+			from pg_proc as routine
+			join pg_namespace as namespace on namespace.oid = routine.pronamespace
+			join lateral aclexplode(routine.proacl) as acl on true
+			where namespace.nspname = 'k8s_reporting'
+			  and routine.proname in ('usage_sandbox_events', 'reservation_hour_facts', 'reservation_meter_status')
+			  and routine.proargtypes = '25 1184 1184'::oidvector
+			  and acl.grantee <> routine.proowner
+			  and (acl.grantee <> 'cyclops_usage_reader'::regrole or acl.privilege_type <> 'EXECUTE' or acl.is_grantable)
 		)`).Scan(&reportingObjectDrift); err != nil {
 		t.Fatalf("read reporting schema and view ACLs: %v", err)
 	}

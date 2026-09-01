@@ -378,6 +378,51 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status()
+		})
+		if checksum != 3094 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_pool_display_status()
+		})
+		if checksum != 8587 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_pool_display_status: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status()
+		})
+		if checksum != 48761 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_removed_pool_display_status: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status()
+		})
+		if checksum != 41320 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status()
+		})
+		if checksum != 39929 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim()
 		})
 		if checksum != 23330 {
@@ -428,6 +473,33 @@ func uniffiCheckChecksums() {
 		if checksum != 18984 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace()
+		})
+		if checksum != 38049 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace()
+		})
+		if checksum != 4545 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace()
+		})
+		if checksum != 184 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -500,6 +572,33 @@ func uniffiCheckChecksums() {
 		if checksum != 46699 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url()
+		})
+		if checksum != 17810 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls()
+		})
+		if checksum != 31479 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url()
+		})
+		if checksum != 59989 {
+			// If this happens try cleaning and rebuilding your project
+			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url: UniFFI API checksum mismatch")
 		}
 	}
 	{
@@ -601,6 +700,7 @@ func uniffiCheckChecksums() {
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute: UniFFI API checksum mismatch")
 		}
 	}
+
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect()
@@ -664,6 +764,7 @@ func uniffiCheckChecksums() {
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client: UniFFI API checksum mismatch")
 		}
 	}
+
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new()
@@ -673,6 +774,7 @@ func uniffiCheckChecksums() {
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new: UniFFI API checksum mismatch")
 		}
 	}
+
 }
 
 type FfiConverterUint16 struct{}
@@ -1209,6 +1311,9 @@ type CyclopsClientInterface interface {
 	// can be mutated through the SDK.
 	RenewClaim(claim Claim, shutdownTime string) (Claim, error)
 	WaitClaim(claim Claim) (Sandbox, error)
+	CreateNamespace(name string) (Namespace, error)
+	DeleteNamespace(name string) error
+	GetNamespace(name string) (Namespace, error)
 	ListNamespaces() ([]Namespace, error)
 	CreatePool(request CreatePoolRequest) (Pool, error)
 	DeletePool(pool Pool) error
@@ -1217,6 +1322,9 @@ type CyclopsClientInterface interface {
 	ReconcilePool(request CreatePoolRequest) (Pool, error)
 	UpdatePool(pool Pool) (Pool, error)
 	ServiceRequest(sandbox Sandbox, service string, path string, request HttpRequest) (HttpResponse, error)
+	CreateSignedServiceUrl(request CreateSignedServiceUrlRequest) (SignedServiceUrl, error)
+	ListSignedServiceUrls(sandbox Sandbox) ([]SignedServiceUrl, error)
+	RevokeSignedServiceUrl(signedServiceUrl SignedServiceUrl) error
 	CreateTemplate(request CreateTemplateRequest) (Template, error)
 	DeleteTemplate(template Template) error
 	GetTemplate(namespace string, name string) (Template, error)
@@ -1527,6 +1635,107 @@ func (_self *CyclopsClient) WaitClaim(claim Claim) (Sandbox, error) {
 	return res, err
 }
 
+func (_self *CyclopsClient) CreateNamespace(name string) (Namespace, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Namespace {
+			return FfiConverterNamespaceINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
+			_pointer, FfiConverterStringINSTANCE.Lower(name)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) DeleteNamespace(name string) error {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	_, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) struct{} {
+			C.ffi_cyclops_sdk_rust_future_complete_void(handle, status)
+			return struct{}{}
+		},
+		// liftFn
+		func(_ struct{}) struct{} { return struct{}{} },
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
+			_pointer, FfiConverterStringINSTANCE.Lower(name)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_void(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_void(handle)
+		},
+	)
+
+	if err == nil {
+		return nil
+	}
+
+	return err
+}
+
+func (_self *CyclopsClient) GetNamespace(name string) (Namespace, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) Namespace {
+			return FfiConverterNamespaceINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
+			_pointer, FfiConverterStringINSTANCE.Lower(name)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
 func (_self *CyclopsClient) ListNamespaces() ([]Namespace, error) {
 	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
 	defer _self.ffiObject.decrementPointer()
@@ -1801,6 +2010,107 @@ func (_self *CyclopsClient) ServiceRequest(sandbox Sandbox, service string, path
 	}
 
 	return res, err
+}
+
+func (_self *CyclopsClient) CreateSignedServiceUrl(request CreateSignedServiceUrlRequest) (SignedServiceUrl, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) SignedServiceUrl {
+			return FfiConverterSignedServiceUrlINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(
+			_pointer, FfiConverterCreateSignedServiceUrlRequestINSTANCE.Lower(request)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) ListSignedServiceUrls(sandbox Sandbox) ([]SignedServiceUrl, error) {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	res, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) RustBufferI {
+			res := C.ffi_cyclops_sdk_rust_future_complete_rust_buffer(handle, status)
+			return GoRustBuffer{
+				inner: res,
+			}
+		},
+		// liftFn
+		func(ffi RustBufferI) []SignedServiceUrl {
+			return FfiConverterSequenceSignedServiceUrlINSTANCE.Lift(ffi)
+		},
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls(
+			_pointer, FfiConverterSandboxINSTANCE.Lower(sandbox)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_rust_buffer(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_rust_buffer(handle)
+		},
+	)
+
+	if err == nil {
+		return res, nil
+	}
+
+	return res, err
+}
+
+func (_self *CyclopsClient) RevokeSignedServiceUrl(signedServiceUrl SignedServiceUrl) error {
+	_pointer := _self.ffiObject.incrementPointer("*CyclopsClient")
+	defer _self.ffiObject.decrementPointer()
+	_, err := uniffiRustCallAsync[*SdkError](
+		FfiConverterSdkErrorINSTANCE,
+		// completeFn
+		func(handle C.uint64_t, status *C.RustCallStatus) struct{} {
+			C.ffi_cyclops_sdk_rust_future_complete_void(handle, status)
+			return struct{}{}
+		},
+		// liftFn
+		func(_ struct{}) struct{} { return struct{}{} },
+		C.uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url(
+			_pointer, FfiConverterSignedServiceUrlINSTANCE.Lower(signedServiceUrl)),
+		// pollFn
+		func(handle C.uint64_t, continuation C.UniffiRustFutureContinuationCallback, data C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_poll_void(handle, continuation, data)
+		},
+		// freeFn
+		func(handle C.uint64_t) {
+			C.ffi_cyclops_sdk_rust_future_free_void(handle)
+		},
+	)
+
+	if err == nil {
+		return nil
+	}
+
+	return err
 }
 
 func (_self *CyclopsClient) CreateTemplate(request CreateTemplateRequest) (Template, error) {
@@ -2588,6 +2898,58 @@ func (_ FfiDestroyerCreatePoolRequest) Destroy(value CreatePoolRequest) {
 	value.Destroy()
 }
 
+type CreateSignedServiceUrlRequest struct {
+	Sandbox          Sandbox
+	Service          string
+	Label            *string
+	ExpiresInSeconds uint32
+}
+
+func (r *CreateSignedServiceUrlRequest) Destroy() {
+	FfiDestroyerSandbox{}.Destroy(r.Sandbox)
+	FfiDestroyerString{}.Destroy(r.Service)
+	FfiDestroyerOptionalString{}.Destroy(r.Label)
+	FfiDestroyerUint32{}.Destroy(r.ExpiresInSeconds)
+}
+
+type FfiConverterCreateSignedServiceUrlRequest struct{}
+
+var FfiConverterCreateSignedServiceUrlRequestINSTANCE = FfiConverterCreateSignedServiceUrlRequest{}
+
+func (c FfiConverterCreateSignedServiceUrlRequest) Lift(rb RustBufferI) CreateSignedServiceUrlRequest {
+	return LiftFromRustBuffer[CreateSignedServiceUrlRequest](c, rb)
+}
+
+func (c FfiConverterCreateSignedServiceUrlRequest) Read(reader io.Reader) CreateSignedServiceUrlRequest {
+	return CreateSignedServiceUrlRequest{
+		FfiConverterSandboxINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterUint32INSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterCreateSignedServiceUrlRequest) Lower(value CreateSignedServiceUrlRequest) C.RustBuffer {
+	return LowerIntoRustBuffer[CreateSignedServiceUrlRequest](c, value)
+}
+
+func (c FfiConverterCreateSignedServiceUrlRequest) LowerExternal(value CreateSignedServiceUrlRequest) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[CreateSignedServiceUrlRequest](c, value))
+}
+
+func (c FfiConverterCreateSignedServiceUrlRequest) Write(writer io.Writer, value CreateSignedServiceUrlRequest) {
+	FfiConverterSandboxINSTANCE.Write(writer, value.Sandbox)
+	FfiConverterStringINSTANCE.Write(writer, value.Service)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.Label)
+	FfiConverterUint32INSTANCE.Write(writer, value.ExpiresInSeconds)
+}
+
+type FfiDestroyerCreateSignedServiceUrlRequest struct{}
+
+func (_ FfiDestroyerCreateSignedServiceUrlRequest) Destroy(value CreateSignedServiceUrlRequest) {
+	value.Destroy()
+}
+
 type CreateTemplateRequest struct {
 	Namespace string
 	Name      string
@@ -2845,10 +3207,13 @@ func (_ FfiDestroyerHttpHeader) Destroy(value HttpHeader) {
 }
 
 type HttpRequest struct {
-	Method      string
-	Url         string
-	Headers     []HttpHeader
-	Body        *[]byte
+	Method  string
+	Url     string
+	Headers []HttpHeader
+	Body    *[]byte
+	// Per-request timeout. Defaults to absent so callers written against the
+	// pre-timeout record shape keep constructing requests unchanged; absent
+	// falls back to the native client's 30-second default.
 	TimeoutSecs *uint64
 }
 
@@ -3119,6 +3484,54 @@ func (_ FfiDestroyerPool) Destroy(value Pool) {
 	value.Destroy()
 }
 
+type PoolDisplayStatus struct {
+	Kind      PoolDisplayStatusKind
+	Label     string
+	Indicator string
+}
+
+func (r *PoolDisplayStatus) Destroy() {
+	FfiDestroyerPoolDisplayStatusKind{}.Destroy(r.Kind)
+	FfiDestroyerString{}.Destroy(r.Label)
+	FfiDestroyerString{}.Destroy(r.Indicator)
+}
+
+type FfiConverterPoolDisplayStatus struct{}
+
+var FfiConverterPoolDisplayStatusINSTANCE = FfiConverterPoolDisplayStatus{}
+
+func (c FfiConverterPoolDisplayStatus) Lift(rb RustBufferI) PoolDisplayStatus {
+	return LiftFromRustBuffer[PoolDisplayStatus](c, rb)
+}
+
+func (c FfiConverterPoolDisplayStatus) Read(reader io.Reader) PoolDisplayStatus {
+	return PoolDisplayStatus{
+		FfiConverterPoolDisplayStatusKindINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterPoolDisplayStatus) Lower(value PoolDisplayStatus) C.RustBuffer {
+	return LowerIntoRustBuffer[PoolDisplayStatus](c, value)
+}
+
+func (c FfiConverterPoolDisplayStatus) LowerExternal(value PoolDisplayStatus) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[PoolDisplayStatus](c, value))
+}
+
+func (c FfiConverterPoolDisplayStatus) Write(writer io.Writer, value PoolDisplayStatus) {
+	FfiConverterPoolDisplayStatusKindINSTANCE.Write(writer, value.Kind)
+	FfiConverterStringINSTANCE.Write(writer, value.Label)
+	FfiConverterStringINSTANCE.Write(writer, value.Indicator)
+}
+
+type FfiDestroyerPoolDisplayStatus struct{}
+
+func (_ FfiDestroyerPoolDisplayStatus) Destroy(value PoolDisplayStatus) {
+	value.Destroy()
+}
+
 type ResourceMetadata struct {
 	Namespace         string
 	Name              string
@@ -3220,6 +3633,82 @@ func (c FfiConverterSandbox) Write(writer io.Writer, value Sandbox) {
 type FfiDestroyerSandbox struct{}
 
 func (_ FfiDestroyerSandbox) Destroy(value Sandbox) {
+	value.Destroy()
+}
+
+type SignedServiceUrl struct {
+	Id        string
+	Namespace string
+	Claim     string
+	Sandbox   string
+	Service   string
+	Label     *string
+	Url       string
+	CreatedAt string
+	ExpiresAt string
+	RevokedAt *string
+}
+
+func (r *SignedServiceUrl) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Id)
+	FfiDestroyerString{}.Destroy(r.Namespace)
+	FfiDestroyerString{}.Destroy(r.Claim)
+	FfiDestroyerString{}.Destroy(r.Sandbox)
+	FfiDestroyerString{}.Destroy(r.Service)
+	FfiDestroyerOptionalString{}.Destroy(r.Label)
+	FfiDestroyerString{}.Destroy(r.Url)
+	FfiDestroyerString{}.Destroy(r.CreatedAt)
+	FfiDestroyerString{}.Destroy(r.ExpiresAt)
+	FfiDestroyerOptionalString{}.Destroy(r.RevokedAt)
+}
+
+type FfiConverterSignedServiceUrl struct{}
+
+var FfiConverterSignedServiceUrlINSTANCE = FfiConverterSignedServiceUrl{}
+
+func (c FfiConverterSignedServiceUrl) Lift(rb RustBufferI) SignedServiceUrl {
+	return LiftFromRustBuffer[SignedServiceUrl](c, rb)
+}
+
+func (c FfiConverterSignedServiceUrl) Read(reader io.Reader) SignedServiceUrl {
+	return SignedServiceUrl{
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterSignedServiceUrl) Lower(value SignedServiceUrl) C.RustBuffer {
+	return LowerIntoRustBuffer[SignedServiceUrl](c, value)
+}
+
+func (c FfiConverterSignedServiceUrl) LowerExternal(value SignedServiceUrl) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[SignedServiceUrl](c, value))
+}
+
+func (c FfiConverterSignedServiceUrl) Write(writer io.Writer, value SignedServiceUrl) {
+	FfiConverterStringINSTANCE.Write(writer, value.Id)
+	FfiConverterStringINSTANCE.Write(writer, value.Namespace)
+	FfiConverterStringINSTANCE.Write(writer, value.Claim)
+	FfiConverterStringINSTANCE.Write(writer, value.Sandbox)
+	FfiConverterStringINSTANCE.Write(writer, value.Service)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.Label)
+	FfiConverterStringINSTANCE.Write(writer, value.Url)
+	FfiConverterStringINSTANCE.Write(writer, value.CreatedAt)
+	FfiConverterStringINSTANCE.Write(writer, value.ExpiresAt)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.RevokedAt)
+}
+
+type FfiDestroyerSignedServiceUrl struct{}
+
+func (_ FfiDestroyerSignedServiceUrl) Destroy(value SignedServiceUrl) {
 	value.Destroy()
 }
 
@@ -3541,6 +4030,160 @@ func (_ FfiDestroyerHttpError) Destroy(value *HttpError) {
 	}
 }
 
+type PoolDisplayStatusKind uint
+
+const (
+	PoolDisplayStatusKindHealthy      PoolDisplayStatusKind = 1
+	PoolDisplayStatusKindScaledToZero PoolDisplayStatusKind = 2
+	PoolDisplayStatusKindRemoved      PoolDisplayStatusKind = 3
+	PoolDisplayStatusKindTerminating  PoolDisplayStatusKind = 4
+	PoolDisplayStatusKindUnknown      PoolDisplayStatusKind = 5
+)
+
+type FfiConverterPoolDisplayStatusKind struct{}
+
+var FfiConverterPoolDisplayStatusKindINSTANCE = FfiConverterPoolDisplayStatusKind{}
+
+func (c FfiConverterPoolDisplayStatusKind) Lift(rb RustBufferI) PoolDisplayStatusKind {
+	return LiftFromRustBuffer[PoolDisplayStatusKind](c, rb)
+}
+
+func (c FfiConverterPoolDisplayStatusKind) Lower(value PoolDisplayStatusKind) C.RustBuffer {
+	return LowerIntoRustBuffer[PoolDisplayStatusKind](c, value)
+}
+
+func (c FfiConverterPoolDisplayStatusKind) LowerExternal(value PoolDisplayStatusKind) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[PoolDisplayStatusKind](c, value))
+}
+func (FfiConverterPoolDisplayStatusKind) Read(reader io.Reader) PoolDisplayStatusKind {
+	id := readInt32(reader)
+	return PoolDisplayStatusKind(id)
+}
+
+func (FfiConverterPoolDisplayStatusKind) Write(writer io.Writer, value PoolDisplayStatusKind) {
+	writeInt32(writer, int32(value))
+}
+
+type FfiDestroyerPoolDisplayStatusKind struct{}
+
+func (_ FfiDestroyerPoolDisplayStatusKind) Destroy(value PoolDisplayStatusKind) {
+}
+
+type SdkBuildError struct {
+	err error
+}
+
+// Convenience method to turn *SdkBuildError into error
+// Avoiding treating nil pointer as non nil error interface
+func (err *SdkBuildError) AsError() error {
+	if err == nil {
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (err SdkBuildError) Error() string {
+	return fmt.Sprintf("SdkBuildError: %s", err.err.Error())
+}
+
+func (err SdkBuildError) Unwrap() error {
+	return err.err
+}
+
+// Err* are used for checking error type with `errors.Is`
+var ErrSdkBuildErrorMissingRequiredField = fmt.Errorf("SdkBuildErrorMissingRequiredField")
+
+// Variant structs
+type SdkBuildErrorMissingRequiredField struct {
+	RecordType string
+	Field      string
+}
+
+func NewSdkBuildErrorMissingRequiredField(
+	recordType string,
+	field string,
+) *SdkBuildError {
+	return &SdkBuildError{err: &SdkBuildErrorMissingRequiredField{
+		RecordType: recordType,
+		Field:      field}}
+}
+
+func (e SdkBuildErrorMissingRequiredField) destroy() {
+	FfiDestroyerString{}.Destroy(e.RecordType)
+	FfiDestroyerString{}.Destroy(e.Field)
+}
+
+func (err SdkBuildErrorMissingRequiredField) Error() string {
+	return fmt.Sprint("MissingRequiredField",
+		": ",
+
+		"RecordType=",
+		err.RecordType,
+		", ",
+		"Field=",
+		err.Field,
+	)
+}
+
+func (self SdkBuildErrorMissingRequiredField) Is(target error) bool {
+	return target == ErrSdkBuildErrorMissingRequiredField
+}
+
+type FfiConverterSdkBuildError struct{}
+
+var FfiConverterSdkBuildErrorINSTANCE = FfiConverterSdkBuildError{}
+
+func (c FfiConverterSdkBuildError) Lift(eb RustBufferI) *SdkBuildError {
+	return LiftFromRustBuffer[*SdkBuildError](c, eb)
+}
+
+func (c FfiConverterSdkBuildError) Lower(value *SdkBuildError) C.RustBuffer {
+	return LowerIntoRustBuffer[*SdkBuildError](c, value)
+}
+
+func (c FfiConverterSdkBuildError) LowerExternal(value *SdkBuildError) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*SdkBuildError](c, value))
+}
+
+func (c FfiConverterSdkBuildError) Read(reader io.Reader) *SdkBuildError {
+	errorID := readUint32(reader)
+
+	switch errorID {
+	case 1:
+		return &SdkBuildError{&SdkBuildErrorMissingRequiredField{
+			RecordType: FfiConverterStringINSTANCE.Read(reader),
+			Field:      FfiConverterStringINSTANCE.Read(reader),
+		}}
+	default:
+		panic(fmt.Sprintf("Unknown error code %d in FfiConverterSdkBuildError.Read()", errorID))
+	}
+}
+
+func (c FfiConverterSdkBuildError) Write(writer io.Writer, value *SdkBuildError) {
+	switch variantValue := value.err.(type) {
+	case *SdkBuildErrorMissingRequiredField:
+		writeInt32(writer, 1)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.RecordType)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Field)
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterSdkBuildError.Write", value))
+	}
+}
+
+type FfiDestroyerSdkBuildError struct{}
+
+func (_ FfiDestroyerSdkBuildError) Destroy(value *SdkBuildError) {
+	switch variantValue := value.err.(type) {
+	case SdkBuildErrorMissingRequiredField:
+		variantValue.destroy()
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerSdkBuildError.Destroy", value))
+	}
+}
+
 type SdkError struct {
 	err error
 }
@@ -3570,10 +4213,12 @@ var ErrSdkErrorTransport = fmt.Errorf("SdkErrorTransport")
 var ErrSdkErrorToken = fmt.Errorf("SdkErrorToken")
 var ErrSdkErrorBody = fmt.Errorf("SdkErrorBody")
 var ErrSdkErrorStatus = fmt.Errorf("SdkErrorStatus")
+var ErrSdkErrorSignedServiceUrlsUnavailable = fmt.Errorf("SdkErrorSignedServiceUrlsUnavailable")
 var ErrSdkErrorUnknownService = fmt.Errorf("SdkErrorUnknownService")
 var ErrSdkErrorInvalidServicePath = fmt.Errorf("SdkErrorInvalidServicePath")
 var ErrSdkErrorClaimFailed = fmt.Errorf("SdkErrorClaimFailed")
 var ErrSdkErrorClaimTimeout = fmt.Errorf("SdkErrorClaimTimeout")
+var ErrSdkErrorPoolAccessDenied = fmt.Errorf("SdkErrorPoolAccessDenied")
 
 // Variant structs
 type SdkErrorConfiguration struct {
@@ -3772,6 +4417,24 @@ func (self SdkErrorStatus) Is(target error) bool {
 	return target == ErrSdkErrorStatus
 }
 
+type SdkErrorSignedServiceUrlsUnavailable struct {
+}
+
+func NewSdkErrorSignedServiceUrlsUnavailable() *SdkError {
+	return &SdkError{err: &SdkErrorSignedServiceUrlsUnavailable{}}
+}
+
+func (e SdkErrorSignedServiceUrlsUnavailable) destroy() {
+}
+
+func (err SdkErrorSignedServiceUrlsUnavailable) Error() string {
+	return fmt.Sprint("SignedServiceUrlsUnavailable")
+}
+
+func (self SdkErrorSignedServiceUrlsUnavailable) Is(target error) bool {
+	return target == ErrSdkErrorSignedServiceUrlsUnavailable
+}
+
 type SdkErrorUnknownService struct {
 	Requested string
 	Available []string
@@ -3888,6 +4551,55 @@ func (self SdkErrorClaimTimeout) Is(target error) bool {
 	return target == ErrSdkErrorClaimTimeout
 }
 
+type SdkErrorPoolAccessDenied struct {
+	Operation string
+	Namespace string
+	Status    uint16
+	Body      string
+}
+
+func NewSdkErrorPoolAccessDenied(
+	operation string,
+	namespace string,
+	status uint16,
+	body string,
+) *SdkError {
+	return &SdkError{err: &SdkErrorPoolAccessDenied{
+		Operation: operation,
+		Namespace: namespace,
+		Status:    status,
+		Body:      body}}
+}
+
+func (e SdkErrorPoolAccessDenied) destroy() {
+	FfiDestroyerString{}.Destroy(e.Operation)
+	FfiDestroyerString{}.Destroy(e.Namespace)
+	FfiDestroyerUint16{}.Destroy(e.Status)
+	FfiDestroyerString{}.Destroy(e.Body)
+}
+
+func (err SdkErrorPoolAccessDenied) Error() string {
+	return fmt.Sprint("PoolAccessDenied",
+		": ",
+
+		"Operation=",
+		err.Operation,
+		", ",
+		"Namespace=",
+		err.Namespace,
+		", ",
+		"Status=",
+		err.Status,
+		", ",
+		"Body=",
+		err.Body,
+	)
+}
+
+func (self SdkErrorPoolAccessDenied) Is(target error) bool {
+	return target == ErrSdkErrorPoolAccessDenied
+}
+
 type FfiConverterSdkError struct{}
 
 var FfiConverterSdkErrorINSTANCE = FfiConverterSdkError{}
@@ -3937,21 +4649,30 @@ func (c FfiConverterSdkError) Read(reader io.Reader) *SdkError {
 			Body:      FfiConverterStringINSTANCE.Read(reader),
 		}}
 	case 7:
+		return &SdkError{&SdkErrorSignedServiceUrlsUnavailable{}}
+	case 8:
 		return &SdkError{&SdkErrorUnknownService{
 			Requested: FfiConverterStringINSTANCE.Read(reader),
 			Available: FfiConverterSequenceStringINSTANCE.Read(reader),
 		}}
-	case 8:
+	case 9:
 		return &SdkError{&SdkErrorInvalidServicePath{
 			Path: FfiConverterStringINSTANCE.Read(reader),
 		}}
-	case 9:
+	case 10:
 		return &SdkError{&SdkErrorClaimFailed{
 			Phase:  FfiConverterStringINSTANCE.Read(reader),
 			Status: FfiConverterStringINSTANCE.Read(reader),
 		}}
-	case 10:
+	case 11:
 		return &SdkError{&SdkErrorClaimTimeout{}}
+	case 12:
+		return &SdkError{&SdkErrorPoolAccessDenied{
+			Operation: FfiConverterStringINSTANCE.Read(reader),
+			Namespace: FfiConverterStringINSTANCE.Read(reader),
+			Status:    FfiConverterUint16INSTANCE.Read(reader),
+			Body:      FfiConverterStringINSTANCE.Read(reader),
+		}}
 	default:
 		panic(fmt.Sprintf("Unknown error code %d in FfiConverterSdkError.Read()", errorID))
 	}
@@ -3981,19 +4702,27 @@ func (c FfiConverterSdkError) Write(writer io.Writer, value *SdkError) {
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Operation)
 		FfiConverterUint16INSTANCE.Write(writer, variantValue.Status)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Body)
-	case *SdkErrorUnknownService:
+	case *SdkErrorSignedServiceUrlsUnavailable:
 		writeInt32(writer, 7)
+	case *SdkErrorUnknownService:
+		writeInt32(writer, 8)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Requested)
 		FfiConverterSequenceStringINSTANCE.Write(writer, variantValue.Available)
 	case *SdkErrorInvalidServicePath:
-		writeInt32(writer, 8)
+		writeInt32(writer, 9)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Path)
 	case *SdkErrorClaimFailed:
-		writeInt32(writer, 9)
+		writeInt32(writer, 10)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Phase)
 		FfiConverterStringINSTANCE.Write(writer, variantValue.Status)
 	case *SdkErrorClaimTimeout:
-		writeInt32(writer, 10)
+		writeInt32(writer, 11)
+	case *SdkErrorPoolAccessDenied:
+		writeInt32(writer, 12)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Operation)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Namespace)
+		FfiConverterUint16INSTANCE.Write(writer, variantValue.Status)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Body)
 	default:
 		_ = variantValue
 		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterSdkError.Write", value))
@@ -4016,6 +4745,8 @@ func (_ FfiDestroyerSdkError) Destroy(value *SdkError) {
 		variantValue.destroy()
 	case SdkErrorStatus:
 		variantValue.destroy()
+	case SdkErrorSignedServiceUrlsUnavailable:
+		variantValue.destroy()
 	case SdkErrorUnknownService:
 		variantValue.destroy()
 	case SdkErrorInvalidServicePath:
@@ -4024,9 +4755,52 @@ func (_ FfiDestroyerSdkError) Destroy(value *SdkError) {
 		variantValue.destroy()
 	case SdkErrorClaimTimeout:
 		variantValue.destroy()
+	case SdkErrorPoolAccessDenied:
+		variantValue.destroy()
 	default:
 		_ = variantValue
 		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerSdkError.Destroy", value))
+	}
+}
+
+type FfiConverterOptionalUint64 struct{}
+
+var FfiConverterOptionalUint64INSTANCE = FfiConverterOptionalUint64{}
+
+func (c FfiConverterOptionalUint64) Lift(rb RustBufferI) *uint64 {
+	return LiftFromRustBuffer[*uint64](c, rb)
+}
+
+func (_ FfiConverterOptionalUint64) Read(reader io.Reader) *uint64 {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterUint64INSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalUint64) Lower(value *uint64) C.RustBuffer {
+	return LowerIntoRustBuffer[*uint64](c, value)
+}
+
+func (c FfiConverterOptionalUint64) LowerExternal(value *uint64) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*uint64](c, value))
+}
+
+func (_ FfiConverterOptionalUint64) Write(writer io.Writer, value *uint64) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterUint64INSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalUint64 struct{}
+
+func (_ FfiDestroyerOptionalUint64) Destroy(value *uint64) {
+	if value != nil {
+		FfiDestroyerUint64{}.Destroy(*value)
 	}
 }
 
@@ -4109,47 +4883,6 @@ type FfiDestroyerOptionalBytes struct{}
 func (_ FfiDestroyerOptionalBytes) Destroy(value *[]byte) {
 	if value != nil {
 		FfiDestroyerBytes{}.Destroy(*value)
-	}
-}
-
-type FfiConverterOptionalUint64 struct{}
-
-var FfiConverterOptionalUint64INSTANCE = FfiConverterOptionalUint64{}
-
-func (c FfiConverterOptionalUint64) Lift(rb RustBufferI) *uint64 {
-	return LiftFromRustBuffer[*uint64](c, rb)
-}
-
-func (_ FfiConverterOptionalUint64) Read(reader io.Reader) *uint64 {
-	if readInt8(reader) == 0 {
-		return nil
-	}
-	temp := FfiConverterUint64INSTANCE.Read(reader)
-	return &temp
-}
-
-func (c FfiConverterOptionalUint64) Lower(value *uint64) C.RustBuffer {
-	return LowerIntoRustBuffer[*uint64](c, value)
-}
-
-func (c FfiConverterOptionalUint64) LowerExternal(value *uint64) ExternalCRustBuffer {
-	return RustBufferFromC(LowerIntoRustBuffer[*uint64](c, value))
-}
-
-func (_ FfiConverterOptionalUint64) Write(writer io.Writer, value *uint64) {
-	if value == nil {
-		writeInt8(writer, 0)
-	} else {
-		writeInt8(writer, 1)
-		FfiConverterUint64INSTANCE.Write(writer, *value)
-	}
-}
-
-type FfiDestroyerOptionalUint64 struct{}
-
-func (_ FfiDestroyerOptionalUint64) Destroy(value *uint64) {
-	if value != nil {
-		FfiDestroyerUint64{}.Destroy(*value)
 	}
 }
 
@@ -4552,6 +5285,53 @@ func (FfiDestroyerSequencePool) Destroy(sequence []Pool) {
 	}
 }
 
+type FfiConverterSequenceSignedServiceUrl struct{}
+
+var FfiConverterSequenceSignedServiceUrlINSTANCE = FfiConverterSequenceSignedServiceUrl{}
+
+func (c FfiConverterSequenceSignedServiceUrl) Lift(rb RustBufferI) []SignedServiceUrl {
+	return LiftFromRustBuffer[[]SignedServiceUrl](c, rb)
+}
+
+func (c FfiConverterSequenceSignedServiceUrl) Read(reader io.Reader) []SignedServiceUrl {
+	length := readInt32(reader)
+	if length == 0 {
+		return nil
+	}
+	result := make([]SignedServiceUrl, 0, length)
+	for i := int32(0); i < length; i++ {
+		result = append(result, FfiConverterSignedServiceUrlINSTANCE.Read(reader))
+	}
+	return result
+}
+
+func (c FfiConverterSequenceSignedServiceUrl) Lower(value []SignedServiceUrl) C.RustBuffer {
+	return LowerIntoRustBuffer[[]SignedServiceUrl](c, value)
+}
+
+func (c FfiConverterSequenceSignedServiceUrl) LowerExternal(value []SignedServiceUrl) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[[]SignedServiceUrl](c, value))
+}
+
+func (c FfiConverterSequenceSignedServiceUrl) Write(writer io.Writer, value []SignedServiceUrl) {
+	if len(value) > math.MaxInt32 {
+		panic("[]SignedServiceUrl is too large to fit into Int32")
+	}
+
+	writeInt32(writer, int32(len(value)))
+	for _, item := range value {
+		FfiConverterSignedServiceUrlINSTANCE.Write(writer, item)
+	}
+}
+
+type FfiDestroyerSequenceSignedServiceUrl struct{}
+
+func (FfiDestroyerSequenceSignedServiceUrl) Destroy(sequence []SignedServiceUrl) {
+	for _, value := range sequence {
+		FfiDestroyerSignedServiceUrl{}.Destroy(value)
+	}
+}
+
 type FfiConverterSequenceTemplate struct{}
 
 var FfiConverterSequenceTemplateINSTANCE = FfiConverterSequenceTemplate{}
@@ -4752,4 +5532,36 @@ func fleet_sdk_uniffiFreeGorutine(data C.uint64_t) {
 
 	guard := handle.Value().(chan struct{})
 	guard <- struct{}{}
+}
+
+func HealthyPoolDisplayStatus() PoolDisplayStatus {
+	return FfiConverterPoolDisplayStatusINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status(_uniffiStatus),
+		}
+	}))
+}
+
+func RemovedPoolDisplayStatus() PoolDisplayStatus {
+	return FfiConverterPoolDisplayStatusINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_fn_func_removed_pool_display_status(_uniffiStatus),
+		}
+	}))
+}
+
+func TerminatingPoolDisplayStatus() PoolDisplayStatus {
+	return FfiConverterPoolDisplayStatusINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status(_uniffiStatus),
+		}
+	}))
+}
+
+func UnknownPoolDisplayStatus() PoolDisplayStatus {
+	return FfiConverterPoolDisplayStatusINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status(_uniffiStatus),
+		}
+	}))
 }

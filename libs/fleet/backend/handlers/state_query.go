@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"mime"
@@ -65,9 +66,11 @@ func (writer *stateQueryStreamWriter) WriteRow(values []any) error {
 func (writer *stateQueryStreamWriter) Finish(err error) error {
 	if err != nil {
 		if auth.IsDatabaseUnavailable(err) {
-			return writer.write(stateQueryErrorEvent{Type: "error", Error: "state query unavailable"})
+			return errors.Join(writer.write(stateQueryErrorEvent{Type: "error", Error: "state query unavailable"}), err)
+
 		}
-		return writer.write(stateQueryErrorEvent{Type: "error", Error: err.Error()})
+		return errors.Join(writer.write(stateQueryErrorEvent{Type: "error", Error: err.Error()}), err)
+
 	}
 	return writer.write(stateQueryDoneEvent{Type: "done"})
 }

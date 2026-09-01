@@ -721,9 +721,12 @@ test_core_writes_denied if {
 	not route_allow with input as spa_request("POST", "api/v1/namespaces/ns-a/persistentvolumeclaims")
 }
 
-# Known group, unknown resource; and known resource, unknown verb.
+# Sandbox reads are customer-facing, but sandbox writes and unknown verbs stay
+# outside the allowlist.
 test_unenumerated_resource_and_verb_denied if {
-	not route_allow with input as spa_request("GET", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	route_allow with input as spa_request("GET", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("POST", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes")
+	not route_allow with input as spa_request("DELETE", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1")
 	not route_allow with input as spa_request("PUT", "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxclaims/claim-1")
 }
 

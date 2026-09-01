@@ -29,6 +29,15 @@ if [[ "$url" == *'/protocol/openid-connect/token' ]]; then
   exit 0
 fi
 if [[ "$method" == DELETE ]]; then
+  if [[ "$url" == */api/namespaces/* && -n "${CLEANUP_NAMESPACE_DELETE_FAILURES:-}" ]]; then
+    counter_file="$log.namespace-delete-attempts"
+    attempts=$(( $(cat "$counter_file" 2>/dev/null || echo 0) + 1 ))
+    printf '%s' "$attempts" > "$counter_file"
+    if (( attempts <= CLEANUP_NAMESPACE_DELETE_FAILURES )); then
+      printf '502'
+      exit 0
+    fi
+  fi
   printf '204'
   exit 0
 fi
@@ -85,3 +94,32 @@ GET https://run.example/api/k8s/apis/cua.ai/v1/namespaces/sdk-example-python-1-1
 DELETE https://run.example/api/namespaces/sdk-example-python-1-1
 FORBIDDEN_EXPECTED
 diff -u "$temporary/forbidden-expected.log" "$CLEANUP_TEST_LOG"
+
+: > "$CLEANUP_TEST_LOG"
+rm -f "$CLEANUP_TEST_LOG.namespace-delete-attempts"
+export CLEANUP_RETRY_DELAY_SECONDS=0
+export CLEANUP_NAMESPACE_DELETE_FAILURES=2
+"$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh"
+cat > "$temporary/retry-expected.log" <<'RETRY_EXPECTED'
+POST https://auth.example/protocol/openid-connect/token
+GET https://run.example/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/sdk-example-python-1-1/osgymsandboxclaims
+DELETE https://run.example/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/sdk-example-python-1-1/osgymsandboxclaims/claim-a
+GET https://run.example/api/k8s/apis/cua.ai/v1/namespaces/sdk-example-python-1-1/osgymworkspacepools
+DELETE https://run.example/api/k8s/apis/cua.ai/v1/namespaces/sdk-example-python-1-1/osgymworkspacepools/pool-a
+DELETE https://run.example/api/namespaces/sdk-example-python-1-1
+DELETE https://run.example/api/namespaces/sdk-example-python-1-1
+DELETE https://run.example/api/namespaces/sdk-example-python-1-1
+RETRY_EXPECTED
+diff -u "$temporary/retry-expected.log" "$CLEANUP_TEST_LOG"
+
+: > "$CLEANUP_TEST_LOG"
+rm -f "$CLEANUP_TEST_LOG.namespace-delete-attempts"
+export CLEANUP_NAMESPACE_DELETE_FAILURES=10
+if "$repo_root/cyclops-cs/scripts/cleanup-live-sdk-example.sh" 2> "$temporary/persistent-stderr.log"; then
+  echo "expected cleanup to fail when the namespace delete keeps returning 502" >&2
+  exit 1
+fi
+grep -q 'Failed to delete https://run.example/api/namespaces/sdk-example-python-1-1: HTTP 502' "$temporary/persistent-stderr.log"
+[[ "$(grep -c '^DELETE https://run.example/api/namespaces/sdk-example-python-1-1$' "$CLEANUP_TEST_LOG")" == 5 ]]
+unset CLEANUP_NAMESPACE_DELETE_FAILURES CLEANUP_RETRY_DELAY_SECONDS
+printf 'live SDK cleanup retry checks passed.\n'

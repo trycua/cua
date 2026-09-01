@@ -80,6 +80,10 @@ func BillingRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-billing", "data.authz_billing.allow"))
 }
 
+func UsageRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-usage", "data.authz_usage.allow"))
+}
+
 // NamespaceOwnershipPolicy is the tenancy boundary for routes that name a
 // namespace in their path. It is a conjunct rather than a surface, because
 // three surfaces carry it and one of them (namespaces) holds routes on both
@@ -157,12 +161,25 @@ func SvcRoutePolicy() Node {
 	)
 }
 
+func SignedServiceURLsRoutePolicy() Node {
+	return All(
+		BasePolicy(),
+		surfaceLeaf("authz-signed-service-urls", "data.authz_signed_service_urls.allow"),
+		NamespaceOwnershipPolicy(),
+	)
+}
+
 // StateQueryRoutePolicy guards /api/state/query.
 func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
 const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+
+// FeatureFlagsRoutePolicy guards the admin-only feature-flag management API.
+func FeatureFlagsRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-feature-flags", "data.authz_feature_flags.allow"))
+}
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
 // as every other route, with two admission conjuncts: card-or-admin admission
@@ -237,18 +254,23 @@ type surfacePolicy struct {
 	options []MiddlewareOption
 }
 
+const featureFlagAuditBodyLimit = 64 << 10
+
 // surfacePolicies is every surface, by name. A surface owning no route fails
 // TestEveryPolicySurfaceOwnsARoute; a route naming no surface cannot start.
 var surfacePolicies = map[string]surfacePolicy{
-	"keys":         {tree: KeysRoutePolicy},
-	"config":       {tree: ConfigRoutePolicy},
-	"chat":         {tree: ChatRoutePolicy},
-	"billing":      {tree: BillingRoutePolicy},
-	"namespaces":   {tree: NamespacesRoutePolicy},
-	"github-trust": {tree: GitHubTrustRoutePolicy},
-	"user-keys":    {tree: UserKeysRoutePolicy},
-	"svc":          {tree: SvcRoutePolicy},
-	"state-query":  {tree: StateQueryRoutePolicy},
+	"keys":                {tree: KeysRoutePolicy},
+	"config":              {tree: ConfigRoutePolicy},
+	"chat":                {tree: ChatRoutePolicy},
+	"billing":             {tree: BillingRoutePolicy},
+	"usage":               {tree: UsageRoutePolicy},
+	"namespaces":          {tree: NamespacesRoutePolicy},
+	"github-trust":        {tree: GitHubTrustRoutePolicy},
+	"user-keys":           {tree: UserKeysRoutePolicy},
+	"svc":                 {tree: SvcRoutePolicy},
+	"signed-service-urls": {tree: SignedServiceURLsRoutePolicy},
+	"state-query":         {tree: StateQueryRoutePolicy},
+	"feature-flags":       {tree: FeatureFlagsRoutePolicy, options: []MiddlewareOption{WithDeniedAudit("feature_flag_admin", featureFlagAuditBodyLimit), WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
 	"k8s": {
 		tree:    K8sRoutePolicy,
 		options: []MiddlewareOption{WithDeniedMessage("k8s request is not allowed")},
@@ -263,14 +285,20 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":      "config",
-	"/api/state/query": "state-query",
+	"/api/config":                "config",
+	"/api/analytics/session":     "config",
+	"/api/analytics/attribution": "config",
+	"/api/state/query":           "state-query",
+	"/api/usage/overview":        "usage",
+	"/api/usage/pool":            "usage",
+	"/api/usage/browser-timings": "usage",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",
 	"/api/chat/conversations/{id}/turns": "chat",
 
 	"/api/billing/summary":        "billing",
+	"/api/billing/usage":          "billing",
 	"/api/billing/setup-session":  "billing",
 	"/api/billing/portal-session": "billing",
 
@@ -289,7 +317,12 @@ var routeSurfaces = map[string]string{
 	"/api/svc/{namespace}/{service}":           "svc",
 	"/api/svc/{namespace}/{service}/{path...}": "svc",
 
-	"/api/k8s/{path...}": "k8s",
+	"/api/signed-service-urls/{namespace}":      "signed-service-urls",
+	"/api/signed-service-urls/{namespace}/{id}": "signed-service-urls",
+
+	"/api/k8s/{path...}":             "k8s",
+	"/api/admin/feature-flags":       "feature-flags",
+	"/api/admin/feature-flags/{key}": "feature-flags",
 }
 
 // AuthenticatedRoutes returns every route the policy layer covers, sorted.

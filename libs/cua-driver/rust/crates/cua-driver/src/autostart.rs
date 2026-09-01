@@ -10,8 +10,15 @@
 //!   Session 0). Equivalent to what `scripts/install.ps1 -AutoStart`
 //!   does — the install script can call out to this subcommand to
 //!   keep the registration logic in one place.
-//! - **macOS / Linux**: not implemented yet. Returns an error pointing
-//!   the user at the manual recipe (`launchctl` / `systemctl --user`).
+//! - **macOS**: LaunchAgent `com.trycua.driver.plist` under
+//!   `~/Library/LaunchAgents/` with `RunAtLoad` + `KeepAlive`, managed
+//!   via the modern `launchctl bootstrap` / `bootout` / `kickstart`
+//!   API. The label matches the bundle identity so the launchd-started
+//!   daemon carries the same TCC responsibility identity as the signed
+//!   app — Accessibility / Screen Recording grants survive logons.
+//!   Equivalent to what `scripts/install-local.sh --autostart` does.
+//! - **Linux**: not implemented yet. Returns an error pointing
+//!   the user at the manual recipe (`systemctl --user`).
 //!   `scripts/install-local.sh --autostart` covers the manual path
 //!   today.
 //!
@@ -446,16 +453,218 @@ Register-ScheduledTask -TaskName $env:CUA_DRIVER_AS_TASK -Action $action -Trigge
     }
 }
 
-// ── macOS / Linux stubs ───────────────────────────────────────────────────
+// ── macOS impl ─────────────────────────────────────────────────────────────
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
+mod platform {
+    use super::*;
+    use std::process::Command;
+
+    /// LaunchAgent label = bundle identity (mirrors how the Windows path uses
+    /// `autostart_task_name()`). Keeps the launchd service name aligned with
+    /// the TCC responsibility identity (`com.trycua.driver`), which is what
+    /// makes Accessibility / Screen Recording grants survive across logons.
+    fn label() -> &'static str {
+        crate::bundle::bundle_id()
+    }
+
+    /// `~/Library/LaunchAgents/<label>.plist` — the user LaunchAgent that
+    /// launchd picks up at every interactive logon.
+    fn plist_path() -> Result<std::path::PathBuf> {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| anyhow!("could not resolve HOME for the LaunchAgent path"))?;
+        let mut path = std::path::PathBuf::from(home);
+        path.push("Library/LaunchAgents");
+        path.push(format!("{}.plist", label()));
+        Ok(path)
+    }
+
+    /// launchctl service target: `gui/<uid>/<label>` (per-user GUI domain).
+    fn service_target() -> String {
+        format!("gui/{}/{}", unsafe { libc::getuid() }, label())
+    }
+
+    /// Per-user domain prefix for `launchctl bootstrap` / `bootout`.
+    fn user_domain() -> String {
+        format!("gui/{}", unsafe { libc::getuid() })
+    }
+
+    /// XML-escape a string for embedding in a plist (paths can contain `&`,
+    /// `<`, `>`; macOS plists are strict XML).
+    pub(super) fn xml_escape(s: &str) -> String {
+        s.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+    }
+
+    /// Log paths under the per-user state dir (`~/.cua-driver` or
+    /// `~/.cua-driver-local`), same convention as the install script.
+    fn state_log_paths() -> Result<(std::path::PathBuf, std::path::PathBuf)> {
+        let home = std::env::var_os("HOME")
+            .ok_or_else(|| anyhow!("could not resolve HOME for daemon logs"))?;
+        let dir = std::path::PathBuf::from(home).join(crate::bundle::user_home_subdirectory());
+        std::fs::create_dir_all(&dir)
+            .map_err(|e| anyhow!("failed to create state dir {}: {e}", dir.display()))?;
+        Ok((dir.join("serve.out.log"), dir.join("serve.err.log")))
+    }
+
+    pub fn enable(exe: &str) -> Result<()> {
+        let plist = plist_path()?;
+        if let Some(dir) = plist.parent() {
+            std::fs::create_dir_all(dir)
+                .map_err(|e| anyhow!("failed to create LaunchAgents dir {}: {e}", dir.display()))?;
+        }
+
+        let (out_log, err_log) = state_log_paths()?;
+        let label = label();
+        let plist_xml = format!(
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{exe}</string>
+    <string>serve</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{out_log}</string>
+  <key>StandardErrorPath</key><string>{err_log}</string>
+</dict>
+</plist>
+"#,
+            label = xml_escape(label),
+            exe = xml_escape(exe),
+            out_log = xml_escape(&out_log.to_string_lossy()),
+            err_log = xml_escape(&err_log.to_string_lossy()),
+        );
+
+        std::fs::write(&plist, plist_xml)
+            .map_err(|e| anyhow!("failed to write LaunchAgent plist {}: {e}", plist.display()))?;
+
+        // Remove any existing registration first, then bootstrap the new
+        // plist. `bootout` errors when nothing is registered — treat that as
+        // a no-op (same best-effort semantics as the Windows disable path).
+        let domain = user_domain();
+        let target = service_target();
+        let _ = Command::new("launchctl")
+            .args(["bootout", &target])
+            .output();
+        let bootstrap = Command::new("launchctl")
+            .args(["bootstrap", &domain, plist.to_str().unwrap_or_default()])
+            .output()
+            .map_err(|e| anyhow!("failed to invoke launchctl bootstrap: {e}"))?;
+        if !bootstrap.status.success() {
+            let stderr = String::from_utf8_lossy(&bootstrap.stderr);
+            // 5: BootstrapFailed; 37: Operation already in progress — an
+            // already-loaded service under the same label means we're fine.
+            let code = bootstrap.status.code().unwrap_or(-1);
+            if code != 5 && code != 37 && !stderr.contains("already") {
+                return Err(anyhow!(
+                    "launchctl bootstrap failed (exit {code}): {}",
+                    stderr.trim()
+                ));
+            }
+        }
+
+        // Start the daemon for the current session without waiting for a
+        // fresh logon (`kickstart -k` restarts if it's already running).
+        let kick = Command::new("launchctl")
+            .args(["kickstart", "-k", &target])
+            .output()
+            .map_err(|e| anyhow!("failed to invoke launchctl kickstart: {e}"))?;
+        if !kick.status.success() {
+            let stderr = String::from_utf8_lossy(&kick.stderr);
+            return Err(anyhow!(
+                "launchctl kickstart failed (exit {}): {}",
+                kick.status.code().unwrap_or(-1),
+                stderr.trim()
+            ));
+        }
+        Ok(())
+    }
+
+    pub fn disable() -> Result<()> {
+        let plist = plist_path()?;
+        // Boot out the service if loaded; missing service / missing plist are
+        // both treated as "already disabled" (no-op), mirroring the Windows
+        // `schtasks /Delete` handling of a nonexistent task.
+        let target = service_target();
+        let boot = Command::new("launchctl")
+            .args(["bootout", &target])
+            .output()
+            .map_err(|e| anyhow!("failed to invoke launchctl bootout: {e}"))?;
+        if !boot.status.success() {
+            let stderr = String::from_utf8_lossy(&boot.stderr);
+            let lower = stderr.to_lowercase();
+            if !(lower.contains("could not find service")
+                || lower.contains("no such process")
+                || lower.contains("does not exist"))
+            {
+                return Err(anyhow!(
+                    "launchctl bootout failed (exit {}): {}",
+                    boot.status.code().unwrap_or(-1),
+                    stderr.trim()
+                ));
+            }
+        }
+        if plist.exists() {
+            std::fs::remove_file(&plist).map_err(|e| {
+                anyhow!(
+                    "failed to remove LaunchAgent plist {}: {e}",
+                    plist.display()
+                )
+            })?;
+        }
+        Ok(())
+    }
+
+    pub fn status() -> Result<Status> {
+        // Not registered if the plist is absent (or the LaunchAgents dir is
+        // unreachable — we can't read it, so report absent rather than fail).
+        let plist = plist_path()?;
+        if !plist.exists() {
+            return Ok(Status::NotRegistered);
+        }
+        // Registered — check whether `cua-driver serve` is live, using the
+        // same socket probe as the Windows path (avoids a second liveness
+        // mechanism and stays consistent across platforms).
+        if crate::serve::is_daemon_listening(&crate::serve::default_socket_path()) {
+            Ok(Status::RegisteredRunning)
+        } else {
+            Ok(Status::RegisteredIdle)
+        }
+    }
+
+    pub fn kick() -> Result<()> {
+        let target = service_target();
+        let out = Command::new("launchctl")
+            .args(["kickstart", "-k", &target])
+            .output()
+            .map_err(|e| anyhow!("failed to invoke launchctl kickstart: {e}"))?;
+        if !out.status.success() {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return Err(anyhow!(
+                "launchctl kickstart failed (exit {}): {}",
+                out.status.code().unwrap_or(-1),
+                stderr.trim()
+            ));
+        }
+        Ok(())
+    }
+}
+
+// ── Linux stubs ────────────────────────────────────────────────────────────
+
+#[cfg(target_os = "linux")]
 mod platform {
     use super::*;
 
-    const NOT_YET: &str = "cua-driver autostart is currently Windows-only. macOS users: see \
-         libs/cua-driver/scripts/install-local.sh --autostart for the \
-         LaunchAgent recipe. Linux users: same script registers a systemd \
-         --user unit. A cross-platform impl is tracked as a follow-up.";
+    const NOT_YET: &str = "cua-driver autostart is currently Windows/macOS-only. Linux users: see \
+         libs/cua-driver/scripts/install-local.sh --autostart for the systemd \
+         user-unit recipe. A cross-platform impl is tracked as a follow-up.";
 
     pub fn enable(_exe: &str) -> Result<()> {
         Err(anyhow!(NOT_YET))
@@ -670,5 +879,33 @@ mod tests {
             TaskQueryOutcome::Unknown
         );
         assert_eq!(classify_task_query(false, None), TaskQueryOutcome::Unknown);
+    }
+
+    #[cfg(target_os = "macos")]
+    mod macos_platform {
+        use super::super::platform::xml_escape;
+
+        #[test]
+        fn xml_escape_handles_ampersand() {
+            assert_eq!(xml_escape("a&b"), "a&amp;b");
+        }
+
+        #[test]
+        fn xml_escape_handles_angle_brackets() {
+            assert_eq!(xml_escape("<path>"), "&lt;path&gt;");
+        }
+
+        #[test]
+        fn xml_escape_leaves_plain_paths_untouched() {
+            assert_eq!(
+                xml_escape("/Users/example/.local/bin/cua-driver"),
+                "/Users/example/.local/bin/cua-driver"
+            );
+        }
+
+        #[test]
+        fn xml_escape_combines_all_characters() {
+            assert_eq!(xml_escape("a&<b>"), "a&amp;&lt;b&gt;");
+        }
     }
 }

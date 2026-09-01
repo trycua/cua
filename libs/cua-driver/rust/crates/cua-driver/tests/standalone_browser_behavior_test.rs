@@ -3859,10 +3859,9 @@ fn run_browser_owned_permission_prompt(spec: &BrowserSpec) {
         );
         let (target_id, tab_id, snapshot) = bind(&mut fixture, &browser_session);
         fixture.driver.start_behavior_recording();
-        // Windows can prove and deliver a native trusted pointer route for
-        // both Chrome and Edge. Edge rejects a synthetic DOM click before it
-        // opens browser chrome. Linux/macOS currently expose only dom_event
-        // through browser_click; Linux Chrome accepts it for this API.
+        // Windows uses trusted input for Chrome and Edge. This row keeps
+        // dom_event on macOS and Linux because it only prepares the native
+        // permission prompt; trusted macOS Chrome click is covered separately.
         let input_route = if cfg!(target_os = "windows") {
             "trusted"
         } else {

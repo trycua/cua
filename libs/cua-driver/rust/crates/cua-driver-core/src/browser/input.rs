@@ -79,7 +79,7 @@ pub(crate) async fn trusted_ref_point(
     cdp_session: &str,
     backend_node_id: i64,
 ) -> Result<(f64, f64), BrowserRefusal> {
-    let point = ref_point(conn, cdp_session, backend_node_id).await?;
+    let point = integer_css_point(ref_point(conn, cdp_session, backend_node_id).await?);
     prove_ref_hit(conn, cdp_session, backend_node_id, point).await?;
     Ok(point)
 }
@@ -197,6 +197,10 @@ async fn resolve_object(
     .map(str::to_owned)
 }
 
+fn integer_css_point(point: (f64, f64)) -> (f64, f64) {
+    (point.0.floor(), point.1.floor())
+}
+
 fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
     let quad = box_model.get("model")?.get("content")?.as_array()?;
     if quad.len() < 8 {
@@ -227,5 +231,10 @@ mod tests {
             quad_center(&json!({ "model": { "content": [0, 0] } })),
             None
         );
+    }
+
+    #[test]
+    fn trusted_points_use_integer_css_coordinates() {
+        assert_eq!(integer_css_point((10.75, 20.25)), (10.0, 20.0));
     }
 }

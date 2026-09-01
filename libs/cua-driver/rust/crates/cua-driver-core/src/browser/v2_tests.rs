@@ -2243,6 +2243,31 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
 }
 
 #[tokio::test]
+async fn trusted_pointer_uses_the_shared_background_refusal() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+
+    let trusted = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "hover",
+            "x": 20, "y": 20, "input_route": "trusted", "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&trusted)["refusal"]["code"],
+        "browser_input_trust_unavailable"
+    );
+    assert_eq!(structured(&trusted)["refusal"]["detail"]["action"], "hover");
+    assert_eq!(
+        structured(&trusted)["refusal"]["detail"]["trusted_delivery_attempted"],
+        false
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Emulation.setFocusEmulationEnabled").is_empty());
+}
+
+#[tokio::test]
 async fn main_frame_navigation_invalidates_refs_via_loader_identity() {
     let f = fixture().await;
     let (target, tab) = bind(&f).await;

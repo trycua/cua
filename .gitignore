@@ -98,6 +98,7 @@ env.bak/
 venv.bak/
 # Git worktrees
 .worktrees/
+.pi/
 # Spyder project settings
 .spyderproject
 .spyproject

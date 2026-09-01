@@ -110,9 +110,10 @@
   <fieldset>
     <legend>drag_task</legend>
     <div class="row">
-      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source">Drag source</div>
+      <div id="drag-source" data-cua-id="drag-source" aria-label="drag-source" draggable="true">Drag source</div>
       <div id="drop-target" data-cua-id="drop-target" aria-label="drop-target">Drop target</div>
       <span class="mirror" id="drag-status" data-cua-id="drag-status">drag_status=idle</span>
+      <span class="mirror" id="drag-events" data-cua-id="drag-events">drag_events=</span>
     </div>
   </fieldset>
 
@@ -254,20 +255,52 @@
     const source = $('drag-source');
     const target = $('drop-target');
     let dragging = false;
+    const observed = [];
+    const record = event => {
+      // One occurrence of each transition is sufficient evidence and keeps
+      // high-frequency pointermove/dragover events deterministic.
+      if (!observed.includes(event.type)) {
+        observed.push(event.type);
+        $('drag-events').textContent = `drag_events=${observed.join(',')}`;
+      }
+    };
+    for (const kind of ['pointerdown', 'pointermove', 'pointerup', 'dragstart', 'dragover', 'drop']) {
+      document.addEventListener(kind, record, true);
+    }
     source.addEventListener('pointerdown', event => {
       dragging = true;
-      source.setPointerCapture(event.pointerId);
       $('drag-status').textContent = 'drag_status=started';
     });
     source.addEventListener('pointermove', event => {
       if (dragging) $('drag-status').textContent = 'drag_status=moved';
     });
-    source.addEventListener('pointerup', event => {
+    // Keep the pointer fallback document-scoped: unlike pointer capture it
+    // does not suppress Chromium's native HTML drag negotiation, and it still
+    // preserves the existing canvas-style background-drag oracle on hosts
+    // whose injected stream does not begin an HTML drag.
+    document.addEventListener('pointerup', event => {
+      if (!dragging) return;
       dragging = false;
       const rect = target.getBoundingClientRect();
       const inside = event.clientX >= rect.left && event.clientX <= rect.right &&
         event.clientY >= rect.top && event.clientY <= rect.bottom;
       $('drag-status').textContent = inside ? 'drag_status=dropped' : 'drag_status=outside';
+    });
+    source.addEventListener('dragstart', event => {
+      dragging = true;
+      event.dataTransfer.setData('text/plain', 'cua-drag-source');
+      event.dataTransfer.effectAllowed = 'move';
+    });
+    target.addEventListener('dragover', event => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = 'move';
+    });
+    target.addEventListener('drop', event => {
+      event.preventDefault();
+      dragging = false;
+      $('drag-status').textContent = event.dataTransfer.getData('text/plain') === 'cua-drag-source'
+        ? 'drag_status=dropped'
+        : 'drag_status=rejected';
     });
   })();
 

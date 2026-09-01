@@ -82,8 +82,8 @@ var allowedProperties = map[string]struct{}{
 var allowedResourceTypes = map[string]struct{}{"pool": {}, "template": {}, "claim": {}}
 var allowedReasons = map[string]struct{}{
 	"payment_required": {}, "authorization": {}, "validation": {}, "quota": {}, "timeout": {}, "internal": {},
-	"not_svc_route": {}, "invalid_method": {}, "upgrade_request": {}, "missing_claim": {}, "multiple_claims": {},
-	"invalid_claim": {}, "claim_lookup_failed": {}, "claim_mismatch": {}, "claim_not_bound": {}, "sandbox_missing": {},
+	"not_svc_route": {}, "invalid_method": {}, "upgrade_request": {}, "binding_lookup_failed": {}, "claim_missing": {},
+	"claim_mismatch": {}, "claim_not_bound": {}, "sandbox_missing": {},
 	"service_mismatch": {}, "pool_lookup_failed": {}, "pool_missing": {}, "non_2xx": {}, "probe_request": {}, "facts_unavailable": {},
 }
 

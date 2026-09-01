@@ -10,7 +10,7 @@ from fleet_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, Cyclops
 BASE = 'https://cyclops.invalid'
 TOKEN = 'https://keycloak.invalid/realms/offline/protocol/openid-connect/token'
 JSON_HEADERS = [('accept', 'application/json'), ('content-type', 'application/json'), ('authorization', 'Bearer offline-token')]
-SERVICE_HEADERS = [('X-Cua-Fleet-Claim', 'default'), ('authorization', 'Bearer offline-token')]
+SERVICE_HEADERS = [('authorization', 'Bearer offline-token')]
 SERVICE_URL = f'{BASE}/api/svc/default/offline-sandbox-mcp/mcp'
 
 @dataclass(frozen=True)

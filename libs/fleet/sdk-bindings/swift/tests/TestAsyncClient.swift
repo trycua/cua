@@ -34,7 +34,7 @@ private func serviceExpected(body: Data?, response: Data) -> Expected {
     Expected(
         method: "POST",
         url: "https://cyclops.invalid/api/svc/default/offline-sandbox-mcp/mcp",
-        headers: [HttpHeader(name: "X-Cua-Fleet-Claim", value: "default"), HttpHeader(name: "authorization", value: "Bearer offline-token")],
+        headers: [HttpHeader(name: "authorization", value: "Bearer offline-token")],
         body: body,
         status: 202,
         response: response

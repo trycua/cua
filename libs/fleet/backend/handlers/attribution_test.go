@@ -16,7 +16,7 @@ type fakeAttributionFactsReader struct {
 	calls int
 }
 
-func (f *fakeAttributionFactsReader) ReadBoundClaim(context.Context, string, string) (BoundClaim, error) {
+func (f *fakeAttributionFactsReader) ReadBoundClaimForSandbox(context.Context, string, string) (BoundClaim, error) {
 	f.calls++
 	return f.claim, nil
 }
@@ -25,13 +25,15 @@ func (f *fakeAttributionFactsReader) PoolExists(context.Context, string, string)
 	return f.pool, nil
 }
 
-func TestFleetAttributionFactsReaderUsesBoundClaimAndExactPool(t *testing.T) {
+func TestFleetAttributionFactsReaderDerivesClaimFromSandboxOwnerAndExactPool(t *testing.T) {
 	var paths []string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		switch r.URL.Path {
+		case "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxes/sandbox-1":
+			_, _ = w.Write([]byte(`{"metadata":{"ownerReferences":[{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","name":"claim-1","uid":"claim-uid-1","controller":true}]}}`))
 		case "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxclaims/claim-1":
-			_, _ = w.Write([]byte(`{"metadata":{"name":"claim-1"},"status":{"phase":"Bound","sandbox":{"name":"sandbox-1"}}}`))
+			_, _ = w.Write([]byte(`{"metadata":{"name":"claim-1","uid":"claim-uid-1"},"status":{"phase":"Bound","sandbox":{"name":"sandbox-1"}}}`))
 		case "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1":
 			_, _ = w.Write([]byte(`{"metadata":{"name":"pool-1"}}`))
 		default:
@@ -50,21 +52,21 @@ func TestFleetAttributionFactsReaderUsesBoundClaimAndExactPool(t *testing.T) {
 
 	ctx := context.WithValue(context.Background(), auth.UserKey, &auth.User{ID: "user-1"})
 	reader := fleetAttributionFactsReader{handlers: Handlers{}}
-	claim, err := reader.ReadBoundClaim(ctx, "pool-1", "claim-1")
-	if err != nil || claim != (BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}) {
+	claim, err := reader.ReadBoundClaimForSandbox(ctx, "pool-1", "sandbox-1")
+	if err != nil || claim != (BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true, OwnerMatched: true}) {
 		t.Fatalf("claim = %#v, err = %v", claim, err)
 	}
 	exists, err := reader.PoolExists(ctx, "pool-1", "pool-1")
 	if err != nil || !exists {
 		t.Fatalf("pool exists = %v, err = %v", exists, err)
 	}
-	if len(paths) != 2 || paths[1] != "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1" {
+	if len(paths) != 3 || paths[0] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxes/sandbox-1" || paths[1] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxclaims/claim-1" || paths[2] != "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1" {
 		t.Fatalf("lookup paths = %#v", paths)
 	}
 }
 
 func TestQualifiesFleetAttribution(t *testing.T) {
-	base := AttributionFacts{AuthenticatedNamespace: true, SDKClaim: "claim-1", Claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}, Service: "sandbox-1-server", NamespacePoolExists: true, UpstreamStatus: 200, Method: "GET", Route: "/api/svc/ns/svc", Path: "/v1/tools"}
+	base := AttributionFacts{AuthenticatedNamespace: true, Claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true, OwnerMatched: true}, Service: "sandbox-1-server", NamespacePoolExists: true, UpstreamStatus: 200, Method: "GET", Route: "/api/svc/ns/svc", Path: "/v1/tools"}
 	cases := []struct {
 		name   string
 		mutate func(*AttributionFacts)
@@ -72,8 +74,8 @@ func TestQualifiesFleetAttribution(t *testing.T) {
 	}{
 		{"all conjuncts", func(*AttributionFacts) {}, true},
 		{"auth missing", func(f *AttributionFacts) { f.AuthenticatedNamespace = false }, false},
-		{"sdk claim missing", func(f *AttributionFacts) { f.SDKClaim = "" }, false},
-		{"claim mismatch", func(f *AttributionFacts) { f.Claim.Claim = "other" }, false},
+		{"claim missing", func(f *AttributionFacts) { f.Claim.Claim = "" }, false},
+		{"owner mismatch", func(f *AttributionFacts) { f.Claim.OwnerMatched = false }, false},
 		{"not bound", func(f *AttributionFacts) { f.Claim.Bound = false }, false},
 		{"sandbox missing", func(f *AttributionFacts) { f.Claim.Sandbox = "" }, false},
 		{"service mismatch", func(f *AttributionFacts) { f.Service = "sandbox-1-mcp" }, false},
@@ -106,21 +108,19 @@ func TestQualifiesFleetAttribution(t *testing.T) {
 	}
 }
 
-func TestQualifySvcRequestUsesOnlyValidatedExactClaimAndSvcRoutes(t *testing.T) {
-	reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}, pool: true}
+func TestQualifySvcRequestDerivesExactBindingWithoutClientHeader(t *testing.T) {
+	reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true, OwnerMatched: true}, pool: true}
 	r := httptest.NewRequest("GET", "/api/svc/pool-1/sandbox-1-server/tools", nil)
 	r.Pattern = "/api/svc/{namespace}/{service}/{path...}"
 	r.SetPathValue("namespace", "pool-1")
 	r.SetPathValue("service", "sandbox-1-server")
 	r.SetPathValue("path", "tools")
-	r.Header.Set(FleetClaimHeader, "claim-1")
 	if !QualifySvcRequest(r.Context(), r, 204, reader) {
-		t.Fatal("expected exact claim to qualify")
+		t.Fatal("expected backend-derived binding to qualify")
 	}
 
 	for _, mutate := range []func(*http.Request){
-		func(r *http.Request) { r.Header.Set(FleetClaimHeader, "bad claim") },
-		func(r *http.Request) { r.Header.Add(FleetClaimHeader, "claim-2") },
+		func(r *http.Request) { r.SetPathValue("service", "sandbox-1-mcp") },
 		func(r *http.Request) { r.Pattern = "/api/k8s/{path...}" },
 	} {
 		before := reader.calls
@@ -140,15 +140,27 @@ func TestQualifySvcRequestUsesOnlyValidatedExactClaimAndSvcRoutes(t *testing.T) 
 }
 
 func TestQualifySvcRequestResultReportsBoundedReasons(t *testing.T) {
-	reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}, pool: true}
+	reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true, OwnerMatched: true}, pool: true}
 	r := httptest.NewRequest("GET", "/api/svc/pool-1/sandbox-1-server/health", nil)
 	r.Pattern = "/api/svc/{namespace}/{service}/{path...}"
 	r.SetPathValue("namespace", "pool-1")
 	r.SetPathValue("service", "sandbox-1-server")
 	r.SetPathValue("path", "health")
-	r.Header.Set(FleetClaimHeader, "claim-1")
 	result := QualifySvcRequestResult(r.Context(), r, http.StatusOK, reader)
 	if result.Qualifies || result.Reason != "probe_request" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestQualifySvcRequestRejectsBindingThatDoesNotMatchSandboxOwner(t *testing.T) {
+	reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}, pool: true}
+	r := httptest.NewRequest(http.MethodPost, "/api/svc/pool-1/sandbox-1-server/tools", nil)
+	r.Pattern = "/api/svc/{namespace}/{service}/{path...}"
+	r.SetPathValue("namespace", "pool-1")
+	r.SetPathValue("service", "sandbox-1-server")
+	r.SetPathValue("path", "tools")
+	result := QualifySvcRequestResult(r.Context(), r, http.StatusOK, reader)
+	if result.Qualifies || result.Reason != "claim_mismatch" {
 		t.Fatalf("result = %#v", result)
 	}
 }
@@ -159,14 +171,13 @@ func TestQualifySvcRequestRejectsUpgradeSignalsBeforeReadingFacts(t *testing.T) 
 		{"Connection": {"keep-alive, Upgrade"}},
 		{"Connection": {"UPGRADE"}},
 	} {
-		reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true}, pool: true}
+		reader := &fakeAttributionFactsReader{claim: BoundClaim{Claim: "claim-1", Sandbox: "sandbox-1", Bound: true, OwnerMatched: true}, pool: true}
 		r := httptest.NewRequest("GET", "/api/svc/pool-1/sandbox-1-server/tools", nil)
 		r.Pattern = "/api/svc/{namespace}/{service}/{path...}"
 		r.SetPathValue("namespace", "pool-1")
 		r.SetPathValue("service", "sandbox-1-server")
 		r.SetPathValue("path", "tools")
 		r.Header = headers
-		r.Header.Set(FleetClaimHeader, "claim-1")
 		if QualifySvcRequest(r.Context(), r, 200, reader) {
 			t.Fatal("upgrade request qualified")
 		}

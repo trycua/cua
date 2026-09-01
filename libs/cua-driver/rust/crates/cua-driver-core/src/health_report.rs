@@ -231,6 +231,15 @@ pub trait HealthCheckProvider: Send + Sync {
     /// Run a single check by name. The dispatcher only forwards names
     /// from `check_names()`; provider authors do not need to handle
     /// unknown names defensively.
+    ///
+    /// Calls MAY OVERLAP: the dispatcher polls every selected check
+    /// concurrently within one task, so a check must not depend on
+    /// another check having run first, and probes that share
+    /// thread-unsafe native state must serialize internally. Overlap
+    /// is concurrency at await points, not parallelism — a provider
+    /// whose check bodies never yield still runs them one at a time,
+    /// and moving a blocking probe onto a worker thread is a per-probe
+    /// decision that requires knowing the native call is thread-safe.
     async fn run_check(&self, name: &str) -> CheckEntry;
 }
 
@@ -442,6 +451,12 @@ impl Tool for HealthReportTool {
         // within this one task — no extra threads, no new Send/Sync
         // requirements on the provider — and returns results in input
         // order, so the report keeps its canonical check order.
+        //
+        // Scope: this overlaps only the checks that YIELD (async
+        // probes, subprocess waits, spawn_blocking work). A provider
+        // whose run_check bodies are synchronous still runs them back
+        // to back; migrating such probes to worker threads is per-probe
+        // work gated on native thread-safety and is tracked separately.
         let checks: Vec<CheckEntry> =
             futures_util::future::join_all(all.iter().map(|name| async {
                 if !to_run.contains(*name) {
@@ -761,5 +776,141 @@ mod tests {
     #[test]
     fn parse_args_compiles() {
         let _ = parse_args(json!({ "include": ["x"], "skip": ["y"] }));
+    }
+
+    // ── Concurrency contract ─────────────────────────────────────────
+
+    // Instrumented provider: every check yields (tokio sleep), overlap
+    // is recorded as an active-counter high-water mark, completion
+    // order is recorded, and an RAII guard does the release bookkeeping
+    // so a CANCELLED check is still counted down (a dropped future
+    // never runs code after its await).
+    struct DelayedProvider {
+        names: &'static [&'static str],
+        delays_ms: &'static [u64],
+        active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        max_active: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+        started: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+        completed: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
+    }
+
+    impl DelayedProvider {
+        fn new(names: &'static [&'static str], delays_ms: &'static [u64]) -> Self {
+            Self {
+                names,
+                delays_ms,
+                active: Default::default(),
+                max_active: Default::default(),
+                started: Default::default(),
+                completed: Default::default(),
+            }
+        }
+    }
+
+    struct ActiveGuard(std::sync::Arc<std::sync::atomic::AtomicUsize>);
+    impl Drop for ActiveGuard {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    #[async_trait]
+    impl HealthCheckProvider for DelayedProvider {
+        fn platform(&self) -> &'static str {
+            "fixture"
+        }
+        fn check_names(&self) -> &'static [&'static str] {
+            self.names
+        }
+        async fn run_check(&self, name: &str) -> CheckEntry {
+            use std::sync::atomic::Ordering;
+            let idx = self.names.iter().position(|n| *n == name).unwrap();
+            self.started.lock().unwrap().push(name.to_owned());
+            let now = self.active.fetch_add(1, Ordering::SeqCst) + 1;
+            self.max_active.fetch_max(now, Ordering::SeqCst);
+            let _guard = ActiveGuard(self.active.clone());
+            tokio::time::sleep(std::time::Duration::from_millis(self.delays_ms[idx])).await;
+            self.completed.lock().unwrap().push(name.to_owned());
+            CheckEntry::pass(name, format!("{name} ok"))
+        }
+    }
+
+    /// The dispatcher must actually overlap yielding checks (the old
+    /// sequential loop fails this: its high-water mark is 1), complete
+    /// them in delay order rather than declaration order, and still
+    /// report entries in canonical `check_names()` order.
+    #[tokio::test]
+    async fn yielding_checks_overlap_and_report_in_canonical_order() {
+        let provider = DelayedProvider::new(&["slow", "mid", "fast"], &[120, 60, 10]);
+        let max_active = provider.max_active.clone();
+        let completed = provider.completed.clone();
+        let tool = HealthReportTool::new(Arc::new(provider));
+
+        let result = tool.invoke(json!({})).await;
+        let checks = result.structured_content.unwrap()["checks"].clone();
+        let reported: Vec<String> = checks
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| c["name"].as_str().unwrap().to_owned())
+            .collect();
+        assert_eq!(reported, vec!["slow", "mid", "fast"], "canonical order");
+
+        let done = completed.lock().unwrap().clone();
+        assert_eq!(
+            done,
+            vec!["fast", "mid", "slow"],
+            "completion follows delays"
+        );
+        assert!(
+            max_active.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "checks never overlapped — high-water mark {}",
+            max_active.load(std::sync::atomic::Ordering::SeqCst)
+        );
+    }
+
+    /// A skipped name must never reach the provider, and its Skip entry
+    /// must still hold its canonical position in the report.
+    #[tokio::test]
+    async fn skipped_checks_never_reach_the_provider() {
+        let provider = DelayedProvider::new(&["slow", "mid", "fast"], &[5, 5, 5]);
+        let started = provider.started.clone();
+        let tool = HealthReportTool::new(Arc::new(provider));
+
+        let result = tool.invoke(json!({ "skip": ["mid"] })).await;
+        let checks = result.structured_content.unwrap()["checks"].clone();
+        let entries = checks.as_array().unwrap();
+        assert_eq!(entries[1]["name"], "mid");
+        assert_eq!(entries[1]["status"], "skip");
+        assert!(
+            !started.lock().unwrap().contains(&"mid".to_owned()),
+            "skipped check reached the provider"
+        );
+    }
+
+    /// Cancelling the report mid-flight must drop every started check
+    /// cleanly: the RAII guards release the active counter, nothing
+    /// panics, and only the checks whose delays elapsed completed.
+    #[tokio::test]
+    async fn cancellation_releases_started_checks() {
+        let provider = DelayedProvider::new(&["fast", "slow_a", "slow_b"], &[5, 30_000, 30_000]);
+        let active = provider.active.clone();
+        let started = provider.started.clone();
+        let completed = provider.completed.clone();
+        let tool = HealthReportTool::new(Arc::new(provider));
+
+        let out = tokio::time::timeout(
+            std::time::Duration::from_millis(150),
+            tool.invoke(json!({})),
+        )
+        .await;
+        assert!(out.is_err(), "expected the report to be cancelled");
+        assert_eq!(started.lock().unwrap().len(), 3, "all checks had started");
+        assert_eq!(completed.lock().unwrap().clone(), vec!["fast"]);
+        assert_eq!(
+            active.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "cancelled checks did not release the active counter"
+        );
     }
 }

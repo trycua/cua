@@ -120,6 +120,9 @@ pub(crate) fn detect_browser_challenge<'a>(
         {
             consider("url", "recaptcha", 60, "challenge_infrastructure", true);
         }
+        if host == "www.google.com" && parsed.path().starts_with("/sorry/") {
+            consider("url", "generic", 60, "challenge_infrastructure", true);
+        }
         if host == "hcaptcha.com" || host.ends_with(".hcaptcha.com") {
             consider("url", "hcaptcha", 60, "challenge_infrastructure", true);
         }
@@ -260,6 +263,39 @@ mod tests {
         assert_eq!(value["provider"], "generic");
         assert_eq!(value["requires_user"], true);
         assert_eq!(value["handling"], "explicit_resume_or_user_handoff");
+    }
+
+    #[test]
+    fn detects_google_unusual_traffic_interstitial_without_a_checkbox() {
+        let value = browser_challenge_value(
+            "https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch",
+            "",
+            ["Our systems have detected unusual traffic. Please try your request again later."],
+        );
+
+        assert_eq!(value["required"], true);
+        assert_eq!(value["origin"], "https://www.google.com");
+        assert_eq!(value["provider"], "generic");
+        assert_eq!(value["confidence"], "high");
+        assert_eq!(
+            value["signals"],
+            json!([{
+                "source": "url",
+                "provider": "generic",
+                "reason": "challenge_infrastructure",
+            }])
+        );
+    }
+
+    #[test]
+    fn does_not_treat_other_sites_sorry_pages_as_google_challenges() {
+        let value = browser_challenge_value(
+            "https://example.test/sorry/index",
+            "Sorry about that",
+            ["The requested article moved."],
+        );
+
+        assert_eq!(value["required"], false);
     }
 
     #[test]

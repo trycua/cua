@@ -58,15 +58,20 @@ releasing the claim.
 <Tabs groupId="signed-service-url-language" persist items={['Python', 'TypeScript']}>
   <Tab value="Python">
 
-Install the Python Sandbox SDK:
-
-```bash
-pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox
-```
+This example uses [`uv`](https://docs.astral.sh/uv/) and the same self-contained
+script setup as the Python pool guide. `uv` installs `cua-sandbox` in an
+isolated environment when you run the script.
 
 Save the following script as `share_service.py`:
 
 ```python title="share_service.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox",
+# ]
+# ///
+
 import asyncio
 import os
 
@@ -111,7 +116,7 @@ asyncio.run(main())
 Run it:
 
 ```bash
-python share_service.py
+uv run share_service.py
 ```
 
 `pool.claim()` keeps the claim bound for the duration of the context manager.

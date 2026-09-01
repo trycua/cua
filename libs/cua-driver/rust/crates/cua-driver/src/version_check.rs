@@ -643,6 +643,15 @@ fn migrate_legacy_cache() {
 
 // ── HTTP fetch (shared with the `update` subcommand) ─────────────────────
 
+fn github_token() -> Option<String> {
+    ["GH_TOKEN", "GITHUB_TOKEN"].into_iter().find_map(|name| {
+        std::env::var(name)
+            .ok()
+            .map(|token| token.trim().to_owned())
+            .filter(|token| !token.is_empty())
+    })
+}
+
 /// Fetch the highest `cua-driver-rs-v*` release tag from GitHub.
 ///
 /// Uses `ureq` (already a dep via telemetry) so we don't shell out to
@@ -667,20 +676,32 @@ pub fn fetch_latest_version() -> Result<String, String> {
 pub fn fetch_latest_version_for(
     channel: crate::release_channel::ReleaseChannel,
 ) -> Result<String, String> {
+    fetch_latest_version_from(RELEASES_URL, channel)
+}
+
+fn fetch_latest_version_from(
+    releases_url: &str,
+    channel: crate::release_channel::ReleaseChannel,
+) -> Result<String, String> {
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()
         .new_agent();
 
-    let response = agent
-        .get(RELEASES_URL)
+    let mut request = agent
+        .get(releases_url)
         .header("Accept", "application/vnd.github+json")
         .header(
             "User-Agent",
             concat!("cua-driver-rs/", env!("CARGO_PKG_VERSION")),
-        )
+        );
+    if let Some(token) = github_token() {
+        request = request.header("Authorization", format!("Bearer {token}"));
+    }
+
+    let response = request
         .call()
-        .map_err(|e| format!("HTTP error: {e}"))?;
+        .map_err(|error| format!("HTTP error: {error}"))?;
 
     let body: serde_json::Value = response
         .into_body()
@@ -829,6 +850,81 @@ mod tests {
             },
         }
         result
+    }
+
+    fn request_authorization(
+        gh_token: Option<&str>,
+        github_token: Option<&str>,
+    ) -> (Option<String>, String) {
+        for (name, value) in [("GH_TOKEN", gh_token), ("GITHUB_TOKEN", github_token)] {
+            match value {
+                Some(value) => unsafe { std::env::set_var(name, value) },
+                None => unsafe { std::env::remove_var(name) },
+            }
+        }
+
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let url = format!("http://{}/releases", listener.local_addr().unwrap());
+        let server = std::thread::spawn(move || {
+            use std::io::{Read, Write};
+
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut chunk = [0_u8; 1024];
+            while !request.windows(4).any(|window| window == b"\r\n\r\n") {
+                let count = stream.read(&mut chunk).unwrap();
+                if count == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..count]);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 401 Unauthorized\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+            String::from_utf8(request).unwrap()
+        });
+
+        let error = fetch_latest_version_from(&url, crate::release_channel::ReleaseChannel::Stable)
+            .unwrap_err();
+        let request = server.join().unwrap();
+        let authorization = request.lines().find_map(|line| {
+            let (name, value) = line.split_once(':')?;
+            name.eq_ignore_ascii_case("authorization")
+                .then(|| value.trim().to_owned())
+        });
+        (authorization, error)
+    }
+
+    #[test]
+    fn github_request_applies_token_precedence_without_leaking_secrets() {
+        let _guard = ENV_LOCK.lock().unwrap();
+        let saved_gh = std::env::var_os("GH_TOKEN");
+        let saved_github = std::env::var_os("GITHUB_TOKEN");
+
+        let (authorization, error) =
+            request_authorization(Some("  gh-secret  "), Some("github-secret"));
+        assert_eq!(authorization.as_deref(), Some("Bearer gh-secret"));
+        assert!(!error.contains("gh-secret"));
+        assert!(!error.contains("github-secret"));
+
+        let (authorization, error) = request_authorization(Some(" \t "), Some("  github-secret  "));
+        assert_eq!(authorization.as_deref(), Some("Bearer github-secret"));
+        assert!(!error.contains("github-secret"));
+
+        let (authorization, error) = request_authorization(None, None);
+        assert_eq!(authorization, None);
+        assert!(!error.contains("secret"));
+
+        match saved_gh {
+            Some(value) => unsafe { std::env::set_var("GH_TOKEN", value) },
+            None => unsafe { std::env::remove_var("GH_TOKEN") },
+        }
+        match saved_github {
+            Some(value) => unsafe { std::env::set_var("GITHUB_TOKEN", value) },
+            None => unsafe { std::env::remove_var("GITHUB_TOKEN") },
+        }
     }
 
     // ── is_newer ────────────────────────────────────────────────────────

@@ -9,7 +9,7 @@ export default defineConfig({
   workers: process.env.CI ? 2 : undefined,
   use: {
     baseURL: "http://localhost:5180",
-    headless: true,
+    headless: process.env.CUA_E2E_HEADED !== "1",
     launchOptions: localChromiumExecutable
       ? { executablePath: localChromiumExecutable }
       : undefined,

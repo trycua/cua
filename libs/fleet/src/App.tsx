@@ -51,6 +51,7 @@ import {
   isThreadNavigationHref,
   useThreadNavigation,
 } from "./components/ThreadNavigation";
+import { useI18n } from "./i18n/I18nProvider";
 
 const VERSION_CHECK_INTERVAL_MS = 60_000;
 
@@ -178,6 +179,7 @@ function ShellLayout({
   const navigate = useNavigate();
   const [staleDismissed, setStaleDismissed] = useState(false);
   const { stale } = useStaleCheck();
+  const { t } = useI18n();
   const user = userInfo();
   const { admin, chat } = useFeatureFlags();
   const threadNavigation = useThreadNavigation();
@@ -240,9 +242,9 @@ function ShellLayout({
           utilities={[
             {
               type: "menu-dropdown",
-              text: user.name ?? user.email ?? "Account",
+              text: user.name ?? user.email ?? t("account.fallback"),
               iconName: "user-profile",
-              items: [{ id: "signout", text: "Sign out" }],
+              items: [{ id: "signout", text: t("common.signOut") }],
               onItemClick: (event) => {
                 if (event.detail.id === "signout") logout();
               },
@@ -254,9 +256,9 @@ function ShellLayout({
         disableBodyScroll={location.pathname.startsWith("/agent")}
         headerSelector="#cua-shell-topnav"
         ariaLabels={{
-          navigation: "Main navigation",
-          navigationClose: "Close navigation",
-          navigationToggle: "Open navigation",
+          navigation: t("navigation.main"),
+          navigationClose: t("navigation.close"),
+          navigationToggle: t("navigation.open"),
         }}
         toolsHide
         navigationOpen={navigationOpen}
@@ -289,17 +291,17 @@ function ShellLayout({
                 navigate(localVisualPreviewPath(path));
               }}
               items={[
-                { type: "link", text: "Pools", href: "#/pools" },
-                { type: "link", text: "Usage", href: "#/usage" },
-                { type: "link", text: "API keys", href: "#/user-keys" },
-                { type: "link", text: "Settings", href: "#/settings" },
+                { type: "link", text: t("navigation.pools"), href: "#/pools" },
+                { type: "link", text: t("navigation.usage"), href: "#/usage" },
+                { type: "link", text: t("navigation.apiKeys"), href: "#/user-keys" },
+                { type: "link", text: t("navigation.settings"), href: "#/settings" },
                 ...(admin
                   ? [
                       {
                         type: "link" as const,
-                        text: "Feature flags",
+                        text: t("navigation.featureFlags"),
                         href: "#/admin/feature-flags",
-                        info: <Badge color="blue">Admin</Badge>,
+                        info: <Badge color="blue">{t("common.admin")}</Badge>,
                       },
                     ]
                   : []),
@@ -317,11 +319,11 @@ function ShellLayout({
                 ? [
                     {
                       type: "info" as const,
-                      header: "A new version is available",
-                      content: "Refresh to get the latest features and fixes.",
+                      header: t("stale.header"),
+                      content: t("stale.content"),
                       action: (
                         <Button onClick={() => window.location.reload()}>
-                          Refresh now
+                          {t("common.refreshNow")}
                         </Button>
                       ),
                       dismissible: true,
@@ -343,6 +345,7 @@ function ShellLayout({
 }
 
 export function App() {
+  const { t } = useI18n();
   return (
     <BrowserRouter>
       <FeatureFlagProvider>
@@ -352,7 +355,7 @@ export function App() {
             <Route
               path="/pools"
               element={
-                <TitledPage title="Pools">
+                <TitledPage title={t("page.pools")}>
                   <PoolsList />
                 </TitledPage>
               }
@@ -360,7 +363,7 @@ export function App() {
             <Route
               path="/pools/new"
               element={
-                <TitledPage title="New pool">
+                <TitledPage title={t("page.newPool")}>
                   <PoolNew />
                 </TitledPage>
               }
@@ -372,7 +375,7 @@ export function App() {
             <Route
               path="/pools/:namespace/:name"
               element={
-                <TitledPage title="Pool details">
+                <TitledPage title={t("page.poolDetails")}>
                   <PoolDetail />
                 </TitledPage>
               }
@@ -380,7 +383,7 @@ export function App() {
             <Route
               path="/user-keys"
               element={
-                <TitledPage title="API keys">
+                <TitledPage title={t("navigation.apiKeys")}>
                   <UserApiKeys />
                 </TitledPage>
               }
@@ -388,7 +391,7 @@ export function App() {
             <Route
               path="/settings"
               element={
-                <TitledPage title="Settings">
+                <TitledPage title={t("page.settings")}>
                   <Settings />
                 </TitledPage>
               }
@@ -396,7 +399,7 @@ export function App() {
             <Route
               path="/usage"
               element={
-                <TitledPage title="Usage">
+                <TitledPage title={t("page.usage")}>
                   <BillingUsagePage />
                 </TitledPage>
               }
@@ -404,7 +407,7 @@ export function App() {
             <Route
               path="/agent"
               element={
-                <TitledPage title="Threads">
+                <TitledPage title={t("page.threads")}>
                   <ChatRoute />
                 </TitledPage>
               }
@@ -412,7 +415,7 @@ export function App() {
             <Route
               path="/agent/archived"
               element={
-                <TitledPage title="Threads">
+                <TitledPage title={t("page.threads")}>
                   <ArchivedThreadsRoute />
                 </TitledPage>
               }
@@ -420,7 +423,7 @@ export function App() {
             <Route
               path="/agent/:threadId"
               element={
-                <TitledPage title="Threads">
+                <TitledPage title={t("page.threads")}>
                   <ChatRoute />
                 </TitledPage>
               }
@@ -433,7 +436,7 @@ export function App() {
               <Route
                 path="/admin/feature-flags"
                 element={
-                  <TitledPage title="Feature flags">
+                  <TitledPage title={t("navigation.featureFlags")}>
                     <FeatureFlags />
                   </TitledPage>
                 }
@@ -442,7 +445,7 @@ export function App() {
             <Route
               path="/pools/:namespace/:poolName/claims/:claimName"
               element={
-                <TitledPage title="Claim details">
+                <TitledPage title={t("page.claimDetails")}>
                   <ClaimDetail />
                 </TitledPage>
               }
@@ -476,9 +479,10 @@ function RedirectModule() {
 
 function ChatRoute() {
   const { chat, resolved } = useFeatureFlags();
+  const { t } = useI18n();
   if (!resolved) {
     return (
-      <PageShell eyebrow="Agent" title="Chat">
+      <PageShell eyebrow="Agent" title={t("page.chat")}>
         <div className="agent-chat-page" />
       </PageShell>
     );
@@ -488,9 +492,10 @@ function ChatRoute() {
 
 function ArchivedThreadsRoute() {
   const { chat, resolved } = useFeatureFlags();
+  const { t } = useI18n();
   if (!resolved)
     return (
-      <PageShell eyebrow="Agent" title="Archived threads">
+      <PageShell eyebrow="Agent" title={t("page.archivedThreads")}>
         <div />
       </PageShell>
     );

@@ -6,6 +6,16 @@ cyclops_root="$repo_root/cyclops-cs"
 binding_dir="$cyclops_root/sdk-bindings/ts-uniffi-browser"
 stamp_dir="$cyclops_root/target/browser-sdk"
 stamp_file="$stamp_dir/input.sha256"
+stamp_existing=false
+
+case "${1:-}" in
+  "") ;;
+  --stamp-existing) stamp_existing=true ;;
+  *)
+    echo "usage: $0 [--stamp-existing]" >&2
+    exit 2
+    ;;
+esac
 
 artifacts=(
   "$binding_dir/ts/index.web.ts"
@@ -40,6 +50,16 @@ done
 stamp_matches=false
 if [ -f "$stamp_file" ] && [ "$(cat "$stamp_file")" = "$inputs_hash" ]; then
   stamp_matches=true
+fi
+
+if [ "$stamp_existing" = true ]; then
+  if [ "$artifacts_ready" != true ]; then
+    echo "error: cannot stamp missing browser SDK artifacts" >&2
+    exit 1
+  fi
+  mkdir -p "$stamp_dir"
+  printf '%s\n' "$inputs_hash" > "$stamp_file"
+  exit 0
 fi
 
 if [ "$artifacts_ready" = true ] && [ "$stamp_matches" = true ]; then

@@ -54,6 +54,28 @@ test("keeps account identity in a collapsed drawer", async ({ page }) => {
   await expect(settingsContent.getByText("test-user-id", { exact: true })).toBeVisible()
 })
 
+test("switches the shared UI language and persists it", async ({ page }) => {
+  await mockAuth(page)
+  await mockNamespacesApi(page)
+  await mockGitHubTrustPoliciesApi(page)
+  await page.goto("/settings")
+
+  await page.getByLabel("Display language").click()
+  await page.getByRole("option", { name: "Español" }).click()
+
+  await expect(page).toHaveTitle("Configuración · Cua")
+  await expect(page.locator("html")).toHaveAttribute("lang", "es")
+  await expect(page.getByRole("heading", { name: "Idioma y región" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Grupos" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Uso" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Claves de API" })).toBeVisible()
+  await expect(page.getByRole("link", { name: "Configuración" })).toBeVisible()
+
+  await page.reload()
+  await expect(page).toHaveTitle("Configuración · Cua")
+  await expect(page.getByLabel("Idioma de la interfaz")).toContainText("Español")
+})
+
 test.describe("Settings GitHub trust policies", () => {
   test.beforeEach(async ({ page }) => {
     await mockAuth(page)

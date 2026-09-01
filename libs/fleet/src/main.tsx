@@ -10,6 +10,7 @@ import displayFont from "@cua/design/assets/fonts/instrument-serif-normal-latin.
 import { HelmetProvider } from "react-helmet-async"
 import { App } from "./App"
 import { AuthProvider } from "./auth/AuthProvider"
+import { I18nProvider } from "./i18n/I18nProvider"
 import "./shell.css"
 import { captureFleetAttribution } from "./auth/fleet-attribution"
 
@@ -91,9 +92,11 @@ document.head.appendChild(interPreload)
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
     <HelmetProvider>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <I18nProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </I18nProvider>
     </HelmetProvider>
   </React.StrictMode>,
 )

@@ -745,6 +745,7 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     # install paths. Unrelated MCP servers are left alone, and the names
     # shared with the retired Swift driver need a Rust marker on disk.
     CLAUDE_JSON="$HOME/.claude.json"
+    CLAUDE_OWNED_NAMES=()
     if [[ -f "$CLAUDE_JSON" ]] && command -v python3 >/dev/null 2>&1; then
         PY_OUTPUT="$(
             CLAUDE_JSON="$CLAUDE_JSON" HOME_DIR="$HOME_DIR" RUST_INSTALL_PRESENT="$RUST_INSTALL_PRESENT" python3 <<'PY'
@@ -767,6 +768,10 @@ except Exception as exc:
     raise SystemExit(0)
 
 removed = []
+# Names this scrub established are ours. `claude mcp remove` matches on the
+# name alone, so the CLI cleanup below can only be trusted with a name once
+# the ownership check here has vouched for it.
+owned = set()
 
 def text_parts(value):
     if isinstance(value, str):
@@ -837,6 +842,7 @@ def scrub_servers(servers, scope):
         return
     for name in list(servers.keys()):
         if should_remove(name, servers[name]):
+            owned.add(name)
             del servers[name]
             removed.append(f"{scope}:{name}")
 
@@ -847,6 +853,9 @@ if isinstance(projects, dict):
     for project in projects.values():
         if isinstance(project, dict):
             scrub_servers(project.get("mcpServers"), "project")
+
+for name in sorted(owned):
+    print(f"owned-server-name: {name}")
 
 if not removed:
     raise SystemExit(0)
@@ -877,11 +886,17 @@ print(f"removed Claude MCP registration(s): {', '.join(removed)}")
 print(f"backed up Claude config to {backup}")
 PY
         )"
-        if [[ -n "$PY_OUTPUT" ]]; then
-            while IFS= read -r line; do
+        CLAUDE_SCRUB_REPORTED=0
+        while IFS= read -r line; do
+            [[ -z "$line" ]] && continue
+            if [[ "$line" == "owned-server-name: "* ]]; then
+                CLAUDE_OWNED_NAMES+=("${line#owned-server-name: }")
+            else
                 log "$line"
-            done <<< "$PY_OUTPUT"
-        else
+                CLAUDE_SCRUB_REPORTED=1
+            fi
+        done <<< "$PY_OUTPUT"
+        if [[ "$CLAUDE_SCRUB_REPORTED" == "0" ]]; then
             log "no Claude MCP registrations for cua-driver found in $CLAUDE_JSON"
         fi
     else
@@ -892,13 +907,20 @@ PY
     # active project / user scopes — fine to run; it's a no-op when the
     # entries were already scrubbed above.
     if command -v claude >/dev/null 2>&1; then
-        # `cua-driver-rs` was only ever ours. The two current names are
-        # shared with the retired Swift driver, so they follow the same
-        # Rust-marker gate the config scrub above uses.
+        # `cua-driver-rs` was only ever ours, so it is always safe to remove
+        # by name. The current names are shared with the retired Swift driver
+        # and with any side-by-side launcher, and `claude mcp remove` matches
+        # on the name alone — it cannot repeat the ownership check the scrub
+        # above made. So only ask for the names that scrub vouched for.
+        # Without that evidence (no python3, no config, or a registration
+        # bound to someone else's launcher) leaving an ambiguous entry is
+        # safer than deleting one we do not own.
         CLAUDE_MCP_SERVERS=(cua-driver-rs)
-        if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
-            CLAUDE_MCP_SERVERS+=(cua-driver cua-computer-use)
-        fi
+        for OWNED_NAME in ${CLAUDE_OWNED_NAMES+"${CLAUDE_OWNED_NAMES[@]}"}; do
+            if [[ "$OWNED_NAME" != "cua-driver-rs" ]]; then
+                CLAUDE_MCP_SERVERS+=("$OWNED_NAME")
+            fi
+        done
         for SERVER in "${CLAUDE_MCP_SERVERS[@]}"; do
             for SCOPE in local project user; do
                 if claude mcp remove "$SERVER" -s "$SCOPE" >/dev/null 2>&1; then

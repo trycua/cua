@@ -48,8 +48,9 @@
 # (~/.cua-driver/packages/, legacy ~/.cua-driver-rs/, CuaDriverRs.app,
 # the LaunchAgent/systemd unit, or current Rust telemetry state).
 #
-# Also scrubs Claude MCP registrations in ~/.claude.json that match
-# the active backend.
+# Also scrubs Claude MCP registrations in ~/.claude.json (cua-driver /
+# cua-computer-use / legacy cua-driver-rs), gated on the same Rust marker
+# for the names the retired Swift driver also used.
 #
 # Revokes TCC grants on macOS by default (Accessibility + Screen Recording)
 # so the next install prompts cleanly under the new signing identity. Pass
@@ -739,9 +740,10 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
     fi
 
     # --- Claude Code MCP registrations ---
-    # Same scrub shape as the Swift branch, keyed on the cua-driver-rs
-    # binary name + the per-platform install paths. Unrelated MCP
-    # servers are left alone.
+    # Keyed on the names the CLI registers (`cua-driver`,
+    # `cua-computer-use`, legacy `cua-driver-rs`) plus the per-platform
+    # install paths. Unrelated MCP servers are left alone, and the names
+    # shared with the retired Swift driver need a Rust marker on disk.
     CLAUDE_JSON="$HOME/.claude.json"
     if [[ -f "$CLAUDE_JSON" ]] && command -v python3 >/dev/null 2>&1; then
         PY_OUTPUT="$(
@@ -795,8 +797,40 @@ def invokes_cua_driver_rs(server):
         return True
     return False
 
+# The names the CLI actually registers. `cua-driver mcp-config --client
+# claude` emits `claude mcp add-json --scope user cua-computer-use`, so
+# `cua-driver-rs` alone never matched a current registration. Both names
+# were also the retired Swift driver's, so they are gated on the same Rust
+# marker as every other shared-path removal.
+RELEASE_SERVER_NAMES = {"cua-driver", "cua-computer-use"}
+
+def launcher_name(server):
+    # The launcher filename this registration runs, compared exactly rather
+    # than by substring: a side-by-side install ships a differently-named
+    # launcher and owns its own registration through its own uninstaller.
+    # A substring test would reach into it.
+    if not isinstance(server, dict):
+        return ""
+    command = server.get("command")
+    if not isinstance(command, str):
+        return ""
+    return os.path.basename(command)
+
 def should_remove(name, server):
-    return name in {"cua-driver-rs"} or invokes_cua_driver_rs(server)
+    if name == "cua-driver-rs" or invokes_cua_driver_rs(server):
+        return True
+    # Everything below is a name or path the retired Swift driver used too,
+    # so a Swift-only Mac that runs this script by mistake keeps its
+    # registrations.
+    if not rust_install_present:
+        return False
+    launcher = launcher_name(server)
+    if launcher == "cua-driver":
+        return True
+    # Name-only match, for an entry whose command we cannot read. When the
+    # command does name a launcher and it is not ours, the entry belongs to
+    # whatever installed it — leave it to that uninstaller.
+    return name in RELEASE_SERVER_NAMES and not launcher
 
 def scrub_servers(servers, scope):
     if not isinstance(servers, dict):
@@ -848,7 +882,7 @@ PY
                 log "$line"
             done <<< "$PY_OUTPUT"
         else
-            log "no Claude MCP registrations for cua-driver-rs found in $CLAUDE_JSON"
+            log "no Claude MCP registrations for cua-driver found in $CLAUDE_JSON"
         fi
     else
         log "no Claude config cleanup via python3 (missing $CLAUDE_JSON or python3)"
@@ -858,7 +892,14 @@ PY
     # active project / user scopes — fine to run; it's a no-op when the
     # entries were already scrubbed above.
     if command -v claude >/dev/null 2>&1; then
-        for SERVER in cua-driver-rs; do
+        # `cua-driver-rs` was only ever ours. The two current names are
+        # shared with the retired Swift driver, so they follow the same
+        # Rust-marker gate the config scrub above uses.
+        CLAUDE_MCP_SERVERS=(cua-driver-rs)
+        if [[ "$RUST_INSTALL_PRESENT" == "1" ]]; then
+            CLAUDE_MCP_SERVERS+=(cua-driver cua-computer-use)
+        fi
+        for SERVER in "${CLAUDE_MCP_SERVERS[@]}"; do
             for SCOPE in local project user; do
                 if claude mcp remove "$SERVER" -s "$SCOPE" >/dev/null 2>&1; then
                     log "removed Claude MCP server $SERVER from $SCOPE scope"

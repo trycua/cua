@@ -162,6 +162,12 @@ func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
+// ImageUploadsRoutePolicy guards bounded image upload signing. Namespace ownership
+// is evaluated by the handler because the namespace is carried in the JSON body.
+func ImageUploadsRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-image-uploads", "data.authz_image_uploads.allow"))
+}
+
 const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
@@ -240,15 +246,16 @@ type surfacePolicy struct {
 // surfacePolicies is every surface, by name. A surface owning no route fails
 // TestEveryPolicySurfaceOwnsARoute; a route naming no surface cannot start.
 var surfacePolicies = map[string]surfacePolicy{
-	"keys":         {tree: KeysRoutePolicy},
-	"config":       {tree: ConfigRoutePolicy},
-	"chat":         {tree: ChatRoutePolicy},
-	"billing":      {tree: BillingRoutePolicy},
-	"namespaces":   {tree: NamespacesRoutePolicy},
-	"github-trust": {tree: GitHubTrustRoutePolicy},
-	"user-keys":    {tree: UserKeysRoutePolicy},
-	"svc":          {tree: SvcRoutePolicy},
-	"state-query":  {tree: StateQueryRoutePolicy},
+	"keys":          {tree: KeysRoutePolicy},
+	"config":        {tree: ConfigRoutePolicy},
+	"chat":          {tree: ChatRoutePolicy},
+	"billing":       {tree: BillingRoutePolicy},
+	"namespaces":    {tree: NamespacesRoutePolicy},
+	"github-trust":  {tree: GitHubTrustRoutePolicy},
+	"user-keys":     {tree: UserKeysRoutePolicy},
+	"svc":           {tree: SvcRoutePolicy},
+	"state-query":   {tree: StateQueryRoutePolicy},
+	"image-uploads": {tree: ImageUploadsRoutePolicy},
 	"k8s": {
 		tree:    K8sRoutePolicy,
 		options: []MiddlewareOption{WithDeniedMessage("k8s request is not allowed")},
@@ -263,8 +270,9 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":      "config",
-	"/api/state/query": "state-query",
+	"/api/config":                "config",
+	"/api/state/query":           "state-query",
+	"/api/image-uploads/presign": "image-uploads",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",

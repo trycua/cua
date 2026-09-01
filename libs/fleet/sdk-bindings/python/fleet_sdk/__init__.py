@@ -28,6 +28,11 @@ class _UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus(_sdk_component._UniffiCo
     read = staticmethod(_schema_component._UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus.read)
     write = staticmethod(_schema_component._UniffiFfiConverterTypeOSGymSandboxWarmPoolStatus.write)
 
+class _UniffiFfiConverterTypePreservedJson(_sdk_component._UniffiConverterRustBuffer):
+    check_lower = staticmethod(_schema_component._UniffiFfiConverterTypePreservedJson.check_lower)
+    read = staticmethod(_schema_component._UniffiFfiConverterTypePreservedJson.read)
+    write = staticmethod(_schema_component._UniffiFfiConverterTypePreservedJson.write)
+
 __all__ = [*_schema_component.__all__, *_sdk_component.__all__]
 
 del _schema_component

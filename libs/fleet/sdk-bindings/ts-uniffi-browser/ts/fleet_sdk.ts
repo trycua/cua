@@ -4,66 +4,14 @@
 /* eslint-disable */
 // @ts-nocheck
 import * as wasmBundle from "./wasm-bindgen/index.js";
-import {
-  type UniffiRustFutureContinuationCallback,
-  type UniffiForeignFutureDroppedCallback,
-  type UniffiForeignFutureDroppedCallbackStruct,
-  type UniffiForeignFutureResultRustBuffer,
-  type UniffiForeignFutureCompleterustBuffer,
-  type UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider,
-  type UniffiVTableCallbackInterfaceFleetSdkHttpClient,
+import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct, type UniffiForeignFutureResultRustBuffer, type UniffiForeignFutureCompleterustBuffer, type UniffiVTableCallbackInterfaceFleetSdkAccessTokenProvider, type UniffiVTableCallbackInterfaceFleetSdkHttpClient,
 } from "./fleet_sdk-ffi";
-import {
-  type ClaimSpec,
-  type OsGymSandboxClaimStatus,
-  type OsGymSandboxTemplateSpec,
-  type OsGymSandboxWarmPoolSpec,
-  type OsGymSandboxWarmPoolStatus,
+import { type ClaimSpec, type OsGymSandboxClaimStatus, type OsGymSandboxTemplateSpec, type OsGymSandboxWarmPoolSpec, type OsGymSandboxWarmPoolStatus, type PreservedJsonLike,
 } from "./cyclops_sdk_schema";
-import {
-  type FfiConverter,
-  type UniffiByteArray,
-  type UniffiGcObject,
-  type UniffiHandle,
-  type UniffiObjectFactory,
-  type UniffiReferenceHolder,
-  type UniffiRustCallStatus,
-  AbstractFfiConverterByteArray,
-  FfiConverterArray,
-  FfiConverterArrayBuffer,
-  FfiConverterBool,
-  FfiConverterInt32,
-  FfiConverterMap,
-  FfiConverterObject,
-  FfiConverterObjectWithCallbacks,
-  FfiConverterOptional,
-  FfiConverterUInt16,
-  FfiConverterUInt32,
-  FfiConverterUInt64,
-  FfiConverterUInt8,
-  RustBuffer,
-  UniffiAbstractObject,
-  UniffiError,
-  UniffiInternalError,
-  UniffiResult,
-  UniffiRustCaller,
-  destructorGuardSymbol,
-  pointerLiteralSymbol,
-  uniffiCreateFfiConverterString,
-  uniffiCreateRecord,
-  uniffiRustCallAsync,
-  uniffiTraitInterfaceCallAsyncWithError,
-  uniffiTypeNameSymbol,
-  variantOrdinalSymbol,
+import { type FfiConverter, type UniffiByteArray, type UniffiGcObject, type UniffiHandle, type UniffiObjectFactory, type UniffiReferenceHolder, type UniffiRustCallStatus, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterArrayBuffer, FfiConverterBool, FfiConverterInt32, FfiConverterMap, FfiConverterObject, FfiConverterObjectWithCallbacks, FfiConverterOptional, FfiConverterUInt16, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiAbstractObject, UniffiError, UniffiInternalError, UniffiResult, UniffiRustCaller, destructorGuardSymbol, pointerLiteralSymbol, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiRustCallAsync, uniffiTraitInterfaceCallAsyncWithError, uniffiTypeNameSymbol, variantOrdinalSymbol,
 } from "@ubjs/core";
 import uniffiCyclopsSdkSchemaModule from "./cyclops_sdk_schema";
-const {
-  FfiConverterTypeClaimSpec,
-  FfiConverterTypeOSGymSandboxClaimStatus,
-  FfiConverterTypeOSGymSandboxTemplateSpec,
-  FfiConverterTypeOSGymSandboxWarmPoolSpec,
-  FfiConverterTypeOSGymSandboxWarmPoolStatus,
-} = uniffiCyclopsSdkSchemaModule.converters;
+const { FfiConverterTypeClaimSpec, FfiConverterTypeOSGymSandboxClaimStatus, FfiConverterTypeOSGymSandboxTemplateSpec, FfiConverterTypeOSGymSandboxWarmPoolSpec, FfiConverterTypeOSGymSandboxWarmPoolStatus, FfiConverterTypePreservedJson } = uniffiCyclopsSdkSchemaModule.converters;
 // wasm1: wrap the wasm-bindgen namespace once so the codegen call sites can
 // uniformly reference `nativeModule().rustbuffer_alloc` / `.rustbuffer_free`.
 // For wasm1, RustBuffers are plain JS Uint8Arrays — no Rust-side allocation
@@ -73,9 +21,7 @@ const _nativeModule = Object.assign({}, wasmBundle, {
   rustbuffer_free: (_: Uint8Array): void => {},
 });
 const nativeModule = () => _nativeModule;
-const uniffiCaller = new UniffiRustCaller(
-  () => new wasmBundle.RustCallStatus(),
-);
+const uniffiCaller = new UniffiRustCaller(() => new wasmBundle.RustCallStatus());
 
 const uniffiIsDebug =
   // @ts-ignore -- The process global might not be defined
@@ -87,134 +33,130 @@ const uniffiIsDebug =
 // Public interface members begin here.
 
 const stringConverter = (() => {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  return {
-    stringToBytes: (s: string) => encoder.encode(s),
-    bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
-    stringByteLength: (s: string) => encoder.encode(s).byteLength,
-    writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
-      const view = new Uint8Array(
-        buf.arrayBuffer,
-        offset,
-        buf.arrayBuffer.byteLength - offset,
-      );
-      return encoder.encodeInto(s, view).written;
-    },
-    readStringFromBuffer: (buf: any, offset: number, length: number): string =>
-      decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
-  };
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    return {
+        stringToBytes: (s: string) => encoder.encode(s),
+        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
+        stringByteLength: (s: string) => encoder.encode(s).byteLength,
+        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
+            const view = new Uint8Array(
+                buf.arrayBuffer,
+                offset,
+                buf.arrayBuffer.byteLength - offset,
+            );
+            return encoder.encodeInto(s, view).written;
+        },
+        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
+            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
+    };
 })();
 const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 
 export type ResourceMetadata = {
-  namespace: string;
-  name: string;
-  labels?: Map<string, string>;
-  creationTimestamp?: string;
-};
+    namespace: string,
+    name: string,
+    labels?: Map<string, string>,
+    creationTimestamp?: string
+}
 
 /**
  * Generated factory for {@link ResourceMetadata} record objects.
  */
 export const ResourceMetadata = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<ResourceMetadata, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<ResourceMetadata>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ResourceMetadata, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ResourceMetadata>,
+    });
 })();
 
 const FfiConverterTypeResourceMetadata = (() => {
-  type TypeName = ResourceMetadata;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        namespace: FfiConverterString.read(from),
-        name: FfiConverterString.read(from),
-        labels: FfiConverterOptionalMapStringString.read(from),
-        creationTimestamp: FfiConverterOptionalString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.namespace, into);
-      FfiConverterString.write(value.name, into);
-      FfiConverterOptionalMapStringString.write(value.labels, into);
-      FfiConverterOptionalString.write(value.creationTimestamp, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.namespace) +
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterOptionalMapStringString.allocationSize(value.labels) +
-        FfiConverterOptionalString.allocationSize(value.creationTimestamp)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = ResourceMetadata;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                labels: FfiConverterOptionalMapStringString.read(from),
+                creationTimestamp: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterOptionalMapStringString.write(value.labels, into);
+            FfiConverterOptionalString.write(value.creationTimestamp, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterOptionalMapStringString.allocationSize(value.labels) +
+             FfiConverterOptionalString.allocationSize(value.creationTimestamp);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type Claim = {
-  apiVersion: string;
-  kind: string;
-  metadata: ResourceMetadata;
-  spec: ClaimSpec;
-  status?: OsGymSandboxClaimStatus;
-};
+    apiVersion: string,
+    kind: string,
+    metadata: ResourceMetadata,
+    spec: ClaimSpec,
+    status?: OsGymSandboxClaimStatus
+}
 
 /**
  * Generated factory for {@link Claim} record objects.
  */
 export const Claim = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<Claim, ReturnType<typeof defaults>>(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<Claim>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<Claim, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<Claim>,
+    });
 })();
 
 const FfiConverterTypeClaim = (() => {
-  type TypeName = Claim;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        apiVersion: FfiConverterString.read(from),
-        kind: FfiConverterString.read(from),
-        metadata: FfiConverterTypeResourceMetadata.read(from),
-        spec: FfiConverterTypeClaimSpec.read(from),
-        status: FfiConverterOptionalTypeOSGymSandboxClaimStatus.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.apiVersion, into);
-      FfiConverterString.write(value.kind, into);
-      FfiConverterTypeResourceMetadata.write(value.metadata, into);
-      FfiConverterTypeClaimSpec.write(value.spec, into);
-      FfiConverterOptionalTypeOSGymSandboxClaimStatus.write(value.status, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.apiVersion) +
-        FfiConverterString.allocationSize(value.kind) +
-        FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
-        FfiConverterTypeClaimSpec.allocationSize(value.spec) +
-        FfiConverterOptionalTypeOSGymSandboxClaimStatus.allocationSize(
-          value.status,
-        )
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = Claim;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                apiVersion: FfiConverterString.read(from),
+                kind: FfiConverterString.read(from),
+                metadata: FfiConverterTypeResourceMetadata.read(from),
+                spec: FfiConverterTypeClaimSpec.read(from),
+                status: FfiConverterOptionalTypeOSGymSandboxClaimStatus.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.apiVersion, into);
+            FfiConverterString.write(value.kind, into);
+            FfiConverterTypeResourceMetadata.write(value.metadata, into);
+            FfiConverterTypeClaimSpec.write(value.spec, into);
+            FfiConverterOptionalTypeOSGymSandboxClaimStatus.write(value.status, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.apiVersion) +
+             FfiConverterString.allocationSize(value.kind) +
+             FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
+             FfiConverterTypeClaimSpec.allocationSize(value.spec) +
+             FfiConverterOptionalTypeOSGymSandboxClaimStatus.allocationSize(value.status);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 /**
@@ -227,822 +169,1010 @@ const FfiConverterTypeClaim = (() => {
  * shim are gone).
  */
 export type Pool = {
-  apiVersion: string;
-  kind: string;
-  metadata: ResourceMetadata;
-  spec: OsGymSandboxWarmPoolSpec;
-  status?: OsGymSandboxWarmPoolStatus;
-};
+    apiVersion: string,
+    kind: string,
+    metadata: ResourceMetadata,
+    spec: OsGymSandboxWarmPoolSpec,
+    status?: OsGymSandboxWarmPoolStatus
+}
 
 /**
  * Generated factory for {@link Pool} record objects.
  */
 export const Pool = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<Pool, ReturnType<typeof defaults>>(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<Pool>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<Pool, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<Pool>,
+    });
 })();
 
 const FfiConverterTypePool = (() => {
-  type TypeName = Pool;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        apiVersion: FfiConverterString.read(from),
-        kind: FfiConverterString.read(from),
-        metadata: FfiConverterTypeResourceMetadata.read(from),
-        spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from),
-        status: FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.apiVersion, into);
-      FfiConverterString.write(value.kind, into);
-      FfiConverterTypeResourceMetadata.write(value.metadata, into);
-      FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into);
-      FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.write(
-        value.status,
-        into,
-      );
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.apiVersion) +
-        FfiConverterString.allocationSize(value.kind) +
-        FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
-        FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec) +
-        FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.allocationSize(
-          value.status,
-        )
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = Pool;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                apiVersion: FfiConverterString.read(from),
+                kind: FfiConverterString.read(from),
+                metadata: FfiConverterTypeResourceMetadata.read(from),
+                spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from),
+                status: FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.apiVersion, into);
+            FfiConverterString.write(value.kind, into);
+            FfiConverterTypeResourceMetadata.write(value.metadata, into);
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into);
+            FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.write(value.status, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.apiVersion) +
+             FfiConverterString.allocationSize(value.kind) +
+             FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
+             FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec) +
+             FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.allocationSize(value.status);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type CreateClaimRequest = {
-  pool: Pool;
-  spec?: ClaimSpec;
-  /**
-   * Explicit claim name. A client-supplied name is used verbatim (after
-   * DNS-label validation); left unset, the client generates a random
-   * `claim-<petname>` so concurrent leases and retries cannot collide.
-   */
-  name?: string;
-};
+    pool: Pool,
+    spec?: ClaimSpec,
+    /**
+     * Explicit claim name. A client-supplied name is used verbatim (after
+     * DNS-label validation); left unset, the client generates a random
+     * `claim-<petname>` so concurrent leases and retries cannot collide.
+     */
+    name?: string
+}
 
 /**
  * Generated factory for {@link CreateClaimRequest} record objects.
  */
 export const CreateClaimRequest = (() => {
-  const defaults = () => ({
-    name: undefined,
-  });
-  const create = (() => {
-    return uniffiCreateRecord<CreateClaimRequest, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<CreateClaimRequest>,
-  });
+    const defaults = () => ({
+        name: undefined
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CreateClaimRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CreateClaimRequest>,
+    });
 })();
 
 const FfiConverterTypeCreateClaimRequest = (() => {
-  type TypeName = CreateClaimRequest;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        pool: FfiConverterTypePool.read(from),
-        spec: FfiConverterOptionalTypeClaimSpec.read(from),
-        name: FfiConverterOptionalString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterTypePool.write(value.pool, into);
-      FfiConverterOptionalTypeClaimSpec.write(value.spec, into);
-      FfiConverterOptionalString.write(value.name, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterTypePool.allocationSize(value.pool) +
-        FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec) +
-        FfiConverterOptionalString.allocationSize(value.name)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = CreateClaimRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pool: FfiConverterTypePool.read(from),
+                spec: FfiConverterOptionalTypeClaimSpec.read(from),
+                name: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypePool.write(value.pool, into);
+            FfiConverterOptionalTypeClaimSpec.write(value.spec, into);
+            FfiConverterOptionalString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypePool.allocationSize(value.pool) +
+             FfiConverterOptionalTypeClaimSpec.allocationSize(value.spec) +
+             FfiConverterOptionalString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type CreatePoolRequest = {
-  namespace: string;
-  spec: OsGymSandboxWarmPoolSpec;
-};
+    namespace: string,
+    spec: OsGymSandboxWarmPoolSpec
+}
 
 /**
  * Generated factory for {@link CreatePoolRequest} record objects.
  */
 export const CreatePoolRequest = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<CreatePoolRequest, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<CreatePoolRequest>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CreatePoolRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CreatePoolRequest>,
+    });
 })();
 
 const FfiConverterTypeCreatePoolRequest = (() => {
-  type TypeName = CreatePoolRequest;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        namespace: FfiConverterString.read(from),
-        spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.namespace, into);
-      FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.namespace) +
-        FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = CreatePoolRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                spec: FfiConverterTypeOSGymSandboxWarmPoolSpec.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterTypeOSGymSandboxWarmPoolSpec.allocationSize(value.spec);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type CreateTemplateRequest = {
-  namespace: string;
-  name: string;
-  spec: OsGymSandboxTemplateSpec;
-};
+    namespace: string,
+    name: string,
+    spec: OsGymSandboxTemplateSpec
+}
 
 /**
  * Generated factory for {@link CreateTemplateRequest} record objects.
  */
 export const CreateTemplateRequest = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      CreateTemplateRequest,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<CreateTemplateRequest>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CreateTemplateRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CreateTemplateRequest>,
+    });
 })();
 
 const FfiConverterTypeCreateTemplateRequest = (() => {
-  type TypeName = CreateTemplateRequest;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        namespace: FfiConverterString.read(from),
-        name: FfiConverterString.read(from),
-        spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.namespace, into);
-      FfiConverterString.write(value.name, into);
-      FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.namespace) +
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.spec)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = CreateTemplateRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.spec);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type CreateUserApiKeyRequest = {
-  name: string;
-  scope: Array<string>;
-};
+    name: string,
+    scope: Array<string>
+}
 
 /**
  * Generated factory for {@link CreateUserApiKeyRequest} record objects.
  */
 export const CreateUserApiKeyRequest = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      CreateUserApiKeyRequest,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<CreateUserApiKeyRequest>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CreateUserApiKeyRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CreateUserApiKeyRequest>,
+    });
 })();
 
 const FfiConverterTypeCreateUserApiKeyRequest = (() => {
-  type TypeName = CreateUserApiKeyRequest;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        name: FfiConverterString.read(from),
-        scope: FfiConverterSequenceString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.name, into);
-      FfiConverterSequenceString.write(value.scope, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterSequenceString.allocationSize(value.scope)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = CreateUserApiKeyRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                scope: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterSequenceString.write(value.scope, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterSequenceString.allocationSize(value.scope);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
-export interface CyclopsCredentialsLike {}
+export interface CyclopsCredentialsLike {
+
+}
 /**
  * @deprecated Use `CyclopsCredentialsLike` instead.
  */
 export type CyclopsCredentialsInterface = CyclopsCredentialsLike;
 
-export class CyclopsCredentials
-  extends UniffiAbstractObject
-  implements CyclopsCredentialsLike
-{
-  readonly [uniffiTypeNameSymbol] = "CyclopsCredentials";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor(clientId: string, clientSecret: string) {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new(
-          FfiConverterString.lower(clientId, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(
-            clientSecret,
-            nativeModule().rustbuffer_alloc,
-          ),
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class CyclopsCredentials extends UniffiAbstractObject implements CyclopsCredentialsLike {
+
+    readonly [uniffiTypeNameSymbol] = "CyclopsCredentials";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor(clientId: string, clientSecret: string) {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopscredentials_new(
+        FfiConverterString.lower(clientId, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(clientSecret, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCyclopsCredentialsObjectFactory.bless(pointer);
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer = uniffiTypeCyclopsCredentialsObjectFactory.pointer(this);
-      uniffiTypeCyclopsCredentialsObjectFactory.freePointer(pointer);
-      uniffiTypeCyclopsCredentialsObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCyclopsCredentialsObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is CyclopsCredentials {
-    return uniffiTypeCyclopsCredentialsObjectFactory.isConcreteType(obj_);
-  }
+
+
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCyclopsCredentialsObjectFactory.pointer(this);
+            uniffiTypeCyclopsCredentialsObjectFactory.freePointer(pointer);
+            uniffiTypeCyclopsCredentialsObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CyclopsCredentials {
+        return uniffiTypeCyclopsCredentialsObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeCyclopsCredentialsObjectFactory: UniffiObjectFactory<CyclopsCredentialsLike> =
-  (() => {
+const uniffiTypeCyclopsCredentialsObjectFactory: UniffiObjectFactory<CyclopsCredentialsLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCyclopsCredentialsObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCyclopsCredentialsObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): CyclopsCredentialsLike {
+    create(pointer: UniffiHandle): CyclopsCredentialsLike {
         const instance = Object.create(CyclopsCredentials.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "CyclopsCredentials";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: CyclopsCredentialsLike): UniffiHandle {
+    pointer(obj_: CyclopsCredentialsLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: CyclopsCredentialsLike): UniffiHandle {
+    clonePointer(obj_: CyclopsCredentialsLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopscredentials(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopscredentials(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopscredentials(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopscredentials(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is CyclopsCredentialsLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "CyclopsCredentials"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCyclopsCredentials = new FfiConverterObject(
-  uniffiTypeCyclopsCredentialsObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is CyclopsCredentialsLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CyclopsCredentials";
+    },
+}})();
+const FfiConverterTypeCyclopsCredentials = new FfiConverterObject(uniffiTypeCyclopsCredentialsObjectFactory);
 
 export type CyclopsConfiguration = {
-  baseUrl: string;
-  tokenUrl: string;
-  credentials: CyclopsCredentialsLike;
-  poolPollIntervalMs: bigint;
-  poolPollLimit: number;
-  claimPollIntervalMs: bigint;
-  claimPollLimit: number;
-};
+    baseUrl: string,
+    tokenUrl: string,
+    credentials: CyclopsCredentialsLike,
+    poolPollIntervalMs: bigint,
+    poolPollLimit: number,
+    claimPollIntervalMs: bigint,
+    claimPollLimit: number
+}
 
 /**
  * Generated factory for {@link CyclopsConfiguration} record objects.
  */
 export const CyclopsConfiguration = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      CyclopsConfiguration,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<CyclopsConfiguration>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CyclopsConfiguration, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CyclopsConfiguration>,
+    });
 })();
 
 const FfiConverterTypeCyclopsConfiguration = (() => {
-  type TypeName = CyclopsConfiguration;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        baseUrl: FfiConverterString.read(from),
-        tokenUrl: FfiConverterString.read(from),
-        credentials: FfiConverterTypeCyclopsCredentials.read(from),
-        poolPollIntervalMs: FfiConverterUInt64.read(from),
-        poolPollLimit: FfiConverterUInt32.read(from),
-        claimPollIntervalMs: FfiConverterUInt64.read(from),
-        claimPollLimit: FfiConverterUInt32.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.baseUrl, into);
-      FfiConverterString.write(value.tokenUrl, into);
-      FfiConverterTypeCyclopsCredentials.write(value.credentials, into);
-      FfiConverterUInt64.write(value.poolPollIntervalMs, into);
-      FfiConverterUInt32.write(value.poolPollLimit, into);
-      FfiConverterUInt64.write(value.claimPollIntervalMs, into);
-      FfiConverterUInt32.write(value.claimPollLimit, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.baseUrl) +
-        FfiConverterString.allocationSize(value.tokenUrl) +
-        FfiConverterTypeCyclopsCredentials.allocationSize(value.credentials) +
-        FfiConverterUInt64.allocationSize(value.poolPollIntervalMs) +
-        FfiConverterUInt32.allocationSize(value.poolPollLimit) +
-        FfiConverterUInt64.allocationSize(value.claimPollIntervalMs) +
-        FfiConverterUInt32.allocationSize(value.claimPollLimit)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = CyclopsConfiguration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                baseUrl: FfiConverterString.read(from),
+                tokenUrl: FfiConverterString.read(from),
+                credentials: FfiConverterTypeCyclopsCredentials.read(from),
+                poolPollIntervalMs: FfiConverterUInt64.read(from),
+                poolPollLimit: FfiConverterUInt32.read(from),
+                claimPollIntervalMs: FfiConverterUInt64.read(from),
+                claimPollLimit: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.baseUrl, into);
+            FfiConverterString.write(value.tokenUrl, into);
+            FfiConverterTypeCyclopsCredentials.write(value.credentials, into);
+            FfiConverterUInt64.write(value.poolPollIntervalMs, into);
+            FfiConverterUInt32.write(value.poolPollLimit, into);
+            FfiConverterUInt64.write(value.claimPollIntervalMs, into);
+            FfiConverterUInt32.write(value.claimPollLimit, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.baseUrl) +
+             FfiConverterString.allocationSize(value.tokenUrl) +
+             FfiConverterTypeCyclopsCredentials.allocationSize(value.credentials) +
+             FfiConverterUInt64.allocationSize(value.poolPollIntervalMs) +
+             FfiConverterUInt32.allocationSize(value.poolPollLimit) +
+             FfiConverterUInt64.allocationSize(value.claimPollIntervalMs) +
+             FfiConverterUInt32.allocationSize(value.claimPollLimit);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type CyclopsTokenProviderConfiguration = {
-  baseUrl: string;
-  poolPollIntervalMs: bigint;
-  poolPollLimit: number;
-  claimPollIntervalMs: bigint;
-  claimPollLimit: number;
-};
+    baseUrl: string,
+    poolPollIntervalMs: bigint,
+    poolPollLimit: number,
+    claimPollIntervalMs: bigint,
+    claimPollLimit: number
+}
 
 /**
  * Generated factory for {@link CyclopsTokenProviderConfiguration} record objects.
  */
 export const CyclopsTokenProviderConfiguration = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<
-      CyclopsTokenProviderConfiguration,
-      ReturnType<typeof defaults>
-    >(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () =>
-      Object.freeze(defaults()) as Partial<CyclopsTokenProviderConfiguration>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CyclopsTokenProviderConfiguration, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CyclopsTokenProviderConfiguration>,
+    });
 })();
 
 const FfiConverterTypeCyclopsTokenProviderConfiguration = (() => {
-  type TypeName = CyclopsTokenProviderConfiguration;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        baseUrl: FfiConverterString.read(from),
-        poolPollIntervalMs: FfiConverterUInt64.read(from),
-        poolPollLimit: FfiConverterUInt32.read(from),
-        claimPollIntervalMs: FfiConverterUInt64.read(from),
-        claimPollLimit: FfiConverterUInt32.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.baseUrl, into);
-      FfiConverterUInt64.write(value.poolPollIntervalMs, into);
-      FfiConverterUInt32.write(value.poolPollLimit, into);
-      FfiConverterUInt64.write(value.claimPollIntervalMs, into);
-      FfiConverterUInt32.write(value.claimPollLimit, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.baseUrl) +
-        FfiConverterUInt64.allocationSize(value.poolPollIntervalMs) +
-        FfiConverterUInt32.allocationSize(value.poolPollLimit) +
-        FfiConverterUInt64.allocationSize(value.claimPollIntervalMs) +
-        FfiConverterUInt32.allocationSize(value.claimPollLimit)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = CyclopsTokenProviderConfiguration;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                baseUrl: FfiConverterString.read(from),
+                poolPollIntervalMs: FfiConverterUInt64.read(from),
+                poolPollLimit: FfiConverterUInt32.read(from),
+                claimPollIntervalMs: FfiConverterUInt64.read(from),
+                claimPollLimit: FfiConverterUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.baseUrl, into);
+            FfiConverterUInt64.write(value.poolPollIntervalMs, into);
+            FfiConverterUInt32.write(value.poolPollLimit, into);
+            FfiConverterUInt64.write(value.claimPollIntervalMs, into);
+            FfiConverterUInt32.write(value.claimPollLimit, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.baseUrl) +
+             FfiConverterUInt64.allocationSize(value.poolPollIntervalMs) +
+             FfiConverterUInt32.allocationSize(value.poolPollLimit) +
+             FfiConverterUInt64.allocationSize(value.claimPollIntervalMs) +
+             FfiConverterUInt32.allocationSize(value.claimPollLimit);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type HttpHeader = {
-  name: string;
-  value: string;
-};
+    name: string,
+    value: string
+}
 
 /**
  * Generated factory for {@link HttpHeader} record objects.
  */
 export const HttpHeader = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<HttpHeader, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<HttpHeader>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<HttpHeader, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<HttpHeader>,
+    });
 })();
 
 const FfiConverterTypeHttpHeader = (() => {
-  type TypeName = HttpHeader;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        name: FfiConverterString.read(from),
-        value: FfiConverterString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.name, into);
-      FfiConverterString.write(value.value, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterString.allocationSize(value.value)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = HttpHeader;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                value: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.value, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.value);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type HttpRequest = {
-  method: string;
-  url: string;
-  headers: Array<HttpHeader>;
-  body?: ArrayBuffer;
-  timeoutSecs?: bigint;
-};
+    method: string,
+    url: string,
+    headers: Array<HttpHeader>,
+    body?: ArrayBuffer,
+    /**
+     * Per-request timeout. Defaults to absent so callers written against the
+     * pre-timeout record shape keep constructing requests unchanged; absent
+     * falls back to the native client's 30-second default.
+     */
+    timeoutSecs?: bigint
+}
 
 /**
  * Generated factory for {@link HttpRequest} record objects.
  */
 export const HttpRequest = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<HttpRequest, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<HttpRequest>,
-  });
+    const defaults = () => ({
+        timeoutSecs: undefined
+    });
+    const create = (() => {
+        return uniffiCreateRecord<HttpRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<HttpRequest>,
+    });
 })();
 
 const FfiConverterTypeHttpRequest = (() => {
-  type TypeName = HttpRequest;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        method: FfiConverterString.read(from),
-        url: FfiConverterString.read(from),
-        headers: FfiConverterSequenceTypeHttpHeader.read(from),
-        body: FfiConverterOptionalBytes.read(from),
-        timeoutSecs: FfiConverterOptionalUInt64.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.method, into);
-      FfiConverterString.write(value.url, into);
-      FfiConverterSequenceTypeHttpHeader.write(value.headers, into);
-      FfiConverterOptionalBytes.write(value.body, into);
-      FfiConverterOptionalUInt64.write(value.timeoutSecs, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.method) +
-        FfiConverterString.allocationSize(value.url) +
-        FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
-        FfiConverterOptionalBytes.allocationSize(value.body) +
-        FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = HttpRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                method: FfiConverterString.read(from),
+                url: FfiConverterString.read(from),
+                headers: FfiConverterSequenceTypeHttpHeader.read(from),
+                body: FfiConverterOptionalBytes.read(from),
+                timeoutSecs: FfiConverterOptionalUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.method, into);
+            FfiConverterString.write(value.url, into);
+            FfiConverterSequenceTypeHttpHeader.write(value.headers, into);
+            FfiConverterOptionalBytes.write(value.body, into);
+            FfiConverterOptionalUInt64.write(value.timeoutSecs, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.method) +
+             FfiConverterString.allocationSize(value.url) +
+             FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
+             FfiConverterOptionalBytes.allocationSize(value.body) +
+             FfiConverterOptionalUInt64.allocationSize(value.timeoutSecs);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type HttpResponse = {
-  status: number;
-  headers: Array<HttpHeader>;
-  body: ArrayBuffer;
-};
+    status: number,
+    headers: Array<HttpHeader>,
+    body: ArrayBuffer
+}
 
 /**
  * Generated factory for {@link HttpResponse} record objects.
  */
 export const HttpResponse = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<HttpResponse, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<HttpResponse>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<HttpResponse, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<HttpResponse>,
+    });
 })();
 
 const FfiConverterTypeHttpResponse = (() => {
-  type TypeName = HttpResponse;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        status: FfiConverterUInt16.read(from),
-        headers: FfiConverterSequenceTypeHttpHeader.read(from),
-        body: FfiConverterArrayBuffer.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterUInt16.write(value.status, into);
-      FfiConverterSequenceTypeHttpHeader.write(value.headers, into);
-      FfiConverterArrayBuffer.write(value.body, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterUInt16.allocationSize(value.status) +
-        FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
-        FfiConverterArrayBuffer.allocationSize(value.body)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = HttpResponse;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                status: FfiConverterUInt16.read(from),
+                headers: FfiConverterSequenceTypeHttpHeader.read(from),
+                body: FfiConverterArrayBuffer.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt16.write(value.status, into);
+            FfiConverterSequenceTypeHttpHeader.write(value.headers, into);
+            FfiConverterArrayBuffer.write(value.body, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt16.allocationSize(value.status) +
+             FfiConverterSequenceTypeHttpHeader.allocationSize(value.headers) +
+             FfiConverterArrayBuffer.allocationSize(value.body);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadFileRequest = {
+    digest: string,
+    sizeBytes: bigint,
+    name: string
+}
+
+/**
+ * Generated factory for {@link ImageUploadFileRequest} record objects.
+ */
+export const ImageUploadFileRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadFileRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadFileRequest>,
+    });
+})();
+
+const FfiConverterTypeImageUploadFileRequest = (() => {
+    type TypeName = ImageUploadFileRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                digest: FfiConverterString.read(from),
+                sizeBytes: FfiConverterUInt64.read(from),
+                name: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.digest, into);
+            FfiConverterUInt64.write(value.sizeBytes, into);
+            FfiConverterString.write(value.name, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.digest) +
+             FfiConverterUInt64.allocationSize(value.sizeBytes) +
+             FfiConverterString.allocationSize(value.name);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type PresignedPut = {
+    method: string,
+    url: string,
+    headers: Map<string, string>
+}
+
+/**
+ * Generated factory for {@link PresignedPut} record objects.
+ */
+export const PresignedPut = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<PresignedPut, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<PresignedPut>,
+    });
+})();
+
+const FfiConverterTypePresignedPut = (() => {
+    type TypeName = PresignedPut;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                method: FfiConverterString.read(from),
+                url: FfiConverterString.read(from),
+                headers: FfiConverterMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.method, into);
+            FfiConverterString.write(value.url, into);
+            FfiConverterMapStringString.write(value.headers, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.method) +
+             FfiConverterString.allocationSize(value.url) +
+             FfiConverterMapStringString.allocationSize(value.headers);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadInstruction = {
+    digest: string,
+    sizeBytes: bigint,
+    reference: string,
+    upload?: PresignedPut
+}
+
+/**
+ * Generated factory for {@link ImageUploadInstruction} record objects.
+ */
+export const ImageUploadInstruction = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadInstruction, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadInstruction>,
+    });
+})();
+
+const FfiConverterTypeImageUploadInstruction = (() => {
+    type TypeName = ImageUploadInstruction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                digest: FfiConverterString.read(from),
+                sizeBytes: FfiConverterUInt64.read(from),
+                reference: FfiConverterString.read(from),
+                upload: FfiConverterOptionalTypePresignedPut.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.digest, into);
+            FfiConverterUInt64.write(value.sizeBytes, into);
+            FfiConverterString.write(value.reference, into);
+            FfiConverterOptionalTypePresignedPut.write(value.upload, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.digest) +
+             FfiConverterUInt64.allocationSize(value.sizeBytes) +
+             FfiConverterString.allocationSize(value.reference) +
+             FfiConverterOptionalTypePresignedPut.allocationSize(value.upload);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadRequest = {
+    namespace: string,
+    files: Array<ImageUploadFileRequest>
+}
+
+/**
+ * Generated factory for {@link ImageUploadRequest} record objects.
+ */
+export const ImageUploadRequest = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadRequest, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadRequest>,
+    });
+})();
+
+const FfiConverterTypeImageUploadRequest = (() => {
+    type TypeName = ImageUploadRequest;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                files: FfiConverterSequenceTypeImageUploadFileRequest.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterSequenceTypeImageUploadFileRequest.write(value.files, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterSequenceTypeImageUploadFileRequest.allocationSize(value.files);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ImageUploadResponse = {
+    files: Array<ImageUploadInstruction>
+}
+
+/**
+ * Generated factory for {@link ImageUploadResponse} record objects.
+ */
+export const ImageUploadResponse = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ImageUploadResponse, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ImageUploadResponse>,
+    });
+})();
+
+const FfiConverterTypeImageUploadResponse = (() => {
+    type TypeName = ImageUploadResponse;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                files: FfiConverterSequenceTypeImageUploadInstruction.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeImageUploadInstruction.write(value.files, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeImageUploadInstruction.allocationSize(value.files);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type Namespace = {
-  name: string;
-  status: string;
-  createdAt: string;
-  labels?: Map<string, string>;
-};
+    name: string,
+    status: string,
+    createdAt: string,
+    labels?: Map<string, string>
+}
 
 /**
  * Generated factory for {@link Namespace} record objects.
  */
 export const Namespace = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<Namespace, ReturnType<typeof defaults>>(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<Namespace>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<Namespace, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<Namespace>,
+    });
 })();
 
 const FfiConverterTypeNamespace = (() => {
-  type TypeName = Namespace;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        name: FfiConverterString.read(from),
-        status: FfiConverterString.read(from),
-        createdAt: FfiConverterString.read(from),
-        labels: FfiConverterOptionalMapStringString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.name, into);
-      FfiConverterString.write(value.status, into);
-      FfiConverterString.write(value.createdAt, into);
-      FfiConverterOptionalMapStringString.write(value.labels, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterString.allocationSize(value.status) +
-        FfiConverterString.allocationSize(value.createdAt) +
-        FfiConverterOptionalMapStringString.allocationSize(value.labels)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = Namespace;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                name: FfiConverterString.read(from),
+                status: FfiConverterString.read(from),
+                createdAt: FfiConverterString.read(from),
+                labels: FfiConverterOptionalMapStringString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.name, into);
+            FfiConverterString.write(value.status, into);
+            FfiConverterString.write(value.createdAt, into);
+            FfiConverterOptionalMapStringString.write(value.labels, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.name) +
+             FfiConverterString.allocationSize(value.status) +
+             FfiConverterString.allocationSize(value.createdAt) +
+             FfiConverterOptionalMapStringString.allocationSize(value.labels);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type NewUserApiKey = {
-  clientId: string;
-  clientSecret: string;
-  tokenUrl: string;
-  name: string;
-  scope: Array<string>;
-};
+    clientId: string,
+    clientSecret: string,
+    tokenUrl: string,
+    name: string,
+    scope: Array<string>
+}
 
 /**
  * Generated factory for {@link NewUserApiKey} record objects.
  */
 export const NewUserApiKey = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<NewUserApiKey, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<NewUserApiKey>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<NewUserApiKey, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<NewUserApiKey>,
+    });
 })();
 
 const FfiConverterTypeNewUserApiKey = (() => {
-  type TypeName = NewUserApiKey;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        clientId: FfiConverterString.read(from),
-        clientSecret: FfiConverterString.read(from),
-        tokenUrl: FfiConverterString.read(from),
-        name: FfiConverterString.read(from),
-        scope: FfiConverterSequenceString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.clientId, into);
-      FfiConverterString.write(value.clientSecret, into);
-      FfiConverterString.write(value.tokenUrl, into);
-      FfiConverterString.write(value.name, into);
-      FfiConverterSequenceString.write(value.scope, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.clientId) +
-        FfiConverterString.allocationSize(value.clientSecret) +
-        FfiConverterString.allocationSize(value.tokenUrl) +
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterSequenceString.allocationSize(value.scope)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = NewUserApiKey;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                clientId: FfiConverterString.read(from),
+                clientSecret: FfiConverterString.read(from),
+                tokenUrl: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                scope: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.clientId, into);
+            FfiConverterString.write(value.clientSecret, into);
+            FfiConverterString.write(value.tokenUrl, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterSequenceString.write(value.scope, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.clientId) +
+             FfiConverterString.allocationSize(value.clientSecret) +
+             FfiConverterString.allocationSize(value.tokenUrl) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterSequenceString.allocationSize(value.scope);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type Sandbox = {
-  namespace: string;
-  claim: string;
-  name: string;
-  services: Array<string>;
-};
+    namespace: string,
+    claim: string,
+    name: string,
+    services: Array<string>
+}
 
 /**
  * Generated factory for {@link Sandbox} record objects.
  */
 export const Sandbox = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<Sandbox, ReturnType<typeof defaults>>(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<Sandbox>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<Sandbox, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<Sandbox>,
+    });
 })();
 
 const FfiConverterTypeSandbox = (() => {
-  type TypeName = Sandbox;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        namespace: FfiConverterString.read(from),
-        claim: FfiConverterString.read(from),
-        name: FfiConverterString.read(from),
-        services: FfiConverterSequenceString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.namespace, into);
-      FfiConverterString.write(value.claim, into);
-      FfiConverterString.write(value.name, into);
-      FfiConverterSequenceString.write(value.services, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.namespace) +
-        FfiConverterString.allocationSize(value.claim) +
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterSequenceString.allocationSize(value.services)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = Sandbox;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                namespace: FfiConverterString.read(from),
+                claim: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                services: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.namespace, into);
+            FfiConverterString.write(value.claim, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterSequenceString.write(value.services, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.namespace) +
+             FfiConverterString.allocationSize(value.claim) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterSequenceString.allocationSize(value.services);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 /**
@@ -1050,4242 +1180,3664 @@ const FfiConverterTypeSandbox = (() => {
  * and claims reference one by name via `spec.sandboxTemplateRef.name`.
  */
 export type Template = {
-  apiVersion: string;
-  kind: string;
-  metadata: ResourceMetadata;
-  spec: OsGymSandboxTemplateSpec;
-};
+    apiVersion: string,
+    kind: string,
+    metadata: ResourceMetadata,
+    spec: OsGymSandboxTemplateSpec
+}
 
 /**
  * Generated factory for {@link Template} record objects.
  */
 export const Template = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<Template, ReturnType<typeof defaults>>(defaults);
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<Template>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<Template, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<Template>,
+    });
 })();
 
 const FfiConverterTypeTemplate = (() => {
-  type TypeName = Template;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        apiVersion: FfiConverterString.read(from),
-        kind: FfiConverterString.read(from),
-        metadata: FfiConverterTypeResourceMetadata.read(from),
-        spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.apiVersion, into);
-      FfiConverterString.write(value.kind, into);
-      FfiConverterTypeResourceMetadata.write(value.metadata, into);
-      FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.apiVersion) +
-        FfiConverterString.allocationSize(value.kind) +
-        FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
-        FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.spec)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = Template;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                apiVersion: FfiConverterString.read(from),
+                kind: FfiConverterString.read(from),
+                metadata: FfiConverterTypeResourceMetadata.read(from),
+                spec: FfiConverterTypeOSGymSandboxTemplateSpec.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.apiVersion, into);
+            FfiConverterString.write(value.kind, into);
+            FfiConverterTypeResourceMetadata.write(value.metadata, into);
+            FfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.apiVersion) +
+             FfiConverterString.allocationSize(value.kind) +
+             FfiConverterTypeResourceMetadata.allocationSize(value.metadata) +
+             FfiConverterTypeOSGymSandboxTemplateSpec.allocationSize(value.spec);
+
+        }
+    };
+    return new FFIConverter();
 })();
 
 export type UserApiKey = {
-  id: string;
-  clientId: string;
-  name: string;
-  scope: Array<string>;
-};
+    id: string,
+    clientId: string,
+    name: string,
+    scope: Array<string>
+}
 
 /**
  * Generated factory for {@link UserApiKey} record objects.
  */
 export const UserApiKey = (() => {
-  const defaults = () => ({});
-  const create = (() => {
-    return uniffiCreateRecord<UserApiKey, ReturnType<typeof defaults>>(
-      defaults,
-    );
-  })();
-  return Object.freeze({
-    create,
-    new: create,
-    defaults: () => Object.freeze(defaults()) as Partial<UserApiKey>,
-  });
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<UserApiKey, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<UserApiKey>,
+    });
 })();
 
 const FfiConverterTypeUserApiKey = (() => {
-  type TypeName = UserApiKey;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      return {
-        id: FfiConverterString.read(from),
-        clientId: FfiConverterString.read(from),
-        name: FfiConverterString.read(from),
-        scope: FfiConverterSequenceString.read(from),
-      };
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      FfiConverterString.write(value.id, into);
-      FfiConverterString.write(value.clientId, into);
-      FfiConverterString.write(value.name, into);
-      FfiConverterSequenceString.write(value.scope, into);
-    }
-    allocationSize(value: TypeName): number {
-      return (
-        FfiConverterString.allocationSize(value.id) +
-        FfiConverterString.allocationSize(value.clientId) +
-        FfiConverterString.allocationSize(value.name) +
-        FfiConverterSequenceString.allocationSize(value.scope)
-      );
-    }
-  }
-  return new FFIConverter();
+    type TypeName = UserApiKey;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                clientId: FfiConverterString.read(from),
+                name: FfiConverterString.read(from),
+                scope: FfiConverterSequenceString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.clientId, into);
+            FfiConverterString.write(value.name, into);
+            FfiConverterSequenceString.write(value.scope, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.clientId) +
+             FfiConverterString.allocationSize(value.name) +
+             FfiConverterSequenceString.allocationSize(value.scope);
+
+        }
+    };
+    return new FFIConverter();
 })();
+
 
 // Error type: AccessTokenProviderError
 export enum AccessTokenProviderError_Tags {
-  Failed = "Failed",
+    Failed = "Failed"
 }
 export const AccessTokenProviderError = (() => {
-  type Failed__interface = {
-    tag: AccessTokenProviderError_Tags.Failed;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Failed_ extends UniffiError implements Failed__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "AccessTokenProviderError";
-    readonly tag = AccessTokenProviderError_Tags.Failed;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("AccessTokenProviderError", "Failed");
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Failed_ {
-      return new Failed_(inner);
+    type Failed__interface = {
+        tag: AccessTokenProviderError_Tags.Failed;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Failed_ extends UniffiError implements Failed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "AccessTokenProviderError";
+        readonly tag = AccessTokenProviderError_Tags.Failed;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("AccessTokenProviderError", "Failed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Failed_ {
+            return new Failed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Failed_ {
+            return obj.tag === AccessTokenProviderError_Tags.Failed;
+        }
+        static hasInner(obj: any): obj is Failed_ {
+            return Failed_.instanceOf(obj);
+        }
+
+        static getInner(obj: Failed_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static instanceOf(obj: any): obj is Failed_ {
-      return obj.tag === AccessTokenProviderError_Tags.Failed;
-    }
-    static hasInner(obj: any): obj is Failed_ {
-      return Failed_.instanceOf(obj);
+    function instanceOf(obj: any): obj is AccessTokenProviderError {
+        return obj[uniffiTypeNameSymbol] === "AccessTokenProviderError";
     }
 
-    static getInner(obj: Failed_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
+    return Object.freeze({
+        instanceOf,
+  Failed: Failed_
+    });
 
-  function instanceOf(obj: any): obj is AccessTokenProviderError {
-    return obj[uniffiTypeNameSymbol] === "AccessTokenProviderError";
-  }
-
-  return Object.freeze({
-    instanceOf,
-    Failed: Failed_,
-  });
 })();
 export type AccessTokenProviderError = InstanceType<
-  (typeof AccessTokenProviderError)["Failed"]
+    typeof AccessTokenProviderError['Failed']
 >;
 
 // FfiConverter for enum AccessTokenProviderError
 const FfiConverterTypeAccessTokenProviderError = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = AccessTokenProviderError;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new AccessTokenProviderError.Failed({
-            reason: FfiConverterString.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case AccessTokenProviderError_Tags.Failed: {
-          ordinalConverter.write(1, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = AccessTokenProviderError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new AccessTokenProviderError.Failed({reason: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          // Throwing from here means that AccessTokenProviderError_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case AccessTokenProviderError_Tags.Failed: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(1);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case AccessTokenProviderError_Tags.Failed: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that AccessTokenProviderError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case AccessTokenProviderError_Tags.Failed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
     }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
+
 
 // Error type: HttpError
 export enum HttpError_Tags {
-  Transport = "Transport",
+    Transport = "Transport"
 }
 export const HttpError = (() => {
-  type Transport__interface = {
-    tag: HttpError_Tags.Transport;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Transport_ extends UniffiError implements Transport__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "HttpError";
-    readonly tag = HttpError_Tags.Transport;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("HttpError", "Transport");
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Transport_ {
-      return new Transport_(inner);
+    type Transport__interface = {
+        tag: HttpError_Tags.Transport;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Transport_ extends UniffiError implements Transport__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "HttpError";
+        readonly tag = HttpError_Tags.Transport;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("HttpError", "Transport");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Transport_ {
+            return new Transport_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Transport_ {
+            return obj.tag === HttpError_Tags.Transport;
+        }
+        static hasInner(obj: any): obj is Transport_ {
+            return Transport_.instanceOf(obj);
+        }
+
+        static getInner(obj: Transport_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static instanceOf(obj: any): obj is Transport_ {
-      return obj.tag === HttpError_Tags.Transport;
-    }
-    static hasInner(obj: any): obj is Transport_ {
-      return Transport_.instanceOf(obj);
+    function instanceOf(obj: any): obj is HttpError {
+        return obj[uniffiTypeNameSymbol] === "HttpError";
     }
 
-    static getInner(obj: Transport_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
+    return Object.freeze({
+        instanceOf,
+  Transport: Transport_
+    });
 
-  function instanceOf(obj: any): obj is HttpError {
-    return obj[uniffiTypeNameSymbol] === "HttpError";
-  }
-
-  return Object.freeze({
-    instanceOf,
-    Transport: Transport_,
-  });
 })();
-export type HttpError = InstanceType<(typeof HttpError)["Transport"]>;
+export type HttpError = InstanceType<
+    typeof HttpError['Transport']
+>;
 
 // FfiConverter for enum HttpError
 const FfiConverterTypeHttpError = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = HttpError;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new HttpError.Transport({
-            reason: FfiConverterString.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case HttpError_Tags.Transport: {
-          ordinalConverter.write(1, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = HttpError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new HttpError.Transport({reason: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          // Throwing from here means that HttpError_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case HttpError_Tags.Transport: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(1);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case HttpError_Tags.Transport: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that HttpError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case HttpError_Tags.Transport: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
     }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
+
 
 // Error type: SdkBuildError
 export enum SdkBuildError_Tags {
-  MissingRequiredField = "MissingRequiredField",
+    MissingRequiredField = "MissingRequiredField"
 }
 export const SdkBuildError = (() => {
-  type MissingRequiredField__interface = {
-    tag: SdkBuildError_Tags.MissingRequiredField;
-    inner: Readonly<{ recordType: string; field: string }>;
-  };
-  class MissingRequiredField_
-    extends UniffiError
-    implements MissingRequiredField__interface
-  {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkBuildError";
-    readonly tag = SdkBuildError_Tags.MissingRequiredField;
-    readonly inner: Readonly<{ recordType: string; field: string }>;
-    constructor(inner: { recordType: string; field: string }) {
-      super("SdkBuildError", "MissingRequiredField");
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      recordType: string;
-      field: string;
-    }): MissingRequiredField_ {
-      return new MissingRequiredField_(inner);
+    type MissingRequiredField__interface = {
+        tag: SdkBuildError_Tags.MissingRequiredField;
+        inner:
+Readonly<{recordType: string; field: string}>
+    };
+    class MissingRequiredField_ extends UniffiError implements MissingRequiredField__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkBuildError";
+        readonly tag = SdkBuildError_Tags.MissingRequiredField;
+        readonly inner:
+Readonly<{recordType: string; field: string}>;
+        constructor(
+inner: {recordType: string; field: string }) {
+            super("SdkBuildError", "MissingRequiredField");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {recordType: string; field: string }): MissingRequiredField_ {
+            return new MissingRequiredField_(inner);
+        }
+
+        static instanceOf(obj: any): obj is MissingRequiredField_ {
+            return obj.tag === SdkBuildError_Tags.MissingRequiredField;
+        }
+        static hasInner(obj: any): obj is MissingRequiredField_ {
+            return MissingRequiredField_.instanceOf(obj);
+        }
+
+        static getInner(obj: MissingRequiredField_):
+Readonly<{recordType: string; field: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static instanceOf(obj: any): obj is MissingRequiredField_ {
-      return obj.tag === SdkBuildError_Tags.MissingRequiredField;
-    }
-    static hasInner(obj: any): obj is MissingRequiredField_ {
-      return MissingRequiredField_.instanceOf(obj);
+    function instanceOf(obj: any): obj is SdkBuildError {
+        return obj[uniffiTypeNameSymbol] === "SdkBuildError";
     }
 
-    static getInner(
-      obj: MissingRequiredField_,
-    ): Readonly<{ recordType: string; field: string }> {
-      return obj.inner;
-    }
-  }
+    return Object.freeze({
+        instanceOf,
+  MissingRequiredField: MissingRequiredField_
+    });
 
-  function instanceOf(obj: any): obj is SdkBuildError {
-    return obj[uniffiTypeNameSymbol] === "SdkBuildError";
-  }
-
-  return Object.freeze({
-    instanceOf,
-    MissingRequiredField: MissingRequiredField_,
-  });
 })();
 export type SdkBuildError = InstanceType<
-  (typeof SdkBuildError)["MissingRequiredField"]
+    typeof SdkBuildError['MissingRequiredField']
 >;
 
 // FfiConverter for enum SdkBuildError
 const FfiConverterTypeSdkBuildError = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = SdkBuildError;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new SdkBuildError.MissingRequiredField({
-            recordType: FfiConverterString.read(from),
-            field: FfiConverterString.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case SdkBuildError_Tags.MissingRequiredField: {
-          ordinalConverter.write(1, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.recordType, into);
-          FfiConverterString.write(inner.field, into);
-          return;
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SdkBuildError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new SdkBuildError.MissingRequiredField({recordType: FfiConverterString.read(from), field: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          // Throwing from here means that SdkBuildError_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case SdkBuildError_Tags.MissingRequiredField: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(1);
-          size += FfiConverterString.allocationSize(inner.recordType);
-          size += FfiConverterString.allocationSize(inner.field);
-          return size;
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case SdkBuildError_Tags.MissingRequiredField: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.recordType, into);
+                    FfiConverterString.write(inner.field, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that SdkBuildError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
         }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case SdkBuildError_Tags.MissingRequiredField: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.recordType);
+                    size += FfiConverterString.allocationSize(inner.field);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
     }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
+
 
 // Error type: SdkError
 export enum SdkError_Tags {
-  Configuration = "Configuration",
-  InvalidResourceName = "InvalidResourceName",
-  Transport = "Transport",
-  Token = "Token",
-  Body = "Body",
-  Status = "Status",
-  UnknownService = "UnknownService",
-  InvalidServicePath = "InvalidServicePath",
-  ClaimFailed = "ClaimFailed",
-  ClaimTimeout = "ClaimTimeout",
-  PoolAccessDenied = "PoolAccessDenied",
+    Configuration = "Configuration",
+    InvalidResourceName = "InvalidResourceName",
+    Transport = "Transport",
+    Token = "Token",
+    Body = "Body",
+    Status = "Status",
+    UnknownService = "UnknownService",
+    InvalidServicePath = "InvalidServicePath",
+    ClaimFailed = "ClaimFailed",
+    ClaimTimeout = "ClaimTimeout",
+    PoolAccessDenied = "PoolAccessDenied"
 }
 export const SdkError = (() => {
-  type Configuration__interface = {
-    tag: SdkError_Tags.Configuration;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Configuration_ extends UniffiError implements Configuration__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.Configuration;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("SdkError", "Configuration");
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Configuration_ {
-      return new Configuration_(inner);
-    }
+    type Configuration__interface = {
+        tag: SdkError_Tags.Configuration;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Configuration_ extends UniffiError implements Configuration__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.Configuration;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("SdkError", "Configuration");
 
-    static instanceOf(obj: any): obj is Configuration_ {
-      return obj.tag === SdkError_Tags.Configuration;
-    }
-    static hasInner(obj: any): obj is Configuration_ {
-      return Configuration_.instanceOf(obj);
-    }
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Configuration_ {
+            return new Configuration_(inner);
+        }
 
-    static getInner(obj: Configuration_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
+        static instanceOf(obj: any): obj is Configuration_ {
+            return obj.tag === SdkError_Tags.Configuration;
+        }
+        static hasInner(obj: any): obj is Configuration_ {
+            return Configuration_.instanceOf(obj);
+        }
 
-  type InvalidResourceName__interface = {
-    tag: SdkError_Tags.InvalidResourceName;
-    inner: Readonly<{ field: string; value: string; reason: string }>;
-  };
-  class InvalidResourceName_
-    extends UniffiError
-    implements InvalidResourceName__interface
-  {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.InvalidResourceName;
-    readonly inner: Readonly<{ field: string; value: string; reason: string }>;
-    constructor(inner: { field: string; value: string; reason: string }) {
-      super("SdkError", "InvalidResourceName");
+        static getInner(obj: Configuration_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      field: string;
-      value: string;
-      reason: string;
-    }): InvalidResourceName_ {
-      return new InvalidResourceName_(inner);
     }
 
-    static instanceOf(obj: any): obj is InvalidResourceName_ {
-      return obj.tag === SdkError_Tags.InvalidResourceName;
-    }
-    static hasInner(obj: any): obj is InvalidResourceName_ {
-      return InvalidResourceName_.instanceOf(obj);
+    type InvalidResourceName__interface = {
+        tag: SdkError_Tags.InvalidResourceName;
+        inner:
+Readonly<{field: string; value: string; reason: string}>
+    };
+    class InvalidResourceName_ extends UniffiError implements InvalidResourceName__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.InvalidResourceName;
+        readonly inner:
+Readonly<{field: string; value: string; reason: string}>;
+        constructor(
+inner: {field: string; value: string; reason: string }) {
+            super("SdkError", "InvalidResourceName");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {field: string; value: string; reason: string }): InvalidResourceName_ {
+            return new InvalidResourceName_(inner);
+        }
+
+        static instanceOf(obj: any): obj is InvalidResourceName_ {
+            return obj.tag === SdkError_Tags.InvalidResourceName;
+        }
+        static hasInner(obj: any): obj is InvalidResourceName_ {
+            return InvalidResourceName_.instanceOf(obj);
+        }
+
+        static getInner(obj: InvalidResourceName_):
+Readonly<{field: string; value: string; reason: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(
-      obj: InvalidResourceName_,
-    ): Readonly<{ field: string; value: string; reason: string }> {
-      return obj.inner;
-    }
-  }
+    type Transport__interface = {
+        tag: SdkError_Tags.Transport;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Transport_ extends UniffiError implements Transport__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.Transport;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("SdkError", "Transport");
 
-  type Transport__interface = {
-    tag: SdkError_Tags.Transport;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Transport_ extends UniffiError implements Transport__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.Transport;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("SdkError", "Transport");
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Transport_ {
+            return new Transport_(inner);
+        }
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Transport_ {
-      return new Transport_(inner);
-    }
+        static instanceOf(obj: any): obj is Transport_ {
+            return obj.tag === SdkError_Tags.Transport;
+        }
+        static hasInner(obj: any): obj is Transport_ {
+            return Transport_.instanceOf(obj);
+        }
 
-    static instanceOf(obj: any): obj is Transport_ {
-      return obj.tag === SdkError_Tags.Transport;
-    }
-    static hasInner(obj: any): obj is Transport_ {
-      return Transport_.instanceOf(obj);
-    }
+        static getInner(obj: Transport_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
 
-    static getInner(obj: Transport_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
-
-  type Token__interface = {
-    tag: SdkError_Tags.Token;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Token_ extends UniffiError implements Token__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.Token;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("SdkError", "Token");
-
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Token_ {
-      return new Token_(inner);
     }
 
-    static instanceOf(obj: any): obj is Token_ {
-      return obj.tag === SdkError_Tags.Token;
-    }
-    static hasInner(obj: any): obj is Token_ {
-      return Token_.instanceOf(obj);
+    type Token__interface = {
+        tag: SdkError_Tags.Token;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Token_ extends UniffiError implements Token__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.Token;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("SdkError", "Token");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Token_ {
+            return new Token_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Token_ {
+            return obj.tag === SdkError_Tags.Token;
+        }
+        static hasInner(obj: any): obj is Token_ {
+            return Token_.instanceOf(obj);
+        }
+
+        static getInner(obj: Token_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(obj: Token_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
+    type Body__interface = {
+        tag: SdkError_Tags.Body;
+        inner:
+Readonly<{reason: string}>
+    };
+    class Body_ extends UniffiError implements Body__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.Body;
+        readonly inner:
+Readonly<{reason: string}>;
+        constructor(
+inner: {reason: string }) {
+            super("SdkError", "Body");
 
-  type Body__interface = {
-    tag: SdkError_Tags.Body;
-    inner: Readonly<{ reason: string }>;
-  };
-  class Body_ extends UniffiError implements Body__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.Body;
-    readonly inner: Readonly<{ reason: string }>;
-    constructor(inner: { reason: string }) {
-      super("SdkError", "Body");
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {reason: string }): Body_ {
+            return new Body_(inner);
+        }
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { reason: string }): Body_ {
-      return new Body_(inner);
-    }
+        static instanceOf(obj: any): obj is Body_ {
+            return obj.tag === SdkError_Tags.Body;
+        }
+        static hasInner(obj: any): obj is Body_ {
+            return Body_.instanceOf(obj);
+        }
 
-    static instanceOf(obj: any): obj is Body_ {
-      return obj.tag === SdkError_Tags.Body;
-    }
-    static hasInner(obj: any): obj is Body_ {
-      return Body_.instanceOf(obj);
-    }
+        static getInner(obj: Body_):
+Readonly<{reason: string}> {
+            return obj.inner;
+        }
 
-    static getInner(obj: Body_): Readonly<{ reason: string }> {
-      return obj.inner;
-    }
-  }
-
-  type Status__interface = {
-    tag: SdkError_Tags.Status;
-    inner: Readonly<{ operation: string; status: number; body: string }>;
-  };
-  class Status_ extends UniffiError implements Status__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.Status;
-    readonly inner: Readonly<{
-      operation: string;
-      status: number;
-      body: string;
-    }>;
-    constructor(inner: { operation: string; status: number; body: string }) {
-      super("SdkError", "Status");
-
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      operation: string;
-      status: number;
-      body: string;
-    }): Status_ {
-      return new Status_(inner);
     }
 
-    static instanceOf(obj: any): obj is Status_ {
-      return obj.tag === SdkError_Tags.Status;
-    }
-    static hasInner(obj: any): obj is Status_ {
-      return Status_.instanceOf(obj);
+    type Status__interface = {
+        tag: SdkError_Tags.Status;
+        inner:
+Readonly<{operation: string; status: number; body: string}>
+    };
+    class Status_ extends UniffiError implements Status__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.Status;
+        readonly inner:
+Readonly<{operation: string; status: number; body: string}>;
+        constructor(
+inner: {operation: string; status: number; body: string }) {
+            super("SdkError", "Status");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {operation: string; status: number; body: string }): Status_ {
+            return new Status_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Status_ {
+            return obj.tag === SdkError_Tags.Status;
+        }
+        static hasInner(obj: any): obj is Status_ {
+            return Status_.instanceOf(obj);
+        }
+
+        static getInner(obj: Status_):
+Readonly<{operation: string; status: number; body: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(
-      obj: Status_,
-    ): Readonly<{ operation: string; status: number; body: string }> {
-      return obj.inner;
-    }
-  }
+    type UnknownService__interface = {
+        tag: SdkError_Tags.UnknownService;
+        inner:
+Readonly<{requested: string; available: Array<string>}>
+    };
+    class UnknownService_ extends UniffiError implements UnknownService__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.UnknownService;
+        readonly inner:
+Readonly<{requested: string; available: Array<string>}>;
+        constructor(
+inner: {requested: string; available: Array<string> }) {
+            super("SdkError", "UnknownService");
 
-  type UnknownService__interface = {
-    tag: SdkError_Tags.UnknownService;
-    inner: Readonly<{ requested: string; available: Array<string> }>;
-  };
-  class UnknownService_
-    extends UniffiError
-    implements UnknownService__interface
-  {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.UnknownService;
-    readonly inner: Readonly<{ requested: string; available: Array<string> }>;
-    constructor(inner: { requested: string; available: Array<string> }) {
-      super("SdkError", "UnknownService");
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {requested: string; available: Array<string> }): UnknownService_ {
+            return new UnknownService_(inner);
+        }
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      requested: string;
-      available: Array<string>;
-    }): UnknownService_ {
-      return new UnknownService_(inner);
-    }
+        static instanceOf(obj: any): obj is UnknownService_ {
+            return obj.tag === SdkError_Tags.UnknownService;
+        }
+        static hasInner(obj: any): obj is UnknownService_ {
+            return UnknownService_.instanceOf(obj);
+        }
 
-    static instanceOf(obj: any): obj is UnknownService_ {
-      return obj.tag === SdkError_Tags.UnknownService;
-    }
-    static hasInner(obj: any): obj is UnknownService_ {
-      return UnknownService_.instanceOf(obj);
+        static getInner(obj: UnknownService_):
+Readonly<{requested: string; available: Array<string>}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(
-      obj: UnknownService_,
-    ): Readonly<{ requested: string; available: Array<string> }> {
-      return obj.inner;
-    }
-  }
+    type InvalidServicePath__interface = {
+        tag: SdkError_Tags.InvalidServicePath;
+        inner:
+Readonly<{path: string}>
+    };
+    class InvalidServicePath_ extends UniffiError implements InvalidServicePath__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.InvalidServicePath;
+        readonly inner:
+Readonly<{path: string}>;
+        constructor(
+inner: {path: string }) {
+            super("SdkError", "InvalidServicePath");
 
-  type InvalidServicePath__interface = {
-    tag: SdkError_Tags.InvalidServicePath;
-    inner: Readonly<{ path: string }>;
-  };
-  class InvalidServicePath_
-    extends UniffiError
-    implements InvalidServicePath__interface
-  {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.InvalidServicePath;
-    readonly inner: Readonly<{ path: string }>;
-    constructor(inner: { path: string }) {
-      super("SdkError", "InvalidServicePath");
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {path: string }): InvalidServicePath_ {
+            return new InvalidServicePath_(inner);
+        }
 
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { path: string }): InvalidServicePath_ {
-      return new InvalidServicePath_(inner);
-    }
+        static instanceOf(obj: any): obj is InvalidServicePath_ {
+            return obj.tag === SdkError_Tags.InvalidServicePath;
+        }
+        static hasInner(obj: any): obj is InvalidServicePath_ {
+            return InvalidServicePath_.instanceOf(obj);
+        }
 
-    static instanceOf(obj: any): obj is InvalidServicePath_ {
-      return obj.tag === SdkError_Tags.InvalidServicePath;
-    }
-    static hasInner(obj: any): obj is InvalidServicePath_ {
-      return InvalidServicePath_.instanceOf(obj);
-    }
+        static getInner(obj: InvalidServicePath_):
+Readonly<{path: string}> {
+            return obj.inner;
+        }
 
-    static getInner(obj: InvalidServicePath_): Readonly<{ path: string }> {
-      return obj.inner;
-    }
-  }
-
-  type ClaimFailed__interface = {
-    tag: SdkError_Tags.ClaimFailed;
-    inner: Readonly<{ phase: string; status: string }>;
-  };
-  class ClaimFailed_ extends UniffiError implements ClaimFailed__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.ClaimFailed;
-    readonly inner: Readonly<{ phase: string; status: string }>;
-    constructor(inner: { phase: string; status: string }) {
-      super("SdkError", "ClaimFailed");
-
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: { phase: string; status: string }): ClaimFailed_ {
-      return new ClaimFailed_(inner);
     }
 
-    static instanceOf(obj: any): obj is ClaimFailed_ {
-      return obj.tag === SdkError_Tags.ClaimFailed;
-    }
-    static hasInner(obj: any): obj is ClaimFailed_ {
-      return ClaimFailed_.instanceOf(obj);
+    type ClaimFailed__interface = {
+        tag: SdkError_Tags.ClaimFailed;
+        inner:
+Readonly<{phase: string; status: string}>
+    };
+    class ClaimFailed_ extends UniffiError implements ClaimFailed__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.ClaimFailed;
+        readonly inner:
+Readonly<{phase: string; status: string}>;
+        constructor(
+inner: {phase: string; status: string }) {
+            super("SdkError", "ClaimFailed");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {phase: string; status: string }): ClaimFailed_ {
+            return new ClaimFailed_(inner);
+        }
+
+        static instanceOf(obj: any): obj is ClaimFailed_ {
+            return obj.tag === SdkError_Tags.ClaimFailed;
+        }
+        static hasInner(obj: any): obj is ClaimFailed_ {
+            return ClaimFailed_.instanceOf(obj);
+        }
+
+        static getInner(obj: ClaimFailed_):
+Readonly<{phase: string; status: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(
-      obj: ClaimFailed_,
-    ): Readonly<{ phase: string; status: string }> {
-      return obj.inner;
-    }
-  }
+    type ClaimTimeout__interface = {
+        tag: SdkError_Tags.ClaimTimeout
+    };
+    class ClaimTimeout_ extends UniffiError implements ClaimTimeout__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.ClaimTimeout;
+        constructor() {
+            super("SdkError", "ClaimTimeout");
+        }
 
-  type ClaimTimeout__interface = {
-    tag: SdkError_Tags.ClaimTimeout;
-  };
-  class ClaimTimeout_ extends UniffiError implements ClaimTimeout__interface {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.ClaimTimeout;
-    constructor() {
-      super("SdkError", "ClaimTimeout");
-    }
+        static new(): ClaimTimeout_ {
+            return new ClaimTimeout_();
+        }
 
-    static new(): ClaimTimeout_ {
-      return new ClaimTimeout_();
-    }
+        static instanceOf(obj: any): obj is ClaimTimeout_ {
+            return obj.tag === SdkError_Tags.ClaimTimeout;
+        }
+        static hasInner(obj: any): obj is ClaimTimeout_ {
+            return false;
+        }
 
-    static instanceOf(obj: any): obj is ClaimTimeout_ {
-      return obj.tag === SdkError_Tags.ClaimTimeout;
-    }
-    static hasInner(obj: any): obj is ClaimTimeout_ {
-      return false;
-    }
-  }
-
-  type PoolAccessDenied__interface = {
-    tag: SdkError_Tags.PoolAccessDenied;
-    inner: Readonly<{
-      operation: string;
-      namespace: string;
-      status: number;
-      body: string;
-    }>;
-  };
-  class PoolAccessDenied_
-    extends UniffiError
-    implements PoolAccessDenied__interface
-  {
-    /**
-     * @private
-     * This field is private and should not be used, use `tag` instead.
-     */
-    readonly [uniffiTypeNameSymbol] = "SdkError";
-    readonly tag = SdkError_Tags.PoolAccessDenied;
-    readonly inner: Readonly<{
-      operation: string;
-      namespace: string;
-      status: number;
-      body: string;
-    }>;
-    constructor(inner: {
-      operation: string;
-      namespace: string;
-      status: number;
-      body: string;
-    }) {
-      super("SdkError", "PoolAccessDenied");
-
-      this.inner = Object.freeze(inner);
-    }
-    static new(inner: {
-      operation: string;
-      namespace: string;
-      status: number;
-      body: string;
-    }): PoolAccessDenied_ {
-      return new PoolAccessDenied_(inner);
     }
 
-    static instanceOf(obj: any): obj is PoolAccessDenied_ {
-      return obj.tag === SdkError_Tags.PoolAccessDenied;
-    }
-    static hasInner(obj: any): obj is PoolAccessDenied_ {
-      return PoolAccessDenied_.instanceOf(obj);
+    type PoolAccessDenied__interface = {
+        tag: SdkError_Tags.PoolAccessDenied;
+        inner:
+Readonly<{operation: string; namespace: string; status: number; body: string}>
+    };
+    class PoolAccessDenied_ extends UniffiError implements PoolAccessDenied__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "SdkError";
+        readonly tag = SdkError_Tags.PoolAccessDenied;
+        readonly inner:
+Readonly<{operation: string; namespace: string; status: number; body: string}>;
+        constructor(
+inner: {operation: string; namespace: string; status: number; body: string }) {
+            super("SdkError", "PoolAccessDenied");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {operation: string; namespace: string; status: number; body: string }): PoolAccessDenied_ {
+            return new PoolAccessDenied_(inner);
+        }
+
+        static instanceOf(obj: any): obj is PoolAccessDenied_ {
+            return obj.tag === SdkError_Tags.PoolAccessDenied;
+        }
+        static hasInner(obj: any): obj is PoolAccessDenied_ {
+            return PoolAccessDenied_.instanceOf(obj);
+        }
+
+        static getInner(obj: PoolAccessDenied_):
+Readonly<{operation: string; namespace: string; status: number; body: string}> {
+            return obj.inner;
+        }
+
     }
 
-    static getInner(
-      obj: PoolAccessDenied_,
-    ): Readonly<{
-      operation: string;
-      namespace: string;
-      status: number;
-      body: string;
-    }> {
-      return obj.inner;
+    function instanceOf(obj: any): obj is SdkError {
+        return obj[uniffiTypeNameSymbol] === "SdkError";
     }
-  }
 
-  function instanceOf(obj: any): obj is SdkError {
-    return obj[uniffiTypeNameSymbol] === "SdkError";
-  }
+    return Object.freeze({
+        instanceOf,
+  Configuration: Configuration_,
+  InvalidResourceName: InvalidResourceName_,
+  Transport: Transport_,
+  Token: Token_,
+  Body: Body_,
+  Status: Status_,
+  UnknownService: UnknownService_,
+  InvalidServicePath: InvalidServicePath_,
+  ClaimFailed: ClaimFailed_,
+  ClaimTimeout: ClaimTimeout_,
+  PoolAccessDenied: PoolAccessDenied_
+    });
 
-  return Object.freeze({
-    instanceOf,
-    Configuration: Configuration_,
-    InvalidResourceName: InvalidResourceName_,
-    Transport: Transport_,
-    Token: Token_,
-    Body: Body_,
-    Status: Status_,
-    UnknownService: UnknownService_,
-    InvalidServicePath: InvalidServicePath_,
-    ClaimFailed: ClaimFailed_,
-    ClaimTimeout: ClaimTimeout_,
-    PoolAccessDenied: PoolAccessDenied_,
-  });
 })();
 export type SdkError = InstanceType<
-  (typeof SdkError)[
-    | "Configuration"
-    | "InvalidResourceName"
-    | "Transport"
-    | "Token"
-    | "Body"
-    | "Status"
-    | "UnknownService"
-    | "InvalidServicePath"
-    | "ClaimFailed"
-    | "ClaimTimeout"
-    | "PoolAccessDenied"]
+    typeof SdkError['Configuration' | 'InvalidResourceName' | 'Transport' | 'Token' | 'Body' | 'Status' | 'UnknownService' | 'InvalidServicePath' | 'ClaimFailed' | 'ClaimTimeout' | 'PoolAccessDenied']
 >;
 
 // FfiConverter for enum SdkError
 const FfiConverterTypeSdkError = (() => {
-  const ordinalConverter = FfiConverterInt32;
-  type TypeName = SdkError;
-  class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
-    read(from: RustBuffer): TypeName {
-      switch (ordinalConverter.read(from)) {
-        case 1:
-          return new SdkError.Configuration({
-            reason: FfiConverterString.read(from),
-          });
-        case 2:
-          return new SdkError.InvalidResourceName({
-            field: FfiConverterString.read(from),
-            value: FfiConverterString.read(from),
-            reason: FfiConverterString.read(from),
-          });
-        case 3:
-          return new SdkError.Transport({
-            reason: FfiConverterString.read(from),
-          });
-        case 4:
-          return new SdkError.Token({ reason: FfiConverterString.read(from) });
-        case 5:
-          return new SdkError.Body({ reason: FfiConverterString.read(from) });
-        case 6:
-          return new SdkError.Status({
-            operation: FfiConverterString.read(from),
-            status: FfiConverterUInt16.read(from),
-            body: FfiConverterString.read(from),
-          });
-        case 7:
-          return new SdkError.UnknownService({
-            requested: FfiConverterString.read(from),
-            available: FfiConverterSequenceString.read(from),
-          });
-        case 8:
-          return new SdkError.InvalidServicePath({
-            path: FfiConverterString.read(from),
-          });
-        case 9:
-          return new SdkError.ClaimFailed({
-            phase: FfiConverterString.read(from),
-            status: FfiConverterString.read(from),
-          });
-        case 10:
-          return new SdkError.ClaimTimeout();
-        case 11:
-          return new SdkError.PoolAccessDenied({
-            operation: FfiConverterString.read(from),
-            namespace: FfiConverterString.read(from),
-            status: FfiConverterUInt16.read(from),
-            body: FfiConverterString.read(from),
-          });
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SdkError;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new SdkError.Configuration({reason: FfiConverterString.read(from) });
+                case 2: return new SdkError.InvalidResourceName({field: FfiConverterString.read(from), value: FfiConverterString.read(from), reason: FfiConverterString.read(from) });
+                case 3: return new SdkError.Transport({reason: FfiConverterString.read(from) });
+                case 4: return new SdkError.Token({reason: FfiConverterString.read(from) });
+                case 5: return new SdkError.Body({reason: FfiConverterString.read(from) });
+                case 6: return new SdkError.Status({operation: FfiConverterString.read(from), status: FfiConverterUInt16.read(from), body: FfiConverterString.read(from) });
+                case 7: return new SdkError.UnknownService({requested: FfiConverterString.read(from), available: FfiConverterSequenceString.read(from) });
+                case 8: return new SdkError.InvalidServicePath({path: FfiConverterString.read(from) });
+                case 9: return new SdkError.ClaimFailed({phase: FfiConverterString.read(from), status: FfiConverterString.read(from) });
+                case 10: return new SdkError.ClaimTimeout();
+                case 11: return new SdkError.PoolAccessDenied({operation: FfiConverterString.read(from), namespace: FfiConverterString.read(from), status: FfiConverterUInt16.read(from), body: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case SdkError_Tags.Configuration: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case SdkError_Tags.InvalidResourceName: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.field, into);
+                    FfiConverterString.write(inner.value, into);
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case SdkError_Tags.Transport: {
+                    ordinalConverter.write(3, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case SdkError_Tags.Token: {
+                    ordinalConverter.write(4, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case SdkError_Tags.Body: {
+                    ordinalConverter.write(5, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.reason, into);
+                    return;
+                }
+                case SdkError_Tags.Status: {
+                    ordinalConverter.write(6, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.operation, into);
+                    FfiConverterUInt16.write(inner.status, into);
+                    FfiConverterString.write(inner.body, into);
+                    return;
+                }
+                case SdkError_Tags.UnknownService: {
+                    ordinalConverter.write(7, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.requested, into);
+                    FfiConverterSequenceString.write(inner.available, into);
+                    return;
+                }
+                case SdkError_Tags.InvalidServicePath: {
+                    ordinalConverter.write(8, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.path, into);
+                    return;
+                }
+                case SdkError_Tags.ClaimFailed: {
+                    ordinalConverter.write(9, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.phase, into);
+                    FfiConverterString.write(inner.status, into);
+                    return;
+                }
+                case SdkError_Tags.ClaimTimeout: {
+                    ordinalConverter.write(10, into);
+                    return;
+                }
+                case SdkError_Tags.PoolAccessDenied: {
+                    ordinalConverter.write(11, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.operation, into);
+                    FfiConverterString.write(inner.namespace, into);
+                    FfiConverterUInt16.write(inner.status, into);
+                    FfiConverterString.write(inner.body, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that SdkError_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case SdkError_Tags.Configuration: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case SdkError_Tags.InvalidResourceName: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterString.allocationSize(inner.field);
+                    size += FfiConverterString.allocationSize(inner.value);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case SdkError_Tags.Transport: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(3);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case SdkError_Tags.Token: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(4);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case SdkError_Tags.Body: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(5);
+                    size += FfiConverterString.allocationSize(inner.reason);
+                    return size;
+                }
+                case SdkError_Tags.Status: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(6);
+                    size += FfiConverterString.allocationSize(inner.operation);
+                    size += FfiConverterUInt16.allocationSize(inner.status);
+                    size += FfiConverterString.allocationSize(inner.body);
+                    return size;
+                }
+                case SdkError_Tags.UnknownService: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(7);
+                    size += FfiConverterString.allocationSize(inner.requested);
+                    size += FfiConverterSequenceString.allocationSize(inner.available);
+                    return size;
+                }
+                case SdkError_Tags.InvalidServicePath: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(8);
+                    size += FfiConverterString.allocationSize(inner.path);
+                    return size;
+                }
+                case SdkError_Tags.ClaimFailed: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(9);
+                    size += FfiConverterString.allocationSize(inner.phase);
+                    size += FfiConverterString.allocationSize(inner.status);
+                    return size;
+                }
+                case SdkError_Tags.ClaimTimeout: {
+                    return ordinalConverter.allocationSize(10);
+                }
+                case SdkError_Tags.PoolAccessDenied: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(11);
+                    size += FfiConverterString.allocationSize(inner.operation);
+                    size += FfiConverterString.allocationSize(inner.namespace);
+                    size += FfiConverterUInt16.allocationSize(inner.status);
+                    size += FfiConverterString.allocationSize(inner.body);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
     }
-    write(value: TypeName, into: RustBuffer): void {
-      switch (value.tag) {
-        case SdkError_Tags.Configuration: {
-          ordinalConverter.write(1, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
-        }
-        case SdkError_Tags.InvalidResourceName: {
-          ordinalConverter.write(2, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.field, into);
-          FfiConverterString.write(inner.value, into);
-          FfiConverterString.write(inner.reason, into);
-          return;
-        }
-        case SdkError_Tags.Transport: {
-          ordinalConverter.write(3, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
-        }
-        case SdkError_Tags.Token: {
-          ordinalConverter.write(4, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
-        }
-        case SdkError_Tags.Body: {
-          ordinalConverter.write(5, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.reason, into);
-          return;
-        }
-        case SdkError_Tags.Status: {
-          ordinalConverter.write(6, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.operation, into);
-          FfiConverterUInt16.write(inner.status, into);
-          FfiConverterString.write(inner.body, into);
-          return;
-        }
-        case SdkError_Tags.UnknownService: {
-          ordinalConverter.write(7, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.requested, into);
-          FfiConverterSequenceString.write(inner.available, into);
-          return;
-        }
-        case SdkError_Tags.InvalidServicePath: {
-          ordinalConverter.write(8, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.path, into);
-          return;
-        }
-        case SdkError_Tags.ClaimFailed: {
-          ordinalConverter.write(9, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.phase, into);
-          FfiConverterString.write(inner.status, into);
-          return;
-        }
-        case SdkError_Tags.ClaimTimeout: {
-          ordinalConverter.write(10, into);
-          return;
-        }
-        case SdkError_Tags.PoolAccessDenied: {
-          ordinalConverter.write(11, into);
-          const inner = value.inner;
-          FfiConverterString.write(inner.operation, into);
-          FfiConverterString.write(inner.namespace, into);
-          FfiConverterUInt16.write(inner.status, into);
-          FfiConverterString.write(inner.body, into);
-          return;
-        }
-        default:
-          // Throwing from here means that SdkError_Tags hasn't matched an ordinal.
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-    allocationSize(value: TypeName): number {
-      switch (value.tag) {
-        case SdkError_Tags.Configuration: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(1);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
-        }
-        case SdkError_Tags.InvalidResourceName: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(2);
-          size += FfiConverterString.allocationSize(inner.field);
-          size += FfiConverterString.allocationSize(inner.value);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
-        }
-        case SdkError_Tags.Transport: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(3);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
-        }
-        case SdkError_Tags.Token: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(4);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
-        }
-        case SdkError_Tags.Body: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(5);
-          size += FfiConverterString.allocationSize(inner.reason);
-          return size;
-        }
-        case SdkError_Tags.Status: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(6);
-          size += FfiConverterString.allocationSize(inner.operation);
-          size += FfiConverterUInt16.allocationSize(inner.status);
-          size += FfiConverterString.allocationSize(inner.body);
-          return size;
-        }
-        case SdkError_Tags.UnknownService: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(7);
-          size += FfiConverterString.allocationSize(inner.requested);
-          size += FfiConverterSequenceString.allocationSize(inner.available);
-          return size;
-        }
-        case SdkError_Tags.InvalidServicePath: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(8);
-          size += FfiConverterString.allocationSize(inner.path);
-          return size;
-        }
-        case SdkError_Tags.ClaimFailed: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(9);
-          size += FfiConverterString.allocationSize(inner.phase);
-          size += FfiConverterString.allocationSize(inner.status);
-          return size;
-        }
-        case SdkError_Tags.ClaimTimeout: {
-          return ordinalConverter.allocationSize(10);
-        }
-        case SdkError_Tags.PoolAccessDenied: {
-          const inner = value.inner;
-          let size = ordinalConverter.allocationSize(11);
-          size += FfiConverterString.allocationSize(inner.operation);
-          size += FfiConverterString.allocationSize(inner.namespace);
-          size += FfiConverterUInt16.allocationSize(inner.status);
-          size += FfiConverterString.allocationSize(inner.body);
-          return size;
-        }
-        default:
-          throw new UniffiInternalError.UnexpectedEnumCase();
-      }
-    }
-  }
-  return new FFIConverter();
+    return new FFIConverter();
 })();
 
 export interface AccessTokenProvider {
-  getAccessToken(
-    forceRefresh: boolean,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<string>;
+
+    getAccessToken(forceRefresh: boolean, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<string>;
 }
 
-export class AccessTokenProviderImpl
-  extends UniffiAbstractObject
-  implements AccessTokenProvider
-{
-  readonly [uniffiTypeNameSymbol] = "AccessTokenProviderImpl";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  // No primary constructor declared for this class.
-  private constructor(pointer: UniffiHandle) {
+
+export class AccessTokenProviderImpl extends UniffiAbstractObject implements AccessTokenProvider {
+
+    readonly [uniffiTypeNameSymbol] = "AccessTokenProviderImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
     super();
     this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeAccessTokenProviderImplObjectFactory.bless(pointer);
-  }
-
-  async getAccessToken(
-    forceRefresh: boolean,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<string> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(
-          uniffiTypeAccessTokenProviderImplObjectFactory.clonePointer(this),
-          FfiConverterBool.lower(forceRefresh, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeAccessTokenProviderError.lift.bind(
-        FfiConverterTypeAccessTokenProviderError,
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeAccessTokenProviderImplObjectFactory.pointer(this);
-      uniffiTypeAccessTokenProviderImplObjectFactory.freePointer(pointer);
-      uniffiTypeAccessTokenProviderImplObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
-    }
-  }
-
-  static instanceOf(obj_: any): obj_ is AccessTokenProviderImpl {
-    return uniffiTypeAccessTokenProviderImplObjectFactory.isConcreteType(obj_);
-  }
+    this[destructorGuardSymbol] = uniffiTypeAccessTokenProviderImplObjectFactory.bless(pointer);
 }
 
-const uniffiTypeAccessTokenProviderImplObjectFactory: UniffiObjectFactory<AccessTokenProvider> =
-  (() => {
+
+
+
+    async getAccessToken(forceRefresh: boolean, asyncOpts_?: { signal: AbortSignal }): Promise<string> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token(
+                    uniffiTypeAccessTokenProviderImplObjectFactory.clonePointer(this),FfiConverterBool.lower(forceRefresh, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeAccessTokenProviderError.lift.bind(FfiConverterTypeAccessTokenProviderError)
+        );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeAccessTokenProviderImplObjectFactory.pointer(this);
+            uniffiTypeAccessTokenProviderImplObjectFactory.freePointer(pointer);
+            uniffiTypeAccessTokenProviderImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is AccessTokenProviderImpl {
+        return uniffiTypeAccessTokenProviderImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeAccessTokenProviderImplObjectFactory: UniffiObjectFactory<AccessTokenProvider> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeAccessTokenProviderImplObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeAccessTokenProviderImplObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): AccessTokenProvider {
+    create(pointer: UniffiHandle): AccessTokenProvider {
         const instance = Object.create(AccessTokenProviderImpl.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "AccessTokenProviderImpl";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: AccessTokenProvider): UniffiHandle {
+    pointer(obj_: AccessTokenProvider): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: AccessTokenProvider): UniffiHandle {
+    clonePointer(obj_: AccessTokenProvider): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_accesstokenprovider(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_accesstokenprovider(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_accesstokenprovider(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_accesstokenprovider(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is AccessTokenProvider {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "AccessTokenProviderImpl"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeAccessTokenProvider = new FfiConverterObjectWithCallbacks(
-  uniffiTypeAccessTokenProviderImplObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is AccessTokenProvider {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "AccessTokenProviderImpl";
+    },
+}})();
+const FfiConverterTypeAccessTokenProvider = new FfiConverterObjectWithCallbacks(uniffiTypeAccessTokenProviderImplObjectFactory);
 
 // Add a vtable for the callbacks that go in AccessTokenProvider.
 
 // Put the implementation in a struct so we don't pollute the top-level namespace
-const uniffiCallbackInterfaceAccessTokenProvider: {
-  vtable: any;
-  register: () => void;
-} = {
-  // Create the VTable using a series of closures.
-  // ts automatically converts these into C callback functions.
-  vtable: {
-    get_access_token: (
-      uniffiHandle: bigint,
-      forceRefresh: number,
-      uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
-      uniffiCallbackData: bigint,
-    ) => {
-      const uniffiMakeCall = async (signal: AbortSignal): Promise<string> => {
-        const jsCallback =
-          FfiConverterTypeAccessTokenProvider.lift(uniffiHandle);
-        return await jsCallback.getAccessToken(
-          FfiConverterBool.lift(forceRefresh),
-          { signal },
-        );
-      };
-      const uniffiHandleSuccess = (returnValue: string) => {
-        uniffiFutureCallback.call(
-          uniffiFutureCallback,
-          uniffiCallbackData,
-          /* UniffiForeignFutureResultRustBuffer */ {
-            return_value: FfiConverterString.lower(
-              returnValue,
-              nativeModule().rustbuffer_alloc,
-            ),
-            call_status: uniffiCaller.createCallStatus(),
-          },
-        );
-      };
-      const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
-        uniffiFutureCallback.call(
-          uniffiFutureCallback,
-          uniffiCallbackData,
-          /* UniffiForeignFutureResultRustBuffer */ {
-            return_value: /*empty*/ new Uint8Array(0),
-            // TODO create callstatus with error.
-            call_status: uniffiCaller.createErrorStatus(code, errorBuf),
-          },
-        );
-      };
-      const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
-        /*makeCall:*/ uniffiMakeCall,
-        /*handleSuccess:*/ uniffiHandleSuccess,
-        /*handleError:*/ uniffiHandleError,
-        /*isErrorType:*/ AccessTokenProviderError.instanceOf,
-        /*lowerError:*/ FfiConverterTypeAccessTokenProviderError.lower.bind(
-          FfiConverterTypeAccessTokenProviderError,
-        ),
-        /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
-        /*alloc:*/ nativeModule().rustbuffer_alloc,
-      );
-      return uniffiForeignFuture;
+const uniffiCallbackInterfaceAccessTokenProvider: { vtable: any; register: () => void; } = {
+    // Create the VTable using a series of closures.
+    // ts automatically converts these into C callback functions.
+    vtable: {
+        get_access_token: (
+            uniffiHandle: bigint,
+            forceRefresh: number,
+            uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<string> => {
+                const jsCallback = FfiConverterTypeAccessTokenProvider.lift(uniffiHandle);
+                return await jsCallback.getAccessToken(
+                    FfiConverterBool.lift(forceRefresh), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: string) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: FfiConverterString.lower(returnValue, nativeModule().rustbuffer_alloc),
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: /*empty*/ new Uint8Array(0),
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ AccessTokenProviderError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeAccessTokenProviderError.lower.bind(FfiConverterTypeAccessTokenProviderError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeAccessTokenProvider.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeAccessTokenProvider.clone(uniffiHandle);
+        }
     },
-    uniffi_free: (uniffiHandle: UniffiHandle): void => {
-      // this will throw a stale handle error if the handle isn't found.
-      FfiConverterTypeAccessTokenProvider.drop(uniffiHandle);
+    register: () => {nativeModule().ubrn_uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(
+            uniffiCallbackInterfaceAccessTokenProvider.vtable
+        );
     },
-    uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
-      return FfiConverterTypeAccessTokenProvider.clone(uniffiHandle);
-    },
-  },
-  register: () => {
-    nativeModule().ubrn_uniffi_cyclops_sdk_fn_init_callback_vtable_accesstokenprovider(
-      uniffiCallbackInterfaceAccessTokenProvider.vtable,
-    );
-  },
 };
 
 export interface CreateClaimRequestBuilderLike {
-  build() /*throws*/ : CreateClaimRequest;
-  name(value: string): CreateClaimRequestBuilderLike;
-  pool(value: Pool): CreateClaimRequestBuilderLike;
-  spec(value: ClaimSpec): CreateClaimRequestBuilderLike;
+
+    build() /*throws*/: CreateClaimRequest;
+    name(value: string): CreateClaimRequestBuilderLike;
+    pool(value: Pool): CreateClaimRequestBuilderLike;
+    spec(value: ClaimSpec): CreateClaimRequestBuilderLike;
 }
 /**
  * @deprecated Use `CreateClaimRequestBuilderLike` instead.
  */
 export type CreateClaimRequestBuilderInterface = CreateClaimRequestBuilderLike;
 
-export class CreateClaimRequestBuilder
-  extends UniffiAbstractObject
-  implements CreateClaimRequestBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "CreateClaimRequestBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createclaimrequestbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCreateClaimRequestBuilderObjectFactory.bless(pointer);
-  }
 
-  build(): CreateClaimRequest /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeCreateClaimRequest.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
-          FfiConverterTypeSdkBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(
-            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
+export class CreateClaimRequestBuilder extends UniffiAbstractObject implements CreateClaimRequestBuilderLike {
 
-  name(value: string): CreateClaimRequestBuilderLike {
-    return FfiConverterTypeCreateClaimRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(
-            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
+    readonly [uniffiTypeNameSymbol] = "CreateClaimRequestBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createclaimrequestbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-  }
-
-  pool(value: Pool): CreateClaimRequestBuilderLike {
-    return FfiConverterTypeCreateClaimRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
-            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypePool.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  spec(value: ClaimSpec): CreateClaimRequestBuilderLike {
-    return FfiConverterTypeCreateClaimRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(
-            uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeClaimSpec.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeCreateClaimRequestBuilderObjectFactory.pointer(this);
-      uniffiTypeCreateClaimRequestBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeCreateClaimRequestBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCreateClaimRequestBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is CreateClaimRequestBuilder {
-    return uniffiTypeCreateClaimRequestBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    build(): CreateClaimRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCreateClaimRequest.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_build(
+                uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_name(
+                uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    pool(value: Pool): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_pool(
+                uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypePool.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    spec(value: ClaimSpec): CreateClaimRequestBuilderLike {
+    return FfiConverterTypeCreateClaimRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createclaimrequestbuilder_spec(
+                uniffiTypeCreateClaimRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeClaimSpec.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCreateClaimRequestBuilderObjectFactory.pointer(this);
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeCreateClaimRequestBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CreateClaimRequestBuilder {
+        return uniffiTypeCreateClaimRequestBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeCreateClaimRequestBuilderObjectFactory: UniffiObjectFactory<CreateClaimRequestBuilderLike> =
-  (() => {
+const uniffiTypeCreateClaimRequestBuilderObjectFactory: UniffiObjectFactory<CreateClaimRequestBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCreateClaimRequestBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCreateClaimRequestBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): CreateClaimRequestBuilderLike {
+    create(pointer: UniffiHandle): CreateClaimRequestBuilderLike {
         const instance = Object.create(CreateClaimRequestBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "CreateClaimRequestBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: CreateClaimRequestBuilderLike): UniffiHandle {
+    pointer(obj_: CreateClaimRequestBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: CreateClaimRequestBuilderLike): UniffiHandle {
+    clonePointer(obj_: CreateClaimRequestBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createclaimrequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createclaimrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createclaimrequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createclaimrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is CreateClaimRequestBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "CreateClaimRequestBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCreateClaimRequestBuilder = new FfiConverterObject(
-  uniffiTypeCreateClaimRequestBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is CreateClaimRequestBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CreateClaimRequestBuilder";
+    },
+}})();
+const FfiConverterTypeCreateClaimRequestBuilder = new FfiConverterObject(uniffiTypeCreateClaimRequestBuilderObjectFactory);
 
 export interface CreatePoolRequestBuilderLike {
-  build() /*throws*/ : CreatePoolRequest;
-  namespace(value: string): CreatePoolRequestBuilderLike;
-  spec(value: OsGymSandboxWarmPoolSpec): CreatePoolRequestBuilderLike;
+
+    build() /*throws*/: CreatePoolRequest;
+    namespace(value: string): CreatePoolRequestBuilderLike;
+    spec(value: OsGymSandboxWarmPoolSpec): CreatePoolRequestBuilderLike;
 }
 /**
  * @deprecated Use `CreatePoolRequestBuilderLike` instead.
  */
 export type CreatePoolRequestBuilderInterface = CreatePoolRequestBuilderLike;
 
-export class CreatePoolRequestBuilder
-  extends UniffiAbstractObject
-  implements CreatePoolRequestBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "CreatePoolRequestBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCreatePoolRequestBuilderObjectFactory.bless(pointer);
-  }
 
-  build(): CreatePoolRequest /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeCreatePoolRequest.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
-          FfiConverterTypeSdkBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(
-            uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
+export class CreatePoolRequestBuilder extends UniffiAbstractObject implements CreatePoolRequestBuilderLike {
 
-  namespace(value: string): CreatePoolRequestBuilderLike {
-    return FfiConverterTypeCreatePoolRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(
-            uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
+    readonly [uniffiTypeNameSymbol] = "CreatePoolRequestBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createpoolrequestbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-  }
-
-  spec(value: OsGymSandboxWarmPoolSpec): CreatePoolRequestBuilderLike {
-    return FfiConverterTypeCreatePoolRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(
-            uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeOSGymSandboxWarmPoolSpec.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeCreatePoolRequestBuilderObjectFactory.pointer(this);
-      uniffiTypeCreatePoolRequestBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeCreatePoolRequestBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCreatePoolRequestBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is CreatePoolRequestBuilder {
-    return uniffiTypeCreatePoolRequestBuilderObjectFactory.isConcreteType(obj_);
-  }
+
+
+
+    build(): CreatePoolRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCreatePoolRequest.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_build(
+                uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    namespace(value: string): CreatePoolRequestBuilderLike {
+    return FfiConverterTypeCreatePoolRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_namespace(
+                uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    spec(value: OsGymSandboxWarmPoolSpec): CreatePoolRequestBuilderLike {
+    return FfiConverterTypeCreatePoolRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec(
+                uniffiTypeCreatePoolRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeOSGymSandboxWarmPoolSpec.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCreatePoolRequestBuilderObjectFactory.pointer(this);
+            uniffiTypeCreatePoolRequestBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeCreatePoolRequestBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CreatePoolRequestBuilder {
+        return uniffiTypeCreatePoolRequestBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeCreatePoolRequestBuilderObjectFactory: UniffiObjectFactory<CreatePoolRequestBuilderLike> =
-  (() => {
+const uniffiTypeCreatePoolRequestBuilderObjectFactory: UniffiObjectFactory<CreatePoolRequestBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCreatePoolRequestBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCreatePoolRequestBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): CreatePoolRequestBuilderLike {
+    create(pointer: UniffiHandle): CreatePoolRequestBuilderLike {
         const instance = Object.create(CreatePoolRequestBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "CreatePoolRequestBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: CreatePoolRequestBuilderLike): UniffiHandle {
+    pointer(obj_: CreatePoolRequestBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: CreatePoolRequestBuilderLike): UniffiHandle {
+    clonePointer(obj_: CreatePoolRequestBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createpoolrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is CreatePoolRequestBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "CreatePoolRequestBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCreatePoolRequestBuilder = new FfiConverterObject(
-  uniffiTypeCreatePoolRequestBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is CreatePoolRequestBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CreatePoolRequestBuilder";
+    },
+}})();
+const FfiConverterTypeCreatePoolRequestBuilder = new FfiConverterObject(uniffiTypeCreatePoolRequestBuilderObjectFactory);
 
 export interface CreateTemplateRequestBuilderLike {
-  build() /*throws*/ : CreateTemplateRequest;
-  name(value: string): CreateTemplateRequestBuilderLike;
-  namespace(value: string): CreateTemplateRequestBuilderLike;
-  spec(value: OsGymSandboxTemplateSpec): CreateTemplateRequestBuilderLike;
+
+    build() /*throws*/: CreateTemplateRequest;
+    name(value: string): CreateTemplateRequestBuilderLike;
+    namespace(value: string): CreateTemplateRequestBuilderLike;
+    spec(value: OsGymSandboxTemplateSpec): CreateTemplateRequestBuilderLike;
 }
 /**
  * @deprecated Use `CreateTemplateRequestBuilderLike` instead.
  */
-export type CreateTemplateRequestBuilderInterface =
-  CreateTemplateRequestBuilderLike;
+export type CreateTemplateRequestBuilderInterface = CreateTemplateRequestBuilderLike;
 
-export class CreateTemplateRequestBuilder
-  extends UniffiAbstractObject
-  implements CreateTemplateRequestBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "CreateTemplateRequestBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class CreateTemplateRequestBuilder extends UniffiAbstractObject implements CreateTemplateRequestBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "CreateTemplateRequestBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCreateTemplateRequestBuilderObjectFactory.bless(pointer);
-  }
-
-  build(): CreateTemplateRequest /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeCreateTemplateRequest.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
-          FfiConverterTypeSdkBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build(
-            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  name(value: string): CreateTemplateRequestBuilderLike {
-    return FfiConverterTypeCreateTemplateRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name(
-            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  namespace(value: string): CreateTemplateRequestBuilderLike {
-    return FfiConverterTypeCreateTemplateRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace(
-            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  spec(value: OsGymSandboxTemplateSpec): CreateTemplateRequestBuilderLike {
-    return FfiConverterTypeCreateTemplateRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec(
-            uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterTypeOSGymSandboxTemplateSpec.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeCreateTemplateRequestBuilderObjectFactory.pointer(this);
-      uniffiTypeCreateTemplateRequestBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeCreateTemplateRequestBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCreateTemplateRequestBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is CreateTemplateRequestBuilder {
-    return uniffiTypeCreateTemplateRequestBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    build(): CreateTemplateRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCreateTemplateRequest.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_build(
+                uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): CreateTemplateRequestBuilderLike {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_name(
+                uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    namespace(value: string): CreateTemplateRequestBuilderLike {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_namespace(
+                uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    spec(value: OsGymSandboxTemplateSpec): CreateTemplateRequestBuilderLike {
+    return FfiConverterTypeCreateTemplateRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createtemplaterequestbuilder_spec(
+                uniffiTypeCreateTemplateRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeOSGymSandboxTemplateSpec.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCreateTemplateRequestBuilderObjectFactory.pointer(this);
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeCreateTemplateRequestBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CreateTemplateRequestBuilder {
+        return uniffiTypeCreateTemplateRequestBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeCreateTemplateRequestBuilderObjectFactory: UniffiObjectFactory<CreateTemplateRequestBuilderLike> =
-  (() => {
+const uniffiTypeCreateTemplateRequestBuilderObjectFactory: UniffiObjectFactory<CreateTemplateRequestBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCreateTemplateRequestBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCreateTemplateRequestBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): CreateTemplateRequestBuilderLike {
+    create(pointer: UniffiHandle): CreateTemplateRequestBuilderLike {
         const instance = Object.create(CreateTemplateRequestBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "CreateTemplateRequestBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: CreateTemplateRequestBuilderLike): UniffiHandle {
+    pointer(obj_: CreateTemplateRequestBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: CreateTemplateRequestBuilderLike): UniffiHandle {
+    clonePointer(obj_: CreateTemplateRequestBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createtemplaterequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is CreateTemplateRequestBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "CreateTemplateRequestBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCreateTemplateRequestBuilder = new FfiConverterObject(
-  uniffiTypeCreateTemplateRequestBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is CreateTemplateRequestBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CreateTemplateRequestBuilder";
+    },
+}})();
+const FfiConverterTypeCreateTemplateRequestBuilder = new FfiConverterObject(uniffiTypeCreateTemplateRequestBuilderObjectFactory);
 
 export interface CreateUserApiKeyRequestBuilderLike {
-  build() /*throws*/ : CreateUserApiKeyRequest;
-  name(value: string): CreateUserApiKeyRequestBuilderLike;
-  scope(value: Array<string>): CreateUserApiKeyRequestBuilderLike;
+
+    build() /*throws*/: CreateUserApiKeyRequest;
+    name(value: string): CreateUserApiKeyRequestBuilderLike;
+    scope(value: Array<string>): CreateUserApiKeyRequestBuilderLike;
 }
 /**
  * @deprecated Use `CreateUserApiKeyRequestBuilderLike` instead.
  */
-export type CreateUserApiKeyRequestBuilderInterface =
-  CreateUserApiKeyRequestBuilderLike;
+export type CreateUserApiKeyRequestBuilderInterface = CreateUserApiKeyRequestBuilderLike;
 
-export class CreateUserApiKeyRequestBuilder
-  extends UniffiAbstractObject
-  implements CreateUserApiKeyRequestBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "CreateUserApiKeyRequestBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createuserapikeyrequestbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class CreateUserApiKeyRequestBuilder extends UniffiAbstractObject implements CreateUserApiKeyRequestBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "CreateUserApiKeyRequestBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_createuserapikeyrequestbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.bless(pointer);
-  }
-
-  build(): CreateUserApiKeyRequest /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeCreateUserApiKeyRequest.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
-          FfiConverterTypeSdkBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_build(
-            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  name(value: string): CreateUserApiKeyRequestBuilderLike {
-    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_name(
-            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  scope(value: Array<string>): CreateUserApiKeyRequestBuilderLike {
-    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_scope(
-            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterSequenceString.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.pointer(this);
-      uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.freePointer(
-        pointer,
-      );
-      uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is CreateUserApiKeyRequestBuilder {
-    return uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    build(): CreateUserApiKeyRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCreateUserApiKeyRequest.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_build(
+                uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    name(value: string): CreateUserApiKeyRequestBuilderLike {
+    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_name(
+                uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    scope(value: Array<string>): CreateUserApiKeyRequestBuilderLike {
+    return FfiConverterTypeCreateUserApiKeyRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_createuserapikeyrequestbuilder_scope(
+                uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterSequenceString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.pointer(this);
+            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CreateUserApiKeyRequestBuilder {
+        return uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory: UniffiObjectFactory<CreateUserApiKeyRequestBuilderLike> =
-  (() => {
+const uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory: UniffiObjectFactory<CreateUserApiKeyRequestBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): CreateUserApiKeyRequestBuilderLike {
-        const instance = Object.create(
-          CreateUserApiKeyRequestBuilder.prototype,
-        );
+    create(pointer: UniffiHandle): CreateUserApiKeyRequestBuilderLike {
+        const instance = Object.create(CreateUserApiKeyRequestBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "CreateUserApiKeyRequestBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: CreateUserApiKeyRequestBuilderLike): UniffiHandle {
+    pointer(obj_: CreateUserApiKeyRequestBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: CreateUserApiKeyRequestBuilderLike): UniffiHandle {
+    clonePointer(obj_: CreateUserApiKeyRequestBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createuserapikeyrequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_createuserapikeyrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createuserapikeyrequestbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_createuserapikeyrequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is CreateUserApiKeyRequestBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "CreateUserApiKeyRequestBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCreateUserApiKeyRequestBuilder = new FfiConverterObject(
-  uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is CreateUserApiKeyRequestBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CreateUserApiKeyRequestBuilder";
+    },
+}})();
+const FfiConverterTypeCreateUserApiKeyRequestBuilder = new FfiConverterObject(uniffiTypeCreateUserApiKeyRequestBuilderObjectFactory);
 
 export interface CyclopsClientLike {
-  createClaim(
-    request: CreateClaimRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Claim>;
-  createNamespace(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Namespace>;
-  createPool(
-    request: CreatePoolRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Pool>;
-  createTemplate(
-    request: CreateTemplateRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Template>;
-  createUserApiKey(
-    request: CreateUserApiKeyRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<NewUserApiKey>;
-  deleteClaim(
-    claim: Claim,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<void>;
-  deleteNamespace(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<void>;
-  deletePool(
-    pool: Pool,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<void>;
-  deleteTemplate(
-    template: Template,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<void>;
-  deleteUserApiKey(
-    id: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<void>;
-  getClaim(
-    claim: Claim,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Claim>;
-  getNamespace(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Namespace>;
-  getPool(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Pool>;
-  getTemplate(
-    namespace: string,
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Template>;
-  listClaims(
-    namespace: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Array<Claim>>;
-  listNamespaces(asyncOpts_?: {
-    signal: AbortSignal;
-  }) /*throws*/ : Promise<Array<Namespace>>;
-  listPools(
-    namespace: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Array<Pool>>;
-  listTemplates(
-    namespace: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Array<Template>>;
-  listUserApiKeys(asyncOpts_?: {
-    signal: AbortSignal;
-  }) /*throws*/ : Promise<Array<UserApiKey>>;
-  reconcilePool(
-    request: CreatePoolRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Pool>;
-  reconcileTemplate(
-    request: CreateTemplateRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Template>;
-  /**
-   * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
-   * expiry is the only liveness input the pool operator's claim reaper
-   * honors, so a holder that outlives its current lease must renew before
-   * the deadline passes or the bound sandbox is deleted underneath it.
-   * Deliberately narrower than a claim update: nothing else on the claim
-   * can be mutated through the SDK.
-   */
-  renewClaim(
-    claim: Claim,
-    shutdownTime: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Claim>;
-  serviceRequest(
-    sandbox: Sandbox,
-    service: string,
-    path: string,
-    request: HttpRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<HttpResponse>;
-  updatePool(
-    pool: Pool,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Pool>;
-  updateTemplate(
-    template: Template,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Template>;
-  waitClaim(
-    claim: Claim,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<Sandbox>;
+
+    createClaim(request: CreateClaimRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+    createImage(namespace: string, manifest: PreservedJsonLike, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PreservedJsonLike>;
+    createNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Namespace>;
+    createPool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
+    createTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
+    createUserApiKey(request: CreateUserApiKeyRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<NewUserApiKey>;
+    deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deletePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    deleteUserApiKey(id: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<void>;
+    getClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+    getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<PreservedJsonLike>;
+    getNamespace(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Namespace>;
+    getPool(name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
+    getTemplate(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
+    listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Claim>>;
+    listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<PreservedJsonLike>>;
+    listNamespaces(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Namespace>>;
+    listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Pool>>;
+    listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<Template>>;
+    listUserApiKeys(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Array<UserApiKey>>;
+    presignImageUploads(request: ImageUploadRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<ImageUploadResponse>;
+    reconcilePool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
+    reconcileTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
+/**
+ * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+ * expiry is the only liveness input the pool operator's claim reaper
+ * honors, so a holder that outlives its current lease must renew before
+ * the deadline passes or the bound sandbox is deleted underneath it.
+ * Deliberately narrower than a claim update: nothing else on the claim
+ * can be mutated through the SDK.
+ */
+    renewClaim(claim: Claim, shutdownTime: string, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Claim>;
+    serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
+    updatePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Pool>;
+    updateTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Template>;
+    waitClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<Sandbox>;
 }
 /**
  * @deprecated Use `CyclopsClientLike` instead.
  */
 export type CyclopsClientInterface = CyclopsClientLike;
 
-export class CyclopsClient
-  extends UniffiAbstractObject
-  implements CyclopsClientLike
-{
-  readonly [uniffiTypeNameSymbol] = "CyclopsClient";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  // No primary constructor declared for this class.
-  private constructor(pointer: UniffiHandle) {
+
+export class CyclopsClient extends UniffiAbstractObject implements CyclopsClientLike {
+
+    readonly [uniffiTypeNameSymbol] = "CyclopsClient";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
     super();
     this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCyclopsClientObjectFactory.bless(pointer);
-  }
-
-  static connect(
-    configuration: CyclopsConfiguration,
-    httpClient: HttpClient,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect(
-            FfiConverterTypeCyclopsConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterTypeHttpClient.lower(
-              httpClient,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  static connectBrowserWithAccessToken(
-    configuration: CyclopsTokenProviderConfiguration,
-    accessToken: string,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token(
-            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterString.lower(
-              accessToken,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  static connectWithAccessToken(
-    configuration: CyclopsTokenProviderConfiguration,
-    accessToken: string,
-    httpClient: HttpClient,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(
-            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterString.lower(
-              accessToken,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterTypeHttpClient.lower(
-              httpClient,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  static connectWithAccessTokenAndNativeHttpClient(
-    configuration: CyclopsTokenProviderConfiguration,
-    accessToken: string,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
-            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterString.lower(
-              accessToken,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  static connectWithAccessTokenProvider(
-    configuration: CyclopsTokenProviderConfiguration,
-    tokenProvider: AccessTokenProvider,
-    httpClient: HttpClient,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(
-            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterTypeAccessTokenProvider.lower(
-              tokenProvider,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterTypeHttpClient.lower(
-              httpClient,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  static connectWithAccessTokenProviderAndNativeHttpClient(
-    configuration: CyclopsTokenProviderConfiguration,
-    tokenProvider: AccessTokenProvider,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
-            FfiConverterTypeCyclopsTokenProviderConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            FfiConverterTypeAccessTokenProvider.lower(
-              tokenProvider,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  static connectWithNativeHttpClient(
-    configuration: CyclopsConfiguration,
-  ): CyclopsClientLike /*throws*/ {
-    return FfiConverterTypeCyclopsClient.lift(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkError.lift.bind(
-          FfiConverterTypeSdkError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(
-            FfiConverterTypeCyclopsConfiguration.lower(
-              configuration,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  async createClaim(
-    request: CreateClaimRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Claim> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeCreateClaimRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async createNamespace(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Namespace> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeNamespace.lift.bind(
-        FfiConverterTypeNamespace,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async createPool(
-    request: CreatePoolRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Pool> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeCreatePoolRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async createTemplate(
-    request: CreateTemplateRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Template> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeCreateTemplateRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
-        FfiConverterTypeTemplate,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async createUserApiKey(
-    request: CreateUserApiKeyRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<NewUserApiKey> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeCreateUserApiKeyRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeNewUserApiKey.lift.bind(
-        FfiConverterTypeNewUserApiKey,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async deleteClaim(
-    claim: Claim,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<void> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
-      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
-      /*liftFunc:*/ (_v) => {},
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async deleteNamespace(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<void> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
-      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
-      /*liftFunc:*/ (_v) => {},
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async deletePool(
-    pool: Pool,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<void> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
-      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
-      /*liftFunc:*/ (_v) => {},
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async deleteTemplate(
-    template: Template,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<void> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeTemplate.lower(
-            template,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
-      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
-      /*liftFunc:*/ (_v) => {},
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async deleteUserApiKey(
-    id: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<void> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(id, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_void,
-      /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
-      /*liftFunc:*/ (_v) => {},
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async getClaim(
-    claim: Claim,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Claim> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async getNamespace(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Namespace> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeNamespace.lift.bind(
-        FfiConverterTypeNamespace,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async getPool(
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Pool> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async getTemplate(
-    namespace: string,
-    name: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Template> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(name, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
-        FfiConverterTypeTemplate,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async listClaims(
-    namespace: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Array<Claim>> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterSequenceTypeClaim.lift.bind(
-        FfiConverterSequenceTypeClaim,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async listNamespaces(asyncOpts_?: {
-    signal: AbortSignal;
-  }): Promise<Array<Namespace>> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterSequenceTypeNamespace.lift.bind(
-        FfiConverterSequenceTypeNamespace,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async listPools(
-    namespace: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Array<Pool>> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterSequenceTypePool.lift.bind(
-        FfiConverterSequenceTypePool,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async listTemplates(
-    namespace: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Array<Template>> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterSequenceTypeTemplate.lift.bind(
-        FfiConverterSequenceTypeTemplate,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async listUserApiKeys(asyncOpts_?: {
-    signal: AbortSignal;
-  }): Promise<Array<UserApiKey>> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterSequenceTypeUserApiKey.lift.bind(
-        FfiConverterSequenceTypeUserApiKey,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async reconcilePool(
-    request: CreatePoolRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Pool> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeCreatePoolRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async reconcileTemplate(
-    request: CreateTemplateRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Template> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeCreateTemplateRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
-        FfiConverterTypeTemplate,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  /**
-   * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
-   * expiry is the only liveness input the pool operator's claim reaper
-   * honors, so a holder that outlives its current lease must renew before
-   * the deadline passes or the bound sandbox is deleted underneath it.
-   * Deliberately narrower than a claim update: nothing else on the claim
-   * can be mutated through the SDK.
-   */
-  async renewClaim(
-    claim: Claim,
-    shutdownTime: string,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Claim> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(
-            shutdownTime,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async serviceRequest(
-    sandbox: Sandbox,
-    service: string,
-    path: string,
-    request: HttpRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<HttpResponse> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeSandbox.lower(
-            sandbox,
-            nativeModule().rustbuffer_alloc,
-          ),
-          FfiConverterString.lower(service, nativeModule().rustbuffer_alloc),
-          FfiConverterString.lower(path, nativeModule().rustbuffer_alloc),
-          FfiConverterTypeHttpRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeHttpResponse.lift.bind(
-        FfiConverterTypeHttpResponse,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async updatePool(
-    pool: Pool,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Pool> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async updateTemplate(
-    template: Template,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Template> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeTemplate.lower(
-            template,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(
-        FfiConverterTypeTemplate,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  async waitClaim(
-    claim: Claim,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<Sandbox> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
-          uniffiTypeCyclopsClientObjectFactory.clonePointer(this),
-          FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeSandbox.lift.bind(FfiConverterTypeSandbox),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(
-        FfiConverterTypeSdkError,
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer = uniffiTypeCyclopsClientObjectFactory.pointer(this);
-      uniffiTypeCyclopsClientObjectFactory.freePointer(pointer);
-      uniffiTypeCyclopsClientObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
-    }
-  }
-
-  static instanceOf(obj_: any): obj_ is CyclopsClient {
-    return uniffiTypeCyclopsClientObjectFactory.isConcreteType(obj_);
-  }
+    this[destructorGuardSymbol] = uniffiTypeCyclopsClientObjectFactory.bless(pointer);
 }
 
-const uniffiTypeCyclopsClientObjectFactory: UniffiObjectFactory<CyclopsClientLike> =
-  (() => {
+
+    static connect(configuration: CyclopsConfiguration, httpClient: HttpClient): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect(
+        FfiConverterTypeCyclopsConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeHttpClient.lower(httpClient, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    static connectBrowserWithAccessToken(configuration: CyclopsTokenProviderConfiguration, accessToken: string): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_browser_with_access_token(
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(accessToken, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    static connectWithAccessToken(configuration: CyclopsTokenProviderConfiguration, accessToken: string, httpClient: HttpClient): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token(
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(accessToken, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeHttpClient.lower(httpClient, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    static connectWithAccessTokenAndNativeHttpClient(configuration: CyclopsTokenProviderConfiguration, accessToken: string): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_and_native_http_client(
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+        FfiConverterString.lower(accessToken, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    static connectWithAccessTokenProvider(configuration: CyclopsTokenProviderConfiguration, tokenProvider: AccessTokenProvider, httpClient: HttpClient): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider(
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeAccessTokenProvider.lower(tokenProvider, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeHttpClient.lower(httpClient, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    static connectWithAccessTokenProviderAndNativeHttpClient(configuration: CyclopsTokenProviderConfiguration, tokenProvider: AccessTokenProvider): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client(
+        FfiConverterTypeCyclopsTokenProviderConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+        FfiConverterTypeAccessTokenProvider.lower(tokenProvider, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    static connectWithNativeHttpClient(configuration: CyclopsConfiguration): CyclopsClientLike /*throws*/ {
+    return FfiConverterTypeCyclopsClient.lift(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopsclient_connect_with_native_http_client(
+        FfiConverterTypeCyclopsConfiguration.lower(configuration, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+
+    async createClaim(request: CreateClaimRequest, asyncOpts_?: { signal: AbortSignal }): Promise<Claim> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_claim(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreateClaimRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async createImage(namespace: string, manifest: PreservedJsonLike, asyncOpts_?: { signal: AbortSignal }): Promise<PreservedJsonLike> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterTypePreservedJson.lower(manifest, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePreservedJson.lift.bind(FfiConverterTypePreservedJson),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async createNamespace(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<Namespace> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeNamespace.lift.bind(FfiConverterTypeNamespace),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async createPool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }): Promise<Pool> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreatePoolRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async createTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreateTemplateRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(FfiConverterTypeTemplate),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async createUserApiKey(request: CreateUserApiKeyRequest, asyncOpts_?: { signal: AbortSignal }): Promise<NewUserApiKey> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_create_user_api_key(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreateUserApiKeyRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeNewUserApiKey.lift.bind(FfiConverterTypeNewUserApiKey),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deleteClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_claim(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deleteImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deleteNamespace(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_namespace(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deletePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_pool(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deleteTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_template(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeTemplate.lower(template, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async deleteUserApiKey(id: string, asyncOpts_?: { signal: AbortSignal }): Promise<void> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_user_api_key(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(id, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_void,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_void,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_void,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_void,
+            /*liftFunc:*/ (_v) => {},
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async getClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<Claim> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_claim(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async getImage(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<PreservedJsonLike> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_u64,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_u64,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_u64,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_u64,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePreservedJson.lift.bind(FfiConverterTypePreservedJson),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async getNamespace(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<Namespace> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_namespace(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeNamespace.lift.bind(FfiConverterTypeNamespace),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async getPool(name: string, asyncOpts_?: { signal: AbortSignal }): Promise<Pool> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_pool(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async getTemplate(namespace: string, name: string, asyncOpts_?: { signal: AbortSignal }): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_get_template(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc),FfiConverterString.lower(name, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(FfiConverterTypeTemplate),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async listClaims(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<Claim>> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeClaim.lift.bind(FfiConverterSequenceTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async listImages(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<PreservedJsonLike>> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypePreservedJson.lift.bind(FfiConverterSequenceTypePreservedJson),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async listNamespaces(asyncOpts_?: { signal: AbortSignal }): Promise<Array<Namespace>> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_namespaces(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeNamespace.lift.bind(FfiConverterSequenceTypeNamespace),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async listPools(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<Pool>> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypePool.lift.bind(FfiConverterSequenceTypePool),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async listTemplates(namespace: string, asyncOpts_?: { signal: AbortSignal }): Promise<Array<Template>> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterString.lower(namespace, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeTemplate.lift.bind(FfiConverterSequenceTypeTemplate),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async listUserApiKeys(asyncOpts_?: { signal: AbortSignal }): Promise<Array<UserApiKey>> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_list_user_api_keys(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterSequenceTypeUserApiKey.lift.bind(FfiConverterSequenceTypeUserApiKey),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async presignImageUploads(request: ImageUploadRequest, asyncOpts_?: { signal: AbortSignal }): Promise<ImageUploadResponse> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeImageUploadRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeImageUploadResponse.lift.bind(FfiConverterTypeImageUploadResponse),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async reconcilePool(request: CreatePoolRequest, asyncOpts_?: { signal: AbortSignal }): Promise<Pool> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_pool(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreatePoolRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async reconcileTemplate(request: CreateTemplateRequest, asyncOpts_?: { signal: AbortSignal }): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_reconcile_template(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeCreateTemplateRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(FfiConverterTypeTemplate),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+/**
+ * Push the claim's `spec.lifecycle.shutdownTime` forward. That absolute
+ * expiry is the only liveness input the pool operator's claim reaper
+ * honors, so a holder that outlives its current lease must renew before
+ * the deadline passes or the bound sandbox is deleted underneath it.
+ * Deliberately narrower than a claim update: nothing else on the claim
+ * can be mutated through the SDK.
+ */
+    async renewClaim(claim: Claim, shutdownTime: string, asyncOpts_?: { signal: AbortSignal }): Promise<Claim> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc),FfiConverterString.lower(shutdownTime, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeClaim.lift.bind(FfiConverterTypeClaim),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async serviceRequest(sandbox: Sandbox, service: string, path: string, request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeSandbox.lower(sandbox, nativeModule().rustbuffer_alloc),FfiConverterString.lower(service, nativeModule().rustbuffer_alloc),FfiConverterString.lower(path, nativeModule().rustbuffer_alloc),FfiConverterTypeHttpRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHttpResponse.lift.bind(FfiConverterTypeHttpResponse),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async updatePool(pool: Pool, asyncOpts_?: { signal: AbortSignal }): Promise<Pool> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_update_pool(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypePool.lower(pool, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypePool.lift.bind(FfiConverterTypePool),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async updateTemplate(template: Template, asyncOpts_?: { signal: AbortSignal }): Promise<Template> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_update_template(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeTemplate.lower(template, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeTemplate.lift.bind(FfiConverterTypeTemplate),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+    async waitClaim(claim: Claim, asyncOpts_?: { signal: AbortSignal }): Promise<Sandbox> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(
+                    uniffiTypeCyclopsClientObjectFactory.clonePointer(this),FfiConverterTypeClaim.lower(claim, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeSandbox.lift.bind(FfiConverterTypeSandbox),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeSdkError.lift.bind(FfiConverterTypeSdkError)
+        );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCyclopsClientObjectFactory.pointer(this);
+            uniffiTypeCyclopsClientObjectFactory.freePointer(pointer);
+            uniffiTypeCyclopsClientObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CyclopsClient {
+        return uniffiTypeCyclopsClientObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeCyclopsClientObjectFactory: UniffiObjectFactory<CyclopsClientLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCyclopsClientObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCyclopsClientObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): CyclopsClientLike {
+    create(pointer: UniffiHandle): CyclopsClientLike {
         const instance = Object.create(CyclopsClient.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "CyclopsClient";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: CyclopsClientLike): UniffiHandle {
+    pointer(obj_: CyclopsClientLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: CyclopsClientLike): UniffiHandle {
+    clonePointer(obj_: CyclopsClientLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopsclient(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopsclient(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopsclient(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopsclient(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is CyclopsClientLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "CyclopsClient"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCyclopsClient = new FfiConverterObject(
-  uniffiTypeCyclopsClientObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is CyclopsClientLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CyclopsClient";
+    },
+}})();
+const FfiConverterTypeCyclopsClient = new FfiConverterObject(uniffiTypeCyclopsClientObjectFactory);
 
 export interface CyclopsTokenProviderConfigurationBuilderLike {
-  baseUrl(value: string): CyclopsTokenProviderConfigurationBuilderLike;
-  build() /*throws*/ : CyclopsTokenProviderConfiguration;
-  claimPollIntervalMs(
-    value: bigint,
-  ): CyclopsTokenProviderConfigurationBuilderLike;
-  claimPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike;
-  poolPollIntervalMs(
-    value: bigint,
-  ): CyclopsTokenProviderConfigurationBuilderLike;
-  poolPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike;
+
+    baseUrl(value: string): CyclopsTokenProviderConfigurationBuilderLike;
+    build() /*throws*/: CyclopsTokenProviderConfiguration;
+    claimPollIntervalMs(value: bigint): CyclopsTokenProviderConfigurationBuilderLike;
+    claimPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike;
+    poolPollIntervalMs(value: bigint): CyclopsTokenProviderConfigurationBuilderLike;
+    poolPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike;
 }
 /**
  * @deprecated Use `CyclopsTokenProviderConfigurationBuilderLike` instead.
  */
-export type CyclopsTokenProviderConfigurationBuilderInterface =
-  CyclopsTokenProviderConfigurationBuilderLike;
+export type CyclopsTokenProviderConfigurationBuilderInterface = CyclopsTokenProviderConfigurationBuilderLike;
 
-export class CyclopsTokenProviderConfigurationBuilder
-  extends UniffiAbstractObject
-  implements CyclopsTokenProviderConfigurationBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "CyclopsTokenProviderConfigurationBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopstokenproviderconfigurationbuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+
+export class CyclopsTokenProviderConfigurationBuilder extends UniffiAbstractObject implements CyclopsTokenProviderConfigurationBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "CyclopsTokenProviderConfigurationBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_cyclopstokenproviderconfigurationbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.bless(
-        pointer,
-      );
-  }
-
-  baseUrl(value: string): CyclopsTokenProviderConfigurationBuilderLike {
-    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_base_url(
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  build(): CyclopsTokenProviderConfiguration /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeCyclopsTokenProviderConfiguration.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
-          FfiConverterTypeSdkBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_build(
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  claimPollIntervalMs(
-    value: bigint,
-  ): CyclopsTokenProviderConfigurationBuilderLike {
-    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms(
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  claimPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike {
-    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit(
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  poolPollIntervalMs(
-    value: bigint,
-  ): CyclopsTokenProviderConfigurationBuilderLike {
-    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms(
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  poolPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike {
-    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit(
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(
-              this,
-            ),
-            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer =
-        uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.pointer(
-          this,
-        );
-      uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.freePointer(
-        pointer,
-      );
-      uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.unbless(
-        ptr,
-      );
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(
-    obj_: any,
-  ): obj_ is CyclopsTokenProviderConfigurationBuilder {
-    return uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.isConcreteType(
-      obj_,
-    );
-  }
+
+
+
+    baseUrl(value: string): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_base_url(
+                uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    build(): CyclopsTokenProviderConfiguration /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeCyclopsTokenProviderConfiguration.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_build(
+                uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    claimPollIntervalMs(value: bigint): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms(
+                uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    claimPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit(
+                uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    poolPollIntervalMs(value: bigint): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms(
+                uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    poolPollLimit(value: number): CyclopsTokenProviderConfigurationBuilderLike {
+    return FfiConverterTypeCyclopsTokenProviderConfigurationBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit(
+                uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.pointer(this);
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is CyclopsTokenProviderConfigurationBuilder {
+        return uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory: UniffiObjectFactory<CyclopsTokenProviderConfigurationBuilderLike> =
-  (() => {
+const uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory: UniffiObjectFactory<CyclopsTokenProviderConfigurationBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.freePointer(
-              heldValue,
-            );
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(
-        pointer: UniffiHandle,
-      ): CyclopsTokenProviderConfigurationBuilderLike {
-        const instance = Object.create(
-          CyclopsTokenProviderConfigurationBuilder.prototype,
-        );
+    create(pointer: UniffiHandle): CyclopsTokenProviderConfigurationBuilderLike {
+        const instance = Object.create(CyclopsTokenProviderConfigurationBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
-        instance[uniffiTypeNameSymbol] =
-          "CyclopsTokenProviderConfigurationBuilder";
+        instance[uniffiTypeNameSymbol] = "CyclopsTokenProviderConfigurationBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(
-        obj_: CyclopsTokenProviderConfigurationBuilderLike,
-      ): UniffiHandle {
+    pointer(obj_: CyclopsTokenProviderConfigurationBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(
-        obj_: CyclopsTokenProviderConfigurationBuilderLike,
-      ): UniffiHandle {
+    clonePointer(obj_: CyclopsTokenProviderConfigurationBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopstokenproviderconfigurationbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_cyclopstokenproviderconfigurationbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopstokenproviderconfigurationbuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_cyclopstokenproviderconfigurationbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(
-        obj_: any,
-      ): obj_ is CyclopsTokenProviderConfigurationBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] ===
-            "CyclopsTokenProviderConfigurationBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeCyclopsTokenProviderConfigurationBuilder =
-  new FfiConverterObject(
-    uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory,
-  );
+    isConcreteType(obj_: any): obj_ is CyclopsTokenProviderConfigurationBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "CyclopsTokenProviderConfigurationBuilder";
+    },
+}})();
+const FfiConverterTypeCyclopsTokenProviderConfigurationBuilder = new FfiConverterObject(uniffiTypeCyclopsTokenProviderConfigurationBuilderObjectFactory);
 
 export interface HttpClient {
-  execute(
-    request: HttpRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ) /*throws*/ : Promise<HttpResponse>;
+
+    execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<HttpResponse>;
 }
+
 
 export class HttpClientImpl extends UniffiAbstractObject implements HttpClient {
-  readonly [uniffiTypeNameSymbol] = "HttpClientImpl";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  // No primary constructor declared for this class.
-  private constructor(pointer: UniffiHandle) {
+
+    readonly [uniffiTypeNameSymbol] = "HttpClientImpl";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    // No primary constructor declared for this class.
+private constructor(pointer: UniffiHandle) {
     super();
     this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeHttpClientImplObjectFactory.bless(pointer);
-  }
-
-  async execute(
-    request: HttpRequest,
-    asyncOpts_?: { signal: AbortSignal },
-  ): Promise<HttpResponse> /*throws*/ {
-    return await uniffiRustCallAsync(
-      /*rustCaller:*/ uniffiCaller,
-      /*rustFutureFunc:*/ () => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httpclient_execute(
-          uniffiTypeHttpClientImplObjectFactory.clonePointer(this),
-          FfiConverterTypeHttpRequest.lower(
-            request,
-            nativeModule().rustbuffer_alloc,
-          ),
-        );
-      },
-      /*pollFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
-      /*cancelFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
-      /*completeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
-      /*freeFunc:*/ nativeModule()
-        .ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
-      // Async returns always go through the JS-side converter: the
-      // FFI symbol returns the future handle (u64), and the user-level
-      // RustBuffer comes back via the shared `rust_future_complete_*`
-      // export. The bytes the runtime hands back must be deserialized
-      // here using the per-callable return-type converter.
-      /*liftFunc:*/ FfiConverterTypeHttpResponse.lift.bind(
-        FfiConverterTypeHttpResponse,
-      ),
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      /*asyncOpts:*/ asyncOpts_,
-      /*errorHandler:*/ FfiConverterTypeHttpError.lift.bind(
-        FfiConverterTypeHttpError,
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer = uniffiTypeHttpClientImplObjectFactory.pointer(this);
-      uniffiTypeHttpClientImplObjectFactory.freePointer(pointer);
-      uniffiTypeHttpClientImplObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
-    }
-  }
-
-  static instanceOf(obj_: any): obj_ is HttpClientImpl {
-    return uniffiTypeHttpClientImplObjectFactory.isConcreteType(obj_);
-  }
+    this[destructorGuardSymbol] = uniffiTypeHttpClientImplObjectFactory.bless(pointer);
 }
 
-const uniffiTypeHttpClientImplObjectFactory: UniffiObjectFactory<HttpClient> =
-  (() => {
+
+
+
+    async execute(request: HttpRequest, asyncOpts_?: { signal: AbortSignal }): Promise<HttpResponse> /*throws*/ {
+    return await uniffiRustCallAsync(
+            /*rustCaller:*/ uniffiCaller,
+            /*rustFutureFunc:*/ () => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httpclient_execute(
+                    uniffiTypeHttpClientImplObjectFactory.clonePointer(this),FfiConverterTypeHttpRequest.lower(request, nativeModule().rustbuffer_alloc)
+                );
+            },
+            /*pollFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            /*cancelFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_cancel_rust_buffer,
+            /*completeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            /*freeFunc:*/ nativeModule().ubrn_ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            // Async returns always go through the JS-side converter: the
+            // FFI symbol returns the future handle (u64), and the user-level
+            // RustBuffer comes back via the shared `rust_future_complete_*`
+            // export. The bytes the runtime hands back must be deserialized
+            // here using the per-callable return-type converter.
+            /*liftFunc:*/ FfiConverterTypeHttpResponse.lift.bind(FfiConverterTypeHttpResponse),
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+            /*asyncOpts:*/ asyncOpts_,
+            /*errorHandler:*/ FfiConverterTypeHttpError.lift.bind(FfiConverterTypeHttpError)
+        );
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeHttpClientImplObjectFactory.pointer(this);
+            uniffiTypeHttpClientImplObjectFactory.freePointer(pointer);
+            uniffiTypeHttpClientImplObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is HttpClientImpl {
+        return uniffiTypeHttpClientImplObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeHttpClientImplObjectFactory: UniffiObjectFactory<HttpClient> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeHttpClientImplObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeHttpClientImplObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): HttpClient {
+    create(pointer: UniffiHandle): HttpClient {
         const instance = Object.create(HttpClientImpl.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "HttpClientImpl";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: HttpClient): UniffiHandle {
+    pointer(obj_: HttpClient): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: HttpClient): UniffiHandle {
+    clonePointer(obj_: HttpClient): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_httpclient(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_httpclient(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_httpclient(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_httpclient(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is HttpClient {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "HttpClientImpl"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeHttpClient = new FfiConverterObjectWithCallbacks(
-  uniffiTypeHttpClientImplObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is HttpClient {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "HttpClientImpl";
+    },
+}})();
+const FfiConverterTypeHttpClient = new FfiConverterObjectWithCallbacks(uniffiTypeHttpClientImplObjectFactory);
 
 // Add a vtable for the callbacks that go in HttpClient.
 
 // Put the implementation in a struct so we don't pollute the top-level namespace
-const uniffiCallbackInterfaceHttpClient: { vtable: any; register: () => void } =
-  {
+const uniffiCallbackInterfaceHttpClient: { vtable: any; register: () => void; } = {
     // Create the VTable using a series of closures.
     // ts automatically converts these into C callback functions.
     vtable: {
-      execute: (
-        uniffiHandle: bigint,
-        request: Uint8Array,
-        uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
-        uniffiCallbackData: bigint,
-      ) => {
-        const uniffiMakeCall = async (
-          signal: AbortSignal,
-        ): Promise<HttpResponse> => {
-          const jsCallback = FfiConverterTypeHttpClient.lift(uniffiHandle);
-          return await jsCallback.execute(
-            FfiConverterTypeHttpRequest.lift(request),
-            { signal },
-          );
-        };
-        const uniffiHandleSuccess = (returnValue: HttpResponse) => {
-          uniffiFutureCallback.call(
-            uniffiFutureCallback,
-            uniffiCallbackData,
-            /* UniffiForeignFutureResultRustBuffer */ {
-              return_value: FfiConverterTypeHttpResponse.lower(
-                returnValue,
-                nativeModule().rustbuffer_alloc,
-              ),
-              call_status: uniffiCaller.createCallStatus(),
-            },
-          );
-        };
-        const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
-          uniffiFutureCallback.call(
-            uniffiFutureCallback,
-            uniffiCallbackData,
-            /* UniffiForeignFutureResultRustBuffer */ {
-              return_value: /*empty*/ new Uint8Array(0),
-              // TODO create callstatus with error.
-              call_status: uniffiCaller.createErrorStatus(code, errorBuf),
-            },
-          );
-        };
-        const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
-          /*makeCall:*/ uniffiMakeCall,
-          /*handleSuccess:*/ uniffiHandleSuccess,
-          /*handleError:*/ uniffiHandleError,
-          /*isErrorType:*/ HttpError.instanceOf,
-          /*lowerError:*/ FfiConverterTypeHttpError.lower.bind(
-            FfiConverterTypeHttpError,
-          ),
-          /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
-          /*alloc:*/ nativeModule().rustbuffer_alloc,
+        execute: (
+            uniffiHandle: bigint,
+            request: Uint8Array,
+            uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer,
+            uniffiCallbackData: bigint) => {
+            const uniffiMakeCall =
+            async (signal: AbortSignal)
+            : Promise<HttpResponse> => {
+                const jsCallback = FfiConverterTypeHttpClient.lift(uniffiHandle);
+                return await jsCallback.execute(
+                    FfiConverterTypeHttpRequest.lift(request), { signal }
+                )
+            };
+            const uniffiHandleSuccess = (returnValue: HttpResponse) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: FfiConverterTypeHttpResponse.lower(returnValue, nativeModule().rustbuffer_alloc),
+                        call_status: uniffiCaller.createCallStatus()
+                    }
+                );
+            };
+            const uniffiHandleError = (code: number, errorBuf: UniffiByteArray) => {
+                uniffiFutureCallback.call(
+                    uniffiFutureCallback,
+                    uniffiCallbackData,
+                    /* UniffiForeignFutureResultRustBuffer */{
+                        return_value: /*empty*/ new Uint8Array(0),
+                        // TODO create callstatus with error.
+                        call_status: uniffiCaller.createErrorStatus(code, errorBuf),
+                    }
+                );
+            };
+            const uniffiForeignFuture = uniffiTraitInterfaceCallAsyncWithError(
+                /*makeCall:*/ uniffiMakeCall,
+                /*handleSuccess:*/ uniffiHandleSuccess,
+                /*handleError:*/ uniffiHandleError,
+                /*isErrorType:*/ HttpError.instanceOf,
+                /*lowerError:*/ FfiConverterTypeHttpError.lower.bind(FfiConverterTypeHttpError),
+                /*lowerString:*/ FfiConverterString.lower.bind(FfiConverterString),
+                /*alloc:*/ nativeModule().rustbuffer_alloc,
+            );
+            return uniffiForeignFuture;
+        },
+        uniffi_free: (uniffiHandle: UniffiHandle): void => {
+            // this will throw a stale handle error if the handle isn't found.
+            FfiConverterTypeHttpClient.drop(uniffiHandle);
+        },
+        uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
+            return FfiConverterTypeHttpClient.clone(uniffiHandle);
+        }
+    },
+    register: () => {nativeModule().ubrn_uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(
+            uniffiCallbackInterfaceHttpClient.vtable
         );
-        return uniffiForeignFuture;
-      },
-      uniffi_free: (uniffiHandle: UniffiHandle): void => {
-        // this will throw a stale handle error if the handle isn't found.
-        FfiConverterTypeHttpClient.drop(uniffiHandle);
-      },
-      uniffi_clone: (uniffiHandle: UniffiHandle): UniffiHandle => {
-        return FfiConverterTypeHttpClient.clone(uniffiHandle);
-      },
     },
-    register: () => {
-      nativeModule().ubrn_uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient(
-        uniffiCallbackInterfaceHttpClient.vtable,
-      );
+};
+
+export interface HttpRequestBuilderLike {
+
+    body(value: ArrayBuffer): HttpRequestBuilderLike;
+    build() /*throws*/: HttpRequest;
+    headers(value: Array<HttpHeader>): HttpRequestBuilderLike;
+    method(value: string): HttpRequestBuilderLike;
+    timeoutSecs(value: bigint): HttpRequestBuilderLike;
+    url(value: string): HttpRequestBuilderLike;
+}
+/**
+ * @deprecated Use `HttpRequestBuilderLike` instead.
+ */
+export type HttpRequestBuilderInterface = HttpRequestBuilderLike;
+
+
+export class HttpRequestBuilder extends UniffiAbstractObject implements HttpRequestBuilderLike {
+
+    readonly [uniffiTypeNameSymbol] = "HttpRequestBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    );
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeHttpRequestBuilderObjectFactory.bless(pointer);
+    }
+
+
+
+
+    body(value: ArrayBuffer): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_body(
+                uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterArrayBuffer.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    build(): HttpRequest /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeHttpRequest.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_build(
+                uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    headers(value: Array<HttpHeader>): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers(
+                uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterSequenceTypeHttpHeader.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    method(value: string): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_method(
+                uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    timeoutSecs(value: bigint): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs(
+                uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterUInt64.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    url(value: string): HttpRequestBuilderLike {
+    return FfiConverterTypeHttpRequestBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_httprequestbuilder_url(
+                uniffiTypeHttpRequestBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeHttpRequestBuilderObjectFactory.pointer(this);
+            uniffiTypeHttpRequestBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeHttpRequestBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is HttpRequestBuilder {
+        return uniffiTypeHttpRequestBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
+}
+
+const uniffiTypeHttpRequestBuilderObjectFactory: UniffiObjectFactory<HttpRequestBuilderLike> = (() => {
+
+    /// <reference lib="es2021" />
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeHttpRequestBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
+
+    return {
+    create(pointer: UniffiHandle): HttpRequestBuilderLike {
+        const instance = Object.create(HttpRequestBuilder.prototype);
+        instance[pointerLiteralSymbol] = pointer;
+        instance[destructorGuardSymbol] = this.bless(pointer);
+        instance[uniffiTypeNameSymbol] = "HttpRequestBuilder";
+        return instance;
     },
-  };
+
+
+    bless(p: UniffiHandle): UniffiGcObject {
+        const ptr = {
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
+        };
+        if (registry) {
+            registry.register(ptr, p, ptr);
+        }
+        return ptr;
+    },
+
+    unbless(ptr_: UniffiGcObject) {
+        if (registry) {
+            registry.unregister(ptr_);
+        }
+    },
+
+    pointer(obj_: HttpRequestBuilderLike): UniffiHandle {
+        if ((obj_ as any)[destructorGuardSymbol] === undefined) {
+            throw new UniffiInternalError.UnexpectedNullPointer();
+        }
+        return (obj_ as any)[pointerLiteralSymbol];
+    },
+
+    clonePointer(obj_: HttpRequestBuilderLike): UniffiHandle {
+        const pointer = this.pointer(obj_);
+        return uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_httprequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    freePointer(pointer: UniffiHandle): void {
+        uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_httprequestbuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
+        );
+    },
+
+    isConcreteType(obj_: any): obj_ is HttpRequestBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "HttpRequestBuilder";
+    },
+}})();
+const FfiConverterTypeHttpRequestBuilder = new FfiConverterObject(uniffiTypeHttpRequestBuilderObjectFactory);
 
 export interface TemplateBuilderLike {
-  apiVersion(value: string): TemplateBuilderLike;
-  build() /*throws*/ : Template;
-  kind(value: string): TemplateBuilderLike;
-  metadata(value: ResourceMetadata): TemplateBuilderLike;
-  spec(value: OsGymSandboxTemplateSpec): TemplateBuilderLike;
+
+    apiVersion(value: string): TemplateBuilderLike;
+    build() /*throws*/: Template;
+    kind(value: string): TemplateBuilderLike;
+    metadata(value: ResourceMetadata): TemplateBuilderLike;
+    spec(value: OsGymSandboxTemplateSpec): TemplateBuilderLike;
 }
 /**
  * @deprecated Use `TemplateBuilderLike` instead.
  */
 export type TemplateBuilderInterface = TemplateBuilderLike;
 
-export class TemplateBuilder
-  extends UniffiAbstractObject
-  implements TemplateBuilderLike
-{
-  readonly [uniffiTypeNameSymbol] = "TemplateBuilder";
-  readonly [destructorGuardSymbol]: UniffiGcObject;
-  readonly [pointerLiteralSymbol]: UniffiHandle;
-  constructor() {
-    super();
-    const pointer = uniffiCaller.rustCall(
-      /*caller:*/ (callStatus) => {
-        return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_templatebuilder_new(
-          callStatus,
-        );
-      },
-      /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-    );
-    this[pointerLiteralSymbol] = pointer;
-    this[destructorGuardSymbol] =
-      uniffiTypeTemplateBuilderObjectFactory.bless(pointer);
-  }
 
-  apiVersion(value: string): TemplateBuilderLike {
-    return FfiConverterTypeTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_api_version(
-            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
+export class TemplateBuilder extends UniffiAbstractObject implements TemplateBuilderLike {
 
-  build(): Template /*throws*/ {
-    return ((__rb: Uint8Array) => {
-      try {
-        return FfiConverterTypeTemplate.lift(__rb);
-      } finally {
-        nativeModule().rustbuffer_free(__rb);
-      }
-    })(
-      uniffiCaller.rustCallWithError(
-        /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(
-          FfiConverterTypeSdkBuildError,
-        ),
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_build(
-            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
+    readonly [uniffiTypeNameSymbol] = "TemplateBuilder";
+    readonly [destructorGuardSymbol]: UniffiGcObject;
+    readonly [pointerLiteralSymbol]: UniffiHandle;
+    constructor() {
+        super();
+        const pointer =
+            uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_constructor_templatebuilder_new(
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
     );
-  }
-
-  kind(value: string): TemplateBuilderLike {
-    return FfiConverterTypeTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_kind(
-            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  metadata(value: ResourceMetadata): TemplateBuilderLike {
-    return FfiConverterTypeTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(
-            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeResourceMetadata.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  spec(value: OsGymSandboxTemplateSpec): TemplateBuilderLike {
-    return FfiConverterTypeTemplateBuilder.lift(
-      uniffiCaller.rustCall(
-        /*caller:*/ (callStatus) => {
-          return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_spec(
-            uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
-            FfiConverterTypeOSGymSandboxTemplateSpec.lower(
-              value,
-              nativeModule().rustbuffer_alloc,
-            ),
-            callStatus,
-          );
-        },
-        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
-      ),
-    );
-  }
-
-  uniffiDestroy(): void {
-    const ptr = (this as any)[destructorGuardSymbol];
-    if (ptr !== undefined) {
-      const pointer = uniffiTypeTemplateBuilderObjectFactory.pointer(this);
-      uniffiTypeTemplateBuilderObjectFactory.freePointer(pointer);
-      uniffiTypeTemplateBuilderObjectFactory.unbless(ptr);
-      delete (this as any)[destructorGuardSymbol];
+        this[pointerLiteralSymbol] = pointer;
+        this[destructorGuardSymbol] = uniffiTypeTemplateBuilderObjectFactory.bless(pointer);
     }
-  }
 
-  static instanceOf(obj_: any): obj_ is TemplateBuilder {
-    return uniffiTypeTemplateBuilderObjectFactory.isConcreteType(obj_);
-  }
+
+
+
+    apiVersion(value: string): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_api_version(
+                uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    build(): Template /*throws*/ {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterTypeTemplate.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCallWithError(
+            /*liftError:*/ FfiConverterTypeSdkBuildError.lift.bind(FfiConverterTypeSdkBuildError),
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_build(
+                uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    kind(value: string): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_kind(
+                uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    metadata(value: ResourceMetadata): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_metadata(
+                uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeResourceMetadata.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    spec(value: OsGymSandboxTemplateSpec): TemplateBuilderLike {
+    return FfiConverterTypeTemplateBuilder.lift(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().ubrn_uniffi_cyclops_sdk_fn_method_templatebuilder_spec(
+                uniffiTypeTemplateBuilderObjectFactory.clonePointer(this),
+        FfiConverterTypeOSGymSandboxTemplateSpec.lower(value, nativeModule().rustbuffer_alloc),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+
+    uniffiDestroy(): void {
+        const ptr = (this as any)[destructorGuardSymbol];
+        if (ptr !== undefined) {
+            const pointer = uniffiTypeTemplateBuilderObjectFactory.pointer(this);
+            uniffiTypeTemplateBuilderObjectFactory.freePointer(pointer);
+            uniffiTypeTemplateBuilderObjectFactory.unbless(ptr);
+            delete (this as any)[destructorGuardSymbol];
+        }
+    }
+
+    static instanceOf(obj_: any): obj_ is TemplateBuilder {
+        return uniffiTypeTemplateBuilderObjectFactory.isConcreteType(obj_);
+    }
+
+
 }
 
-const uniffiTypeTemplateBuilderObjectFactory: UniffiObjectFactory<TemplateBuilderLike> =
-  (() => {
+const uniffiTypeTemplateBuilderObjectFactory: UniffiObjectFactory<TemplateBuilderLike> = (() => {
+
     /// <reference lib="es2021" />
-    const registry =
-      typeof FinalizationRegistry !== "undefined"
-        ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
-            uniffiTypeTemplateBuilderObjectFactory.freePointer(heldValue);
-          })
-        : null;
+    const registry = typeof FinalizationRegistry !== 'undefined' ? new FinalizationRegistry<UniffiHandle>((heldValue: UniffiHandle) => {
+        uniffiTypeTemplateBuilderObjectFactory.freePointer(heldValue);
+    }) : null;
 
     return {
-      create(pointer: UniffiHandle): TemplateBuilderLike {
+    create(pointer: UniffiHandle): TemplateBuilderLike {
         const instance = Object.create(TemplateBuilder.prototype);
         instance[pointerLiteralSymbol] = pointer;
         instance[destructorGuardSymbol] = this.bless(pointer);
         instance[uniffiTypeNameSymbol] = "TemplateBuilder";
         return instance;
-      },
+    },
 
-      bless(p: UniffiHandle): UniffiGcObject {
+
+    bless(p: UniffiHandle): UniffiGcObject {
         const ptr = {
-          p, // make sure this object doesn't get optimized away.
-          markDestroyed: () => undefined,
+            p, // make sure this object doesn't get optimized away.
+            markDestroyed: () => undefined,
         };
         if (registry) {
-          registry.register(ptr, p, ptr);
+            registry.register(ptr, p, ptr);
         }
         return ptr;
-      },
+    },
 
-      unbless(ptr_: UniffiGcObject) {
+    unbless(ptr_: UniffiGcObject) {
         if (registry) {
-          registry.unregister(ptr_);
+            registry.unregister(ptr_);
         }
-      },
+    },
 
-      pointer(obj_: TemplateBuilderLike): UniffiHandle {
+    pointer(obj_: TemplateBuilderLike): UniffiHandle {
         if ((obj_ as any)[destructorGuardSymbol] === undefined) {
-          throw new UniffiInternalError.UnexpectedNullPointer();
+            throw new UniffiInternalError.UnexpectedNullPointer();
         }
         return (obj_ as any)[pointerLiteralSymbol];
-      },
+    },
 
-      clonePointer(obj_: TemplateBuilderLike): UniffiHandle {
+    clonePointer(obj_: TemplateBuilderLike): UniffiHandle {
         const pointer = this.pointer(obj_);
         return uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_templatebuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_clone_templatebuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      freePointer(pointer: UniffiHandle): void {
+    freePointer(pointer: UniffiHandle): void {
         uniffiCaller.rustCall(
-          /*caller:*/ (callStatus) =>
-            nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_templatebuilder(
-              pointer,
-              callStatus,
-            ),
-          /*liftString:*/ FfiConverterString.lift,
+            /*caller:*/ (callStatus) => nativeModule().ubrn_uniffi_cyclops_sdk_fn_free_templatebuilder(pointer, callStatus),
+            /*liftString:*/ FfiConverterString.lift
         );
-      },
+    },
 
-      isConcreteType(obj_: any): obj_ is TemplateBuilderLike {
-        return (
-          obj_[destructorGuardSymbol] &&
-          obj_[uniffiTypeNameSymbol] === "TemplateBuilder"
-        );
-      },
-    };
-  })();
-const FfiConverterTypeTemplateBuilder = new FfiConverterObject(
-  uniffiTypeTemplateBuilderObjectFactory,
-);
+    isConcreteType(obj_: any): obj_ is TemplateBuilderLike {
+        return obj_[destructorGuardSymbol] && obj_[uniffiTypeNameSymbol] === "TemplateBuilder";
+    },
+}})();
+const FfiConverterTypeTemplateBuilder = new FfiConverterObject(uniffiTypeTemplateBuilderObjectFactory);
 
 // FfiConverter for Map<string, string>
-const FfiConverterMapStringString = new FfiConverterMap(
-  FfiConverterString,
-  FfiConverterString,
-);
+const FfiConverterMapStringString = new FfiConverterMap(FfiConverterString, FfiConverterString);
 
 // FfiConverter for Map<string, string> | undefined
-const FfiConverterOptionalMapStringString = new FfiConverterOptional(
-  FfiConverterMapStringString,
-);
+const FfiConverterOptionalMapStringString = new FfiConverterOptional(FfiConverterMapStringString);
 
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
 // FfiConverter for OsGymSandboxClaimStatus | undefined
-const FfiConverterOptionalTypeOSGymSandboxClaimStatus =
-  new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimStatus);
+const FfiConverterOptionalTypeOSGymSandboxClaimStatus = new FfiConverterOptional(FfiConverterTypeOSGymSandboxClaimStatus);
 
 // FfiConverter for OsGymSandboxWarmPoolStatus | undefined
-const FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus =
-  new FfiConverterOptional(FfiConverterTypeOSGymSandboxWarmPoolStatus);
+const FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus = new FfiConverterOptional(FfiConverterTypeOSGymSandboxWarmPoolStatus);
 
 // FfiConverter for ClaimSpec | undefined
-const FfiConverterOptionalTypeClaimSpec = new FfiConverterOptional(
-  FfiConverterTypeClaimSpec,
-);
+const FfiConverterOptionalTypeClaimSpec = new FfiConverterOptional(FfiConverterTypeClaimSpec);
 
 // FfiConverter for Array<string>
 const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
 // FfiConverter for Array<HttpHeader>
-const FfiConverterSequenceTypeHttpHeader = new FfiConverterArray(
-  FfiConverterTypeHttpHeader,
-);
+const FfiConverterSequenceTypeHttpHeader = new FfiConverterArray(FfiConverterTypeHttpHeader);
 
 // FfiConverter for ArrayBuffer | undefined
-const FfiConverterOptionalBytes = new FfiConverterOptional(
-  FfiConverterArrayBuffer,
-);
+const FfiConverterOptionalBytes = new FfiConverterOptional(FfiConverterArrayBuffer);
 
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
+// FfiConverter for PresignedPut | undefined
+const FfiConverterOptionalTypePresignedPut = new FfiConverterOptional(FfiConverterTypePresignedPut);
+
+// FfiConverter for Array<ImageUploadFileRequest>
+const FfiConverterSequenceTypeImageUploadFileRequest = new FfiConverterArray(FfiConverterTypeImageUploadFileRequest);
+
+// FfiConverter for Array<ImageUploadInstruction>
+const FfiConverterSequenceTypeImageUploadInstruction = new FfiConverterArray(FfiConverterTypeImageUploadInstruction);
+
 // FfiConverter for Array<Claim>
-const FfiConverterSequenceTypeClaim = new FfiConverterArray(
-  FfiConverterTypeClaim,
-);
+const FfiConverterSequenceTypeClaim = new FfiConverterArray(FfiConverterTypeClaim);
+
+// FfiConverter for Array<PreservedJsonLike>
+const FfiConverterSequenceTypePreservedJson = new FfiConverterArray(FfiConverterTypePreservedJson);
 
 // FfiConverter for Array<Namespace>
-const FfiConverterSequenceTypeNamespace = new FfiConverterArray(
-  FfiConverterTypeNamespace,
-);
+const FfiConverterSequenceTypeNamespace = new FfiConverterArray(FfiConverterTypeNamespace);
 
 // FfiConverter for Array<Pool>
-const FfiConverterSequenceTypePool = new FfiConverterArray(
-  FfiConverterTypePool,
-);
+const FfiConverterSequenceTypePool = new FfiConverterArray(FfiConverterTypePool);
 
 // FfiConverter for Array<Template>
-const FfiConverterSequenceTypeTemplate = new FfiConverterArray(
-  FfiConverterTypeTemplate,
-);
+const FfiConverterSequenceTypeTemplate = new FfiConverterArray(FfiConverterTypeTemplate);
 
 // FfiConverter for Array<UserApiKey>
-const FfiConverterSequenceTypeUserApiKey = new FfiConverterArray(
-  FfiConverterTypeUserApiKey,
-);
+const FfiConverterSequenceTypeUserApiKey = new FfiConverterArray(FfiConverterTypeUserApiKey);
+
 
 /**
  * This should be called before anything else.
@@ -5298,557 +4850,254 @@ const FfiConverterSequenceTypeUserApiKey = new FfiConverterArray(
  * It also initializes the machinery to enable Rust to talk back to Javascript.
  */
 function uniffiEnsureInitialized() {
-  // Get the bindings contract version from our ComponentInterface
-  const bindingsContractVersion = 30;
-  // Get the scaffolding contract version by calling the into the dylib
-  const scaffoldingContractVersion =
-    nativeModule().ubrn_ffi_cyclops_sdk_uniffi_contract_version();
-  if (bindingsContractVersion !== scaffoldingContractVersion) {
-    throw new UniffiInternalError.ContractVersionMismatch(
-      scaffoldingContractVersion,
-      bindingsContractVersion,
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() !==
-    1180
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() !==
-    10967
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() !==
-    10518
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() !==
-    19762
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() !==
-    7405
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() !==
-    28263
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() !==
-    33658
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build() !==
-    60558
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() !==
-    18934
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() !==
-    7566
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() !==
-    6787
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() !==
-    46749
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name() !==
-    38970
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace() !==
-    38181
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec() !==
-    29902
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new() !==
-    47741
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build() !==
-    18677
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name() !==
-    53365
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope() !==
-    26616
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() !==
-    54404
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token() !==
-    55589
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() !==
-    10148
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client() !==
-    42291
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() !==
-    58487
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client() !==
-    62005
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() !==
-    49301
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() !==
-    23330
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() !==
-    38049
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() !==
-    48557
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() !==
-    13689
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() !==
-    9174
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !==
-    20460
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() !==
-    4545
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() !==
-    31235
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() !==
-    54852
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() !==
-    1700
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() !==
-    17760
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() !==
-    184
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() !==
-    49450
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template() !==
-    8909
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() !==
-    7802
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() !==
-    65288
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() !==
-    27984
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() !==
-    58376
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() !==
-    5949
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() !==
-    53919
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() !==
-    36469
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() !==
-    17505
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() !==
-    46699
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() !==
-    17695
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() !==
-    18704
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() !==
-    18984
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() !==
-    25746
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new() !==
-    43069
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url() !==
-    48016
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build() !==
-    28182
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms() !==
-    50054
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit() !==
-    7533
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms() !==
-    16373
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() !==
-    6865
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute() !==
-    38803
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_httpclient_execute",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() !==
-    19815
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version() !==
-    65471
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_build() !==
-    2046
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_templatebuilder_build",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_kind() !==
-    14122
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_templatebuilder_kind",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata() !==
-    25572
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata",
-    );
-  }
-  if (
-    nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_spec() !==
-    43128
-  ) {
-    throw new UniffiInternalError.ApiChecksumMismatch(
-      "uniffi_cyclops_sdk_checksum_method_templatebuilder_spec",
-    );
-  }
+    // Get the bindings contract version from our ComponentInterface
+    const bindingsContractVersion = 30;
+    // Get the scaffolding contract version by calling the into the dylib
+    const scaffoldingContractVersion = nativeModule().ubrn_ffi_cyclops_sdk_uniffi_contract_version();
+    if (bindingsContractVersion !== scaffoldingContractVersion) {
+        throw new UniffiInternalError.ContractVersionMismatch(scaffoldingContractVersion, bindingsContractVersion);
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() !== 1180) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() !== 10967) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build() !== 10518) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name() !== 19762) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool() !== 7405) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec() !== 28263) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createclaimrequestbuilder_spec");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new() !== 33658) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build() !== 60558) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() !== 18934) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() !== 7566) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() !== 6787) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build() !== 46749) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name() !== 38970) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace() !== 38181) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_namespace");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec() !== 29902) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_spec");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new() !== 47741) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_createuserapikeyrequestbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build() !== 18677) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name() !== 53365) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_name");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope() !== 26616) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_createuserapikeyrequestbuilder_scope");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect() !== 54404) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token() !== 55589) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_browser_with_access_token");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token() !== 10148) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client() !== 42291) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_and_native_http_client");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider() !== 58487) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client() !== 62005) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_access_token_provider_and_native_http_client");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client() !== 49301) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopsclient_connect_with_native_http_client");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim() !== 23330) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() !== 51053) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() !== 38049) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() !== 48557) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() !== 13689) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() !== 9174) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim() !== 20460) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_claim");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() !== 24680) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace() !== 4545) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool() !== 31235) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template() !== 54852) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_template");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key() !== 1700) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_user_api_key");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim() !== 17760) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_claim");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() !== 56969) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace() !== 184) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_namespace");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool() !== 49450) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template() !== 8909) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_template");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims() !== 7802) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_claims");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() !== 31215) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces() !== 65288) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() !== 27984) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() !== 58376) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() !== 5949) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() !== 53280) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool() !== 53919) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() !== 36469) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() !== 17505) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() !== 46699) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool() !== 17695) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_pool");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template() !== 18704) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_update_template");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() !== 18984) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new() !== 25746) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopscredentials_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new() !== 43069) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url() !== 48016) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_base_url");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build() !== 28182) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms() !== 50054) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_interval_ms");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit() !== 7533) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_claim_poll_limit");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms() !== 16373) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_interval_ms");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() !== 6865) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httpclient_execute() !== 38803) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httpclient_execute");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() !== 25892) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body() !== 9054) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build() !== 14573) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() !== 19982) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() !== 4078) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs() !== 40941) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url() !== 12282) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new() !== 19815) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version() !== 65471) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_build() !== 2046) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_templatebuilder_build");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_kind() !== 14122) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_templatebuilder_kind");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata() !== 25572) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_templatebuilder_metadata");
+    }
+    if (nativeModule().ubrn_uniffi_cyclops_sdk_checksum_method_templatebuilder_spec() !== 43128) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cyclops_sdk_checksum_method_templatebuilder_spec");
+    }
 
-  uniffiCallbackInterfaceAccessTokenProvider.register();
-  uniffiCallbackInterfaceHttpClient.register();
-}
+    uniffiCallbackInterfaceAccessTokenProvider.register();
+    uniffiCallbackInterfaceHttpClient.register();
+    }
 
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
@@ -5873,10 +5122,16 @@ export default Object.freeze({
     FfiConverterTypeHttpError,
     FfiConverterTypeHttpHeader,
     FfiConverterTypeHttpRequest,
+    FfiConverterTypeHttpRequestBuilder,
     FfiConverterTypeHttpResponse,
+    FfiConverterTypeImageUploadFileRequest,
+    FfiConverterTypeImageUploadInstruction,
+    FfiConverterTypeImageUploadRequest,
+    FfiConverterTypeImageUploadResponse,
     FfiConverterTypeNamespace,
     FfiConverterTypeNewUserApiKey,
     FfiConverterTypePool,
+    FfiConverterTypePresignedPut,
     FfiConverterTypeResourceMetadata,
     FfiConverterTypeSandbox,
     FfiConverterTypeSdkBuildError,
@@ -5884,5 +5139,5 @@ export default Object.freeze({
     FfiConverterTypeTemplate,
     FfiConverterTypeTemplateBuilder,
     FfiConverterTypeUserApiKey,
-  },
+  }
 });

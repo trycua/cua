@@ -36,10 +36,12 @@ import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.FfiConverterTypeOSGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.FfiConverterTypePreservedJson
 import ai.cua.cyclops.sdk.schema.OsGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.OsGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.OsGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.PreservedJson
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.coroutines.resume
 import kotlinx.coroutines.CancellableContinuation
@@ -53,6 +55,7 @@ import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxClaimStatus
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxTemplateSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolSpec
 import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferOSGymSandboxWarmPoolStatus
+import ai.cua.cyclops.sdk.schema.RustBuffer as RustBufferPreservedJson
 
 // This is a helper for safely working with byte buffers returned from the Rust code.
 // A rust-owned buffer is represented by its capacity, its current length, and a
@@ -714,6 +717,16 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim(
     ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image(
+    ): Short
+    external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images(
+    ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace(
     ): Short
     external fun uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_namespace(
@@ -900,6 +913,16 @@ external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_claims(`ptr`: Long,
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,`shutdownTime`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_wait_claim(`ptr`: Long,`claim`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(`ptr`: Long,`request`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`manifest`: Long,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(`ptr`: Long,`namespace`: RustBuffer.ByValue,`name`: RustBuffer.ByValue,
+): Long
+external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(`ptr`: Long,`namespace`: RustBuffer.ByValue,
 ): Long
 external fun uniffi_cyclops_sdk_fn_method_cyclopsclient_create_namespace(`ptr`: Long,`name`: RustBuffer.ByValue,
 ): Long
@@ -1202,6 +1225,21 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_wait_claim() != 18984.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_presign_image_uploads() != 53280.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_image() != 51053.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_delete_image() != 24680.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_get_image() != 56969.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_images() != 31215.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace() != 38049.toShort()) {
@@ -3533,6 +3571,16 @@ public interface CyclopsClientInterface {
 
     suspend fun `waitClaim`(`claim`: Claim): Sandbox
 
+    suspend fun `presignImageUploads`(`request`: ImageUploadRequest): ImageUploadResponse
+
+    suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson): PreservedJson
+
+    suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String)
+
+    suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String): PreservedJson
+
+    suspend fun `listImages`(`namespace`: kotlin.String): List<PreservedJson>
+
     suspend fun `createNamespace`(`name`: kotlin.String): Namespace
 
     suspend fun `deleteNamespace`(`name`: kotlin.String)
@@ -3802,6 +3850,112 @@ open class CyclopsClient: Disposable, AutoCloseable, CyclopsClientInterface
         { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
         // lift function
         { FfiConverterTypeSandbox.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `presignImageUploads`(`request`: ImageUploadRequest) : ImageUploadResponse {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_presign_image_uploads(
+                uniffiHandle,
+                FfiConverterTypeImageUploadRequest.lower(`request`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterTypeImageUploadResponse.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `createImage`(`namespace`: kotlin.String, `manifest`: PreservedJson) : PreservedJson {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterTypePreservedJson.lower(`manifest`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `deleteImage`(`namespace`: kotlin.String, `name`: kotlin.String) {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_delete_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_void(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_void(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_void(future) },
+        // lift function
+        { Unit },
+
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `getImage`(`namespace`: kotlin.String, `name`: kotlin.String) : PreservedJson {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_get_image(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),FfiConverterString.lower(`name`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_u64(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_u64(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_u64(future) },
+        // lift function
+        { FfiConverterTypePreservedJson.lift(it) },
+        // Error FFI converter
+        SdkException.ErrorHandler,
+    )
+    }
+
+
+    @Throws(SdkException::class)
+    @Suppress("ASSIGNED_BUT_NEVER_ACCESSED_VARIABLE")
+    override suspend fun `listImages`(`namespace`: kotlin.String) : List<PreservedJson> {
+        return uniffiRustCallAsync(
+        callWithHandle { uniffiHandle ->
+            UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_images(
+                uniffiHandle,
+                FfiConverterString.lower(`namespace`),
+            )
+        },
+        { future, callback, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer(future, callback, continuation) },
+        { future, continuation -> UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer(future, continuation) },
+        { future -> UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer(future) },
+        // lift function
+        { FfiConverterSequenceTypePreservedJson.lift(it) },
         // Error FFI converter
         SdkException.ErrorHandler,
     )
@@ -6408,6 +6562,168 @@ public object FfiConverterTypeHttpResponse: FfiConverterRustBuffer<HttpResponse>
 
 
 
+data class ImageUploadFileRequest (
+    var `digest`: kotlin.String
+    ,
+    var `sizeBytes`: kotlin.ULong
+    ,
+    var `name`: kotlin.String
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadFileRequest: FfiConverterRustBuffer<ImageUploadFileRequest> {
+    override fun read(buf: ByteBuffer): ImageUploadFileRequest {
+        return ImageUploadFileRequest(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadFileRequest) = (
+            FfiConverterString.allocationSize(value.`digest`) +
+            FfiConverterULong.allocationSize(value.`sizeBytes`) +
+            FfiConverterString.allocationSize(value.`name`)
+    )
+
+    override fun write(value: ImageUploadFileRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`digest`, buf)
+            FfiConverterULong.write(value.`sizeBytes`, buf)
+            FfiConverterString.write(value.`name`, buf)
+    }
+}
+
+
+
+data class ImageUploadInstruction (
+    var `digest`: kotlin.String
+    ,
+    var `sizeBytes`: kotlin.ULong
+    ,
+    var `reference`: kotlin.String
+    ,
+    var `upload`: PresignedPut?
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadInstruction: FfiConverterRustBuffer<ImageUploadInstruction> {
+    override fun read(buf: ByteBuffer): ImageUploadInstruction {
+        return ImageUploadInstruction(
+            FfiConverterString.read(buf),
+            FfiConverterULong.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterOptionalTypePresignedPut.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadInstruction) = (
+            FfiConverterString.allocationSize(value.`digest`) +
+            FfiConverterULong.allocationSize(value.`sizeBytes`) +
+            FfiConverterString.allocationSize(value.`reference`) +
+            FfiConverterOptionalTypePresignedPut.allocationSize(value.`upload`)
+    )
+
+    override fun write(value: ImageUploadInstruction, buf: ByteBuffer) {
+            FfiConverterString.write(value.`digest`, buf)
+            FfiConverterULong.write(value.`sizeBytes`, buf)
+            FfiConverterString.write(value.`reference`, buf)
+            FfiConverterOptionalTypePresignedPut.write(value.`upload`, buf)
+    }
+}
+
+
+
+data class ImageUploadRequest (
+    var `namespace`: kotlin.String
+    ,
+    var `files`: List<ImageUploadFileRequest>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadRequest: FfiConverterRustBuffer<ImageUploadRequest> {
+    override fun read(buf: ByteBuffer): ImageUploadRequest {
+        return ImageUploadRequest(
+            FfiConverterString.read(buf),
+            FfiConverterSequenceTypeImageUploadFileRequest.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadRequest) = (
+            FfiConverterString.allocationSize(value.`namespace`) +
+            FfiConverterSequenceTypeImageUploadFileRequest.allocationSize(value.`files`)
+    )
+
+    override fun write(value: ImageUploadRequest, buf: ByteBuffer) {
+            FfiConverterString.write(value.`namespace`, buf)
+            FfiConverterSequenceTypeImageUploadFileRequest.write(value.`files`, buf)
+    }
+}
+
+
+
+data class ImageUploadResponse (
+    var `files`: List<ImageUploadInstruction>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypeImageUploadResponse: FfiConverterRustBuffer<ImageUploadResponse> {
+    override fun read(buf: ByteBuffer): ImageUploadResponse {
+        return ImageUploadResponse(
+            FfiConverterSequenceTypeImageUploadInstruction.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: ImageUploadResponse) = (
+            FfiConverterSequenceTypeImageUploadInstruction.allocationSize(value.`files`)
+    )
+
+    override fun write(value: ImageUploadResponse, buf: ByteBuffer) {
+            FfiConverterSequenceTypeImageUploadInstruction.write(value.`files`, buf)
+    }
+}
+
+
+
 data class Namespace (
     var `name`: kotlin.String
     ,
@@ -6566,6 +6882,49 @@ public object FfiConverterTypePool: FfiConverterRustBuffer<Pool> {
             FfiConverterTypeResourceMetadata.write(value.`metadata`, buf)
             FfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.`spec`, buf)
             FfiConverterOptionalTypeOSGymSandboxWarmPoolStatus.write(value.`status`, buf)
+    }
+}
+
+
+
+data class PresignedPut (
+    var `method`: kotlin.String
+    ,
+    var `url`: kotlin.String
+    ,
+    var `headers`: Map<kotlin.String, kotlin.String>
+
+){
+
+
+
+
+
+    companion object
+}
+
+/**
+ * @suppress
+ */
+public object FfiConverterTypePresignedPut: FfiConverterRustBuffer<PresignedPut> {
+    override fun read(buf: ByteBuffer): PresignedPut {
+        return PresignedPut(
+            FfiConverterString.read(buf),
+            FfiConverterString.read(buf),
+            FfiConverterMapStringString.read(buf),
+        )
+    }
+
+    override fun allocationSize(value: PresignedPut) = (
+            FfiConverterString.allocationSize(value.`method`) +
+            FfiConverterString.allocationSize(value.`url`) +
+            FfiConverterMapStringString.allocationSize(value.`headers`)
+    )
+
+    override fun write(value: PresignedPut, buf: ByteBuffer) {
+            FfiConverterString.write(value.`method`, buf)
+            FfiConverterString.write(value.`url`, buf)
+            FfiConverterMapStringString.write(value.`headers`, buf)
     }
 }
 
@@ -7369,6 +7728,38 @@ public object FfiConverterOptionalByteArray: FfiConverterRustBuffer<kotlin.ByteA
 /**
  * @suppress
  */
+public object FfiConverterOptionalTypePresignedPut: FfiConverterRustBuffer<PresignedPut?> {
+    override fun read(buf: ByteBuffer): PresignedPut? {
+        if (buf.get().toInt() == 0) {
+            return null
+        }
+        return FfiConverterTypePresignedPut.read(buf)
+    }
+
+    override fun allocationSize(value: PresignedPut?): ULong {
+        if (value == null) {
+            return 1UL
+        } else {
+            return 1UL + FfiConverterTypePresignedPut.allocationSize(value)
+        }
+    }
+
+    override fun write(value: PresignedPut?, buf: ByteBuffer) {
+        if (value == null) {
+            buf.put(0)
+        } else {
+            buf.put(1)
+            FfiConverterTypePresignedPut.write(value, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterOptionalTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec?> {
     override fun read(buf: ByteBuffer): ClaimSpec? {
         if (buf.get().toInt() == 0) {
@@ -7525,6 +7916,34 @@ public object FfiConverterSequenceString: FfiConverterRustBuffer<List<kotlin.Str
 /**
  * @suppress
  */
+public object FfiConverterSequenceTypePreservedJson: FfiConverterRustBuffer<List<PreservedJson>> {
+    override fun read(buf: ByteBuffer): List<PreservedJson> {
+        val len = buf.getInt()
+        return List<PreservedJson>(len) {
+            FfiConverterTypePreservedJson.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<PreservedJson>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypePreservedJson.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<PreservedJson>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypePreservedJson.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
 public object FfiConverterSequenceTypeClaim: FfiConverterRustBuffer<List<Claim>> {
     override fun read(buf: ByteBuffer): List<Claim> {
         val len = buf.getInt()
@@ -7571,6 +7990,62 @@ public object FfiConverterSequenceTypeHttpHeader: FfiConverterRustBuffer<List<Ht
         buf.putInt(value.size)
         value.iterator().forEach {
             FfiConverterTypeHttpHeader.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeImageUploadFileRequest: FfiConverterRustBuffer<List<ImageUploadFileRequest>> {
+    override fun read(buf: ByteBuffer): List<ImageUploadFileRequest> {
+        val len = buf.getInt()
+        return List<ImageUploadFileRequest>(len) {
+            FfiConverterTypeImageUploadFileRequest.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ImageUploadFileRequest>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeImageUploadFileRequest.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ImageUploadFileRequest>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeImageUploadFileRequest.write(it, buf)
+        }
+    }
+}
+
+
+
+
+/**
+ * @suppress
+ */
+public object FfiConverterSequenceTypeImageUploadInstruction: FfiConverterRustBuffer<List<ImageUploadInstruction>> {
+    override fun read(buf: ByteBuffer): List<ImageUploadInstruction> {
+        val len = buf.getInt()
+        return List<ImageUploadInstruction>(len) {
+            FfiConverterTypeImageUploadInstruction.read(buf)
+        }
+    }
+
+    override fun allocationSize(value: List<ImageUploadInstruction>): ULong {
+        val sizeForLength = 4UL
+        val sizeForItems = value.map { FfiConverterTypeImageUploadInstruction.allocationSize(it) }.sum()
+        return sizeForLength + sizeForItems
+    }
+
+    override fun write(value: List<ImageUploadInstruction>, buf: ByteBuffer) {
+        buf.putInt(value.size)
+        value.iterator().forEach {
+            FfiConverterTypeImageUploadInstruction.write(it, buf)
         }
     }
 }

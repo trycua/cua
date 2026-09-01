@@ -53,6 +53,9 @@ type Handlers struct {
 	WorkloadAdmin    *keycloak.Admin
 	WorkloadAudience string
 	WorkloadTokenURL string
+
+	ImageUploads config.ImageUploadConfiguration
+	ImageObjects ImageObjectStore
 }
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
@@ -65,6 +68,7 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		KC:           cfg.Keycloak,
 		Stripe:       cfg.Stripe,
 		ChatAccess:   cfg.Chat.Access,
+		ImageUploads: cfg.ImageUploads,
 		chatLocks:    newConversationLockRegistry(),
 	}
 }

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 generator="$workspace_dir/scripts/generate-sdk-bindings.sh"
 bindings_dir="$workspace_dir/sdk-bindings"
 temporary_directory="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-sdk-bindings-test.XXXXXX")"
@@ -260,6 +259,9 @@ if [ "$handwritten_directory_created" = true ]; then
 fi
 assert_tree_unchanged "$initial_hash" "handwritten fixture cleanup"
 "$generator" --check
+for compatibility_root in go-uniffi ts-uniffi ts-uniffi-browser; do
+  [ -f "$bindings_dir/$compatibility_root/.cyclops-sdk-generated-files" ] ||     fail "canonical generator omits $compatibility_root manifest"
+done
 
 runtime_library="$(find_cyclops_sdk_library)" || fail "could not read a cyclops-sdk cdylib from Cargo compiler-artifact output"
 [ -f "$runtime_library" ] || fail "Cargo reported a missing cyclops-sdk cdylib: $runtime_library"
@@ -346,15 +348,11 @@ swift_schema_source="$bindings_dir/swift/CyclopsSdkSchema.swift"
 ruby_sdk_source="$bindings_dir/ruby/cyclops_sdk/sdk.rb"
 ruby_schema_source="$bindings_dir/ruby/cyclops_sdk/schema.rb"
 node_sdk_source="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+node_schema_source="$bindings_dir/ts-uniffi/cyclops_sdk_schema.ts"
 browser_sdk_source="$bindings_dir/ts-uniffi-browser/ts/fleet_sdk.ts"
 browser_schema_source="$bindings_dir/ts-uniffi-browser/ts/cyclops_sdk_schema.ts"
 go_sdk_source="$bindings_dir/go-uniffi/fleet_sdk/fleet_sdk.go"
-
-for separate_binding in "$node_sdk_source" "$go_sdk_source"; do
-  if grep -Fq -- "VmTemplateBuilder" "$separate_binding" || grep -Fq -- "CreatePoolRequestBuilder" "$separate_binding"; then
-    fail "separately generated Go/Node binding unexpectedly contains authoritative builders: $separate_binding"
-  fi
-done
+go_schema_source="$bindings_dir/go-uniffi/cyclops_sdk_schema/cyclops_sdk_schema.go"
 
 for browser_builder in \
   VmTemplateBuilder \
@@ -407,6 +405,26 @@ grep -Fq -- "public var creationTimestamp: String?" "$swift_sdk_source" || fail 
 grep -Fq -- "attr_reader :namespace, :name, :labels, :creation_timestamp" "$ruby_sdk_source" || fail "Ruby bindings omit creation_timestamp"
 grep -Fq -- "creationTimestamp?: string" "$node_sdk_source" || fail "Node bindings omit creationTimestamp"
 grep -Fq -- "CreationTimestamp *string" "$go_sdk_source" || fail "Go bindings omit CreationTimestamp"
+
+for typescript_schema in "$node_schema_source" "$browser_schema_source"; do
+  grep -Fq -- "export type ImageRef =" "$typescript_schema" || fail "TypeScript bindings omit ImageRef: $typescript_schema"
+  grep -Fq -- "containerDiskImage?: string" "$typescript_schema" || fail "TypeScript bindings require VmTemplate.containerDiskImage: $typescript_schema"
+  grep -Fq -- "imageRef?: ImageRef" "$typescript_schema" || fail "TypeScript bindings omit VmTemplate.imageRef: $typescript_schema"
+done
+for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
+  for upload_type in ImageUploadFileRequest ImageUploadInstruction ImageUploadRequest ImageUploadResponse PresignedPut; do
+    grep -Fq -- "export type $upload_type =" "$typescript_binding" || fail "TypeScript bindings omit $upload_type: $typescript_binding"
+  done
+  grep -Fq -- "presignImageUploads(" "$typescript_binding" || fail "TypeScript bindings omit presignImageUploads: $typescript_binding"
+done
+for upload_type in ImageUploadFileRequest ImageUploadInstruction ImageUploadRequest ImageUploadResponse PresignedPut; do
+  grep -Fq -- "type $upload_type struct" "$go_sdk_source" || fail "Go bindings omit $upload_type"
+done
+grep -Fq -- "PresignImageUploads(" "$go_sdk_source" || fail "Go bindings omit PresignImageUploads"
+
+grep -Fq -- "type ImageRef struct" "$go_schema_source" || fail "Go bindings omit ImageRef"
+grep -Eq '^[[:space:]]*ContainerDiskImage[[:space:]]+\*string$' "$go_schema_source" || fail "Go bindings require VmTemplate.ContainerDiskImage"
+grep -Eq '^[[:space:]]*ImageRef[[:space:]]+\*ImageRef$' "$go_schema_source" || fail "Go bindings omit VmTemplate.ImageRef"
 
 for typescript_binding in "$node_sdk_source" "$browser_sdk_source"; do
   grep -Fq -- "timeoutSecs?: bigint" "$typescript_binding" || fail "TypeScript bindings omit HttpRequest.timeoutSecs: $typescript_binding"
@@ -476,6 +494,17 @@ printf '\n# task10 content drift\n' >> "$content_file"
 expect_check_failure content
 mv "$temporary_directory/content-file" "$content_file"
 chmod "$content_file_mode" "$content_file"
+"$generator" --check
+
+compatibility_content_file="$bindings_dir/ts-uniffi/fleet_sdk.ts"
+compatibility_content_mode="$(mode_for "$compatibility_content_file")"
+cp "$compatibility_content_file" "$temporary_directory/compatibility-content-file"
+printf '
+// compatibility content drift
+' >> "$compatibility_content_file"
+expect_check_failure compatibility-content
+mv "$temporary_directory/compatibility-content-file" "$compatibility_content_file"
+chmod "$compatibility_content_mode" "$compatibility_content_file"
 "$generator" --check
 
 mode_file="$bindings_dir/ruby/cyclops_sdk.rb"

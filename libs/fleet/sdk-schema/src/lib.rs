@@ -10,8 +10,8 @@ pub use claim::{
     OSGymSandboxClaimCondition, OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus,
 };
 pub use common::{
-    Firmware, ImagePullPolicy, OidcConfig, RuntimeKind, SandboxService, SandboxServiceBuilder,
-    ServiceProtocol, VmTemplate, VmTemplateBuilder,
+    Firmware, ImagePullPolicy, ImageRef, ImageRefBuilder, OidcConfig, RuntimeKind, SandboxService,
+    SandboxServiceBuilder, ServiceProtocol, VmTemplate, VmTemplateBuilder,
 };
 pub use common::{SandboxTemplateRef, SandboxTemplateRefBuilder};
 pub use json::{JsonValueError, PreservedJson};
@@ -30,6 +30,8 @@ uniffi::setup_scaffolding!("cyclops_sdk_schema");
 pub enum SchemaBuildError {
     #[error("{record_type} is missing required field {field}")]
     MissingRequiredField { record_type: String, field: String },
+    #[error("{message}")]
+    Invalid { message: String },
 }
 
 impl SchemaBuildError {
@@ -37,6 +39,12 @@ impl SchemaBuildError {
         Self::MissingRequiredField {
             record_type: record_type.into(),
             field: field.into(),
+        }
+    }
+
+    pub fn invalid(message: &str) -> Self {
+        Self::Invalid {
+            message: message.into(),
         }
     }
 }

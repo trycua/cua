@@ -1,12 +1,44 @@
 use proc_macro::TokenStream;
 use quote::{format_ident, quote};
-use syn::{Data, DeriveInput, Fields, GenericArgument, PathArguments, Type, parse_macro_input};
+use syn::{
+    Data, DeriveInput, Fields, GenericArgument, Ident, Path, PathArguments, Token, Type,
+    parse::{Parse, ParseStream},
+    parse_macro_input,
+};
 
 #[proc_macro_derive(UniffiBuilder, attributes(uniffi_builder))]
 pub fn derive_uniffi_builder(input: TokenStream) -> TokenStream {
     expand(parse_macro_input!(input as DeriveInput))
         .unwrap_or_else(syn::Error::into_compile_error)
         .into()
+}
+
+struct BuilderConfig {
+    error: Path,
+    validate: Option<Path>,
+}
+
+impl Parse for BuilderConfig {
+    fn parse(input: ParseStream) -> syn::Result<Self> {
+        let error = input.parse()?;
+        let validate = if input.is_empty() {
+            None
+        } else {
+            input.parse::<Token![,]>()?;
+            let key: Ident = input.parse()?;
+            if key != "validate" {
+                return Err(syn::Error::new_spanned(key, "expected `validate`"));
+            }
+            input.parse::<Token![=]>()?;
+            let validate = input.parse()?;
+            if !input.is_empty() {
+                return Err(input.error("unexpected token"));
+            }
+            Some(validate)
+        };
+
+        Ok(Self { error, validate })
+    }
 }
 
 fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
@@ -18,12 +50,14 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
     }
     let record = input.ident;
     let builder = format_ident!("{record}Builder");
-    let error = input
+    let config = input
         .attrs
         .iter()
         .find(|attribute| attribute.path().is_ident("uniffi_builder"))
         .ok_or_else(|| syn::Error::new_spanned(&record, "missing #[uniffi_builder(ErrorType)]"))?
-        .parse_args::<syn::Path>()?;
+        .parse_args::<BuilderConfig>()?;
+    let error = config.error;
+    let validation_hook = config.validate;
     let fields = match input.data {
         Data::Struct(data) => match data.fields {
             Fields::Named(fields) => fields.named,
@@ -71,6 +105,8 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
         }
     }
 
+    let validation = validation_hook.map(|hook| quote! { #hook(&record)?; });
+
     let field_names = setters.iter().map(|(name, _)| name).collect::<Vec<_>>();
     let setter_methods = setters.iter().map(|(setter_name, setter_ty)| {
         let assignments = field_names.iter().map(|field_name| {
@@ -101,7 +137,9 @@ fn expand(input: DeriveInput) -> syn::Result<proc_macro2::TokenStream> {
             #(#setter_methods)*
 
             pub fn build(&self) -> ::std::result::Result<#record, #error> {
-                ::std::result::Result::Ok(#record { #(#builds,)* })
+                let record = #record { #(#builds,)* };
+                #validation
+                ::std::result::Result::Ok(record)
             }
         }
     })
@@ -227,5 +265,23 @@ mod tests {
             expand(input).unwrap_err().to_string(),
             "UniffiBuilder optional fields must use Option<T>, std::option::Option<T>, or core::option::Option<T>"
         );
+    }
+}
+
+#[cfg(test)]
+mod validation_hook_tests {
+    use super::expand;
+    use syn::{DeriveInput, parse_quote};
+
+    #[test]
+    fn emits_an_optional_validation_hook() {
+        let input: DeriveInput = parse_quote! {
+            #[uniffi_builder(crate::BuildError, validate = crate::validate_record)]
+            struct Record { value: String }
+        };
+
+        let generated = expand(input).unwrap().to_string();
+
+        assert!(generated.contains("crate :: validate_record (& record) ?"));
     }
 }

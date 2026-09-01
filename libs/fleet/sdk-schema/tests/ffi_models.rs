@@ -1,5 +1,5 @@
 use cyclops_sdk_schema::{
-    Firmware, ImagePullPolicy, JsonValueError, OSGymSandboxClaimCondition,
+    Firmware, ImagePullPolicy, ImageRef, JsonValueError, OSGymSandboxClaimCondition,
     OSGymSandboxClaimSandbox, OSGymSandboxClaimStatus, OSGymSandboxStatus,
     OSGymSandboxWarmPoolStatus, OidcConfig, PreservedJson, RuntimeKind, SandboxService,
     ServiceProtocol, VmTemplate,
@@ -75,7 +75,8 @@ fn preserved_json_rejects_null() {
 #[test]
 fn vm_template_round_trips_every_known_field() {
     let template = VmTemplate {
-        container_disk_image: "registry.example/vm:latest".into(),
+        container_disk_image: Some("registry.example/vm:latest".into()),
+        image_ref: None,
         command: Some(vec!["/bin/sh".into(), "-c".into(), "echo ready".into()]),
         runtime: Some(RuntimeKind::Gvisor),
         runtime_class_name: Some("gvisor".into()),
@@ -133,7 +134,10 @@ fn vm_template_rejects_non_object_opaque_fields() {
 #[test]
 fn minimal_vm_template_omits_none_fields_and_round_trips() {
     let template = VmTemplate {
-        container_disk_image: "registry.example/vm:latest".into(),
+        container_disk_image: None,
+        image_ref: Some(ImageRef {
+            name: "image-mzxw6ytboi".into(),
+        }),
         command: None,
         runtime: None,
         runtime_class_name: None,
@@ -151,10 +155,7 @@ fn minimal_vm_template_omits_none_fields_and_round_trips() {
     };
 
     let value = serde_json::to_value(&template).unwrap();
-    assert_eq!(
-        value,
-        json!({"containerDiskImage": "registry.example/vm:latest"})
-    );
+    assert_eq!(value, json!({"imageRef": {"name": "image-mzxw6ytboi"}}));
     assert!(!value.to_string().contains("null"));
     assert_eq!(
         serde_json::from_value::<VmTemplate>(value).unwrap(),

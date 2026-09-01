@@ -371,6 +371,231 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build()
+		})
+		if checksum != 42434 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name()
+		})
+		if checksum != 43667 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build()
+		})
+		if checksum != 62919 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name()
+		})
+		if checksum != 62417 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_name: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol()
+		})
+		if checksum != 10309 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_protocol: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port()
+		})
+		if checksum != 61462 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_target_port: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build()
+		})
+		if checksum != 46569 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name()
+		})
+		if checksum != 1803 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_sandboxtemplaterefbuilder_name: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build()
+		})
+		if checksum != 17867 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command()
+		})
+		if checksum != 20371 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_command: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image()
+		})
+		if checksum != 49021 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_container_disk_image: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores()
+		})
+		if checksum != 25645 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_cpu_cores: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware()
+		})
+		if checksum != 33926 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_firmware: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy()
+		})
+		if checksum != 41828 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_policy: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret()
+		})
+		if checksum != 40154 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref()
+		})
+		if checksum != 11892 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory()
+		})
+		if checksum != 55615 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization()
+		})
+		if checksum != 23834 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector()
+		})
+		if checksum != 45280 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc()
+		})
+		if checksum != 27280 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes()
+		})
+		if checksum != 40623 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_probes: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime()
+		})
+		if checksum != 63375 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name()
+		})
+		if checksum != 25466 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_runtime_class_name: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services()
+		})
+		if checksum != 14113 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_services: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations()
+		})
+		if checksum != 1632 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_tolerations: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_schema_checksum_method_preservedjson_to_json()
 		})
 		if checksum != 8252 {
@@ -380,11 +605,164 @@ func uniffiCheckChecksums() {
 	}
 	{
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build()
+		})
+		if checksum != 53928 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template()
+		})
+		if checksum != 6610 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxtemplatespecbuilder_vm_template: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling()
+		})
+		if checksum != 44912 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_autoscaling: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build()
+		})
+		if checksum != 5682 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas()
+		})
+		if checksum != 50438 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref()
+		})
+		if checksum != 7198 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build()
+		})
+		if checksum != 17132 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size()
+		})
+		if checksum != 56913 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_initial_pool_size: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size()
+		})
+		if checksum != 18359 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_max_pool_size: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size()
+		})
+		if checksum != 46153 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new()
+		})
+		if checksum != 48335 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new()
+		})
+		if checksum != 21082 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new()
+		})
+		if checksum != 4748 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_sandboxtemplaterefbuilder_new: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new()
+		})
+		if checksum != 27302 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_vmtemplatebuilder_new: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json()
 		})
 		if checksum != 24064 {
 			// If this happens try cleaning and rebuilding your project
 			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new()
+		})
+		if checksum != 22071 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxtemplatespecbuilder_new: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new()
+		})
+		if checksum != 26063 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_osgymsandboxwarmpoolspecbuilder_new: UniFFI API checksum mismatch")
+		}
+	}
+	{
+		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
+			return C.uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new()
+		})
+		if checksum != 25769 {
+			// If this happens try cleaning and rebuilding your project
+			panic("cyclops_sdk_schema: uniffi_cyclops_sdk_schema_checksum_constructor_warmpoolautoscalingbuilder_new: UniFFI API checksum mismatch")
 		}
 	}
 }
@@ -588,6 +966,311 @@ func (ffiObject *FfiObject) freeRustArcPtr() {
 	})
 }
 
+type ImageRefBuilderInterface interface {
+	Build() (ImageRef, error)
+	Name(value string) *ImageRefBuilder
+}
+type ImageRefBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewImageRefBuilder() *ImageRefBuilder {
+	return FfiConverterImageRefBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *ImageRefBuilder) Build() (ImageRef, error) {
+	_pointer := _self.ffiObject.incrementPointer("*ImageRefBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue ImageRef
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterImageRefINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *ImageRefBuilder) Name(value string) *ImageRefBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*ImageRefBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterImageRefBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *ImageRefBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterImageRefBuilder struct{}
+
+var FfiConverterImageRefBuilderINSTANCE = FfiConverterImageRefBuilder{}
+
+func (c FfiConverterImageRefBuilder) Lift(handle C.uint64_t) *ImageRefBuilder {
+	result := &ImageRefBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*ImageRefBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterImageRefBuilder) Read(reader io.Reader) *ImageRefBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterImageRefBuilder) Lower(value *ImageRefBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*ImageRefBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterImageRefBuilder) Write(writer io.Writer, value *ImageRefBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalImageRefBuilder(handle uint64) *ImageRefBuilder {
+	return FfiConverterImageRefBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalImageRefBuilder(value *ImageRefBuilder) uint64 {
+	return uint64(FfiConverterImageRefBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerImageRefBuilder struct{}
+
+func (_ FfiDestroyerImageRefBuilder) Destroy(value *ImageRefBuilder) {
+	value.Destroy()
+}
+
+type OsGymSandboxTemplateSpecBuilderInterface interface {
+	Build() (OsGymSandboxTemplateSpec, error)
+	VmTemplate(value VmTemplate) *OsGymSandboxTemplateSpecBuilder
+}
+type OsGymSandboxTemplateSpecBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewOsGymSandboxTemplateSpecBuilder() *OsGymSandboxTemplateSpecBuilder {
+	return FfiConverterOsGymSandboxTemplateSpecBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxtemplatespecbuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *OsGymSandboxTemplateSpecBuilder) Build() (OsGymSandboxTemplateSpec, error) {
+	_pointer := _self.ffiObject.incrementPointer("*OsGymSandboxTemplateSpecBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue OsGymSandboxTemplateSpec
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterOsGymSandboxTemplateSpecINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *OsGymSandboxTemplateSpecBuilder) VmTemplate(value VmTemplate) *OsGymSandboxTemplateSpecBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*OsGymSandboxTemplateSpecBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterOsGymSandboxTemplateSpecBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxtemplatespecbuilder_vm_template(
+			_pointer, FfiConverterVmTemplateINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *OsGymSandboxTemplateSpecBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterOsGymSandboxTemplateSpecBuilder struct{}
+
+var FfiConverterOsGymSandboxTemplateSpecBuilderINSTANCE = FfiConverterOsGymSandboxTemplateSpecBuilder{}
+
+func (c FfiConverterOsGymSandboxTemplateSpecBuilder) Lift(handle C.uint64_t) *OsGymSandboxTemplateSpecBuilder {
+	result := &OsGymSandboxTemplateSpecBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxtemplatespecbuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxtemplatespecbuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*OsGymSandboxTemplateSpecBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterOsGymSandboxTemplateSpecBuilder) Read(reader io.Reader) *OsGymSandboxTemplateSpecBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterOsGymSandboxTemplateSpecBuilder) Lower(value *OsGymSandboxTemplateSpecBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*OsGymSandboxTemplateSpecBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterOsGymSandboxTemplateSpecBuilder) Write(writer io.Writer, value *OsGymSandboxTemplateSpecBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalOsGymSandboxTemplateSpecBuilder(handle uint64) *OsGymSandboxTemplateSpecBuilder {
+	return FfiConverterOsGymSandboxTemplateSpecBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalOsGymSandboxTemplateSpecBuilder(value *OsGymSandboxTemplateSpecBuilder) uint64 {
+	return uint64(FfiConverterOsGymSandboxTemplateSpecBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerOsGymSandboxTemplateSpecBuilder struct{}
+
+func (_ FfiDestroyerOsGymSandboxTemplateSpecBuilder) Destroy(value *OsGymSandboxTemplateSpecBuilder) {
+	value.Destroy()
+}
+
+type OsGymSandboxWarmPoolSpecBuilderInterface interface {
+	Autoscaling(value WarmPoolAutoscaling) *OsGymSandboxWarmPoolSpecBuilder
+	Build() (OsGymSandboxWarmPoolSpec, error)
+	Replicas(value uint32) *OsGymSandboxWarmPoolSpecBuilder
+	SandboxTemplateRef(value SandboxTemplateRef) *OsGymSandboxWarmPoolSpecBuilder
+}
+type OsGymSandboxWarmPoolSpecBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewOsGymSandboxWarmPoolSpecBuilder() *OsGymSandboxWarmPoolSpecBuilder {
+	return FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_osgymsandboxwarmpoolspecbuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *OsGymSandboxWarmPoolSpecBuilder) Autoscaling(value WarmPoolAutoscaling) *OsGymSandboxWarmPoolSpecBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*OsGymSandboxWarmPoolSpecBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_autoscaling(
+			_pointer, FfiConverterWarmPoolAutoscalingINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *OsGymSandboxWarmPoolSpecBuilder) Build() (OsGymSandboxWarmPoolSpec, error) {
+	_pointer := _self.ffiObject.incrementPointer("*OsGymSandboxWarmPoolSpecBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue OsGymSandboxWarmPoolSpec
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterOsGymSandboxWarmPoolSpecINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *OsGymSandboxWarmPoolSpecBuilder) Replicas(value uint32) *OsGymSandboxWarmPoolSpecBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*OsGymSandboxWarmPoolSpecBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(
+			_pointer, FfiConverterUint32INSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *OsGymSandboxWarmPoolSpecBuilder) SandboxTemplateRef(value SandboxTemplateRef) *OsGymSandboxWarmPoolSpecBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*OsGymSandboxWarmPoolSpecBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+			_pointer, FfiConverterSandboxTemplateRefINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *OsGymSandboxWarmPoolSpecBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterOsGymSandboxWarmPoolSpecBuilder struct{}
+
+var FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE = FfiConverterOsGymSandboxWarmPoolSpecBuilder{}
+
+func (c FfiConverterOsGymSandboxWarmPoolSpecBuilder) Lift(handle C.uint64_t) *OsGymSandboxWarmPoolSpecBuilder {
+	result := &OsGymSandboxWarmPoolSpecBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_osgymsandboxwarmpoolspecbuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_osgymsandboxwarmpoolspecbuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*OsGymSandboxWarmPoolSpecBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterOsGymSandboxWarmPoolSpecBuilder) Read(reader io.Reader) *OsGymSandboxWarmPoolSpecBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterOsGymSandboxWarmPoolSpecBuilder) Lower(value *OsGymSandboxWarmPoolSpecBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*OsGymSandboxWarmPoolSpecBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterOsGymSandboxWarmPoolSpecBuilder) Write(writer io.Writer, value *OsGymSandboxWarmPoolSpecBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalOsGymSandboxWarmPoolSpecBuilder(handle uint64) *OsGymSandboxWarmPoolSpecBuilder {
+	return FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalOsGymSandboxWarmPoolSpecBuilder(value *OsGymSandboxWarmPoolSpecBuilder) uint64 {
+	return uint64(FfiConverterOsGymSandboxWarmPoolSpecBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerOsGymSandboxWarmPoolSpecBuilder struct{}
+
+func (_ FfiDestroyerOsGymSandboxWarmPoolSpecBuilder) Destroy(value *OsGymSandboxWarmPoolSpecBuilder) {
+	value.Destroy()
+}
+
 type PreservedJsonInterface interface {
 	ToJson() string
 }
@@ -670,6 +1353,576 @@ func LowerToExternalPreservedJson(value *PreservedJson) uint64 {
 type FfiDestroyerPreservedJson struct{}
 
 func (_ FfiDestroyerPreservedJson) Destroy(value *PreservedJson) {
+	value.Destroy()
+}
+
+type SandboxServiceBuilderInterface interface {
+	Build() (SandboxService, error)
+	Name(value string) *SandboxServiceBuilder
+	Protocol(value ServiceProtocol) *SandboxServiceBuilder
+	TargetPort(value uint16) *SandboxServiceBuilder
+}
+type SandboxServiceBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewSandboxServiceBuilder() *SandboxServiceBuilder {
+	return FfiConverterSandboxServiceBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_sandboxservicebuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *SandboxServiceBuilder) Build() (SandboxService, error) {
+	_pointer := _self.ffiObject.incrementPointer("*SandboxServiceBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue SandboxService
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterSandboxServiceINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *SandboxServiceBuilder) Name(value string) *SandboxServiceBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*SandboxServiceBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterSandboxServiceBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_name(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *SandboxServiceBuilder) Protocol(value ServiceProtocol) *SandboxServiceBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*SandboxServiceBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterSandboxServiceBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_protocol(
+			_pointer, FfiConverterServiceProtocolINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *SandboxServiceBuilder) TargetPort(value uint16) *SandboxServiceBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*SandboxServiceBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterSandboxServiceBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_sandboxservicebuilder_target_port(
+			_pointer, FfiConverterUint16INSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *SandboxServiceBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterSandboxServiceBuilder struct{}
+
+var FfiConverterSandboxServiceBuilderINSTANCE = FfiConverterSandboxServiceBuilder{}
+
+func (c FfiConverterSandboxServiceBuilder) Lift(handle C.uint64_t) *SandboxServiceBuilder {
+	result := &SandboxServiceBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_sandboxservicebuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*SandboxServiceBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterSandboxServiceBuilder) Read(reader io.Reader) *SandboxServiceBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterSandboxServiceBuilder) Lower(value *SandboxServiceBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*SandboxServiceBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterSandboxServiceBuilder) Write(writer io.Writer, value *SandboxServiceBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalSandboxServiceBuilder(handle uint64) *SandboxServiceBuilder {
+	return FfiConverterSandboxServiceBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalSandboxServiceBuilder(value *SandboxServiceBuilder) uint64 {
+	return uint64(FfiConverterSandboxServiceBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerSandboxServiceBuilder struct{}
+
+func (_ FfiDestroyerSandboxServiceBuilder) Destroy(value *SandboxServiceBuilder) {
+	value.Destroy()
+}
+
+type SandboxTemplateRefBuilderInterface interface {
+	Build() (SandboxTemplateRef, error)
+	Name(value string) *SandboxTemplateRefBuilder
+}
+type SandboxTemplateRefBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewSandboxTemplateRefBuilder() *SandboxTemplateRefBuilder {
+	return FfiConverterSandboxTemplateRefBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_sandboxtemplaterefbuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *SandboxTemplateRefBuilder) Build() (SandboxTemplateRef, error) {
+	_pointer := _self.ffiObject.incrementPointer("*SandboxTemplateRefBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue SandboxTemplateRef
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterSandboxTemplateRefINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *SandboxTemplateRefBuilder) Name(value string) *SandboxTemplateRefBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*SandboxTemplateRefBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterSandboxTemplateRefBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_sandboxtemplaterefbuilder_name(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *SandboxTemplateRefBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterSandboxTemplateRefBuilder struct{}
+
+var FfiConverterSandboxTemplateRefBuilderINSTANCE = FfiConverterSandboxTemplateRefBuilder{}
+
+func (c FfiConverterSandboxTemplateRefBuilder) Lift(handle C.uint64_t) *SandboxTemplateRefBuilder {
+	result := &SandboxTemplateRefBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_sandboxtemplaterefbuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_sandboxtemplaterefbuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*SandboxTemplateRefBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterSandboxTemplateRefBuilder) Read(reader io.Reader) *SandboxTemplateRefBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterSandboxTemplateRefBuilder) Lower(value *SandboxTemplateRefBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*SandboxTemplateRefBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterSandboxTemplateRefBuilder) Write(writer io.Writer, value *SandboxTemplateRefBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalSandboxTemplateRefBuilder(handle uint64) *SandboxTemplateRefBuilder {
+	return FfiConverterSandboxTemplateRefBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalSandboxTemplateRefBuilder(value *SandboxTemplateRefBuilder) uint64 {
+	return uint64(FfiConverterSandboxTemplateRefBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerSandboxTemplateRefBuilder struct{}
+
+func (_ FfiDestroyerSandboxTemplateRefBuilder) Destroy(value *SandboxTemplateRefBuilder) {
+	value.Destroy()
+}
+
+type VmTemplateBuilderInterface interface {
+	Build() (VmTemplate, error)
+	Command(value []string) *VmTemplateBuilder
+	ContainerDiskImage(value string) *VmTemplateBuilder
+	CpuCores(value uint32) *VmTemplateBuilder
+	Firmware(value Firmware) *VmTemplateBuilder
+	ImagePullPolicy(value ImagePullPolicy) *VmTemplateBuilder
+	ImagePullSecret(value string) *VmTemplateBuilder
+	ImageRef(value ImageRef) *VmTemplateBuilder
+	Memory(value string) *VmTemplateBuilder
+	NestedVirtualization(value bool) *VmTemplateBuilder
+	NodeSelector(value map[string]string) *VmTemplateBuilder
+	Oidc(value OidcConfig) *VmTemplateBuilder
+	Probes(value *PreservedJson) *VmTemplateBuilder
+	Runtime(value RuntimeKind) *VmTemplateBuilder
+	RuntimeClassName(value string) *VmTemplateBuilder
+	Services(value []SandboxService) *VmTemplateBuilder
+	Tolerations(value []*PreservedJson) *VmTemplateBuilder
+}
+type VmTemplateBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewVmTemplateBuilder() *VmTemplateBuilder {
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_vmtemplatebuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Build() (VmTemplate, error) {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue VmTemplate
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterVmTemplateINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *VmTemplateBuilder) Command(value []string) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_command(
+			_pointer, FfiConverterSequenceStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) ContainerDiskImage(value string) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_container_disk_image(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) CpuCores(value uint32) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_cpu_cores(
+			_pointer, FfiConverterUint32INSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Firmware(value Firmware) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_firmware(
+			_pointer, FfiConverterFirmwareINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) ImagePullPolicy(value ImagePullPolicy) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_policy(
+			_pointer, FfiConverterImagePullPolicyINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) ImagePullSecret(value string) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) ImageRef(value ImageRef) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref(
+			_pointer, FfiConverterImageRefINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Memory(value string) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) NestedVirtualization(value bool) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(
+			_pointer, FfiConverterBoolINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) NodeSelector(value map[string]string) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(
+			_pointer, FfiConverterMapStringStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Oidc(value OidcConfig) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(
+			_pointer, FfiConverterOidcConfigINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Probes(value *PreservedJson) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_probes(
+			_pointer, FfiConverterPreservedJsonINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Runtime(value RuntimeKind) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime(
+			_pointer, FfiConverterRuntimeKindINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) RuntimeClassName(value string) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_runtime_class_name(
+			_pointer, FfiConverterStringINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Services(value []SandboxService) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_services(
+			_pointer, FfiConverterSequenceSandboxServiceINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *VmTemplateBuilder) Tolerations(value []*PreservedJson) *VmTemplateBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_tolerations(
+			_pointer, FfiConverterSequencePreservedJsonINSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *VmTemplateBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterVmTemplateBuilder struct{}
+
+var FfiConverterVmTemplateBuilderINSTANCE = FfiConverterVmTemplateBuilder{}
+
+func (c FfiConverterVmTemplateBuilder) Lift(handle C.uint64_t) *VmTemplateBuilder {
+	result := &VmTemplateBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_vmtemplatebuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_vmtemplatebuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*VmTemplateBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterVmTemplateBuilder) Read(reader io.Reader) *VmTemplateBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterVmTemplateBuilder) Lower(value *VmTemplateBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*VmTemplateBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterVmTemplateBuilder) Write(writer io.Writer, value *VmTemplateBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalVmTemplateBuilder(handle uint64) *VmTemplateBuilder {
+	return FfiConverterVmTemplateBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalVmTemplateBuilder(value *VmTemplateBuilder) uint64 {
+	return uint64(FfiConverterVmTemplateBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerVmTemplateBuilder struct{}
+
+func (_ FfiDestroyerVmTemplateBuilder) Destroy(value *VmTemplateBuilder) {
+	value.Destroy()
+}
+
+type WarmPoolAutoscalingBuilderInterface interface {
+	Build() (WarmPoolAutoscaling, error)
+	InitialPoolSize(value uint32) *WarmPoolAutoscalingBuilder
+	MaxPoolSize(value uint32) *WarmPoolAutoscalingBuilder
+	MinPoolSize(value uint32) *WarmPoolAutoscalingBuilder
+}
+type WarmPoolAutoscalingBuilder struct {
+	ffiObject FfiObject
+}
+
+func NewWarmPoolAutoscalingBuilder() *WarmPoolAutoscalingBuilder {
+	return FfiConverterWarmPoolAutoscalingBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_constructor_warmpoolautoscalingbuilder_new(_uniffiStatus)
+	}))
+}
+
+func (_self *WarmPoolAutoscalingBuilder) Build() (WarmPoolAutoscaling, error) {
+	_pointer := _self.ffiObject.incrementPointer("*WarmPoolAutoscalingBuilder")
+	defer _self.ffiObject.decrementPointer()
+	_uniffiRV, _uniffiErr := rustCallWithError[*SchemaBuildError](FfiConverterSchemaBuildError{}, func(_uniffiStatus *C.RustCallStatus) RustBufferI {
+		return GoRustBuffer{
+			inner: C.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_build(
+				_pointer, _uniffiStatus),
+		}
+	})
+	if _uniffiErr != nil {
+		var _uniffiDefaultValue WarmPoolAutoscaling
+		return _uniffiDefaultValue, _uniffiErr
+	} else {
+		return FfiConverterWarmPoolAutoscalingINSTANCE.Lift(_uniffiRV), nil
+	}
+}
+
+func (_self *WarmPoolAutoscalingBuilder) InitialPoolSize(value uint32) *WarmPoolAutoscalingBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*WarmPoolAutoscalingBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterWarmPoolAutoscalingBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_initial_pool_size(
+			_pointer, FfiConverterUint32INSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *WarmPoolAutoscalingBuilder) MaxPoolSize(value uint32) *WarmPoolAutoscalingBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*WarmPoolAutoscalingBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterWarmPoolAutoscalingBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_max_pool_size(
+			_pointer, FfiConverterUint32INSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+
+func (_self *WarmPoolAutoscalingBuilder) MinPoolSize(value uint32) *WarmPoolAutoscalingBuilder {
+	_pointer := _self.ffiObject.incrementPointer("*WarmPoolAutoscalingBuilder")
+	defer _self.ffiObject.decrementPointer()
+	return FfiConverterWarmPoolAutoscalingBuilderINSTANCE.Lift(rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint64_t {
+		return C.uniffi_cyclops_sdk_schema_fn_method_warmpoolautoscalingbuilder_min_pool_size(
+			_pointer, FfiConverterUint32INSTANCE.Lower(value), _uniffiStatus)
+	}))
+}
+func (object *WarmPoolAutoscalingBuilder) Destroy() {
+	runtime.SetFinalizer(object, nil)
+	object.ffiObject.destroy()
+}
+
+type FfiConverterWarmPoolAutoscalingBuilder struct{}
+
+var FfiConverterWarmPoolAutoscalingBuilderINSTANCE = FfiConverterWarmPoolAutoscalingBuilder{}
+
+func (c FfiConverterWarmPoolAutoscalingBuilder) Lift(handle C.uint64_t) *WarmPoolAutoscalingBuilder {
+	result := &WarmPoolAutoscalingBuilder{
+		newFfiObject(
+			handle,
+			func(handle C.uint64_t, status *C.RustCallStatus) C.uint64_t {
+				return C.uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(handle, status)
+			},
+			func(handle C.uint64_t, status *C.RustCallStatus) {
+				C.uniffi_cyclops_sdk_schema_fn_free_warmpoolautoscalingbuilder(handle, status)
+			},
+		),
+	}
+	runtime.SetFinalizer(result, (*WarmPoolAutoscalingBuilder).Destroy)
+	return result
+}
+
+func (c FfiConverterWarmPoolAutoscalingBuilder) Read(reader io.Reader) *WarmPoolAutoscalingBuilder {
+	return c.Lift(C.uint64_t(readUint64(reader)))
+}
+
+func (c FfiConverterWarmPoolAutoscalingBuilder) Lower(value *WarmPoolAutoscalingBuilder) C.uint64_t {
+	// TODO: this is bad - all synchronization from ObjectRuntime.go is discarded here,
+	// because the handle will be decremented immediately after this function returns,
+	// and someone will be left holding onto a non-locked handle.
+	handle := value.ffiObject.incrementPointer("*WarmPoolAutoscalingBuilder")
+	defer value.ffiObject.decrementPointer()
+	return handle
+}
+
+func (c FfiConverterWarmPoolAutoscalingBuilder) Write(writer io.Writer, value *WarmPoolAutoscalingBuilder) {
+	writeUint64(writer, uint64(c.Lower(value)))
+}
+
+func LiftFromExternalWarmPoolAutoscalingBuilder(handle uint64) *WarmPoolAutoscalingBuilder {
+	return FfiConverterWarmPoolAutoscalingBuilderINSTANCE.Lift(C.uint64_t(handle))
+}
+
+func LowerToExternalWarmPoolAutoscalingBuilder(value *WarmPoolAutoscalingBuilder) uint64 {
+	return uint64(FfiConverterWarmPoolAutoscalingBuilderINSTANCE.Lower(value))
+}
+
+type FfiDestroyerWarmPoolAutoscalingBuilder struct{}
+
+func (_ FfiDestroyerWarmPoolAutoscalingBuilder) Destroy(value *WarmPoolAutoscalingBuilder) {
 	value.Destroy()
 }
 
@@ -770,6 +2023,46 @@ func (c FfiConverterClaimSpec) Write(writer io.Writer, value ClaimSpec) {
 type FfiDestroyerClaimSpec struct{}
 
 func (_ FfiDestroyerClaimSpec) Destroy(value ClaimSpec) {
+	value.Destroy()
+}
+
+type ImageRef struct {
+	Name string
+}
+
+func (r *ImageRef) Destroy() {
+	FfiDestroyerString{}.Destroy(r.Name)
+}
+
+type FfiConverterImageRef struct{}
+
+var FfiConverterImageRefINSTANCE = FfiConverterImageRef{}
+
+func (c FfiConverterImageRef) Lift(rb RustBufferI) ImageRef {
+	return LiftFromRustBuffer[ImageRef](c, rb)
+}
+
+func (c FfiConverterImageRef) Read(reader io.Reader) ImageRef {
+	return ImageRef{
+		FfiConverterStringINSTANCE.Read(reader),
+	}
+}
+
+func (c FfiConverterImageRef) Lower(value ImageRef) C.RustBuffer {
+	return LowerIntoRustBuffer[ImageRef](c, value)
+}
+
+func (c FfiConverterImageRef) LowerExternal(value ImageRef) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[ImageRef](c, value))
+}
+
+func (c FfiConverterImageRef) Write(writer io.Writer, value ImageRef) {
+	FfiConverterStringINSTANCE.Write(writer, value.Name)
+}
+
+type FfiDestroyerImageRef struct{}
+
+func (_ FfiDestroyerImageRef) Destroy(value ImageRef) {
 	value.Destroy()
 }
 
@@ -1310,7 +2603,8 @@ func (_ FfiDestroyerSandboxTemplateRef) Destroy(value SandboxTemplateRef) {
 }
 
 type VmTemplate struct {
-	ContainerDiskImage   string
+	ContainerDiskImage   *string
+	ImageRef             *ImageRef
 	Command              *[]string
 	Runtime              *RuntimeKind
 	RuntimeClassName     *string
@@ -1328,7 +2622,8 @@ type VmTemplate struct {
 }
 
 func (r *VmTemplate) Destroy() {
-	FfiDestroyerString{}.Destroy(r.ContainerDiskImage)
+	FfiDestroyerOptionalString{}.Destroy(r.ContainerDiskImage)
+	FfiDestroyerOptionalImageRef{}.Destroy(r.ImageRef)
 	FfiDestroyerOptionalSequenceString{}.Destroy(r.Command)
 	FfiDestroyerOptionalRuntimeKind{}.Destroy(r.Runtime)
 	FfiDestroyerOptionalString{}.Destroy(r.RuntimeClassName)
@@ -1355,7 +2650,8 @@ func (c FfiConverterVmTemplate) Lift(rb RustBufferI) VmTemplate {
 
 func (c FfiConverterVmTemplate) Read(reader io.Reader) VmTemplate {
 	return VmTemplate{
-		FfiConverterStringINSTANCE.Read(reader),
+		FfiConverterOptionalStringINSTANCE.Read(reader),
+		FfiConverterOptionalImageRefINSTANCE.Read(reader),
 		FfiConverterOptionalSequenceStringINSTANCE.Read(reader),
 		FfiConverterOptionalRuntimeKindINSTANCE.Read(reader),
 		FfiConverterOptionalStringINSTANCE.Read(reader),
@@ -1382,7 +2678,8 @@ func (c FfiConverterVmTemplate) LowerExternal(value VmTemplate) ExternalCRustBuf
 }
 
 func (c FfiConverterVmTemplate) Write(writer io.Writer, value VmTemplate) {
-	FfiConverterStringINSTANCE.Write(writer, value.ContainerDiskImage)
+	FfiConverterOptionalStringINSTANCE.Write(writer, value.ContainerDiskImage)
+	FfiConverterOptionalImageRefINSTANCE.Write(writer, value.ImageRef)
 	FfiConverterOptionalSequenceStringINSTANCE.Write(writer, value.Command)
 	FfiConverterOptionalRuntimeKindINSTANCE.Write(writer, value.Runtime)
 	FfiConverterOptionalStringINSTANCE.Write(writer, value.RuntimeClassName)
@@ -1669,6 +2966,159 @@ type FfiDestroyerRuntimeKind struct{}
 func (_ FfiDestroyerRuntimeKind) Destroy(value RuntimeKind) {
 }
 
+type SchemaBuildError struct {
+	err error
+}
+
+// Convenience method to turn *SchemaBuildError into error
+// Avoiding treating nil pointer as non nil error interface
+func (err *SchemaBuildError) AsError() error {
+	if err == nil {
+		return nil
+	} else {
+		return err
+	}
+}
+
+func (err SchemaBuildError) Error() string {
+	return fmt.Sprintf("SchemaBuildError: %s", err.err.Error())
+}
+
+func (err SchemaBuildError) Unwrap() error {
+	return err.err
+}
+
+// Err* are used for checking error type with `errors.Is`
+var ErrSchemaBuildErrorMissingRequiredField = fmt.Errorf("SchemaBuildErrorMissingRequiredField")
+var ErrSchemaBuildErrorInvalid = fmt.Errorf("SchemaBuildErrorInvalid")
+
+// Variant structs
+type SchemaBuildErrorMissingRequiredField struct {
+	RecordType string
+	Field      string
+}
+
+func NewSchemaBuildErrorMissingRequiredField(
+	recordType string,
+	field string,
+) *SchemaBuildError {
+	return &SchemaBuildError{err: &SchemaBuildErrorMissingRequiredField{
+		RecordType: recordType,
+		Field:      field}}
+}
+
+func (e SchemaBuildErrorMissingRequiredField) destroy() {
+	FfiDestroyerString{}.Destroy(e.RecordType)
+	FfiDestroyerString{}.Destroy(e.Field)
+}
+
+func (err SchemaBuildErrorMissingRequiredField) Error() string {
+	return fmt.Sprint("MissingRequiredField",
+		": ",
+
+		"RecordType=",
+		err.RecordType,
+		", ",
+		"Field=",
+		err.Field,
+	)
+}
+
+func (self SchemaBuildErrorMissingRequiredField) Is(target error) bool {
+	return target == ErrSchemaBuildErrorMissingRequiredField
+}
+
+type SchemaBuildErrorInvalid struct {
+	Message string
+}
+
+func NewSchemaBuildErrorInvalid(
+	message string,
+) *SchemaBuildError {
+	return &SchemaBuildError{err: &SchemaBuildErrorInvalid{
+		Message: message}}
+}
+
+func (e SchemaBuildErrorInvalid) destroy() {
+	FfiDestroyerString{}.Destroy(e.Message)
+}
+
+func (err SchemaBuildErrorInvalid) Error() string {
+	return fmt.Sprint("Invalid",
+		": ",
+
+		"Message=",
+		err.Message,
+	)
+}
+
+func (self SchemaBuildErrorInvalid) Is(target error) bool {
+	return target == ErrSchemaBuildErrorInvalid
+}
+
+type FfiConverterSchemaBuildError struct{}
+
+var FfiConverterSchemaBuildErrorINSTANCE = FfiConverterSchemaBuildError{}
+
+func (c FfiConverterSchemaBuildError) Lift(eb RustBufferI) *SchemaBuildError {
+	return LiftFromRustBuffer[*SchemaBuildError](c, eb)
+}
+
+func (c FfiConverterSchemaBuildError) Lower(value *SchemaBuildError) C.RustBuffer {
+	return LowerIntoRustBuffer[*SchemaBuildError](c, value)
+}
+
+func (c FfiConverterSchemaBuildError) LowerExternal(value *SchemaBuildError) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*SchemaBuildError](c, value))
+}
+
+func (c FfiConverterSchemaBuildError) Read(reader io.Reader) *SchemaBuildError {
+	errorID := readUint32(reader)
+
+	switch errorID {
+	case 1:
+		return &SchemaBuildError{&SchemaBuildErrorMissingRequiredField{
+			RecordType: FfiConverterStringINSTANCE.Read(reader),
+			Field:      FfiConverterStringINSTANCE.Read(reader),
+		}}
+	case 2:
+		return &SchemaBuildError{&SchemaBuildErrorInvalid{
+			Message: FfiConverterStringINSTANCE.Read(reader),
+		}}
+	default:
+		panic(fmt.Sprintf("Unknown error code %d in FfiConverterSchemaBuildError.Read()", errorID))
+	}
+}
+
+func (c FfiConverterSchemaBuildError) Write(writer io.Writer, value *SchemaBuildError) {
+	switch variantValue := value.err.(type) {
+	case *SchemaBuildErrorMissingRequiredField:
+		writeInt32(writer, 1)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.RecordType)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Field)
+	case *SchemaBuildErrorInvalid:
+		writeInt32(writer, 2)
+		FfiConverterStringINSTANCE.Write(writer, variantValue.Message)
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiConverterSchemaBuildError.Write", value))
+	}
+}
+
+type FfiDestroyerSchemaBuildError struct{}
+
+func (_ FfiDestroyerSchemaBuildError) Destroy(value *SchemaBuildError) {
+	switch variantValue := value.err.(type) {
+	case SchemaBuildErrorMissingRequiredField:
+		variantValue.destroy()
+	case SchemaBuildErrorInvalid:
+		variantValue.destroy()
+	default:
+		_ = variantValue
+		panic(fmt.Sprintf("invalid error value `%v` in FfiDestroyerSchemaBuildError.Destroy", value))
+	}
+}
+
 type ServiceProtocol uint
 
 const (
@@ -1907,6 +3357,47 @@ type FfiDestroyerOptionalClaimLifecycle struct{}
 func (_ FfiDestroyerOptionalClaimLifecycle) Destroy(value *ClaimLifecycle) {
 	if value != nil {
 		FfiDestroyerClaimLifecycle{}.Destroy(*value)
+	}
+}
+
+type FfiConverterOptionalImageRef struct{}
+
+var FfiConverterOptionalImageRefINSTANCE = FfiConverterOptionalImageRef{}
+
+func (c FfiConverterOptionalImageRef) Lift(rb RustBufferI) *ImageRef {
+	return LiftFromRustBuffer[*ImageRef](c, rb)
+}
+
+func (_ FfiConverterOptionalImageRef) Read(reader io.Reader) *ImageRef {
+	if readInt8(reader) == 0 {
+		return nil
+	}
+	temp := FfiConverterImageRefINSTANCE.Read(reader)
+	return &temp
+}
+
+func (c FfiConverterOptionalImageRef) Lower(value *ImageRef) C.RustBuffer {
+	return LowerIntoRustBuffer[*ImageRef](c, value)
+}
+
+func (c FfiConverterOptionalImageRef) LowerExternal(value *ImageRef) ExternalCRustBuffer {
+	return RustBufferFromC(LowerIntoRustBuffer[*ImageRef](c, value))
+}
+
+func (_ FfiConverterOptionalImageRef) Write(writer io.Writer, value *ImageRef) {
+	if value == nil {
+		writeInt8(writer, 0)
+	} else {
+		writeInt8(writer, 1)
+		FfiConverterImageRefINSTANCE.Write(writer, *value)
+	}
+}
+
+type FfiDestroyerOptionalImageRef struct{}
+
+func (_ FfiDestroyerOptionalImageRef) Destroy(value *ImageRef) {
+	if value != nil {
+		FfiDestroyerImageRef{}.Destroy(*value)
 	}
 }
 

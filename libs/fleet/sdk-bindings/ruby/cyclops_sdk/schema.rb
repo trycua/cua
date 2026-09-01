@@ -154,6 +154,25 @@ end
     end
   end
 
+  # The Record type ImageRef.
+
+  def self.check_lower_TypeImageRef(v)
+
+  end
+
+  def self.alloc_from_TypeImageRef(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeImageRef(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeImageRef
+    consumeWithStream do |stream|
+      return stream.readTypeImageRef
+    end
+  end
+
   # The Record type OSGymSandboxClaimCondition.
 
   def self.check_lower_TypeOSGymSandboxClaimCondition(v)
@@ -390,7 +409,8 @@ end
   # The Record type VmTemplate.
 
   def self.check_lower_TypeVmTemplate(v)
-
+    RustBuffer.check_lower_Optionalstring(v.container_disk_image)
+    RustBuffer.check_lower_OptionalTypeImageRef(v.image_ref)
     RustBuffer.check_lower_OptionalSequencestring(v.command)
     RustBuffer.check_lower_OptionalTypeRuntimeKind(v.runtime)
     RustBuffer.check_lower_Optionalstring(v.runtime_class_name)
@@ -623,6 +643,27 @@ end
   def consumeIntoOptionalTypeClaimLifecycle
     consumeWithStream do |stream|
       return stream.readOptionalTypeClaimLifecycle
+    end
+  end
+
+  # The Optional<T> type for TypeImageRef.
+
+  def self.check_lower_OptionalTypeImageRef(v)
+    if not v.nil?
+      RustBuffer.check_lower_TypeImageRef(v)
+    end
+  end
+
+  def self.alloc_from_OptionalTypeImageRef(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_OptionalTypeImageRef(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoOptionalTypeImageRef
+    consumeWithStream do |stream|
+      return stream.readOptionalTypeImageRef
     end
   end
 
@@ -1053,6 +1094,13 @@ class RustBufferStream
     read(size).force_encoding(Encoding::UTF_8)
   end
 
+  # The Object type ImageRefBuilder.
+
+  def readTypeImageRefBuilder
+    handle = unpack_from 8, 'Q>'
+    return ImageRefBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type OSGymSandboxTemplateSpecBuilder.
 
   def readTypeOSGymSandboxTemplateSpecBuilder
@@ -1120,6 +1168,14 @@ class RustBufferStream
       warmpool: readOptionalstring,
       bind_deadline: readOptionalu32,
       lifecycle: readOptionalTypeClaimLifecycle
+    )
+  end
+
+  # The Record type ImageRef.
+
+  def readTypeImageRef
+    ImageRef.new(
+      name: readString
     )
   end
 
@@ -1239,7 +1295,8 @@ class RustBufferStream
 
   def readTypeVmTemplate
     VmTemplate.new(
-      container_disk_image: readString,
+      container_disk_image: readOptionalstring,
+      image_ref: readOptionalTypeImageRef,
       command: readOptionalSequencestring,
       runtime: readOptionalTypeRuntimeKind,
       runtime_class_name: readOptionalstring,
@@ -1364,6 +1421,11 @@ class RustBufferStream
             readString()
         )
     end
+    if variant == 2
+        return SchemaBuildError::Invalid.new(
+            readString()
+        )
+    end
 
     raise InternalError, 'Unexpected variant tag for TypeSchemaBuildError'
   end
@@ -1455,6 +1517,20 @@ class RustBufferStream
       return readTypeClaimLifecycle
     else
       raise InternalError, 'Unexpected flag byte for OptionalTypeClaimLifecycle'
+    end
+  end
+
+  # The Optional<T> type for TypeImageRef.
+
+  def readOptionalTypeImageRef
+    flag = unpack_from 1, 'c'
+
+    if flag == 0
+      return nil
+    elsif flag == 1
+      return readTypeImageRef
+    else
+      raise InternalError, 'Unexpected flag byte for OptionalTypeImageRef'
     end
   end
 
@@ -1769,6 +1845,13 @@ class RustBufferBuilder
     write v
   end
 
+  # The Object type ImageRefBuilder.
+
+  def write_TypeImageRefBuilder(obj)
+    handle = ImageRefBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
   # The Object type OSGymSandboxTemplateSpecBuilder.
 
   def write_TypeOSGymSandboxTemplateSpecBuilder(obj)
@@ -1833,6 +1916,12 @@ class RustBufferBuilder
     self.write_Optionalstring(v.warmpool)
     self.write_Optionalu32(v.bind_deadline)
     self.write_OptionalTypeClaimLifecycle(v.lifecycle)
+  end
+
+  # The Record type ImageRef.
+
+  def write_TypeImageRef(v)
+    self.write_String(v.name)
   end
 
   # The Record type OSGymSandboxClaimCondition.
@@ -1928,7 +2017,8 @@ class RustBufferBuilder
   # The Record type VmTemplate.
 
   def write_TypeVmTemplate(v)
-    self.write_String(v.container_disk_image)
+    self.write_Optionalstring(v.container_disk_image)
+    self.write_OptionalTypeImageRef(v.image_ref)
     self.write_OptionalSequencestring(v.command)
     self.write_OptionalTypeRuntimeKind(v.runtime)
     self.write_Optionalstring(v.runtime_class_name)
@@ -2037,6 +2127,17 @@ class RustBufferBuilder
     else
       pack_into(1, 'c', 1)
       self.write_TypeClaimLifecycle(v)
+    end
+  end
+
+  # The Optional<T> type for TypeImageRef.
+
+  def write_OptionalTypeImageRef(v)
+    if v.nil?
+      pack_into(1, 'c', 0)
+    else
+      pack_into(1, 'c', 1)
+      self.write_TypeImageRef(v)
     end
   end
 
@@ -2283,6 +2384,19 @@ module SchemaBuildError
      "#{self.class.name}(record_type=#{@record_type.inspect}, field=#{@field.inspect})"
     end
   end
+  class Invalid < StandardError
+    def initialize(message)
+        @message = message
+        super()
+      end
+
+    attr_reader :message
+
+
+    def to_s
+     "#{self.class.name}(message=#{@message.inspect})"
+    end
+  end
 
 end
 
@@ -2391,6 +2505,21 @@ module UniFFILib
   ffi_lib 'cyclops_sdk'
 
 
+  attach_function :uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_clone_sandboxservicebuilder,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2455,6 +2584,9 @@ module UniFFILib
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,
@@ -2565,6 +2697,12 @@ module UniFFILib
   attach_function :ffi_cyclops_sdk_schema_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_imagerefbuilder_name,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_sandboxservicebuilder_build,
     [RustCallStatus.by_ref],
     :uint16
@@ -2602,6 +2740,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_pull_secret,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_image_ref,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory,
@@ -2662,6 +2803,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_min_pool_size,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_imagerefbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_constructor_sandboxservicebuilder_new,
@@ -2875,6 +3019,23 @@ class OSGymSandboxClaimStatus
   end
 end
 
+  # Record type ImageRef
+class ImageRef
+  attr_reader :name
+
+  def initialize(name:)
+    @name = name
+  end
+
+  def ==(other)
+    if @name != other.name
+      return false
+    end
+
+    true
+  end
+end
+
   # Record type OidcConfig
 class OidcConfig
   attr_reader :credentials_secret, :token_url, :aws_role_arn, :aws_region, :refresh_interval_seconds
@@ -2952,10 +3113,11 @@ end
 
   # Record type VmTemplate
 class VmTemplate
-  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc
+  attr_reader :container_disk_image, :image_ref, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc
 
-  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:)
+  def initialize(container_disk_image:, image_ref:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:)
     @container_disk_image = container_disk_image
+    @image_ref = image_ref
     @command = command
     @runtime = runtime
     @runtime_class_name = runtime_class_name
@@ -2974,6 +3136,9 @@ class VmTemplate
 
   def ==(other)
     if @container_disk_image != other.container_disk_image
+      return false
+    end
+    if @image_ref != other.image_ref
       return false
     end
     if @command != other.command
@@ -3180,6 +3345,69 @@ end
 
 
 
+
+  class ImageRefBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      CyclopsSdkSchema.rust_call(
+        :uniffi_cyclops_sdk_schema_fn_free_imagerefbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a ImageRefBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return CyclopsSdkSchema.rust_call(
+      :uniffi_cyclops_sdk_schema_fn_clone_imagerefbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_constructor_imagerefbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = CyclopsSdkSchema.rust_call_with_error(SchemaBuildError,:uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeImageRef
+  end
+  def name(value)
+        value = CyclopsSdkSchema::uniffi_utf8(value)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_imagerefbuilder_name,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return ImageRefBuilder.uniffi_allocate(result)
+  end
+
+end
 
   class SandboxServiceBuilder
 
@@ -3407,6 +3635,12 @@ end
         value = CyclopsSdkSchema::uniffi_utf8(value)
 
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_secret,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
+  def image_ref(value)
+        value = value
+        RustBuffer.check_lower_TypeImageRef(value)
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_ref,uniffi_clone_handle(),RustBuffer.alloc_from_TypeImageRef(value))
     return VmTemplateBuilder.uniffi_allocate(result)
   end
   def memory(value)

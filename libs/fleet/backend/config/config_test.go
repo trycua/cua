@@ -1,14 +1,40 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/pflag"
 	"github.com/spf13/viper"
 )
+
+func TestMain(m *testing.M) {
+	if err := os.Setenv("IMAGE_UPLOAD_BUCKET", "test-image-uploads"); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestLoadConfig_RequiresImageUploadBucket(t *testing.T) {
+	for _, value := range []string{"", "   "} {
+		t.Run(fmt.Sprintf("value_%q", value), func(t *testing.T) {
+			viper.Reset()
+			t.Cleanup(viper.Reset)
+			t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+			t.Setenv("IMAGE_UPLOAD_BUCKET", value)
+			RegisterFlags(pflag.NewFlagSet("missing-image-upload-bucket", pflag.ContinueOnError))
+
+			_, err := LoadConfig()
+			if err == nil || !strings.Contains(err.Error(), "IMAGE_UPLOAD_BUCKET") {
+				t.Fatalf("LoadConfig() error = %v, want IMAGE_UPLOAD_BUCKET requirement", err)
+			}
+		})
+	}
+}
 
 func TestLoadConfig_UsesPublicIssuerForTokenURL(t *testing.T) {
 	viper.Reset()
@@ -271,5 +297,37 @@ func TestLoadConfig_ChatDisabledDoesNotRequireCredentials(t *testing.T) {
 	t.Setenv("CYCLOPS_CS_CHAT_ACCESS", "disabled")
 	if _, err := loadChatTestConfig(t); err != nil {
 		t.Fatalf("LoadConfig() error = %v, want disabled mode without credentials", err)
+	}
+}
+
+func TestLoadConfig_ImageUploadValues(t *testing.T) {
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "test-secret")
+	t.Setenv("IMAGE_UPLOAD_BUCKET", "fleet-uploads")
+	t.Setenv("IMAGE_UPLOAD_REGION", "us-west-2")
+	t.Setenv("IMAGE_UPLOAD_URL_LIFETIME", "10m")
+	t.Setenv("IMAGE_UPLOAD_MAX_FILE_BYTES", "1234")
+	t.Setenv("IMAGE_UPLOAD_MAX_FILES_PER_REQUEST", "3")
+	RegisterFlags(pflag.NewFlagSet("image-upload-test", pflag.ContinueOnError))
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		t.Fatalf("LoadConfig() error = %v", err)
+	}
+	if got, want := cfg.ImageUploads.Bucket, "fleet-uploads"; got != want {
+		t.Fatalf("Bucket = %q, want %q", got, want)
+	}
+	if got, want := cfg.ImageUploads.Region, "us-west-2"; got != want {
+		t.Fatalf("Region = %q, want %q", got, want)
+	}
+	if got, want := cfg.ImageUploads.URLLifetime, 10*time.Minute; got != want {
+		t.Fatalf("URLLifetime = %s, want %s", got, want)
+	}
+	if got, want := cfg.ImageUploads.MaxFileBytes, int64(1234); got != want {
+		t.Fatalf("MaxFileBytes = %d, want %d", got, want)
+	}
+	if got, want := cfg.ImageUploads.MaxFilesPerRequest, 3; got != want {
+		t.Fatalf("MaxFilesPerRequest = %d, want %d", got, want)
 	}
 }

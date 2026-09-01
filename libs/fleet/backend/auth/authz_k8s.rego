@@ -185,6 +185,20 @@ k8s_request_allowed {
 	fleet_crud_shape(parts)
 }
 
+# ── Fleet Images ─────────────────────────────────────────────────────────────
+#
+# apis/images.cua.ai/v1alpha1/namespaces/{ns}/images
+#
+# Image recipes are managed through the generic Kubernetes proxy. This permits
+# only the namespaced Image collection and objects; the cluster-scoped form and
+# every other resource in images.cua.ai remain absent from the allowlist.
+k8s_request_allowed {
+	parts := split(input.params.path, "/")
+	apis_namespaced_group(parts, "images.cua.ai", "v1alpha1")
+	parts[5] == "images"
+	image_crud_watch_shape(parts)
+}
+
 # ── Fleet CRDs, legacy group ────────────────────────────────────────────────
 #
 # apis/cua.ai/v1/namespaces/{ns}/osgymworkspacepools
@@ -393,6 +407,38 @@ fleet_crud_shape(parts) {
 fleet_crud_shape(parts) {
 	apis_subresource(parts, "status")
 	input.method == "PATCH"
+}
+
+# Image requests use only collection and item shapes. Collection GET includes
+# query-string watches because input.params.path excludes the query string.
+image_crud_watch_shape(parts) {
+	apis_collection(parts)
+	input.method == "GET"
+}
+
+image_crud_watch_shape(parts) {
+	apis_collection(parts)
+	input.method == "POST"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "GET"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "PUT"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "PATCH"
+}
+
+image_crud_watch_shape(parts) {
+	apis_item(parts)
+	input.method == "DELETE"
 }
 
 legacy_pool_shape(parts) {

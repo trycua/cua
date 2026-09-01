@@ -5,8 +5,9 @@ usage() {
   cat >&2 <<'USAGE'
 Usage: generate-sdk-bindings.sh [--check]
 
-Generate checked-in UniFFI Python, Kotlin, Swift, and Ruby bindings. --check
-compares fresh output to the checked-in generated source without modifying it.
+Generate all checked-in UniFFI bindings, including Go, Node TypeScript, and
+browser TypeScript compatibility targets. --check compares fresh output to the
+checked-in generated source without modifying it.
 USAGE
 }
 
@@ -21,11 +22,13 @@ if [ "$#" -gt 1 ]; then
   exit 2
 fi
 
-repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-workspace_dir="$repo_root/cyclops-cs"
+workspace_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workspace="$workspace_dir/Cargo.toml"
 bindings_dir="$workspace_dir/sdk-bindings"
 languages="python kotlin swift ruby"
+binding_roots="$languages go-uniffi ts-uniffi ts-uniffi-browser"
+go_bindgen_version="uniffi-bindgen 0.7.1+v0.31.0"
+typescript_bindgen_package="uniffi-bindgen-react-native@0.31.0-3"
 manifest_name=".cyclops-sdk-generated-files"
 
 if cargo_bin="$(command -v cargo)" && [ -n "$cargo_bin" ]; then
@@ -35,10 +38,25 @@ else
   exit 127
 fi
 
+if go_bindgen_bin="$(command -v uniffi-bindgen-go)" && \
+  [ "$($go_bindgen_bin --version)" = "$go_bindgen_version" ]; then
+  :
+else
+  echo "error: uniffi-bindgen-go $go_bindgen_version must be available on PATH" >&2
+  exit 127
+fi
+
 if rustc_bin="$(command -v rustc)" && [ -n "$rustc_bin" ]; then
   :
 else
   echo "error: rustc must be available on PATH" >&2
+  exit 127
+fi
+
+if npx_bin="$(command -v npx)" && [ -n "$npx_bin" ]; then
+  :
+else
+  echo "error: npx must be available on PATH" >&2
   exit 127
 fi
 
@@ -294,8 +312,38 @@ PYTHON_FACADE_FOOTER
   } >> "$facade_file"
 }
 
+normalize_browser_bridge_order() {
+  python3 - "$temporary_output/generated/ts-uniffi-browser/cpp/fleet_sdk_module.rs" <<'PYTHON_BROWSER_ORDER'
+import pathlib
+import re
+import sys
+
+path = pathlib.Path(sys.argv[1])
+text = path.read_text()
+lines = text.splitlines(keepends=True)
+starts = []
+for index, line in enumerate(lines):
+    if re.match(r"^mod [a-z0-9_]+ \{", line):
+        if index > 0 and lines[index - 1].rstrip("\n") == "#[allow(non_snake_case)]":
+            starts.append(index - 1)
+        else:
+            starts.append(index)
+if not starts:
+    raise SystemExit("expected browser callback module section")
+prefix = "".join(lines[:starts[0]])
+blocks = ["".join(lines[block_start:block_end]) for block_start, block_end in zip(starts, starts[1:] + [len(lines)])]
+def module_name(block: str) -> str:
+    match = re.search(r"(?m)^mod ([a-z0-9_]+) \{", block)
+    if match is None:
+        raise SystemExit("unexpected browser callback module name")
+    return match.group(1)
+blocks.sort(key=module_name)
+path.write_text(prefix + "".join(blocks))
+PYTHON_BROWSER_ORDER
+}
+
 normalize_generated_text() {
-  for language in $languages; do
+  for language in $binding_roots; do
     find -P "$temporary_output/generated/$language" -type f -print | while IFS= read -r file; do
       normalized="$file.normalized"
       awk '
@@ -482,7 +530,7 @@ prepare_complete_replacement_root() {
 
   replacement_root="$(mktemp -d "$workspace_dir/.sdk-bindings.new.XXXXXX")"
   cp -pR "$bindings_dir/." "$replacement_root/"
-  for language in $languages; do
+  for language in $binding_roots; do
     prepare_replacement_root "$language"
   done
 }
@@ -629,11 +677,22 @@ fi
 raw_output="$temporary_output/raw"
 generated_root="$temporary_output/generated"
 mkdir -p "$raw_output" "$generated_root/python/fleet_sdk" "$generated_root/kotlin" \
-  "$generated_root/swift" "$generated_root/ruby/cyclops_sdk"
+  "$generated_root/swift" "$generated_root/ruby/cyclops_sdk" \
+  "$generated_root/go-uniffi" "$generated_root/ts-uniffi" \
+  "$generated_root/ts-uniffi-browser/ts" "$generated_root/ts-uniffi-browser/cpp"
 "$cargo_bin" run --locked --manifest-path "$workspace" -p cyclops-sdk-bindgen --target "$host_triple" -- \
   generate --library "$library" \
   --language python --language kotlin --language swift --language ruby \
   --out-dir "$raw_output" --no-format
+
+"$go_bindgen_bin" "$library" --library --out-dir "$generated_root/go-uniffi"
+"$npx_bin" --yes --package "$typescript_bindgen_package" ubrn \
+  generate napi bindings "$library" --library \
+  --ts-dir "$generated_root/ts-uniffi" --lib-colocated
+"$npx_bin" --yes --package "$typescript_bindgen_package" ubrn \
+  generate wasm bindings "$library" --library \
+  --ts-dir "$generated_root/ts-uniffi-browser/ts" \
+  --cpp-dir "$generated_root/ts-uniffi-browser/cpp"
 
 mv "$raw_output/fleet_sdk.py" "$generated_root/python/fleet_sdk/_sdk.py"
 mv "$raw_output/cyclops_sdk_schema.py" "$generated_root/python/fleet_sdk/_schema.py"
@@ -842,8 +901,8 @@ def replace_buffer(match):
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 23:
-    raise SystemExit(f"expected 23 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 27:
+    raise SystemExit(f"expected 27 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
 if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 7:
     raise SystemExit("expected seven synchronous Ruby SDK builder build calls")
 
@@ -858,8 +917,8 @@ def replace_void(match):
         f"{indent})"
     )
 text, void_replacements = re.subn(void_pattern, replace_void, text)
-if void_replacements != 5:
-    raise SystemExit(f"expected 5 Ruby void future wrappers, found {void_replacements}")
+if void_replacements != 6:
+    raise SystemExit(f"expected 6 Ruby void future wrappers, found {void_replacements}")
 
 handle_map_anchor = """def self.uniffi_bytes(v)
   raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)
@@ -1060,8 +1119,9 @@ write_ruby_facade \
   "$generated_root/ruby/cyclops_sdk/schema.rb" \
   "$generated_root/ruby/cyclops_sdk.rb"
 
+normalize_browser_bridge_order
 normalize_generated_text
-for language in $languages; do
+for language in $binding_roots; do
   find -P "$generated_root/$language" -type d -exec chmod 755 {} \;
   find -P "$generated_root/$language" -type f -exec chmod 644 {} \;
   write_manifest "$generated_root/$language" "$temporary_output/$language.manifest"
@@ -1071,7 +1131,7 @@ done
 
 if "$check_only"; then
   check_failed=false
-  for language in $languages; do
+  for language in $binding_roots; do
     if ! compare_root "$generated_root/$language" "$bindings_dir/$language" "$language"; then
       check_failed=true
     fi

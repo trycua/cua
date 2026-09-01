@@ -3,7 +3,7 @@ use std::sync::Arc;
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CreatePoolRequest, CyclopsClient, CyclopsConfiguration,
     CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpRequestBuilder,
-    HttpResponse, Pool, ResourceMetadata, Sandbox, SdkError,
+    HttpResponse, Pool, PreservedJson, ResourceMetadata, Sandbox, SdkError,
 };
 use cyclops_sdk_schema::{
     ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus,
@@ -99,6 +99,28 @@ fn public_configuration_and_transport_are_constructible() {
 
     let client = CyclopsClient::connect(configuration, Arc::new(RecordingHttpClient));
     assert!(client.is_ok());
+}
+
+#[test]
+fn public_image_api_uses_opaque_json() {
+    let client = CyclopsClient::connect(configuration(), Arc::new(RecordingHttpClient)).unwrap();
+    let manifest = PreservedJson::from_json(
+        r#"{"apiVersion":"images.cua.ai/v1alpha1","kind":"Image","metadata":{"namespace":"default","name":"image-demo"}}"#.into(),
+    )
+    .unwrap();
+
+    std::mem::drop(
+        client
+            .clone()
+            .get_image("default".into(), "image-demo".into()),
+    );
+    std::mem::drop(client.clone().create_image("default".into(), manifest));
+    std::mem::drop(
+        client
+            .clone()
+            .delete_image("default".into(), "image-demo".into()),
+    );
+    std::mem::drop(client.list_images("default".into()));
 }
 
 #[test]

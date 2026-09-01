@@ -36,6 +36,13 @@ import (
 	"github.com/trycua/cloud/pkg/featureflags"
 )
 
+func TestNewImageObjectStoreRejectsMissingBucket(t *testing.T) {
+	_, err := newImageObjectStore(context.Background(), config.ImageUploadConfiguration{})
+	if err == nil || !strings.Contains(err.Error(), "IMAGE_UPLOAD_BUCKET") {
+		t.Fatalf("newImageObjectStore() error = %v, want IMAGE_UPLOAD_BUCKET requirement", err)
+	}
+}
+
 func TestGatewayRoutesAreRemoved(t *testing.T) {
 	router := setupRouter(handlers.Handlers{})
 

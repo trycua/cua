@@ -20,6 +20,7 @@ import { createPool } from "../fleet/pools"
 import type { PoolTemplateConfig } from "../fleet/models"
 import { CuaButton } from "../components/CuaButton"
 import { PageShell } from "../components/PageShell"
+import { isReviewPreviewEnvironment } from "../preview-environment"
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -80,6 +81,7 @@ export function PoolNew() {
   const location = useLocation()
   const flash = useFlash()
   const { billing: billingEnabled } = useFeatureFlags()
+  const paymentMethodGateEnabled = !isReviewPreviewEnvironment()
 
   const navState = location.state as PoolNewState | null
   const source = navState?.source ?? null
@@ -124,7 +126,7 @@ export function PoolNew() {
   const nameRef = useRef<InputProps.Ref>(null)
 
   useEffect(() => {
-    if (!billingEnabled) return
+    if (!billingEnabled || !paymentMethodGateEnabled) return
     let cancelled = false
     billingApi
       .summary()
@@ -140,7 +142,7 @@ export function PoolNew() {
     return () => {
       cancelled = true
     }
-  }, [billingEnabled])
+  }, [billingEnabled, paymentMethodGateEnabled])
 
   useBeforeUnload(event => {
     if (!dirty || submitting) return

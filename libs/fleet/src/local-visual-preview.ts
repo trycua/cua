@@ -10,16 +10,13 @@ import type {
   Conversation,
   ConversationSummary,
 } from "./api/chat"
+import { isReviewPreviewEnvironment } from "./preview-environment"
 
 export function isLocalVisualPreview(): boolean {
   const localPreview =
     import.meta.env.DEV &&
     import.meta.env.VITE_CUA_LOCAL_VISUAL_PREVIEW === "true"
-  const pullRequestPreview =
-    import.meta.env.VITE_CUA_REVIEW_VISUAL_PREVIEW === "true" &&
-    /^cyclops-cs-pr-\d+\.tail204509\.ts\.net$/.test(
-      window.location.hostname,
-    )
+  const pullRequestPreview = isReviewPreviewEnvironment()
   if (!localPreview && !pullRequestPreview) return false
   return new URLSearchParams(window.location.search).has("cua-visual-preview")
 }

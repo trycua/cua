@@ -125,7 +125,9 @@ func (reader fleetAttributionFactsReader) PoolExists(ctx context.Context, namesp
 	if pool == "" {
 		return false, fmt.Errorf("missing pool")
 	}
-	path := fmt.Sprintf("/apis/cua.ai/v1/namespaces/%s/osgymworkspacepools/%s", url.PathEscape(namespace), url.PathEscape(pool))
+	// Fleet SDK pools are native OSGymSandboxWarmPool resources. Keep the
+	// qualification lookup aligned with the resource the SDK actually creates.
+	path := fmt.Sprintf("/apis/osgym.cua.ai/v1alpha1/namespaces/%s/osgymsandboxwarmpools/%s", url.PathEscape(namespace), url.PathEscape(pool))
 	response, err := reader.handlers.k8sImpersonate(ctx, http.MethodGet, path, nil, subject)
 	if err != nil {
 		return false, err

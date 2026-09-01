@@ -34,7 +34,7 @@ func TestFleetAttributionFactsReaderDerivesClaimFromSandboxOwnerAndExactPool(t *
 			_, _ = w.Write([]byte(`{"metadata":{"ownerReferences":[{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","name":"claim-1","uid":"claim-uid-1","controller":true}]}}`))
 		case "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxclaims/claim-1":
 			_, _ = w.Write([]byte(`{"metadata":{"name":"claim-1","uid":"claim-uid-1"},"status":{"phase":"Bound","sandbox":{"name":"sandbox-1"}}}`))
-		case "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1":
+		case "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxwarmpools/pool-1":
 			_, _ = w.Write([]byte(`{"metadata":{"name":"pool-1"}}`))
 		default:
 			http.NotFound(w, r)
@@ -60,7 +60,7 @@ func TestFleetAttributionFactsReaderDerivesClaimFromSandboxOwnerAndExactPool(t *
 	if err != nil || !exists {
 		t.Fatalf("pool exists = %v, err = %v", exists, err)
 	}
-	if len(paths) != 3 || paths[0] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxes/sandbox-1" || paths[1] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxclaims/claim-1" || paths[2] != "/apis/cua.ai/v1/namespaces/pool-1/osgymworkspacepools/pool-1" {
+	if len(paths) != 3 || paths[0] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxes/sandbox-1" || paths[1] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxclaims/claim-1" || paths[2] != "/apis/osgym.cua.ai/v1alpha1/namespaces/pool-1/osgymsandboxwarmpools/pool-1" {
 		t.Fatalf("lookup paths = %#v", paths)
 	}
 }

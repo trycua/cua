@@ -1950,11 +1950,12 @@ mod tests {
         // been read; the path itself is passed through the public ABI.
         let directory = tempfile::tempdir().unwrap();
         let output = directory.path().join("embedded-abi.png");
+        let trusted_output = directory.path().join("embedded-trusted-adapter.png");
         let runtime = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .unwrap();
-        let (screen, desktop) = runtime.block_on(async {
+        let (screen, desktop, trusted_screen, trusted_desktop) = runtime.block_on(async {
             let screen = driver
                 .get_screen_size(GetScreenSizeInput { session: None })
                 .await
@@ -1966,8 +1967,25 @@ mod tests {
                 })
                 .await
                 .unwrap();
+            let trusted_screen = driver
+                .call_tool_from_trusted_adapter(
+                    "get_screen_size",
+                    serde_json::json!({"session": null}),
+                )
+                .await
+                .unwrap();
+            let trusted_desktop = driver
+                .call_tool_from_trusted_adapter(
+                    "get_desktop_state",
+                    serde_json::json!({
+                        "session": null,
+                        "screenshot_out_file": trusted_output.to_string_lossy().into_owned()
+                    }),
+                )
+                .await
+                .unwrap();
             driver.shutdown().await.unwrap();
-            (screen, desktop)
+            (screen, desktop, trusted_screen, trusted_desktop)
         });
 
         assert!(!screen.is_error, "get_screen_size failed: {}", screen.text);
@@ -1994,6 +2012,41 @@ mod tests {
             "desktop state scale factor should match the physical desktop DPI: expected {expected_scale_factor}, got {reported_scale_factor}"
         );
 
+        assert!(
+            !trusted_screen.is_error,
+            "trusted-adapter get_screen_size failed: {}",
+            trusted_screen.text
+        );
+        assert!(
+            !trusted_desktop.is_error,
+            "trusted-adapter get_desktop_state failed: {}",
+            trusted_desktop.text
+        );
+        let trusted_screen: Value = serde_json::from_str(
+            trusted_screen
+                .structured_json
+                .as_deref()
+                .expect("trusted screen should return structured JSON"),
+        )
+        .unwrap();
+        let trusted_desktop: Value = serde_json::from_str(
+            trusted_desktop
+                .structured_json
+                .as_deref()
+                .expect("trusted desktop should return structured JSON"),
+        )
+        .unwrap();
+        assert_eq!(trusted_screen["width"].as_u64(), Some(expected_width));
+        assert_eq!(trusted_screen["height"].as_u64(), Some(expected_height));
+        assert_eq!(
+            trusted_desktop["screenshot_width"].as_u64(),
+            Some(expected_width)
+        );
+        assert_eq!(
+            trusted_desktop["screenshot_height"].as_u64(),
+            Some(expected_height)
+        );
+
         let png = std::fs::read(&output).unwrap();
         assert!(
             png.len() >= 24,
@@ -2004,6 +2057,19 @@ mod tests {
         let png_width = u32::from_be_bytes(png[16..20].try_into().unwrap()) as u64;
         let png_height = u32::from_be_bytes(png[20..24].try_into().unwrap()) as u64;
         assert_eq!((png_width, png_height), (expected_width, expected_height));
+        let trusted_png = std::fs::read(&trusted_output).unwrap();
+        assert!(
+            trusted_png.len() >= 24,
+            "trusted-adapter PNG is too short to contain an IHDR chunk: {} bytes",
+            trusted_png.len()
+        );
+        assert_eq!(&trusted_png[..8], b"\x89PNG\r\n\x1a\n");
+        let trusted_png_width = u32::from_be_bytes(trusted_png[16..20].try_into().unwrap()) as u64;
+        let trusted_png_height = u32::from_be_bytes(trusted_png[20..24].try_into().unwrap()) as u64;
+        assert_eq!(
+            (trusted_png_width, trusted_png_height),
+            (expected_width, expected_height)
+        );
         assert!(unsafe {
             AreDpiAwarenessContextsEqual(
                 GetThreadDpiAwarenessContext(),
@@ -2116,6 +2182,100 @@ mod tests {
 
     fn register_slow_host_tool(registry: &mut cua_driver_core::tool::ToolRegistry) {
         registry.register(Box::new(SlowHostTool));
+    }
+
+    struct TrustedCancellationTool;
+
+    static TRUSTED_CANCELLATION_TOOL_DEF: std::sync::OnceLock<cua_driver_core::tool::ToolDef> =
+        std::sync::OnceLock::new();
+    static TRUSTED_CANCELLATION_STARTED: std::sync::OnceLock<tokio::sync::Notify> =
+        std::sync::OnceLock::new();
+    static TRUSTED_CANCELLATION_DROPPED: std::sync::OnceLock<tokio::sync::Notify> =
+        std::sync::OnceLock::new();
+
+    struct TrustedCancellationDropProbe;
+
+    impl Drop for TrustedCancellationDropProbe {
+        fn drop(&mut self) {
+            TRUSTED_CANCELLATION_DROPPED
+                .get_or_init(tokio::sync::Notify::new)
+                .notify_one();
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl cua_driver_core::tool::Tool for TrustedCancellationTool {
+        fn def(&self) -> &cua_driver_core::tool::ToolDef {
+            TRUSTED_CANCELLATION_TOOL_DEF.get_or_init(|| cua_driver_core::tool::ToolDef {
+                name: "health_report".into(),
+                description: "test-only trusted adapter cancellation probe".into(),
+                input_schema: serde_json::json!({"type": "object"}),
+                read_only: true,
+                destructive: false,
+                idempotent: true,
+                open_world: false,
+            })
+        }
+
+        async fn invoke(&self, _args: Value) -> cua_driver_core::protocol::ToolResult {
+            let _drop_probe = TrustedCancellationDropProbe;
+            TRUSTED_CANCELLATION_STARTED
+                .get_or_init(tokio::sync::Notify::new)
+                .notify_one();
+            std::future::pending::<()>().await;
+            unreachable!("cancelled trusted adapter tool unexpectedly resumed")
+        }
+    }
+
+    fn register_trusted_cancellation_tool(registry: &mut cua_driver_core::tool::ToolRegistry) {
+        registry.register(Box::new(TrustedCancellationTool));
+    }
+
+    #[tokio::test]
+    async fn dropping_trusted_adapter_call_cancels_shared_abi_operation() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let driver = CuaDriver::try_create_for_host(DriverHostOptions {
+            cursor: cursor_overlay::CursorConfig {
+                enabled: false,
+                ..cursor_overlay::CursorConfig::default()
+            },
+            host_owns_permission_ux: false,
+            host_bundle_id: None,
+            claude_code_compatibility: false,
+            prepare_desktop_environment: false,
+            register_host_tools: Some(register_trusted_cancellation_tool),
+            authorization_host: None,
+            activity_observer: None,
+        })
+        .unwrap();
+
+        let action_driver = driver.clone();
+        let action = tokio::spawn(async move {
+            action_driver
+                .call_tool_from_trusted_adapter("health_report", serde_json::json!({}))
+                .await
+        });
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            TRUSTED_CANCELLATION_STARTED
+                .get_or_init(tokio::sync::Notify::new)
+                .notified(),
+        )
+        .await
+        .expect("trusted adapter test tool did not start");
+
+        action.abort();
+        assert!(action.await.unwrap_err().is_cancelled());
+        tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            TRUSTED_CANCELLATION_DROPPED
+                .get_or_init(tokio::sync::Notify::new)
+                .notified(),
+        )
+        .await
+        .expect("trusted adapter work was not cancelled after its caller dropped");
+
+        driver.shutdown().await.unwrap();
     }
 
     #[cfg(not(target_os = "windows"))]

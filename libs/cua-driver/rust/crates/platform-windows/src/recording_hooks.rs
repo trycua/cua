@@ -124,9 +124,10 @@ pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> 
         .upgrade()?;
     let pid_u32 = u32::try_from(pid).ok()?;
     let (sx, sy) = cache.get_element_center(pid_u32, window_id, element_index as usize)?;
-    // The cached center is in SCREEN coords. Convert to window-local pixel
-    // coords by subtracting the window's screen origin (GetWindowRect-equivalent
-    // in WindowInfo). Windows captures at logical pixels so no scale factor.
+    // The cached center is in SCREEN coords. Convert to window-local physical
+    // pixel coords by subtracting the window's screen origin
+    // (GetWindowRect-equivalent in WindowInfo). Capture and input share this
+    // physical-pixel space under Per-Monitor-V2 awareness.
     let wins = crate::win32::list_windows(Some(pid_u32));
     let win = wins.iter().find(|w| w.hwnd == window_id)?;
     Some(((sx - win.x) as f64, (sy - win.y) as f64))

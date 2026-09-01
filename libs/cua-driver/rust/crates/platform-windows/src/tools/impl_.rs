@@ -7326,10 +7326,11 @@ impl Tool for DragTool {
 
 /// Read the primary display size in PHYSICAL pixels.
 ///
-/// With permonitorv2 DPI awareness (set in cua-driver.manifest),
-/// `SM_CXSCREEN` / `SM_CYSCREEN` already return physical pixels — the same
-/// coordinate space screenshots and pixel clicks use on Windows. Shared by
-/// `get_screen_size` and `get_desktop_state`.
+/// With Per-Monitor-V2 DPI awareness, `SM_CXSCREEN` / `SM_CYSCREEN` already
+/// return physical pixels — the same coordinate space screenshots and pixel
+/// clicks use on Windows. The standalone executable obtains this context from
+/// its manifest; the embedded SDK establishes it on its owned threads. Shared
+/// by `get_screen_size` and `get_desktop_state`.
 fn physical_screen_size() -> (i32, i32) {
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
     unsafe { (GetSystemMetrics(SM_CXSCREEN), GetSystemMetrics(SM_CYSCREEN)) }
@@ -7357,9 +7358,10 @@ impl Tool for GetScreenSizeTool {
             return error;
         }
         use windows::Win32::UI::HiDpi::GetDpiForSystem;
-        // With permonitorv2 DPI awareness (set in cua-driver.manifest),
-        // SM_CXSCREEN/SM_CYSCREEN return PHYSICAL pixels — the same
-        // coordinate space screenshots and pixel clicks use on Windows.
+        // With Per-Monitor-V2 DPI awareness, SM_CXSCREEN/SM_CYSCREEN return
+        // PHYSICAL pixels — the same coordinate space screenshots and pixel
+        // clicks use on Windows. Standalone mode gets this from its manifest;
+        // embedded mode sets it on the ABI-owned thread.
         // Report these as-is, along with the scale factor for reference.
         let (w, h) = physical_screen_size();
         let dpi = unsafe { GetDpiForSystem() };

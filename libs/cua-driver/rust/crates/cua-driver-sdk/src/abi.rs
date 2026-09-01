@@ -486,12 +486,27 @@ impl AbiExecutor {
             .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?;
         Ok(())
     }
+
+    fn is_ready(&self) -> bool {
+        self.check_ready().is_ok()
+    }
 }
 
 fn abi_executor() -> Result<&'static AbiExecutor, AbiFailure> {
     let executor = abi_executor_for_cleanup()?;
     executor.check_ready()?;
     Ok(executor)
+}
+
+fn embedded_runtime_is_available(
+    runtime_running: bool,
+    executor: Result<&AbiExecutor, AbiFailure>,
+) -> bool {
+    runtime_running && executor.is_ok_and(AbiExecutor::is_ready)
+}
+
+fn admit_trusted_session(executor: Result<&AbiExecutor, AbiFailure>) -> Result<(), AbiFailure> {
+    executor?.check_ready()
 }
 
 // Shutdown must still revoke sessions and finalize recordings after DPI
@@ -601,6 +616,51 @@ where
                 future.await
             }
         },
+        callback,
+        context,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InvokeMode {
+    Regular,
+    TrustedAdapter,
+}
+
+async fn invoke_runtime_to_json(
+    runtime: Arc<DriverRuntime>,
+    name: String,
+    arguments: Value,
+    mode: InvokeMode,
+) -> Result<String, AbiFailure> {
+    let shutdown_message = match mode {
+        InvokeMode::Regular => "the Cua Driver SDK has been shut down",
+        InvokeMode::TrustedAdapter => "the owning Cua Driver runtime has been shut down",
+    };
+    let result = match mode {
+        InvokeMode::Regular => runtime.invoke(&name, arguments).await,
+        InvokeMode::TrustedAdapter => runtime.invoke_from_trusted_adapter(&name, arguments).await,
+    }
+    .ok_or_else(|| AbiFailure::new(CuaDriverStatus::Shutdown, shutdown_message))?;
+    serde_json::to_string(&result)
+        .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
+}
+
+// All embedded GUI invocations, including trusted adapter calls, enter through
+// this one dispatcher. The future is guarded on the ABI-owned executor, while
+// OperationGuard preserves cancellation when a Rust caller drops its await.
+fn start_invoke_completion(
+    runtime: Arc<DriverRuntime>,
+    name: String,
+    arguments: Value,
+    mode: InvokeMode,
+    callback: CuaDriverCompletionV1,
+    context: *mut c_void,
+) -> Result<*mut CuaDriverOperation, AbiFailure> {
+    let executor = abi_executor()?.handle().clone();
+    spawn_completion(
+        executor,
+        invoke_runtime_to_json(runtime, name, arguments, mode),
         callback,
         context,
     )
@@ -775,7 +835,11 @@ pub unsafe extern "C" fn cua_driver_is_available_v1(
                 "out_available must not be null",
             )
         })?;
-        *out_available = driver.runtime.is_running();
+        // `runtime.is_running()` only describes shutdown state. An embedded
+        // Windows runtime is also unavailable once its owned executor has
+        // lost the physical-pixel DPI contract.
+        *out_available =
+            embedded_runtime_is_available(driver.runtime.is_running(), abi_executor_for_cleanup());
         Ok(())
     })
 }
@@ -885,20 +949,11 @@ pub unsafe extern "C" fn cua_driver_invoke_v1(
                 "tool arguments must be a JSON object",
             ));
         }
-        let runtime = driver.runtime.clone();
-        let executor = abi_executor()?.handle().clone();
-        *out_operation = spawn_completion(
-            executor,
-            async move {
-                let result = runtime.invoke(&name, arguments).await.ok_or_else(|| {
-                    AbiFailure::new(
-                        CuaDriverStatus::Shutdown,
-                        "the Cua Driver SDK has been shut down",
-                    )
-                })?;
-                serde_json::to_string(&result)
-                    .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
-            },
+        *out_operation = start_invoke_completion(
+            driver.runtime.clone(),
+            name,
+            arguments,
+            InvokeMode::Regular,
             callback,
             context,
         )?;
@@ -937,6 +992,10 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
                 "public_session must not be empty",
             ));
         }
+        // Creating a trusted session is a new GUI-work admission boundary. Do
+        // not issue fresh authority after the embedded executor has entered a
+        // terminal DPI failure; cleanup of existing sessions remains allowed.
+        admit_trusted_session(abi_executor_for_cleanup())?;
         let capability_manifest = options
             .capability_manifest_path()?
             .map(|path| {
@@ -1566,12 +1625,47 @@ impl NativeAbiDriver {
                     .clone()
             }
         };
-        let result = runtime
-            .invoke_from_trusted_adapter(name, arguments)
-            .await
-            .ok_or(DriverError::Shutdown)?;
-        serde_json::to_value(result).map_err(|error| DriverError::Protocol {
-            reason: format!("serialize {name} trusted-adapter result: {error}"),
+        if !arguments.is_object() {
+            return Err(DriverError::InvalidArguments {
+                tool: name.into(),
+                reason: "arguments must be a JSON object".into(),
+            });
+        }
+
+        let (receiver, guard) = {
+            let (sender, receiver) = oneshot::channel();
+            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+            let operation = match start_invoke_completion(
+                runtime,
+                name.to_owned(),
+                arguments,
+                InvokeMode::TrustedAdapter,
+                rust_completion,
+                context,
+            ) {
+                Ok(operation) => operation,
+                Err(error) => {
+                    unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
+                    return Err(map_status(error.status, error.message, name));
+                }
+            };
+            (
+                receiver,
+                OperationGuard {
+                    operation: operation.cast::<ffi::Operation>(),
+                    completed: false,
+                },
+            )
+        };
+        let completed = receiver.await.map_err(|_| DriverError::Protocol {
+            reason: format!("{name} trusted-adapter completion callback was dropped"),
+        })?;
+        guard.complete();
+        if completed.status != CuaDriverStatus::Ok {
+            return Err(map_status(completed.status, completed.error, name));
+        }
+        serde_json::from_str(&completed.result).map_err(|error| DriverError::Protocol {
+            reason: format!("{name} returned invalid trusted-adapter JSON: {error}"),
         })
     }
 
@@ -1894,6 +1988,19 @@ mod tests {
             .check_ready()
             .unwrap_err();
         assert_eq!(error.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(!initialized_abi_executor(&cell, || unreachable!())
+            .unwrap()
+            .is_ready());
+        assert!(!embedded_runtime_is_available(
+            true,
+            initialized_abi_executor(&cell, || unreachable!()),
+        ));
+        let session_error =
+            admit_trusted_session(initialized_abi_executor(&cell, || unreachable!())).unwrap_err();
+        assert_eq!(session_error.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(session_error
+            .message
+            .contains("late blocking worker DPI rejection"));
         // Teardown must still run after failure, without admitting GUI work.
         let (sender, receiver) = oneshot::channel();
         let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();

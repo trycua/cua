@@ -128,6 +128,12 @@ cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
 
 **[Get Started](https://cua.ai/docs/cuabench/guide/getting-started/first-steps)** | **[Partner With Us](https://cuabench.ai/)** | **[Registry](https://cuabench.ai/registry)** | **[CLI Reference](https://cua.ai/docs/cuabench/reference/cli-reference)**
 
+### Related external benchmarks
+
+The following independent benchmark is related to Cua's computer-use evaluation scope but is not part of Cua Bench and is not integrated with or supported by Cua:
+
+* **[ClawBench](https://github.com/TIGER-AI-Lab/ClawBench)** — [paper](https://arxiv.org/abs/2604.08523) and [project page](https://claw-bench.com/). It evaluates web and computer-use agents on 283 tasks across 163 live platforms with isolated browser sessions, request-level outcome checks, and recorded action, screenshot, network, and message traces. See the project's own [runner and setup instructions](https://github.com/TIGER-AI-Lab/ClawBench#readme); task definitions are available on [Hugging Face](https://huggingface.co/datasets/NAIL-Group/ClawBench) and mirrored at [TIGER-Lab/ClawBench](https://huggingface.co/datasets/TIGER-Lab/ClawBench).
+
 ---
 
 ## Lume - macOS Virtualization

@@ -134,8 +134,10 @@ func (h Handlers) k8sImpersonate(
 	// on users and groups (granted by cyclops-cs-impersonator ClusterRole).
 	// Prefixes resolve from OpenFeature (see package identity) so the backend,
 	// standalone Tenant controller, and apiserver flags stay aligned.
-	req.Header.Set("Impersonate-User", identity.ImpersonateUser(ctx, userSub))
-	req.Header.Set("Impersonate-Group", identity.ImpersonateGroup(ctx, userSub))
+	if userSub != "" {
+		req.Header.Set("Impersonate-User", identity.ImpersonateUser(ctx, userSub))
+		req.Header.Set("Impersonate-Group", identity.ImpersonateGroup(ctx, userSub))
+	}
 
 	return k8sClient.Do(req)
 }

@@ -21,6 +21,7 @@ import (
 	"reflect"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -734,6 +735,110 @@ func TestK8sRouteRejectsCustomResourceCreateWithoutCardBeforeProxy(t *testing.T)
 	}
 }
 
+func TestInitializeSignedServiceURLs_BaseOnlyConfigurationDisablesFeature(t *testing.T) {
+	const baseURL = "https://run.cua.ai"
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	service, closeStore, err := initializeSignedServiceURLs(context.Background(), "postgres://application@db.example/cyclops", config.SignedServiceURLConfiguration{BaseURL: baseURL})
+	defer closeStore()
+	if err != nil {
+		t.Fatalf("initializeSignedServiceURLs() error = %v, want disabled feature", err)
+	}
+	if service != nil {
+		t.Fatal("initializeSignedServiceURLs() service = non-nil, want disabled feature")
+	}
+	if got := logged.String(); !strings.Contains(got, "SIGNED_SERVICE_URL_SECRET") || strings.Contains(got, baseURL) || strings.Contains(got, "DATABASE_URL") {
+		t.Fatalf("signed URL disabled log = %s, want only the missing secret key name", got)
+	}
+}
+
+func TestInitializeSignedServiceURLs_RecoversWhenSecretFileMaterializes(t *testing.T) {
+	const secret = "12345678901234567890123456789012"
+
+	secretFile := t.TempDir() + "/hmac_secret"
+	cfg := config.SignedServiceURLConfiguration{
+		BaseURL:    "https://run.cua.ai",
+		SecretFile: secretFile,
+	}
+
+	service, closeStore, err := initializeSignedServiceURLs(context.Background(), "", cfg)
+	defer closeStore()
+	if err == nil || !strings.Contains(err.Error(), "SIGNED_SERVICE_URL_SECRET_FILE") {
+		t.Fatalf("initializeSignedServiceURLs() error = %v, want retryable missing secret file error", err)
+	}
+	if service != nil {
+		t.Fatal("initializeSignedServiceURLs() service = non-nil with missing secret file")
+	}
+	if strings.Contains(err.Error(), secret) {
+		t.Fatalf("missing secret file error exposed secret: %v", err)
+	}
+
+	if err := os.WriteFile(secretFile, []byte(secret), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	service, closeStore, err = initializeSignedServiceURLs(context.Background(), "", cfg)
+	defer closeStore()
+	if err != nil {
+		t.Fatalf("initializeSignedServiceURLs() error after secret file materialized = %v", err)
+	}
+	if service != nil {
+		t.Fatal("initializeSignedServiceURLs() service = non-nil without database configuration")
+	}
+}
+
+func TestInitializeSignedServiceURLs_SecretFileValidation(t *testing.T) {
+	const secret = "12345678901234567890123456789012"
+
+	tests := []struct {
+		name      string
+		contents  string
+		secret    string
+		wantError string
+	}{
+		{name: "empty file", wantError: "SIGNED_SERVICE_URL_SECRET_FILE must not be empty"},
+		{name: "whitespace-only file", contents: "\n \t\n", wantError: "SIGNED_SERVICE_URL_SECRET_FILE must not be empty"},
+		{name: "short file", contents: "too-short\n", wantError: "SIGNED_SERVICE_URL_SECRET_FILE must be at least 32 bytes"},
+		{name: "valid file trims trailing newline", contents: secret + "\n"},
+		{name: "environment secret takes precedence over file", contents: "too-short", secret: secret},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			secretFile := t.TempDir() + "/hmac_secret"
+			if err := os.WriteFile(secretFile, []byte(test.contents), 0o600); err != nil {
+				t.Fatal(err)
+			}
+
+			service, closeStore, err := initializeSignedServiceURLs(context.Background(), "", config.SignedServiceURLConfiguration{
+				BaseURL:    "https://run.cua.ai",
+				Secret:     test.secret,
+				SecretFile: secretFile,
+			})
+			defer closeStore()
+
+			if test.wantError != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantError) {
+					t.Fatalf("initializeSignedServiceURLs() error = %v, want containing %q", err, test.wantError)
+				}
+				if service != nil {
+					t.Fatal("initializeSignedServiceURLs() service = non-nil with invalid secret file")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("initializeSignedServiceURLs() error = %v", err)
+			}
+			if service != nil {
+				t.Fatal("initializeSignedServiceURLs() service = non-nil without database configuration")
+			}
+		})
+	}
+}
+
 func TestInitializeDatabaseFeatures(t *testing.T) {
 	tests := []struct {
 		name                string
@@ -1302,5 +1407,37 @@ func TestServeUntilCanceledShutsDownServer(t *testing.T) {
 	}()
 	if err := serveUntilCanceled(ctx, server); err != nil {
 		t.Fatalf("serveUntilCanceled() error = %v", err)
+	}
+}
+
+func TestShutdownSignedServiceURLsCancelsAndJoinsBeforeClosingOnce(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	var retry sync.WaitGroup
+	var mu sync.RWMutex
+	retryStarted := make(chan struct{})
+	retryStopped := make(chan struct{})
+	retry.Add(1)
+	go func() {
+		defer retry.Done()
+		close(retryStarted)
+		<-ctx.Done()
+		close(retryStopped)
+	}()
+	<-retryStarted
+	closeCalls := 0
+	closeStore := func() {
+		select {
+		case <-retryStopped:
+		default:
+			t.Fatal("store closed before retry goroutine stopped")
+		}
+		closeCalls++
+	}
+
+	shutdownSignedServiceURLs(cancel, &retry, &mu, &closeStore)
+	shutdownSignedServiceURLs(cancel, &retry, &mu, &closeStore)
+
+	if closeCalls != 1 {
+		t.Fatalf("close calls = %d, want 1", closeCalls)
 	}
 }

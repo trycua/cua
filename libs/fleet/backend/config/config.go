@@ -12,6 +12,7 @@
 package config
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"net/url"
 	"regexp"
@@ -38,6 +39,7 @@ type Configuration struct {
 	Telemetry        TelemetryConfiguration
 	Usage            UsageConfiguration
 	ProductAnalytics ProductAnalyticsConfiguration
+	SignedServiceURL SignedServiceURLConfiguration
 }
 
 type WebServerConfiguration struct {
@@ -97,8 +99,8 @@ type StripeConfiguration struct {
 	PortalReturnURL    string
 }
 
-// DatabaseConfiguration drives the Postgres-backed stores (currently the
-// GitHub OIDC trust policies). An empty URL disables those routes (503),
+// DatabaseConfiguration drives the Postgres-backed stores, including GitHub
+// OIDC trust policies and signed service URLs. An empty URL disables those routes (503),
 // keeping the backend bootable without a database — see CUA-675.
 type DatabaseConfiguration struct {
 	URL                      string // DATABASE_URL — application database and GitHub trust-policy storage
@@ -110,6 +112,16 @@ type ChatConfiguration struct {
 	BaseURL string
 	APIKey  string
 	Model   string
+}
+
+// SignedServiceURLConfiguration enables database-backed signed capability
+// URLs. A base URL and HMAC secret from either the environment or SecretFile
+// are required; leaving every value empty disables only this feature so
+// deployments can roll out its Secret independently.
+type SignedServiceURLConfiguration struct {
+	BaseURL    string // SIGNED_SERVICE_URL_BASE_URL — trusted external HTTPS origin
+	Secret     string // SIGNED_SERVICE_URL_SECRET — HMAC key, never logged
+	SecretFile string // SIGNED_SERVICE_URL_SECRET_FILE — optional path to the HMAC key
 }
 
 // UsageConfiguration enables the usage provider only when DatabaseURL is set.
@@ -207,6 +219,9 @@ var specs = []flagSpec{
 	{"stripe.checkout-success-url", "stripe-checkout-success-url", "STRIPE_CHECKOUT_SUCCESS_URL", "", "Stripe Checkout success redirect URL"},
 	{"stripe.checkout-cancel-url", "stripe-checkout-cancel-url", "STRIPE_CHECKOUT_CANCEL_URL", "", "Stripe Checkout cancel redirect URL"},
 	{"stripe.portal-return-url", "stripe-portal-return-url", "STRIPE_PORTAL_RETURN_URL", "", "Stripe Billing Portal return URL"},
+	{"signed-service-url.base-url", "signed-service-url-base-url", "SIGNED_SERVICE_URL_BASE_URL", "", "Trusted external HTTPS origin for signed sandbox service URLs"},
+	{"signed-service-url.secret", "signed-service-url-secret", "SIGNED_SERVICE_URL_SECRET", "", "HMAC secret for signed sandbox service URLs"},
+	{"signed-service-url.secret-file", "signed-service-url-secret-file", "SIGNED_SERVICE_URL_SECRET_FILE", "", "Optional path to the signed sandbox service URL HMAC secret"},
 	{"chat.base-url", "litellm-base-url", "LITELLM_BASE_URL", "", "LiteLLM OpenAI-compatible base URL"},
 	{"chat.api-key", "litellm-api-key", "LITELLM_API_KEY", "", "LiteLLM virtual key"},
 	{"chat.model", "litellm-model", "LITELLM_MODEL", "large", "LiteLLM model alias"},
@@ -325,6 +340,11 @@ func LoadConfig() (*Configuration, error) {
 			APIKey:  viper.GetString("chat.api-key"),
 			Model:   viper.GetString("chat.model"),
 		},
+		SignedServiceURL: SignedServiceURLConfiguration{
+			BaseURL:    strings.TrimRight(strings.TrimSpace(viper.GetString("signed-service-url.base-url")), "/"),
+			Secret:     viper.GetString("signed-service-url.secret"),
+			SecretFile: strings.TrimSpace(viper.GetString("signed-service-url.secret-file")),
+		},
 		Usage: UsageConfiguration{
 			DatabaseURL:       strings.TrimSpace(viper.GetString("usage.database-url")),
 			QueryWebhookURL:   strings.TrimSpace(viper.GetString("usage.query-webhook-url")),
@@ -361,10 +381,36 @@ func LoadConfig() (*Configuration, error) {
 	if (cfg.Chat.BaseURL == "") != (cfg.Chat.APIKey == "") {
 		return nil, fmt.Errorf("chat configuration requires both LITELLM_BASE_URL and LITELLM_API_KEY")
 	}
+	if err := validateSignedServiceURLConfiguration(cfg.SignedServiceURL); err != nil {
+		return nil, err
+	}
 	if err := validateUsageConfiguration(cfg.Usage); err != nil {
 		return nil, err
 	}
 	return cfg, nil
+}
+
+func validateSignedServiceURLConfiguration(cfg SignedServiceURLConfiguration) error {
+	if cfg.BaseURL == "" {
+		if cfg.Secret != "" {
+			return fmt.Errorf("SIGNED_SERVICE_URL_SECRET requires SIGNED_SERVICE_URL_BASE_URL")
+		}
+		if cfg.SecretFile != "" {
+			return fmt.Errorf("SIGNED_SERVICE_URL_SECRET_FILE requires SIGNED_SERVICE_URL_BASE_URL")
+		}
+		return nil
+	}
+	parsed, err := url.Parse(cfg.BaseURL)
+	if err != nil {
+		return newSanitizedError("invalid SIGNED_SERVICE_URL_BASE_URL", err)
+	}
+	if parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.Path != "" && parsed.Path != "/") || (parsed.RawPath != "" && parsed.RawPath != "/") {
+		return fmt.Errorf("SIGNED_SERVICE_URL_BASE_URL must be a bare HTTPS origin")
+	}
+	if cfg.Secret != "" && len([]byte(cfg.Secret)) < sha256.Size {
+		return fmt.Errorf("SIGNED_SERVICE_URL_SECRET must be at least %d bytes", sha256.Size)
+	}
+	return nil
 }
 
 func validateUsageConfiguration(cfg UsageConfiguration) error {

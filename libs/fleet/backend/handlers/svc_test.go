@@ -37,7 +37,7 @@ func TestRewriteLocation(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := rewriteLocation(tc.location, tc.basePath)
+			got := rewriteLocation(tc.location, tc.basePath, "/")
 			if got != tc.want {
 				t.Errorf("rewriteLocation(%q, %q) = %q, want %q", tc.location, tc.basePath, got, tc.want)
 			}

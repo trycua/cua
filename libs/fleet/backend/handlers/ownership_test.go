@@ -61,9 +61,10 @@ func authorizationStage(t *testing.T, route string) (http.Handler, *bool) {
 }
 
 const (
-	svcRoute        = "/api/svc/{namespace}/{service}/{path...}"
-	namespacesRoute = "/api/namespaces/{name}"
-	namespaceList   = "/api/namespaces"
+	svcRoute               = "/api/svc/{namespace}/{service}/{path...}"
+	signedServiceURLsRoute = "/api/signed-service-urls/{namespace}"
+	namespacesRoute        = "/api/namespaces/{name}"
+	namespaceList          = "/api/namespaces"
 )
 
 // svcRequest builds a /api/svc request with path values + user stamped.
@@ -72,6 +73,15 @@ func svcRequest(u *auth.User, ns, service string) *http.Request {
 	r.SetPathValue("namespace", ns)
 	r.SetPathValue("service", service)
 	r.SetPathValue("path", "")
+	if u != nil {
+		r = withUser(r, u)
+	}
+	return r
+}
+
+func signedServiceURLsRequest(u *auth.User, namespace string) *http.Request {
+	r := httptest.NewRequest(http.MethodPost, "/api/signed-service-urls/"+namespace, nil)
+	r.SetPathValue("namespace", namespace)
 	if u != nil {
 		r = withUser(r, u)
 	}
@@ -368,6 +378,24 @@ func TestSvcRoute_PerKey_NamespaceMismatch_Forbidden_NoProbe(t *testing.T) {
 	// account borrowing somebody else's namespace.
 	if len(fk.requests) != 0 {
 		t.Fatalf("expected no K8s probe for per-key client, got %d request(s)", len(fk.requests))
+	}
+}
+
+func TestSignedServiceURLsRoute_PerKey_NamespaceMismatch_ForbiddenBeforeHandler(t *testing.T) {
+	resetOwnershipCache()
+	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
+	defer fk.server.Close()
+	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+
+	stage, reached := authorizationStage(t, signedServiceURLsRoute)
+	w := httptest.NewRecorder()
+	stage.ServeHTTP(w, signedServiceURLsRequest(&auth.User{ID: "svc-acct", AZP: "key-mypool", Namespace: "mypool"}, "other-ns"))
+
+	if w.Code != http.StatusForbidden || *reached {
+		t.Fatalf("status = %d, reached = %v; want 403 and no handler; body = %s", w.Code, *reached, w.Body.String())
+	}
+	if len(fk.requests) != 0 {
+		t.Fatalf("expected no Kubernetes probe for denied per-key request, got %d request(s)", len(fk.requests))
 	}
 }
 

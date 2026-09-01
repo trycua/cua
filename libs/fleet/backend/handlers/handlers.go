@@ -18,7 +18,10 @@ import (
 	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/keycloak"
 	"cyclops-cs-backend/productanalytics"
+	"cyclops-cs-backend/signedurls"
 	"cyclops-cs-backend/usage"
+
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
@@ -27,16 +30,27 @@ type UserAccountService interface {
 	UserCreatedAt(ctx context.Context, subject string) (time.Time, error)
 }
 
+type SignedServiceURLService interface {
+	Create(context.Context, signedurls.CreateInput) (signedurls.Record, error)
+	List(context.Context, string, string) ([]signedurls.Record, error)
+	Revoke(context.Context, string, uuid.UUID) (signedurls.Record, error)
+}
+
 type Handlers struct {
-	Admin           *keycloak.Admin
-	GatewayCfg      config.GatewayConfiguration
-	AuthCfg         config.AuthConfiguration
-	KC              config.KeycloakConfiguration
-	Stripe          config.StripeConfiguration
-	Billing         BillingService
-	UserAccounts    UserAccountService
-	WebhookVerifier WebhookVerifier
-	Analytics       productanalytics.Capturer
+	Admin                    *keycloak.Admin
+	GatewayCfg               config.GatewayConfiguration
+	AuthCfg                  config.AuthConfiguration
+	KC                       config.KeycloakConfiguration
+	Stripe                   config.StripeConfiguration
+	Billing                  BillingService
+	UserAccounts             UserAccountService
+	WebhookVerifier          WebhookVerifier
+	Analytics                productanalytics.Capturer
+	SignedServiceURLs        *signedurls.Service
+	SignedServiceURLProvider func() *signedurls.Service
+	signedServiceURLs        SignedServiceURLService
+	signedServiceExists      func(context.Context, string, string, string) (bool, error)
+	checkSignedServiceExists bool
 
 	// Features carries the database-backed dependencies (the state query
 	// executor and the GitHub trust policy store). It is a pointer because
@@ -76,6 +90,18 @@ func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 		Analytics:    productanalytics.Nop(),
 		chatLocks:    newConversationLockRegistry(),
 	}
+}
+
+func (h Handlers) signedServiceURLService() SignedServiceURLService {
+	if h.SignedServiceURLProvider != nil {
+		if service := h.SignedServiceURLProvider(); service != nil {
+			return service
+		}
+	}
+	if h.SignedServiceURLs != nil {
+		return h.SignedServiceURLs
+	}
+	return h.signedServiceURLs
 }
 
 func (h Handlers) usagePricing(ctx context.Context, user *auth.User) (auth.UsagePricing, error) {

@@ -655,7 +655,7 @@ export async function mockPoolsApi(page: Page): Promise<void> {
         containerDiskImage: "test-image:latest",
         cpuCores: 4,
         memory: "4Gi",
-        services: [],
+        services: [{ name: "mcp", targetPort: 8080, protocol: "TCP" }],
       },
     },
   };
@@ -882,37 +882,74 @@ export async function mockInstanceDetailApi(page: Page): Promise<void> {
 // Claims API mocking (OSGymSandboxClaim CRD)
 // ---------------------------------------------------------------------------
 
-export async function mockClaimsApi(page: Page): Promise<void> {
+export interface MockClaim {
+  name: string;
+  namespace?: string;
+  phase?: "Bound" | "Pending" | "Failed";
+  sandboxName?: string;
+  sandboxService?: string;
+}
+
+export interface MockClaimsApiOptions {
+  claims?: MockClaim[];
+}
+
+export interface MockClaimsApiControl {
+  holdNextLists(count?: number): void;
+  releaseLists(): void;
+}
+
+export async function mockClaimsApi(
+  page: Page,
+  options: MockClaimsApiOptions = {},
+): Promise<MockClaimsApiControl> {
+  const claims = options.claims ?? [
+    {
+      name: "claim-abc123",
+      namespace: "demo-pool",
+      phase: "Bound",
+      sandboxName: "vm-xyz789",
+      sandboxService: "vm-xyz789-svc",
+    },
+  ];
+  const heldLists: Array<ReturnType<typeof deferred>> = [];
+  const activeLists = new Set<ReturnType<typeof deferred>>();
+  const items = claims.map((claim) => ({
+    apiVersion: "osgym.cua.ai/v1alpha1",
+    kind: "OSGymSandboxClaim",
+    metadata: {
+      name: claim.name,
+      namespace: claim.namespace ?? "demo-pool",
+      creationTimestamp: "2026-05-28T10:00:00Z",
+    },
+    spec: {
+      sandboxTemplateRef: { name: "demo-pool-template" },
+      warmpool: "demo-pool",
+    },
+    status: {
+      phase: claim.phase ?? "Bound",
+      ...(claim.phase === "Pending" ? {} : {
+        sandbox: {
+          name: claim.sandboxName ?? `${claim.name}-sandbox`,
+          service: claim.sandboxService ?? `${claim.name}-svc`,
+        },
+      }),
+    },
+  }));
+
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxclaims",
     async (route) => {
       if (route.request().method() === "GET") {
+        const heldList = heldLists.shift();
+        if (heldList) {
+          activeLists.add(heldList);
+          await heldList.promise;
+          activeLists.delete(heldList);
+        }
         await route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify({
-            items: [
-              {
-                apiVersion: "osgym.cua.ai/v1alpha1",
-                kind: "OSGymSandboxClaim",
-                metadata: {
-                  name: "claim-abc123",
-                  namespace: "demo-pool",
-                  creationTimestamp: "2026-05-28T10:00:00Z",
-                },
-                spec: {
-                  sandboxTemplateRef: { name: "demo-pool-template" },
-                  warmpool: "demo-pool",
-                },
-                status: {
-                  phase: "Bound",
-                  sandbox: {
-                    name: "vm-xyz789",
-                    service: "vm-xyz789-svc",
-                  },
-                },
-              },
-            ],
-          }),
+          body: JSON.stringify({ items }),
         });
       } else if (route.request().method() === "POST") {
         const body = route.request().postDataJSON();
@@ -948,6 +985,15 @@ export async function mockClaimsApi(page: Page): Promise<void> {
       }
     },
   );
+
+  return {
+    holdNextLists(count = 1) {
+      for (let index = 0; index < count; index += 1) heldLists.push(deferred());
+    },
+    releaseLists() {
+      for (const list of [...heldLists.splice(0), ...activeLists]) list.resolve();
+    },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -1382,5 +1428,157 @@ export async function mockChatApi(
     releaseTurn: turnGate.resolve,
     releasePatch: patch.resolve,
     releaseCreate: create.resolve,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Signed service URLs API mocking
+// ---------------------------------------------------------------------------
+
+export interface MockSignedServiceUrl {
+  id: string;
+  namespace: string;
+  claim: string;
+  sandbox: string;
+  service: string;
+  logicalService: string;
+  label?: string;
+  url: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+}
+
+export interface MockSignedServiceUrlsApiOptions {
+  holdListClaims?: string[];
+  holdCreateClaims?: string[];
+  holdRevokeIds?: string[];
+  unavailable?: { list?: boolean; create?: boolean; revoke?: boolean };
+}
+
+export async function mockSignedServiceUrlsApi(
+  page: Page,
+  initial: MockSignedServiceUrl[] = [],
+  options: MockSignedServiceUrlsApiOptions = {},
+): Promise<{
+  urls: MockSignedServiceUrl[];
+  requests: Array<{ method: string; id?: string; body?: Record<string, unknown> }>;
+  releaseList(claim: string): void;
+  releaseCreate(claim: string): void;
+  releaseRevoke(id: string): void;
+}> {
+  const urls = [...initial];
+  const requests: Array<{ method: string; id?: string; body?: Record<string, unknown> }> = [];
+  const heldLists = new Map<string, ReturnType<typeof deferred>>(
+    (options.holdListClaims ?? []).map((claim) => [claim, deferred()]),
+  );
+  const heldCreates = new Map<string, ReturnType<typeof deferred>>(
+    (options.holdCreateClaims ?? []).map((claim) => [claim, deferred()]),
+  );
+  const heldRevokes = new Map<string, ReturnType<typeof deferred>>(
+    (options.holdRevokeIds ?? []).map((id) => [id, deferred()]),
+  );
+
+  await page.route(/\/api\/signed-service-urls\/[^/?]+(?:\/[^/?]+)?(?:\?.*)?$/, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const parts = url.pathname.split("/").filter(Boolean);
+    const namespace = decodeURIComponent(parts[2] ?? "");
+    const id = parts.length > 3 ? decodeURIComponent(parts[3]) : undefined;
+    const body = request.postData()
+      ? request.postDataJSON() as Record<string, unknown>
+      : undefined;
+    requests.push({ method: request.method(), id, body });
+
+    if (request.method() === "GET" && !id) {
+      const claim = url.searchParams.get("claim") ?? "";
+      await heldLists.get(claim)?.promise;
+      if (options.unavailable?.list) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed service URLs are unavailable" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(urls.filter((item) => item.namespace === namespace && item.claim === claim)),
+      });
+      return;
+    }
+
+    if (request.method() === "POST" && !id && body) {
+      await heldCreates.get(String(body.claim))?.promise;
+      if (options.unavailable?.create) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed service URLs are unavailable" }),
+        });
+        return;
+      }
+      const signedUrlId = `00000000-0000-4000-8000-${String(urls.length + 1).padStart(12, "0")}`;
+      const createdAt = "2099-01-01T00:00:00Z";
+      const created: MockSignedServiceUrl = {
+        id: signedUrlId,
+        namespace,
+        claim: String(body.claim),
+        sandbox: String(body.sandbox),
+        service: String(body.service),
+        logicalService: String(body.logicalService),
+        ...(typeof body.label === "string" ? { label: body.label } : {}),
+        url: `https://run.cua.ai/api/signed/${signedUrlId}`,
+        createdAt,
+        expiresAt: new Date(Date.parse(createdAt) + Number(body.expiresInSeconds) * 1000).toISOString(),
+      };
+      urls.push(created);
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(created),
+      });
+      return;
+    }
+
+    if (request.method() === "DELETE" && id) {
+      await heldRevokes.get(id)?.promise;
+      if (options.unavailable?.revoke) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed service URLs are unavailable" }),
+        });
+        return;
+      }
+      const index = urls.findIndex((item) => item.namespace === namespace && item.id === id);
+      if (index < 0) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed URL not found" }),
+        });
+        return;
+      }
+      urls[index].revokedAt = "2026-08-31T12:30:00Z";
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+
+    await route.continue();
+  });
+
+  return {
+    urls,
+    requests,
+    releaseList(claim: string) {
+      heldLists.get(claim)?.resolve();
+    },
+    releaseCreate(claim: string) {
+      heldCreates.get(claim)?.resolve();
+    },
+    releaseRevoke(id: string) {
+      heldRevokes.get(id)?.resolve();
+    },
   };
 }

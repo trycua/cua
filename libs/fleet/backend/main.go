@@ -21,12 +21,15 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -45,6 +48,7 @@ import (
 	"cyclops-cs-backend/metrics"
 	"cyclops-cs-backend/middlewares"
 	"cyclops-cs-backend/productanalytics"
+	"cyclops-cs-backend/signedurls"
 	"cyclops-cs-backend/statequery"
 	"cyclops-cs-backend/telemetry"
 	"cyclops-cs-backend/usage"
@@ -228,12 +232,22 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// namespace ownership are all the policy's: per-key and GitHub tokens by
 	// their claims, everyone else by an impersonated RoleBinding probe the
 	// policy reads as a fact — see auth/authz_ownership.rego.
+	r.Handle("/api/signed-svc/{token}", onlyLog("/api/signed-svc/{token}", c.HandleSignedSvc))
+	r.Handle("/api/signed-svc/{token}/{path...}", onlyLog("/api/signed-svc/{token}/{path...}", c.HandleSignedSvc))
+
 	r.Handle("/api/svc/{namespace}/{service}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}", c.Svc,
 			productanalytics.RouteObserverWithQualification("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 	r.Handle("/api/svc/{namespace}/{service}/{path...}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc,
 			productanalytics.RouteObserverWithQualification("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
+
+	r.Handle("POST /api/signed-service-urls/{namespace}",
+		withAuthenticatedMiddlewares("/api/signed-service-urls/{namespace}", c.CreateSignedServiceURL))
+	r.Handle("GET /api/signed-service-urls/{namespace}",
+		withAuthenticatedMiddlewares("/api/signed-service-urls/{namespace}", c.ListSignedServiceURLs))
+	r.Handle("DELETE /api/signed-service-urls/{namespace}/{id}",
+		withAuthenticatedMiddlewares("/api/signed-service-urls/{namespace}/{id}", c.RevokeSignedServiceURL))
 
 	// K8s API access replaces the unauthenticated /k8s-api nginx location.
 	r.Handle("/api/k8s/{path...}",
@@ -378,6 +392,25 @@ func run() error {
 
 	h := handlers.New(admin, cfg)
 	h.Analytics = analyticsClient
+	signedServiceURLsContext, cancelSignedServiceURLs := context.WithCancel(ctx)
+	defer cancelSignedServiceURLs()
+	var signedServiceURLsRetry sync.WaitGroup
+	var signedServiceURLsMu sync.RWMutex
+	var signedServiceURLs *signedurls.Service
+	closeSignedServiceURLs := func() {}
+	h.SignedServiceURLProvider = func() *signedurls.Service {
+		signedServiceURLsMu.RLock()
+		defer signedServiceURLsMu.RUnlock()
+		return signedServiceURLs
+	}
+	installSignedServiceURLs := func(service *signedurls.Service, close func()) {
+		signedServiceURLsMu.Lock()
+		signedServiceURLs = service
+		closeSignedServiceURLs = close
+		signedServiceURLsMu.Unlock()
+	}
+	startupErrors = errors.Join(startupErrors, startSignedServiceURLs(ctx, signedServiceURLsContext, cfg.Database.URL, cfg.SignedServiceURL, &signedServiceURLsRetry, installSignedServiceURLs))
+	defer shutdownSignedServiceURLs(cancelSignedServiceURLs, &signedServiceURLsRetry, &signedServiceURLsMu, &closeSignedServiceURLs)
 	usageProvider, closeUsageProvider, err := initializeUsageProvider(ctx, cfg.Usage)
 	if err != nil {
 		return errors.Join(fmt.Errorf("initialize usage provider: %w", err), startupErrors, telemetryErr)
@@ -444,6 +477,107 @@ func run() error {
 
 	srv := &http.Server{Addr: cfg.WebServer.Addr, Handler: router}
 	return errors.Join(serveUntilCanceled(ctx, srv), startupErrors, telemetryErr)
+}
+
+// startSignedServiceURLs installs the signed service URL dependency on first
+// try, or arms the background retry loop and reports the degradation so run()
+// can fold it into the startup error set. Serving stays up either way; the
+// routes answer 503 until a retry succeeds.
+func startSignedServiceURLs(ctx, retryCtx context.Context, databaseURL string, cfg config.SignedServiceURLConfiguration, retry *sync.WaitGroup, install func(*signedurls.Service, func())) error {
+	service, close, err := initializeSignedServiceURLs(ctx, databaseURL, cfg)
+	if err == nil {
+		install(service, close)
+		return nil
+	}
+	slog.Error("signed service URLs: initialization unavailable; routes will return 503", "class", "dependency_unavailable", "retryable", true)
+	retry.Add(1)
+	go func() {
+		defer retry.Done()
+		ticker := time.NewTicker(databaseRetryInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-retryCtx.Done():
+				return
+			case <-ticker.C:
+				service, close, err := initializeSignedServiceURLs(retryCtx, databaseURL, cfg)
+				if err == nil {
+					install(service, close)
+					slog.Info("signed service URLs: recovered without a restart")
+					return
+				}
+			}
+		}
+	}()
+	return fmt.Errorf("initialize signed service URLs: %w", err)
+}
+
+func shutdownSignedServiceURLs(cancel context.CancelFunc, retry *sync.WaitGroup, mu *sync.RWMutex, closeStore *func()) {
+	cancel()
+	retry.Wait()
+	mu.Lock()
+	close := *closeStore
+	*closeStore = func() {}
+	mu.Unlock()
+	close()
+}
+
+func initializeSignedServiceURLs(ctx context.Context, databaseURL string, cfg config.SignedServiceURLConfiguration) (*signedurls.Service, func(), error) {
+	secret, err := signedServiceURLSecret(cfg)
+	if err != nil {
+		return nil, func() {}, err
+	}
+
+	missing := make([]string, 0, 3)
+	if databaseURL == "" {
+		missing = append(missing, "DATABASE_URL")
+	}
+	if cfg.BaseURL == "" {
+		missing = append(missing, "SIGNED_SERVICE_URL_BASE_URL")
+	}
+	if secret == "" {
+		missing = append(missing, "SIGNED_SERVICE_URL_SECRET")
+	}
+	if len(missing) > 0 {
+		slog.Info("signed service URLs: disabled", "missing_configuration_keys", missing)
+		return nil, func() {}, nil
+	}
+
+	store, err := signedurls.NewPostgresStore(ctx, databaseURL)
+	if err != nil {
+		return nil, func() {}, fmt.Errorf("initialize signed URL store: %w", err)
+	}
+	signer, err := signedurls.NewSigner(cfg.BaseURL, []byte(secret))
+	if err != nil {
+		store.Close()
+		return nil, func() {}, fmt.Errorf("initialize signed URL signer: %w", err)
+	}
+	return signedurls.NewService(store, signer), store.Close, nil
+}
+
+func signedServiceURLSecret(cfg config.SignedServiceURLConfiguration) (string, error) {
+	if cfg.Secret != "" {
+		return validateSignedServiceURLSecret("SIGNED_SERVICE_URL_SECRET", cfg.Secret)
+	}
+	if cfg.SecretFile == "" {
+		return "", nil
+	}
+
+	contents, err := os.ReadFile(cfg.SecretFile)
+	if err != nil {
+		return "", fmt.Errorf("read SIGNED_SERVICE_URL_SECRET_FILE: %w", err)
+	}
+	return validateSignedServiceURLSecret("SIGNED_SERVICE_URL_SECRET_FILE", strings.TrimSpace(string(contents)))
+}
+
+func validateSignedServiceURLSecret(name, secret string) (string, error) {
+	if secret == "" {
+		return "", fmt.Errorf("%s must not be empty", name)
+	}
+	if len([]byte(secret)) < sha256.Size {
+		return "", fmt.Errorf("%s must be at least %d bytes", name, sha256.Size)
+	}
+	return secret, nil
 }
 
 func serveUntilCanceled(ctx context.Context, server *http.Server) error {

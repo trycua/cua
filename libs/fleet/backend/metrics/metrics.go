@@ -21,6 +21,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -235,6 +236,11 @@ func normalizePath(p string) string {
 		return "/api/keys/:id"
 	case len(p) > 13 && p[:13] == "/api/gateway/":
 		return "/api/gateway/:name/:path"
+	case len(p) > 16 && p[:16] == "/api/signed-svc/":
+		if strings.Contains(p[16:], "/") {
+			return "/api/signed-svc/:token/:path"
+		}
+		return "/api/signed-svc/:token"
 	case len(p) > 9 && p[:9] == "/api/svc/":
 		return "/api/svc/:namespace/:service/:path"
 	case len(p) > 9 && p[:9] == "/api/k8s/":

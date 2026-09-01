@@ -281,6 +281,33 @@ definitions:
         example: my-workspace
         type: string
     type: object
+  handlers.CreateSignedServiceURLRequest:
+    properties:
+      claim:
+        type: string
+      expiresInSeconds:
+        maximum: 86400
+        minimum: 60
+        type: integer
+      label:
+        description: |-
+          Label is optional and limited to 120 UTF-8 bytes. OpenAPI maxLength is a
+          character upper bound; backend byte validation remains authoritative.
+        maxLength: 120
+        type: string
+      logicalService:
+        type: string
+      sandbox:
+        type: string
+      service:
+        type: string
+    required:
+    - claim
+    - expiresInSeconds
+    - logicalService
+    - sandbox
+    - service
+    type: object
   handlers.CreateUserKeyRequest:
     properties:
       name:
@@ -349,6 +376,31 @@ definitions:
       name:
         type: string
       status:
+        type: string
+    type: object
+  handlers.SignedServiceURLResponse:
+    properties:
+      claim:
+        type: string
+      createdAt:
+        type: string
+      expiresAt:
+        type: string
+      id:
+        type: string
+      label:
+        type: string
+      logicalService:
+        type: string
+      namespace:
+        type: string
+      revokedAt:
+        type: string
+      sandbox:
+        type: string
+      service:
+        type: string
+      url:
         type: string
     type: object
   handlers.TurnRequest:
@@ -1337,6 +1389,138 @@ paths:
       summary: Get a namespace owned by the calling user
       tags:
       - namespaces
+  /api/signed-service-urls/{namespace}:
+    get:
+      parameters:
+      - description: K8s namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Claim name
+        in: query
+        name: claim
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/handlers.SignedServiceURLResponse'
+            type: array
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: List signed URLs for a sandbox claim
+      tags:
+      - signed-service-urls
+    post:
+      consumes:
+      - application/json
+      description: Creates a temporary bearer link for one logical sandbox service.
+      parameters:
+      - description: K8s namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Signed service URL details
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.CreateSignedServiceURLRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handlers.SignedServiceURLResponse'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a signed URL for a sandbox service
+      tags:
+      - signed-service-urls
+  /api/signed-service-urls/{namespace}/{id}:
+    delete:
+      parameters:
+      - description: K8s namespace
+        in: path
+        name: namespace
+        required: true
+        type: string
+      - description: Signed URL ID
+        in: path
+        name: id
+        required: true
+        type: string
+      responses:
+        "204":
+          description: No Content
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "401":
+          description: Unauthorized
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "404":
+          description: Not Found
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+        "503":
+          description: Service Unavailable
+          schema:
+            $ref: '#/definitions/handlers.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Revoke a signed URL
+      tags:
+      - signed-service-urls
   /api/svc/{namespace}/{service}/{path}:
     get:
       description: Proxies to {service}.{namespace}.svc.cluster.local:80. Per-key

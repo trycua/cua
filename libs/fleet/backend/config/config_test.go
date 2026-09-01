@@ -123,6 +123,7 @@ func unsetEnv(t *testing.T, key string) {
 		}
 		_ = os.Unsetenv(key)
 	})
+
 }
 
 func loadGitHubOIDCTestConfig(t *testing.T) *Configuration {
@@ -346,4 +347,107 @@ func TestLoadConfig_ProductAnalyticsValues(t *testing.T) {
 	if got, want := cfg.ProductAnalytics.ExcludedSubjects, []string{"internal-1", "internal-2"}; !slices.Equal(got, want) {
 		t.Fatalf("ExcludedSubjects = %#v, want %#v", got, want)
 	}
+}
+func loadSignedServiceURLTestConfig(t *testing.T, env map[string]string) (*Configuration, error) {
+	t.Helper()
+	viper.Reset()
+	t.Cleanup(viper.Reset)
+	t.Setenv("KC_ADMIN_CLIENT_SECRET", "secret")
+	for _, key := range []string{"SIGNED_SERVICE_URL_BASE_URL", "SIGNED_SERVICE_URL_SECRET", "SIGNED_SERVICE_URL_SECRET_FILE"} {
+		t.Setenv(key, "")
+	}
+	for key, value := range env {
+		t.Setenv(key, value)
+	}
+	RegisterFlags(pflag.NewFlagSet("signed-service-url-test", pflag.ContinueOnError))
+	return LoadConfig()
+}
+
+func TestLoadConfig_SignedServiceURLConfiguration(t *testing.T) {
+	const secret = "12345678901234567890123456789012"
+
+	t.Run("validates and normalizes configured values", func(t *testing.T) {
+		cfg, err := loadSignedServiceURLTestConfig(t, map[string]string{
+			"SIGNED_SERVICE_URL_BASE_URL": "https://run.cua.ai/",
+			"SIGNED_SERVICE_URL_SECRET":   secret,
+		})
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if got, want := cfg.SignedServiceURL.BaseURL, "https://run.cua.ai"; got != want {
+			t.Fatalf("SignedServiceURL.BaseURL = %q, want %q", got, want)
+		}
+		if got, want := cfg.SignedServiceURL.Secret, secret; got != want {
+			t.Fatalf("SignedServiceURL.Secret = %q, want configured secret", got)
+		}
+	})
+
+	invalidBaseURLs := map[string]string{
+		"HTTP":          "http://run.cua.ai",
+		"userinfo":      "https://user@run.cua.ai",
+		"query":         "https://run.cua.ai?source=test",
+		"fragment":      "https://run.cua.ai#fragment",
+		"non-root path": "https://run.cua.ai/services",
+	}
+	for name, baseURL := range invalidBaseURLs {
+		t.Run("rejects "+name, func(t *testing.T) {
+			_, err := loadSignedServiceURLTestConfig(t, map[string]string{
+				"SIGNED_SERVICE_URL_BASE_URL": baseURL,
+				"SIGNED_SERVICE_URL_SECRET":   secret,
+			})
+			if err == nil || !strings.Contains(err.Error(), "SIGNED_SERVICE_URL_BASE_URL") {
+				t.Fatalf("LoadConfig() error = %v, want invalid base URL error", err)
+			}
+		})
+	}
+
+	for name, env := range map[string]map[string]string{
+		"short secret":     {"SIGNED_SERVICE_URL_BASE_URL": "https://run.cua.ai", "SIGNED_SERVICE_URL_SECRET": "too-short"},
+		"missing base URL": {"SIGNED_SERVICE_URL_SECRET": secret},
+	} {
+		t.Run("rejects "+name, func(t *testing.T) {
+			_, err := loadSignedServiceURLTestConfig(t, env)
+			if err == nil || !strings.Contains(err.Error(), "SIGNED_SERVICE_URL") {
+				t.Fatalf("LoadConfig() error = %v, want signed URL configuration error", err)
+			}
+		})
+	}
+
+	t.Run("base URL without secret keeps the feature disabled during rollout", func(t *testing.T) {
+		cfg, err := loadSignedServiceURLTestConfig(t, map[string]string{
+			"SIGNED_SERVICE_URL_BASE_URL": "https://run.cua.ai",
+		})
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v, want disabled configuration", err)
+		}
+		if got, want := cfg.SignedServiceURL.BaseURL, "https://run.cua.ai"; got != want {
+			t.Fatalf("SignedServiceURL.BaseURL = %q, want %q", got, want)
+		}
+		if cfg.SignedServiceURL.Secret != "" {
+			t.Fatalf("SignedServiceURL.Secret = %q, want empty optional secret", cfg.SignedServiceURL.Secret)
+		}
+	})
+
+	t.Run("accepts a non-sensitive secret file path", func(t *testing.T) {
+		cfg, err := loadSignedServiceURLTestConfig(t, map[string]string{
+			"SIGNED_SERVICE_URL_BASE_URL":    "https://run.cua.ai",
+			"SIGNED_SERVICE_URL_SECRET_FILE": "/var/run/signed-service-url/hmac_secret",
+		})
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v", err)
+		}
+		if got, want := cfg.SignedServiceURL.SecretFile, "/var/run/signed-service-url/hmac_secret"; got != want {
+			t.Fatalf("SignedServiceURL.SecretFile = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("both values absent disables feature", func(t *testing.T) {
+		cfg, err := loadSignedServiceURLTestConfig(t, nil)
+		if err != nil {
+			t.Fatalf("LoadConfig() error = %v, want disabled configuration", err)
+		}
+		if cfg.SignedServiceURL != (SignedServiceURLConfiguration{}) {
+			t.Fatalf("SignedServiceURL = %#v, want zero configuration", cfg.SignedServiceURL)
+		}
+	})
 }

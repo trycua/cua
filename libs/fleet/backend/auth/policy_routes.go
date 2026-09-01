@@ -161,6 +161,14 @@ func SvcRoutePolicy() Node {
 	)
 }
 
+func SignedServiceURLsRoutePolicy() Node {
+	return All(
+		BasePolicy(),
+		surfaceLeaf("authz-signed-service-urls", "data.authz_signed_service_urls.allow"),
+		NamespaceOwnershipPolicy(),
+	)
+}
+
 // StateQueryRoutePolicy guards /api/state/query.
 func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
@@ -251,17 +259,18 @@ const featureFlagAuditBodyLimit = 64 << 10
 // surfacePolicies is every surface, by name. A surface owning no route fails
 // TestEveryPolicySurfaceOwnsARoute; a route naming no surface cannot start.
 var surfacePolicies = map[string]surfacePolicy{
-	"keys":          {tree: KeysRoutePolicy},
-	"config":        {tree: ConfigRoutePolicy},
-	"chat":          {tree: ChatRoutePolicy},
-	"billing":       {tree: BillingRoutePolicy},
-	"usage":         {tree: UsageRoutePolicy},
-	"namespaces":    {tree: NamespacesRoutePolicy},
-	"github-trust":  {tree: GitHubTrustRoutePolicy},
-	"user-keys":     {tree: UserKeysRoutePolicy},
-	"svc":           {tree: SvcRoutePolicy},
-	"state-query":   {tree: StateQueryRoutePolicy},
-	"feature-flags": {tree: FeatureFlagsRoutePolicy, options: []MiddlewareOption{WithDeniedAudit("feature_flag_admin", featureFlagAuditBodyLimit), WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
+	"keys":                {tree: KeysRoutePolicy},
+	"config":              {tree: ConfigRoutePolicy},
+	"chat":                {tree: ChatRoutePolicy},
+	"billing":             {tree: BillingRoutePolicy},
+	"usage":               {tree: UsageRoutePolicy},
+	"namespaces":          {tree: NamespacesRoutePolicy},
+	"github-trust":        {tree: GitHubTrustRoutePolicy},
+	"user-keys":           {tree: UserKeysRoutePolicy},
+	"svc":                 {tree: SvcRoutePolicy},
+	"signed-service-urls": {tree: SignedServiceURLsRoutePolicy},
+	"state-query":         {tree: StateQueryRoutePolicy},
+	"feature-flags":       {tree: FeatureFlagsRoutePolicy, options: []MiddlewareOption{WithDeniedAudit("feature_flag_admin", featureFlagAuditBodyLimit), WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
 	"k8s": {
 		tree:    K8sRoutePolicy,
 		options: []MiddlewareOption{WithDeniedMessage("k8s request is not allowed")},
@@ -307,6 +316,9 @@ var routeSurfaces = map[string]string{
 
 	"/api/svc/{namespace}/{service}":           "svc",
 	"/api/svc/{namespace}/{service}/{path...}": "svc",
+
+	"/api/signed-service-urls/{namespace}":      "signed-service-urls",
+	"/api/signed-service-urls/{namespace}/{id}": "signed-service-urls",
 
 	"/api/k8s/{path...}":             "k8s",
 	"/api/admin/feature-flags":       "feature-flags",

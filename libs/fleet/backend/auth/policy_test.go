@@ -77,6 +77,54 @@ func prepareQuery(t *testing.T, query string, modules map[string]string) rego.Pr
 	return pq
 }
 
+func TestPerKeyClientUsesConfiguredPrefixFromUserInput(t *testing.T) {
+	query := prepareQuery(t, "data.authz.is_per_key_client", map[string]string{"authz.rego": authzPolicy})
+	for _, testCase := range []struct {
+		name string
+		user *User
+		want bool
+	}{
+		{name: "custom prefix client", user: &User{AZP: "poolkey-ns-a", KeyClientPfx: "poolkey-"}, want: true},
+		{name: "legacy prefix client", user: &User{AZP: "key-ns-a", KeyClientPfx: "poolkey-"}, want: false},
+		{name: "default prefix client", user: &User{AZP: "key-ns-a"}, want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			results, err := query.Eval(context.Background(), rego.EvalInput(map[string]any{"user": buildUserInput(testCase.user)}))
+			if err != nil {
+				t.Fatalf("evaluate per-key client policy: %v", err)
+			}
+			got := len(results) > 0 && len(results[0].Expressions) > 0 && results[0].Expressions[0].Value == true
+			if got != testCase.want {
+				t.Fatalf("is_per_key_client = %t, want %t; input = %#v", got, testCase.want, buildUserInput(testCase.user))
+			}
+		})
+	}
+}
+
+func TestSignedServiceURLsCustomPerKeyPrefixIsNamespaceScoped(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		namespace string
+		want      bool
+	}{
+		{name: "matching namespace", namespace: "ns-a", want: true},
+		{name: "other namespace", namespace: "ns-b", want: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			input := map[string]any{
+				"route":  "/api/signed-service-urls/{namespace}",
+				"method": http.MethodGet,
+				"params": map[string]string{"namespace": testCase.namespace},
+				"user":   buildUserInput(&User{ID: "svc-1", AZP: "poolkey-ns-a", KeyClientPfx: "poolkey-", Namespace: "ns-a"}),
+				"flags":  map[string]any{},
+			}
+			if got := evalAllow(t, input); got != testCase.want {
+				t.Fatalf("allow(namespace=%q) = %t, want %t", testCase.namespace, got, testCase.want)
+			}
+		})
+	}
+}
+
 // evalAllow answers what the route's production policy would, over a raw input
 // document. There is no single module to query any more: a route runs
 // All(base, surface), so this resolves the tree main.go dispatches input.route
@@ -541,5 +589,19 @@ func TestPoolAdmissionIgnoresLookalikeResourceGroups(t *testing.T) {
 	}
 	if !evalPoolAdmission(t, input) {
 		t.Fatal("lookalike resource group should be outside pool admission policy scope")
+	}
+}
+
+func TestSignedServiceURLsRejectLegacyPerKeyPrefixUnderCustomConfiguration(t *testing.T) {
+	input := map[string]any{
+		"route":  "/api/signed-service-urls/{namespace}",
+		"method": http.MethodGet,
+		"params": map[string]string{"namespace": "ns-a"},
+		"user":   buildUserInput(&User{ID: "svc-1", AZP: "key-ns-a", KeyClientPfx: "poolkey-", Namespace: "ns-a"}),
+		"flags":  map[string]any{},
+		"facts":  map[string]any{"namespace_rbac": map[string]any{"allowed": true}},
+	}
+	if evalAllow(t, input) {
+		t.Fatal("legacy key- client must not regain signed URL access through RBAC under a custom prefix")
 	}
 }

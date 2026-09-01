@@ -69,19 +69,20 @@ var surfacePolicySources = map[string]struct {
 	filename string
 	source   string
 }{
-	"authz-base":          {"authz_base.rego", authzBasePolicy},
-	"authz-keys":          {"authz_keys.rego", authzKeysPolicy},
-	"authz-config":        {"authz_config.rego", authzConfigPolicy},
-	"authz-chat":          {"authz_chat.rego", authzChatPolicy},
-	"authz-billing":       {"authz_billing.rego", authzBillingPolicy},
-	"authz-usage":         {"authz_usage.rego", authzUsagePolicy},
-	"authz-namespaces":    {"authz_namespaces.rego", authzNamespacesPolicy},
-	"authz-github-trust":  {"authz_github_trust.rego", authzGitHubTrustPolicy},
-	"authz-user-keys":     {"authz_user_keys.rego", authzUserKeysPolicy},
-	"authz-k8s":           {"authz_k8s.rego", authzK8sPolicy},
-	"authz-svc":           {"authz_svc.rego", authzSvcPolicy},
-	"authz-state-query":   {"authz_state_query.rego", authzStateQueryPolicy},
-	"authz-feature-flags": {"authz_feature_flags.rego", authzFeatureFlagsPolicy},
+	"authz-base":                {"authz_base.rego", authzBasePolicy},
+	"authz-keys":                {"authz_keys.rego", authzKeysPolicy},
+	"authz-config":              {"authz_config.rego", authzConfigPolicy},
+	"authz-chat":                {"authz_chat.rego", authzChatPolicy},
+	"authz-billing":             {"authz_billing.rego", authzBillingPolicy},
+	"authz-usage":               {"authz_usage.rego", authzUsagePolicy},
+	"authz-namespaces":          {"authz_namespaces.rego", authzNamespacesPolicy},
+	"authz-github-trust":        {"authz_github_trust.rego", authzGitHubTrustPolicy},
+	"authz-user-keys":           {"authz_user_keys.rego", authzUserKeysPolicy},
+	"authz-k8s":                 {"authz_k8s.rego", authzK8sPolicy},
+	"authz-svc":                 {"authz_svc.rego", authzSvcPolicy},
+	"authz-signed-service-urls": {"authz_signed_service_urls.rego", authzSignedServiceURLsPolicy},
+	"authz-state-query":         {"authz_state_query.rego", authzStateQueryPolicy},
+	"authz-feature-flags":       {"authz_feature_flags.rego", authzFeatureFlagsPolicy},
 }
 
 //go:embed authz_base.rego
@@ -116,6 +117,9 @@ var authzK8sPolicy string
 
 //go:embed authz_svc.rego
 var authzSvcPolicy string
+
+//go:embed authz_signed_service_urls.rego
+var authzSignedServiceURLsPolicy string
 
 //go:embed authz_state_query.rego
 var authzStateQueryPolicy string
@@ -666,6 +670,7 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 					Email:         proxyEmail,
 					EmailVerified: proxyEmail != "",
 					AZP:           "oauth2-proxy", // distinct from SPA/key clients for OPA
+					KeyClientPfx:  configuredKeyClientPfx(),
 				}
 				metrics.SetRequestUser(r.Context(), user.ID)
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))
@@ -687,6 +692,7 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 			writeJSONErr(w, http.StatusUnauthorized, "auth token is invalid")
 			return
 		}
+		user.KeyClientPfx = configuredKeyClientPfx()
 
 		// ── User-key identity override ─────────────────────────────
 		// User-key tokens have azp="ukey-..." and carry hardcoded
@@ -706,6 +712,20 @@ func TokenAuthMiddleware(next http.Handler) http.Handler {
 		metrics.SetRequestUser(r.Context(), user.ID)
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserKey, user)))
 	})
+}
+
+func configuredKeyClientPfx() string {
+	if authConfig != nil && authConfig.KeyClientPfx != "" {
+		return authConfig.KeyClientPfx
+	}
+	return "key-"
+}
+
+func keyClientPfx(value string) string {
+	if value == "" {
+		return "key-"
+	}
+	return value
 }
 
 func applyUserKeyIdentity(user *User, userKeyPfx string) error {
@@ -735,6 +755,7 @@ func buildUserInput(user *User) map[string]any {
 	return map[string]any{
 		"sub":                user.ID,
 		"azp":                user.AZP,
+		"key_client_prefix":  keyClientPfx(user.KeyClientPfx),
 		"namespace":          user.Namespace,
 		"email":              user.Email,
 		"groups":             user.Groups,

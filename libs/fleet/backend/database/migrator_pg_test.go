@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/url"
 	"os"
@@ -16,6 +17,7 @@ import (
 
 	"cyclops-cs-backend/chat"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const migratorIntegrationOptIn = "CYCLOPS_TEST_DATABASE_MIGRATOR_ISOLATED_CLUSTER"
@@ -86,12 +88,18 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	inspectionURL := maintenanceURLForDatabase(t, maintenanceURL, migrationURL)
 	assertMigrationOwnerFixture(t, ctx, migrationURL)
 	assertInitialMigrationRejectsPublicSecurityDefiner(t, ctx, migrationURL, credentials)
-	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
-		t.Fatal(err)
+	firstSummary := captureRunSummary(t, func() error {
+		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	})
+	if firstSummary.Pending != 11 || firstSummary.Applied != 11 {
+		t.Fatalf("initial migration summary = %+v, want pending=11 applied=11", firstSummary)
 	}
 	before := migrationLedgerRows(t, ctx, migrationURL)
-	if err := Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials}); err != nil {
-		t.Fatalf("second migration run must be a no-op: %v", err)
+	secondSummary := captureRunSummary(t, func() error {
+		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
+	})
+	if secondSummary.Pending != 0 || secondSummary.Applied != 0 {
+		t.Fatalf("second migration summary = %+v, want pending=0 applied=0", secondSummary)
 	}
 	if after := migrationLedgerRows(t, ctx, migrationURL); !reflect.DeepEqual(after, before) {
 		t.Fatalf("second migration run changed migration ledger: before=%+v after=%+v", before, after)
@@ -105,6 +113,7 @@ func TestInitialMigrationBuildsCompleteDatabase(t *testing.T) {
 	assertImplicitCreatorAdminMembership(t, ctx, migrationURL, "billing_meter_owner", bootstrapGrantor)
 	assertNoQueryBroker(t, ctx, migrationURL)
 	assertOwnershipAndPublicACLs(t, ctx, inspectionURL, currentRole(t, ctx, migrationURL))
+	assertSignedServiceURLContract(t, ctx, inspectionURL, credentials.Application, currentRole(t, ctx, migrationURL))
 	assertMetabaseBillingMeterAccess(t, ctx, migrationURL, credentials.Metabase)
 	assertRLSContract(t, ctx, inspectionURL)
 	assertSecurityDefinerContract(t, ctx, inspectionURL)
@@ -191,14 +200,14 @@ func TestRunUpgradesVersionOneAndThenNoOps(t *testing.T) {
 	upgrade := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if upgrade.Current != 1 || upgrade.Target != 10 || upgrade.Pending != 9 || upgrade.Applied != 9 || upgrade.Skipped != 1 || upgrade.Result != "success" {
+	if upgrade.Current != 1 || upgrade.Target != 11 || upgrade.Pending != 10 || upgrade.Applied != 10 || upgrade.Skipped != 1 || upgrade.Result != "success" {
 		t.Fatalf("version-one upgrade summary = %+v", upgrade)
 	}
 
 	noOp := captureRunSummary(t, func() error {
 		return Run(ctx, Config{MigrationURL: migrationURL, Credentials: credentials})
 	})
-	if noOp.Current != 10 || noOp.Target != 10 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 10 || noOp.Result != "success" {
+	if noOp.Current != 11 || noOp.Target != 11 || noOp.Pending != 0 || noOp.Applied != 0 || noOp.Skipped != 11 || noOp.Result != "success" {
 		t.Fatalf("post-upgrade no-op summary = %+v", noOp)
 	}
 }
@@ -1594,8 +1603,8 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 	if err := rows.Err(); err != nil {
 		t.Fatal("iterate migration ledger")
 	}
-	if len(ledger) != 10 {
-		t.Fatalf("migration ledger row count = %d, want 10", len(ledger))
+	if len(ledger) != 11 {
+		t.Fatalf("migration ledger row count = %d, want 11", len(ledger))
 	}
 	for index, want := range []struct {
 		version  int64
@@ -1611,6 +1620,7 @@ func migrationLedgerRows(t *testing.T, ctx context.Context, adminURL string) []l
 		{8, "000008_metabase_hourly_reservation_usage_excluding_tenants.sql"},
 		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
 		{10, "000010_grant_metabase_billing_meter_access.sql"},
+		{11, "000011_signed_service_urls.sql"},
 	} {
 		if ledger[index].Version != want.version || ledger[index].ApplicationOrder != int64(index+1) || ledger[index].Filename != want.filename {
 			t.Fatalf("migration ledger row %d = version:%d order:%d filename:%q", index, ledger[index].Version, ledger[index].ApplicationOrder, ledger[index].Filename)
@@ -1850,6 +1860,7 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	for _, want := range []struct{ schema, name, owner string }{
 		{"public", "github_trust_policies", migrationOwner},
 		{"public", "chat_conversations", migrationOwner},
+		{"public", "signed_service_urls", migrationOwner},
 		{"k8s_state", "resource_state", "k8s_state_owner"},
 		{"k8s_state", "resource_event_outbox", "k8s_state_owner"},
 		{"k8s_state", "resource_event_outbox_usage_lookup_idx", "k8s_state_owner"},
@@ -1884,8 +1895,85 @@ func assertOwnershipAndPublicACLs(t *testing.T, ctx context.Context, adminURL, m
 	for _, schema := range []string{"k8s_state", "k8s_api", "k8s_reporting", "cyclops_migrations"} {
 		assertNoPublicSchemaPrivilege(t, ctx, connection, schema, "USAGE")
 	}
-	for _, relation := range []string{"public.github_trust_policies", "public.chat_conversations", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "k8s_reporting.hourly_reservation_usage", "k8s_reporting.hourly_reservation_usage_excluding_tenants", "cyclops_migrations.applied_migrations"} {
+	for _, relation := range []string{"public.github_trust_policies", "public.chat_conversations", "public.signed_service_urls", "k8s_state.resource_state", "k8s_state.resource_event_outbox", "k8s_api.current_resources", "k8s_reporting.current_resources", "k8s_reporting.hourly_reservation_usage", "k8s_reporting.hourly_reservation_usage_excluding_tenants", "cyclops_migrations.applied_migrations"} {
 		assertNoPublicTablePrivilege(t, ctx, connection, relation)
+	}
+}
+
+func assertSignedServiceURLContract(t *testing.T, ctx context.Context, inspectionURL, applicationURL, migrationOwner string) {
+	t.Helper()
+	inspection := connect(t, ctx, inspectionURL)
+	defer inspection.Close(ctx)
+	assertRelationOwner(t, inspection, "public", "signed_service_urls", migrationOwner)
+	assertTablePrivileges(t, inspection, "cyclops_app", "public", "signed_service_urls", []string{"SELECT", "INSERT", "UPDATE"})
+
+	application := connect(t, ctx, applicationURL)
+	defer application.Close(ctx)
+	createdAt := time.Date(2026, time.August, 31, 0, 0, 0, 0, time.UTC)
+	insert := func(id string, expiresAt time.Time) error {
+		_, err := application.Exec(ctx, `
+			insert into public.signed_service_urls
+				(id, namespace, claim_name, sandbox_name, service_name, logical_service, label, creator_sub, created_at, expires_at)
+			values ($1, 'tenant-a', 'claim-a', 'sandbox-a', 'service-a', 'desktop', 'Desktop', 'user-a', $2, $3)`,
+			id, createdAt, expiresAt)
+		return err
+	}
+	if err := insert("00000000-0000-0000-0000-000000000001", createdAt.Add(time.Minute)); err != nil {
+		t.Fatalf("insert one-minute signed URL: %v", err)
+	}
+	if err := insert("00000000-0000-0000-0000-000000000002", createdAt.Add(24*time.Hour)); err != nil {
+		t.Fatalf("insert 24-hour signed URL: %v", err)
+	}
+	assertCheckViolation(t, insert("00000000-0000-0000-0000-000000000003", createdAt.Add(59*time.Second)))
+	assertCheckViolation(t, insert("00000000-0000-0000-0000-000000000004", createdAt.Add(24*time.Hour+time.Second)))
+
+	var count int
+	if err := application.QueryRow(ctx, `select count(*) from public.signed_service_urls`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("signed URL row count = %d, err=%v, want 2", count, err)
+	}
+	if _, err := application.Exec(ctx, `update public.signed_service_urls set revoked_at = $1 where id = $2`, createdAt, "00000000-0000-0000-0000-000000000001"); err != nil {
+		t.Fatalf("revoke signed URL: %v", err)
+	}
+}
+
+func assertRelationOwner(t *testing.T, connection *pgx.Conn, schema, relation, wantOwner string) {
+	t.Helper()
+	var owner string
+	if err := connection.QueryRow(context.Background(), `
+		select relation.relowner::regrole::text
+		from pg_class relation
+		join pg_namespace namespace on namespace.oid = relation.relnamespace
+		where namespace.nspname = $1 and relation.relname = $2`, schema, relation).Scan(&owner); err != nil {
+		t.Fatalf("read owner for %s.%s: %v", schema, relation, err)
+	}
+	if owner != wantOwner {
+		t.Fatalf("owner for %s.%s = %s, want %s", schema, relation, owner, wantOwner)
+	}
+}
+
+func assertTablePrivileges(t *testing.T, connection *pgx.Conn, role, schema, table string, want []string) {
+	t.Helper()
+	qualified := pgx.Identifier{schema, table}.Sanitize()
+	var got []string
+	for _, privilege := range []string{"SELECT", "INSERT", "UPDATE", "DELETE", "TRUNCATE", "REFERENCES", "TRIGGER"} {
+		var allowed bool
+		if err := connection.QueryRow(context.Background(), `select has_table_privilege($1, $2, $3)`, role, qualified, privilege).Scan(&allowed); err != nil {
+			t.Fatalf("read %s privilege for %s on %s: %v", privilege, role, qualified, err)
+		}
+		if allowed {
+			got = append(got, privilege)
+		}
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("table privileges for %s on %s = %v, want %v", role, qualified, got, want)
+	}
+}
+
+func assertCheckViolation(t *testing.T, err error) {
+	t.Helper()
+	var pgError *pgconn.PgError
+	if !errors.As(err, &pgError) || pgError.Code != "23514" {
+		t.Fatalf("insert error = %v, want PostgreSQL check violation", err)
 	}
 }
 
@@ -2004,7 +2092,7 @@ func assertRuntimeLedgerAccess(t *testing.T, ctx context.Context, credentials Cr
 		var count int
 		err := connection.QueryRow(ctx, `select count(*) from cyclops_migrations.applied_migrations`).Scan(&count)
 		connection.Close(ctx)
-		if err != nil || count != 10 {
+		if err != nil || count != 11 {
 			t.Errorf("%s ledger select = count:%d err:%v", role, count, err)
 		}
 		assertStatementFails(t, ctx, databaseURL, `insert into cyclops_migrations.applied_migrations (version, filename, sha256) values (99, 'invalid.sql', 'invalid')`)

@@ -5,6 +5,7 @@ mod namespaces;
 mod pools;
 mod routes;
 mod services;
+mod signed_service_urls;
 mod status;
 mod templates;
 mod transport;
@@ -24,12 +25,12 @@ pub use status::{
 pub use transport::{AccessTokenProvider, HttpClient};
 pub use types::{
     Claim, CreateClaimRequest, CreateClaimRequestBuilder, CreatePoolRequest,
-    CreatePoolRequestBuilder, CreateTemplateRequest, CreateTemplateRequestBuilder,
-    CreateUserApiKeyRequest, CreateUserApiKeyRequestBuilder, CyclopsConfiguration,
-    CyclopsCredentials, CyclopsTokenProviderConfiguration,
-    CyclopsTokenProviderConfigurationBuilder, HttpHeader, HttpRequest, HttpRequestBuilder,
-    HttpResponse, Namespace, NewUserApiKey, Pool, ResourceMetadata, Sandbox, Template,
-    TemplateBuilder, UserApiKey,
+    CreatePoolRequestBuilder, CreateSignedServiceUrlRequest, CreateSignedServiceUrlRequestBuilder,
+    CreateTemplateRequest, CreateTemplateRequestBuilder, CreateUserApiKeyRequest,
+    CreateUserApiKeyRequestBuilder, CyclopsConfiguration, CyclopsCredentials,
+    CyclopsTokenProviderConfiguration, CyclopsTokenProviderConfigurationBuilder, HttpHeader,
+    HttpRequest, HttpRequestBuilder, HttpResponse, Namespace, NewUserApiKey, Pool,
+    ResourceMetadata, Sandbox, SignedServiceUrl, Template, TemplateBuilder, UserApiKey,
 };
 
 uniffi::setup_scaffolding!("fleet_sdk");

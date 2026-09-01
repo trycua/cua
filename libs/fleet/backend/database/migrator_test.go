@@ -521,8 +521,36 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 10 {
-		t.Fatalf("expected exactly ten migrations, got %d", len(files))
+	if len(files) != 11 {
+		t.Fatalf("expected exactly eleven migrations, got %d", len(files))
+	}
+	manifest := make([]struct {
+		Version int64
+		Name    string
+	}, 0, len(files))
+	for _, file := range files {
+		manifest = append(manifest, struct {
+			Version int64
+			Name    string
+		}{file.Version, file.Name})
+	}
+	if !reflect.DeepEqual(manifest, []struct {
+		Version int64
+		Name    string
+	}{
+		{1, "000001_initial_schema.sql"},
+		{2, "000002_usage_sandbox_events.sql"},
+		{3, "000003_usage_claimed_sandbox_pool.sql"},
+		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
+		{5, "000005_hourly_reservation_meter.sql"},
+		{6, "000006_chat_conversations.sql"},
+		{7, "000007_metabase_hourly_reservation_usage.sql"},
+		{8, "000008_metabase_hourly_reservation_usage_excluding_tenants.sql"},
+		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
+		{10, "000010_grant_metabase_billing_meter_access.sql"},
+		{11, "000011_signed_service_urls.sql"},
+	}) {
+		t.Fatalf("migration manifest = %#v", manifest)
 	}
 	initial := files[0]
 	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
@@ -722,6 +750,19 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	} {
 		if !strings.Contains(billingMeterAccess.SQL, expected) {
 			t.Errorf("Metabase billing meter access migration is missing contract %q", expected)
+		}
+	}
+
+	signedServiceURLs := files[10]
+	for _, fragment := range []string{
+		"CREATE TABLE public.signed_service_urls",
+		"signed_service_urls_claim_created_idx",
+		"CHECK (expires_at >= created_at + interval '1 minute')",
+		"CHECK (expires_at <= created_at + interval '24 hours')",
+		"GRANT SELECT, INSERT, UPDATE ON TABLE public.signed_service_urls TO cyclops_app",
+	} {
+		if !strings.Contains(signedServiceURLs.SQL, fragment) {
+			t.Fatalf("migration 11 missing %q", fragment)
 		}
 	}
 

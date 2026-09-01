@@ -11,11 +11,26 @@ token="$($curl_bin --fail-with-body --silent --show-error -X POST "$CUA_TOKEN_UR
   --data-urlencode "client_id=$CUA_CLIENT_ID" \
   --data-urlencode "client_secret=$CUA_CLIENT_SECRET" | jq -er .access_token)"
 cleanup_failed=0
+retry_attempts=5
+retry_delay="${CLEANUP_RETRY_DELAY_SECONDS:-5}"
+
+transient_status() {
+  case "$1" in
+    000|5??) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 
 delete_url() {
-  local url="$1" status
-  status="$($curl_bin --silent --show-error -o /dev/null --write-out '%{http_code}' \
-    -H "Authorization: Bearer $token" -X DELETE "$url")" || status=000
+  local url="$1" status attempt
+  for attempt in $(seq 1 "$retry_attempts"); do
+    status="$($curl_bin --silent --show-error -o /dev/null --write-out '%{http_code}' \
+      -H "Authorization: Bearer $token" -X DELETE "$url")" || status=000
+    if ! transient_status "$status" || (( attempt >= retry_attempts )); then
+      break
+    fi
+    sleep "$retry_delay"
+  done
   case "$status" in
     200|202|204|404) ;;
     *) echo "Failed to delete $url: HTTP $status" >&2; cleanup_failed=1 ;;
@@ -23,10 +38,16 @@ delete_url() {
 }
 
 delete_collection() {
-  local collection="$1" body_file status
+  local collection="$1" body_file status attempt
   body_file="$(mktemp)"
-  status="$($curl_bin --silent --show-error -o "$body_file" --write-out '%{http_code}' \
-    -H "Authorization: Bearer $token" "$collection")" || status=000
+  for attempt in $(seq 1 "$retry_attempts"); do
+    status="$($curl_bin --silent --show-error -o "$body_file" --write-out '%{http_code}' \
+      -H "Authorization: Bearer $token" "$collection")" || status=000
+    if ! transient_status "$status" || (( attempt >= retry_attempts )); then
+      break
+    fi
+    sleep "$retry_delay"
+  done
   case "$status" in
     200)
       while IFS= read -r name; do

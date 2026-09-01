@@ -257,6 +257,24 @@ func characterizationCases() map[string][]routeCase {
 	cases["/api/svc/{namespace}/{service}"] = proxyCases(false)
 	cases["/api/svc/{namespace}/{service}/{path...}"] = proxyCases(true)
 
+	// /api/signed-service-urls mirrors the /api/svc parameter logic: DNS-label shape,
+	// the per-key namespace binding, and the RBAC fact for everyone else —
+	// its handler acts with the pod ServiceAccount, so the ownership conjunct
+	// is the boundary and all three fact answers matter here too.
+	cases["/api/signed-service-urls/{namespace}"] = []routeCase{
+		{name: "owned-ns", params: map[string]string{"namespace": characterizationOwnedNamespace}, path: "/api/signed-service-urls/ns-a"},
+		{name: "other-ns", params: map[string]string{"namespace": characterizationUnownedNamespace}, path: "/api/signed-service-urls/ns-b"},
+		{name: "unreachable-ns", params: map[string]string{"namespace": characterizationUnreachableNamespace}, path: "/api/signed-service-urls/ns-err"},
+		{name: "invalid-ns", params: map[string]string{"namespace": "Not_A_Label"}, path: "/api/signed-service-urls/Not_A_Label"},
+		{name: "empty-ns", params: map[string]string{"namespace": ""}, path: "/api/signed-service-urls/"},
+	}
+	cases["/api/signed-service-urls/{namespace}/{id}"] = []routeCase{
+		{name: "owned-ns", params: map[string]string{"namespace": characterizationOwnedNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-a/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "other-ns", params: map[string]string{"namespace": characterizationUnownedNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-b/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "unreachable-ns", params: map[string]string{"namespace": characterizationUnreachableNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-err/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "empty-id", params: map[string]string{"namespace": characterizationOwnedNamespace, "id": ""}, path: "/api/signed-service-urls/ns-a/"},
+	}
+
 	// /api/k8s carries the richest parameter logic in the policy: the infra-path
 	// list, the admin escape hatch over it, the GitHub namespace grant, and the
 	// pool-admission leaf reading the body.

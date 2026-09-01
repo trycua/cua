@@ -6,7 +6,7 @@
 //! These types are transport-free. The contract generator derives JSON Schema
 //! from them, and live Rust handlers deserialize the same types before acting.
 
-use crate::CursorThemeSelection;
+use crate::{schema_settings, CursorThemeSelection};
 use schemars::{json_schema, JsonSchema, Schema, SchemaGenerator};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::Value;
@@ -19,11 +19,9 @@ pub trait ToolInput: Serialize + DeserializeOwned + JsonSchema {
     }
 
     fn input_schema() -> Value {
-        let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-            settings.meta_schema = None;
-            settings.inline_subschemas = true;
-        });
-        let schema = settings.into_generator().into_root_schema_for::<Self>();
+        let schema = schema_settings()
+            .into_generator()
+            .into_root_schema_for::<Self>();
         let mut value = serde_json::to_value(schema).expect("tool input schema serializes");
         normalize_schema(&mut value);
         value
@@ -34,12 +32,6 @@ fn normalize_schema(value: &mut Value) {
     match value {
         Value::Object(object) => {
             object.remove("title");
-            if matches!(
-                object.get("format").and_then(Value::as_str),
-                Some("uint32" | "uint64" | "double")
-            ) {
-                object.remove("format");
-            }
             if object.get("type").and_then(Value::as_str) == Some("object") {
                 object
                     .entry("properties")
@@ -232,11 +224,7 @@ pub enum ActionTarget {
 }
 
 pub fn action_target_schema() -> Value {
-    let settings = schemars::generate::SchemaSettings::draft2020_12().with(|settings| {
-        settings.meta_schema = None;
-        settings.inline_subschemas = true;
-    });
-    let schema = settings
+    let schema = schema_settings()
         .into_generator()
         .into_root_schema_for::<ActionTarget>();
     let mut value = serde_json::to_value(schema).expect("action target schema serializes");
@@ -1104,29 +1092,5 @@ mod tests {
         }))
         .expect_err("portable input must reject runtime-only fields");
         assert!(error.to_string().contains("unknown field `pid`"));
-    }
-
-    #[test]
-    fn input_normalization_drops_only_schemars_numeric_formats() {
-        let mut schema = json!({
-            "type": "object",
-            "properties": {
-                "count": {"type": "integer", "format": "uint32"},
-                "frame": {"type": "integer", "format": "uint64"},
-                "ratio": {"type": "number", "format": "double"},
-                "created_at": {"type": "string", "format": "date-time"},
-                "format": {"type": "string"}
-            },
-            "required": ["format"]
-        });
-
-        normalize_schema(&mut schema);
-
-        for property in ["count", "frame", "ratio"] {
-            assert!(schema["properties"][property].get("format").is_none());
-        }
-        assert_eq!(schema["properties"]["created_at"]["format"], "date-time");
-        assert_eq!(schema["properties"]["format"], json!({"type": "string"}));
-        assert_eq!(schema["required"], json!(["format"]));
     }
 }

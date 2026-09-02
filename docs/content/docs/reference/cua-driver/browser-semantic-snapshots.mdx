@@ -103,6 +103,13 @@ The closed action vocabulary is `click`, `type`, and `upload`.
 returning `browser_action_unavailable` before delivery. A file input declares
 `upload`, not `type`. Legacy `dom_refs_v1` refs retain their existing behavior.
 
+A live semantic-v2 DOM `input` whose `type` is exactly `password` also carries
+`"secure_field": "password"`. This marker is positive evidence for guarded
+credential delivery; names, ARIA roles, masking styles, content-editable
+widgets, text inputs, and legacy refs never receive it. Password refs omit the
+`value` member entirely, including mask characters and length information.
+This marker does not itself reveal, resolve, or type a credential.
+
 ## Content refs
 
 `content_refs` identify readable semantic nodes that have a live backend node

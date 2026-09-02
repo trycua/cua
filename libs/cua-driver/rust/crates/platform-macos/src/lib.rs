@@ -63,7 +63,7 @@ pub fn register_tools_with_compat(compat: bool) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     {
         let mut r = ToolRegistry::new();
-        tools::register_all(&mut r, compat, false, false, None);
+        tools::register_all(&mut r, compat, false, false, None, None);
         r
     }
     #[cfg(not(target_os = "macos"))]
@@ -109,6 +109,26 @@ pub fn register_tools_with_cursor_and_provider(
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
 ) -> ToolRegistry {
+    register_tools_with_cursor_provider_and_secret_broker(
+        provider,
+        None,
+        cfg,
+        compat,
+        host_owns_permission_ux,
+        host_bundle_id,
+    )
+}
+
+/// Register all macOS tools with constructor-installed trusted services.
+/// Existing public constructors remain wrappers that provide no secret broker.
+pub fn register_tools_with_cursor_provider_and_secret_broker(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    secret_broker: Option<std::sync::Arc<cua_driver_core::credentials::SecretBroker>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+    host_owns_permission_ux: bool,
+    host_bundle_id: Option<String>,
+) -> ToolRegistry {
     #[cfg(target_os = "macos")]
     {
         let cursor_overlay_available =
@@ -123,6 +143,7 @@ pub fn register_tools_with_cursor_and_provider(
             cursor_overlay_available,
             host_owns_permission_ux,
             host_bundle_id,
+            secret_broker,
         );
         r
     }
@@ -133,6 +154,7 @@ pub fn register_tools_with_cursor_and_provider(
         let _ = host_owns_permission_ux;
         let _ = host_bundle_id;
         let _ = provider;
+        let _ = secret_broker;
         ToolRegistry::new()
     }
 }

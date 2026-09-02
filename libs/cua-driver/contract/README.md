@@ -66,6 +66,23 @@ The checked-observation slice is also shared by MCP and both generated SDKs:
 - `include_screenshot=true` adds final image content for a multimodal agent
   harness to interpret. Cua Driver does not OCR or assign task meaning to it.
 
+The target-bound credential slice is shared by MCP and both generated SDKs:
+
+- `find_credentials` proves one exact live semantic browser password field and
+  returns only safe descriptors plus fresh opaque, single-use handles.
+- `type_secret` releases one authorized field through a handle to that same
+  exact browser node. It does not expose secret material through arguments,
+  results, clipboard state, generic typing, or replayable recordings.
+
+Credential providers and bootstrap stores are registered only by the trusted
+native host after it creates the runtime authorization scope. The public
+contract exposes credential requests and results, but it does not expose host
+factories, provider construction, bootstrap enrollment, or provider
+configuration through MCP, the generated language bindings, the stable C ABI,
+or serialized daemon configuration. Ordinary daemon and private-worker paths
+therefore publish no credential tools unless their trusted host explicitly
+injects a scope-matched credential broker.
+
 Session contracts are marked `canonical_runtime`: the same typed Rust input,
 output, and metadata declaration builds the live MCP tool. The preferred action
 target is a tagged union: `{kind:"window", pid, window_id}` or
@@ -99,7 +116,7 @@ Compatibility is tracked separately at each boundary:
 
 | Field | Current | Meaning |
 | --- | --- | --- |
-| `contract_version` | `0.7.0` | Generated manifest and typed SDK shape |
+| `contract_version` | `0.8.0` | Generated manifest and typed SDK shape |
 | `tools_list_schema_version` | `1` | cua-driver `tools/list` extension shape |
 | `capability_version` | `1` | Additive capability-token vocabulary |
 | `mcp_protocol_version` | `2025-06-18` | MCP initialization protocol served to agent runtimes |

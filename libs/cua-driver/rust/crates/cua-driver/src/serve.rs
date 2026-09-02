@@ -2515,6 +2515,7 @@ mod gate_tests {
                 register_host_tools: Some(register_probe),
                 authorization_host: None,
                 activity_observer: None,
+                credential_host_factory: None,
             });
         let direct_driver = driver.clone();
         let sdk = crate::sdk_adapter::SdkAdapter::load(driver)

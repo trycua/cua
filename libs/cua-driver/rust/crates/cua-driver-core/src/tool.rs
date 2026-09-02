@@ -402,6 +402,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // input.pointer/keyboard families) because they act inside a
         // page via CDP, not on the OS input layer.
         "get_browser_state" => &["browser.state"],
+        "find_credentials" => &["credentials.find", "browser.state"],
         "browser_prepare" => &["browser.prepare"],
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
@@ -410,6 +411,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         "browser_set_input_files" => &["browser.input.files"],
         "browser_download" => &["browser.download"],
         "browser_pointer" => &["browser.input.pointer"],
+        "type_secret" => &["credentials.release", "browser.input.secret"],
 
         // ── driver self-service ──────────────────────────────────────
         "check_for_update" => &["driver.update_check"],
@@ -506,6 +508,13 @@ pub enum ProtectedResourceOwnership {
 #[async_trait]
 pub trait Tool: Send + Sync {
     fn def(&self) -> &ToolDef;
+
+    /// Return the explicit argument projection retained when deterministic
+    /// recording is active. Host-registered mutable tools can opt in without
+    /// weakening the fail-closed policy for unclassified built-in tools.
+    fn recording_projection(&self, _args: &Value) -> Option<Value> {
+        None
+    }
 
     /// Trusted implementation-side provenance for prompt-light disposable
     /// resources. The default is deliberately conservative: caller arguments
@@ -633,6 +642,10 @@ pub struct ToolRegistry {
     cursor_outcome_readers: Vec<crate::session::CursorOutcomeReaderRegistration>,
     _recording_state_readers: Vec<crate::session::RecordingStateReaderRegistration>,
     runtime_cleanups: Vec<RuntimeCleanup>,
+    /// Trusted Rust hosts may register administrative mutations whose public
+    /// arguments are not part of the canonical contract. Their recordings are
+    /// fixed and content-free rather than inheriting pass-through behavior.
+    fixed_recording_tools: HashSet<String>,
     /// Runtime-owned protected-consent broker shared by every resource
     /// adapter. Keeping it at the canonical dispatch boundary prevents
     /// browser, desktop, and file adapters from growing independent provider
@@ -700,6 +713,7 @@ impl ToolRegistry {
             cursor_outcome_readers: Vec::new(),
             _recording_state_readers: vec![recording_state_reader],
             runtime_cleanups: Vec::new(),
+            fixed_recording_tools: HashSet::new(),
             approval_broker,
             protected_resource_grants,
             protected_resource_ownership,
@@ -723,6 +737,15 @@ impl ToolRegistry {
         &self,
     ) -> Arc<crate::consent::ProtectedResourceOwnershipStore> {
         self.protected_resource_ownership.clone()
+    }
+
+    /// Give a trusted host-registered tool a privacy-suppressed, content-free
+    /// recording policy. Unknown built-in mutations remain fail closed.
+    #[doc(hidden)]
+    pub fn mark_fixed_recording_policy(&mut self, tool_name: &str) {
+        if self.tools.contains_key(tool_name) {
+            self.fixed_recording_tools.insert(tool_name.to_owned());
+        }
     }
 
     async fn snapshot_running_pids(&self) -> Option<std::collections::BTreeSet<i64>> {
@@ -1286,7 +1309,13 @@ impl ToolRegistry {
             args = public_args.clone();
             namespace_runtime_args(&mut args, context, evidence);
         }
-        let recording_args = recording_args_for(resolved_name, &public_args);
+        let host_fixed_recording = self.fixed_recording_tools.contains(resolved_name);
+        let recording_args = if host_fixed_recording {
+            Some(serde_json::json!({}))
+        } else {
+            recording_args_for(resolved_name, &public_args)
+                .or_else(|| tool.recording_projection(&public_args))
+        };
         if has_adapter("desktop_input")
             && (!runtime_proves_driver_owned || context.capability_manifest().is_some())
         {
@@ -1495,7 +1524,18 @@ impl ToolRegistry {
                 resolved_name,
                 "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
             );
-        let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
+        if should_record && self.recording.current_state().enabled && recording_args.is_none() {
+            return ToolResult::error("recording policy unavailable for this operation")
+                .with_structured(serde_json::json!({
+                    "status": "refused",
+                    "refusal": {
+                        "code": "recording_policy_unavailable",
+                        "message": "recording policy unavailable for this operation",
+                    }
+                }));
+        }
+        let fixed_recording_turn = resolved_name == "type_secret" || host_fixed_recording;
+        let private_recording_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {
             let coordinator = desktop_action_coordinator();
             // Avoid yielding the dispatch task when the process-wide input
@@ -1512,13 +1552,17 @@ impl ToolRegistry {
         };
         let pending_turn = should_record
             .then(|| {
-                if private_consent_turn {
-                    self.recording
-                        .begin_private_turn(resolved_name, &recording_args, start_ms)
-                } else {
-                    self.recording
-                        .begin_turn(resolved_name, &recording_args, start_ms)
-                }
+                recording_args.as_ref().and_then(|recording_args| {
+                    if fixed_recording_turn {
+                        self.recording.begin_fixed_turn(resolved_name, start_ms)
+                    } else if private_recording_turn {
+                        self.recording
+                            .begin_private_turn(resolved_name, recording_args, start_ms)
+                    } else {
+                        self.recording
+                            .begin_turn(resolved_name, recording_args, start_ms)
+                    }
+                })
             })
             .flatten();
 
@@ -1652,7 +1696,11 @@ impl ToolRegistry {
         // of action tools the recording pipeline cares about (non-read-only,
         // not the recording-control meta-tools) so the live view matches
         // what the recorder would have captured for the turn.
-        if pip_hook::pip_enabled() && should_record && !private_consent_turn {
+        if pip_hook::pip_enabled()
+            && should_record
+            && !private_recording_turn
+            && !fixed_recording_turn
+        {
             let window_id = args.opt_u64("window_id");
             let pid = args.opt_i64("pid");
             if let Some(png_bytes) = screenshot_for(window_id, pid) {
@@ -4678,7 +4726,14 @@ fn is_existing_profile_prepare(tool_name: &str, args: &Value) -> bool {
             == Some("existing_profile")
 }
 
-fn recording_args_for(tool_name: &str, args: &Value) -> Value {
+/// Return the explicitly reviewed recording projection for a mutable tool.
+///
+/// Unknown tools are deliberately non-recordable. This makes adding a new
+/// mutation fail closed until its retained argument shape has been reviewed.
+fn recording_args_for(tool_name: &str, args: &Value) -> Option<Value> {
+    if !has_recording_policy(tool_name) {
+        return None;
+    }
     let mut redacted = args.clone();
     if let Some(arguments) = redacted.as_object_mut() {
         match tool_name {
@@ -4718,11 +4773,103 @@ fn recording_args_for(tool_name: &str, args: &Value) -> Value {
                     );
                 }
             }
-            "browser_pointer" => {}
+            "type_secret" => {
+                arguments.clear();
+            }
+            "type_text" | "browser_type" => {
+                if arguments.contains_key("text") {
+                    arguments.insert("text".to_owned(), Value::String("[redacted]".to_owned()));
+                }
+            }
+            "set_value" => {
+                if arguments.contains_key("value") {
+                    arguments.insert("value".to_owned(), Value::String("[redacted]".to_owned()));
+                }
+            }
+            "browser_navigate" => {
+                if arguments.contains_key("url") {
+                    arguments.insert("url".to_owned(), Value::String("[redacted]".to_owned()));
+                }
+            }
+            "page" => {
+                let session = arguments.get("session").cloned();
+                arguments.clear();
+                arguments.insert(
+                    "arguments".to_owned(),
+                    Value::String("[redacted]".to_owned()),
+                );
+                if let Some(session) = session {
+                    arguments.insert("session".to_owned(), session);
+                }
+            }
+            "start_recording" | "replay_trajectory" => {
+                for field in ["output_dir", "input_dir"] {
+                    if arguments.contains_key(field) {
+                        arguments.insert(field.to_owned(), Value::String("[redacted]".to_owned()));
+                    }
+                }
+            }
+            name if recording_passthrough_tool(name) => {}
             _ => {}
         }
     }
-    redacted
+    Some(redacted)
+}
+
+fn recording_passthrough_tool(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "launch_app"
+            | "kill_app"
+            | "bring_to_front"
+            | "set_window_frame"
+            | "invoke_menu"
+            | "click"
+            | "double_click"
+            | "right_click"
+            | "drag"
+            | "mouse_button_down"
+            | "mouse_drag"
+            | "mouse_button_up"
+            | "parallel_mouse_drag"
+            | "press_key"
+            | "hotkey"
+            | "scroll"
+            | "move_cursor"
+            | "set_agent_cursor_enabled"
+            | "set_agent_cursor_motion"
+            | "set_agent_cursor_theme"
+            | "check_permissions"
+            | "set_config"
+            | "zoom"
+            | "browser_click"
+            | "browser_pointer"
+            | "install_ffmpeg"
+            | "stop_recording"
+            | "start_session"
+            | "escalate_session"
+            | "end_session"
+    )
+}
+
+/// Whether a mutable operation has an explicit retained-argument policy.
+pub fn has_recording_policy(tool_name: &str) -> bool {
+    matches!(
+        tool_name,
+        "browser_prepare"
+            | "browser_dialog"
+            | "clipboard_write"
+            | "browser_set_input_files"
+            | "browser_download"
+            | "type_text"
+            | "browser_type"
+            | "type_secret"
+            | "set_value"
+            | "browser_navigate"
+            | "page"
+            | "start_recording"
+            | "replay_trajectory"
+    ) || recording_passthrough_tool(tool_name)
 }
 
 impl Default for ToolRegistry {
@@ -4751,15 +4898,8 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
                 "".into()
             }
         }
-        "type_text" => {
-            let text = arg("text").unwrap_or_default();
-            let trimmed: String = text.chars().take(40).collect();
-            if text.chars().count() > 40 {
-                format!("\"{trimmed}…\"")
-            } else {
-                format!("\"{trimmed}\"")
-            }
-        }
+        "type_text" => return "Type text".to_owned(),
+        "type_secret" => return "Fill saved secret".to_owned(),
         "press_key" | "hotkey" => arg("key").or_else(|| arg("keys")).unwrap_or_default(),
         "scroll" => format!(
             "dx={} dy={}",
@@ -4767,7 +4907,7 @@ fn synthesize_action_label(tool_name: &str, args: &Value) -> String {
             arg("dy").unwrap_or_else(|| "0".into())
         ),
         "drag" => "drag".into(),
-        "set_value" => arg("value").unwrap_or_default(),
+        "set_value" => return "Set value".to_owned(),
         "launch_app" => arg("bundle_id").or_else(|| arg("name")).unwrap_or_default(),
         _ => String::new(),
     };
@@ -4797,7 +4937,8 @@ mod capability_tests {
                 "strategy": {"kind": "existing_profile"},
                 "_transport_session_id": "private-transport",
             }),
-        );
+        )
+        .expect("browser_prepare has an explicit recording policy");
         assert!(recorded.get("_transport_session_id").is_none());
         assert_eq!(recorded["pid"], 42);
         assert_eq!(recorded["window_id"], 7);
@@ -4809,13 +4950,15 @@ mod capability_tests {
         let dialog = recording_args_for(
             "browser_dialog",
             &serde_json::json!({"action": "accept", "prompt_text": "private reply"}),
-        );
+        )
+        .expect("browser_dialog has an explicit recording policy");
         assert_eq!(dialog["prompt_text"], "[redacted]");
 
         let upload = recording_args_for(
             "browser_set_input_files",
             &serde_json::json!({"files": ["/private/one", "/private/two"]}),
-        );
+        )
+        .expect("browser_set_input_files has an explicit recording policy");
         assert_eq!(upload["files"], serde_json::json!({"count": 2}));
 
         let download = recording_args_for(
@@ -4824,7 +4967,8 @@ mod capability_tests {
                 "destination_root": "/private/destination",
                 "_cua_browser_download_mcp_host_approved": true,
             }),
-        );
+        )
+        .expect("browser_download has an explicit recording policy");
         assert_eq!(download["destination_root"], "[redacted]");
         assert!(download
             .get("_cua_browser_download_mcp_host_approved")
@@ -4854,7 +4998,8 @@ mod capability_tests {
                 "file_path": "/private/document.pdf",
                 "session": "public-session",
             }),
-        );
+        )
+        .expect("clipboard_write has an explicit recording policy");
         assert_eq!(recorded["text"], "[redacted]");
         assert_eq!(recorded["image_path"], "[redacted]");
         assert_eq!(recorded["file_path"], "[redacted]");
@@ -4866,6 +5011,83 @@ mod capability_tests {
             "/private/document.pdf",
         ] {
             assert!(!serialized.contains(forbidden));
+        }
+    }
+
+    #[test]
+    fn text_bearing_recording_args_do_not_retain_caller_content() {
+        let canary = "cua-secret-canary-do-not-retain";
+        let cases = [
+            ("type_text", serde_json::json!({"text": canary})),
+            ("set_value", serde_json::json!({"value": canary})),
+            ("browser_type", serde_json::json!({"text": canary})),
+            (
+                "browser_navigate",
+                serde_json::json!({"url": format!("https://example.test/?token={canary}")}),
+            ),
+            (
+                "page",
+                serde_json::json!({"action": "type", "text": canary}),
+            ),
+        ];
+
+        for (tool_name, args) in cases {
+            let recorded = recording_args_for(tool_name, &args)
+                .unwrap_or_else(|| panic!("{tool_name} must have a recording policy"));
+            assert!(
+                !recorded.to_string().contains(canary),
+                "{tool_name} retained caller content: {recorded}"
+            );
+        }
+    }
+
+    #[test]
+    fn unclassified_mutations_are_not_recordable() {
+        assert!(recording_args_for(
+            "new_mutation_without_privacy_review",
+            &serde_json::json!({"text": "must not persist"}),
+        )
+        .is_none());
+        assert!(!has_recording_policy("new_mutation_without_privacy_review"));
+    }
+
+    #[test]
+    fn permission_prompt_recording_retains_only_reviewed_boolean_controls() {
+        let recorded = recording_args_for(
+            "check_permissions",
+            &serde_json::json!({
+                "prompt": true,
+                "probe_direct_capture": false,
+            }),
+        )
+        .expect("check_permissions has an explicit recording policy");
+        assert_eq!(
+            recorded,
+            serde_json::json!({
+                "prompt": true,
+                "probe_direct_capture": false,
+            })
+        );
+    }
+
+    #[test]
+    fn visible_text_action_labels_never_echo_caller_content() {
+        let canary = "cua-visible-canary";
+        for (tool_name, args, expected) in [
+            (
+                "type_text",
+                serde_json::json!({"text": canary}),
+                "Type text",
+            ),
+            (
+                "set_value",
+                serde_json::json!({"value": canary}),
+                "Set value",
+            ),
+        ] {
+            let label = synthesize_action_label(tool_name, &args);
+            assert_eq!(label, expected);
+            assert!(!label.contains(canary));
         }
     }
 
@@ -5306,6 +5528,14 @@ mod capability_tests {
         assert_eq!(entry["risk"]["enforcement"], "active");
         assert_eq!(entry["risk"]["operation_sensitive"], true);
         assert_eq!(entry["risk"]["version"], "1");
+
+        let discovery = dummy_def("find_credentials").to_list_entry();
+        assert_eq!(discovery["risk"]["class"], "r2");
+        assert_eq!(discovery["risk"]["enforcement"], "active");
+
+        let delivery = dummy_def("type_secret").to_list_entry();
+        assert_eq!(delivery["risk"]["class"], "r3");
+        assert_eq!(delivery["risk"]["enforcement"], "active");
     }
 
     #[test]
@@ -5365,7 +5595,13 @@ mod capability_tests {
     fn action_tools_advertise_the_same_closed_output_schema() {
         let expected =
             <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema();
-        for name in ["click", "browser_click", "browser_pointer", "browser_type"] {
+        for name in [
+            "click",
+            "browser_click",
+            "browser_pointer",
+            "browser_type",
+            "type_secret",
+        ] {
             let entry = action_tool_entry(name);
             // The success variant is unchanged and still closed; it now sits
             // beside the refusal envelope instead of standing alone.

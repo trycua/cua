@@ -65,6 +65,25 @@ pub enum BrowserVisibility {
     Unknown,
 }
 
+/// Browser fields that are eligible for brokered secret delivery.
+///
+/// This classification is minted only by semantic-v2 from exact live DOM
+/// evidence. It is intentionally closed so callers cannot turn a generic
+/// editable ref into a secret sink by naming or styling it like one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SecureFieldKind {
+    Password,
+}
+
+impl SecureFieldKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Password => "password",
+        }
+    }
+}
+
 impl BrowserVisibility {
     pub fn as_str(self) -> &'static str {
         match self {
@@ -159,6 +178,10 @@ pub struct RefEntry {
     pub actions: Vec<BrowserActionKind>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub visibility: Option<BrowserVisibility>,
+    /// Positive semantic-v2 DOM classification for guarded secret delivery.
+    /// Legacy refs and ordinary editable fields always store `None`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub secure_field: Option<SecureFieldKind>,
     /// Semantic refs enforce their declared action set. Legacy DOM refs keep
     /// their existing permissive behavior during the versioned migration.
     #[serde(skip_serializing)]
@@ -217,6 +240,10 @@ pub struct TargetRecord {
     /// CDP connection generation that minted this capability. Zero denotes
     /// the legacy/non-grant route.
     pub generation: u64,
+    /// Always-nonzero identity generation for the exact endpoint binding.
+    /// Unlike `generation`, this also covers driver-owned and embedded routes
+    /// whose socket is re-proven directly instead of owned by a grant.
+    pub endpoint_generation: u64,
     /// Internal transport owner that proved an existing-profile grant or a
     /// driver-owned browser lifecycle. The public session remains the target
     /// namespace and is checked independently.
@@ -298,6 +325,12 @@ impl BrowserStore {
     /// Mint a fresh snapshot id.
     pub fn mint_snapshot_id(&self) -> u64 {
         self.next()
+    }
+
+    /// Mint an identity generation for one freshly proven endpoint binding.
+    pub fn mint_endpoint_generation(&self) -> u64 {
+        static NEXT_ENDPOINT_GENERATION: AtomicU64 = AtomicU64::new(1);
+        NEXT_ENDPOINT_GENERATION.fetch_add(1, Ordering::Relaxed)
     }
 
     /// Look up a target capability. Unknown ids — including ids minted
@@ -477,6 +510,7 @@ mod tests {
             endpoint_transport: EndpointTransport::LegacyJsonVersion,
             endpoint_access_class: EndpointAccessClass::EmbeddedApplication,
             generation: 0,
+            endpoint_generation: 1,
             transport_session: None,
             fingerprint: ProcessFingerprint {
                 pid: 42,
@@ -508,6 +542,7 @@ mod tests {
                     label: Some("Submit".into()),
                     actions: Vec::new(),
                     visibility: None,
+                    secure_field: None,
                     semantic: false,
                     frame: FrameRef {
                         kind: FrameKind::Main,

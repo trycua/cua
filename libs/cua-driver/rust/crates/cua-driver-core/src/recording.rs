@@ -147,6 +147,7 @@ pub struct PendingTurn {
     pid: Option<i64>,
     click_point: Option<(f64, f64)>,
     capture_visual_state: bool,
+    fixed_content: bool,
     before: TurnCapture,
 }
 
@@ -477,7 +478,7 @@ impl RecordingSession {
     /// Reserve a turn and capture its target immediately before tool dispatch.
     /// No-op when recording is disabled.
     pub fn begin_turn(&self, tool_name: &str, args: &Value, start_ms: u64) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, true)
+        self.begin_turn_with_capture(tool_name, args, start_ms, true, false)
     }
 
     /// Reserve a turn while deliberately suppressing visual and accessibility
@@ -490,7 +491,13 @@ impl RecordingSession {
         args: &Value,
         start_ms: u64,
     ) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, false)
+        self.begin_turn_with_capture(tool_name, args, start_ms, false, false)
+    }
+
+    /// Reserve a privacy-suppressed turn whose persisted contents are fixed by
+    /// the runtime rather than derived from caller arguments or tool results.
+    pub fn begin_fixed_turn(&self, tool_name: &str, start_ms: u64) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, &serde_json::json!({}), start_ms, false, true)
     }
 
     fn begin_turn_with_capture(
@@ -499,6 +506,7 @@ impl RecordingSession {
         args: &Value,
         start_ms: u64,
         capture_visual_state: bool,
+        fixed_content: bool,
     ) -> Option<PendingTurn> {
         let (turn_dir, session_start_ms, generation) = {
             let mut inner = self.inner.lock().unwrap();
@@ -567,6 +575,7 @@ impl RecordingSession {
             pid,
             click_point,
             capture_visual_state,
+            fixed_content,
             before,
         })
     }
@@ -773,6 +782,7 @@ fn write_turn(
         pid,
         click_point,
         capture_visual_state,
+        fixed_content,
         before,
     } = pending;
     std::fs::create_dir_all(&turn_dir)?;
@@ -798,20 +808,42 @@ fn write_turn(
     let click_expected =
         click_family && !refused_before_target_resolution && !refused_before_dispatch;
 
-    let mut payload = serde_json::json!({
-        "tool": tool_name,
-        "arguments": args,
-        "result_summary": result_text,
-        "result_error": result_is_error,
-        "timestamp": iso_now(),
-        "t_ms_from_session_start": now.saturating_sub(session_start_ms),
-        "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
-    });
+    let mut payload = if fixed_content {
+        let label = if tool_name == "type_secret" {
+            "Fill saved secret"
+        } else {
+            "Host-managed action"
+        };
+        serde_json::json!({
+            "tool": tool_name,
+            "label": label,
+            "arguments": {},
+            "replayable": false,
+            "result_summary": "",
+            "result_error": result_is_error,
+            "timestamp": iso_now(),
+            "t_ms_from_session_start": now.saturating_sub(session_start_ms),
+            "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
+        })
+    } else {
+        serde_json::json!({
+            "tool": tool_name,
+            "arguments": args,
+            "replayable": true,
+            "result_summary": result_text,
+            "result_error": result_is_error,
+            "timestamp": iso_now(),
+            "t_ms_from_session_start": now.saturating_sub(session_start_ms),
+            "t_start_ms_from_session_start": start_ms.saturating_sub(session_start_ms),
+        })
+    };
     if let Some((cx, cy)) = click_point {
         payload["click_point"] = serde_json::json!({"x": cx, "y": cy});
     }
-    if let Some(action_record) = action_record {
-        payload["action_truth"] = action_record.debug_json();
+    if !fixed_content {
+        if let Some(action_record) = action_record {
+            payload["action_truth"] = action_record.debug_json();
+        }
     }
     write_json_atomic(&turn_dir.join("action.json"), &payload)?;
     write_phase_artifacts(&turn_dir, "after", &after)?;
@@ -1230,6 +1262,59 @@ mod tests {
         }
         std::fs::remove_dir(&turn).expect("remove private turn directory");
         std::fs::remove_dir(&output_dir).expect("remove private recording directory");
+    }
+
+    #[test]
+    fn fixed_secret_turn_retains_no_caller_or_result_content() {
+        let output_dir = std::env::temp_dir().join(format!(
+            "cua-recording-fixed-secret-turn-{}-{}",
+            std::process::id(),
+            now_ms()
+        ));
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().expect("recording lock");
+            inner.enabled = true;
+            inner.output_dir = Some(output_dir.clone());
+            inner.session_start_ms = now_ms();
+        }
+        let pending = session
+            .begin_fixed_turn("type_secret", now_ms())
+            .expect("reserve fixed secret turn");
+        session.finish_turn(pending, "CREDENTIAL_CANARY_MUST_NOT_PERSIST");
+
+        let turn = output_dir.join("turn-00001");
+        let action_bytes = std::fs::read(turn.join("action.json")).expect("read fixed action");
+        let action: Value = serde_json::from_slice(&action_bytes).expect("parse fixed action");
+        assert_eq!(action["tool"], "type_secret");
+        assert_eq!(action["label"], "Fill saved secret");
+        assert_eq!(action["arguments"], serde_json::json!({}));
+        assert_eq!(action["result_summary"], "");
+        assert_eq!(action["replayable"], false);
+        assert!(action.get("action_truth").is_none());
+        let rendered = String::from_utf8(action_bytes).expect("action JSON is UTF-8");
+        for forbidden in ["CREDENTIAL_CANARY", "ch-", "target_id", "tab_id", "ref"] {
+            assert!(
+                !rendered.contains(forbidden),
+                "fixed turn leaked {forbidden}"
+            );
+        }
+        for private_artifact in [
+            "before.png",
+            "after.png",
+            "screenshot.png",
+            "before_state.json",
+            "after_state.json",
+            "app_state.json",
+        ] {
+            assert!(!turn.join(private_artifact).exists(), "{private_artifact}");
+        }
+
+        for file in ["action.json", "evidence.json"] {
+            std::fs::remove_file(turn.join(file)).expect("remove fixed turn artifact");
+        }
+        std::fs::remove_dir(&turn).expect("remove fixed turn directory");
+        std::fs::remove_dir(&output_dir).expect("remove fixed recording directory");
     }
 
     #[test]

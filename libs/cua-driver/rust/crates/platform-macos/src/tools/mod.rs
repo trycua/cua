@@ -800,6 +800,7 @@ pub fn register_all(
     cursor_overlay_available: bool,
     host_owns_permission_ux: bool,
     host_bundle_id: Option<String>,
+    secret_broker: Option<Arc<cua_driver_core::credentials::SecretBroker>>,
 ) {
     let state = Arc::new(ToolState::new(
         cursor_overlay_available,
@@ -1007,13 +1008,15 @@ pub fn register_all(
     registry.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         page::MacOsPageBackend::new(state.clone()),
     ))));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
-        Arc::new(crate::browser::MacOsBrowserPlatform::new(
-            state.cursor_registry.clone(),
-        )),
-        registry.approval_broker(),
-        registry.protected_resource_ownership(),
-    );
+    let browser_engine =
+        cua_driver_core::browser::BrowserEngine::new_with_runtime_services_and_secret_broker(
+            Arc::new(crate::browser::MacOsBrowserPlatform::new(
+                state.cursor_registry.clone(),
+            )),
+            registry.approval_broker(),
+            registry.protected_resource_ownership(),
+            secret_broker,
+        );
     cua_driver_core::browser::register_browser_tools(&browser_engine, registry);
     // Recording / replay + session-lifecycle tools are platform-independent.
     registry.register_recording_tools();

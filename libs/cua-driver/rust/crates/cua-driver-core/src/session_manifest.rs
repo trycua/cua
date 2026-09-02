@@ -4,7 +4,7 @@
 //! launcher responsibility. The manifest only narrows the built-in,
 //! managed, and user policy layers; it cannot introduce unreviewed tools.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -51,6 +51,7 @@ pub struct SessionManifest {
     terminable_pids: HashSet<i64>,
     configuration_changes: Vec<(String, serde_json::Value)>,
     computer_history_operations: HashSet<String>,
+    secret_release_bindings: HashMap<String, HashSet<String>>,
     last_authorized_dispatch: Arc<Mutex<Instant>>,
     idle_expired: Arc<AtomicBool>,
 }
@@ -229,6 +230,42 @@ impl SessionManifest {
             "file_transfer_and_output" => self.authorize_file_resource(kind, resource),
             "browser_bound_input" | "browser_consequential_action" => {
                 self.authorize_resource_origin(resource)
+            }
+            "secret_release" => {
+                if kind != "bound_secret_release_to_verified_target" {
+                    return refused();
+                }
+                let authorization = resource
+                    .get("authorization")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        "secret release did not attest a binding authorization".to_owned()
+                    })?;
+                let origin = resource
+                    .get("origin")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "secret release did not attest an origin".to_owned())?;
+                let field = resource
+                    .get("field")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "secret release did not attest a field".to_owned())?;
+                let secure_field = resource
+                    .get("secure_field")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| {
+                        "secret release did not attest a secure field classification".to_owned()
+                    })?;
+                if field != "password" || secure_field != "password" {
+                    return refused();
+                }
+                self.secret_release_bindings
+                    .get(authorization)
+                    .is_some_and(|origins| origins.contains(origin))
+                    .then_some(())
+                    .ok_or_else(|| {
+                        "secret release binding or origin is outside the capability manifest"
+                            .to_owned()
+                    })
             }
             "process_control" => {
                 let pid = resource
@@ -557,6 +594,8 @@ struct RawResources {
     driver_configuration: RawDriverConfigurationResources,
     #[serde(default)]
     computer_history: RawComputerHistoryResources,
+    #[serde(default)]
+    credentials: RawCredentialResources,
 }
 
 #[cfg(feature = "yaml")]
@@ -669,6 +708,22 @@ struct RawComputerHistoryResources {
 }
 
 #[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawCredentialResources {
+    #[serde(default)]
+    secret_release: Vec<RawSecretReleaseResource>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawSecretReleaseResource {
+    authorization: String,
+    origins: Vec<String>,
+}
+
+#[cfg(feature = "yaml")]
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 struct RawConfigurationChange {
@@ -774,6 +829,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             processes,
             driver_configuration,
             computer_history,
+            credentials,
         } = resources;
         let RawBrowserResources {
             existing_profiles: raw_existing_profiles,
@@ -798,6 +854,9 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
         let RawComputerHistoryResources {
             operations: raw_computer_history_operations,
         } = computer_history;
+        let RawCredentialResources {
+            secret_release: raw_secret_release_bindings,
+        } = credentials;
 
         if !matches!(version, 1..=3) {
             return Err(format!(
@@ -973,6 +1032,57 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 return Err(format!("computer_history operations repeats '{operation}'"));
             }
         }
+        if version < 3 && !raw_secret_release_bindings.is_empty() {
+            return Err("credential resources require capability manifest version 3".to_owned());
+        }
+        let mut secret_release_bindings = HashMap::new();
+        for binding in raw_secret_release_bindings {
+            let authorization = binding.authorization.trim();
+            if authorization.is_empty()
+                || authorization.len() > 128
+                || !authorization.bytes().all(|byte| {
+                    byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.' | b':')
+                })
+            {
+                return Err(
+                    "credential secret_release authorization must be a bounded identifier"
+                        .to_owned(),
+                );
+            }
+            if binding.origins.is_empty() {
+                return Err(format!(
+                    "credential secret_release authorization '{authorization}' requires at least one origin"
+                ));
+            }
+            let mut origins = HashSet::new();
+            for raw_origin in binding.origins {
+                let origin = canonical_origin(&raw_origin)?;
+                if origin != raw_origin.trim().trim_end_matches('/') {
+                    return Err(format!(
+                        "credential secret_release origin '{raw_origin}' must be an exact canonical origin without a path"
+                    ));
+                }
+                if !origins.insert(origin.clone()) {
+                    return Err(format!(
+                        "credential secret_release authorization '{authorization}' repeats origin '{origin}'"
+                    ));
+                }
+            }
+            if secret_release_bindings
+                .insert(authorization.to_owned(), origins)
+                .is_some()
+            {
+                return Err(format!(
+                    "credential secret_release repeats authorization '{authorization}'"
+                ));
+            }
+        }
+        if allow.contains("secret_release") && secret_release_bindings.is_empty() {
+            return Err(
+                "capability manifest allowing secret_release requires an exact credential binding resource"
+                    .to_owned(),
+            );
+        }
         if !browser_origins.is_empty() {
             const ORIGIN_BYPASS_TOOLS: &[&str] = &[
                 "page",
@@ -1034,6 +1144,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             terminable_pids,
             configuration_changes,
             computer_history_operations,
+            secret_release_bindings,
             last_authorized_dispatch: Arc::new(Mutex::new(Instant::now())),
             idle_expired: Arc::new(AtomicBool::new(false)),
         })
@@ -1065,6 +1176,7 @@ fn validate_tools(section: &str, tools: Vec<String>) -> Result<HashSet<String>, 
 fn canonical_tool_name(tool: &str) -> &str {
     match tool {
         "type_text_chars" => "type_text",
+        "type_secret" => "secret_release",
         other => other,
     }
 }
@@ -1994,6 +2106,114 @@ allow:
         )
         .unwrap_err();
         assert!(overlap.contains("more than one decision set"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn secret_release_requires_its_own_exact_binding_and_origin_scope() {
+        let loaded = manifest(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 5m
+resources:
+  credentials:
+    secret_release:
+      - authorization: login-recovery
+        origins: [https://accounts.example.test]
+allow:
+  tools: [secret_release]
+"#,
+        )
+        .unwrap();
+        let resource = serde_json::json!({
+            "kind": "bound_secret_release_to_verified_target",
+            "authorization": "login-recovery",
+            "origin": "https://accounts.example.test",
+            "field": "password",
+            "secure_field": "password",
+        });
+        assert_eq!(loaded.decision("secret_release"), ManifestDecision::Allow);
+        loaded
+            .authorize_protected_resource("secret_release", &resource)
+            .unwrap();
+
+        for changed in [
+            serde_json::json!({
+                "kind": "bound_secret_release_to_verified_target",
+                "authorization": "another-binding",
+                "origin": "https://accounts.example.test",
+                "field": "password",
+                "secure_field": "password",
+            }),
+            serde_json::json!({
+                "kind": "bound_secret_release_to_verified_target",
+                "authorization": "login-recovery",
+                "origin": "https://other.example.test",
+                "field": "password",
+                "secure_field": "password",
+            }),
+            serde_json::json!({
+                "kind": "bound_secret_release_to_verified_target",
+                "authorization": "login-recovery",
+                "origin": "https://accounts.example.test",
+                "field": "text",
+                "secure_field": "password",
+            }),
+        ] {
+            assert!(loaded
+                .authorize_protected_resource("secret_release", &changed)
+                .is_err());
+        }
+
+        let generic_input_only = manifest(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 5m
+resources:
+  browser:
+    origins: [https://accounts.example.test]
+allow:
+  tools: [browser_type]
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            generic_input_only.decision("secret_release"),
+            ManifestDecision::Undeclared
+        );
+        assert!(generic_input_only
+            .authorize_protected_resource("secret_release", &resource)
+            .is_err());
+
+        assert!(manifest(
+            "version: 3\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [secret_release]\n",
+        )
+        .unwrap_err()
+        .contains("requires an exact credential binding resource"));
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn public_type_secret_alias_authorizes_the_internal_release_decision() {
+        let loaded = manifest(
+            r#"
+version: 3
+expires_after: 1h
+idle_timeout: 5m
+resources:
+  credentials:
+    secret_release:
+      - authorization: login-recovery
+        origins: [https://accounts.example.test]
+allow:
+  tools: [type_secret]
+"#,
+        )
+        .unwrap();
+        assert_eq!(loaded.decision("type_secret"), ManifestDecision::Allow);
+        assert_eq!(loaded.decision("secret_release"), ManifestDecision::Allow);
     }
 
     #[test]

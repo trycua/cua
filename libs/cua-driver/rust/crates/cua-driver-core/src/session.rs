@@ -31,6 +31,7 @@ pub const DEFAULT_SESSION_IDLE_TTL: Duration = Duration::from_secs(5 * 60);
 
 type SessionEndHook = Arc<dyn Fn(&str) -> Result<(), String> + Send + Sync>;
 type SessionReviveHook = Arc<dyn Fn(&str) + Send + Sync>;
+type RuntimeSuspendHook = Arc<dyn Fn(&str) + Send + Sync>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionCleanupFailure {
@@ -329,6 +330,8 @@ static SESSION_CLEANUP_PROGRESS: OnceLock<Mutex<HashMap<String, SessionCleanupPr
     OnceLock::new();
 static SESSION_REVIVE_HOOKS: OnceLock<Mutex<HashMap<u64, SessionReviveHook>>> = OnceLock::new();
 static NEXT_SESSION_REVIVE_HOOK_ID: AtomicU64 = AtomicU64::new(1);
+static RUNTIME_SUSPEND_HOOKS: OnceLock<Mutex<HashMap<u64, RuntimeSuspendHook>>> = OnceLock::new();
+static NEXT_RUNTIME_SUSPEND_HOOK_ID: AtomicU64 = AtomicU64::new(1);
 
 /// Last-activity timestamp per live lifecycle session. Only an admitted,
 /// session-requiring call that reaches dispatch refreshes this timestamp.
@@ -963,15 +966,31 @@ fn suspended_runtime_scopes() -> &'static Mutex<HashSet<String>> {
     SUSPENDED_RUNTIME_SCOPES.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn runtime_suspend_hooks() -> &'static Mutex<HashMap<u64, RuntimeSuspendHook>> {
+    RUNTIME_SUSPEND_HOOKS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
 /// Terminally suspend authorization for one private runtime generation.
 ///
 /// The opaque scope is generated inside Cua and is never accepted from a
 /// public tool argument.
 pub fn suspend_runtime_scope(runtime_scope: &str) -> bool {
-    suspended_runtime_scopes()
+    let inserted = suspended_runtime_scopes()
         .lock()
         .unwrap()
-        .insert(runtime_scope.to_owned())
+        .insert(runtime_scope.to_owned());
+    if inserted {
+        let registered = runtime_suspend_hooks()
+            .lock()
+            .unwrap()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for hook in registered {
+            hook(runtime_scope);
+        }
+    }
+    inserted
 }
 
 pub fn is_runtime_scope_suspended(runtime_scope: &str) -> bool {
@@ -987,6 +1006,29 @@ pub fn forget_suspended_runtime_scope(runtime_scope: &str) -> bool {
         .lock()
         .unwrap()
         .remove(runtime_scope)
+}
+
+/// Register a runtime-owned callback for terminal generation suspension.
+/// Dropping the returned guard removes the callback.
+pub fn register_scoped_runtime_suspend_hook(
+    hook: impl Fn(&str) + Send + Sync + 'static,
+) -> RuntimeSuspendHookRegistration {
+    let id = NEXT_RUNTIME_SUSPEND_HOOK_ID.fetch_add(1, Ordering::Relaxed);
+    runtime_suspend_hooks()
+        .lock()
+        .unwrap()
+        .insert(id, Arc::new(hook));
+    RuntimeSuspendHookRegistration { id }
+}
+
+pub struct RuntimeSuspendHookRegistration {
+    id: u64,
+}
+
+impl Drop for RuntimeSuspendHookRegistration {
+    fn drop(&mut self) {
+        runtime_suspend_hooks().lock().unwrap().remove(&self.id);
+    }
 }
 
 pub(crate) fn public_session_label(session_id: &str) -> &str {

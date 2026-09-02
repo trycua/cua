@@ -29,14 +29,373 @@ use super::types::BindingQuality;
 /// engine with their adapter.
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
+    registry.register(Box::new(FindCredentialsTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
+    registry.register(Box::new(TypeSecretTool::new(engine.clone())));
     registry.register(Box::new(BrowserDialogTool::new(engine.clone())));
     registry.register(Box::new(BrowserSetInputFilesTool::new(engine.clone())));
     registry.register(Box::new(BrowserDownloadTool::new(engine.clone())));
     registry.register(Box::new(BrowserPointerTool::new(engine.clone())));
+}
+
+fn credential_tool_def(name: &str) -> ToolDef {
+    let contract = cua_driver_contract::tool_contract(name)
+        .unwrap_or_else(|| panic!("missing canonical contract for {name}"));
+    ToolDef {
+        name: contract.name,
+        description: contract.description,
+        input_schema: contract.input_schema,
+        read_only: contract.annotations.read_only,
+        destructive: contract.annotations.destructive,
+        idempotent: contract.annotations.idempotent,
+        open_world: contract.annotations.open_world,
+    }
+}
+
+fn parse_public_credential_input<T: serde::de::DeserializeOwned>(
+    args: &Value,
+    tool_name: &str,
+) -> Result<T, ToolResult> {
+    let mut public = args.clone();
+    if let Some(object) = public.as_object_mut() {
+        object.retain(|name, _| !name.starts_with('_'));
+    }
+    serde_json::from_value(public).map_err(|_| {
+        ToolResult::error(format!("{tool_name} arguments are invalid")).with_structured(json!({
+            "status": "refused",
+            "refusal": {
+                "code": "invalid_arguments",
+                "message": format!("{tool_name} arguments are invalid"),
+            }
+        }))
+    })
+}
+
+fn fixed_credential_refusal(code: &'static str, message: &'static str) -> ToolResult {
+    ToolResult::error(format!("refused ({code}): {message}")).with_structured(json!({
+        "status": "refused",
+        "refusal": {
+            "code": code,
+            "message": message,
+        }
+    }))
+}
+
+fn target_bound_credential_refusal(refusal: BrowserRefusal) -> ToolResult {
+    match refusal.code {
+        BrowserRefusalCode::SecretReleaseNotAuthorized => fixed_credential_refusal(
+            "secret_release_not_authorized",
+            "credential delivery is not authorized",
+        ),
+        BrowserRefusalCode::SecretBindingExpired => {
+            fixed_credential_refusal("secret_binding_expired", "the credential binding expired")
+        }
+        BrowserRefusalCode::SecretBindingRevoked => fixed_credential_refusal(
+            "secret_binding_revoked",
+            "the credential binding was revoked",
+        ),
+        BrowserRefusalCode::SecretBindingScopeDenied => fixed_credential_refusal(
+            "secret_binding_scope_denied",
+            "the credential binding does not authorize this release",
+        ),
+        BrowserRefusalCode::SecretHandleExpired => fixed_credential_refusal(
+            "secret_handle_expired",
+            "the credential handle expired; discover credentials again",
+        ),
+        BrowserRefusalCode::SecretHandleConsumed => fixed_credential_refusal(
+            "secret_handle_consumed",
+            "the credential handle was already used; discover credentials again",
+        ),
+        BrowserRefusalCode::SecretHandleTargetMismatch => fixed_credential_refusal(
+            "secret_handle_target_mismatch",
+            "the credential handle does not match this secure target",
+        ),
+        BrowserRefusalCode::SecretProviderUnavailable => fixed_credential_refusal(
+            "secret_provider_unavailable",
+            "the credential provider is unavailable",
+        ),
+        BrowserRefusalCode::SecretProviderLocked => fixed_credential_refusal(
+            "secret_provider_locked",
+            "the credential provider is locked",
+        ),
+        BrowserRefusalCode::SecretUserPresenceRequired => fixed_credential_refusal(
+            "secret_user_presence_required",
+            "credential delivery requires provider-owned user presence",
+        ),
+        BrowserRefusalCode::SecretResolutionFailed => fixed_credential_refusal(
+            "secret_resolution_failed",
+            "the credential could not be resolved",
+        ),
+        BrowserRefusalCode::SecretValueInvalid => fixed_credential_refusal(
+            "secret_value_invalid",
+            "the resolved credential value is invalid",
+        ),
+        BrowserRefusalCode::SecretDeliveryMisdirected => fixed_credential_refusal(
+            "secret_delivery_misdirected",
+            "credential delivery did not remain bound to the exact secure target",
+        ),
+        BrowserRefusalCode::SecretDeliveryUnverified => fixed_credential_refusal(
+            "secret_delivery_unverified",
+            "credential delivery could not be verified",
+        ),
+        BrowserRefusalCode::SecretDeliveryUnavailable => fixed_credential_refusal(
+            "secret_delivery_unavailable",
+            "credential delivery is unavailable",
+        ),
+        BrowserRefusalCode::BrowserRefStale
+        | BrowserRefusalCode::BrowserBindingStale
+        | BrowserRefusalCode::BrowserTabNotFound => fixed_credential_refusal(
+            "secret_target_stale",
+            "the secure credential target is stale",
+        ),
+        BrowserRefusalCode::BrowserWrongTargetRefused
+        | BrowserRefusalCode::BrowserEndpointOwnerMismatch
+        | BrowserRefusalCode::BrowserBindingAmbiguous => fixed_credential_refusal(
+            "secret_target_mismatch",
+            "the secure credential target could not be matched exactly",
+        ),
+        BrowserRefusalCode::BrowserRouteUnavailable
+        | BrowserRefusalCode::BrowserRequiresSetup
+        | BrowserRefusalCode::BrowserTabRequired
+        | BrowserRefusalCode::BrowserInputTrustUnavailable
+        | BrowserRefusalCode::BrowserConsentRequired
+        | BrowserRefusalCode::BrowserConsentRevoked
+        | BrowserRefusalCode::BrowserReconnectExhausted
+        | BrowserRefusalCode::BrowserInputIncomplete
+        | BrowserRefusalCode::BrowserActionUnavailable
+        | BrowserRefusalCode::BrowserOriginOutsideScope => fixed_credential_refusal(
+            "secret_target_unsupported",
+            "the secure credential target is unsupported",
+        ),
+    }
+}
+
+pub struct FindCredentialsTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl FindCredentialsTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        Self {
+            def: credential_tool_def("find_credentials"),
+            engine,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for FindCredentialsTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "private_observation" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "private_observation" {
+            browser_protected_resource_scope(&self.engine, args, "get_browser_state").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let input: cua_driver_contract::FindCredentialsInput =
+            match parse_public_credential_input(&args, "find_credentials") {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(_) => {
+                return fixed_credential_refusal(
+                    "secret_target_unsupported",
+                    "credential discovery requires a lifecycle session",
+                )
+            }
+        };
+        let descriptors = match self
+            .engine
+            .discover_credentials_for_ref(
+                &session,
+                &input.target_id,
+                &input.tab_id,
+                &input.element_ref,
+            )
+            .await
+        {
+            Ok(descriptors) => descriptors,
+            Err(refusal) => return target_bound_credential_refusal(refusal),
+        };
+        let credentials = descriptors
+            .into_iter()
+            .map(|descriptor| cua_driver_contract::CredentialDescriptor {
+                handle: descriptor.handle.as_str().to_owned(),
+                label: descriptor.label.map(|label| label.as_str().to_owned()),
+                fields: descriptor
+                    .fields
+                    .into_iter()
+                    .map(|field| match field {
+                        crate::credentials::CredentialField::Password => {
+                            cua_driver_contract::CredentialField::Password
+                        }
+                    })
+                    .collect(),
+                provider_class: descriptor.provider_class.and_then(|class| match class {
+                    crate::credentials::CredentialProviderClass::Fake => None,
+                    crate::credentials::CredentialProviderClass::ServiceAccountVault => {
+                        Some(cua_driver_contract::CredentialProviderClass::ServiceAccountVault)
+                    }
+                    crate::credentials::CredentialProviderClass::InteractiveDesktop => {
+                        Some(cua_driver_contract::CredentialProviderClass::InteractiveDesktop)
+                    }
+                }),
+            })
+            .collect();
+        let output = cua_driver_contract::FindCredentialsOutput { credentials };
+        ToolResult::text(format!(
+            "found {} saved credential option(s)",
+            output.credentials.len()
+        ))
+        .with_structured(
+            serde_json::to_value(output).expect("credential discovery output serializes"),
+        )
+    }
+}
+
+pub struct TypeSecretTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl TypeSecretTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        Self {
+            def: credential_tool_def("type_secret"),
+            engine,
+        }
+    }
+}
+
+#[async_trait]
+impl Tool for TypeSecretTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "type_secret").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let input: cua_driver_contract::TypeSecretInput =
+            match parse_public_credential_input(&args, "type_secret") {
+                Ok(input) => input,
+                Err(result) => return result,
+            };
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(_) => {
+                return fixed_credential_refusal(
+                    "secret_target_unsupported",
+                    "credential delivery requires a lifecycle session",
+                )
+            }
+        };
+        let handle = match crate::credentials::CredentialHandle::parse_public(&input.handle) {
+            Ok(handle) => handle,
+            Err(_) => {
+                return fixed_credential_refusal(
+                    "secret_handle_invalid",
+                    "the credential handle is invalid",
+                )
+            }
+        };
+        let field = match input.field {
+            cua_driver_contract::CredentialField::Password => {
+                crate::credentials::CredentialField::Password
+            }
+        };
+        match self
+            .engine
+            .deliver_credential_for_ref(
+                &session,
+                &input.target_id,
+                &input.tab_id,
+                &input.element_ref,
+                &handle,
+                field,
+            )
+            .await
+        {
+            Ok(crate::credentials::CredentialDeliveryOutcome::Delivered) => {
+                let mut record = crate::action_record::ActionExecutionRecord::new(
+                    crate::action_record::ActionEffect::Confirmed,
+                    crate::action_record::ActionTransport::BrowserCdpInputKey,
+                    crate::action_record::RequestedDelivery::Background,
+                );
+                record.actual_delivery = Some(crate::action_record::ActualDelivery::Background);
+                record.evidence.push(crate::action_record::ActionEvidence {
+                    kind: crate::action_record::EvidenceKind::EventReceipt,
+                    detail: "exact secure target events confirmed".into(),
+                });
+                ToolResult::text("Filled saved secret")
+                    .with_structured(json!({"status": "ok"}))
+                    .with_action_record(record)
+            }
+            Ok(crate::credentials::CredentialDeliveryOutcome::ProviderFillUnavailable) => {
+                fixed_credential_refusal(
+                    "secret_provider_fill_unavailable",
+                    "provider-managed credential fill is unavailable",
+                )
+            }
+            Ok(crate::credentials::CredentialDeliveryOutcome::UserPresenceRequired) => {
+                fixed_credential_refusal(
+                    "secret_user_presence_required",
+                    "credential delivery requires provider-owned user presence",
+                )
+            }
+            Err(refusal) => target_bound_credential_refusal(refusal),
+        }
+    }
 }
 
 // ── Shared helpers ───────────────────────────────────────────────────────────
@@ -194,7 +553,7 @@ pub(crate) async fn browser_protected_resource_scope(
 }
 
 fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
-    json!({
+    let mut value = json!({
         "ref": listed.external,
         "role": listed.node.role,
         "name": listed.node.name,
@@ -203,7 +562,15 @@ fn semantic_ref_value(listed: &super::engine::SemanticListedRef) -> Value {
         "actions": listed.node.actions.iter().map(|action| action.as_str()).collect::<Vec<_>>(),
         "frame": listed.node.frame.kind.as_str(),
         "visibility": listed.node.visibility.as_str(),
-    })
+    });
+    if let Some(secure_field) = listed.node.secure_field {
+        value
+            .as_object_mut()
+            .expect("semantic ref object")
+            .remove("value");
+        value["secure_field"] = json!(secure_field.as_str());
+    }
+    value
 }
 
 fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot) -> ToolResult {
@@ -2625,6 +2992,17 @@ mod tests {
             false
         );
 
+        let find_credentials = FindCredentialsTool::new(e.clone());
+        assert!(find_credentials.def().read_only);
+        assert!(!find_credentials.def().destructive);
+        assert!(!find_credentials.def().idempotent);
+
+        let type_secret = TypeSecretTool::new(e.clone());
+        assert!(!type_secret.def().read_only);
+        assert!(type_secret.def().destructive);
+        assert!(!type_secret.def().idempotent);
+        assert!(type_secret.def().open_world);
+
         let prepare = BrowserPrepareTool::new(e.clone());
         assert!(prepare.def().destructive);
         assert!(!prepare.def().idempotent);
@@ -2686,6 +3064,7 @@ mod tests {
             BrowserNavigateTool::new(e.clone()).def().clone(),
             BrowserClickTool::new(e.clone()).def().clone(),
             BrowserTypeTool::new(e.clone()).def().clone(),
+            TypeSecretTool::new(e.clone()).def().clone(),
             BrowserDialogTool::new(e.clone()).def().clone(),
             BrowserSetInputFilesTool::new(e.clone()).def().clone(),
             BrowserDownloadTool::new(e.clone()).def().clone(),
@@ -2694,6 +3073,57 @@ mod tests {
             assert!(def.open_world, "{} can affect open-world state", def.name);
         }
         assert!(BrowserDownloadTool::new(e.clone()).def().destructive);
+    }
+
+    #[test]
+    fn credential_refusals_drop_private_diagnostics_and_caller_identifiers() {
+        let canary = "PRIVATE_CREDENTIAL_DIAGNOSTIC_CANARY";
+        for code in [
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            BrowserRefusalCode::BrowserRequiresSetup,
+            BrowserRefusalCode::BrowserBindingAmbiguous,
+            BrowserRefusalCode::BrowserBindingStale,
+            BrowserRefusalCode::BrowserWrongTargetRefused,
+            BrowserRefusalCode::BrowserTabRequired,
+            BrowserRefusalCode::BrowserTabNotFound,
+            BrowserRefusalCode::BrowserRefStale,
+            BrowserRefusalCode::BrowserInputTrustUnavailable,
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            BrowserRefusalCode::BrowserConsentRequired,
+            BrowserRefusalCode::BrowserConsentRevoked,
+            BrowserRefusalCode::BrowserReconnectExhausted,
+            BrowserRefusalCode::BrowserInputIncomplete,
+            BrowserRefusalCode::BrowserActionUnavailable,
+            BrowserRefusalCode::BrowserOriginOutsideScope,
+            BrowserRefusalCode::SecretReleaseNotAuthorized,
+            BrowserRefusalCode::SecretBindingExpired,
+            BrowserRefusalCode::SecretBindingRevoked,
+            BrowserRefusalCode::SecretBindingScopeDenied,
+            BrowserRefusalCode::SecretHandleExpired,
+            BrowserRefusalCode::SecretHandleConsumed,
+            BrowserRefusalCode::SecretHandleTargetMismatch,
+            BrowserRefusalCode::SecretProviderUnavailable,
+            BrowserRefusalCode::SecretProviderLocked,
+            BrowserRefusalCode::SecretUserPresenceRequired,
+            BrowserRefusalCode::SecretResolutionFailed,
+            BrowserRefusalCode::SecretValueInvalid,
+            BrowserRefusalCode::SecretDeliveryUnavailable,
+            BrowserRefusalCode::SecretDeliveryMisdirected,
+            BrowserRefusalCode::SecretDeliveryUnverified,
+        ] {
+            let result = target_bound_credential_refusal(
+                BrowserRefusal::new(code, format!("{canary}-message")).with_detail(json!({
+                    "target_id": format!("{canary}-target"),
+                    "tab_id": format!("{canary}-tab"),
+                    "ref": format!("{canary}-ref"),
+                    "handle": "ch-0123456789abcdef0123456789abcdef",
+                })),
+            );
+            let rendered = serde_json::to_string(&result).expect("serialize refusal");
+            for forbidden in [canary, "target_id", "tab_id", "\"ref\"", "ch-"] {
+                assert!(!rendered.contains(forbidden), "{code:?} leaked {forbidden}");
+            }
+        }
     }
 
     #[test]
@@ -2706,10 +3136,12 @@ mod tests {
             names,
             vec![
                 "get_browser_state",
+                "find_credentials",
                 "browser_prepare",
                 "browser_navigate",
                 "browser_click",
                 "browser_type",
+                "type_secret",
                 "browser_dialog",
                 "browser_set_input_files",
                 "browser_download",
@@ -3018,6 +3450,7 @@ mod tests {
                 endpoint_access_class:
                     crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
+                endpoint_generation: 1,
                 transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
@@ -3079,6 +3512,7 @@ mod tests {
                 endpoint_access_class:
                     crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
+                endpoint_generation: 1,
                 transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,
@@ -3125,6 +3559,7 @@ mod tests {
                 endpoint_access_class:
                     crate::browser::types::EndpointAccessClass::EmbeddedApplication,
                 generation: 0,
+                endpoint_generation: 1,
                 transport_session: None,
                 fingerprint: ProcessFingerprint {
                     pid: 1,

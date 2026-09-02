@@ -516,11 +516,17 @@ fn parse_action_json(path: &std::path::Path) -> anyhow::Result<(String, Value)> 
     }
     let text = std::fs::read_to_string(path)?;
     let obj: Value = serde_json::from_str(&text)?;
+    if obj.get("replayable").and_then(Value::as_bool) == Some(false) {
+        anyhow::bail!("action.json marks this operation non-replayable");
+    }
     let tool = obj
         .get("tool")
         .and_then(|v| v.as_str())
         .ok_or_else(|| anyhow::anyhow!("action.json missing 'tool' string field"))?
         .to_owned();
+    if matches!(tool.as_str(), "find_credentials" | "type_secret") {
+        anyhow::bail!("credential operations are non-replayable");
+    }
     let tool_args = obj
         .get("arguments")
         .cloned()
@@ -615,6 +621,35 @@ impl Tool for InstallFfmpegTool {
                 ToolResult::error(format!("ffmpeg install failed: {e}\nCommand: {display}"))
             }
             Err(e) => ToolResult::error(format!("install task error: {e}")),
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_action_json;
+
+    #[test]
+    fn credential_tool_names_are_refused_even_when_a_fixture_claims_replayable() {
+        for tool in ["find_credentials", "type_secret"] {
+            let path = std::env::temp_dir().join(format!(
+                "cua-non-replayable-credential-{}-{}.json",
+                tool,
+                uuid::Uuid::new_v4().simple()
+            ));
+            std::fs::write(
+                &path,
+                serde_json::to_vec(&serde_json::json!({
+                    "tool": tool,
+                    "arguments": {"handle": "ch-0123456789abcdef0123456789abcdef"},
+                    "replayable": true,
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let error = parse_action_json(&path).unwrap_err().to_string();
+            assert!(error.contains("non-replayable"));
+            std::fs::remove_file(path).unwrap();
         }
     }
 }

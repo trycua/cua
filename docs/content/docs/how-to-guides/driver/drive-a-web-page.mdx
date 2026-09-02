@@ -259,6 +259,12 @@ check that the chosen entry declares `click` or `type` in `actions`.
 `content_refs` are read capabilities for `scope_ref`; they cannot be passed to
 an unsupported mutation.
 
+Password inputs identified from exact live DOM evidence include
+`"secure_field": "password"` and omit `value`. Treat the marker as field
+classification only; ordinary browser typing still requires caller-supplied
+text, and password-looking ARIA or custom masked widgets are not classified as
+secure fields.
+
 If `snapshot.continuation` is non-null, request the next ranked segment without
 changing the page:
 

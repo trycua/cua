@@ -360,6 +360,9 @@ impl ActionExecutionRecord {
                             | ProjectedEvidenceKind::ValueReadback => {
                                 cua_driver_contract::ActionEvidenceKind::ValueReadback
                             }
+                            ProjectedEvidenceKind::TargetEvent => {
+                                cua_driver_contract::ActionEvidenceKind::TargetEvent
+                            }
                             ProjectedEvidenceKind::WindowChange => {
                                 cua_driver_contract::ActionEvidenceKind::WindowChange
                             }
@@ -916,10 +919,10 @@ fn projected_evidence(evidence: &[ActionEvidence]) -> Option<Vec<ActionEvidenceP
                 EvidenceKind::AccessibilityReadback => ProjectedEvidenceKind::AccessibilityReadback,
                 EvidenceKind::BrowserReadback => ProjectedEvidenceKind::BrowserReadback,
                 EvidenceKind::ValueReadback => ProjectedEvidenceKind::ValueReadback,
+                EvidenceKind::EventReceipt => ProjectedEvidenceKind::TargetEvent,
                 EvidenceKind::WindowChange => ProjectedEvidenceKind::WindowChange,
                 EvidenceKind::NativeApiResult
                 | EvidenceKind::ScreenshotComparison
-                | EvidenceKind::EventReceipt
                 | EvidenceKind::OperatorObservation => return None,
             };
             Some(ActionEvidenceProjection {
@@ -1120,6 +1123,7 @@ pub enum ProjectedEvidenceKind {
     AccessibilityReadback,
     BrowserReadback,
     ValueReadback,
+    TargetEvent,
     WindowChange,
 }
 
@@ -1140,6 +1144,36 @@ mod tests {
             kind: EvidenceKind::AccessibilityReadback,
             detail: "value changed".to_owned(),
         }
+    }
+
+    #[test]
+    fn target_event_evidence_projects_to_the_closed_type_secret_result() {
+        let record = ActionExecutionRecord::builder(
+            ActionEffect::Confirmed,
+            ActionTransport::BrowserCdpInputKey,
+            RequestedDelivery::Background,
+        )
+        .actual_delivery(ActualDelivery::Background)
+        .evidence(ActionEvidence {
+            kind: EvidenceKind::EventReceipt,
+            detail: "PRIVATE_TARGET_EVENT_DETAIL_CANARY".to_owned(),
+        })
+        .build()
+        .expect("valid target-event record");
+        let public = record.public_result().expect("public action result");
+        let value = serde_json::to_value(public).expect("serialize public action result");
+
+        assert_eq!(value["effect"], "confirmed");
+        assert_eq!(value["route"], "trusted_input");
+        assert_eq!(value["delivery"]["mode"], "background");
+        assert_eq!(value["evidence"][0]["kind"], "target_event");
+        assert!(!value
+            .to_string()
+            .contains("PRIVATE_TARGET_EVENT_DETAIL_CANARY"));
+        assert_eq!(
+            cua_driver_contract::validate_success_output("type_secret", value),
+            Ok(true)
+        );
     }
 
     #[test]

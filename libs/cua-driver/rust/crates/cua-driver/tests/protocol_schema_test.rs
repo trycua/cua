@@ -28,6 +28,17 @@ fn tools_list_schema_shape() {
         .as_array()
         .expect("tools array");
 
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let mutable = tool["annotations"]["readOnlyHint"] == false;
+        if mutable {
+            assert!(
+                cua_driver_core::tool::has_recording_policy(name),
+                "mutable tool {name} has no reviewed recording policy"
+            );
+        }
+    }
+
     let properties = |name: &str| {
         &tools
             .iter()

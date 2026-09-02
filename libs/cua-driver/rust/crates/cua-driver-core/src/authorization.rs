@@ -236,6 +236,7 @@ const PRIVATE_OBSERVATION_OPERATIONS: &[&str] = &[
     "list_windows",
     "debug_window_info",
     "get_browser_state",
+    "find_credentials",
     "browser_dialog[action=inspect]",
     "page[action=get_text|query_dom]",
     "escalate_session",
@@ -351,6 +352,7 @@ const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
     "browser_click",
     "browser_type",
     "browser_pointer",
+    "type_secret",
 ];
 const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
     "daemon_generation",
@@ -359,6 +361,29 @@ const BROWSER_BOUND_INPUT_SCOPE_KEYS: &[&str] = &[
     "tab",
     "origin",
     "permission_mode",
+    "managed_policy_sha256",
+    "user_policy_sha256",
+];
+
+const SECRET_RELEASE_OPERATIONS: &[&str] = &["secret_release", "type_secret"];
+const SECRET_RELEASE_SCOPE_KEYS: &[&str] = &[
+    "daemon_generation",
+    "public_session",
+    "transport_session",
+    "binding_definition_digest",
+    "handle_digest",
+    "provider_id",
+    "provider_class",
+    "browser_process_fingerprint",
+    "browser_endpoint_generation",
+    "browser_target",
+    "tab",
+    "frame_document_identity",
+    "origin",
+    "semantic_v2_ref",
+    "secure_field",
+    "permission_mode",
+    "capability_manifest_sha256",
     "managed_policy_sha256",
     "user_policy_sha256",
 ];
@@ -539,6 +564,25 @@ pub const ENFORCEMENT_ADAPTERS: &[EnforcementAdapterDescriptor] = &[
         authorization_source: "built_in_standard; unattended_bounded_profile; trusted_unrestricted_mode; optional_capability_manifest_ceiling",
         enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
         profile_behavior: AdapterProfileBehavior::Routine,
+    },
+    EnforcementAdapterDescriptor {
+        id: "secret_release",
+        operations: SECRET_RELEASE_OPERATIONS,
+        state: RiskEnforcement::Active,
+        risk_class: RiskClass::R3,
+        resource_kind: "bound_secret_release_to_verified_target",
+        scope_keys: SECRET_RELEASE_SCOPE_KEYS,
+        grant_type: Some("trusted_binding_and_capability_manifest"),
+        idle_ttl_seconds: None,
+        absolute_ttl_seconds: None,
+        authorization_requirement:
+            "denied_in_standard; exact_trusted_manifest_scope_in_bounded; trusted_runtime_ceiling_in_unrestricted",
+        revocation_triggers: SESSION_REVOCATION,
+        refusal_code: Some("secret_release_not_authorized"),
+        authorization_source:
+            "trusted_binding; approved_capability_manifest_in_bounded; trusted_unrestricted_mode; managed_and_user_policy_ceiling",
+        enforcement_by_mode: AdapterEnforcement::uniform(RiskEnforcement::Active),
+        profile_behavior: AdapterProfileBehavior::BoundedOrUnrestricted,
     },
     EnforcementAdapterDescriptor {
         id: "process_control",
@@ -742,6 +786,7 @@ pub fn enforcement_adapters_for_call(
             | "list_windows"
             | "debug_window_info"
             | "get_browser_state"
+            | "find_credentials"
             | "escalate_session"
             | "zoom"
             | "start_recording"
@@ -809,6 +854,10 @@ pub fn enforcement_adapters_for_call(
 
     if BROWSER_BOUND_INPUT_OPERATIONS.contains(&tool) {
         add("browser_bound_input");
+    }
+
+    if SECRET_RELEASE_OPERATIONS.contains(&tool) {
+        add("secret_release");
     }
 
     if PROCESS_CONTROL_OPERATIONS.contains(&tool) {
@@ -916,6 +965,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "escalate_session"
         | "start_recording"
         | "get_browser_state"
+        | "find_credentials"
         | "browser_prepare"
         | "browser_navigate"
         | "browser_click"
@@ -935,6 +985,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "browser_dialog"
         | "browser_set_input_files"
         | "browser_download" => RiskClass::R3,
+
+        "secret_release" | "type_secret" => RiskClass::R3,
 
         _ => RiskClass::Unclassified,
     };
@@ -1164,6 +1216,60 @@ pub fn authorize_tool_call_with_context(
         }
     }
     Ok(risk)
+}
+
+/// Authorize one internal target-bound secret release.
+///
+/// This operation is deliberately absent from public tool registries. The
+/// resource is minted only by the credential broker after it has validated an
+/// opaque handle against an immutable binding and a verified browser target.
+pub(crate) fn authorize_secret_release(
+    context: &crate::session_authorization::EffectiveAuthorizationContext,
+    resource: &crate::credentials::SecretReleaseResource,
+) -> Result<
+    crate::credentials::SecretReleasePermit,
+    crate::credentials::SecretReleaseAuthorizationError,
+> {
+    use crate::credentials::SecretReleaseAuthorizationError as ReleaseError;
+
+    resource.validate_context(context)?;
+    crate::policy::authorize_tool_call("secret_release", &resource.policy_args())
+        .map_err(|_| ReleaseError::PolicyDenied)?;
+
+    let descriptor = ENFORCEMENT_ADAPTERS
+        .iter()
+        .find(|descriptor| descriptor.id == "secret_release")
+        .expect("secret_release authorization adapter is registered");
+    match descriptor.profile_behavior.for_mode(context.mode()) {
+        ModeBehavior::Deny | ModeBehavior::RequireGrant => {
+            return Err(ReleaseError::StandardDenied)
+        }
+        ModeBehavior::AllowWithoutGrant if context.capability_manifest().is_none() => {
+            return Err(ReleaseError::ManifestRequired)
+        }
+        ModeBehavior::Allow | ModeBehavior::AllowWithoutGrant => {}
+    }
+
+    if let Some(manifest) = context.capability_manifest() {
+        manifest
+            .validate_for_mode(context.mode())
+            .map_err(|_| ReleaseError::ManifestDenied)?;
+        if manifest.decision("secret_release") != crate::session_manifest::ManifestDecision::Allow {
+            return Err(ReleaseError::ManifestDenied);
+        }
+        manifest
+            .authorize_call("secret_release", &resource.policy_args())
+            .and_then(|_| {
+                manifest
+                    .authorize_protected_resource("secret_release", &resource.manifest_resource())
+            })
+            .map_err(|_| ReleaseError::ManifestDenied)?;
+    }
+
+    context
+        .commit_authorized_dispatch()
+        .map_err(|_| ReleaseError::ContextExpired)?;
+    Ok(resource.authorize(context))
 }
 
 fn enforce_hard_invariants(
@@ -1673,6 +1779,7 @@ mod tests {
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
+                "secret_release",
                 "process_control",
                 "os_permission_prompt",
                 "driver_configuration",
@@ -1699,6 +1806,7 @@ mod tests {
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
+                "secret_release",
                 "process_control",
                 "os_permission_prompt",
                 "driver_configuration",
@@ -1753,6 +1861,18 @@ mod tests {
         assert_eq!(
             behavior("process_control", PermissionMode::Standard),
             ModeBehavior::Deny
+        );
+        assert_eq!(
+            behavior("secret_release", PermissionMode::Standard),
+            ModeBehavior::Deny
+        );
+        assert_eq!(
+            behavior("secret_release", PermissionMode::Bounded),
+            ModeBehavior::AllowWithoutGrant
+        );
+        assert_eq!(
+            behavior("secret_release", PermissionMode::Unrestricted),
+            ModeBehavior::Allow
         );
         assert_eq!(
             behavior("browser_unbounded_script", PermissionMode::Bounded),
@@ -1875,6 +1995,16 @@ mod tests {
             vec!["browser_prepare.isolated"]
         );
         assert_eq!(
+            ids("secret_release", serde_json::json!({})),
+            vec!["secret_release"]
+        );
+        assert!(ids("browser_type", serde_json::json!({}))
+            .iter()
+            .all(|adapter| *adapter != "secret_release"));
+        assert!(ids("type_text", serde_json::json!({}))
+            .iter()
+            .all(|adapter| *adapter != "secret_release"));
+        assert_eq!(
             ids(
                 "browser_prepare",
                 serde_json::json!({"strategy": {"kind": "existing_profile"}})
@@ -1926,6 +2056,10 @@ mod tests {
             vec!["browser_bound_input"]
         );
         assert_eq!(
+            ids("type_secret", serde_json::json!({})),
+            vec!["browser_bound_input", "secret_release"]
+        );
+        assert_eq!(
             ids("kill_app", serde_json::json!({})),
             vec!["process_control"]
         );
@@ -1975,6 +2109,7 @@ mod tests {
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
+                "secret_release",
                 "process_control",
                 "os_permission_prompt",
                 "driver_configuration",
@@ -2001,6 +2136,7 @@ mod tests {
                 "browser_consequential_action",
                 "browser_unbounded_script",
                 "browser_bound_input",
+                "secret_release",
                 "process_control",
                 "os_permission_prompt",
                 "driver_configuration",

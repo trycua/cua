@@ -8141,6 +8141,14 @@ pub fn build_registry_with_provider(
     compat: bool,
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
+    build_registry_with_provider_and_secret_broker(compat, provider, None)
+}
+
+pub fn build_registry_with_provider_and_secret_broker(
+    compat: bool,
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    secret_broker: Option<std::sync::Arc<cua_driver_core::credentials::SecretBroker>>,
+) -> ToolRegistry {
     let state = ToolState::new();
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
@@ -8358,11 +8366,13 @@ pub fn build_registry_with_provider(
     r.register(Box::new(cua_driver_core::page::PageTool::new(Arc::new(
         super::page::LinuxPageBackend::new(),
     ))));
-    let browser_engine = cua_driver_core::browser::BrowserEngine::new_with_runtime_services(
-        Arc::new(crate::browser_platform::LinuxBrowserPlatform),
-        r.approval_broker(),
-        r.protected_resource_ownership(),
-    );
+    let browser_engine =
+        cua_driver_core::browser::BrowserEngine::new_with_runtime_services_and_secret_broker(
+            Arc::new(crate::browser_platform::LinuxBrowserPlatform),
+            r.approval_broker(),
+            r.protected_resource_ownership(),
+            secret_broker,
+        );
     cua_driver_core::browser::register_browser_tools(&browser_engine, &mut r);
     r.register_recording_tools();
     r.register_session_tools();

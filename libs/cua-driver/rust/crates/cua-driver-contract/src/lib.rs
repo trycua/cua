@@ -14,6 +14,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
 pub mod compatibility;
+mod credentials;
 pub mod cursor;
 mod cursor_tools;
 mod desktop;
@@ -22,6 +23,10 @@ mod outputs;
 mod session;
 mod verification;
 
+pub use credentials::{
+    CredentialDescriptor, CredentialField, CredentialProviderClass, FindCredentialsInput,
+    FindCredentialsOutput, TypeSecretInput,
+};
 pub use cursor::{
     classify_cursor_semantics, CursorAction, CursorDelivery, CursorPlayback, CursorReducedMotion,
     CursorSemantics, CursorTarget, CursorThemeSelection,
@@ -60,7 +65,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.7.0";
+pub const CONTRACT_VERSION: &str = "0.8.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -90,6 +95,7 @@ pub const ACTION_RESULT_TOOLS: &[&str] = &[
     "browser_click",
     "browser_pointer",
     "browser_type",
+    "type_secret",
 ];
 
 pub fn is_action_result_tool(name: &str) -> bool {
@@ -187,6 +193,7 @@ pub fn manifest() -> ContractManifest {
     let mut tools = session::contracts();
     tools.extend(desktop::contracts());
     tools.extend(cursor_tools::contracts());
+    tools.extend(credentials::contracts());
     tools.extend(verification::contracts());
     tools.sort_by(|left, right| left.name.cmp(&right.name));
     ContractManifest {
@@ -297,7 +304,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.7.0");
+        assert_eq!(manifest.contract_version, "0.8.0");
         assert!(manifest.experimental);
     }
 

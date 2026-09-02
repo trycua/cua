@@ -50,6 +50,9 @@ pub mod win32;
 pub mod history;
 
 #[cfg(target_os = "windows")]
+pub mod bootstrap_credentials;
+
+#[cfg(target_os = "windows")]
 pub mod browser_platform;
 
 #[cfg(target_os = "windows")]
@@ -94,9 +97,18 @@ pub fn register_tools_with_cursor_and_provider(
     cfg: cursor_overlay::CursorConfig,
     compat: bool,
 ) -> ToolRegistry {
+    register_tools_with_cursor_provider_and_secret_broker(provider, None, cfg, compat)
+}
+
+pub fn register_tools_with_cursor_provider_and_secret_broker(
+    provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
+    secret_broker: Option<std::sync::Arc<cua_driver_core::credentials::SecretBroker>>,
+    cfg: cursor_overlay::CursorConfig,
+    compat: bool,
+) -> ToolRegistry {
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
-    tools::build_registry_with_provider(compat, provider)
+    tools::build_registry_with_provider_and_secret_broker(compat, provider, secret_broker)
 }

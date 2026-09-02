@@ -64,6 +64,27 @@ pub enum BrowserRefusalCode {
     /// The live top-level document left the origin set approved in the
     /// capability manifest. Further browser input is paused.
     BrowserOriginOutsideScope,
+    /// The target-bound credential resource did not pass the trusted R3
+    /// authorization boundary.
+    SecretReleaseNotAuthorized,
+    SecretBindingExpired,
+    SecretBindingRevoked,
+    SecretBindingScopeDenied,
+    SecretHandleExpired,
+    SecretHandleConsumed,
+    SecretHandleTargetMismatch,
+    SecretProviderUnavailable,
+    SecretProviderLocked,
+    SecretUserPresenceRequired,
+    SecretResolutionFailed,
+    SecretValueInvalid,
+    /// The credential broker or provider could not produce a usable release.
+    SecretDeliveryUnavailable,
+    /// Delivery could not be proven to have remained on the exact secure node.
+    SecretDeliveryMisdirected,
+    /// Chromium may have accepted the secret, but the runtime could not prove
+    /// the final delivery state. Agents must never retry automatically.
+    SecretDeliveryUnverified,
 }
 
 impl BrowserRefusalCode {
@@ -86,6 +107,21 @@ impl BrowserRefusalCode {
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
+            Self::SecretReleaseNotAuthorized => "secret_release_not_authorized",
+            Self::SecretBindingExpired => "secret_binding_expired",
+            Self::SecretBindingRevoked => "secret_binding_revoked",
+            Self::SecretBindingScopeDenied => "secret_binding_scope_denied",
+            Self::SecretHandleExpired => "secret_handle_expired",
+            Self::SecretHandleConsumed => "secret_handle_consumed",
+            Self::SecretHandleTargetMismatch => "secret_handle_target_mismatch",
+            Self::SecretProviderUnavailable => "secret_provider_unavailable",
+            Self::SecretProviderLocked => "secret_provider_locked",
+            Self::SecretUserPresenceRequired => "secret_user_presence_required",
+            Self::SecretResolutionFailed => "secret_resolution_failed",
+            Self::SecretValueInvalid => "secret_value_invalid",
+            Self::SecretDeliveryUnavailable => "secret_delivery_unavailable",
+            Self::SecretDeliveryMisdirected => "secret_delivery_misdirected",
+            Self::SecretDeliveryUnverified => "secret_delivery_unverified",
         }
     }
 }
@@ -193,6 +229,66 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserOriginOutsideScope,
                 "browser_origin_outside_scope",
+            ),
+            (
+                BrowserRefusalCode::SecretReleaseNotAuthorized,
+                "secret_release_not_authorized",
+            ),
+            (
+                BrowserRefusalCode::SecretBindingExpired,
+                "secret_binding_expired",
+            ),
+            (
+                BrowserRefusalCode::SecretBindingRevoked,
+                "secret_binding_revoked",
+            ),
+            (
+                BrowserRefusalCode::SecretBindingScopeDenied,
+                "secret_binding_scope_denied",
+            ),
+            (
+                BrowserRefusalCode::SecretHandleExpired,
+                "secret_handle_expired",
+            ),
+            (
+                BrowserRefusalCode::SecretHandleConsumed,
+                "secret_handle_consumed",
+            ),
+            (
+                BrowserRefusalCode::SecretHandleTargetMismatch,
+                "secret_handle_target_mismatch",
+            ),
+            (
+                BrowserRefusalCode::SecretProviderUnavailable,
+                "secret_provider_unavailable",
+            ),
+            (
+                BrowserRefusalCode::SecretProviderLocked,
+                "secret_provider_locked",
+            ),
+            (
+                BrowserRefusalCode::SecretUserPresenceRequired,
+                "secret_user_presence_required",
+            ),
+            (
+                BrowserRefusalCode::SecretResolutionFailed,
+                "secret_resolution_failed",
+            ),
+            (
+                BrowserRefusalCode::SecretValueInvalid,
+                "secret_value_invalid",
+            ),
+            (
+                BrowserRefusalCode::SecretDeliveryUnavailable,
+                "secret_delivery_unavailable",
+            ),
+            (
+                BrowserRefusalCode::SecretDeliveryMisdirected,
+                "secret_delivery_misdirected",
+            ),
+            (
+                BrowserRefusalCode::SecretDeliveryUnverified,
+                "secret_delivery_unverified",
             ),
         ];
         for (code, wire) in all {

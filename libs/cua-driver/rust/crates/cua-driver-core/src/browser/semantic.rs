@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 
-use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry};
+use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry, SecureFieldKind};
 
 pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
     "display",
@@ -122,6 +122,7 @@ pub(crate) struct SemanticNode {
     pub(crate) frame: FrameRef,
     pub(crate) visibility: BrowserVisibility,
     pub(crate) actions: Vec<BrowserActionKind>,
+    pub(crate) secure_field: Option<SecureFieldKind>,
     pub(crate) document_order: usize,
 }
 
@@ -134,6 +135,7 @@ impl SemanticNode {
             label: self.name.clone(),
             actions: self.actions.clone(),
             visibility: Some(self.visibility),
+            secure_field: self.secure_field,
             semantic: true,
             frame: self.frame.clone(),
         })
@@ -523,8 +525,12 @@ pub(crate) fn compose_accessibility_tree(
         let states = ax_states(ax);
         let visibility = classify_visibility(dom_meta, layout_meta, viewport);
         let actions = action_kinds(&role, dom_meta, &states, layout_meta);
+        let secure_field = secure_field_kind(backend_node_id, dom_meta);
+        let redact_value = secure_field.is_some() || ax_reports_protected(ax);
         let name = ax_value_string(ax.get("name")).and_then(clean_semantic_text);
-        let value = ax_value_string(ax.get("value")).and_then(clean_semantic_text);
+        let value = (!redact_value)
+            .then(|| ax_value_string(ax.get("value")).and_then(clean_semantic_text))
+            .flatten();
         let document_order = dom_meta.map_or(fallback_order, |meta| meta.order);
         nodes.push(SemanticNode {
             ax_id,
@@ -550,6 +556,7 @@ pub(crate) fn compose_accessibility_tree(
             frame: frame.clone(),
             visibility,
             actions,
+            secure_field,
             document_order,
         });
     }
@@ -674,6 +681,7 @@ fn supplement_dom_actions(
             .iter()
             .find_map(|key| meta.attrs.get(*key).cloned())
             .and_then(clean_semantic_text);
+        let secure_field = secure_field_kind(Some(backend_node_id), Some(meta));
         nodes.push(SemanticNode {
             ax_id: format!("dom-{backend_node_id}"),
             parent_ax_id: meta
@@ -683,18 +691,47 @@ fn supplement_dom_actions(
             backend_node_id: Some(backend_node_id),
             role,
             name,
-            value: meta
-                .attrs
-                .get("value")
-                .cloned()
-                .and_then(clean_semantic_text),
+            value: secure_field
+                .is_none()
+                .then(|| {
+                    meta.attrs
+                        .get("value")
+                        .cloned()
+                        .and_then(clean_semantic_text)
+                })
+                .flatten(),
             states,
             frame: frame.clone(),
             visibility,
             actions,
+            secure_field,
             document_order: meta.order,
         });
     }
+}
+
+fn secure_field_kind(
+    backend_node_id: Option<i64>,
+    dom: Option<&DomMeta>,
+) -> Option<SecureFieldKind> {
+    let dom = backend_node_id.and(dom)?;
+    (dom.tag == "input"
+        && dom
+            .attrs
+            .get("type")
+            .is_some_and(|value| value.eq_ignore_ascii_case("password")))
+    .then_some(SecureFieldKind::Password)
+}
+
+fn ax_reports_protected(node: &Value) -> bool {
+    node.get("properties")
+        .and_then(Value::as_array)
+        .is_some_and(|properties| {
+            properties.iter().any(|property| {
+                property.get("name").and_then(Value::as_str) == Some("protected")
+                    && property.pointer("/value/value").and_then(Value::as_bool) == Some(true)
+            })
+        })
 }
 
 fn attributes(node: &Value) -> HashMap<String, String> {
@@ -1173,6 +1210,82 @@ mod tests {
             action_kinds("textbox", Some(&dom), &BTreeMap::new(), None),
             vec![BrowserActionKind::Upload]
         );
+    }
+
+    #[test]
+    fn secure_fields_require_exact_live_password_input_evidence() {
+        let classified = |tag: &str, attrs: &[(&str, &str)], backend_node_id| {
+            let dom = DomMeta {
+                tag: tag.into(),
+                attrs: attrs
+                    .iter()
+                    .map(|(name, value)| ((*name).into(), (*value).into()))
+                    .collect(),
+                ..Default::default()
+            };
+            secure_field_kind(backend_node_id, Some(&dom))
+        };
+
+        assert_eq!(
+            classified("input", &[("type", "PaSsWoRd")], Some(7)),
+            Some(SecureFieldKind::Password)
+        );
+        assert_eq!(
+            classified("input", &[("type", " password ")], Some(7)),
+            None
+        );
+        assert_eq!(classified("input", &[("type", "text")], Some(7)), None);
+        assert_eq!(
+            classified(
+                "input",
+                &[("type", "text"), ("aria-label", "Password")],
+                Some(7)
+            ),
+            None
+        );
+        assert_eq!(
+            classified("textarea", &[("data-masked", "true")], Some(7)),
+            None
+        );
+        assert_eq!(
+            classified(
+                "div",
+                &[("role", "textbox"), ("aria-label", "Password")],
+                Some(7)
+            ),
+            None
+        );
+        assert_eq!(classified("input", &[("type", "password")], None), None);
+    }
+
+    #[test]
+    fn ax_protected_nodes_redact_values_without_becoming_delivery_targets() {
+        let document = compose_accessibility_tree(
+            &json!({"nodes": [{
+                "nodeId": "protected-without-dom",
+                "ignored": false,
+                "role": {"value": "textbox"},
+                "name": {"value": "Account secret"},
+                "value": {"value": "************"},
+                "properties": [{
+                    "name": "protected",
+                    "value": {"type": "boolean", "value": true}
+                }]
+            }]}),
+            &DomIndex::default(),
+            &LayoutIndex::default(),
+            &Viewport::default(),
+            frame(),
+        );
+
+        let node = document
+            .nodes
+            .iter()
+            .find(|node| node.ax_id == "protected-without-dom")
+            .unwrap();
+        assert_eq!(node.value, None);
+        assert_eq!(node.secure_field, None);
+        assert!(node.to_ref_entry().is_none());
     }
     use crate::browser::store::FrameRef;
 

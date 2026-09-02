@@ -126,6 +126,7 @@ async fn run_async(
             register_host_tools: Some(crate::check_update_tool::register_into),
             authorization_host: None,
             activity_observer: None,
+            credential_host_factory: None,
         },
     ) {
         Ok(driver) => driver,

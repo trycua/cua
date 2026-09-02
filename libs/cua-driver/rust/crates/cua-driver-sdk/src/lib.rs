@@ -7,12 +7,13 @@
 
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
-    EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InvokeMenuInput, ListSessionsInput, ListSessionsOutput, MoveCursorInput, PressKeyInput,
-    ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    StartSessionOutput, ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
+    EndSessionOutput, EscalateSessionInput, FindCredentialsInput, FindCredentialsOutput,
+    GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    GetSessionInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput, ListSessionsInput,
+    ListSessionsOutput, MoveCursorInput, PressKeyInput, ScrollInput, SessionOutput,
+    SessionStateOutput, SetAgentCursorEnabledInput, SetAgentCursorMotionInput,
+    SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput, StartSessionOutput,
+    ToolInput, TypeSecretInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -605,6 +606,44 @@ pub struct DriverHostOptions {
     pub authorization_host: Option<Arc<dyn DriverAuthorizationHost>>,
     /// Optional content-free activity callback supplied by a trusted host.
     pub activity_observer: Option<Arc<dyn DriverActivityObserver>>,
+    /// Trusted constructor-only credential composition. The factory runs only
+    /// after the runtime scope exists and never crosses UniFFI or a transport.
+    pub credential_host_factory: Option<Arc<dyn DriverCredentialHostFactory>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum DriverCredentialHostError {
+    #[error("credential host configuration is invalid")]
+    InvalidConfiguration,
+    #[error("credential host configuration is unavailable")]
+    Unavailable,
+}
+
+pub trait DriverCredentialHostFactory: Send + Sync {
+    fn build(&self, runtime_scope: &str)
+        -> Result<DriverCredentialHost, DriverCredentialHostError>;
+}
+
+pub struct DriverCredentialHost {
+    broker: Arc<cua_driver_core::credentials::SecretBroker>,
+    retained: Vec<Arc<dyn std::any::Any + Send + Sync>>,
+}
+
+impl DriverCredentialHost {
+    pub fn new(broker: Arc<cua_driver_core::credentials::SecretBroker>) -> Self {
+        Self {
+            broker,
+            retained: Vec::new(),
+        }
+    }
+
+    pub fn retain<T: Send + Sync + 'static>(&mut self, value: Arc<T>) {
+        self.retained.push(value);
+    }
+
+    pub(crate) fn broker(&self) -> Arc<cua_driver_core::credentials::SecretBroker> {
+        self.broker.clone()
+    }
 }
 
 /// Runtime that imported the shared UniFFI SDK library. The language package
@@ -687,6 +726,8 @@ macro_rules! define_exported_tool_names {
             <ListSessionsInput as ToolInput>::TOOL_NAME,
             <GetSessionStateInput as ToolInput>::TOOL_NAME,
             <EndSessionInput as ToolInput>::TOOL_NAME,
+            <FindCredentialsInput as ToolInput>::TOOL_NAME,
+            <TypeSecretInput as ToolInput>::TOOL_NAME,
             $(<$input as ToolInput>::TOOL_NAME,)*
         ];
     };
@@ -1012,6 +1053,7 @@ impl CuaDriver {
                 options.authorization_host,
             ),
             activity_observer: options.activity_observer,
+            credential_host_factory: None,
         })
     }
 
@@ -1157,6 +1199,7 @@ impl CuaDriver {
                         options.authorization_host,
                     ),
                     activity_observer: options.activity_observer,
+                    credential_host_factory: options.credential_host_factory,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -1205,6 +1248,7 @@ impl CuaDriver {
                         options.authorization_host,
                     ),
                     activity_observer: options.activity_observer,
+                    credential_host_factory: options.credential_host_factory,
                 },
             )?)),
             client_kind: DaemonClientKind::Unknown,
@@ -1248,6 +1292,7 @@ impl CuaDriver {
                     host.register_host_tools,
                     authorization_host::SdkDriverAuthorizationHost::adapt(host.authorization_host),
                     host.activity_observer,
+                    host.credential_host_factory,
                 )?,
             )),
             client_kind: DaemonClientKind::Unknown,
@@ -1446,6 +1491,19 @@ impl CuaDriver {
             .typed_success(EndSessionInput::TOOL_NAME)
     }
 
+    pub async fn find_credentials(
+        &self,
+        input: FindCredentialsInput,
+    ) -> Result<FindCredentialsOutput, DriverError> {
+        self.invoke_typed(FindCredentialsInput::TOOL_NAME, input)
+            .await?
+            .typed_success(FindCredentialsInput::TOOL_NAME)
+    }
+
+    pub async fn type_secret(&self, input: TypeSecretInput) -> Result<ToolResult, DriverError> {
+        self.invoke_typed(TypeSecretInput::TOOL_NAME, input).await
+    }
+
     /// Stop accepting new embedded operations. Repeated calls are harmless;
     /// daemon compatibility clients do not own the daemon and therefore no-op.
     pub async fn shutdown(&self) -> Result<(), DriverError> {
@@ -1525,6 +1583,19 @@ impl CuaDriverSession {
             .typed_success(EndSessionInput::TOOL_NAME);
         self.backend.close_async().await;
         result
+    }
+
+    pub async fn find_credentials(
+        &self,
+        input: FindCredentialsInput,
+    ) -> Result<FindCredentialsOutput, DriverError> {
+        self.invoke_typed(FindCredentialsInput::TOOL_NAME, input)
+            .await?
+            .typed_success(FindCredentialsInput::TOOL_NAME)
+    }
+
+    pub async fn type_secret(&self, input: TypeSecretInput) -> Result<ToolResult, DriverError> {
+        self.invoke_typed(TypeSecretInput::TOOL_NAME, input).await
     }
 }
 
@@ -1906,6 +1977,115 @@ mod tests {
         }
     }
 
+    struct RetainedCredentialProbe {
+        drops: Arc<std::sync::atomic::AtomicUsize>,
+        runtime_scope: String,
+        suspended_before_drop: Arc<std::sync::atomic::AtomicBool>,
+    }
+
+    impl Drop for RetainedCredentialProbe {
+        fn drop(&mut self) {
+            self.suspended_before_drop.store(
+                cua_driver_core::session::is_runtime_scope_suspended(&self.runtime_scope),
+                std::sync::atomic::Ordering::SeqCst,
+            );
+            self.drops.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    struct TestCredentialHostFactory {
+        builds: std::sync::atomic::AtomicUsize,
+        retained_drops: Arc<std::sync::atomic::AtomicUsize>,
+        suspended_before_drop: Arc<std::sync::atomic::AtomicBool>,
+        mismatched_scope: bool,
+    }
+
+    impl DriverCredentialHostFactory for TestCredentialHostFactory {
+        fn build(
+            &self,
+            runtime_scope: &str,
+        ) -> Result<DriverCredentialHost, DriverCredentialHostError> {
+            self.builds
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            let broker_scope = if self.mismatched_scope {
+                format!("different-{runtime_scope}")
+            } else {
+                runtime_scope.to_owned()
+            };
+            let broker = cua_driver_core::credentials::SecretBrokerBuilder::new(broker_scope)
+                .and_then(|builder| builder.build())
+                .map_err(|_| DriverCredentialHostError::InvalidConfiguration)?;
+            let mut host = DriverCredentialHost::new(broker);
+            host.retain(Arc::new(RetainedCredentialProbe {
+                drops: self.retained_drops.clone(),
+                runtime_scope: runtime_scope.to_owned(),
+                suspended_before_drop: self.suspended_before_drop.clone(),
+            }));
+            Ok(host)
+        }
+    }
+
+    fn host_options_with_credential_factory(
+        factory: Arc<dyn DriverCredentialHostFactory>,
+    ) -> DriverHostOptions {
+        DriverHostOptions {
+            cursor: cursor_overlay::CursorConfig {
+                enabled: false,
+                ..cursor_overlay::CursorConfig::default()
+            },
+            host_owns_permission_ux: false,
+            host_bundle_id: None,
+            claude_code_compatibility: false,
+            prepare_desktop_environment: false,
+            register_host_tools: None,
+            authorization_host: None,
+            activity_observer: None,
+            credential_host_factory: Some(factory),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[tokio::test]
+    async fn credential_host_factory_is_scope_bound_and_retained_until_shutdown() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let retained_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let suspended_before_drop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let factory = Arc::new(TestCredentialHostFactory {
+            builds: std::sync::atomic::AtomicUsize::new(0),
+            retained_drops: retained_drops.clone(),
+            suspended_before_drop: suspended_before_drop.clone(),
+            mismatched_scope: false,
+        });
+
+        let inventory =
+            CuaDriver::inspect_host_tools(host_options_with_credential_factory(factory.clone()));
+        assert!(inventory["tools"].is_array());
+        assert_eq!(factory.builds.load(std::sync::atomic::Ordering::SeqCst), 0);
+
+        let driver =
+            CuaDriver::try_create_for_host(host_options_with_credential_factory(factory.clone()))
+                .unwrap();
+        assert_eq!(factory.builds.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(retained_drops.load(std::sync::atomic::Ordering::SeqCst), 0);
+        driver.shutdown().await.unwrap();
+        assert_eq!(retained_drops.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert!(suspended_before_drop.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn credential_host_factory_rejects_a_broker_for_another_runtime_scope() {
+        let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
+        let factory = Arc::new(TestCredentialHostFactory {
+            builds: std::sync::atomic::AtomicUsize::new(0),
+            retained_drops: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            suspended_before_drop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
+            mismatched_scope: true,
+        });
+        let result = CuaDriver::try_create_for_host(host_options_with_credential_factory(factory));
+        assert!(matches!(result, Err(DriverError::Configuration { .. })));
+    }
+
     #[tokio::test]
     async fn activity_observer_receives_only_content_free_authorization_metadata() {
         let _runtime_test = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
@@ -2016,6 +2196,7 @@ mod tests {
             register_host_tools: None,
             authorization_host: None,
             activity_observer: None,
+            credential_host_factory: None,
         });
         assert!(inventory["tools"]
             .as_array()
@@ -2112,6 +2293,7 @@ mod tests {
             register_host_tools: Some(register_slow_host_tool),
             authorization_host: None,
             activity_observer: None,
+            credential_host_factory: None,
         })
         .unwrap();
         let action_driver = driver.clone();

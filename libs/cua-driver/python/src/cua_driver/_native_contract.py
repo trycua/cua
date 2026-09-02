@@ -1049,7 +1049,9 @@ class ActionEvidenceKind(enum.Enum):
 
     VALUE_READBACK = 0
 
-    WINDOW_CHANGE = 1
+    TARGET_EVENT = 1
+
+    WINDOW_CHANGE = 2
 
 
 
@@ -1060,12 +1062,16 @@ class _UniffiFfiConverterTypeActionEvidenceKind(_UniffiConverterRustBuffer):
         if variant == 1:
             return ActionEvidenceKind.VALUE_READBACK
         if variant == 2:
+            return ActionEvidenceKind.TARGET_EVENT
+        if variant == 3:
             return ActionEvidenceKind.WINDOW_CHANGE
         raise InternalError("Raw enum value doesn't match any cases")
 
     @staticmethod
     def check_lower(value):
         if value == ActionEvidenceKind.VALUE_READBACK:
+            return
+        if value == ActionEvidenceKind.TARGET_EVENT:
             return
         if value == ActionEvidenceKind.WINDOW_CHANGE:
             return
@@ -1075,8 +1081,10 @@ class _UniffiFfiConverterTypeActionEvidenceKind(_UniffiConverterRustBuffer):
     def write(value, buf):
         if value == ActionEvidenceKind.VALUE_READBACK:
             buf.write_i32(1)
-        if value == ActionEvidenceKind.WINDOW_CHANGE:
+        if value == ActionEvidenceKind.TARGET_EVENT:
             buf.write_i32(2)
+        if value == ActionEvidenceKind.WINDOW_CHANGE:
+            buf.write_i32(3)
 
 
 
@@ -2144,6 +2152,174 @@ class _UniffiFfiConverterTypeClipboardWriteOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterBoolean.write(value.privacy_sensitive, buf)
         _UniffiFfiConverterBoolean.write(value.content_redacted_from_telemetry, buf)
 
+
+
+
+
+
+class CredentialField(enum.Enum):
+
+    PASSWORD = 0
+
+
+
+class _UniffiFfiConverterTypeCredentialField(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CredentialField.PASSWORD
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CredentialField.PASSWORD:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CredentialField.PASSWORD:
+            buf.write_i32(1)
+
+
+
+class _UniffiFfiConverterSequenceTypeCredentialField(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeCredentialField.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeCredentialField.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeCredentialField.read(buf) for i in range(count)
+        ]
+
+
+
+
+
+
+class CredentialProviderClass(enum.Enum):
+
+    SERVICE_ACCOUNT_VAULT = 0
+
+    INTERACTIVE_DESKTOP = 1
+
+
+
+class _UniffiFfiConverterTypeCredentialProviderClass(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return CredentialProviderClass.SERVICE_ACCOUNT_VAULT
+        if variant == 2:
+            return CredentialProviderClass.INTERACTIVE_DESKTOP
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == CredentialProviderClass.SERVICE_ACCOUNT_VAULT:
+            return
+        if value == CredentialProviderClass.INTERACTIVE_DESKTOP:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == CredentialProviderClass.SERVICE_ACCOUNT_VAULT:
+            buf.write_i32(1)
+        if value == CredentialProviderClass.INTERACTIVE_DESKTOP:
+            buf.write_i32(2)
+
+
+
+class _UniffiFfiConverterOptionalTypeCredentialProviderClass(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        if value is not None:
+            _UniffiFfiConverterTypeCredentialProviderClass.check_lower(value)
+
+    @classmethod
+    def write(cls, value, buf):
+        if value is None:
+            buf.write_u8(0)
+            return
+
+        buf.write_u8(1)
+        _UniffiFfiConverterTypeCredentialProviderClass.write(value, buf)
+
+    @classmethod
+    def read(cls, buf):
+        flag = buf.read_u8()
+        if flag == 0:
+            return None
+        elif flag == 1:
+            return _UniffiFfiConverterTypeCredentialProviderClass.read(buf)
+        else:
+            raise InternalError("Unexpected flag byte for optional type")
+
+@dataclass
+class CredentialDescriptor:
+    def __init__(self, *, handle:str, label:typing.Optional[str], fields:typing.List[CredentialField], provider_class:typing.Optional[CredentialProviderClass]):
+        self.handle = handle
+        self.label = label
+        self.fields = fields
+        self.provider_class = provider_class
+
+
+
+
+    def __str__(self):
+        return "CredentialDescriptor(handle={}, label={}, fields={}, provider_class={})".format(self.handle, self.label, self.fields, self.provider_class)
+    def __eq__(self, other):
+        if self.handle != other.handle:
+            return False
+        if self.label != other.label:
+            return False
+        if self.fields != other.fields:
+            return False
+        if self.provider_class != other.provider_class:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCredentialDescriptor(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CredentialDescriptor(
+            handle=_UniffiFfiConverterString.read(buf),
+            label=_UniffiFfiConverterOptionalString.read(buf),
+            fields=_UniffiFfiConverterSequenceTypeCredentialField.read(buf),
+            provider_class=_UniffiFfiConverterOptionalTypeCredentialProviderClass.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.handle)
+        _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterSequenceTypeCredentialField.check_lower(value.fields)
+        _UniffiFfiConverterOptionalTypeCredentialProviderClass.check_lower(value.provider_class)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.handle, buf)
+        _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterSequenceTypeCredentialField.write(value.fields, buf)
+        _UniffiFfiConverterOptionalTypeCredentialProviderClass.write(value.provider_class, buf)
+
 @dataclass
 class CursorMotionOutput:
     def __init__(self, *, start_handle:float, end_handle:float, arc_size:float, arc_flow:float, spring:float, glide_duration_ms:float, dwell_after_click_ms:float, idle_hide_ms:float, turn_radius:float):
@@ -3005,6 +3181,107 @@ class _UniffiFfiConverterTypeEscalateSessionInput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterTypeEscalationReason.write(value.reason, buf)
         _UniffiFfiConverterOptionalString.write(value.detail, buf)
+
+@dataclass
+class FindCredentialsInput:
+    def __init__(self, *, session:typing.Optional[str], target_id:str, tab_id:str, element_ref:str):
+        self.session = session
+        self.target_id = target_id
+        self.tab_id = tab_id
+        self.element_ref = element_ref
+
+
+
+
+    def __str__(self):
+        return "FindCredentialsInput(session={}, target_id={}, tab_id={}, element_ref={})".format(self.session, self.target_id, self.tab_id, self.element_ref)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.target_id != other.target_id:
+            return False
+        if self.tab_id != other.tab_id:
+            return False
+        if self.element_ref != other.element_ref:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeFindCredentialsInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return FindCredentialsInput(
+            session=_UniffiFfiConverterOptionalString.read(buf),
+            target_id=_UniffiFfiConverterString.read(buf),
+            tab_id=_UniffiFfiConverterString.read(buf),
+            element_ref=_UniffiFfiConverterString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalString.check_lower(value.session)
+        _UniffiFfiConverterString.check_lower(value.target_id)
+        _UniffiFfiConverterString.check_lower(value.tab_id)
+        _UniffiFfiConverterString.check_lower(value.element_ref)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalString.write(value.session, buf)
+        _UniffiFfiConverterString.write(value.target_id, buf)
+        _UniffiFfiConverterString.write(value.tab_id, buf)
+        _UniffiFfiConverterString.write(value.element_ref, buf)
+
+class _UniffiFfiConverterSequenceTypeCredentialDescriptor(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeCredentialDescriptor.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeCredentialDescriptor.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeCredentialDescriptor.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class FindCredentialsOutput:
+    def __init__(self, *, credentials:typing.List[CredentialDescriptor]):
+        self.credentials = credentials
+
+
+
+
+    def __str__(self):
+        return "FindCredentialsOutput(credentials={})".format(self.credentials)
+    def __eq__(self, other):
+        if self.credentials != other.credentials:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeFindCredentialsOutput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return FindCredentialsOutput(
+            credentials=_UniffiFfiConverterSequenceTypeCredentialDescriptor.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterSequenceTypeCredentialDescriptor.check_lower(value.credentials)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterSequenceTypeCredentialDescriptor.write(value.credentials, buf)
 
 @dataclass
 class GetAgentCursorStateInput:
@@ -5019,6 +5296,66 @@ class _UniffiFfiConverterTypeStatePredicate(_UniffiConverterRustBuffer):
         _UniffiFfiConverterOptionalTypeElementPredicate.write(value.element, buf)
 
 @dataclass
+class TypeSecretInput:
+    def __init__(self, *, session:typing.Optional[str], target_id:str, tab_id:str, element_ref:str, handle:str, field:CredentialField):
+        self.session = session
+        self.target_id = target_id
+        self.tab_id = tab_id
+        self.element_ref = element_ref
+        self.handle = handle
+        self.field = field
+
+
+
+
+    def __str__(self):
+        return "TypeSecretInput(session={}, target_id={}, tab_id={}, element_ref={}, handle={}, field={})".format(self.session, self.target_id, self.tab_id, self.element_ref, self.handle, self.field)
+    def __eq__(self, other):
+        if self.session != other.session:
+            return False
+        if self.target_id != other.target_id:
+            return False
+        if self.tab_id != other.tab_id:
+            return False
+        if self.element_ref != other.element_ref:
+            return False
+        if self.handle != other.handle:
+            return False
+        if self.field != other.field:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeTypeSecretInput(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return TypeSecretInput(
+            session=_UniffiFfiConverterOptionalString.read(buf),
+            target_id=_UniffiFfiConverterString.read(buf),
+            tab_id=_UniffiFfiConverterString.read(buf),
+            element_ref=_UniffiFfiConverterString.read(buf),
+            handle=_UniffiFfiConverterString.read(buf),
+            field=_UniffiFfiConverterTypeCredentialField.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterOptionalString.check_lower(value.session)
+        _UniffiFfiConverterString.check_lower(value.target_id)
+        _UniffiFfiConverterString.check_lower(value.tab_id)
+        _UniffiFfiConverterString.check_lower(value.element_ref)
+        _UniffiFfiConverterString.check_lower(value.handle)
+        _UniffiFfiConverterTypeCredentialField.check_lower(value.field)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterOptionalString.write(value.session, buf)
+        _UniffiFfiConverterString.write(value.target_id, buf)
+        _UniffiFfiConverterString.write(value.tab_id, buf)
+        _UniffiFfiConverterString.write(value.element_ref, buf)
+        _UniffiFfiConverterString.write(value.handle, buf)
+        _UniffiFfiConverterTypeCredentialField.write(value.field, buf)
+
+@dataclass
 class TypeTextInput:
     def __init__(self, *, text:str, target:typing.Optional[ActionTarget], scope:typing.Optional[DesktopScope], session:typing.Optional[str]):
         self.text = text
@@ -5317,6 +5654,8 @@ __all__ = [
     "ActionTarget",
     "DesktopScope",
     "ClickButton",
+    "CredentialField",
+    "CredentialProviderClass",
     "CursorReducedMotion",
     "CursorAction",
     "EscalationReason",
@@ -5340,6 +5679,7 @@ __all__ = [
     "ClipboardReadOutput",
     "ClipboardWriteInput",
     "ClipboardWriteOutput",
+    "CredentialDescriptor",
     "CursorMotionOutput",
     "CursorPointOutput",
     "CursorThemeOutput",
@@ -5351,6 +5691,8 @@ __all__ = [
     "EndSessionInput",
     "EndSessionOutput",
     "EscalateSessionInput",
+    "FindCredentialsInput",
+    "FindCredentialsOutput",
     "GetAgentCursorStateInput",
     "GetAgentCursorStateOutput",
     "GetCursorPositionInput",
@@ -5379,6 +5721,7 @@ __all__ = [
     "StartSessionOutput",
     "WindowPredicate",
     "StatePredicate",
+    "TypeSecretInput",
     "TypeTextInput",
     "VerifyStateInput",
     "VerifyStateOutput",

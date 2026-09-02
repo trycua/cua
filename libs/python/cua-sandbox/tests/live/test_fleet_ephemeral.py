@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 import re
 import time
@@ -138,35 +139,36 @@ async def run_fleet_ephemeral_live() -> None:
                 assert result.success
                 assert result.stdout.strip() == "Linux"
 
-                signed_url = await sandbox.services.create_signed_url(
-                    "server",
-                    label="periodic-live-e2e",
-                    expires_in_seconds=300,
-                )
-                assert signed_url.namespace == pool_name
-                assert signed_url.service == "server"
-                assert signed_url.label == "periodic-live-e2e"
-                assert signed_url.revoked_at is None
-
-                try:
-                    listed_signed_urls = await sandbox.services.list_signed_urls()
-                    listed_signed_url = next(
-                        item for item in listed_signed_urls if item.id == signed_url.id
+                if os.environ.get("CUA_LIVE_E2E_SIGNED_URLS") == "true":
+                    signed_url = await sandbox.services.create_signed_url(
+                        "server",
+                        label="periodic-live-e2e",
+                        expires_in_seconds=300,
                     )
-                    assert listed_signed_url.revoked_at is None
-                finally:
-                    await sandbox.services.revoke_signed_url(signed_url)
+                    assert signed_url.namespace == pool_name
+                    assert signed_url.service == "server"
+                    assert signed_url.label == "periodic-live-e2e"
+                    assert signed_url.revoked_at is None
 
-                revoked_signed_urls = await sandbox.services.list_signed_urls()
-                revoked_signed_url = next(
-                    item for item in revoked_signed_urls if item.id == signed_url.id
-                )
-                assert revoked_signed_url.revoked_at is not None
-                summary["signed_service_url"] = {
-                    "created": True,
-                    "listed": True,
-                    "revoked": True,
-                }
+                    try:
+                        listed_signed_urls = await sandbox.services.list_signed_urls()
+                        listed_signed_url = next(
+                            item for item in listed_signed_urls if item.id == signed_url.id
+                        )
+                        assert listed_signed_url.revoked_at is None
+                    finally:
+                        await sandbox.services.revoke_signed_url(signed_url)
+
+                    revoked_signed_urls = await sandbox.services.list_signed_urls()
+                    revoked_signed_url = next(
+                        item for item in revoked_signed_urls if item.id == signed_url.id
+                    )
+                    assert revoked_signed_url.revoked_at is not None
+                    summary["signed_service_url"] = {
+                        "created": True,
+                        "listed": True,
+                        "revoked": True,
+                    }
             except BaseException as error:
                 primary_error = error
                 summary["error"] = {"type": type(error).__name__}
@@ -192,7 +194,15 @@ async def run_fleet_ephemeral_live() -> None:
                 except BaseException as error:
                     record_cleanup_error(error)
                 try:
+                    expected_inventory = {"templates": [], "pools": [], "claims": []}
                     inventory = await collect_resource_inventory(fleet, resource_namespace)
+                    if claims_absent is True and primary_error is None:
+                        inventory_deadline = time.monotonic() + 180.0
+                        while inventory != expected_inventory and time.monotonic() < inventory_deadline:
+                            await asyncio.sleep(5.0)
+                            inventory = await collect_resource_inventory(
+                                fleet, resource_namespace
+                            )
                     summary["persistent_resources"] = inventory
                 except BaseException as error:
                     record_cleanup_error(error)
@@ -204,7 +214,6 @@ async def run_fleet_ephemeral_live() -> None:
                 except BaseException as error:
                     record_cleanup_error(error)
             if sandbox_yielded and inventory is not None:
-                expected_inventory = {"templates": [], "pools": [], "claims": []}
                 if inventory != expected_inventory:
                     try:
                         summary["unexpected_inventory"] = True

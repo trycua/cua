@@ -90,6 +90,7 @@ jobs:
       CUA_LIVE_E2E_POOL_COLD_NAMESPACE: cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}
       CUA_LIVE_E2E_ARTIFACT_DIR: /tmp/cua-live-e2e
       CUA_TELEMETRY_ENABLED: "false"
+      CUA_LIVE_E2E_SIGNED_URLS: "true"
     steps:
       - name: Check Fleet OAuth credentials
         env:

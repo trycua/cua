@@ -211,6 +211,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         self.assertEqual(live["env"]["CUA_LIVE_E2E_EVENT"], "${{ github.event_name }}")
         self.assertEqual(live["env"]["CUA_LIVE_E2E_SUITE"], "${{ matrix.suite }}")
+        self.assertEqual(live["env"]["CUA_LIVE_E2E_SIGNED_URLS"], "true")
         self.assertEqual(
             live["env"]["CUA_LIVE_E2E_NAMESPACE"],
             "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}",

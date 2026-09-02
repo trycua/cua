@@ -118,6 +118,7 @@ class Computer:
         vnc_host: Optional[str] = None,
         vnc_port: int = 5900,
         vnc_password: str = "",
+        vnc_force_caps: bool = False,
         run_opts: Optional[Dict[str, Any]] = None,
     ):
         """Initialize a new Computer instance.
@@ -163,6 +164,10 @@ class Computer:
             vnc_host: VNC server host (required when backend='vnc')
             vnc_port: VNC server port (default: 5900)
             vnc_password: VNC server password
+            vnc_force_caps: Synthesise Shift around shifted characters when typing over
+                VNC. Some servers (notably QEMU's) only apply the shift level implied by
+                a keysym to letters, so symbols like '@' arrive as '2'. Only used when
+                backend='vnc'.
             run_opts: Optional dictionary of provider-specific run options.
         """
 
@@ -224,6 +229,7 @@ class Computer:
         self.vnc_host = vnc_host
         self.vnc_port = vnc_port
         self.vnc_password = vnc_password
+        self.vnc_force_caps = vnc_force_caps
 
         if "app-use" in self.experiments:
             assert self.os_type == "macos", "App use experiment is only supported on macOS"
@@ -358,6 +364,25 @@ class Computer:
         """Stop the computer."""
         loop = asyncio.get_event_loop()
         loop.run_until_complete(self.__aexit__(exc_type, exc_val, exc_tb))
+
+    def _backend_env(self) -> Dict[str, str]:
+        """Environment the computer-server needs to select and configure its backend.
+
+        Every VNC setting has to travel this way: the server reads its backend
+        configuration from the environment, and a setting that is not forwarded here
+        silently falls back to its default inside the VM.
+        """
+        if self.backend != "vnc":
+            return {}
+        env: Dict[str, str] = {"CUA_BACKEND": "vnc"}
+        if self.vnc_host:
+            env["CUA_VNC_HOST"] = self.vnc_host
+            env["CUA_VNC_PORT"] = str(self.vnc_port)
+            if self.vnc_password:
+                env["CUA_VNC_PASSWORD"] = self.vnc_password
+            if self.vnc_force_caps:
+                env["CUA_VNC_FORCE_CAPS"] = "true"
+        return env
 
     async def run(self) -> Optional[str]:
         """Initialize the VM and computer interface."""
@@ -551,14 +576,9 @@ class Computer:
                         run_opts["shared_directories"] = shared_dirs.copy()
 
                     # Pass backend configuration as env vars for the computer-server
-                    if self.backend == "vnc":
-                        run_opts.setdefault("env", {})
-                        run_opts["env"]["CUA_BACKEND"] = "vnc"
-                        if self.vnc_host:
-                            run_opts["env"]["CUA_VNC_HOST"] = self.vnc_host
-                            run_opts["env"]["CUA_VNC_PORT"] = str(self.vnc_port)
-                            if self.vnc_password:
-                                run_opts["env"]["CUA_VNC_PASSWORD"] = self.vnc_password
+                    backend_env = self._backend_env()
+                    if backend_env:
+                        run_opts.setdefault("env", {}).update(backend_env)
 
                     # Merge custom run_opts
                     run_opts.update(self.custom_run_opts)

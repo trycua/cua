@@ -155,3 +155,39 @@ def test_env_flag_is_false_when_unset(monkeypatch):
     monkeypatch.delenv("CUA_VNC_FORCE_CAPS", raising=False)
 
     assert env_flag("CUA_VNC_FORCE_CAPS") is False
+
+
+def test_computer_forwards_force_caps_to_the_server_env():
+    """The SDK has to hand the flag down, or --vnc-force-caps only helps people
+    who start computer-server by hand."""
+    from computer.computer import Computer
+
+    computer = Computer(
+        use_host_computer_server=True,
+        backend="vnc",
+        vnc_host="127.0.0.1",
+        vnc_password="secret",
+        vnc_force_caps=True,
+    )
+
+    assert computer._backend_env() == {
+        "CUA_BACKEND": "vnc",
+        "CUA_VNC_HOST": "127.0.0.1",
+        "CUA_VNC_PORT": "5900",
+        "CUA_VNC_PASSWORD": "secret",
+        "CUA_VNC_FORCE_CAPS": "true",
+    }
+
+
+def test_computer_leaves_force_caps_unset_by_default():
+    from computer.computer import Computer
+
+    computer = Computer(use_host_computer_server=True, backend="vnc", vnc_host="127.0.0.1")
+
+    assert "CUA_VNC_FORCE_CAPS" not in computer._backend_env()
+
+
+def test_computer_sends_no_backend_env_for_the_native_backend():
+    from computer.computer import Computer
+
+    assert Computer(use_host_computer_server=True)._backend_env() == {}

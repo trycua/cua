@@ -89,6 +89,18 @@ from the client instead. It stays off by default: vncdotool documents it as a
 workaround for non-compliant servers, and it changes what every uppercase and
 shifted-punctuation keystroke puts on the wire.
 
+When the server is started for you by the Python SDK, pass it through
+`Computer(...)` instead — it is forwarded to the VM alongside the other VNC
+settings:
+
+```python
+computer = Computer(
+    backend="vnc",
+    vnc_host="127.0.0.1",
+    vnc_force_caps=True,
+)
+```
+
 ### Cua Driver backend
 
 `--backend cua-driver` keeps computer-server's HTTP/WebSocket, MCP, shell,

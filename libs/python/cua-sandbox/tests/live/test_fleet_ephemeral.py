@@ -21,7 +21,7 @@ from tests.live.fleet_e2e_support import (
 
 IMAGE = (
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
-    "@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d"
+    "@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2"
 )
 
 
@@ -137,6 +137,36 @@ async def run_fleet_ephemeral_live() -> None:
                 }
                 assert result.success
                 assert result.stdout.strip() == "Linux"
+
+                signed_url = await sandbox.services.create_signed_url(
+                    "server",
+                    label="periodic-live-e2e",
+                    expires_in_seconds=300,
+                )
+                assert signed_url.namespace == pool_name
+                assert signed_url.service == "server"
+                assert signed_url.label == "periodic-live-e2e"
+                assert signed_url.revoked_at is None
+
+                try:
+                    listed_signed_urls = await sandbox.services.list_signed_urls()
+                    listed_signed_url = next(
+                        item for item in listed_signed_urls if item.id == signed_url.id
+                    )
+                    assert listed_signed_url.revoked_at is None
+                finally:
+                    await sandbox.services.revoke_signed_url(signed_url)
+
+                revoked_signed_urls = await sandbox.services.list_signed_urls()
+                revoked_signed_url = next(
+                    item for item in revoked_signed_urls if item.id == signed_url.id
+                )
+                assert revoked_signed_url.revoked_at is not None
+                summary["signed_service_url"] = {
+                    "created": True,
+                    "listed": True,
+                    "revoked": True,
+                }
             except BaseException as error:
                 primary_error = error
                 summary["error"] = {"type": type(error).__name__}

@@ -1,6 +1,6 @@
 {
   "name": "@trycua/fleet",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "packageManager": "pnpm@10.12.3",
   "description": "Browser and WebAssembly SDK for Cua Fleet sandbox lifecycle management",
   "type": "module",

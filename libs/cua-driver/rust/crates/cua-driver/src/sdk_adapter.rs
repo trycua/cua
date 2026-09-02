@@ -111,16 +111,7 @@ impl SdkAdapter {
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {
-        name == "type_text_chars"
-            || self
-                .tools_list
-                .get("tools")
-                .and_then(Value::as_array)
-                .is_some_and(|tools| {
-                    tools
-                        .iter()
-                        .any(|tool| tool.get("name").and_then(Value::as_str) == Some(name))
-                })
+        self.driver.local_is_known_tool(name).unwrap_or(false)
     }
 
     pub fn describe(&self, name: &str) -> Option<Value> {
@@ -413,6 +404,10 @@ fn daemon_tools_list_from(tools_list: &Value) -> Value {
 impl ToolProvider for SdkAdapter {
     fn tools_list(&self) -> Value {
         self.tools_list()
+    }
+
+    fn is_known_tool(&self, name: &str) -> bool {
+        SdkAdapter::is_known_tool(self, name)
     }
 
     async fn invoke_tool(&self, name: &str, arguments: Value) -> Result<Value, String> {

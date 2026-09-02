@@ -235,6 +235,10 @@ impl DriverRuntime {
         self.is_running().then(|| self.registry.tools_list())
     }
 
+    pub(crate) fn is_known_tool(&self, name: &str) -> bool {
+        self.is_running() && self.registry.is_known_tool(name)
+    }
+
     pub(crate) fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
         self.is_running().then(|| self.registry.history()).flatten()
     }

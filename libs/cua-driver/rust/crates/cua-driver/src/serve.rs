@@ -508,18 +508,17 @@ async fn invoke_daemon_tool(
         }
     }
 
-    // Policy enforcement — defense-in-depth for direct daemon socket connections.
-    // Evaluate before registry lookup so a deny-by-default policy does not leak
-    // whether an unapproved name happens to be registered. This also preserves
-    // the MCP policy contract now that every call passes through the daemon.
-    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
-        observe_daemon_error(observation, 1);
-        return DaemonResponse::err(error.to_string(), 1);
-    }
-
+    // Tool discovery is already public through tools/list. Reject unknown names
+    // before authorization so typos are not reported as unreviewed tools.
     if !known_tool {
         observe_daemon_error(observation, 64);
         return DaemonResponse::err(format!("Unknown tool: {tool_name}"), 64);
+    }
+
+    // Policy enforcement — defense-in-depth for direct daemon socket connections.
+    if let Err(error) = cua_driver_core::authorization::authorize_tool_call(&tool_name, &args) {
+        observe_daemon_error(observation, 1);
+        return DaemonResponse::err(error.to_string(), 1);
     }
 
     inject_browser_approvals(&tool_name, &mut args, req.session_id.as_deref());
@@ -2552,6 +2551,26 @@ mod gate_tests {
         }
 
         let sid = "gate-test-session-A1B2C3";
+
+        let unknown_socket = socket.clone();
+        let unknown = DaemonRequest {
+            method: "call".into(),
+            name: Some("get_active_window".into()),
+            args: Some(serde_json::json!({})),
+            session_id: Some(sid.to_owned()),
+            observation_origin: None,
+            client_kind: None,
+        };
+        let response = tokio::task::spawn_blocking(move || send_request(&unknown_socket, &unknown))
+            .await
+            .unwrap()
+            .expect("unknown call response");
+        assert!(!response.ok);
+        assert_eq!(response.exit_code, Some(64));
+        assert_eq!(
+            response.error.as_deref(),
+            Some("Unknown tool: get_active_window")
+        );
 
         // 1. LIVE session call → tool runs.
         let socket1 = socket.clone();

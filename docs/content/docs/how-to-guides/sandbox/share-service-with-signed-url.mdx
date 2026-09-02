@@ -1,0 +1,267 @@
+---
+title: Share a sandbox service with a signed URL
+description: Create, list, and revoke time-limited public URLs for sandbox services with Python or TypeScript.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tab, Tabs } from 'fumadocs-ui/components/tabs';
+
+Use a signed service URL when a person or external system needs temporary
+access to a service running inside a Fleet sandbox. The URL is public,
+time-limited, and revocable. Requests still route only to the named service on
+the bound sandbox.
+
+<Callout type="warn">
+  A signed service URL is a bearer credential. Anyone who has it can access the service until the
+  URL expires or is revoked. Do not put signed URLs in source control, logs, analytics events, or
+  public chat channels.
+</Callout>
+
+## Prerequisites
+
+- A Fleet pool whose template exposes the service you want to share.
+- A bound sandbox claim. The signed URL does not create or keep a claim alive.
+- OAuth client credentials with permission to manage the claim.
+- A Cua Sandbox or Fleet SDK release that includes signed service URL support.
+
+If you do not have a pool yet, create one with
+[Python](/how-to-guides/sandbox/create-pool-with-python) or
+[TypeScript](/how-to-guides/sandbox/create-pool-with-typescript). The service
+name passed to the signed URL API must match a service declared on that pool's
+template.
+
+Signed URLs accept expiration times from 60 seconds through 24 hours. The
+optional label is useful for recording why a link was created and is limited to
+120 UTF-8 bytes.
+
+## Authenticate
+
+Both SDKs connect to `https://run.cua.ai` by default. Set OAuth client
+credentials before running either example:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+export CUA_POOL_NAME="my-team-pool"
+export CUA_CLAIM_NAME="signed-url-demo"
+```
+
+Set `CUA_FLEET_BASE_URL` or `CUA_TOKEN_URL` only when you use non-default Fleet
+or OAuth endpoints.
+
+## Create and revoke a signed URL
+
+The examples claim a sandbox from an existing pool, create a one-hour URL for
+the `mcp` service, wait while you use the URL, and then revoke it before
+releasing the claim.
+
+<Tabs groupId="signed-service-url-language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+This example uses [`uv`](https://docs.astral.sh/uv/) and the same self-contained
+script setup as the Python pool guide. `uv` installs `cua-sandbox` in an
+isolated environment when you run the script.
+
+Save the following script as `share_service.py`:
+
+```python title="share_service.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox",
+# ]
+# ///
+
+import asyncio
+import os
+
+from cua_sandbox import Pool
+
+
+POOL_NAME = os.environ["CUA_POOL_NAME"]
+CLAIM_NAME = os.environ.get("CUA_CLAIM_NAME", "signed-url-demo")
+SERVICE_NAME = "mcp"
+
+
+async def main() -> None:
+    pool = await Pool.get(POOL_NAME)
+
+    async with pool.claim(
+        name=CLAIM_NAME,
+        service=SERVICE_NAME,
+        time_to_start=900,
+    ) as sandbox:
+        signed_url = await sandbox.services.create_signed_url(
+            SERVICE_NAME,
+            label="Customer demo",
+            expires_in_seconds=3600,
+        )
+
+        try:
+            print(f"Share this URL: {signed_url.url}")
+
+            urls = await sandbox.services.list_signed_urls()
+            for item in urls:
+                state = "revoked" if item.revoked_at else "available"
+                print(f"{item.label or item.id}: {state}, expires {item.expires_at}")
+
+            await asyncio.to_thread(input, "Press Enter to revoke the URL... ")
+        finally:
+            await sandbox.services.revoke_signed_url(signed_url)
+
+
+asyncio.run(main())
+```
+
+Run it:
+
+```bash
+uv run share_service.py
+```
+
+`pool.claim()` keeps the claim bound for the duration of the context manager.
+The `finally` block revokes the URL even when the work inside the block raises
+an exception. Exiting the context then releases the claim while leaving the
+pool warm.
+
+  </Tab>
+  <Tab value="TypeScript">
+
+Install the Fleet SDK and a TypeScript runner:
+
+```bash
+npm install @trycua/fleet@^0.1.1
+npm install --save-dev tsx typescript
+npm pkg set type=module
+```
+
+Save the following script as `share-service.ts`:
+
+```ts title="share-service.ts"
+import { createInterface } from 'node:readline/promises';
+import {
+  CreateClaimRequestBuilder,
+  CyclopsClient,
+  CyclopsCredentials,
+  FetchHttpClient,
+  type Claim,
+  type CyclopsConfiguration,
+  type SignedServiceUrl,
+  uniffiInitAsync,
+} from '@trycua/fleet/node';
+
+const BASE_URL = process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
+const TOKEN_URL =
+  process.env.CUA_TOKEN_URL ??
+  'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token';
+const CLIENT_ID = requiredEnv('CUA_CLIENT_ID');
+const CLIENT_SECRET = requiredEnv('CUA_CLIENT_SECRET');
+const POOL_NAME = requiredEnv('CUA_POOL_NAME');
+const CLAIM_NAME = process.env.CUA_CLAIM_NAME ?? 'signed-url-demo';
+const SERVICE_NAME = 'mcp';
+
+function requiredEnv(name: string): string {
+  const value = process.env[name];
+  if (!value) throw new Error(`Missing environment variable: ${name}`);
+  return value;
+}
+
+await uniffiInitAsync();
+
+const configuration: CyclopsConfiguration = {
+  baseUrl: BASE_URL,
+  tokenUrl: TOKEN_URL,
+  credentials: new CyclopsCredentials(CLIENT_ID, CLIENT_SECRET),
+  poolPollIntervalMs: 5_000n,
+  poolPollLimit: 120,
+  claimPollIntervalMs: 5_000n,
+  claimPollLimit: 120,
+};
+const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as CyclopsClient;
+
+let claim: Claim | undefined;
+let signedUrl: SignedServiceUrl | undefined;
+
+try {
+  const pool = await client.getPool(POOL_NAME);
+  claim = await client.createClaim(
+    new CreateClaimRequestBuilder().pool(pool).name(CLAIM_NAME).build()
+  );
+  const sandbox = await client.waitClaim(claim);
+
+  signedUrl = await client.createSignedServiceUrl({
+    sandbox,
+    service: SERVICE_NAME,
+    label: 'Customer demo',
+    expiresInSeconds: 3600,
+  });
+
+  console.log(`Share this URL: ${signedUrl.url}`);
+
+  const urls = await client.listSignedServiceUrls(sandbox);
+  for (const item of urls) {
+    const state = item.revokedAt ? 'revoked' : 'available';
+    console.log(`${item.label ?? item.id}: ${state}, expires ${item.expiresAt}`);
+  }
+
+  const readline = createInterface({ input: process.stdin, output: process.stdout });
+  await readline.question('Press Enter to revoke the URL... ');
+  readline.close();
+} finally {
+  try {
+    if (signedUrl) await client.revokeSignedServiceUrl(signedUrl);
+  } finally {
+    try {
+      if (claim) await client.deleteClaim(claim);
+    } finally {
+      client.uniffiDestroy();
+    }
+  }
+}
+```
+
+Run it:
+
+```bash
+npx tsx share-service.ts
+```
+
+The Fleet client manages signed URLs directly. Keep the returned
+`SignedServiceUrl` record because `revokeSignedServiceUrl()` uses it to identify
+the URL and namespace. The nested cleanup blocks revoke the URL, release the
+claim, and destroy the native client in that order.
+
+  </Tab>
+</Tabs>
+
+## Use the URL safely
+
+- Keep the claim bound while clients use the URL. Releasing or deleting the
+  claim can remove the backing service before the URL expires.
+- Choose the shortest practical expiration time. Create a new URL instead of
+  extending access through a long-lived link.
+- Use labels that identify the recipient or purpose without including secrets
+  or personal data.
+- Revoke the URL immediately when sharing is complete. Expiration is a fallback,
+  not a substitute for revocation.
+- Treat a `503` response from URL management operations as signed URLs being
+  unavailable in the current Fleet environment.
+
+## Troubleshoot
+
+### The SDK reports an unknown service
+
+The service name must be present in the bound sandbox's service list. Reconcile
+the pool template with the service and target port, then create a new claim.
+
+### The URL stops working before its expiration time
+
+Confirm that the claim is still bound and that the backing service still
+exists. A signed URL grants access to a service; it does not extend the claim's
+lifecycle.
+
+### The SDK says signed service URLs are unavailable
+
+Confirm that your installed Cua Sandbox or Fleet SDK includes signed service
+URL support and that the Fleet environment has the feature configured. Older
+SDK bindings do not expose the create, list, or revoke operations.

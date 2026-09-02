@@ -11,6 +11,7 @@
     "secrets",
     "scale-out",
     "tunneling",
+    "share-service-with-signed-url",
     "images",
     "interactive-shell",
     "minecraft"

@@ -1527,9 +1527,15 @@ impl Tool for GetWindowStateTool {
                     }
                     // base64 is embedded only when no out_file was given (vision
                     // path). With `screenshot_out_file` the bytes went to disk and
-                    // we surface the path instead — never both.
+                    // we surface the path instead — never both. Keep a text content
+                    // part when the image went to disk so the response is never
+                    // empty on the capture-only path (which has no tree markdown).
                     if let Some(b64) = b64_opt {
                         content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    } else if let Some(fp) = &file_path {
+                        content.push(cua_driver_core::protocol::Content::text(format!(
+                            "window_id={hwnd} pid={pid} size={w}x{h} screenshot written to {fp}"
+                        )));
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
@@ -1574,6 +1580,19 @@ impl Tool for GetWindowStateTool {
                         cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
                     ),
                 );
+
+                // The capture-only path (include_accessibility_tree:false) leaves
+                // `content` empty if the screenshot was also unavailable. Return a
+                // structured error rather than a "successful" response with no
+                // content parts (consistent with the tree+screenshot path, which
+                // always carries at least the tree markdown).
+                if content.is_empty() {
+                    return ToolResult::error(format!(
+                        "No content produced for window_id {hwnd}: the accessibility tree was \
+                         skipped (include_accessibility_tree:false) and no screenshot was returned."
+                    ))
+                    .with_structured(structured);
+                }
 
                 ToolResult {
                     content,

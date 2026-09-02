@@ -705,10 +705,16 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize);
 
         let process_is_live = crate::proc_fs::is_process_live(pid);
+        // Enumerate the pid's windows ONCE and reuse the result for both the
+        // window-ownership check (Wayland) and the additive window metadata
+        // below, instead of paying for the compositor/X11 enumeration twice.
+        // `window_meta` also names the surface + its on-screen rectangle on the
+        // capture-only path, where no AT-SPI tree identifies it.
+        let window_meta = crate::wayland::list_windows_dispatch(Some(pid))
+            .into_iter()
+            .find(|w| w.xid == xid);
         let window_matches = if crate::wayland::is_wayland() {
-            crate::wayland::list_windows_dispatch(Some(pid))
-                .iter()
-                .any(|window| window.xid == xid && window.pid == Some(pid))
+            window_meta.as_ref().is_some_and(|w| w.pid == Some(pid))
                 || crate::wayland::window_was_listed_for_pid(pid, xid)
         } else {
             crate::x11::window_belongs_to_pid(xid, pid)
@@ -718,12 +724,6 @@ impl Tool for GetWindowStateTool {
                 "Window target pid {pid}, window_id {xid} is stale or no longer running; refresh list_windows."
             ));
         }
-        // Window identity metadata (additive), sourced from the same enumerator
-        // list_windows uses. Names the surface and its on-screen rectangle even
-        // on the capture-only path, where no AT-SPI tree identifies it.
-        let window_meta = crate::wayland::list_windows_dispatch(Some(pid))
-            .into_iter()
-            .find(|w| w.xid == xid);
 
         // Always walk the AT-SPI tree; capture the screenshot by default. The
         // tree+screenshot pair is the default so the agent grounds on both and
@@ -978,8 +978,15 @@ impl Tool for GetWindowStateTool {
                     }
                     // ax mode + screenshot_out_file writes the PNG to disk and
                     // returns b64=None — never embed the image bytes in that case.
+                    // Keep a text content part when the image went to disk so the
+                    // response is never empty on the capture-only path (which has
+                    // no tree markdown either).
                     if let Some(b64) = b64_opt {
                         content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    } else if let Some(fp) = &file_path {
+                        content.push(cua_driver_core::protocol::Content::text(format!(
+                            "window_id={xid} pid={pid} size={w}x{h} screenshot written to {fp}"
+                        )));
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
@@ -991,9 +998,10 @@ impl Tool for GetWindowStateTool {
                         structured["screenshot_file_path"] = json!(fp);
                     }
                 }
-                if let Some(reason) = screenshot_error {
+                if let Some(reason) = &screenshot_error {
                     structured["screenshot_frame_valid"] = json!(false);
-                    structured["screenshot_error"] = surface_identity_unproven_error(xid, reason);
+                    structured["screenshot_error"] =
+                        surface_identity_unproven_error(xid, reason.clone());
                 }
                 // Window identity metadata (additive): app + title + on-screen
                 // rectangle for the requested window_id, useful on the
@@ -1008,6 +1016,23 @@ impl Tool for GetWindowStateTool {
                     structured["window_bounds"] = json!({
                         "x": meta.x, "y": meta.y, "width": meta.width, "height": meta.height
                     });
+                }
+
+                // The capture-only path (include_accessibility_tree:false) leaves
+                // `content` empty when the screenshot was also unavailable — most
+                // often on Wayland, where per-window capture cannot prove surface
+                // identity. Return a structured error rather than a "successful"
+                // response with no content parts.
+                if content.is_empty() {
+                    let reason_note = match &screenshot_error {
+                        Some(reason) => format!(" and no screenshot could be captured ({reason})"),
+                        None => " and no screenshot was returned".to_string(),
+                    };
+                    return ToolResult::error(format!(
+                        "No content produced for window_id {xid}: the accessibility tree was \
+                         skipped (include_accessibility_tree:false){reason_note}."
+                    ))
+                    .with_structured(structured);
                 }
 
                 ToolResult {

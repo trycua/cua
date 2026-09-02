@@ -1490,11 +1490,7 @@ impl ToolRegistry {
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
-        let should_record = !tool.def().read_only
-            && !matches!(
-                resolved_name,
-                "start_recording" | "stop_recording" | "get_recording_state" | "replay_trajectory"
-            );
+        let should_record = crate::action_record::is_action_tool(resolved_name);
         let private_consent_turn = is_existing_profile_prepare(resolved_name, &args);
         let _desktop_action = if is_physical_desktop_action(resolved_name) {
             let coordinator = desktop_action_coordinator();
@@ -1513,11 +1509,19 @@ impl ToolRegistry {
         let pending_turn = should_record
             .then(|| {
                 if private_consent_turn {
-                    self.recording
-                        .begin_private_turn(resolved_name, &recording_args, start_ms)
+                    self.recording.begin_private_turn_for_session(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        runtime_session.as_deref(),
+                    )
                 } else {
-                    self.recording
-                        .begin_turn(resolved_name, &recording_args, start_ms)
+                    self.recording.begin_turn_for_session(
+                        resolved_name,
+                        &recording_args,
+                        start_ms,
+                        runtime_session.as_deref(),
+                    )
                 }
             })
             .flatten();

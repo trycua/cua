@@ -477,7 +477,17 @@ impl RecordingSession {
     /// Reserve a turn and capture its target immediately before tool dispatch.
     /// No-op when recording is disabled.
     pub fn begin_turn(&self, tool_name: &str, args: &Value, start_ms: u64) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, true)
+        self.begin_turn_for_session(tool_name, args, start_ms, None)
+    }
+
+    pub fn begin_turn_for_session(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+        session_id: Option<&str>,
+    ) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, true, session_id)
     }
 
     /// Reserve a turn while deliberately suppressing visual and accessibility
@@ -490,7 +500,17 @@ impl RecordingSession {
         args: &Value,
         start_ms: u64,
     ) -> Option<PendingTurn> {
-        self.begin_turn_with_capture(tool_name, args, start_ms, false)
+        self.begin_private_turn_for_session(tool_name, args, start_ms, None)
+    }
+
+    pub fn begin_private_turn_for_session(
+        &self,
+        tool_name: &str,
+        args: &Value,
+        start_ms: u64,
+        session_id: Option<&str>,
+    ) -> Option<PendingTurn> {
+        self.begin_turn_with_capture(tool_name, args, start_ms, false, session_id)
     }
 
     fn begin_turn_with_capture(
@@ -499,10 +519,11 @@ impl RecordingSession {
         args: &Value,
         start_ms: u64,
         capture_visual_state: bool,
+        session_id: Option<&str>,
     ) -> Option<PendingTurn> {
         let (turn_dir, session_start_ms, generation) = {
             let mut inner = self.inner.lock().unwrap();
-            if !inner.enabled {
+            if !inner.enabled || inner.owner.as_deref() != session_id {
                 return None;
             }
             let out = inner.output_dir.clone()?;
@@ -1144,6 +1165,22 @@ mod tests {
             std::fs::remove_dir(directory).expect("remove refused turn fixture directory");
         }
         std::fs::remove_dir(&output_dir).expect("remove recording fixture directory");
+    }
+
+    #[test]
+    fn turn_admission_is_limited_to_the_recording_owner() {
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().expect("recording lock");
+            inner.enabled = true;
+            inner.owner = Some("owner".into());
+            inner.output_dir = Some(std::env::temp_dir());
+            inner.session_start_ms = now_ms();
+        }
+
+        assert!(session
+            .begin_turn_for_session("click", &serde_json::json!({}), now_ms(), Some("other"))
+            .is_none());
     }
 
     #[test]

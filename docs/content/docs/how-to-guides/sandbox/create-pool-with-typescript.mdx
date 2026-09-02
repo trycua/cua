@@ -125,12 +125,13 @@ const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as Cy
 
 let claim: Claim | undefined;
 try {
-  const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const serverService = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const mcpService = new SandboxServiceBuilder().name('mcp').targetPort(3000).build();
   const vm = new VmTemplateBuilder()
     .containerDiskImage(IMAGE)
     .cpuCores(4)
     .memory('4Gi')
-    .services([service])
+    .services([serverService, mcpService])
     .build();
   const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
   const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
@@ -188,7 +189,9 @@ npx tsx create-pool.ts
 
 The script writes `sandbox.png` in the current directory. The Fleet client
 creates and waits for the claim, routes `POST /cmd` through the authenticated
-`server` service proxy, and deletes the claim before closing.
+`server` service proxy, and deletes the claim before closing. The template also
+declares the Cua Driver MCP endpoint as the `mcp` service on port `3000`, so the
+same pool works with the signed-service URL guide.
 
   </Tab>
   <Tab value="Browser">
@@ -307,12 +310,13 @@ const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as Cy
 
 let claim: Claim | undefined;
 try {
-  const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const serverService = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const mcpService = new SandboxServiceBuilder().name('mcp').targetPort(3000).build();
   const vm = new VmTemplateBuilder()
     .containerDiskImage(IMAGE)
     .cpuCores(4)
     .memory('4Gi')
-    .services([service])
+    .services([serverService, mcpService])
     .build();
   const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
   const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
@@ -388,7 +392,9 @@ npm run dev
 
 The browser SDK authenticates the Fleet API request, routes `POST /cmd` through
 the named `server` service, decodes the computer-server event-stream response,
-and displays the PNG.
+and displays the PNG. The pool also exposes the Cua Driver MCP endpoint as the
+`mcp` service on port `3000`, matching the service used by the signed-service
+URL guide.
 
   </Tab>
 </Tabs>

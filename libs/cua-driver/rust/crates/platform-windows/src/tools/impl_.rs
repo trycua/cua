@@ -327,7 +327,10 @@ use cua_driver_core::{
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
-use std::sync::{Arc, RwLock};
+use std::{
+    future::Future,
+    sync::{Arc, RwLock},
+};
 
 use crate::uia::ElementCache;
 use cursor_overlay::CursorRegistry;
@@ -1064,6 +1067,237 @@ mod list_windows_z_index_tests {
 
 // ── get_window_state ─────────────────────────────────────────────────────────
 
+#[derive(Debug, PartialEq, Eq)]
+enum IndependentObservation<T> {
+    Ready(T),
+    Failed(String),
+    TimedOut,
+}
+
+async fn await_independent_observations<Tree, Screenshot, TreeFuture, ScreenshotFuture>(
+    deadline: std::time::Duration,
+    tree: TreeFuture,
+    screenshot: ScreenshotFuture,
+) -> (
+    IndependentObservation<Tree>,
+    IndependentObservation<Screenshot>,
+)
+where
+    TreeFuture: Future<Output = Result<Tree, String>>,
+    ScreenshotFuture: Future<Output = Result<Screenshot, String>>,
+{
+    let (tree, screenshot) = tokio::join!(
+        tokio::time::timeout(deadline, tree),
+        tokio::time::timeout(deadline, screenshot),
+    );
+    let tree = match tree {
+        Ok(Ok(value)) => IndependentObservation::Ready(value),
+        Ok(Err(error)) => IndependentObservation::Failed(error),
+        Err(_) => IndependentObservation::TimedOut,
+    };
+    let screenshot = match screenshot {
+        Ok(Ok(value)) => IndependentObservation::Ready(value),
+        Ok(Err(error)) => IndependentObservation::Failed(error),
+        Err(_) => IndependentObservation::TimedOut,
+    };
+    (tree, screenshot)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn mark_uia_tree_unavailable(
+    content: &mut Vec<cua_driver_core::protocol::Content>,
+    structured: &mut Value,
+    state: &ToolState,
+    pid: u32,
+    hwnd: u64,
+    observation_only: bool,
+    has_screenshot: bool,
+    error: &str,
+) {
+    // A wedged UIA provider must not suppress the independent window
+    // capture. Invalidate the prior element snapshot so stale tokens cannot
+    // target controls from an older tree, then return a degraded observation.
+    if !observation_only {
+        state.element_cache.update(pid, hwnd, &[]);
+        let _ =
+            cua_driver_core::element_token::global().register_snapshot(pid as i32, hwnd as u32, 0);
+    }
+    content.push(cua_driver_core::protocol::Content::text(format!(
+        "window_id={hwnd} pid={pid} elements=0\n\nUIA tree unavailable: {error}"
+    )));
+    structured["element_count"] = json!(0);
+    structured["total_element_count"] = json!(0);
+    structured["returned_element_count"] = json!(0);
+    structured["elements"] = json!([]);
+    structured["elements_complete"] = json!(false);
+    structured["tree_markdown"] = json!("");
+    structured["tree_error"] = json!(error);
+    structured["degraded"] = json!(true);
+    if has_screenshot {
+        structured["degraded_reason"] = json!(
+            "uia_tree_unavailable: the target accessibility observation failed or timed out; \
+             the window screenshot remains usable."
+        );
+        structured["escalation"] = json!({
+            "recommended": "px",
+            "reason": "UIA unavailable — act by pixel (x,y) off the screenshot \
+                       returned in this response."
+        });
+    } else {
+        structured["degraded_reason"] = json!(
+            "uia_tree_unavailable: the target accessibility observation failed or timed out \
+             and no screenshot completed."
+        );
+    }
+}
+
+#[cfg(test)]
+mod independent_observation_tests {
+    use super::{
+        await_independent_observations, mark_uia_tree_unavailable, IndependentObservation,
+        ToolState,
+    };
+    use crate::uia::UiaNode;
+    use serde_json::json;
+    use std::{future::pending, time::Duration};
+
+    #[tokio::test]
+    async fn screenshot_survives_tree_timeout() {
+        let tree = async {
+            pending::<()>().await;
+            Ok::<_, String>("unreachable tree")
+        };
+        let screenshot = async { Ok::<_, String>("png") };
+
+        let (tree, screenshot) =
+            await_independent_observations(Duration::from_millis(5), tree, screenshot).await;
+
+        assert_eq!(tree, IndependentObservation::TimedOut);
+        assert_eq!(screenshot, IndependentObservation::Ready("png"));
+    }
+
+    #[tokio::test]
+    async fn tree_survives_screenshot_timeout() {
+        let tree = async { Ok::<_, String>("tree") };
+        let screenshot = async {
+            pending::<()>().await;
+            Ok::<_, String>("unreachable screenshot")
+        };
+
+        let (tree, screenshot) =
+            await_independent_observations(Duration::from_millis(5), tree, screenshot).await;
+
+        assert_eq!(tree, IndependentObservation::Ready("tree"));
+        assert_eq!(screenshot, IndependentObservation::TimedOut);
+    }
+
+    #[tokio::test]
+    async fn one_observation_failure_does_not_suppress_the_other() {
+        let tree = async { Ok::<_, String>("tree") };
+        let screenshot = async { Err::<&str, _>("capture failed".to_owned()) };
+
+        let (tree, screenshot) =
+            await_independent_observations(Duration::from_secs(1), tree, screenshot).await;
+
+        assert_eq!(tree, IndependentObservation::Ready("tree"));
+        assert_eq!(
+            screenshot,
+            IndependentObservation::Failed("capture failed".to_owned())
+        );
+    }
+
+    #[test]
+    fn tree_timeout_keeps_screenshot_metadata_and_invalidates_old_targets() {
+        let pid = 1_000_000_007;
+        let hwnd = 0x0a11_ce55;
+        let state = ToolState::new();
+        let node = UiaNode {
+            element_index: Some(0),
+            control_type: "Button".to_owned(),
+            name: Some("old target".to_owned()),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions: vec!["invoke".to_owned()],
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        };
+        state.element_cache.update(pid, hwnd, &[node]);
+        assert_eq!(state.element_cache.element_count(pid, hwnd), 1);
+
+        let tokens = cua_driver_core::element_token::global();
+        let old_snapshot = tokens.register_snapshot(pid as i32, hwnd as u32, 1);
+        let old_token = cua_driver_core::element_token::token_for(old_snapshot, 0);
+        let mut content = Vec::new();
+        let mut structured = json!({
+            "pid": pid,
+            "window_id": hwnd,
+            "screenshot_width": 640,
+            "screenshot_height": 480,
+            "screenshot_mime_type": "image/png",
+        });
+
+        mark_uia_tree_unavailable(
+            &mut content,
+            &mut structured,
+            &state,
+            pid,
+            hwnd,
+            false,
+            true,
+            "provider timed out",
+        );
+
+        assert_eq!(structured["degraded"], json!(true));
+        assert_eq!(structured["tree_error"], json!("provider timed out"));
+        assert_eq!(structured["elements"], json!([]));
+        assert_eq!(structured["element_count"], json!(0));
+        assert_eq!(structured["returned_element_count"], json!(0));
+        assert_eq!(structured["screenshot_width"], json!(640));
+        assert_eq!(structured["screenshot_height"], json!(480));
+        assert_eq!(structured["escalation"]["recommended"], json!("px"));
+        assert_eq!(state.element_cache.element_count(pid, hwnd), 0);
+        assert_eq!(
+            tokens.resolve(pid as i32, &old_token).unwrap_err(),
+            cua_driver_core::element_token::STALE_TOKEN_ERROR
+        );
+        assert_eq!(content.len(), 1);
+    }
+
+    #[test]
+    fn tree_timeout_without_screenshot_has_no_pixel_escalation() {
+        let state = ToolState::new();
+        let mut content = Vec::new();
+        let mut structured = json!({ "pid": 7, "window_id": 11 });
+
+        mark_uia_tree_unavailable(
+            &mut content,
+            &mut structured,
+            &state,
+            7,
+            11,
+            true,
+            false,
+            "provider timed out",
+        );
+
+        assert_eq!(structured["degraded"], json!(true));
+        assert!(structured.get("escalation").is_none());
+        assert!(structured["degraded_reason"]
+            .as_str()
+            .unwrap()
+            .contains("no screenshot completed"));
+    }
+}
+
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
@@ -1103,10 +1337,12 @@ impl Tool for GetWindowStateTool {
                 and `structuredContent.elements` to matching rows plus their ancestor chain. \
                 Original element indices are preserved. `total_element_count` reports the \
                 complete snapshot; `returned_element_count` reports the projection.\n\n\
-                Always returns BOTH the element tree AND a screenshot — ground on both \
-                and cross-check (the tree lies on some surfaces). Choose the modality at \
-                ACTION time: an element ax action (element_index/element_token → \
-                accessibility rung) or an element px action (x,y → pixel rung off this \
+                By default, attempts the element tree and screenshot independently and returns \
+                every observation that completes. If either provider is unavailable, the result \
+                is marked degraded while the other observation remains usable. Ground on both \
+                when present and cross-check (the tree lies on some surfaces). Choose the \
+                modality at ACTION time: an element ax action (element_index/element_token → \
+                accessibility rung) or an element px action (x,y → pixel rung off the \
                 screenshot). capture_mode is deprecated and ignored.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
@@ -1217,31 +1453,26 @@ impl Tool for GetWindowStateTool {
             .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
-        let do_tree = true;
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
 
         let state = self.state.clone();
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
-        let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let tree_result = if do_tree {
-                Some(crate::uia::walk_tree_bounded(
-                    hwnd,
-                    q.as_deref(),
-                    max_elements,
-                    max_depth,
-                ))
-            } else {
-                None
-            };
+
+        // UIA providers are third-party COM code and can wedge indefinitely.
+        // Capture must not share their blocking worker: otherwise the four-second
+        // UIA timeout discards a perfectly healthy PrintWindow/WGC screenshot.
+        // Start both observations independently and retain whichever completes.
+        let tree_blocking = tokio::task::spawn_blocking(move || {
+            crate::uia::walk_tree_bounded(hwnd, q.as_deref(), max_elements, max_depth)
+        });
+        let screenshot_blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             // Capture screenshot AND any error message so the response can
             // surface *why* there's no image (the iconic-window guard from
             // #1973 / PR #1974 is the load-bearing case: minimized windows
             // legitimately can't be captured, and the caller needs to know
             // to call `bring_to_front` instead of retrying).
-            // The previous `Err(_) => None` silently dropped the error and
-            // upstream agents saw an empty response with no signal.
-            let (screenshot, screenshot_err) = if do_shot {
+            let result = if do_shot {
                 match crate::capture::screenshot_window_bytes(hwnd) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw)
@@ -1250,54 +1481,78 @@ impl Tool for GetWindowStateTool {
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
                         let original_w = if w < orig_w { Some(orig_w) } else { None };
-                        // `screenshot_out_file` set (any mode) → write to disk and
-                        // surface the path, never embed bytes. Otherwise (vision,
-                        // no out_file) → embed base64.
-                        if let Some(ref path) = out_file {
-                            std::fs::write(path, &png)?;
-                            (Some((None, Some(path.clone()), w, h, original_w)), None)
-                        } else {
-                            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-                            (Some((Some(B64.encode(&png)), None, w, h, original_w)), None)
-                        }
+                        (Some((png, w, h, original_w)), None)
                     }
                     Err(e) => (None, Some(format!("{e}"))),
                 }
             } else {
                 (None, None)
             };
-            Ok((tree_result, screenshot, screenshot_err))
+            Ok(result)
         });
-        // Timeout: Chrome's UIA provider can block indefinitely on property reads.
-        let result: Result<anyhow::Result<_>, _> =
-            match tokio::time::timeout(std::time::Duration::from_secs(4), blocking).await {
-                Ok(join_result) => join_result.map_err(|e| anyhow::anyhow!("task panic: {e}")),
-                Err(_elapsed) => {
-                    // Surface the target's window class + an actionable hint
-                    // instead of just "UIA provider unresponsive". The class
-                    // points the caller at the right workaround (e.g. SALFRAME
-                    // → screenshot + pixel coords + delivery_mode:"foreground"; UWP
-                    // class → re-call with a depth-limited scan and act by pixel
-                    // off the screenshot if the tree stays unusable).
-                    let class = crate::input::delivery::read_class_name(hwnd);
-                    Err(anyhow::anyhow!(
-                        "get_window_state timed out after 4s (UIA provider unresponsive on \
-                     hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
-                     (a) re-call this tool with a depth-limited scan \
-                     (`max_elements` / `max_depth`) — if the tree stays unusable, act \
-                     by pixel `click(x, y)` off the screenshot in the response; \
-                     (b) if the target is a transient VCL / message-box dialog, send \
-                     `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
-                     default accelerator (Esc / Enter / Y / N) without needing the tree."
-                    ))
+
+        let tree_future = async move {
+            tree_blocking
+                .await
+                .map_err(|error| format!("UIA tree task failed: {error}"))
+        };
+        let screenshot_future = async move {
+            screenshot_blocking
+                .await
+                .map_err(|error| format!("screenshot task failed: {error}"))?
+                .map_err(|error| error.to_string())
+        };
+        let (tree_observation, screenshot_observation) = await_independent_observations(
+            std::time::Duration::from_secs(4),
+            tree_future,
+            screenshot_future,
+        )
+        .await;
+
+        let (tree_opt, tree_err) = match tree_observation {
+            IndependentObservation::Ready(tree) => (Some(tree), None),
+            IndependentObservation::Failed(error) => (None, Some(error)),
+            IndependentObservation::TimedOut => {
+                let class = crate::input::delivery::read_class_name(hwnd);
+                (
+                    None,
+                    Some(format!(
+                        "UIA tree timed out after 4s on hwnd 0x{hwnd:x}, class '{class}'. \
+                         Window capture runs independently and may still be available in \
+                         this response."
+                    )),
+                )
+            }
+        };
+        let (screenshot_opt, screenshot_err) = match screenshot_observation {
+            IndependentObservation::Ready((Some((png, w, h, original_w)), error)) => {
+                if let Some(path) = &out_file {
+                    match std::fs::write(path, &png) {
+                        Ok(()) => (Some((None, Some(path.clone()), w, h, original_w)), error),
+                        Err(write_error) => (None, Some(write_error.to_string())),
+                    }
+                } else {
+                    use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+                    (
+                        Some((Some(B64.encode(&png)), None, w, h, original_w)),
+                        error,
+                    )
                 }
-            };
-        let result = result.and_then(|r| r);
+            }
+            IndependentObservation::Ready((None, error)) => (None, error),
+            IndependentObservation::Failed(error) => (None, Some(error)),
+            IndependentObservation::TimedOut => (
+                None,
+                Some("window screenshot timed out after 4s".to_owned()),
+            ),
+        };
+        let result: anyhow::Result<_> = Ok((tree_opt, screenshot_opt, screenshot_err, tree_err));
 
         match result {
-            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
+            Ok((tree_opt, screenshot_opt, screenshot_err, tree_err)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                let has_screenshot = screenshot_opt.is_some();
 
                 if let Some(tr) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
@@ -1456,6 +1711,17 @@ impl Tool for GetWindowStateTool {
                                        screenshot in this response (an element px action)."
                         });
                     }
+                } else if let Some(err) = tree_err {
+                    mark_uia_tree_unavailable(
+                        &mut content,
+                        &mut structured,
+                        &state,
+                        pid,
+                        hwnd,
+                        observation_only,
+                        has_screenshot,
+                        &err,
+                    );
                 }
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {

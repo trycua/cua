@@ -60,6 +60,7 @@ function poolSummary(pool: Pool): PoolSummary {
     namespace: pool.metadata.namespace,
     replicas: pool.spec.replicas,
     availableCount: pool.status?.readyReplicas ?? 0,
+    ttlSecondsAfterCreated: pool.spec.ttlSecondsAfterCreated,
     status: poolDisplayStatus(pool),
   }
 }

@@ -643,6 +643,7 @@ export async function mockPoolsApi(page: Page): Promise<void> {
     spec: {
       replicas: 2,
       sandboxTemplateRef: { name: "demo-pool-template" },
+      ttlSecondsAfterCreated: 3600,
     },
     status: { replicas: 2, readyReplicas: 2 },
   };
@@ -888,6 +889,7 @@ export interface MockClaim {
   phase?: "Bound" | "Pending" | "Failed";
   sandboxName?: string;
   sandboxService?: string;
+  ttlSecondsAfterCreated?: number;
 }
 
 export interface MockClaimsApiOptions {
@@ -910,6 +912,7 @@ export async function mockClaimsApi(
       phase: "Bound",
       sandboxName: "vm-xyz789",
       sandboxService: "vm-xyz789-svc",
+      ttlSecondsAfterCreated: 1800,
     },
   ];
   const heldLists: Array<ReturnType<typeof deferred>> = [];
@@ -925,6 +928,7 @@ export async function mockClaimsApi(
     spec: {
       sandboxTemplateRef: { name: "demo-pool-template" },
       warmpool: "demo-pool",
+      ttlSecondsAfterCreated: claim.ttlSecondsAfterCreated,
     },
     status: {
       phase: claim.phase ?? "Bound",

@@ -18,11 +18,13 @@ import { CuaButton } from "../components/CuaButton"
 import { PageEmpty } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
 import type { PoolSummary } from "../fleet/models"
+import { formatTtl } from "../fleet/ttl"
 
 interface PoolRow {
   name: string
   namespace: string
   replicas: number
+  ttlSecondsAfterCreated?: number
   status: PoolSummary["status"]
   statusText: string
 }
@@ -258,6 +260,7 @@ export function PoolsList() {
         columnDisplay={[
           { id: "name", visible: true },
           { id: "replicas", visible: !compactTable },
+          { id: "ttl", visible: !compactTable },
           { id: "status", visible: true },
         ]}
         columnDefinitions={[
@@ -288,6 +291,13 @@ export function PoolsList() {
             header: "Replicas",
             cell: p => p.replicas,
             sortingField: "replicas",
+            minWidth: 96,
+          },
+          {
+            id: "ttl",
+            header: "TTL",
+            cell: p => formatTtl(p.ttlSecondsAfterCreated),
+            sortingField: "ttlSecondsAfterCreated",
             minWidth: 96,
           },
           {

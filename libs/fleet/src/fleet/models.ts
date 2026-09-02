@@ -32,6 +32,7 @@ export interface PoolSummary {
   namespace: string
   replicas: number
   availableCount: number
+  ttlSecondsAfterCreated?: number
   status: PoolDisplayStatus
 }
 
@@ -49,6 +50,7 @@ export interface Claim {
   phase: string
   sandboxName?: string
   sandboxService?: string
+  ttlSecondsAfterCreated?: number
   createdAt: string
 }
 

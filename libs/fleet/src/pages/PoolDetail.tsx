@@ -23,6 +23,7 @@ import { tombstonePool } from "../fleet/status"
 import { CuaButton } from "../components/CuaButton"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
+import { formatTtl } from "../fleet/ttl"
 
 export function PoolDetail() {
   const { namespace = "", name = "" } = useParams()
@@ -620,6 +621,14 @@ function InstancesTable({ pool }: { pool: PoolData }) {
                 </StatusIndicator>
               )
             },
+          },
+          {
+            id: "ttl",
+            header: "TTL",
+            cell: (instance: InstanceRow) =>
+              instance.claim
+                ? formatTtl(instance.claim.ttlSecondsAfterCreated)
+                : "-",
           },
           {
             id: "age",

@@ -22,6 +22,7 @@ function claimModel(claim: SdkClaim): Claim {
     phase: claim.status?.phase ?? "Pending",
     sandboxName: claim.status?.sandbox?.name,
     sandboxService: claim.status?.sandbox?.service,
+    ttlSecondsAfterCreated: claim.spec.ttlSecondsAfterCreated,
     createdAt: claim.metadata.creationTimestamp ?? "",
   }
 }

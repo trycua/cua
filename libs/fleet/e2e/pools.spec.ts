@@ -36,8 +36,10 @@ test.describe("Pools page header", () => {
       const refreshPools = page.getByRole("button", { name: "Refresh pools" })
       const newPool = page.getByRole("button", { name: "New pool" })
       const status = page.getByRole("columnheader", { name: "Status" })
+      const ttl = page.getByRole("columnheader", { name: "TTL" })
 
       await expect(mesh).toHaveCount(0)
+      if (viewport.width >= 768) await expect(ttl).toBeVisible()
       await expect(page).toHaveTitle("Pools · Cua")
       await expect(page.locator(".cua-pagehead canvas")).toHaveCount(0)
       const navigationPanel = page.locator('[class*="awsui_navigation-container_"]').first()
@@ -640,6 +642,7 @@ test.describe("Pool detail instances", () => {
     await expect(claimedRow).toContainText("Ready")
     await expect(claimedRow).toContainText("claim-abc123")
     await expect(claimedRow).toContainText("Bound")
+    await expect(claimedRow).toContainText("30m")
     await expect(claimedRow.getByRole("button", { name: "Release" })).toBeVisible()
 
     const availableRow = page.getByRole("row").filter({ hasText: "vm-ready456" })

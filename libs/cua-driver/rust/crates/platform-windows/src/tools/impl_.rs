@@ -1131,6 +1131,7 @@ impl Tool for GetWindowStateTool {
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
+                "include_accessibility":{"type":"boolean","default":true,"description":"Default true — returns the accessibility tree. Set false for screenshot-only recovery when the target's accessibility provider is known to be unresponsive."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
@@ -1213,16 +1214,53 @@ impl Tool for GetWindowStateTool {
         // `screenshot_out_file` the bytes go to disk and the path is surfaced
         // instead of embedding base64; otherwise the base64 PNG is embedded.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        let include_accessibility = args
+            .get("include_accessibility")
+            .and_then(|value| value.as_bool());
         let observation_only = args
             .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
-        let do_tree = true;
+        let do_tree = include_accessibility != Some(false);
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
 
         let state = self.state.clone();
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
+        // Capture independently from UIA. A provider can hang before a combined
+        // task reaches screenshot capture, leaving visual callers without the
+        // image they need for pixel or keyboard recovery.
+        let screenshot_task = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            if !do_shot {
+                return Ok((None, None));
+            }
+            match crate::capture::screenshot_window_bytes(hwnd) {
+                Ok(raw) => {
+                    let orig_w = crate::capture::png_dimensions_pub(&raw)
+                        .map(|(w, _)| w)
+                        .unwrap_or(0);
+                    let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
+                    let (w, h) = crate::capture::png_dimensions_pub(&png)?;
+                    let original_w = if w < orig_w { Some(orig_w) } else { None };
+                    if let Some(ref path) = out_file {
+                        std::fs::write(path, &png)?;
+                        Ok((Some((None, Some(path.clone()), w, h, original_w)), None))
+                    } else {
+                        use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
+                        Ok((Some((Some(B64.encode(&png)), None, w, h, original_w)), None))
+                    }
+                }
+                Err(error) => Ok((None, Some(format!("{error}")))),
+            }
+        });
+        let (screenshot, screenshot_err) = match screenshot_task.await {
+            Ok(Ok(value)) => value,
+            Ok(Err(error)) => return ToolResult::error(format!("Error: {error}")),
+            Err(error) => {
+                return ToolResult::error(format!("Error: screenshot task panic: {error}"));
+            }
+        };
+
         let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
             let tree_result = if do_tree {
                 Some(crate::uia::walk_tree_bounded(
@@ -1234,44 +1272,16 @@ impl Tool for GetWindowStateTool {
             } else {
                 None
             };
-            // Capture screenshot AND any error message so the response can
-            // surface *why* there's no image (the iconic-window guard from
-            // #1973 / PR #1974 is the load-bearing case: minimized windows
-            // legitimately can't be captured, and the caller needs to know
-            // to call `bring_to_front` instead of retrying).
-            // The previous `Err(_) => None` silently dropped the error and
-            // upstream agents saw an empty response with no signal.
-            let (screenshot, screenshot_err) = if do_shot {
-                match crate::capture::screenshot_window_bytes(hwnd) {
-                    Ok(raw) => {
-                        let orig_w = crate::capture::png_dimensions_pub(&raw)
-                            .map(|(w, _)| w)
-                            .unwrap_or(0);
-                        let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
-                        let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                        let original_w = if w < orig_w { Some(orig_w) } else { None };
-                        // `screenshot_out_file` set (any mode) → write to disk and
-                        // surface the path, never embed bytes. Otherwise (vision,
-                        // no out_file) → embed base64.
-                        if let Some(ref path) = out_file {
-                            std::fs::write(path, &png)?;
-                            (Some((None, Some(path.clone()), w, h, original_w)), None)
-                        } else {
-                            use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-                            (Some((Some(B64.encode(&png)), None, w, h, original_w)), None)
-                        }
-                    }
-                    Err(e) => (None, Some(format!("{e}"))),
-                }
-            } else {
-                (None, None)
-            };
-            Ok((tree_result, screenshot, screenshot_err))
+            Ok(tree_result)
         });
         // Timeout: Chrome's UIA provider can block indefinitely on property reads.
-        let result: Result<anyhow::Result<_>, _> =
+        let (tree_result, accessibility_err) =
             match tokio::time::timeout(std::time::Duration::from_secs(4), blocking).await {
-                Ok(join_result) => join_result.map_err(|e| anyhow::anyhow!("task panic: {e}")),
+                Ok(join_result) => match join_result {
+                    Ok(Ok(tree)) => (tree, None),
+                    Ok(Err(error)) => (None, Some(format!("{error}"))),
+                    Err(error) => (None, Some(format!("task panic: {error}"))),
+                },
                 Err(_elapsed) => {
                     // Surface the target's window class + an actionable hint
                     // instead of just "UIA provider unresponsive". The class
@@ -1280,8 +1290,10 @@ impl Tool for GetWindowStateTool {
                     // class → re-call with a depth-limited scan and act by pixel
                     // off the screenshot if the tree stays unusable).
                     let class = crate::input::delivery::read_class_name(hwnd);
-                    Err(anyhow::anyhow!(
-                        "get_window_state timed out after 4s (UIA provider unresponsive on \
+                    (
+                        None,
+                        Some(format!(
+                            "get_window_state timed out after 4s (UIA provider unresponsive on \
                      hwnd 0x{hwnd:x}, class '{class}'). Fallback options: \
                      (a) re-call this tool with a depth-limited scan \
                      (`max_elements` / `max_depth`) — if the tree stays unusable, act \
@@ -1289,13 +1301,15 @@ impl Tool for GetWindowStateTool {
                      (b) if the target is a transient VCL / message-box dialog, send \
                      `press_key` with `delivery_mode:\"foreground\"` (SendInput) to fire the \
                      default accelerator (Esc / Enter / Y / N) without needing the tree."
-                    ))
+                        )),
+                    )
                 }
             };
-        let result = result.and_then(|r| r);
+        let result: anyhow::Result<_> =
+            Ok((tree_result, screenshot, screenshot_err, accessibility_err));
 
         match result {
-            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
+            Ok((tree_opt, screenshot_opt, screenshot_err, accessibility_err)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
@@ -1456,6 +1470,11 @@ impl Tool for GetWindowStateTool {
                                        screenshot in this response (an element px action)."
                         });
                     }
+                    if observation_only {
+                        // No cache adopts these actionable COM references, so
+                        // release them after building the observation payload.
+                        unsafe { crate::uia::release_walk_nodes(tr.nodes) };
+                    }
                 }
 
                 if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
@@ -1495,6 +1514,21 @@ impl Tool for GetWindowStateTool {
                         "screenshot unavailable: {err}"
                     )));
                     structured["screenshot_error"] = json!(err);
+                }
+
+                if let Some(err) = accessibility_err {
+                    content.push(cua_driver_core::protocol::Content::text(format!(
+                        "accessibility unavailable: {err}"
+                    )));
+                    structured["accessibility_error"] = json!(err);
+                    structured["degraded"] = json!(true);
+                    structured["degraded_reason"] = json!(
+                        "accessibility_unavailable: use the screenshot with pixel or foreground keyboard input."
+                    );
+                    structured["escalation"] = json!({
+                        "recommended": "px",
+                        "reason": "The accessibility provider was unavailable; act from the screenshot."
+                    });
                 }
 
                 cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
@@ -2888,7 +2922,8 @@ impl Tool for ClickTool {
                     "modifier": cua_driver_core::tool_schema::modifier_schema(),
                     "from_zoom":{"type":"boolean","description":"When true, x and y are pixel coordinates in the last `zoom` image for this pid. The driver maps them back to window coords."},
                     "scope":{"type":"string","enum":["window","desktop"],"default":"window"},
-                    "delivery_mode": crate::input::delivery::delivery_mode_schema()
+                    "delivery_mode": crate::input::delivery::delivery_mode_schema(),
+                    "retain_foreground":{"type":"boolean","default":false,"description":"With foreground delivery, leave the verified target foreground after the click instead of restoring the prior window. Use only for an explicitly authorized multi-step focus session."}
                 },"additionalProperties":false
             }),
             read_only: false, destructive: true, idempotent: false, open_world: true,
@@ -3052,6 +3087,7 @@ impl Tool for ClickTool {
         // a modifier passed to a background click is necessarily ignored there.
         let modifiers: Vec<String> = args.str_array("modifier");
         let delivery = DeliveryMode::from_args(&args);
+        let retain_foreground = args.bool_or("retain_foreground", false);
         if !modifiers.is_empty() && delivery != DeliveryMode::Foreground {
             return ToolResult::error(
                 "click modifiers require delivery_mode:\"foreground\" on Windows; UIA and \
@@ -3203,7 +3239,9 @@ impl Tool for ClickTool {
                     }
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                if !retain_foreground {
+                    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                }
                 let half = if want_expand { "dropdown" } else { "press" };
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
@@ -3350,7 +3388,9 @@ impl Tool for ClickTool {
                     )
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                if !retain_foreground {
+                    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                }
                 return match send_result {
                     Ok(Ok(())) => ToolResult::text(format!(
                         "✅ Performed SendInput click on [{idx}] at screen ({cx},{cy}) (delivery_mode:foreground)."
@@ -3663,7 +3703,9 @@ impl Tool for ClickTool {
                     )
                 })
                 .await;
-                tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                if !retain_foreground {
+                    tokio::spawn(restore_foreground_polling_best_effort(prev_fg_addr, pid));
+                }
                 return match send_result {
                     Ok(Ok(())) => {
                         let click_word = match count {
@@ -10100,6 +10142,62 @@ mod click_button_schema_tests {
         for need in ["left", "right", "middle"] {
             assert!(enum_vals.contains(&need), "missing {need} in button.enum");
         }
+    }
+
+    #[test]
+    fn retain_foreground_is_an_opt_in_boolean() {
+        let tool = ClickTool {
+            state: super::ToolState::new(),
+        };
+        let properties = tool
+            .def()
+            .input_schema
+            .get("properties")
+            .expect("properties");
+        let retain = properties
+            .get("retain_foreground")
+            .expect("retain_foreground field present");
+        assert_eq!(
+            retain.get("type").and_then(|value| value.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            retain.get("default").and_then(|value| value.as_bool()),
+            Some(false)
+        );
+    }
+}
+
+#[cfg(test)]
+mod get_window_state_schema_tests {
+    use super::GetWindowStateTool;
+    use cua_driver_core::tool::Tool;
+
+    #[test]
+    fn accessibility_is_enabled_by_default_but_can_be_skipped() {
+        let tool = GetWindowStateTool {
+            state: super::ToolState::new(),
+        };
+        let properties = tool
+            .def()
+            .input_schema
+            .get("properties")
+            .expect("properties");
+        let include_accessibility = properties
+            .get("include_accessibility")
+            .expect("include_accessibility field present");
+        assert_eq!(
+            include_accessibility
+                .get("type")
+                .and_then(|value| value.as_str()),
+            Some("boolean")
+        );
+        assert_eq!(
+            include_accessibility
+                .get("default")
+                .and_then(|value| value.as_bool()),
+            Some(true)
+        );
     }
 }
 

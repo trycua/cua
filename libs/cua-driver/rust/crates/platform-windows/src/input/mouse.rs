@@ -30,6 +30,11 @@ const MK_MBUTTON: u32 = 0x0010;
 const MK_RBUTTON: u32 = 0x0002;
 
 const CLICK_DELAY_MS: u64 = 35;
+// Keep foreground pointer phases visible across at least one 30 Hz frame.
+// Some games sample hover and button state once per render frame instead of
+// consuming the complete Win32 input queue. A single move/down/up SendInput
+// batch can therefore update hover without ever exposing a pressed state.
+const FOREGROUND_POINTER_PHASE_MS: u64 = 35;
 
 fn posted_press_message(down: u32, double: u32, click_index: usize, wants_double: bool) -> u32 {
     if wants_double && click_index % 2 == 1 {
@@ -576,15 +581,6 @@ fn send_click_synthesized_mods_impl(
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        if activate && !crate::input::force_foreground_assisted(target).0 {
-            let actual = GetForegroundWindow();
-            bail!(
-                "foreground_unavailable: Windows did not activate exact target HWND {:?} \
-                 (actual foreground HWND {:?}); no mouse input was sent",
-                target.0,
-                actual.0
-            );
-        }
         let foreground_target = if activate {
             match crate::win32::capture_foreground_target(target.0 as usize as u64) {
                 Some(target) => Some(target),
@@ -597,6 +593,40 @@ fn send_click_synthesized_mods_impl(
         } else {
             None
         };
+        let mut activation_via_click = false;
+        if activate && !crate::input::force_foreground_assisted(target).0 {
+            let actual = GetForegroundWindow();
+            if !crate::win32::foreground_matches_target_owner(
+                foreground_target.expect("foreground target captured before activation"),
+                actual.0 as usize as u64,
+            ) {
+                // A system-routed pointer press on a visible top-level window is
+                // itself allowed to establish foreground ownership. Raise only
+                // the already-verified target, then let the requested click make
+                // that transition. The post-action foreground check below still
+                // fails closed if Windows routes the input anywhere else.
+                let raised = SetWindowPos(
+                    target,
+                    HWND_TOPMOST,
+                    0,
+                    0,
+                    0,
+                    0,
+                    SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+                )
+                .is_ok();
+                if !raised {
+                    bail!(
+                        "foreground_unavailable: Windows did not activate exact target HWND {:?} \
+                         or retain its verified same-process owner (actual foreground HWND {:?}); \
+                         target could not be raised for click-assisted activation",
+                        target.0,
+                        actual.0
+                    );
+                }
+                activation_via_click = true;
+            }
+        }
         let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
         if !activate {
             let _ = SetWindowPos(
@@ -632,12 +662,17 @@ fn send_click_synthesized_mods_impl(
             if !sent_ok {
                 break;
             }
-            // Only the move record carries absolute coordinates. Button-only
-            // records act at the current pointer position; adding ABSOLUTE to
-            // them can prevent retained-mode controls from seeing the press.
-            let events = [move_input, down_input, up_input];
-            let sent = SendInput(&events, std::mem::size_of::<INPUT>() as i32);
-            if sent as usize != events.len() {
+            // Submit a frame-visible pointer lifecycle. Retained-mode desktop
+            // controls dispatch hover asynchronously, while games commonly
+            // sample hover and button state once per render frame. Sending the
+            // full lifecycle in one batch lets those targets observe only the
+            // final released state.
+            let moved = SendInput(&[move_input], std::mem::size_of::<INPUT>() as i32);
+            sleep(Duration::from_millis(FOREGROUND_POINTER_PHASE_MS));
+            let pressed = SendInput(&[down_input], std::mem::size_of::<INPUT>() as i32);
+            sleep(Duration::from_millis(FOREGROUND_POINTER_PHASE_MS));
+            let released = SendInput(&[up_input], std::mem::size_of::<INPUT>() as i32);
+            if moved != 1 || pressed != 1 || released != 1 {
                 sent_ok = false;
                 break;
             }
@@ -662,7 +697,7 @@ fn send_click_synthesized_mods_impl(
         // lose the click if the real cursor is warped away while those queued
         // messages are still being dispatched.
         sleep(Duration::from_millis(if activate { 120 } else { 40 }));
-        if !was_topmost && !activate {
+        if !was_topmost && (!activate || activation_via_click) {
             let _ = SetWindowPos(
                 target,
                 HWND_NOTOPMOST,
@@ -696,8 +731,12 @@ fn send_click_synthesized_mods_impl(
         }
         if activate {
             let actual = GetForegroundWindow();
+            let captured = foreground_target.expect("foreground target captured before input");
             if !crate::win32::foreground_matches_target_or_owned_window(
-                foreground_target.expect("foreground target captured before input"),
+                captured,
+                actual.0 as usize as u64,
+            ) && !crate::win32::foreground_matches_target_owner(
+                captured,
                 actual.0 as usize as u64,
             ) {
                 bail!(

@@ -96,7 +96,8 @@ test.describe("SDK builders", () => {
           namespace: template.namespace,
           name: template.name,
           image: template.spec.vmTemplate.containerDiskImage,
-          secret: template.spec.vmTemplate.imagePullSecret,
+          imagePullSecretUnset:
+            template.spec.vmTemplate.imagePullSecret === undefined,
           firmwareIsEfi: template.spec.vmTemplate.firmware === Firmware.Efi,
           services: template.spec.vmTemplate.services?.map(service => ({
             name: service.name,
@@ -118,7 +119,7 @@ test.describe("SDK builders", () => {
       namespace: "demo-pool",
       name: "demo-pool-template",
       image: "registry.example/cyclops:v1",
-      secret: "ecr-credentials",
+      imagePullSecretUnset: true,
       firmwareIsEfi: true,
       services: [
         { name: "ssh", targetPort: 22, udp: false },

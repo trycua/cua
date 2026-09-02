@@ -223,7 +223,6 @@ export function buildTemplateRequest(
 ): CreateTemplateRequest {
   let vmBuilder: VmTemplateBuilderLike = new VmTemplateBuilder()
     .containerDiskImage(values.ociImage)
-    .imagePullSecret("ecr-credentials")
     .cpuCores(values.cpu)
     .memory(values.ram)
   if (values.firmware === "efi") vmBuilder = vmBuilder.firmware(Firmware.Efi)

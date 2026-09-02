@@ -73,6 +73,7 @@ class Transport(ABC):
         method: str,
         path: str,
         json_body: Any = None,
+        content: bytes | None = None,
         headers: Any = None,
     ) -> Any:
         """Request an auxiliary named service exposed by this sandbox."""

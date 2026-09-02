@@ -140,6 +140,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 
 	r := http.NewServeMux()
 	svcQualifier := c.FleetAttributionQualification()
+	loginObserver := productanalytics.LoginObserver(c.Analytics, c.AuthCfg.SPAClientID)
 
 	r.Handle("GET /healthz", onlyLog("/healthz", c.GetHealth))
 	r.Handle("GET /readyz", onlyLog("/readyz", c.GetReadiness))
@@ -237,9 +238,11 @@ func setupRouter(c handlers.Handlers) http.Handler {
 
 	r.Handle("/api/svc/{namespace}/{service}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}", c.Svc,
+			loginObserver,
 			productanalytics.RouteObserverWithQualification("/api/svc/{namespace}/{service}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 	r.Handle("/api/svc/{namespace}/{service}/{path...}",
 		withAuthenticatedMiddlewares("/api/svc/{namespace}/{service}/{path...}", c.Svc,
+			loginObserver,
 			productanalytics.RouteObserverWithQualification("/api/svc/{namespace}/{service}/{path...}", c.Analytics, c.AuthCfg.SPAClientID, svcQualifier)))
 
 	r.Handle("POST /api/signed-service-urls/{namespace}",
@@ -252,6 +255,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	// K8s API access replaces the unauthenticated /k8s-api nginx location.
 	r.Handle("/api/k8s/{path...}",
 		withAuthenticatedMiddlewares("/api/k8s/{path...}", c.K8s,
+			loginObserver,
 			productanalytics.RouteObserver("/api/k8s/{path...}", c.Analytics, c.AuthCfg.SPAClientID)))
 
 	// Wrap the entire mux in the metrics middleware so every request

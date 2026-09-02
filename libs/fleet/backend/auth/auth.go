@@ -258,6 +258,8 @@ func validateKeycloak(raw string) (*User, error) {
 		Namespace:     str(claims, "namespace"),
 		PrincipalType: PrincipalTypeUser,
 		Claims: map[string]string{
+			"sid":                str(claims, "sid"),
+			"session_state":      str(claims, "session_state"),
 			"preferred_username": str(claims, "preferred_username"),
 			"user_sub":           str(claims, "user_sub"),
 			"user_groups":        str(claims, "user_groups"),

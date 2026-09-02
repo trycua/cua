@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"cyclops-cs-backend/auth"
@@ -21,6 +22,90 @@ type SvcQualificationResult struct {
 	Reason    string
 }
 type SvcQualification func(context.Context, *http.Request, int) SvcQualificationResult
+
+const (
+	loginSessionCacheCapacity = 4096
+	loginSessionCacheTTL      = 12 * time.Hour
+)
+
+type loginSessionGate struct {
+	mu       sync.Mutex
+	expires  map[string]time.Time
+	capacity int
+	ttl      time.Duration
+}
+
+func newLoginSessionGate(capacity int, ttl time.Duration) *loginSessionGate {
+	return &loginSessionGate{expires: make(map[string]time.Time), capacity: capacity, ttl: ttl}
+}
+
+func (gate *loginSessionGate) first(key string, now time.Time) bool {
+	if key == "" {
+		return false
+	}
+	gate.mu.Lock()
+	defer gate.mu.Unlock()
+	if expiry, exists := gate.expires[key]; exists && now.Before(expiry) {
+		return false
+	}
+	if len(gate.expires) >= gate.capacity {
+		for cachedKey, expiry := range gate.expires {
+			if !now.Before(expiry) {
+				delete(gate.expires, cachedKey)
+			}
+		}
+	}
+	if len(gate.expires) >= gate.capacity {
+		var oldestKey string
+		var oldestExpiry time.Time
+		for cachedKey, expiry := range gate.expires {
+			if oldestKey == "" || expiry.Before(oldestExpiry) {
+				oldestKey, oldestExpiry = cachedKey, expiry
+			}
+		}
+		delete(gate.expires, oldestKey)
+	}
+	gate.expires[key] = now.Add(gate.ttl)
+	return true
+}
+
+// LoginObserver records a successful authentication made with the public CLI
+// client. The CLI has no browser session to call the SPA-only analytics
+// endpoint, but a validated cua-cli token reaching a supported Fleet
+// control/data-plane route is sufficient proof of Fleet entry. The observer
+// runs after authentication and captures regardless of downstream
+// authorization or service status: those outcomes describe the request, not
+// whether the login succeeded.
+func LoginObserver(capturer Capturer, spaClientID string) auth.Middleware {
+	if capturer == nil {
+		capturer = Nop()
+	}
+	gate := newLoginSessionGate(loginSessionCacheCapacity, loginSessionCacheTTL)
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			user := auth.GetUser(r.Context())
+			source, ok := SourceForUser(user, spaClientID)
+			if !ok || source != SourceCLI || !gate.first(loginSessionKey(user), time.Now()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			principalType := user.PrincipalType
+			if principalType == "" {
+				principalType = auth.PrincipalTypeUser
+			}
+			capturer.Capture(Event{
+				Name: EventLoginSucceeded, DistinctID: user.ID,
+				Properties: map[string]any{
+					"outcome":        OutcomeSuccess,
+					"source":         source,
+					"principal_type": principalType,
+					"identity_class": ClassifyIdentity(user),
+				},
+			})
+			next.ServeHTTP(w, r)
+		})
+	}
+}
 
 func RouteObserver(route string, capturer Capturer, spaClientID string, qualifiers ...SvcQualifier) auth.Middleware {
 	var qualifier SvcQualification

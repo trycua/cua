@@ -7,6 +7,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,6 +18,10 @@ import (
 type captureSink struct{ events []Event }
 
 func (sink *captureSink) Capture(event Event) { sink.events = append(sink.events, event) }
+
+type captureFunc func(Event)
+
+func (capture captureFunc) Capture(event Event) { capture(event) }
 
 type eventChannel chan Event
 
@@ -30,6 +35,89 @@ func observedRequest(method, route, path string, user *auth.User) *http.Request 
 	spanID, _ := trace.SpanIDFromHex("2222222222222222")
 	ctx = trace.ContextWithSpanContext(ctx, trace.NewSpanContext(trace.SpanContextConfig{TraceID: traceID, SpanID: spanID}))
 	return request.WithContext(ctx)
+}
+
+func TestLoginObserverCapturesCLIAuthenticationOncePerSession(t *testing.T) {
+	sink := &captureSink{}
+	observer := LoginObserver(sink, "cyclops-cs-spa")
+	handler := observer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	user := &auth.User{ID: "external-1", Email: "person@example.test", EmailVerified: true, AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser, Claims: map[string]string{"sid": "session-1"}}
+	handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodPost, "/api/k8s/{path...}", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", user))
+	observer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})).ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/svc/{namespace}/{service}", "", user))
+
+	if len(sink.events) != 1 {
+		t.Fatalf("events = %#v", sink.events)
+	}
+	event := sink.events[0]
+	if event.Name != EventLoginSucceeded || event.DistinctID != user.ID || event.InsertID != "" {
+		t.Fatalf("event = %#v", event)
+	}
+	if event.Properties["outcome"] != OutcomeSuccess || event.Properties["source"] != SourceCLI || event.Properties["identity_class"] != IdentityExternal {
+		t.Fatalf("properties = %#v", event.Properties)
+	}
+}
+
+func TestLoginObserverCapturesDifferentCLISessions(t *testing.T) {
+	sink := &captureSink{}
+	handler := LoginObserver(sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	for _, sessionID := range []string{"session-1", "session-2"} {
+		user := &auth.User{ID: "external-1", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser, Claims: map[string]string{"sid": sessionID}}
+		handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/k8s/{path...}", "version", user))
+	}
+	if len(sink.events) != 2 {
+		t.Fatalf("events = %#v", sink.events)
+	}
+}
+
+func TestLoginSessionGateIsBoundedAndExpires(t *testing.T) {
+	gate := newLoginSessionGate(1, time.Hour)
+	now := time.Date(2026, time.September, 2, 0, 0, 0, 0, time.UTC)
+	if !gate.first("session-1", now) || gate.first("session-1", now) {
+		t.Fatal("same live session was not suppressed")
+	}
+	if !gate.first("session-2", now) || !gate.first("session-1", now) {
+		t.Fatal("capacity eviction did not admit the oldest session key")
+	}
+	if !gate.first("session-1", now.Add(2*time.Hour)) {
+		t.Fatal("expired session key remained suppressed")
+	}
+}
+
+func TestLoginObserverCapturesBeforeTheFleetRequest(t *testing.T) {
+	order := []string{}
+	sink := captureFunc(func(Event) { order = append(order, "login") })
+	handler := LoginObserver(sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		order = append(order, "request")
+		w.WriteHeader(http.StatusOK)
+	}))
+	handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/k8s/{path...}", "version", &auth.User{ID: "cli-1", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser}))
+	if got := strings.Join(order, ","); got != "login,request" {
+		t.Fatalf("order = %q", got)
+	}
+}
+
+func TestLoginObserverIgnoresBrowserAndNonInteractivePrincipals(t *testing.T) {
+	for _, user := range []*auth.User{
+		{ID: "spa-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser},
+		{ID: "key-1", AZP: "ukey-demo", PrincipalType: auth.PrincipalTypeUserKey},
+		{ID: "github-1", AZP: "github-oidc", PrincipalType: auth.PrincipalTypeGitHubOIDC},
+		{ID: "github-2", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeGitHubOIDC},
+	} {
+		sink := &captureSink{}
+		handler := LoginObserver(sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+		handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodGet, "/api/k8s/{path...}", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", user))
+		if len(sink.events) != 0 {
+			t.Fatalf("user %#v captured %#v", user, sink.events)
+		}
+	}
 }
 
 func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *testing.T) {

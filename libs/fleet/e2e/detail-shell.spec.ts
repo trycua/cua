@@ -227,7 +227,7 @@ test("claim detail hides signed URL controls when creation is unavailable", asyn
   await mockFleet(page, [], { unavailable: { create: true } })
   await page.goto("/pools/demo-pool/demo-pool/claims/claim-abc123")
 
-  await page.getByRole("button", { name: "Create signed URL" }).click()
+  await page.getByLabel("Signed URLs", { exact: true }).getByRole("button", { name: "Create signed URL" }).click()
   await page.getByRole("button", { name: "Choose a service" }).click()
   await page.getByRole("option", { name: "mcp" }).click()
   await page.getByRole("button", { name: "Create signed URL" }).first().click()

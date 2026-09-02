@@ -26,7 +26,8 @@ func TestRecordAnalyticsSessionCapturesSuccessfulSPALogin(t *testing.T) {
 	capture := &analyticsCapture{}
 	h := Handlers{Analytics: capture, AuthCfg: configAuthForAnalytics()}
 	request := httptest.NewRequest(http.MethodPost, "/api/analytics/session", nil)
-	ctx := context.WithValue(request.Context(), auth.UserKey, &auth.User{ID: "subject-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser})
+	user := &auth.User{ID: "subject-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}
+	ctx := context.WithValue(request.Context(), auth.UserKey, user)
 	ctx = context.WithValue(ctx, middlewares.ContextKey("traceId"), "trace-1")
 	response := httptest.NewRecorder()
 

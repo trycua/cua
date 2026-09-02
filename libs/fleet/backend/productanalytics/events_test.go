@@ -1,6 +1,7 @@
 package productanalytics
 
 import (
+	"strings"
 	"testing"
 
 	"cyclops-cs-backend/auth"
@@ -14,6 +15,8 @@ func TestSourceForUser(t *testing.T) {
 		ok   bool
 	}{
 		{name: "spa", user: &auth.User{ID: "user-1", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: SourceSPA, ok: true},
+		{name: "cli", user: &auth.User{ID: "user-1", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser}, want: SourceCLI, ok: true},
+		{name: "non-user cua-cli principal", user: &auth.User{ID: "user-1", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeGitHubOIDC}},
 		{name: "oauth proxy", user: &auth.User{ID: "user-1", AZP: "oauth2-proxy"}, want: SourceSPA, ok: true},
 		{name: "user key", user: &auth.User{ID: "user-1", AZP: "ukey-demo", PrincipalType: auth.PrincipalTypeUserKey}, want: SourceUserKey, ok: true},
 		{name: "github", user: &auth.User{ID: "user-1", AZP: "github-oidc", PrincipalType: auth.PrincipalTypeGitHubOIDC}},
@@ -61,6 +64,23 @@ func TestPseudonymForUserIDIsDeterministicAndKeyed(t *testing.T) {
 	}
 	if first == PseudonymForUserID("user-1", "key-b") || first == PseudonymForUserID("user-2", "key-a") {
 		t.Fatalf("pseudonym is not keyed/input-bound: %q", first)
+	}
+}
+
+func TestLoginSessionKeyUsesTrustedSessionClaims(t *testing.T) {
+	user := &auth.User{ID: "user-1", Claims: map[string]string{"sid": "session-1", "session_state": "legacy-session"}}
+	first := loginSessionKey(user)
+	if first == "" || first != loginSessionKey(user) {
+		t.Fatalf("session key is not stable: %q", first)
+	}
+	if strings.Contains(first, "user-1") || strings.Contains(first, "session-1") {
+		t.Fatalf("session key contains raw identity material: %q", first)
+	}
+	if first == loginSessionKey(&auth.User{ID: "user-1", Claims: map[string]string{"sid": "session-2"}}) {
+		t.Fatalf("different sessions share key: %q", first)
+	}
+	if got := loginSessionKey(&auth.User{ID: "user-1"}); got == "" {
+		t.Fatal("missing-session fallback is empty")
 	}
 }
 

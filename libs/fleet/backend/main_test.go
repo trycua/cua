@@ -355,6 +355,53 @@ func requestWithAZP(t *testing.T, method, path string, body io.Reader, azp strin
 	return req
 }
 
+type routerAnalyticsCapture struct {
+	mu     sync.Mutex
+	events []productanalytics.Event
+}
+
+func (capture *routerAnalyticsCapture) Capture(event productanalytics.Event) {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	capture.events = append(capture.events, event)
+}
+
+func (capture *routerAnalyticsCapture) eventsNamed(name string) []productanalytics.Event {
+	capture.mu.Lock()
+	defer capture.mu.Unlock()
+	events := make([]productanalytics.Event, 0)
+	for _, event := range capture.events {
+		if event.Name == name {
+			events = append(events, event)
+		}
+	}
+	return events
+}
+
+func TestRouterEmitsOneCLILoginAcrossFleetRoutes(t *testing.T) {
+	capture := &routerAnalyticsCapture{}
+	router := setupRouter(handlers.Handlers{
+		Analytics: capture,
+		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+	})
+
+	for _, path := range []string{
+		"/api/k8s/api/v1/nodes",
+		"/api/svc/Not_A_Label/svc-a",
+	} {
+		response := httptest.NewRecorder()
+		router.ServeHTTP(response, requestWithAZP(t, http.MethodGet, path, nil, "cua-cli"))
+	}
+
+	logins := capture.eventsNamed(productanalytics.EventLoginSucceeded)
+	if len(logins) != 1 {
+		t.Fatalf("login events = %#v", logins)
+	}
+	if logins[0].Properties["source"] != productanalytics.SourceCLI || logins[0].Properties["identity_class"] != productanalytics.IdentityExternal {
+		t.Fatalf("login properties = %#v", logins[0].Properties)
+	}
+}
+
 func bigEndianBytes(v int) []byte {
 	if v == 0 {
 		return []byte{0}

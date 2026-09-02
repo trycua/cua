@@ -46,6 +46,9 @@ func TestClientDeliversAllowlistedEvent(t *testing.T) {
 		if item["event"] != EventPoolCreate || item["distinct_id"] != PseudonymForUserID("subject-1", "identity-test-key") {
 			t.Fatalf("event payload = %#v", item)
 		}
+		if _, err := time.Parse(time.RFC3339Nano, item["timestamp"].(string)); err != nil {
+			t.Fatalf("timestamp = %#v: %v", item["timestamp"], err)
+		}
 		properties := item["properties"].(map[string]any)
 		if properties["environment"] != "production" || properties["instrumentation_version"] != Version || properties["$insert_id"] != "trace-1" {
 			t.Fatalf("properties = %#v", properties)
@@ -87,6 +90,47 @@ func TestClientSuppressesExcludedSubject(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	_ = client.Shutdown(ctx)
+}
+
+func TestClientDoesNotLeakRawLoginIdentity(t *testing.T) {
+	requests := make(chan map[string]any, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			t.Fatal(err)
+		}
+		requests <- payload
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+	client := New(Config{
+		Enabled: true, Host: server.URL, ProjectToken: "phc_test", IdentityKey: "identity-test-key", Environment: "production",
+		QueueSize: 2, BatchSize: 1, FlushInterval: time.Hour, RequestTimeout: time.Second,
+	})
+	client.Capture(Event{
+		Name: EventLoginSucceeded, DistinctID: "subject-1",
+		Properties: map[string]any{"outcome": OutcomeSuccess, "source": SourceCLI, "principal_type": "user", "identity_class": IdentityExternal},
+	})
+	select {
+	case payload := <-requests:
+		encoded, _ := json.Marshal(payload)
+		if bytes.Contains(encoded, []byte("subject-1")) {
+			t.Fatalf("payload contains raw identity: %s", encoded)
+		}
+		item := payload["batch"].([]any)[0].(map[string]any)
+		properties := item["properties"].(map[string]any)
+		if _, exists := properties["$insert_id"]; exists {
+			t.Fatalf("login event unexpectedly contains $insert_id: %#v", properties)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for login capture")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	if err := client.Shutdown(ctx); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestClientPseudonymizesAttributionIdentityAndStableInsertID(t *testing.T) {

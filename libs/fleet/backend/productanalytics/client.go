@@ -92,13 +92,17 @@ func (client *Client) Capture(event Event) {
 	if event.Name == EventAttributionBound {
 		event.InsertID = "fleet-attribution:" + pseudonym
 	}
+	capturedAt := time.Now().UTC()
+	if event.Timestamp.IsZero() {
+		event.Timestamp = capturedAt
+	}
 	copied := cloneEvent(event)
 	copied.Properties["environment"] = client.config.Environment
 	copied.Properties["instrumentation_version"] = Version
 	if copied.SetOnce == nil {
 		copied.SetOnce = map[string]any{}
 	}
-	copied.SetOnce[firstSeenProperty] = time.Now().UTC().Format(time.RFC3339)
+	copied.SetOnce[firstSeenProperty] = capturedAt.Format(time.RFC3339)
 	select {
 	case client.queue <- copied:
 		metrics.SetProductAnalyticsQueueDepth(len(client.queue))
@@ -164,7 +168,10 @@ func (client *Client) deliver(events []Event) {
 		if len(event.SetOnce) > 0 {
 			properties["$set_once"] = cloneMap(event.SetOnce)
 		}
-		items = append(items, map[string]any{"event": event.Name, "distinct_id": event.DistinctID, "properties": properties})
+		items = append(items, map[string]any{
+			"event": event.Name, "distinct_id": event.DistinctID,
+			"timestamp": event.Timestamp.Format(time.RFC3339Nano), "properties": properties,
+		})
 	}
 	body, err := json.Marshal(map[string]any{"api_key": client.config.ProjectToken, "batch": items})
 	if err != nil {

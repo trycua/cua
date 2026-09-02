@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 
 	"cyclops-cs-backend/auth"
 )
@@ -38,6 +39,26 @@ func PseudonymForUserID(userID, key string) string {
 	return "u_" + hex.EncodeToString(mac.Sum(nil))
 }
 
+// loginSessionKey returns an internal-only hash for suppressing repeated
+// observations from one authenticated CLI session.
+func loginSessionKey(user *auth.User) string {
+	if user == nil || user.ID == "" {
+		return ""
+	}
+	sessionID := ""
+	if user.Claims != nil {
+		sessionID = strings.TrimSpace(user.Claims["sid"])
+		if sessionID == "" {
+			sessionID = strings.TrimSpace(user.Claims["session_state"])
+		}
+	}
+	if sessionID == "" {
+		sessionID = user.ID
+	}
+	digest := sha256.Sum256([]byte(user.ID + "\x00" + sessionID))
+	return hex.EncodeToString(digest[:])
+}
+
 const (
 	EventLoginSucceeded        = "fleet_login_succeeded"
 	EventPaymentMethodSetup    = "fleet_payment_method_setup"
@@ -59,6 +80,7 @@ const (
 	OutcomeSuccess = "success"
 	OutcomeFailure = "failure"
 	SourceSPA      = "spa"
+	SourceCLI      = "cli"
 	SourceUserKey  = "user_key"
 	Version        = "1"
 )
@@ -99,6 +121,7 @@ type Event struct {
 	Name       string
 	DistinctID string
 	InsertID   string
+	Timestamp  time.Time
 	Properties map[string]any
 	SetOnce    map[string]any
 }
@@ -119,6 +142,9 @@ func SourceForUser(user *auth.User, spaClientID string) (string, bool) {
 	}
 	if user.PrincipalType == auth.PrincipalTypeUserKey || strings.HasPrefix(user.AZP, "ukey-") {
 		return SourceUserKey, true
+	}
+	if user.AZP == "cua-cli" && user.PrincipalType == auth.PrincipalTypeUser {
+		return SourceCLI, true
 	}
 	if user.AZP == spaClientID || user.AZP == "oauth2-proxy" {
 		return SourceSPA, true

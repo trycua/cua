@@ -71,12 +71,14 @@ test("frontend image builds from the repository root", async () => {
 })
 
 test("dashboard activates the shared theme through supported boundaries", async () => {
-  const [entrypoint, shell, shellStyles, visualPreview] = await Promise.all([
-    readFile(path.join(cyclopsRoot, "src/main.tsx"), "utf8"),
-    readFile(path.join(cyclopsRoot, "src/App.tsx"), "utf8"),
-    readFile(path.join(cyclopsRoot, "src/shell.css"), "utf8"),
-    readFile(path.join(cyclopsRoot, "src/local-visual-preview.ts"), "utf8"),
-  ])
+  const [entrypoint, shell, shellStyles, visualPreview, previewEnvironment] =
+    await Promise.all([
+      readFile(path.join(cyclopsRoot, "src/main.tsx"), "utf8"),
+      readFile(path.join(cyclopsRoot, "src/App.tsx"), "utf8"),
+      readFile(path.join(cyclopsRoot, "src/shell.css"), "utf8"),
+      readFile(path.join(cyclopsRoot, "src/local-visual-preview.ts"), "utf8"),
+      readFile(path.join(cyclopsRoot, "src/preview-environment.ts"), "utf8"),
+    ])
   const allStyles = (await readCssTree(path.join(cyclopsRoot, "src"))).join(
     "\n",
   )
@@ -109,11 +111,11 @@ test("dashboard activates the shared theme through supported boundaries", async 
   assert.match(visualPreview, /import\.meta\.env\.DEV/)
   assert.match(visualPreview, /VITE_CUA_LOCAL_VISUAL_PREVIEW === "true"/)
   assert.match(
-    visualPreview,
+    previewEnvironment,
     /VITE_CUA_REVIEW_VISUAL_PREVIEW === "true"/,
   )
   assert.match(
-    visualPreview,
+    previewEnvironment,
     /\^cyclops-cs-pr-\\d\+\\\.tail204509\\\.ts\\\.net\$/,
   )
 })

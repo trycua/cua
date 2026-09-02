@@ -1919,6 +1919,33 @@ fn chromium_background_must_refuse(
     chromium && !foreground && !focus_free_inject_mode
 }
 
+/// After AT-SPI-at-point misses, background pixel delivery must not claim an
+/// XSendEvent success on hosts that cannot bind an MPX/uinput pointer (Xvfb,
+/// missing `/dev/uinput`). Chromium/GTK/Qt drop those synthetic events; the
+/// caller retries with `delivery_mode: foreground`.
+fn background_pixel_without_mpx_must_refuse(
+    foreground: bool,
+    atspi_at_point_landed: bool,
+    mpx_available: bool,
+) -> bool {
+    !foreground && !atspi_at_point_landed && !mpx_available
+}
+
+fn unavailable_background_pointer_without_mpx(
+    delivery: crate::input::delivery::DeliveryMode,
+) -> Option<ToolResult> {
+    background_pixel_without_mpx_must_refuse(
+        delivery.is_foreground(),
+        false,
+        crate::input::real_pointer_input_available() || crate::wayland::is_inject_mode(),
+    )
+    .then(|| {
+        crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::NoMpxPointer,
+        )
+    })
+}
+
 /// Screen-absolute center of a window (top-left from translate_coordinates plus
 /// half its geometry). Used to position the no-focus-steal scroll over the
 /// window's content. Blocking — call inside spawn_blocking.
@@ -1939,15 +1966,14 @@ fn window_screen_center(xid: u64) -> anyhow::Result<(i32, i32)> {
     ))
 }
 
-/// X11 no-focus-steal pixel click with graceful fallback. On a real Xorg host
-/// the MPX uinput pointer + XI2 shield grab lands a *true* button event on
-/// XInput2 toolkits (GTK3/4) that silently drop synthetic `XSendEvent` pointers
-/// — so right / middle / double clicks actually register. On Xvfb / Xtigervnc /
-/// unsupported servers (`real_pointer_input_available()` returns false) or if
-/// the MPX attempt fails, it falls back to the legacy `XSendEvent` path so
-/// headless tests and core-only toolkits keep working. `lx`,`ly` are
-/// window-local; screen-absolute coords for the warp are derived here. Blocking
-/// — call inside spawn_blocking.
+/// X11 no-focus-steal pixel click. On a real Xorg host the MPX uinput pointer
+/// + XI2 shield grab lands a *true* button event on XInput2 toolkits (GTK3/4)
+/// that silently drop synthetic `XSendEvent` pointers. Background callers must
+/// refuse with `background_unavailable` when `real_pointer_input_available()`
+/// is false (Xvfb / Xtigervnc / no uinput) instead of reporting an XSendEvent
+/// success that Chromium/GTK/Qt will drop. This helper still falls back to
+/// XSendEvent if an MPX attempt fails on a host that looked capable.
+/// `lx`,`ly` are window-local. Blocking — call inside spawn_blocking.
 fn x11_pixel_click_no_focus_steal(
     cursor_id: &str,
     xid: u64,
@@ -2868,6 +2894,13 @@ impl Tool for ClickTool {
                         return Ok("x11_atspi");
                     }
                 }
+                if background_pixel_without_mpx_must_refuse(
+                    fg,
+                    false,
+                    crate::input::real_pointer_input_available(),
+                ) {
+                    return Ok("background_unavailable_no_mpx");
+                }
                 if fg {
                     // Foreground: the window is already activated. Deliver a REAL
                     // XTest warp+button click. Synthetic XSendEvent button events
@@ -2928,6 +2961,11 @@ impl Tool for ClickTool {
             Ok(Ok("background_unavailable")) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                )
+            }
+            Ok(Ok("background_unavailable_no_mpx")) => {
+                crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::NoMpxPointer,
                 )
             }
             // A pixel/coordinate click is never driver-verifiable (no read-back) —
@@ -4671,6 +4709,9 @@ impl Tool for ScrollTool {
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
             return refusal;
         }
+        if let Some(refusal) = unavailable_background_pointer_without_mpx(delivery) {
+            return refusal;
+        }
 
         // An element-addressed scroll must land over the element. The old
         // fallback used (0, 0) in the window, which can report success while
@@ -4853,6 +4894,9 @@ impl Tool for DoubleClickTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_background_pointer_without_mpx(delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
@@ -5079,6 +5123,9 @@ impl Tool for RightClickTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_background_pointer_without_mpx(delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
@@ -5369,6 +5416,9 @@ impl Tool for DragTool {
             return refusal;
         }
         if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+            return refusal;
+        }
+        if let Some(refusal) = unavailable_background_pointer_without_mpx(delivery) {
             return refusal;
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
@@ -8371,7 +8421,10 @@ pub fn build_registry_with_provider(
 
 #[cfg(test)]
 mod click_button_schema_tests {
-    use super::{chromium_background_must_refuse, maps_indicate_gtk, ClickTool};
+    use super::{
+        background_pixel_without_mpx_must_refuse, chromium_background_must_refuse,
+        maps_indicate_gtk, ClickTool,
+    };
     use cua_driver_core::tool::Tool;
 
     /// Surface 5: schema must advertise the three canonical button values and
@@ -8414,6 +8467,22 @@ mod click_button_schema_tests {
         assert!(!chromium_background_must_refuse(false, true, true));
         assert!(!chromium_background_must_refuse(true, false, true));
         assert!(!chromium_background_must_refuse(false, false, false));
+    }
+
+    #[test]
+    fn background_pixel_refuses_xsend_event_when_atspi_and_mpx_are_unavailable() {
+        assert!(background_pixel_without_mpx_must_refuse(
+            false, false, false
+        ));
+        assert!(!background_pixel_without_mpx_must_refuse(
+            false, true, false
+        ));
+        assert!(!background_pixel_without_mpx_must_refuse(
+            false, false, true
+        ));
+        assert!(!background_pixel_without_mpx_must_refuse(
+            true, false, false
+        ));
     }
 
     #[test]

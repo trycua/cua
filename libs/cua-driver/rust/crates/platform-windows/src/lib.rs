@@ -43,6 +43,11 @@ mod keycodes;
 // pass that lives in this commit).
 pub mod lparam;
 
+// Pure geometry and structured-output helpers for the Windows window-state
+// coordinate contract. Kept outside the Windows-only modules so unit tests can
+// validate the wire shape without a live HWND or interactive desktop.
+pub(crate) mod window_state_coordinates;
+
 #[cfg(target_os = "windows")]
 pub mod win32;
 

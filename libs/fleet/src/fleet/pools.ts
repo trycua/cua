@@ -74,6 +74,7 @@ function poolData(pool: Pool, template: Template): PoolData {
     cpu: vm.cpuCores ?? 0,
     ram: vm.memory ?? "",
     ociImage: vm.containerDiskImage,
+    ttlSecondsAfterCreated: pool.spec.ttlSecondsAfterCreated,
     firmware: vm.firmware === Firmware.Efi ? "efi" : undefined,
     services: (vm.services ?? []).map(service => ({
       name: service.name,
@@ -202,6 +203,11 @@ export function buildPoolRequest(
       .sandboxTemplateRef(reference)
   const autoscaling = buildAutoscaling(values.autoscaling)
   if (autoscaling) specBuilder = specBuilder.autoscaling(autoscaling)
+  if (values.ttlSecondsAfterCreated !== undefined) {
+    specBuilder = specBuilder.ttlSecondsAfterCreated(
+      values.ttlSecondsAfterCreated,
+    )
+  }
 
   return new CreatePoolRequestBuilder()
     .namespace(namespace)

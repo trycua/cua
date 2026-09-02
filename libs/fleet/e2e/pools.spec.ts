@@ -312,9 +312,75 @@ test.describe("Pool creation", () => {
     await expect(page.getByPlaceholder("my-pool")).toBeVisible()
     // Numeric inputs (vCPU, replicas)
     await expect(page.getByRole("spinbutton").first()).toBeVisible()
+    await expect(
+      page.getByRole("spinbutton", { name: "Time to live (seconds)" }),
+    ).toHaveValue("")
 
     // Services section has an "Add service" button
     await expect(page.getByRole("button", { name: "Add service" })).toBeVisible()
+  })
+
+  test("submits an optional time to live in seconds", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let submittedTtl: number | undefined
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
+      async route => {
+        if (route.request().method() !== "POST") return route.fallback()
+        const body = route.request().postDataJSON() as {
+          spec: { replicas: number; ttlSecondsAfterCreated?: number }
+        }
+        submittedTtl = body.spec.ttlSecondsAfterCreated
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ...body,
+            status: { replicas: body.spec.replicas },
+          }),
+        })
+      },
+    )
+
+    await page.goto("/pools/new")
+    await page.getByRole("textbox", { name: "Name" }).fill("ttl-pool")
+    await page
+      .getByRole("spinbutton", { name: "Time to live (seconds)" })
+      .fill("3600")
+    await page.getByRole("button", { name: "Create" }).click()
+
+    await expect.poll(() => submittedTtl).toBe(3600)
+  })
+
+  test("rejects a negative time to live", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let createRequests = 0
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
+      route => {
+        if (route.request().method() !== "POST") return route.fallback()
+        createRequests += 1
+        return route.fulfill({ status: 500, body: "unexpected create" })
+      },
+    )
+
+    await page.goto("/pools/new")
+    await page.getByRole("textbox", { name: "Name" }).fill("ttl-pool")
+    const ttl = page.getByRole("spinbutton", {
+      name: "Time to live (seconds)",
+    })
+    await ttl.fill("-1")
+    await page.getByRole("button", { name: "Create" }).click()
+
+    await expect(ttl).toBeFocused()
+    await expect(
+      page.getByText("Time to live must be a non-negative whole number."),
+    ).toBeVisible()
+    expect(createRequests).toBe(0)
   })
 
   test("invalid submission focuses the name and cancel protects unsaved work", async ({
@@ -454,6 +520,7 @@ test.describe("Pool duplication", () => {
       metadata: { name: "demo-pool", namespace: "demo-pool" },
       spec: {
         replicas: 3,
+        ttlSecondsAfterCreated: 7200,
         sandboxTemplateRef: { name: "demo-pool-template" },
       },
       status: { replicas: 3, readyReplicas: 3 },
@@ -531,6 +598,9 @@ test.describe("Pool duplication", () => {
     await expect(page.getByRole("textbox", { name: "OCI image" })).toHaveValue(
       "custom-image:v1",
     )
+    await expect(
+      page.getByRole("spinbutton", { name: "Time to live (seconds)" }),
+    ).toHaveValue("7200")
   })
 })
 

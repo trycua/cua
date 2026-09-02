@@ -94,6 +94,11 @@ export function PoolNew() {
   const [ociImage, setOciImage] = useState(seed.ociImage ?? DEFAULTS.ociImage)
   const [firmware, setFirmware] = useState<"bios" | "efi">(seed.firmware ?? "bios")
   const [replicas, setReplicas] = useState(String(seed.replicas ?? DEFAULTS.replicas))
+  const [ttlSecondsAfterCreated, setTtlSecondsAfterCreated] = useState(
+    seed.ttlSecondsAfterCreated === undefined
+      ? ""
+      : String(seed.ttlSecondsAfterCreated),
+  )
   const [readinessPort, setReadinessPort] = useState(
     portFromProbe(seed.probes?.readinessProbe),
   )
@@ -124,6 +129,7 @@ export function PoolNew() {
   // enforcement point, so the gate fails open on a billing hiccup.
   const [cardRequired, setCardRequired] = useState(false)
   const nameRef = useRef<InputProps.Ref>(null)
+  const ttlRef = useRef<InputProps.Ref>(null)
 
   useEffect(() => {
     if (!billingEnabled || !paymentMethodGateEnabled) return
@@ -156,6 +162,15 @@ export function PoolNew() {
     }
     return undefined
   }, [name, submitAttempted])
+
+  const ttlError = useMemo(() => {
+    if (!ttlSecondsAfterCreated.trim()) return undefined
+    const value = Number(ttlSecondsAfterCreated)
+    if (!Number.isInteger(value) || value < 0) {
+      return "Time to live must be a non-negative whole number."
+    }
+    return undefined
+  }, [ttlSecondsAfterCreated])
 
   const addService = () => {
     setDirty(true)
@@ -196,6 +211,9 @@ export function PoolNew() {
       ociImage: ociImage.trim() || DEFAULTS.ociImage,
       firmware: firmware !== "bios" ? firmware : undefined,
       replicas: parseInt(replicas, 10) || DEFAULTS.replicas,
+      ttlSecondsAfterCreated: ttlSecondsAfterCreated.trim()
+        ? Number(ttlSecondsAfterCreated)
+        : undefined,
       services: validServices.length ? validServices : undefined,
       probes: Object.keys(probes).length ? probes : undefined,
       autoscaling: autoscalingEnabled
@@ -210,8 +228,12 @@ export function PoolNew() {
 
   const create = async () => {
     setSubmitAttempted(true)
-    if (!name || nameError) {
-      nameRef.current?.focus()
+    if (!name || nameError || ttlError) {
+      if (!name || nameError) {
+        nameRef.current?.focus()
+      } else {
+        ttlRef.current?.focus()
+      }
       return
     }
     setSubmitting(true)
@@ -339,6 +361,22 @@ export function PoolNew() {
               type="number"
               value={replicas}
               onChange={({ detail }) => setReplicas(detail.value)}
+            />
+          </FormField>
+
+          <FormField
+            label="Time to live (seconds)"
+            description="Optional. Automatically deletes the pool after this many seconds. Leave blank for no expiration."
+            errorText={ttlError}
+          >
+            <Input
+              ref={ttlRef}
+              type="number"
+              value={ttlSecondsAfterCreated}
+              onChange={({ detail }) =>
+                setTtlSecondsAfterCreated(detail.value)
+              }
+              placeholder="3600"
             />
           </FormField>
 

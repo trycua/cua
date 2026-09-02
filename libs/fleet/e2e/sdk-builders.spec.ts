@@ -74,6 +74,7 @@ test.describe("SDK builders", () => {
         ram: "8Gi",
         ociImage: "registry.example/cyclops:v1",
         replicas: 2,
+        ttlSecondsAfterCreated: 3600,
         firmware: "efi" as const,
         services: [
           { name: "ssh", targetPort: 22, protocol: "TCP" },
@@ -89,6 +90,7 @@ test.describe("SDK builders", () => {
           replicas: pool.spec.replicas,
           template: pool.spec.sandboxTemplateRef.name,
           autoscaling: pool.spec.autoscaling,
+          ttlSecondsAfterCreated: pool.spec.ttlSecondsAfterCreated,
         },
         template: {
           namespace: template.namespace,
@@ -110,6 +112,7 @@ test.describe("SDK builders", () => {
       replicas: 2,
       template: "demo-pool-template",
       autoscaling: { minPoolSize: 1, initialPoolSize: 2, maxPoolSize: 5 },
+      ttlSecondsAfterCreated: 3600,
     })
     expect(result.template).toEqual({
       namespace: "demo-pool",

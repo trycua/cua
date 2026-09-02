@@ -17,6 +17,7 @@ export interface PoolTemplateConfig {
   ram: string
   ociImage: string
   replicas: number
+  ttlSecondsAfterCreated?: number
   firmware?: "bios" | "efi"
   services?: PoolService[]
   probes?: {

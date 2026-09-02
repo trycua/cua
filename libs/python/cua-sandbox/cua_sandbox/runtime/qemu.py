@@ -1,13 +1,18 @@
 """QEMU runtime — bare-metal or Docker-wrapped QEMU VMs.
 
-Two modes:
+Three modes:
   QEMURuntime(mode="docker")     — default, uses trycua/cua-qemu-* Docker images
   QEMURuntime(mode="bare-metal") — launches qemu-system-* directly on the host
+  QEMURuntime(mode="wsl2")       — launches qemu-system-* inside WSL2, for KVM
+
+Only the modes that build the QEMU command line themselves — bare-metal and
+wsl2 — accept extra_args.
 """
 
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json as _json
 import logging
 import platform as _plat
@@ -1092,14 +1097,62 @@ class QEMUWSL2Runtime(Runtime):
         raise TimeoutError(f"WSL2 QEMU VM {info.name} not ready after {timeout}s")
 
 
+_QEMU_RUNTIME_MODES: dict[str, type[Runtime]] = {
+    "docker": QEMUDockerRuntime,
+    "bare-metal": QEMUBaremetalRuntime,
+    "wsl2": QEMUWSL2Runtime,
+}
+
+
+def _accepted_kwargs(runtime_cls: type[Runtime]) -> set[str]:
+    """Keyword argument names a runtime constructor accepts."""
+    return {
+        name
+        for name, param in inspect.signature(runtime_cls.__init__).parameters.items()
+        if name != "self" and param.kind in (param.KEYWORD_ONLY, param.POSITIONAL_OR_KEYWORD)
+    }
+
+
 def QEMURuntime(mode: str = "docker", **kwargs) -> Runtime:
     """Factory that returns the appropriate QEMU runtime.
 
     Args:
         mode: "docker" (default), "bare-metal", or "wsl2"
+
+    The three modes do not share a constructor signature — only the two that
+    build the QEMU command line themselves take ``extra_args``. An argument the
+    selected mode cannot use raises a TypeError naming ``mode`` and the modes
+    that do accept it, instead of one naming a class the caller never mentioned.
     """
-    if mode == "wsl2":
-        return QEMUWSL2Runtime(**kwargs)
-    if mode == "bare-metal":
-        return QEMUBaremetalRuntime(**kwargs)
-    return QEMUDockerRuntime(**kwargs)
+    runtime_cls = _QEMU_RUNTIME_MODES.get(mode)
+    if runtime_cls is None:
+        raise ValueError(
+            f"Unknown QEMURuntime mode {mode!r}; expected one of "
+            + ", ".join(repr(m) for m in _QEMU_RUNTIME_MODES)
+        )
+
+    unknown = sorted(set(kwargs) - _accepted_kwargs(runtime_cls))
+    if unknown:
+        details = []
+        for name in unknown:
+            elsewhere = [
+                m
+                for m, cls in _QEMU_RUNTIME_MODES.items()
+                if m != mode and name in _accepted_kwargs(cls)
+            ]
+            if elsewhere:
+                modes = " or ".join(f"mode={m!r}" for m in elsewhere)
+                details.append(f"{name} (accepted by {modes})")
+            else:
+                details.append(name)
+        message = f"QEMURuntime(mode={mode!r}) does not accept: " + ", ".join(details) + "."
+        if "extra_args" in unknown:
+            message += (
+                " Raw QEMU flags such as -cpu host go in extra_args, which only the"
+                " modes that build the QEMU command line themselves accept;"
+                " mode='docker' (the default) runs a prebuilt image whose command"
+                " line is fixed."
+            )
+        raise TypeError(message)
+
+    return runtime_cls(**kwargs)

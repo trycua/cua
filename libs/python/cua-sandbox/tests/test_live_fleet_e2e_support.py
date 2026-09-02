@@ -16,6 +16,7 @@ from tests.live.fleet_e2e_support import (
     has_oauth_credentials,
     is_pool_missing_error,
     wait_claims_absent,
+    wait_resource_inventory_empty,
     write_summary,
 )
 
@@ -237,6 +238,74 @@ async def test_collect_resource_inventory_propagates_non_404_sdk_errors() -> Non
         await collect_resource_inventory(FakeClient(), "demo")
 
 
+@pytest.mark.asyncio
+async def test_wait_resource_inventory_empty_polls_until_all_resources_are_gone() -> None:
+    calls = 0
+
+    class FakeClient:
+        async def list_templates(self, name: str):
+            return []
+
+        async def list_pools(self, name: str):
+            nonlocal calls
+            calls += 1
+            if calls == 1:
+                return [SimpleNamespace(metadata=SimpleNamespace(name="pool-a"))]
+            return []
+
+        async def list_claims(self, name: str):
+            return []
+
+    assert await wait_resource_inventory_empty(FakeClient(), "demo", timeout=1, interval=0) == {
+        "templates": [],
+        "pools": [],
+        "claims": [],
+    }
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_wait_resource_inventory_empty_returns_last_inventory_on_timeout() -> None:
+    class FakeClient:
+        async def list_templates(self, name: str):
+            return []
+
+        async def list_pools(self, name: str):
+            return [SimpleNamespace(metadata=SimpleNamespace(name="pool-a"))]
+
+        async def list_claims(self, name: str):
+            return []
+
+    assert await wait_resource_inventory_empty(FakeClient(), "demo", timeout=0, interval=0) == {
+        "templates": [],
+        "pools": ["pool-a"],
+        "claims": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_resource_inventory_empty_treats_public_sdk_404_as_empty() -> None:
+    class FakeClient:
+        async def list_templates(self, name: str):
+            raise SdkError.Status("list templates", 404, b"not found")
+
+    assert await wait_resource_inventory_empty(FakeClient(), "demo", timeout=1, interval=0) == {
+        "templates": [],
+        "pools": [],
+        "claims": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_wait_resource_inventory_empty_propagates_non_404_sdk_errors() -> None:
+    class FakeClient:
+        async def list_templates(self, name: str):
+            raise SdkError.Status("list templates", 500, b"failure")
+
+    with pytest.raises(SdkError.Status):
+        await wait_resource_inventory_empty(FakeClient(), "demo", timeout=1, interval=0)
+
+
 def test_write_summary_recursively_redacts_sensitive_values(tmp_path) -> None:
     path = tmp_path / "summary.json"
     write_summary(
@@ -354,7 +423,7 @@ async def test_owned_ephemeral_namespace_is_empty_after_cleanup(monkeypatch, tmp
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return True
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-existing")
@@ -363,7 +432,7 @@ async def test_owned_ephemeral_namespace_is_empty_after_cleanup(monkeypatch, tmp
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", ephemeral)
     monkeypatch.setattr(live_test, "assert_template_contract", lambda template, expected_port: None)
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     await live_test.run_fleet_ephemeral_live()
@@ -414,14 +483,14 @@ async def test_cleanup_failure_does_not_mask_primary_failure(
             raise CleanupFailure("poll failed")
         return False
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         raise CleanupFailure("inventory failed")
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-primary-failure")
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (FakeFleet(), FakeHttpClient()))
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(PrimaryFailure, match="provision failed"):
@@ -553,7 +622,7 @@ async def test_claim_leak_records_persistent_inventory_without_deletion(
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-raced")
@@ -562,7 +631,7 @@ async def test_claim_leak_records_persistent_inventory_without_deletion(
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FakeEphemeral())
     monkeypatch.setattr(live_test, "assert_template_contract", lambda template, expected_port: None)
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(pytest.fail.Exception, match="claims remain"):
@@ -599,14 +668,14 @@ async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeyp
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-provisioning-failure")
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
@@ -640,7 +709,7 @@ async def test_pre_yield_failure_records_no_inventory_without_pool_identity(
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-pre-yield-claim")
@@ -648,7 +717,7 @@ async def test_pre_yield_failure_records_no_inventory_without_pool_identity(
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
@@ -684,7 +753,7 @@ async def test_pre_yield_missing_namespace_skips_inventory_without_pool_identity
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return True
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-pre-yield-missing")
@@ -692,7 +761,7 @@ async def test_pre_yield_missing_namespace_skips_inventory_without_pool_identity
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (object(), FakeHttpClient()))
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FailingEphemeral())
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(ProvisioningFailure, match="provisioning failed"):
@@ -786,7 +855,7 @@ async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-identity")
@@ -796,7 +865,7 @@ async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup
     monkeypatch.setattr(live_test, "build_fleet_client", lambda: (FakeFleet(), FakeHttpClient()))
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FakeEphemeral())
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", lambda path, summary: summaries.append(summary))
 
     with pytest.raises(AssertionError, match=message):
@@ -862,7 +931,7 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def collect_resource_inventory(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     def write_summary(path, summary) -> None:
@@ -876,7 +945,7 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
     monkeypatch.setattr(live_test.Sandbox, "ephemeral", lambda *args, **kwargs: FakeEphemeral())
     monkeypatch.setattr(live_test, "assert_template_contract", lambda template, expected_port: None)
     monkeypatch.setattr(live_test, "wait_claims_absent", wait_claims_absent)
-    monkeypatch.setattr(live_test, "collect_resource_inventory", collect_resource_inventory)
+    monkeypatch.setattr(live_test, "wait_resource_inventory_empty", wait_resource_inventory_empty)
     monkeypatch.setattr(live_test, "write_summary", write_summary)
 
     with pytest.raises(pytest.fail.Exception, match="claims remain"):

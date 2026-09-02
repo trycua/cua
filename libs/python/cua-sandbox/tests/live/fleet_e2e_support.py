@@ -146,6 +146,21 @@ async def collect_resource_inventory(client: CyclopsClient, name: str) -> dict[s
     }
 
 
+async def wait_resource_inventory_empty(
+    client: CyclopsClient,
+    name: str,
+    *,
+    timeout: float = 180.0,
+    interval: float = 5.0,
+) -> dict[str, list[str]]:
+    deadline = time.monotonic() + timeout
+    inventory = await collect_resource_inventory(client, name)
+    while any(inventory.values()) and time.monotonic() < deadline:
+        await asyncio.sleep(interval)
+        inventory = await collect_resource_inventory(client, name)
+    return inventory
+
+
 def assert_template_contract(template: Any, expected_port: int) -> None:
     vm_template = template.spec.vm_template
     server = next((service for service in vm_template.services if service.name == "server"), None)

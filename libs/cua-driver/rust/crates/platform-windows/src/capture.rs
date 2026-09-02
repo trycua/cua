@@ -1,30 +1,25 @@
-//! Window screenshot via PrintWindow + GDI BitBlt on Windows.
+//! Window screenshots on Windows.
 //!
-//! `PW_RENDERFULLCONTENT` (0x2) renders the window contents even if it is
-//! occluded or off-screen for GDI-backed surfaces. The result is encoded as
-//! base64 PNG in memory.
+//! Windows.Graphics.Capture (WGC) is the primary backend. It reads the
+//! compositor-owned frame at its actual texture dimensions, remains correct
+//! when the target has a different DPI-awareness mode than the driver, and
+//! captures occluded DirectComposition surfaces. PrintWindow and a desktop
+//! region BitBlt remain compatibility fallbacks for systems where WGC is not
+//! available.
 //!
-//! ## UWP / DirectComposition fallback (CUA-542)
+//! ## Why PrintWindow is not the primary backend
 //!
 //! `PrintWindow` doesn't capture DirectComposition-backed surfaces —
 //! modern UWP / WinUI3 apps (Calculator, Photos, Settings, Win 11
 //! Notepad) render directly to the GPU compositor and have no GDI back
 //! buffer for `PrintWindow` to copy from. Result is an all-black image.
 //!
-//! When the PrintWindow result comes back mostly-black (sentinel for
-//! that case), we fall back to a **screen-region BitBlt**: read the
-//! window's on-screen bounds via `GetWindowRect`, BitBlt the matching
-//! pixels off the desktop DC. This is the same approach the Windows
-//! Snipping Tool's "Window" mode uses. Trade-off: only works when the
-//! window is actually on-screen and not occluded by another window.
-//! For our daemon-driven agent flow that's the common case anyway —
-//! the daemon lives in the user's interactive session and the target
-//! is typically a visible window the agent just launched.
-//!
-//! The full proper fix (Windows.Graphics.Capture, which works for
-//! occluded / off-screen UWP windows too) is tracked separately on
-//! CUA-542; the screen-region fallback covers the same common
-//! ground at a fraction of the implementation cost.
+//! PrintWindow can also paint through the target process's DPI-virtualized
+//! coordinate space. If its destination bitmap is sized from physical
+//! GetWindowRect bounds, the result is valid-looking content in one quadrant
+//! of an oversized black canvas. That breaks the screenshot-pixel action
+//! contract without producing an API error. WGC avoids the cross-process GDI
+//! coordinate mismatch entirely.
 
 use anyhow::{bail, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
@@ -222,45 +217,30 @@ pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
 /// user / LLM should attach an explicit warning. See `target_is_obscured`
 /// for the sampling heuristic.
 pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, bool)> {
-    match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
-        Ok(capture) => Ok(capture),
-        Err(primary_error) => {
-            if primary_error.to_string().contains("minimized window") {
-                return Err(primary_error);
-            }
-            // A freshly restored DirectComposition window can temporarily have
-            // no usable GDI surface even though DWM is already rendering it.
-            // WGC reads the compositor-owned frame and is therefore the right
-            // first fallback for this class of capture failure.
-            match crate::wgc::screenshot_window_via_wgc(hwnd) {
-                Ok((pixels, width, height)) => Ok((
-                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
-                    false,
-                )),
-                Err(wgc_error) => {
-                    // Headless/virtualized Windows sessions can expose DWM but
-                    // no WGC-compatible hardware device. Once a window is
-                    // visible, a desktop-region crop remains a truthful final
-                    // fallback; report whether another window covered it.
-                    let target = HWND(hwnd as *mut _);
-                    let occluded = unsafe { target_is_obscured(target) };
-                    match unsafe { screenshot_via_screen_region(target) } {
-                        Ok((pixels, width, height)) => Ok((
-                            cua_driver_core::image_utils::encode_bgra_to_png(
-                                &pixels,
-                                width as u32,
-                                height as u32,
-                            )?,
-                            occluded,
-                        )),
-                        Err(screen_error) => Err(primary_error.context(format!(
-                            "Windows.Graphics.Capture fallback failed: {wgc_error}; \
-                             desktop-region fallback failed: {screen_error}"
-                        ))),
-                    }
-                }
-            }
-        }
+    // WGC is the only backend here whose output dimensions come from the same
+    // compositor texture as its pixels. PrintWindow can silently mix physical
+    // GetWindowRect dimensions with a DPI-virtualized target render, yielding
+    // a partially populated image that cannot be repaired downstream.
+    capture_window_with(
+        || crate::wgc::screenshot_window_via_wgc(hwnd),
+        || unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) },
+    )
+}
+
+fn capture_window_with(
+    wgc: impl FnOnce() -> Result<(Vec<u8>, u32, u32)>,
+    fallback: impl FnOnce() -> Result<(Vec<u8>, bool)>,
+) -> Result<(Vec<u8>, bool)> {
+    match wgc() {
+        Ok((pixels, width, height)) => Ok((
+            cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
+            false,
+        )),
+        Err(wgc_error) => fallback().map_err(|fallback_error| {
+            fallback_error.context(format!(
+                "Windows.Graphics.Capture primary backend failed: {wgc_error}"
+            ))
+        }),
     }
 }
 
@@ -311,29 +291,12 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
 
     // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the
     // PrintWindow GDI path returns black (DirectComposition isn't in
-    // the GDI back-buffer). We try Windows.Graphics.Capture (WGC)
-    // first — that's the only API that returns the target's actual
-    // composited pixels even when it's occluded by another window
-    // (the Calculator-behind-terminal regression captured in the
-    // autonomous-test journal). On older Windows / GPU stalls / cloaked
-    // windows WGC may fail; fall back to the screen-region BitBlt
-    // path, then to PrintWindow as a last resort.
+    // the GDI back-buffer). WGC is attempted by the caller's primary
+    // capture ladder above; once that attempt fails, continue directly
+    // through the legacy screen-region and PrintWindow paths. Keeping
+    // WGC out of this compatibility fallback avoids a second 1500 ms
+    // frame wait before the real fallback runs.
     if crate::input::is_xaml_host_hwnd(hwnd_raw) {
-        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
-            Ok((pixels, w, h)) => {
-                return Ok((
-                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w, h)?,
-                    false, // WGC reads target's own pixels — never occluded by definition
-                ));
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "cua-driver",
-                    "screenshot: WGC failed for XAML target hwnd 0x{hwnd_raw:x}: {e}; \
-                     falling back to screen-region BitBlt (may be occluded)."
-                );
-            }
-        }
         let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
             Ok((pixels, w, h)) => {
@@ -493,28 +456,11 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     };
 
     // CUA-542: detect the all-black bitmap PrintWindow returns for
-    // DirectComposition-backed UWP / WinUI3 surfaces. Recovery order:
-    //   1. WGC (occlusion-immune; works for UWP).
-    //   2. Screen-region BitBlt (works when target is on-screen and
-    //      not covered).
-    // The WGC-first ordering covers backgrounded UWP targets the
-    // screen-region path mishandles (returns covering window's pixels).
+    // DirectComposition-backed UWP / WinUI3 surfaces. WGC has already
+    // been attempted by the primary capture ladder. Recovery continues
+    // through the legacy screen-region BitBlt path (works when target is
+    // on-screen and not covered).
     if is_mostly_black_bgra(&pixels) {
-        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
-            Ok((alt_pixels, w, h)) => {
-                return Ok((
-                    cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
-                    false,
-                ));
-            }
-            Err(e) => {
-                tracing::warn!(
-                    target: "cua-driver",
-                    "screenshot: PrintWindow returned black AND WGC failed for hwnd 0x{hwnd_raw:x}: {e}; \
-                     trying screen-region BitBlt next."
-                );
-            }
-        }
         let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
             Ok((alt_pixels, alt_w, alt_h)) => {
@@ -643,6 +589,47 @@ pub fn png_bytes_to_jpeg(png_bytes: &[u8], quality: u8) -> Result<Vec<u8>> {
 /// original bytes unchanged.
 pub fn resize_png_if_needed(png_bytes: &[u8], max_dim: u32) -> Result<Vec<u8>> {
     cua_driver_core::image_utils::resize_png_if_needed(png_bytes, max_dim)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capture_window_with;
+    use anyhow::anyhow;
+    use std::cell::Cell;
+
+    #[test]
+    fn compositor_capture_is_preferred_over_print_window_fallback() {
+        let fallback_called = Cell::new(false);
+
+        let (png, occluded) = capture_window_with(
+            || Ok((vec![1, 2, 3, 255], 1, 1)),
+            || {
+                fallback_called.set(true);
+                Ok((vec![9], true))
+            },
+        )
+        .expect("WGC capture should be encoded");
+
+        assert_eq!(
+            cua_driver_core::image_utils::png_dimensions(&png).unwrap(),
+            (1, 1)
+        );
+        assert!(!occluded);
+        assert!(!fallback_called.get());
+    }
+
+    #[test]
+    fn print_window_remains_a_compatibility_fallback_when_wgc_fails() {
+        let expected = vec![9, 8, 7];
+
+        let capture = capture_window_with(
+            || Err(anyhow!("WGC unavailable")),
+            || Ok((expected.clone(), true)),
+        )
+        .expect("fallback capture should be returned");
+
+        assert_eq!(capture, (expected, true));
+    }
 }
 
 /// Draw a red crosshair at pixel (cx, cy) on a PNG image and return

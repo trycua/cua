@@ -198,11 +198,12 @@ async def run_fleet_ephemeral_live() -> None:
                     inventory = await collect_resource_inventory(fleet, resource_namespace)
                     if claims_absent is True and primary_error is None:
                         inventory_deadline = time.monotonic() + 180.0
-                        while inventory != expected_inventory and time.monotonic() < inventory_deadline:
+                        while (
+                            inventory != expected_inventory
+                            and time.monotonic() < inventory_deadline
+                        ):
                             await asyncio.sleep(5.0)
-                            inventory = await collect_resource_inventory(
-                                fleet, resource_namespace
-                            )
+                            inventory = await collect_resource_inventory(fleet, resource_namespace)
                     summary["persistent_resources"] = inventory
                 except BaseException as error:
                     record_cleanup_error(error)

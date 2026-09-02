@@ -13,6 +13,8 @@ import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Toggle from "@cloudscape-design/components/toggle"
 import { billingApi } from "../api/billing"
+import { recordFleetPaymentGate, type FleetPaymentGateReason } from "../auth/analytics"
+import { kc } from "../auth/keycloak"
 import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { useFlash } from "../components/FlashContext"
 import { errorMessage } from "../error-message"
@@ -127,7 +129,7 @@ export function PoolNew() {
   // card-admission policy would deny this user's pool create. Stays false
   // while loading or when the lookup fails: the backend policy is still the
   // enforcement point, so the gate fails open on a billing hiccup.
-  const [cardRequired, setCardRequired] = useState(false)
+  const [paymentGateReason, setPaymentGateReason] = useState<FleetPaymentGateReason | null>(null)
   const nameRef = useRef<InputProps.Ref>(null)
   const ttlRef = useRef<InputProps.Ref>(null)
 
@@ -138,9 +140,15 @@ export function PoolNew() {
       .summary()
       .then(summary => {
         if (!cancelled) {
-          setCardRequired(
+          const cardRequired =
             !summary.payment_method_present ||
-              summary.pool_create_card_required === true,
+            summary.pool_create_card_required === true
+          setPaymentGateReason(
+            !cardRequired
+              ? null
+              : !summary.payment_method_present
+                ? "no_payment_method"
+                : "card_admission_required",
           )
         }
       })
@@ -149,6 +157,13 @@ export function PoolNew() {
       cancelled = true
     }
   }, [billingEnabled, paymentMethodGateEnabled])
+
+  useEffect(() => {
+    if (!paymentGateReason) return
+    void recordFleetPaymentGate(paymentGateReason, kc.sessionId).catch(() => undefined)
+  }, [paymentGateReason])
+
+  const cardRequired = paymentGateReason !== null
 
   useBeforeUnload(event => {
     if (!dirty || submitting) return

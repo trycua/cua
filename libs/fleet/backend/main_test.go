@@ -402,6 +402,30 @@ func TestRouterEmitsOneCLILoginAcrossFleetRoutes(t *testing.T) {
 	}
 }
 
+func TestRouterRecordsSPAPaymentGate(t *testing.T) {
+	capture := &routerAnalyticsCapture{}
+	router := setupRouter(handlers.Handlers{
+		Analytics: capture,
+		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+	})
+	response := httptest.NewRecorder()
+
+	router.ServeHTTP(response, authorizedRequest(
+		t,
+		http.MethodPost,
+		"/api/analytics/payment-gate",
+		strings.NewReader(`{"reason":"no_payment_method"}`),
+	))
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204; body = %s", response.Code, response.Body.String())
+	}
+	events := capture.eventsNamed(productanalytics.EventPaymentGateShown)
+	if len(events) != 1 || events[0].Properties["reason"] != productanalytics.ReasonNoPaymentMethod {
+		t.Fatalf("payment gate events = %#v", events)
+	}
+}
+
 func bigEndianBytes(v int) []byte {
 	if v == 0 {
 		return []byte{0}

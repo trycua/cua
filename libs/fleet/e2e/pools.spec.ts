@@ -412,6 +412,11 @@ test.describe("Pool creation", () => {
     await mockAuth(page, { billing: true })
     await mockNamespacesApi(page)
     await mockPoolsApi(page)
+    const paymentGateRequests: Array<{ reason: string }> = []
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests.push(route.request().postDataJSON() as { reason: string })
+      await route.fulfill({ status: 204 })
+    })
     await page.route("**/api/billing/summary", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -429,6 +434,9 @@ test.describe("Pool creation", () => {
     await page.goto("/pools/new")
 
     await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toEqual([
+      { reason: "no_payment_method" },
+    ])
     // Cloudscape renders reason-carrying disabled buttons with aria-disabled
     // (kept focusable for the tooltip) rather than the disabled attribute.
     await expect(page.getByRole("button", { name: "Create" })).toHaveAttribute(
@@ -442,8 +450,71 @@ test.describe("Pool creation", () => {
         .getByText("Add a payment method in Settings to create pools."),
     ).toBeVisible()
 
+    await page.goto("/pools")
+    await page.goto("/pools/new")
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toHaveLength(1)
+
     await page.getByRole("button", { name: "Add payment method" }).click()
     await expect(page).toHaveURL(/\/settings$/)
+  })
+
+  test("payment policy gate reports the admission reason", async ({ page }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    const paymentGateRequests: Array<{ reason: string }> = []
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests.push(route.request().postDataJSON() as { reason: string })
+      await route.fulfill({ status: 204 })
+    })
+    await page.route("**/api/billing/summary", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: true,
+          card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+          pool_create_card_required: true,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toEqual([
+      { reason: "card_admission_required" },
+    ])
+  })
+
+  test("missing payment method takes priority over the admission reason", async ({
+    page,
+  }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    const paymentGateRequests: Array<{ reason: string }> = []
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests.push(route.request().postDataJSON() as { reason: string })
+      await route.fulfill({ status: 204 })
+    })
+    await page.route("**/api/billing/summary", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: false,
+          card: null,
+          pool_create_card_required: true,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toEqual([
+      { reason: "no_payment_method" },
+    ])
   })
 
   test("create stays enabled once a payment card is on file", async ({
@@ -452,6 +523,11 @@ test.describe("Pool creation", () => {
     await mockAuth(page, { billing: true })
     await mockNamespacesApi(page)
     await mockPoolsApi(page)
+    let paymentGateRequests = 0
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests += 1
+      await route.fulfill({ status: 204 })
+    })
     await page.route("**/api/billing/summary", (route) =>
       route.fulfill({
         contentType: "application/json",
@@ -468,6 +544,31 @@ test.describe("Pool creation", () => {
     await expect(page.getByPlaceholder("my-pool")).toBeVisible()
     await expect(page.getByText("Payment method required")).toHaveCount(0)
     await expect(page.getByRole("button", { name: "Create" })).toBeEnabled()
+    expect(paymentGateRequests).toBe(0)
+  })
+
+  test("payment gate analytics stays off when billing is disabled", async ({
+    page,
+  }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let summaryRequests = 0
+    let paymentGateRequests = 0
+    await page.route("**/api/billing/summary", route => {
+      summaryRequests += 1
+      return route.fulfill({ status: 500 })
+    })
+    await page.route("**/api/analytics/payment-gate", route => {
+      paymentGateRequests += 1
+      return route.fulfill({ status: 204 })
+    })
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByPlaceholder("my-pool")).toBeVisible()
+    expect(summaryRequests).toBe(0)
+    expect(paymentGateRequests).toBe(0)
   })
 
   test("create failure pipes the backend error into the flash message", async ({

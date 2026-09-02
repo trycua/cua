@@ -152,6 +152,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withAuthenticatedMiddlewares("/api/analytics/session", c.RecordAnalyticsSession))
 	r.Handle("POST /api/analytics/attribution",
 		withAuthenticatedMiddlewares("/api/analytics/attribution", c.RecordFleetAttribution))
+	r.Handle("POST /api/analytics/payment-gate",
+		withAuthenticatedMiddlewares("/api/analytics/payment-gate", c.RecordFleetPaymentGate))
 
 	r.Handle("POST /api/chat/conversations",
 		withAuthenticatedMiddlewares("/api/chat/conversations", c.CreateConversation))

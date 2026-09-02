@@ -116,6 +116,7 @@ export async function mockAuth(
             this.realmAccess = { roles: [] };
             this.resourceAccess = {};
             this.subject = "test-user-id";
+            this.sessionId = "test-session-id";
           }
           async init(options) {
             window.__MOCK_KEYCLOAK__.initOptions = options;

@@ -174,7 +174,7 @@ func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
-const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+const BillingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
 
 // FeatureFlagsRoutePolicy guards the admin-only feature-flag management API.
 func FeatureFlagsRoutePolicy() Node {
@@ -217,7 +217,7 @@ func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
-		Because(CustomResourceCreationAdmissionPolicy(), billingSetupRequiredMessage),
+		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
 		Policy(
 			Modules(
 				Registered("authz"),
@@ -285,13 +285,14 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":                "config",
-	"/api/analytics/session":     "config",
-	"/api/analytics/attribution": "config",
-	"/api/state/query":           "state-query",
-	"/api/usage/overview":        "usage",
-	"/api/usage/pool":            "usage",
-	"/api/usage/browser-timings": "usage",
+	"/api/config":                 "config",
+	"/api/analytics/session":      "config",
+	"/api/analytics/attribution":  "config",
+	"/api/analytics/payment-gate": "config",
+	"/api/state/query":            "state-query",
+	"/api/usage/overview":         "usage",
+	"/api/usage/pool":             "usage",
+	"/api/usage/browser-timings":  "usage",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",

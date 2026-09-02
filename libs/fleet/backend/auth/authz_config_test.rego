@@ -64,3 +64,23 @@ test_user_key_analytics_attribution_denied if {
 		"user": {"sub": "user-123", "azp": "ukey-test", "namespace": "", "email": ""},
 	}
 }
+
+test_spa_payment_gate_allowed if {
+	route_allow with input as {
+		"route": "/api/analytics/payment-gate",
+		"method": "POST",
+		"path": "/api/analytics/payment-gate",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "cyclops-cs-spa", "namespace": "", "email": ""},
+	}
+}
+
+test_user_key_payment_gate_denied if {
+	not route_allow with input as {
+		"route": "/api/analytics/payment-gate",
+		"method": "POST",
+		"path": "/api/analytics/payment-gate",
+		"params": {},
+		"user": {"sub": "user-123", "azp": "ukey-test", "namespace": "", "email": ""},
+	}
+}

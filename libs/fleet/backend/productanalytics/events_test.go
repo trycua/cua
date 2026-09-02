@@ -132,3 +132,59 @@ func TestValidateEventRejectsUnsafeProperties(t *testing.T) {
 		}
 	}
 }
+
+func TestValidatePaymentFunnelEvents(t *testing.T) {
+	setupStart := Event{
+		Name: EventPaymentSetupStart, DistinctID: "subject-1",
+		Properties: map[string]any{
+			"outcome": OutcomeSuccess, "source": SourceSPA,
+			"principal_type": auth.PrincipalTypeUser, "identity_class": IdentityExternal,
+			"status_code": 200,
+		},
+	}
+	if err := ValidateEvent(setupStart); err != nil {
+		t.Fatalf("ValidateEvent(setup start) error = %v", err)
+	}
+
+	gate := Event{
+		Name: EventPaymentGateShown, DistinctID: "subject-1",
+		Properties: map[string]any{
+			"outcome": OutcomeSuccess, "source": SourceSPA,
+			"principal_type": auth.PrincipalTypeUser, "identity_class": IdentityExternal,
+			"resource_type": "pool", "reason": ReasonNoPaymentMethod,
+		},
+	}
+	if err := ValidateEvent(gate); err != nil {
+		t.Fatalf("ValidateEvent(payment gate) error = %v", err)
+	}
+	gate.Properties["reason"] = ReasonCardAdmissionRequired
+	if err := ValidateEvent(gate); err != nil {
+		t.Fatalf("ValidateEvent(card admission gate) error = %v", err)
+	}
+
+	invalid := []struct {
+		name       string
+		properties map[string]any
+	}{
+		{name: "missing reason", properties: map[string]any{"resource_type": "pool"}},
+		{name: "missing resource", properties: map[string]any{"reason": ReasonNoPaymentMethod}},
+		{name: "wrong resource", properties: map[string]any{"resource_type": "claim", "reason": ReasonNoPaymentMethod}},
+		{name: "wrong reason", properties: map[string]any{"resource_type": "pool", "reason": "payment_required"}},
+	}
+	for _, testCase := range invalid {
+		t.Run(testCase.name, func(t *testing.T) {
+			event := Event{Name: EventPaymentGateShown, DistinctID: "subject-1", Properties: testCase.properties}
+			if err := ValidateEvent(event); err == nil {
+				t.Fatalf("ValidateEvent() accepted properties %#v", testCase.properties)
+			}
+		})
+	}
+
+	blocked := Event{
+		Name: EventResourceBlocked, DistinctID: "subject-1",
+		Properties: map[string]any{"resource_type": "pool", "reason": ReasonNoPaymentMethod},
+	}
+	if err := ValidateEvent(blocked); err == nil {
+		t.Fatal("ValidateEvent() accepted a payment-gate-only reason on a resource block")
+	}
+}

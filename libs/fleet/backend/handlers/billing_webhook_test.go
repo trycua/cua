@@ -233,7 +233,7 @@ func TestBillingWebhookEmitsTrustedTerminalPaymentFailure(t *testing.T) {
 		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
 	}
 	event := capture.events[0]
-	if event.InsertID != "evt_failed" || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
+	if event.Name != productanalytics.EventPaymentMethodSetup || event.InsertID != "evt_failed" || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
 		t.Fatalf("event = %#v", event)
 	}
 }

@@ -13,6 +13,12 @@ interface AnalyticsDependencies {
 }
 
 const storagePrefix = "fleet-login-recorded:"
+const paymentGateStoragePrefix = "fleet-payment-gate-recorded:"
+const paymentGateInFlight = new Map<string, Promise<void>>()
+
+export type FleetPaymentGateReason =
+  | "no_payment_method"
+  | "card_admission_required"
 
 function defaultDependencies(): AnalyticsDependencies {
   return {
@@ -42,6 +48,42 @@ export async function recordFleetLogin(
     throw new Error(`Fleet login analytics request failed: ${response.status}`)
   }
   dependencies.storage.setItem(marker, "true")
+}
+
+export async function recordFleetPaymentGate(
+  reason: FleetPaymentGateReason,
+  sessionID: string | undefined,
+  dependencies: AnalyticsDependencies = defaultDependencies(),
+): Promise<void> {
+  const marker = `${paymentGateStoragePrefix}${sessionID || "authenticated"}:${reason}`
+  if (dependencies.storage.getItem(marker) === "true") return
+  const pending = paymentGateInFlight.get(marker)
+  if (pending) return pending
+
+  const request = (async () => {
+    const token = await dependencies.getToken()
+    if (!token) throw new Error("Authentication token is unavailable")
+    const response = await dependencies.fetch("/api/analytics/payment-gate", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ reason }),
+    })
+    if (!response.ok) {
+      throw new Error(`Fleet payment gate analytics request failed: ${response.status}`)
+    }
+    dependencies.storage.setItem(marker, "true")
+  })()
+  paymentGateInFlight.set(marker, request)
+  try {
+    await request
+  } finally {
+    if (paymentGateInFlight.get(marker) === request) {
+      paymentGateInFlight.delete(marker)
+    }
+  }
 }
 
 export async function bindFleetAttribution(

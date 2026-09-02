@@ -187,30 +187,41 @@ func (h Handlers) CreateBillingSetupSession(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	source, sourceOK := productanalytics.SourceForUser(user, h.AuthCfg.SPAClientID)
+	captureSetupStart := func(outcome string, statusCode int, errorClass string) {
+		if !sourceOK {
+			return
+		}
+		traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
+		capturer := h.Analytics
+		if capturer == nil {
+			capturer = productanalytics.Nop()
+		}
+		properties := map[string]any{
+			"outcome":        outcome,
+			"source":         source,
+			"principal_type": user.PrincipalType,
+			"identity_class": productanalytics.ClassifyIdentity(user),
+			"status_code":    statusCode,
+		}
+		if errorClass != "" {
+			properties["error_class"] = errorClass
+		}
+		capturer.Capture(productanalytics.Event{
+			Name: productanalytics.EventPaymentSetupStart, DistinctID: user.ID, InsertID: traceID,
+			Properties: properties,
+		})
+	}
 	url, err := h.Billing.CreateSetupSession(r.Context(), user.ID, billing.SetupOptions{
 		SuccessURL: h.Stripe.CheckoutSuccessURL,
 		CancelURL:  h.Stripe.CheckoutCancelURL,
 		Source:     source,
 	})
 	if err != nil {
-		if sourceOK {
-			traceID, _ := r.Context().Value(middlewares.ContextKey("traceId")).(string)
-			capturer := h.Analytics
-			if capturer == nil {
-				capturer = productanalytics.Nop()
-			}
-			capturer.Capture(productanalytics.Event{
-				Name: productanalytics.EventPaymentMethodSetup, DistinctID: user.ID, InsertID: traceID,
-				Properties: map[string]any{
-					"outcome": productanalytics.OutcomeFailure, "source": source,
-					"principal_type": user.PrincipalType, "status_code": http.StatusBadGateway,
-					"error_class": "payment_provider",
-				},
-			})
-		}
+		captureSetupStart(productanalytics.OutcomeFailure, http.StatusBadGateway, "payment_provider")
 		writeErr(w, http.StatusBadGateway, "could not create Stripe card setup Session")
 		return
 	}
+	captureSetupStart(productanalytics.OutcomeSuccess, http.StatusOK, "")
 	writeJSON(w, http.StatusOK, BillingSessionResponse{URL: url})
 }
 

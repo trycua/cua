@@ -61,6 +61,8 @@ func loginSessionKey(user *auth.User) string {
 
 const (
 	EventLoginSucceeded        = "fleet_login_succeeded"
+	EventPaymentGateShown      = "fleet_payment_gate_shown"
+	EventPaymentSetupStart     = "fleet_payment_setup_start"
 	EventPaymentMethodSetup    = "fleet_payment_method_setup"
 	EventPoolCreate            = "fleet_pool_create"
 	EventClaimCreate           = "fleet_claim_create"
@@ -83,10 +85,13 @@ const (
 	SourceCLI      = "cli"
 	SourceUserKey  = "user_key"
 	Version        = "1"
+
+	ReasonNoPaymentMethod       = "no_payment_method"
+	ReasonCardAdmissionRequired = "card_admission_required"
 )
 
 var allowedEvents = map[string]struct{}{
-	EventLoginSucceeded: {}, EventPaymentMethodSetup: {}, EventPoolCreate: {},
+	EventLoginSucceeded: {}, EventPaymentGateShown: {}, EventPaymentSetupStart: {}, EventPaymentMethodSetup: {}, EventPoolCreate: {},
 	EventClaimCreate: {}, EventHTTPProxyRequest: {},
 	EventFleetActivation:    {},
 	EventQualifyingWorkload: {},
@@ -103,7 +108,7 @@ var allowedProperties = map[string]struct{}{
 
 var allowedResourceTypes = map[string]struct{}{"pool": {}, "template": {}, "claim": {}}
 var allowedReasons = map[string]struct{}{
-	"payment_required": {}, "authorization": {}, "validation": {}, "quota": {}, "timeout": {}, "internal": {},
+	"payment_required": {}, ReasonNoPaymentMethod: {}, ReasonCardAdmissionRequired: {}, "authorization": {}, "validation": {}, "quota": {}, "timeout": {}, "internal": {},
 	"not_svc_route": {}, "invalid_method": {}, "upgrade_request": {}, "binding_lookup_failed": {}, "claim_missing": {},
 	"claim_mismatch": {}, "claim_not_bound": {}, "sandbox_missing": {},
 	"service_mismatch": {}, "pool_lookup_failed": {}, "pool_missing": {}, "non_2xx": {}, "probe_request": {}, "facts_unavailable": {},
@@ -208,9 +213,19 @@ func ValidateEvent(event Event) error {
 		if _, valid := allowedReasons[value]; !valid {
 			return fmt.Errorf("unsupported analytics reason")
 		}
+		if event.Name != EventPaymentGateShown && (value == ReasonNoPaymentMethod || value == ReasonCardAdmissionRequired) {
+			return fmt.Errorf("payment gate reason requires payment gate event")
+		}
 	}
 	if event.Name == EventResourceBlocked && (!hasResourceType || !hasReason) {
 		return fmt.Errorf("resource block event requires resource type and reason")
+	}
+	if event.Name == EventPaymentGateShown {
+		resource, resourceOK := resourceType.(string)
+		reasonValue, reasonOK := reason.(string)
+		if !hasResourceType || !hasReason || !resourceOK || resource != "pool" || !reasonOK || (reasonValue != ReasonNoPaymentMethod && reasonValue != ReasonCardAdmissionRequired) {
+			return fmt.Errorf("payment gate event requires pool resource type and payment gate reason")
+		}
 	}
 	if event.Name == EventQualificationRejected && !hasReason {
 		return fmt.Errorf("qualification rejection event requires reason")

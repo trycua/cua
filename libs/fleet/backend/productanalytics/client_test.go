@@ -133,8 +133,8 @@ func TestClientDoesNotLeakRawLoginIdentity(t *testing.T) {
 	}
 }
 
-func TestClientPseudonymizesAttributionIdentityAndStableInsertID(t *testing.T) {
-	requests := make(chan map[string]any, 1)
+func TestClientPseudonymizesStableIdentityEventInsertIDs(t *testing.T) {
+	requests := make(chan map[string]any, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer r.Body.Close()
 		var payload map[string]any
@@ -168,6 +168,27 @@ func TestClientPseudonymizesAttributionIdentityAndStableInsertID(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timed out waiting for attribution capture")
+	}
+
+	client.Capture(Event{
+		Name: EventFleetActivation, DistinctID: "subject-1",
+		Properties: map[string]any{"outcome": OutcomeSuccess, "source": SourceSPA, "principal_type": "user", "identity_class": IdentityExternal},
+		SetOnce:    map[string]any{firstActivationProperty: time.Now().UTC().Format(time.RFC3339)},
+	})
+	select {
+	case payload := <-requests:
+		encoded, _ := json.Marshal(payload)
+		if bytes.Contains(encoded, []byte("subject-1")) {
+			t.Fatalf("payload contains raw subject: %s", encoded)
+		}
+		item := payload["batch"].([]any)[0].(map[string]any)
+		pseudonym := PseudonymForUserID("subject-1", "identity-test-key")
+		properties := item["properties"].(map[string]any)
+		if item["distinct_id"] != pseudonym || properties["$insert_id"] != "fleet-activation:"+pseudonym {
+			t.Fatalf("item = %#v", item)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for activation capture")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()

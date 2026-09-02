@@ -273,9 +273,11 @@ func TestCreateSetupSessionReturns503WithoutRedirectURLs(t *testing.T) {
 func TestCreateSetupSessionUsesAuthenticatedSubjectAndNoClientInput(t *testing.T) {
 	setBillingFlag(t, true)
 	service := &fakeBillingService{}
+	capture := &analyticsCapture{}
 	h := Handlers{
-		Billing: service,
-		AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+		Billing:   service,
+		Analytics: capture,
+		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
 		Stripe: config.StripeConfiguration{
 			SecretKey:          "sk_test",
 			CheckoutSuccessURL: "https://run.example.test/settings?setup=success",
@@ -309,6 +311,20 @@ func TestCreateSetupSessionUsesAuthenticatedSubjectAndNoClientInput(t *testing.T
 	}
 	if response.URL != "https://checkout.stripe.test/session" {
 		t.Fatalf("response URL = %q", response.URL)
+	}
+	if len(capture.events) != 1 {
+		t.Fatalf("events = %#v, want one setup-start event", capture.events)
+	}
+	event := capture.events[0]
+	if event.Name != productanalytics.EventPaymentSetupStart || event.DistinctID != billingAlice.ID {
+		t.Fatalf("event = %#v", event)
+	}
+	if event.Properties["outcome"] != productanalytics.OutcomeSuccess ||
+		event.Properties["source"] != productanalytics.SourceSPA ||
+		event.Properties["principal_type"] != auth.PrincipalTypeUser ||
+		event.Properties["identity_class"] != productanalytics.IdentityExternal ||
+		event.Properties["status_code"] != http.StatusOK {
+		t.Fatalf("properties = %#v", event.Properties)
 	}
 }
 
@@ -415,7 +431,34 @@ func TestCreateSetupSessionProviderFailureEmitsFailureEvent(t *testing.T) {
 		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
 	}
 	event := capture.events[0]
-	if event.Name != productanalytics.EventPaymentMethodSetup || event.DistinctID != billingAlice.ID || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
+	if event.Name != productanalytics.EventPaymentSetupStart || event.DistinctID != billingAlice.ID ||
+		event.Properties["outcome"] != productanalytics.OutcomeFailure ||
+		event.Properties["source"] != productanalytics.SourceSPA ||
+		event.Properties["principal_type"] != auth.PrincipalTypeUser ||
+		event.Properties["identity_class"] != productanalytics.IdentityExternal ||
+		event.Properties["status_code"] != http.StatusBadGateway ||
+		event.Properties["error_class"] != "payment_provider" {
 		t.Fatalf("event = %#v", event)
+	}
+}
+
+func TestCreateSetupSessionDoesNotCaptureUnknownSource(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{}
+	capture := &analyticsCapture{}
+	user := *billingAlice
+	user.AZP = "unknown-client"
+	h := Handlers{
+		Billing:   service,
+		Analytics: capture,
+		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+		Stripe:    config.StripeConfiguration{SecretKey: "sk_test", CheckoutSuccessURL: "https://run.example.test/success", CheckoutCancelURL: "https://run.example.test/cancel"},
+	}
+	response := httptest.NewRecorder()
+
+	h.CreateBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session", "", &user))
+
+	if response.Code != http.StatusOK || len(capture.events) != 0 {
+		t.Fatalf("status/events = %d/%#v, want 200/no events", response.Code, capture.events)
 	}
 }

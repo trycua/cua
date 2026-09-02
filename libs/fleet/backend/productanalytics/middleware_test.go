@@ -160,7 +160,7 @@ func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *test
 				if workload == nil {
 					t.Fatalf("qualifying workload event missing: %#v", events)
 				}
-				if activation == nil || activation.InsertID != "fleet-activation:"+test.user.ID || activation.SetOnce[firstActivationProperty] == nil {
+				if activation == nil || activation.InsertID != "" || activation.SetOnce[firstActivationProperty] == nil {
 					t.Fatalf("activation event = %#v", activation)
 				}
 			}
@@ -335,7 +335,7 @@ func TestRouteObserverClassifiesPaymentRequiredWithoutChangingResponse(t *testin
 	handler := RouteObserver("/api/k8s/{path...}", sink, "cyclops-cs-spa")(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"message":"A payment method is required to create this resource. Add one in Billing and try again."}`))
+		_, _ = w.Write([]byte(`{"message":"` + auth.BillingSetupRequiredMessage + `"}`))
 	}))
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, observedRequest(http.MethodPost, "/api/k8s/{path...}", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", &auth.User{ID: "u-1", AZP: "cyclops-cs-spa"}))

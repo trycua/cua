@@ -14,6 +14,8 @@ from cua_sandbox.registry.media_types import (
     CONTAINER_CONFIG_TYPES,
     CONTAINER_LAYER_TYPES,
     LEGACY_DISK_CHUNK,
+    LUME_DISK,
+    LUME_PART_NUMBER_ANNOTATION,
     OCI_VM_CONFIG,
     OCI_VM_CONFIG_LEGACY,
     OCI_VM_DISK,
@@ -109,10 +111,14 @@ def detect_format(manifest: dict) -> ImageFormat:
     if any(layer.get("mediaType") == LEGACY_DISK_CHUNK for layer in layers):
         return ImageFormat.LEGACY_LZ4
 
-    # Chunked-parts: standard OCI layer type but with ;part.number= suffix
+    # Chunked-parts: one layer per disk part. The part index lives either in a
+    # ";part.number=" suffix on the media type or — for what lume pushes today —
+    # in an org.trycua.lume.part.number annotation on the layer.
     for layer in layers:
         mt = layer.get("mediaType", "")
         if "part.number=" in mt:
+            return ImageFormat.CHUNKED_PARTS
+        if mt == LUME_DISK or LUME_PART_NUMBER_ANNOTATION in layer.get("annotations", {}):
             return ImageFormat.CHUNKED_PARTS
 
     # QEMU (cua): trycua.qemu config or disk layers

@@ -1,8 +1,18 @@
-"""Integration tests for the synchronous API wrappers."""
+"""Integration tests for the synchronous API wrappers.
+
+These drive the *real* host desktop (they type on the real keyboard and grab
+the real screen), so they are skipped unless this machine has a controllable
+desktop. See tests/conftest.py::local_desktop_available.
+"""
 
 from __future__ import annotations
 
+import pytest
 from cua_sandbox.sync import localhost
+
+from tests.conftest import LOCAL_ENABLED, LOCAL_SKIP_REASON
+
+pytestmark = pytest.mark.skipif(not LOCAL_ENABLED, reason=LOCAL_SKIP_REASON)
 
 
 class TestSyncLocalhost:

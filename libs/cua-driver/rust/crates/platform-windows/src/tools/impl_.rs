@@ -1062,6 +1062,48 @@ mod list_windows_z_index_tests {
     }
 }
 
+#[cfg(test)]
+mod get_window_state_actions_tests {
+    use super::*;
+    use crate::uia::UiaNode;
+
+    fn node(actions: Vec<String>) -> UiaNode {
+        UiaNode {
+            element_index: Some(1),
+            control_type: "Button".to_owned(),
+            name: Some("OK".to_owned()),
+            value: None,
+            automation_id: None,
+            help_text: None,
+            actions,
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn element_entry_includes_actions_when_present() {
+        let n = node(vec!["invoke".to_owned(), "toggle".to_owned()]);
+        let entry = build_element_entry(&n, None).unwrap();
+        assert_eq!(entry["actions"], json!(["invoke", "toggle"]));
+    }
+
+    #[test]
+    fn element_entry_omits_actions_when_empty() {
+        let n = node(Vec::new());
+        let entry = build_element_entry(&n, None).unwrap();
+        assert!(entry.get("actions").is_none());
+    }
+}
+
 // ── get_window_state ─────────────────────────────────────────────────────────
 
 /// Fold a per-call `max_dimension` cap with the configured
@@ -1074,6 +1116,65 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
         Some(md) => ceiling.min(md),
         None => ceiling,
     }
+}
+
+/// Build a single structured element entry for `get_window_state`.
+/// Returns `None` when the node has no `element_index` (non-actionable rows).
+fn build_element_entry(
+    n: &crate::uia::UiaNode,
+    snapshot_id: Option<u32>,
+) -> Option<serde_json::Value> {
+    let idx = n.element_index?;
+    // `label`: name → value → automation_id → help_text.
+    let label = n
+        .name
+        .clone()
+        .or_else(|| n.value.clone())
+        .or_else(|| n.automation_id.clone())
+        .or_else(|| n.help_text.clone());
+    let mut entry = json!({
+        "element_index": idx,
+        "role": n.control_type,
+        "depth": n.depth,
+    });
+    if let Some(snapshot_id) = snapshot_id {
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+    }
+    if n.in_web_content {
+        entry["in_web_content"] = json!(true);
+    }
+    if let Some(label) = label {
+        entry["label"] = json!(label);
+    }
+    // Surface the element's value separately from `label` (which collapses
+    // name→value→automation_id→help): a control with both a name AND text
+    // (a ValuePattern edit holding typed content) would otherwise hide the
+    // text from a caller reading the structured side. See the macOS
+    // get_window_state builder for the rationale.
+    if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+        entry["value"] = json!(value);
+    }
+    if let Some(enabled) = n.enabled {
+        entry["enabled"] = json!(enabled);
+    }
+    if let Some(selected) = n.selected {
+        entry["selected"] = json!(selected);
+    }
+    if !n.actions.is_empty() {
+        entry["actions"] = json!(n.actions);
+    }
+    if let Some(parent) = n.parent_element_index {
+        entry["parent_index"] = json!(parent);
+    }
+    if let Some((l, t, r, b)) = n.rect {
+        entry["frame"] = json!({
+            "x": l,
+            "y": t,
+            "w": (r - l).max(0),
+            "h": (b - t).max(0),
+        });
+    }
+    Some(entry)
 }
 
 pub struct GetWindowStateTool {
@@ -1101,7 +1202,8 @@ impl Tool for GetWindowStateTool {
                 the next snapshot of the same (pid, window_id).\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
                 indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
-                `selected`, `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+                `selected`, `actions` (names of UIA patterns exposed as actions, \
+                omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
                 `tree_markdown` stays available \
                 and unchanged in shape for existing text-parsing callers — but new \
                 fields will only be added to the structured side.\n\n\
@@ -1401,64 +1503,12 @@ impl Tool for GetWindowStateTool {
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
                     // `{element_index, element_token, role, label, depth,
-                    // parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // actions?, parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included when UIA reported a usable BoundingRectangle.
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
                         .iter()
-                        .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label`: name → value → automation_id → help_text.
-                            let label = n
-                                .name
-                                .clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.automation_id.clone())
-                                .or_else(|| n.help_text.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                "role": n.control_type,
-                                "depth": n.depth,
-                            });
-                            if let Some(snapshot_id) = snapshot_id {
-                                entry["element_token"] = json!(
-                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
-                                );
-                            }
-                            if n.in_web_content {
-                                entry["in_web_content"] = json!(true);
-                            }
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            // Surface the element's value separately from `label`
-                            // (which collapses name→value→automation_id→help): a
-                            // control with both a name AND text (a ValuePattern
-                            // edit holding typed content) would otherwise hide the
-                            // text from a caller reading the structured side. See
-                            // the macOS get_window_state builder for the rationale.
-                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
-                                entry["value"] = json!(value);
-                            }
-                            if let Some(enabled) = n.enabled {
-                                entry["enabled"] = json!(enabled);
-                            }
-                            if let Some(selected) = n.selected {
-                                entry["selected"] = json!(selected);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((l, t, r, b)) = n.rect {
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
-                                });
-                            }
-                            Some(entry)
-                        })
+                        .filter_map(|n| build_element_entry(n, snapshot_id))
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(
                         elements,

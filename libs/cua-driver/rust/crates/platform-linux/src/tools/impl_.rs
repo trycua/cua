@@ -574,6 +574,67 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
     }
 }
 
+/// Build a single structured element entry for `get_window_state`.
+/// Returns `None` when the node has no `element_index` (non-actionable rows).
+fn build_element_entry(
+    n: &crate::atspi::AtspiNode,
+    snapshot_id: Option<u32>,
+    bounds: Option<(i32, i32, u32, u32)>,
+) -> Option<serde_json::Value> {
+    let idx = n.element_index?;
+    // `label` mirrors what a human reading the markdown row would call this
+    // element: name first, then value, then description.
+    let label = n
+        .name
+        .clone()
+        .or_else(|| n.value.clone())
+        .or_else(|| n.description.clone());
+    let mut entry = json!({
+        "element_index": idx,
+        "role": n.role,
+        "depth": n.depth,
+    });
+    if let Some(snapshot_id) = snapshot_id {
+        entry["element_token"] = json!(cua_driver_core::element_token::token_for(snapshot_id, idx));
+    }
+    if n.in_web_content {
+        entry["in_web_content"] = json!(true);
+    }
+    if let Some(label) = label {
+        entry["label"] = json!(label);
+    }
+    // Surface the element's value separately from `label` (which collapses
+    // name→value→description): a field with both a name AND typed text would
+    // otherwise hide the text from a caller reading the structured side,
+    // leaving it only in tree_markdown. See the macOS get_window_state builder
+    // for the rationale.
+    if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
+        entry["value"] = json!(value);
+    }
+    if let Some(enabled) = n.enabled {
+        entry["enabled"] = json!(enabled);
+    }
+    if let Some(selected) = n.selected {
+        entry["selected"] = json!(selected);
+    }
+    let actions: Vec<String> = n
+        .actions
+        .iter()
+        .filter(|a| !a.trim().is_empty())
+        .cloned()
+        .collect();
+    if !actions.is_empty() {
+        entry["actions"] = json!(actions);
+    }
+    if let Some(parent) = n.parent_element_index {
+        entry["parent_index"] = json!(parent);
+    }
+    if let Some((x, y, w, h)) = bounds {
+        entry["frame"] = json!({ "x": x, "y": y, "w": w, "h": h });
+    }
+    Some(entry)
+}
+
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
@@ -592,7 +653,8 @@ impl Tool for GetWindowStateTool {
                 the structured array.\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry \
                 per indexed row with `element_index`, `role`, `label`, `value`, \
-                `enabled`, `selected`, \
+                `enabled`, `selected`, `actions` (names of AT-SPI actions exposed \
+                by the element, omitted when empty), \
                 `frame: {x,y,w,h}` when AT-SPI reports usable bounds, \
                 `parent_index`, `depth`). The markdown `tree_markdown` stays \
                 available and unchanged in shape for existing text-parsing \
@@ -845,7 +907,7 @@ impl Tool for GetWindowStateTool {
 
                     // Structured `elements` array: one entry per actionable node.
                     // Shape: `{element_index, element_token, role, label,
-                    // depth, parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // depth, actions?, parent_index?, frame?: {x,y,w,h}}`. Frame is
                     // included whenever AT-SPI Component.GetExtents(Screen)
                     // reported usable bounds; omitted otherwise (some
                     // toolkits leave bounds unset on hidden / virtual
@@ -859,53 +921,11 @@ impl Tool for GetWindowStateTool {
                         .nodes
                         .iter()
                         .filter_map(|n| {
-                            let idx = n.element_index?;
-                            // `label` mirrors what a human reading the markdown row
-                            // would call this element: name first, then value,
-                            // then description.
-                            let label = n
-                                .name
-                                .clone()
-                                .or_else(|| n.value.clone())
-                                .or_else(|| n.description.clone());
-                            let mut entry = json!({
-                                "element_index": idx,
-                                "role": n.role,
-                                "depth": n.depth,
-                            });
-                            if let Some(snapshot_id) = snapshot_id {
-                                entry["element_token"] = json!(
-                                    cua_driver_core::element_token::token_for(snapshot_id, idx)
-                                );
-                            }
-                            if n.in_web_content {
-                                entry["in_web_content"] = json!(true);
-                            }
-                            if let Some(label) = label {
-                                entry["label"] = json!(label);
-                            }
-                            // Surface the element's value separately from `label`
-                            // (which collapses name→value→description): a field
-                            // with both a name AND typed text would otherwise hide
-                            // the text from a caller reading the structured side,
-                            // leaving it only in tree_markdown. See the macOS
-                            // get_window_state builder for the rationale.
-                            if let Some(value) = n.value.clone().filter(|v| !v.is_empty()) {
-                                entry["value"] = json!(value);
-                            }
-                            if let Some(enabled) = n.enabled {
-                                entry["enabled"] = json!(enabled);
-                            }
-                            if let Some(selected) = n.selected {
-                                entry["selected"] = json!(selected);
-                            }
-                            if let Some(parent) = n.parent_element_index {
-                                entry["parent_index"] = json!(parent);
-                            }
-                            if let Some((x, y, w, h)) = bounds_by_idx.get(&idx).copied() {
-                                entry["frame"] = json!({ "x": x, "y": y, "w": w, "h": h });
-                            }
-                            Some(entry)
+                            build_element_entry(
+                                n,
+                                snapshot_id,
+                                bounds_by_idx.get(&n.element_index?).copied(),
+                            )
                         })
                         .collect();
                     let elements = cua_driver_core::element_query::project_elements_for_query(
@@ -1075,6 +1095,56 @@ mod get_window_state_capture_tests {
         assert!(error["reason"]
             .as_str()
             .is_some_and(|reason| reason.contains("surface_identity_unproven")));
+    }
+}
+
+#[cfg(test)]
+mod get_window_state_actions_tests {
+    use super::*;
+    use crate::atspi::AtspiNode;
+
+    fn node(actions: Vec<String>) -> AtspiNode {
+        AtspiNode {
+            element_index: Some(1),
+            role: "button".to_owned(),
+            name: Some("ok".to_owned()),
+            value: None,
+            checked: None,
+            enabled: Some(true),
+            selected: None,
+            description: None,
+            actions,
+            element_key: 1,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        }
+    }
+
+    #[test]
+    fn element_entry_includes_actions_when_present() {
+        let n = node(vec!["Press".to_owned(), "Open".to_owned()]);
+        let entry = build_element_entry(&n, None, None).unwrap();
+        assert_eq!(entry["actions"], json!(["Press", "Open"]));
+    }
+
+    #[test]
+    fn element_entry_omits_actions_when_empty() {
+        let n = node(Vec::new());
+        let entry = build_element_entry(&n, None, None).unwrap();
+        assert!(entry.get("actions").is_none());
+    }
+
+    #[test]
+    fn element_entry_filters_blank_action_names() {
+        let n = node(vec![
+            "Press".to_owned(),
+            "".to_owned(),
+            "   ".to_owned(),
+            "Open".to_owned(),
+        ]);
+        let entry = build_element_entry(&n, None, None).unwrap();
+        assert_eq!(entry["actions"], json!(["Press", "Open"]));
     }
 }
 

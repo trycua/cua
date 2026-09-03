@@ -37,11 +37,10 @@
 #     (each only when it's a reparse point — never clobber a real dir).
 #
 # Conservative on Claude MCP cleanup: we DON'T auto-edit %USERPROFILE%\
-# .claude.json on Windows (mirrors the macOS uninstall.sh's stance for
-# environments without python3). The closing message prints the
-# `claude mcp remove cua-computer-use` command for the user to run —
-# that is the name `mcp-config --client claude` registers — plus the
-# legacy cua-driver-rs name for older installs.
+# .claude.json on Windows. The closing message tells the user to verify the
+# exact registration's command path belongs to this release before removing
+# the shared `cua-computer-use` name. The legacy `cua-driver-rs` name remains
+# release-specific guidance for older installs.
 #
 # Env overrides (mirror install.ps1's variable names):
 #   $env:CUA_DRIVER_RS_INSTALL_DIR   visible bin dir to remove
@@ -498,19 +497,26 @@ if (-not $Purge) {
     Write-Host ""
 }
 Write-Host "Claude Code MCP registrations:" -ForegroundColor Yellow
-Write-Host "  We don't auto-edit ~/.claude.json on Windows. If you registered cua-driver"
-Write-Host "  with Claude Code, remove it manually. mcp-config --client claude registers"
-Write-Host "  the server under the name cua-computer-use:"
+Write-Host "  We don't auto-edit ~/.claude.json on Windows. Do NOT remove the shared"
+Write-Host "  cua-computer-use registration by name alone. First open ~/.claude.json"
+Write-Host "  and verify that the exact user-scope entry's 'command' belongs to this"
+Write-Host "  release install, for example cua-driver.exe under one of these paths:"
+Write-Host ""
+Write-Host "    $VisibleBinDir"
+Write-Host "    $HomeDir\packages\"
+Write-Host "    $LegacyVisibleBinDir"
+Write-Host "    $LegacyHomeDir\packages\"
+Write-Host ""
+Write-Host "  Only if that command path is release-owned, remove the current registration:"
 Write-Host ""
 Write-Host "    claude mcp remove cua-computer-use -s user"
 Write-Host ""
-Write-Host "  Installs from v0.2.13 and earlier used the name cua-driver-rs:"
+Write-Host "  If it points somewhere else (for example cua-driver-local or another"
+Write-Host "  side-by-side install), preserve it and use that installation's uninstaller."
+Write-Host ""
+Write-Host "  Installs from v0.2.13 and earlier used the release-specific name cua-driver-rs:"
 Write-Host ""
 Write-Host "    claude mcp remove cua-driver-rs -s user"
-Write-Host ""
-Write-Host "  Or edit ~/.claude.json directly and delete entries whose 'command' points at"
-Write-Host "  cua-driver.exe under %LOCALAPPDATA%\Programs\Cua\cua-driver\bin\"
-Write-Host "  (or the legacy %LOCALAPPDATA%\Programs\trycua\cua-driver-rs\bin\ from v0.2.13 and earlier)."
 Write-Host ""
 Write-Host "PATH:"
 Write-Host "  If you added $VisibleBinDir to your User PATH after the install, remove it:"

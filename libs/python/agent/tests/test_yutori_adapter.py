@@ -21,12 +21,16 @@ def test_yutori_adapter_routes_prefixed_model_to_openai_and_uses_api_base(monkey
         messages=[],
         api_base="https://baseten.example/v1",
         api_key="call-key",
+        parallel_tool_calls=True,
+        tool_set="computer_use_tools-20260830",
     )
 
     assert captured["model"] == "openai/yutori-admin/n2os-joint-test"
     assert captured["api_base"] == "https://baseten.example/v1"
     assert captured["api_key"] == "call-key"
     assert captured["extra_headers"]["Authorization"] == "Bearer call-key"
+    assert captured["parallel_tool_calls"] is True
+    assert captured["tool_set"] == "computer_use_tools-20260830"
 
 
 @pytest.mark.asyncio
@@ -57,7 +61,7 @@ def test_computer_agent_registers_yutori_provider(disable_telemetry):
 
     agent = ComputerAgent(model="yutori/yutori-admin/n2os-joint-test")
 
-    assert type(agent.agent_loop).__name__ == "GenericVlmConfig"
+    assert type(agent.agent_loop).__name__ == "YutoriN2Config"
     assert "yutori" in [item["provider"] for item in litellm.custom_provider_map]
 
 

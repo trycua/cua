@@ -60,6 +60,10 @@ class YutoriAdapter(CustomLLM):
             params["tools"] = kwargs["tools"]
         if "tool_choice" in kwargs:
             params["tool_choice"] = kwargs["tool_choice"]
+        if "parallel_tool_calls" in kwargs:
+            params["parallel_tool_calls"] = kwargs["parallel_tool_calls"]
+        if "tool_set" in kwargs:
+            params["tool_set"] = kwargs["tool_set"]
 
         # Forward optional generation params
         for key in (

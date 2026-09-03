@@ -24,6 +24,7 @@ from . import (
     uitars,
     uitars2,
     yutori,
+    yutori_n2,
 )
 
 __all__ = [
@@ -47,4 +48,5 @@ __all__ = [
     "uitars",
     "uitars2",
     "yutori",
+    "yutori_n2",
 ]

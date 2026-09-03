@@ -33,6 +33,29 @@ def test_yutori_n2_computer_batch_expands_gui_actions_in_order():
     ]
 
 
+def test_yutori_n2_computer_batch_expands_flat_gui_actions_in_order():
+    tool_call = {
+        "name": "computer_batch",
+        "arguments": {
+            "actions": [
+                {"action": "left_click", "coordinates": [500, 500]},
+                {"action": "type", "text": "done"},
+            ]
+        },
+    }
+
+    assert convert_yutori_n2_tool_call_to_completion_tool_calls(
+        tool_call,
+        dimensions=(2000, 1000),
+    ) == [
+        {
+            "name": "computer",
+            "arguments": {"action": "click", "button": "left", "x": 1000, "y": 500},
+        },
+        {"name": "computer", "arguments": {"action": "type", "text": "done"}},
+    ]
+
+
 def test_yutori_n2_computer_batch_stops_at_first_unexecutable_action():
     tool_call = {
         "name": "computer_batch",

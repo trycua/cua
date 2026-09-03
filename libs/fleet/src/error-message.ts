@@ -41,15 +41,25 @@ function uniffiErrorDetail(error: UniffiErrorLike): string | undefined {
   return undefined
 }
 
+// A pool-create PoolAccessDenied is ambiguous. The name-conflict case reaches
+// us as a Kubernetes RBAC refusal — the namespace cannot create the resource
+// because another account already claimed the (globally unique, DNS-like)
+// name — and its raw text explains nothing to the user. But the same variant
+// also carries deliberate policy denials, like the card-admission gate, whose
+// own message is the actionable one. Only rewrite the RBAC shape.
+const RBAC_CREATE_DENIAL = /is forbidden:[\s\S]*cannot create resource/i
+
 export function poolCreateErrorMessage(error: unknown, poolName: string): string {
+  const detail = errorMessage(error)
   if (
     error &&
     typeof error === "object" &&
-    (error as UniffiErrorLike).tag === "PoolAccessDenied"
+    (error as UniffiErrorLike).tag === "PoolAccessDenied" &&
+    RBAC_CREATE_DENIAL.test(detail)
   ) {
     return `Pool names must be globally unique across all accounts, similar to DNS names. "${poolName}" may already be in use. Try a different name.`
   }
-  return errorMessage(error)
+  return detail
 }
 
 export function errorMessage(error: unknown): string {

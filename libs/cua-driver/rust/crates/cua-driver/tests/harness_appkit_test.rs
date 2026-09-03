@@ -1112,6 +1112,12 @@ fn harness_appkit_double_click_px_background() {
                 "AppKit double click failed: {}",
                 response.text()
             );
+            assert_eq!(
+                response.structured()["synthetic_target_focus"],
+                true,
+                "background double click must exercise target-only synthetic focus: {}",
+                response.raw
+            );
             std::thread::sleep(Duration::from_millis(250));
             assert!(
                 snapshot_elements(driver, pid, wid)

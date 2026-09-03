@@ -162,11 +162,7 @@ impl ForegroundSentinel {
             violations.push("foreground sentinel heartbeat stopped".to_owned());
         }
         if !is_wayland_session() {
-            if events.iter().any(|event| {
-                event_kind(event) == Some("blur")
-                    || (event_kind(event) == Some("visibility")
-                        && event["state"].as_str() == Some("hidden"))
-            }) {
+            if events.iter().any(is_focus_loss_event) {
                 violations.push("foreground sentinel lost focus".to_owned());
             } else {
                 passed.push(OracleKind::Focus);
@@ -268,6 +264,13 @@ impl ForegroundSentinel {
         if is_wayland_session() {
             wait_for_native_focus_lost(self.target)?;
         } else {
+            #[cfg(target_os = "macos")]
+            wait_for_event(
+                &self.journal_path,
+                "native-window-blur",
+                Duration::from_secs(3),
+            )?;
+            #[cfg(not(target_os = "macos"))]
             wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
             let (_, focus_violations) = self.observe();
             if !focus_violations
@@ -447,6 +450,12 @@ fn read_journal_events(path: &std::path::Path) -> Result<Vec<serde_json::Value>,
 
 fn event_kind(event: &serde_json::Value) -> Option<&str> {
     event["kind"].as_str()
+}
+
+fn is_focus_loss_event(event: &serde_json::Value) -> bool {
+    event_kind(event) == Some("blur")
+        || event_kind(event) == Some("native-window-blur")
+        || (event_kind(event) == Some("visibility") && event["state"].as_str() == Some("hidden"))
 }
 
 fn wait_for_event(path: &std::path::Path, kind: &str, timeout: Duration) -> Result<(), String> {
@@ -1068,5 +1077,24 @@ fn electron_fixture() -> ElectronFixture {
                 "--force-renderer-accessibility",
             ],
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_focus_loss_event;
+
+    #[test]
+    fn native_window_blur_is_a_focus_loss_even_without_dom_blur() {
+        assert!(is_focus_loss_event(
+            &serde_json::json!({"kind": "native-window-blur"})
+        ));
+        assert!(is_focus_loss_event(&serde_json::json!({"kind": "blur"})));
+        assert!(is_focus_loss_event(
+            &serde_json::json!({"kind": "visibility", "state": "hidden"})
+        ));
+        assert!(!is_focus_loss_event(
+            &serde_json::json!({"kind": "native-window-focus"})
+        ));
     }
 }

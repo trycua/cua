@@ -128,4 +128,7 @@ The GitHub-hosted Windows workflow is canonical when its strict preflight proves
 an interactive desktop. The workflow also accepts a runner label so maintainers
 can replay the same command on an Azure VM with an active RDP session for
 environment parity; that replay is not a separate test definition or source of
-behavioral truth.
+behavioral truth. On administrator-hosted runners, the suite keeps the typed
+administrator-token refusal as a negative control, then verifies an inactive
+Administrators role before running the platform-selected positive rows in a
+restricted child process.

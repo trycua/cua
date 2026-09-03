@@ -8,6 +8,7 @@ Usage::
 from cua_agent.callbacks import (
     AsyncCallbackHandler,
     BudgetManagerCallback,
+    CaptchaSolverCallback,
     ImageRetentionCallback,
     LoggingCallback,
     OperatorNormalizerCallback,
@@ -20,6 +21,7 @@ from cua_agent.callbacks import (
 
 __all__ = [
     "AsyncCallbackHandler",
+    "CaptchaSolverCallback",
     "ImageRetentionCallback",
     "LoggingCallback",
     "TrajectorySaverCallback",

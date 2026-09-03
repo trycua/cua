@@ -126,6 +126,7 @@ else
     standalone_browser_frames
     standalone_browser_multi_tab
     standalone_browser_pointer_actions
+    standalone_browser_prepare_automation_exposure
     standalone_browser_prepare_isolated
     standalone_browser_roundtrip
     standalone_browser_semantic_state

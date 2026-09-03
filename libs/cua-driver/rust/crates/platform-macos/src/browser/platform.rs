@@ -998,6 +998,26 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         Ok(None)
     }
 
+    async fn discover_spawned_endpoint_on_port(
+        &self,
+        pid: i64,
+        port: u16,
+    ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(expected_ws_url) = browser_websocket_url(port).await else {
+            return Ok(None);
+        };
+        let endpoint = self
+            .discover_spawned_endpoint(pid, &expected_ws_url)
+            .await?
+            .ok_or_else(|| {
+                refusal(
+                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                    "the driver-selected DevTools port is not owned by the spawned browser",
+                )
+            })?;
+        Ok(Some(endpoint))
+    }
+
     async fn discover_existing_profile_endpoint(
         &self,
         pid: i64,
@@ -1357,6 +1377,7 @@ impl BrowserPlatform for MacOsBrowserPlatform {
                 prepared_pid: Some(endpoint.ownership.owner_pid),
                 endpoint: Some(endpoint),
                 message: "An owned loopback DevTools endpoint is already available.".to_owned(),
+                launch_posture: None,
                 side_effects: Default::default(),
                 attachment: None,
             });
@@ -1371,6 +1392,50 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn driver_selected_port_rejects_a_foreign_devtools_listener() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind foreign listener on reserved port");
+        let port = listener
+            .local_addr()
+            .expect("foreign listener address")
+            .port();
+        let (release, keep_listener_open) = tokio::sync::oneshot::channel();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener
+                .accept()
+                .await
+                .expect("accept /json/version request");
+            let mut request = [0_u8; 512];
+            stream.read(&mut request).await.expect("read request");
+            let body = format!(
+                r#"{{"webSocketDebuggerUrl":"ws://127.0.0.1:{port}/devtools/browser/foreign"}}"#
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            stream
+                .write_all(response.as_bytes())
+                .await
+                .expect("write fake DevTools response");
+            stream.shutdown().await.expect("close fake response");
+            let _ = keep_listener_open.await;
+        });
+
+        let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
+        let error = platform
+            .discover_spawned_endpoint_on_port(1, port)
+            .await
+            .expect_err("a DevTools-shaped response is not an ownership proof");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserEndpointOwnerMismatch);
+
+        let _ = release.send(());
+        server.await.expect("foreign listener task");
+    }
 
     fn consent_surface(window_id: u32) -> ConsentSurfaceEvidence {
         ConsentSurfaceEvidence {

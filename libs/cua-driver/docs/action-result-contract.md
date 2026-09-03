@@ -55,6 +55,12 @@ The invariants are:
 - `partial` has `delivery.delivered_count`;
 - `refused` has neither delivery nor evidence.
 
+`suspected_noop` is advisory. It means a bounded readable state remained
+unchanged, not that the action failed. For a ref-targeted browser DOM click,
+the readback covers bounded semantic and form state on the target plus the
+document URL and active-element identity. Effects elsewhere on the page can be
+invisible to that readback, so verify the expected postcondition before retrying.
+
 ## Window target resolution
 
 Window-scoped actions accept a PID without `window_id` only when that process

@@ -41,6 +41,17 @@ function uniffiErrorDetail(error: UniffiErrorLike): string | undefined {
   return undefined
 }
 
+export function poolCreateErrorMessage(error: unknown, poolName: string): string {
+  if (
+    error &&
+    typeof error === "object" &&
+    (error as UniffiErrorLike).tag === "PoolAccessDenied"
+  ) {
+    return `Pool names must be globally unique across all accounts, similar to DNS names. "${poolName}" may already be in use. Try a different name.`
+  }
+  return errorMessage(error)
+}
+
 export function errorMessage(error: unknown): string {
   if (error && typeof error === "object") {
     const detail = uniffiErrorDetail(error as UniffiErrorLike)

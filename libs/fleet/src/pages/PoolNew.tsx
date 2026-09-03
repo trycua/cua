@@ -17,7 +17,7 @@ import { recordFleetPaymentGate, type FleetPaymentGateReason } from "../auth/ana
 import { kc } from "../auth/keycloak"
 import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { useFlash } from "../components/FlashContext"
-import { errorMessage } from "../error-message"
+import { poolCreateErrorMessage } from "../error-message"
 import { createPool } from "../fleet/pools"
 import type { PoolTemplateConfig } from "../fleet/models"
 import { CuaButton } from "../components/CuaButton"
@@ -262,7 +262,7 @@ export function PoolNew() {
       flash.push({
         type: "error",
         header: "Create failed",
-        content: errorMessage(e),
+        content: poolCreateErrorMessage(e, name),
       })
     } finally {
       setSubmitting(false)

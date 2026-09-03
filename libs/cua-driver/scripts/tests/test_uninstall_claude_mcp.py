@@ -1,9 +1,4 @@
-"""Claude MCP scrubbing in the release uninstaller.
-
-`cua-driver mcp-config --client claude` registers the server as
-`cua-computer-use`, so an uninstaller that only matched `cua-driver-rs` left a
-live registration behind while reporting a clean uninstall.
-"""
+"""Ownership-safe Claude MCP cleanup in the release uninstaller."""
 
 from __future__ import annotations
 
@@ -19,47 +14,67 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 UNINSTALL = REPO_ROOT / "libs/cua-driver/scripts/uninstall.sh"
 
 
-def _executable(path: Path, body: str) -> None:
+def _executable(path: Path, body: str = "exit 0") -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(f"#!/bin/sh\n{body}", encoding="utf-8")
+    path.write_text(f"#!/bin/sh\n{body}\n", encoding="utf-8")
     path.chmod(0o755)
+
+
+def _expand(value, *, home: Path, tmp_path: Path):
+    if isinstance(value, str):
+        return value.format(home=home, tmp=tmp_path)
+    if isinstance(value, list):
+        return [_expand(item, home=home, tmp_path=tmp_path) for item in value]
+    if isinstance(value, dict):
+        return {
+            key: _expand(item, home=home, tmp_path=tmp_path)
+            for key, item in value.items()
+        }
+    return value
 
 
 def _run(
     tmp_path: Path,
-    servers: dict,
+    config: dict,
     *,
     rust_marker: bool,
     with_claude_cli: bool = False,
+    create_canonical_launcher: bool = True,
+    custom_release_launchers: tuple[str, ...] = (),
 ) -> tuple[dict, str]:
-    """Uninstall against a fake HOME and return the surviving servers."""
+    """Run the real release uninstaller against a fake HOME."""
 
     home = tmp_path / "home"
     fake_bin = tmp_path / "fake-bin"
-    (home / ".local/bin").mkdir(parents=True)
+    (home / ".local/bin").mkdir(parents=True, exist_ok=True)
+
+    release_binary = home / ".cua-driver/packages/current/cua-driver"
     if rust_marker:
-        (home / ".cua-driver/packages/current").mkdir(parents=True)
+        _executable(release_binary)
+        if create_canonical_launcher:
+            (home / ".local/bin/cua-driver").symlink_to(release_binary)
+        for raw_path in custom_release_launchers:
+            launcher = Path(raw_path.format(home=home, tmp=tmp_path))
+            launcher.parent.mkdir(parents=True, exist_ok=True)
+            launcher.symlink_to(release_binary)
 
     claude_json = home / ".claude.json"
-
     _executable(fake_bin / "uname", "printf 'Linux\\n'")
-    _executable(fake_bin / "pkill", "exit 0")
-    _executable(fake_bin / "systemctl", "exit 0")
+    _executable(fake_bin / "pkill")
+    _executable(fake_bin / "systemctl")
+
     if with_claude_cli:
-        # `claude mcp remove` matches on the name alone, so the stub has to
-        # mutate the config the way the real CLI does — a stub that only
-        # records its arguments cannot show an entry being deleted after the
-        # scrub deliberately kept it.
         _executable(
             fake_bin / "claude",
             f'echo "$@" >> "{tmp_path / "claude-calls"}"\n'
             f'[ "$1" = mcp ] && [ "$2" = remove ] || exit 1\n'
             f'exec {shlex.quote(sys.executable)} '
             f'{shlex.quote(str(Path(__file__).with_name("_fake_claude_remove.py")))} '
-            f'"{claude_json}" "$3"\n',
+            f'"{claude_json}" "$3"',
         )
 
-    claude_json.write_text(json.dumps(servers), encoding="utf-8")
+    expanded = _expand(config, home=home, tmp_path=tmp_path)
+    claude_json.write_text(json.dumps(expanded), encoding="utf-8")
 
     env = os.environ.copy()
     env.update({"HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"})
@@ -75,19 +90,30 @@ def _run(
     return json.loads(claude_json.read_text(encoding="utf-8")), result.stdout
 
 
-def _user_servers(config: dict) -> set:
+def _user_servers(config: dict) -> set[str]:
     return set(config["mcpServers"])
 
 
-def test_registered_claude_server_is_removed(tmp_path: Path) -> None:
-    """The reported bug: the name the CLI actually registers survived."""
+def _project_servers(config: dict, project: str = "/work/repo") -> set[str]:
+    return set(config["projects"][project]["mcpServers"])
 
+
+def _claude_removals(tmp_path: Path) -> set[str]:
+    calls = (tmp_path / "claude-calls").read_text(encoding="utf-8").splitlines()
+    return {
+        parts[2]
+        for parts in (call.split() for call in calls)
+        if parts[:2] == ["mcp", "remove"]
+    }
+
+
+def test_release_registration_is_removed(tmp_path: Path) -> None:
     config, stdout = _run(
         tmp_path,
         {
             "mcpServers": {
                 "cua-computer-use": {
-                    "command": "/home/u/.local/bin/cua-driver",
+                    "command": "{home}/.local/bin/cua-driver",
                     "args": ["mcp"],
                 },
                 "unrelated": {"command": "/usr/bin/other", "args": ["mcp"]},
@@ -100,7 +126,7 @@ def test_registered_claude_server_is_removed(tmp_path: Path) -> None:
     assert "removed Claude MCP registration(s): user:cua-computer-use" in stdout
 
 
-def test_project_scoped_registrations_are_scrubbed_too(tmp_path: Path) -> None:
+def test_project_release_registration_is_removed(tmp_path: Path) -> None:
     config, _ = _run(
         tmp_path,
         {
@@ -109,7 +135,7 @@ def test_project_scoped_registrations_are_scrubbed_too(tmp_path: Path) -> None:
                 "/work/repo": {
                     "mcpServers": {
                         "cua-computer-use": {
-                            "command": "/home/u/.local/bin/cua-driver",
+                            "command": "{home}/.local/bin/cua-driver",
                             "args": ["mcp"],
                         },
                         "unrelated": {"command": "/usr/bin/other"},
@@ -120,15 +146,18 @@ def test_project_scoped_registrations_are_scrubbed_too(tmp_path: Path) -> None:
         rust_marker=True,
     )
 
-    assert set(config["projects"]["/work/repo"]["mcpServers"]) == {"unrelated"}
+    assert _project_servers(config) == {"unrelated"}
 
 
-def test_a_renamed_key_still_matches_on_the_launcher(tmp_path: Path) -> None:
+def test_renamed_key_is_removed_when_target_is_release_owned(tmp_path: Path) -> None:
     config, _ = _run(
         tmp_path,
         {
             "mcpServers": {
-                "my-driver": {"command": "/home/u/.local/bin/cua-driver", "args": ["mcp"]}
+                "my-driver": {
+                    "command": "{home}/.local/bin/cua-driver",
+                    "args": ["mcp"],
+                }
             }
         },
         rust_marker=True,
@@ -137,57 +166,82 @@ def test_a_renamed_key_still_matches_on_the_launcher(tmp_path: Path) -> None:
     assert _user_servers(config) == set()
 
 
-def test_a_name_without_a_readable_command_is_still_removed(tmp_path: Path) -> None:
+def test_shared_name_without_command_is_preserved(tmp_path: Path) -> None:
     config, _ = _run(
         tmp_path,
         {"mcpServers": {"cua-computer-use": {"args": ["mcp"]}}},
         rust_marker=True,
     )
 
-    assert _user_servers(config) == set()
+    assert _user_servers(config) == {"cua-computer-use"}
 
 
-def test_the_legacy_name_is_removed_without_a_marker(tmp_path: Path) -> None:
-    """`cua-driver-rs` was only ever ours, so it needs no disambiguation."""
-
+def test_legacy_name_is_removed_without_a_marker(tmp_path: Path) -> None:
     config, _ = _run(
         tmp_path,
-        {"mcpServers": {"cua-driver-rs": {"command": "/x/cua-driver-rs", "args": ["mcp"]}}},
+        {
+            "mcpServers": {
+                "cua-driver-rs": {
+                    "command": "/x/cua-driver-rs",
+                    "args": ["mcp"],
+                }
+            }
+        },
         rust_marker=False,
     )
 
     assert _user_servers(config) == set()
 
 
-def test_shared_names_are_kept_without_a_rust_marker(tmp_path: Path) -> None:
-    """A Swift-only Mac used the same names; leave its registrations alone."""
+def test_shared_release_name_is_kept_without_rust_marker(tmp_path: Path) -> None:
+    config, _ = _run(
+        tmp_path,
+        {
+            "mcpServers": {
+                "cua-computer-use": {
+                    "command": "{home}/.local/bin/cua-driver",
+                    "args": ["mcp"],
+                }
+            }
+        },
+        rust_marker=False,
+    )
 
+    assert _user_servers(config) == {"cua-computer-use"}
+
+
+def test_reported_cua_driver_local_registration_is_preserved(tmp_path: Path) -> None:
+    """The release uninstaller must not claim the source-built local product."""
+
+    local_launcher = tmp_path / "home/.local/bin/cua-driver-local"
+    _executable(local_launcher)
     config, stdout = _run(
         tmp_path,
         {
             "mcpServers": {
                 "cua-computer-use": {
-                    "command": "/home/u/.local/bin/cua-driver",
+                    "command": "{home}/.local/bin/cua-driver-local",
                     "args": ["mcp"],
                 }
             }
         },
-        rust_marker=False,
+        rust_marker=True,
     )
 
     assert _user_servers(config) == {"cua-computer-use"}
-    assert "no Claude MCP registrations for cua-driver found" in stdout
+    assert "preserved local Claude MCP registration(s): user:cua-computer-use" in stdout
+    assert "uninstall-local.sh" in stdout
 
 
-def test_another_installs_launcher_is_left_to_its_own_uninstaller(tmp_path: Path) -> None:
-    """A side-by-side launcher registers under the same name and owns its entry."""
-
+def test_same_filename_at_unrelated_path_is_preserved(tmp_path: Path) -> None:
+    other_launcher = tmp_path / "other/bin/cua-driver"
+    _executable(other_launcher)
     config, _ = _run(
         tmp_path,
         {
             "mcpServers": {
                 "cua-computer-use": {
-                    "command": "/home/u/.local/bin/cua-driver-sidecar",
+                    "command": "{tmp}/other/bin/cua-driver",
                     "args": ["mcp"],
                 }
             }
@@ -198,22 +252,92 @@ def test_another_installs_launcher_is_left_to_its_own_uninstaller(tmp_path: Path
     assert _user_servers(config) == {"cua-computer-use"}
 
 
-def _claude_removals(tmp_path: Path) -> set:
-    """Server names the uninstaller asked the `claude` CLI to remove."""
+def test_custom_bin_launcher_is_removed_when_it_resolves_into_release(tmp_path: Path) -> None:
+    config, _ = _run(
+        tmp_path,
+        {
+            "mcpServers": {
+                "cua-computer-use": {
+                    "command": "{tmp}/custom-bin/cua-driver",
+                    "args": ["mcp"],
+                }
+            }
+        },
+        rust_marker=True,
+        custom_release_launchers=("{tmp}/custom-bin/cua-driver",),
+    )
 
-    calls = (tmp_path / "claude-calls").read_text(encoding="utf-8").splitlines()
-    return {parts[2] for parts in (call.split() for call in calls) if parts[:2] == ["mcp", "remove"]}
+    assert _user_servers(config) == set()
 
 
-def test_cli_fallback_asks_for_a_name_the_scrub_vouched_for(tmp_path: Path) -> None:
-    """Ownership established, so the CLI may clear the name from other scopes."""
+def test_missing_canonical_launcher_is_safe_fallback(tmp_path: Path) -> None:
+    config, _ = _run(
+        tmp_path,
+        {
+            "mcpServers": {
+                "cua-computer-use": {
+                    "command": "{home}/.local/bin/cua-driver",
+                    "args": ["mcp"],
+                }
+            }
+        },
+        rust_marker=True,
+        create_canonical_launcher=False,
+    )
 
+    assert _user_servers(config) == set()
+
+
+def test_scope_ownership_does_not_leak_to_same_name_in_project(tmp_path: Path) -> None:
+    other_launcher = tmp_path / "other/bin/cua-driver"
+    _executable(other_launcher)
+    config, _ = _run(
+        tmp_path,
+        {
+            "mcpServers": {
+                "cua-computer-use": {
+                    "command": "{home}/.local/bin/cua-driver",
+                    "args": ["mcp"],
+                }
+            },
+            "projects": {
+                "/work/repo": {
+                    "mcpServers": {
+                        "cua-computer-use": {
+                            "command": "{tmp}/other/bin/cua-driver",
+                            "args": ["mcp"],
+                        }
+                    }
+                }
+            },
+        },
+        rust_marker=True,
+        with_claude_cli=True,
+    )
+
+    assert _user_servers(config) == set()
+    assert _project_servers(config) == {"cua-computer-use"}
+    assert _claude_removals(tmp_path) == {"cua-driver-rs"}
+
+
+def test_cli_fallback_only_uses_unambiguous_legacy_name(tmp_path: Path) -> None:
+    _run(
+        tmp_path,
+        {"mcpServers": {}},
+        rust_marker=True,
+        with_claude_cli=True,
+    )
+
+    assert _claude_removals(tmp_path) == {"cua-driver-rs"}
+
+
+def test_shared_name_never_enters_cli_fallback_after_json_scrub(tmp_path: Path) -> None:
     _run(
         tmp_path,
         {
             "mcpServers": {
                 "cua-computer-use": {
-                    "command": "/home/u/.local/bin/cua-driver",
+                    "command": "{home}/.local/bin/cua-driver",
                     "args": ["mcp"],
                 }
             }
@@ -222,66 +346,13 @@ def test_cli_fallback_asks_for_a_name_the_scrub_vouched_for(tmp_path: Path) -> N
         with_claude_cli=True,
     )
 
-    assert _claude_removals(tmp_path) == {"cua-driver-rs", "cua-computer-use"}
-
-
-def test_cli_fallback_asks_only_for_the_unambiguous_name_without_evidence(
-    tmp_path: Path,
-) -> None:
-    """Nothing in the config vouches for a shared name, so do not guess."""
-
-    _run(tmp_path, {"mcpServers": {}}, rust_marker=True, with_claude_cli=True)
-
     assert _claude_removals(tmp_path) == {"cua-driver-rs"}
 
 
-def test_cli_fallback_keeps_shared_names_without_a_rust_marker(tmp_path: Path) -> None:
-    config, _ = _run(
-        tmp_path,
-        {
-            "mcpServers": {
-                "cua-computer-use": {
-                    "command": "/home/u/.local/bin/cua-driver",
-                    "args": ["mcp"],
-                }
-            }
-        },
-        rust_marker=False,
-        with_claude_cli=True,
-    )
-
-    assert _claude_removals(tmp_path) == {"cua-driver-rs"}
-    assert _user_servers(config) == {"cua-computer-use"}
-
-
-def test_cli_fallback_does_not_delete_another_installs_registration(tmp_path: Path) -> None:
-    """The scrub keeps this entry; the name-only CLI pass must not undo that."""
-
-    config, _ = _run(
-        tmp_path,
-        {
-            "mcpServers": {
-                "cua-computer-use": {
-                    "command": "/home/u/.local/bin/cua-driver-sidecar",
-                    "args": ["mcp"],
-                }
-            }
-        },
-        rust_marker=True,
-        with_claude_cli=True,
-    )
-
-    assert "cua-computer-use" not in _claude_removals(tmp_path)
-    assert _user_servers(config) == {"cua-computer-use"}
-
-
-def test_windows_guidance_names_the_registered_server() -> None:
-    """Windows does not auto-edit the config, so the printed command must be right."""
-
+def test_windows_guidance_uses_registered_user_scope() -> None:
     script = (REPO_ROOT / "libs/cua-driver/scripts/uninstall.ps1").read_text(
         encoding="utf-8-sig"
     )
 
-    assert "claude mcp remove cua-computer-use" in script
-    # The legacy name stays for installs that registered under it.
-    assert "claude mcp remove cua-driver-rs" in script
+    assert "claude mcp remove cua-computer-use -s user" in script
+    assert "claude mcp remove cua-driver-rs -s user" in script

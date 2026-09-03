@@ -950,7 +950,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
     // symbol is `_dispatch_main_q`, a *struct* (not a pointer).
     // We declare it as `u8` (opaque placeholder) and take its ADDRESS to
     // obtain the `dispatch_queue_t` (pointer to the struct).
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         // Opaque placeholder — we only ever take &_dispatch_main_q, never read it.
         static _dispatch_main_q: u8;
@@ -995,7 +995,7 @@ fn dispatch_set_layer_contents(layer_ptr: usize, pixmap: tiny_skia::Pixmap) {
 fn dispatch_order_front(win_ptr: usize) {
     use std::ffi::c_void;
 
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(
@@ -1059,7 +1059,7 @@ fn target_is_frontmost_visible_window(
 fn dispatch_pin_above(win_ptr: usize, target_wid: u64) {
     use std::ffi::c_void;
 
-    #[link(name = "dispatch", kind = "dylib")]
+    #[link(name = "System", kind = "framework")]
     extern "C" {
         static _dispatch_main_q: u8;
         fn dispatch_async_f(

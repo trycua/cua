@@ -2884,6 +2884,12 @@ mod tests {
                 "strategy": { "kind": "existing_profile" },
                 "session": "existing-profile-without-pid"
             }),
+            json!({
+                "allow_launch": true,
+                "profile": { "mode": "isolated_new" },
+                "strategy": { "kind": "existing_profile" },
+                "session": "conflicting-strategy-without-pid"
+            }),
         ] {
             let result = tool.invoke(request).await;
             assert_eq!(result.is_error, Some(true));

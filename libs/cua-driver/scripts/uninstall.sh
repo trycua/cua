@@ -522,6 +522,16 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
+    # Ownership-aware Claude cleanup currently uses Python's JSON + realpath
+    # support. If a Claude config exists but Python is unavailable, stop before
+    # touching the release so uninstall cannot report success while leaving a
+    # current shared-name registration behind.
+    CLAUDE_JSON="$HOME/.claude.json"
+    if [[ -f "$CLAUDE_JSON" ]] && ! command -v python3 >/dev/null 2>&1; then
+        printf 'error: python3 is required to safely inspect Claude MCP ownership before uninstalling a release with %s; install python3 and retry. No release files were removed.\n' "$CLAUDE_JSON" >&2
+        exit 1
+    fi
+
     DAEMON_PID_FILE="$(daemon_pid_file_path)"
     DAEMON_STOP_HELPER="$(select_daemon_stop_helper || true)"
 

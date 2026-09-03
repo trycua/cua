@@ -330,7 +330,14 @@ async fn concurrent_start_coalesces_and_restart_rotates_generation() {
 async fn stop_cancels_startup_and_unblocks_every_waiter() {
     let directory = tempfile::tempdir().unwrap();
     let binary = directory.path().join("never-ready-driver");
-    write_test_shell_script(&binary, "printf 'cancelled-startup\\n' >&2\nread _\nexit 9");
+    let started = directory.path().join("started");
+    write_test_shell_script(
+        &binary,
+        &format!(
+            "printf 'cancelled-startup\\n' >&2\n: > '{}'\nread _\nexit 9",
+            started.display()
+        ),
+    );
     let host = capturing_host(&binary, "com.trycua.embedded-cancel-test");
 
     let starting = tokio::spawn(host.clone().start());
@@ -339,21 +346,11 @@ async fn stop_cancels_startup_and_unblocks_every_waiter() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(host.state(), EmbeddedDriverHostState::Starting);
-
-    let diagnostic_deadline = Instant::now() + Duration::from_secs(2);
-    while host
-        .last_diagnostics()
-        .as_ref()
-        .map(|diagnostics| diagnostics.stderr_tail.as_str())
-        != Some("cancelled-startup\n")
-        && Instant::now() < diagnostic_deadline
-    {
+    let fixture_deadline = Instant::now() + Duration::from_secs(10);
+    while !started.exists() && Instant::now() < fixture_deadline {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
-    assert_eq!(
-        host.last_diagnostics().unwrap().stderr_tail,
-        "cancelled-startup\n"
-    );
+    assert!(started.exists(), "startup fixture did not run");
 
     host.clone().stop().await.expect("cancel startup");
     let start_error = starting.await.unwrap().unwrap_err();

@@ -23,6 +23,12 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 #[derive(Debug, Default)]
 pub struct LinuxBrowserPlatform;
 
+fn exact_x11_singleton(owned_window_ids: &[u64], target_window_id: u64) -> Option<bool> {
+    owned_window_ids
+        .contains(&target_window_id)
+        .then_some(owned_window_ids.len() == 1)
+}
+
 fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefusal {
     BrowserRefusal::new(code, message)
 }
@@ -552,6 +558,42 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
+        // A mixed Wayland+XWayland session still gives X11 clients an exact,
+        // PID-owned XID and geometry. Resolve that identity before consulting
+        // native-Wayland adapters; treating the mere presence of
+        // WAYLAND_DISPLAY as proof that every target is native Wayland turns a
+        // uniquely bound embedded Chromium window into a read-only heuristic.
+        if let Some(window) = tokio::task::spawn_blocking(move || {
+            crate::x11::list_windows(Some(pid_u32))
+                .into_iter()
+                .find(|window| window.xid == window_id)
+        })
+        .await
+        .ok()
+        .flatten()
+        {
+            return Ok(NativeWindowInfo {
+                pid,
+                window_id,
+                title: window.title,
+                bounds: Rect::new(
+                    f64::from(window.x),
+                    f64::from(window.y),
+                    f64::from(window.width),
+                    f64::from(window.height),
+                ),
+                geometry_exact: true,
+                ownership: NativeOwnershipProof {
+                    method: NativeOwnershipMethod::PlatformAttested,
+                    owner_pid: pid,
+                    detail: Some(
+                        "X11 _NET_WM_PID corroborated independently by the owned endpoint pid"
+                            .to_owned(),
+                    ),
+                },
+            });
+        }
+
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             if let Some(window) = crate::wayland::sway_ipc::window_for_id(window_id) {
                 if window.pid != pid_u32 {
@@ -638,40 +680,10 @@ impl BrowserPlatform for LinuxBrowserPlatform {
             });
         }
 
-        let window = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid_u32))
-                .into_iter()
-                .find(|window| window.xid == window_id)
-        })
-        .await
-        .ok()
-        .flatten()
-        .ok_or_else(|| {
-            refusal(
-                BrowserRefusalCode::BrowserBindingStale,
-                format!("X11 window {window_id} is not owned by pid {pid}"),
-            )
-        })?;
-        Ok(NativeWindowInfo {
-            pid,
-            window_id,
-            title: window.title,
-            bounds: Rect::new(
-                f64::from(window.x),
-                f64::from(window.y),
-                f64::from(window.width),
-                f64::from(window.height),
-            ),
-            geometry_exact: true,
-            ownership: NativeOwnershipProof {
-                method: NativeOwnershipMethod::PlatformAttested,
-                owner_pid: pid,
-                detail: Some(
-                    "X11 _NET_WM_PID corroborated independently by the owned endpoint pid"
-                        .to_owned(),
-                ),
-            },
-        })
+        Err(refusal(
+            BrowserRefusalCode::BrowserBindingStale,
+            format!("X11 window {window_id} is not owned by pid {pid}"),
+        ))
     }
 
     async fn is_only_exact_native_window(
@@ -685,6 +697,23 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 format!("pid {pid} is outside the Linux process-id range"),
             )
         })?;
+        let x11_owned = tokio::task::spawn_blocking(move || {
+            crate::x11::list_windows(Some(pid_u32))
+                .into_iter()
+                .map(|window| window.xid)
+                .collect::<Vec<_>>()
+        })
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not enumerate X11 browser windows: {error}"),
+            )
+        })?;
+        if let Some(singleton) = exact_x11_singleton(&x11_owned, window_id) {
+            return Ok(Some(singleton));
+        }
+
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
             let Some(windows) = crate::wayland::sway_ipc::list_windows() else {
                 if let Some(owned) =
@@ -723,20 +752,7 @@ impl BrowserPlatform for LinuxBrowserPlatform {
                 .collect::<Vec<_>>();
             return Ok(Some(owned.len() == 1 && owned[0] == window_id));
         }
-        let owned = tokio::task::spawn_blocking(move || {
-            crate::x11::list_windows(Some(pid_u32))
-                .into_iter()
-                .map(|window| u64::from(window.xid))
-                .collect::<Vec<_>>()
-        })
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not enumerate X11 browser windows: {error}"),
-            )
-        })?;
-        Ok(Some(owned.len() == 1 && owned[0] == window_id))
+        Ok(Some(false))
     }
 
     async fn discover_owned_endpoint(
@@ -1214,6 +1230,16 @@ mod tests {
         .expect("cleanup worker");
 
         assert!(cleaned);
+    }
+
+    #[test]
+    fn exact_x11_identity_wins_in_mixed_display_sessions() {
+        assert_eq!(exact_x11_singleton(&[0x400004], 0x400004), Some(true));
+        assert_eq!(
+            exact_x11_singleton(&[0x400004, 0x600007], 0x400004),
+            Some(false)
+        );
+        assert_eq!(exact_x11_singleton(&[0x400004], 0x700001), None);
     }
 
     #[test]

@@ -125,32 +125,102 @@ fn get_window_list(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
                     .value32()
                     .map(|iter| iter.collect())
                     .unwrap_or_default();
-                if client_list_property(reply.type_, windows.as_slice()).is_some() {
+                if ewmh_client_list_is_usable(reply.type_, &windows) {
                     return Ok(windows);
                 }
             }
         }
     }
 
-    // No EWMH client-list property means there may be no window manager. In
-    // that case only expose mapped root children; unmapped Electron children
-    // can otherwise be reported before a late-starting WM reparents them.
-    let tree = conn.query_tree(root)?.reply()?;
-    Ok(tree
-        .children
-        .into_iter()
-        .filter(|window| {
-            conn.get_window_attributes(*window)
-                .ok()
-                .and_then(|cookie| cookie.reply().ok())
-                .map(|attributes| fallback_window_is_listable(attributes.map_state))
-                .unwrap_or(false)
-        })
-        .collect())
+    // Rootless XWayland WMs can omit the EWMH client lists, or publish them
+    // while leaving them empty, then reparent each real client beneath a
+    // compositor-owned frame. The same fallback covers bare X. Walk only
+    // bounded, viewable descendants and admit ICCCM client windows with an
+    // exact PID, title, and WM_STATE. This excludes compositor frames, support
+    // windows, and our overlay while avoiding unmapped Electron startup rows.
+    nested_client_windows(conn, root)
 }
 
-fn client_list_property(property_type: Atom, windows: &[Window]) -> Option<&[Window]> {
-    (property_type != x11rb::NONE).then_some(windows)
+fn ewmh_client_list_is_usable(property_type: Atom, windows: &[Window]) -> bool {
+    property_type != x11rb::NONE && !windows.is_empty()
+}
+
+const MAX_FALLBACK_TREE_DEPTH: usize = 8;
+const MAX_FALLBACK_TREE_WINDOWS: usize = 4096;
+
+fn nested_client_windows(conn: &RustConnection, root: Window) -> Result<Vec<Window>> {
+    let root_children = conn.query_tree(root)?.reply()?.children;
+    if !fallback_tree_within_budget(0, 0, root_children.len()) {
+        anyhow::bail!(
+            "X11 fallback tree exceeds the {MAX_FALLBACK_TREE_WINDOWS}-window discovery limit"
+        );
+    }
+    let wm_state = get_atom(conn, "WM_STATE")?;
+    let mut pending = root_children
+        .into_iter()
+        .rev()
+        .map(|window| (window, 1_usize))
+        .collect::<Vec<_>>();
+    let mut visited = 0_usize;
+    let mut clients = Vec::new();
+
+    while let Some((window, depth)) = pending.pop() {
+        visited += 1;
+        if !window_is_viewable(conn, window) {
+            continue;
+        }
+        if fallback_window_is_client(conn, window, wm_state) {
+            clients.push(window);
+            continue;
+        }
+        if depth >= MAX_FALLBACK_TREE_DEPTH {
+            continue;
+        }
+        if let Ok(tree) = conn.query_tree(window)?.reply() {
+            if !fallback_tree_within_budget(visited, pending.len(), tree.children.len()) {
+                anyhow::bail!(
+                    "X11 fallback tree exceeds the {MAX_FALLBACK_TREE_WINDOWS}-window discovery limit"
+                );
+            }
+            pending.extend(
+                tree.children
+                    .into_iter()
+                    .rev()
+                    .map(|child| (child, depth + 1)),
+            );
+        }
+    }
+
+    Ok(clients)
+}
+
+fn fallback_tree_within_budget(visited: usize, pending: usize, additional: usize) -> bool {
+    visited
+        .checked_add(pending)
+        .and_then(|known| known.checked_add(additional))
+        .is_some_and(|known| known <= MAX_FALLBACK_TREE_WINDOWS)
+}
+
+fn window_is_viewable(conn: &RustConnection, window: Window) -> bool {
+    conn.get_window_attributes(window)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|attributes| fallback_window_is_listable(attributes.map_state))
+}
+
+fn fallback_window_is_client(conn: &RustConnection, window: Window, wm_state: Atom) -> bool {
+    let has_pid = get_window_pid(conn, window).ok().flatten().is_some();
+    let has_title = get_window_title(conn, window).is_ok_and(|title| !title.trim().is_empty());
+    let has_wm_state = conn
+        .get_property(false, window, wm_state, AtomEnum::ANY, 0, 2)
+        .ok()
+        .and_then(|cookie| cookie.reply().ok())
+        .is_some_and(|reply| reply.type_ != x11rb::NONE);
+    fallback_client_is_eligible(has_pid, has_title, has_wm_state)
+}
+
+fn fallback_client_is_eligible(has_pid: bool, has_title: bool, has_wm_state: bool) -> bool {
+    has_pid && has_title && has_wm_state
 }
 
 fn fallback_window_is_listable(map_state: MapState) -> bool {
@@ -319,13 +389,127 @@ mod tests {
     use super::*;
 
     #[test]
-    fn empty_present_client_list_does_not_fall_back_to_query_tree() {
-        assert_eq!(client_list_property(1, &[]), Some([].as_slice()));
+    #[ignore = "requires a live X11 server"]
+    fn live_nested_client_fallback_lists_reparented_client() {
+        use x11rb::protocol::xproto::ConnectionExt as _;
+        use x11rb::wrapper::ConnectionExt as _;
+
+        let (conn, screen_num) = RustConnection::connect(None).expect("connect to X11 fixture");
+        let screen = &conn.setup().roots[screen_num];
+        let frame = conn.generate_id().expect("generate frame window id");
+        let client = conn.generate_id().expect("generate client window id");
+
+        conn.create_window(
+            screen.root_depth,
+            frame,
+            screen.root,
+            20,
+            20,
+            360,
+            240,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new().background_pixel(screen.black_pixel),
+        )
+        .expect("create frame request")
+        .check()
+        .expect("create frame");
+        conn.create_window(
+            screen.root_depth,
+            client,
+            frame,
+            4,
+            4,
+            320,
+            200,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            screen.root_visual,
+            &CreateWindowAux::new().background_pixel(screen.white_pixel),
+        )
+        .expect("create client request")
+        .check()
+        .expect("create client");
+
+        let pid_atom = get_atom(&conn, "_NET_WM_PID").expect("intern pid atom");
+        let name_atom = get_atom(&conn, "_NET_WM_NAME").expect("intern name atom");
+        let utf8_atom = get_atom(&conn, "UTF8_STRING").expect("intern UTF8 atom");
+        let wm_state = get_atom(&conn, "WM_STATE").expect("intern WM_STATE atom");
+        conn.change_property32(
+            PropMode::REPLACE,
+            client,
+            pid_atom,
+            AtomEnum::CARDINAL,
+            &[std::process::id()],
+        )
+        .expect("set client pid");
+        conn.change_property8(
+            PropMode::REPLACE,
+            client,
+            name_atom,
+            utf8_atom,
+            b"nested-client-fixture",
+        )
+        .expect("set client title");
+        conn.change_property32(
+            PropMode::REPLACE,
+            client,
+            wm_state,
+            wm_state,
+            &[1, x11rb::NONE],
+        )
+        .expect("set client WM_STATE");
+
+        let stacking = get_atom(&conn, "_NET_CLIENT_LIST_STACKING").expect("intern stacking atom");
+        let client_list = get_atom(&conn, "_NET_CLIENT_LIST").expect("intern client-list atom");
+        conn.change_property32(
+            PropMode::REPLACE,
+            screen.root,
+            stacking,
+            AtomEnum::WINDOW,
+            &[],
+        )
+        .expect("publish empty stacking list");
+        conn.delete_property(screen.root, client_list)
+            .expect("remove client list");
+        conn.map_window(client).expect("map client");
+        conn.map_window(frame).expect("map frame");
+        conn.flush().expect("flush fixture");
+        conn.get_input_focus()
+            .expect("fixture sync request")
+            .reply()
+            .expect("fixture sync reply");
+
+        let windows = list_windows(Some(std::process::id()));
+        assert_eq!(windows.len(), 1, "only the nested ICCCM client is listable");
+        assert_eq!(windows[0].xid, u64::from(client));
+        assert_eq!(windows[0].title, "nested-client-fixture");
+        assert!(windows[0].is_on_screen);
     }
 
     #[test]
-    fn absent_client_list_allows_query_tree_fallback() {
-        assert_eq!(client_list_property(x11rb::NONE, &[]), None);
+    fn nested_client_fallback_is_strictly_bounded() {
+        assert_eq!(MAX_FALLBACK_TREE_DEPTH, 8);
+        assert_eq!(MAX_FALLBACK_TREE_WINDOWS, 4096);
+        assert!(fallback_tree_within_budget(1, 4094, 1));
+        assert!(!fallback_tree_within_budget(1, 4094, 2));
+        assert!(!fallback_tree_within_budget(usize::MAX, 0, 1));
+    }
+
+    #[test]
+    fn empty_or_absent_ewmh_client_lists_require_fallback_discovery() {
+        assert!(!ewmh_client_list_is_usable(1, &[]));
+        assert!(!ewmh_client_list_is_usable(x11rb::NONE, &[0x400004]));
+        assert!(ewmh_client_list_is_usable(1, &[0x400004]));
+    }
+
+    #[test]
+    fn nested_client_fallback_requires_exact_client_metadata() {
+        assert!(fallback_client_is_eligible(true, true, true));
+        assert!(!fallback_client_is_eligible(false, true, true));
+        assert!(!fallback_client_is_eligible(true, false, true));
+        assert!(!fallback_client_is_eligible(true, true, false));
     }
 
     #[test]

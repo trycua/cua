@@ -50,6 +50,22 @@ pub fn refusal_envelope_schema() -> Value {
 /// agent.
 pub const TOOL_INVOCATION_FAILED_CODE: &str = "tool_invocation_failed";
 
+/// Keys that make a payload recognisable to the refusal arm of
+/// [`advertised_output_schema`].
+const REFUSAL_MARKER_KEYS: [&str; 3] = ["refusal", "status", "code"];
+
+/// Whether a payload already satisfies the refusal arm of
+/// [`advertised_output_schema`].
+pub fn is_refusal_envelope(value: &Value) -> bool {
+    value.as_object().is_some_and(has_refusal_marker)
+}
+
+fn has_refusal_marker(object: &Map<String, Value>) -> bool {
+    REFUSAL_MARKER_KEYS
+        .iter()
+        .any(|marker| object.contains_key(*marker))
+}
+
 /// Guarantee a structured error payload is recognisable as a refusal.
 ///
 /// Inserts [`TOOL_INVOCATION_FAILED_CODE`] when the payload carries none of the
@@ -68,10 +84,7 @@ pub fn conforming_error_envelope(structured: Value) -> Value {
             object
         }
     };
-    if !["refusal", "status", "code"]
-        .iter()
-        .any(|marker| object.contains_key(*marker))
-    {
+    if !has_refusal_marker(&object) {
         object.insert(
             "code".into(),
             Value::String(TOOL_INVOCATION_FAILED_CODE.into()),

@@ -27,7 +27,9 @@ use cua_driver_core::server::{
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
-use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin};
+use crate::serve::{
+    is_daemon_listening, send_request, DaemonRequest, DaemonResponse, ToolObservationOrigin,
+};
 
 /// Run stdio MCP directly over an SDK-owned runtime.
 ///
@@ -774,46 +776,48 @@ async fn forward_tool_call(
         Ok(Ok(r)) => r,
     };
 
-    if !resp.ok {
-        // MCP separates two failure modes:
-        //   - JSON-RPC errors → `Response::error(...)`, used for
-        //     transport / protocol failures (unknown method, bad
-        //     params shape, server crash).
-        //   - Tool-level errors → `Response::ok(...)` carrying a
-        //     `CallTool.Result` with `isError: true` and the error
-        //     message in `content[]`. The tool ran, returned a
-        //     well-formed result that says "I failed."
-        //
-        // A non-`ok` daemon response means the tool call reached the
-        // daemon and the daemon decided the tool returned an error
-        // (or rejected the call). That's tool-level, not transport-
-        // level, so the core protocol surfaces it as `Response::ok` with
-        // `isError: true`. Mirror that shape here — CodeRabbit #2.
+    Response::ok(id, daemon_response_to_tool_result(&name, resp))
+}
+
+/// Translate one `DaemonResponse` into the `CallTool.Result` the MCP client
+/// receives.
+///
+/// MCP separates two failure modes:
+///   - JSON-RPC errors → `Response::error(...)`, used for transport /
+///     protocol failures (unknown method, bad params shape, server crash).
+///     Those are handled by the caller, above.
+///   - Tool-level errors → `Response::ok(...)` carrying a `CallTool.Result`
+///     with `isError: true` and the error message in `content[]`. The tool
+///     ran, returned a well-formed result that says "I failed."
+///
+/// A non-`ok` daemon response means the tool call reached the daemon and the
+/// daemon decided the tool returned an error (or rejected the call). That's
+/// tool-level, not transport-level, so the core protocol surfaces it as
+/// `Response::ok` with `isError: true`. Mirror that shape here — CodeRabbit #2.
+///
+/// Every branch — including the empty result synthesised for an `ok` response
+/// that carries none — leaves through the same boundary the direct dispatch
+/// uses, so a daemon-backed call is held to the tool's advertised
+/// `outputSchema` exactly as a direct one is.
+fn daemon_response_to_tool_result(name: &str, resp: DaemonResponse) -> serde_json::Value {
+    let result = if resp.ok {
+        resp.result.unwrap_or_else(|| {
+            serde_json::json!({
+                "content": [],
+                "isError": false
+            })
+        })
+    } else {
         let msg = resp
             .error
             .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
-        // MCP validates this payload against the tool's advertised
-        // `outputSchema`, so the bare `exit_code` diagnostic is normalized into
-        // the refusal arm. Otherwise a strict client rejects the response and
-        // `msg` never reaches the agent.
-        let result = serde_json::json!({
-            "content": [{ "type": "text", "text": msg }],
-            "isError": true,
-            "structuredContent": cua_driver_core::conforming_error_envelope(
-                serde_json::json!({ "exit_code": exit_code })
-            )
-        });
-        return Response::ok(id, result);
-    }
-
-    let result = resp.result.unwrap_or_else(|| {
-        serde_json::json!({
-            "content": [],
-            "isError": false
-        })
-    });
-    Response::ok(id, result)
+        cua_driver_core::mcp_result::tool_error_result(
+            msg,
+            serde_json::json!({ "exit_code": exit_code }),
+        )
+    };
+    cua_driver_core::mcp_result::conforming_tool_result(name, result)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -825,7 +829,6 @@ async fn forward_tool_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serve::DaemonResponse;
 
     #[tokio::test]
     async fn proxy_loop_returns_promptly_on_clean_eof() {
@@ -882,22 +885,11 @@ mod tests {
         assert!(response.get("result").is_some());
     }
 
-    /// Reconstruct the `!resp.ok` branch in isolation so we can assert
-    /// on the serialized shape without spinning up a real daemon /
-    /// tokio runtime. Keep this in sync with `forward_tool_call`.
-    fn build_tool_error_response(id: serde_json::Value, resp: DaemonResponse) -> Response {
-        let msg = resp
-            .error
-            .unwrap_or_else(|| "daemon reported failure".into());
-        let exit_code = resp.exit_code.unwrap_or(1);
-        let result = serde_json::json!({
-            "content": [{ "type": "text", "text": msg }],
-            "isError": true,
-            "structuredContent": cua_driver_core::conforming_error_envelope(
-                serde_json::json!({ "exit_code": exit_code })
-            )
-        });
-        Response::ok(id, result)
+    /// Serialize the production conversion the way the proxy answers it, so
+    /// these assertions run against `forward_tool_call`'s own branch without
+    /// spinning up a real daemon.
+    fn tool_call_response(id: serde_json::Value, resp: DaemonResponse) -> Response {
+        Response::ok(id, daemon_response_to_tool_result("click", resp))
     }
 
     #[test]
@@ -908,7 +900,7 @@ mod tests {
             error: Some("missing required field `pid`".into()),
             exit_code: Some(64),
         };
-        let resp = build_tool_error_response(serde_json::json!(7), daemon_resp);
+        let resp = tool_call_response(serde_json::json!(7), daemon_resp);
         let value = serde_json::to_value(&resp).expect("serialize");
 
         // Top-level JSON-RPC envelope: success (`result`), not error.
@@ -946,7 +938,7 @@ mod tests {
             error: None,
             exit_code: None,
         };
-        let resp = build_tool_error_response(serde_json::json!("abc"), daemon_resp);
+        let resp = tool_call_response(serde_json::json!("abc"), daemon_resp);
         let value = serde_json::to_value(&resp).expect("serialize");
         assert_eq!(value["result"]["isError"], serde_json::json!(true));
         assert_eq!(
@@ -958,6 +950,51 @@ mod tests {
             value["result"]["structuredContent"]["code"],
             cua_driver_core::TOOL_INVOCATION_FAILED_CODE
         );
+    }
+
+    /// An `ok` daemon response that carries no result used to be forwarded as
+    /// an empty success. For a tool that declares an `outputSchema` that is a
+    /// response a strict client rejects outright (`-32600`), so the boundary
+    /// converts it into an error the client can actually read.
+    #[test]
+    fn an_ok_daemon_response_with_no_result_becomes_a_conforming_error() {
+        let daemon_resp = DaemonResponse {
+            ok: true,
+            result: None,
+            error: None,
+            exit_code: None,
+        };
+
+        let result = daemon_response_to_tool_result("click", daemon_resp);
+
+        assert_eq!(result["isError"], serde_json::json!(true));
+        assert_eq!(
+            result["structuredContent"]["code"],
+            cua_driver_core::mcp_result::TOOL_OUTPUT_INVALID_CODE
+        );
+    }
+
+    /// A daemon result that already conforms is forwarded untouched.
+    #[test]
+    fn a_conforming_daemon_success_is_forwarded_unchanged() {
+        let result = serde_json::json!({
+            "content": [{ "type": "text", "text": "clicked" }],
+            "isError": false,
+            "structuredContent": {
+                "effect": "confirmed",
+                "route": "accessibility",
+                "delivery": { "mode": "background" },
+                "evidence": [{ "kind": "value_readback" }],
+            },
+        });
+        let daemon_resp = DaemonResponse {
+            ok: true,
+            result: Some(result.clone()),
+            error: None,
+            exit_code: None,
+        };
+
+        assert_eq!(daemon_response_to_tool_result("click", daemon_resp), result);
     }
 
     #[test]

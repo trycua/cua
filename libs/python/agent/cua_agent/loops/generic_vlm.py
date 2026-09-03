@@ -23,6 +23,13 @@ from ..responses import (
     make_reasoning_item,
 )
 from ..types import AgentCapability
+from .yutori_n2 import (
+    convert_yutori_n2_tool_call_to_completion_tool_calls,
+    parse_yutori_n2_tool_calls_from_text,
+    strip_parsed_yutori_n2_tool_calls_from_text,
+)
+
+_YUTORI_N2_SKIPPED_TOOL_CALL_MESSAGE = "Skipped malformed Yutori N2 tool call."
 
 # ComputerUse tool schema (OpenAI function tool format)
 QWEN3_COMPUTER_TOOL: Dict[str, Any] = {
@@ -151,6 +158,31 @@ async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -
     y_abs = max(0.0, min(height, (y / 1000.0) * height))
     args = {**args, "coordinate": [round(x_abs), round(y_abs)]}
     return args
+
+
+async def _get_computer_dimensions(computer_handler) -> Optional[Tuple[int, int]]:
+    if computer_handler is None:
+        return None
+
+    try:
+        if hasattr(computer_handler, "get_dimensions"):
+            dimensions = await computer_handler.get_dimensions()
+        elif hasattr(computer_handler, "interface") and hasattr(
+            computer_handler.interface, "get_screen_size"
+        ):
+            dimensions = await computer_handler.interface.get_screen_size()
+        else:
+            return None
+
+        if isinstance(dimensions, dict):
+            width = dimensions.get("width")
+            height = dimensions.get("height")
+        else:
+            width, height = dimensions
+
+        return int(width), int(height)
+    except Exception:
+        return None
 
 
 def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
@@ -426,80 +458,141 @@ class GenericVlmConfig(AsyncAgentConfig):
         if reasoning_text:
             output_items.append(make_reasoning_item(reasoning_text))
 
-        # Priority 1: Try to parse tool call from content text (OpenRouter format)
-        tool_call = _parse_tool_call_from_text(content_text)
+        yutori_n2_tool_calls = (
+            parse_yutori_n2_tool_calls_from_text(content_text)
+            if model.startswith("yutori/")
+            else []
+        )
 
-        if tool_call and isinstance(tool_call, dict):
-            fn_name = tool_call.get("name") or "computer"
-            raw_args = tool_call.get("arguments") or {}
-            # Unnormalize coordinates to actual screen size using last resized dims
-            if last_rw is None or last_rh is None:
-                raise RuntimeError(
-                    "No screenshots found to derive dimensions for coordinate unnormalization."
-                )
-            args = await _unnormalize_coordinate(raw_args, (last_rw, last_rh))
-
-            # Build an OpenAI-style tool call so we can reuse the converter
-            fake_cm = {
-                "role": "assistant",
-                "tool_calls": [
-                    {
-                        "type": "function",
-                        "id": "call_0",
-                        "function": {
-                            "name": fn_name,
-                            "arguments": json.dumps(args),
-                        },
-                    }
-                ],
-            }
-            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
-        elif tool_calls_array:
-            # Priority 2: Use tool_calls field if present (Ollama Cloud format)
-            # Process and unnormalize coordinates in tool calls
+        if yutori_n2_tool_calls:
             processed_tool_calls = []
-            for tc in tool_calls_array:
-                function = tc.get("function", {})
-                fn_name = function.get("name", "computer")
-                args_str = function.get("arguments", "{}")
+            call_index = 0
+            yutori_n2_dimensions = await _get_computer_dimensions(computer_handler)
+            if yutori_n2_dimensions is None and last_rw is not None and last_rh is not None:
+                yutori_n2_dimensions = (last_rw, last_rh)
 
-                try:
-                    args = json.loads(args_str)
+            for parsed_tool_call in yutori_n2_tool_calls:
+                expanded_tool_calls = convert_yutori_n2_tool_call_to_completion_tool_calls(
+                    parsed_tool_call,
+                    dimensions=yutori_n2_dimensions,
+                )
+                if not expanded_tool_calls:
+                    continue
 
-                    # Unnormalize coordinates if present
-                    if "coordinate" in args and last_rw is not None and last_rh is not None:
-                        args = await _unnormalize_coordinate(args, (last_rw, last_rh))
-
-                    # Convert Qwen format to Computer Calls format if this is a computer tool
-                    if fn_name == "computer":
-                        converted_action = convert_qwen_tool_args_to_computer_action(args)
-                        if converted_action:
-                            args = converted_action
-
+                for expanded_tool_call in expanded_tool_calls:
                     processed_tool_calls.append(
                         {
-                            "type": tc.get("type", "function"),
-                            "id": tc.get("id", "call_0"),
+                            "type": "function",
+                            "id": f"call_{call_index}",
+                            "function": {
+                                "name": expanded_tool_call["name"],
+                                "arguments": json.dumps(expanded_tool_call["arguments"]),
+                            },
+                        }
+                    )
+                    call_index += 1
+
+            if processed_tool_calls:
+                assistant_text = strip_parsed_yutori_n2_tool_calls_from_text(
+                    content_text, yutori_n2_tool_calls
+                )
+                if assistant_text:
+                    output_items.extend(
+                        convert_completion_messages_to_responses_items(
+                            [{"role": "assistant", "content": assistant_text}]
+                        )
+                    )
+
+                fake_cm = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": processed_tool_calls,
+                }
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+            else:
+                assistant_text = strip_parsed_yutori_n2_tool_calls_from_text(
+                    content_text, yutori_n2_tool_calls
+                )
+                fake_cm = {
+                    "role": "assistant",
+                    "content": assistant_text or _YUTORI_N2_SKIPPED_TOOL_CALL_MESSAGE,
+                }
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+        else:
+            # Priority 1: Try to parse tool call from content text (OpenRouter format)
+            tool_call = _parse_tool_call_from_text(content_text)
+
+            if tool_call and isinstance(tool_call, dict):
+                fn_name = tool_call.get("name") or "computer"
+                raw_args = tool_call.get("arguments") or {}
+                # Unnormalize coordinates to actual screen size using last resized dims
+                if last_rw is None or last_rh is None:
+                    raise RuntimeError(
+                        "No screenshots found to derive dimensions for coordinate unnormalization."
+                    )
+                args = await _unnormalize_coordinate(raw_args, (last_rw, last_rh))
+
+                # Build an OpenAI-style tool call so we can reuse the converter
+                fake_cm = {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {
+                            "type": "function",
+                            "id": "call_0",
                             "function": {
                                 "name": fn_name,
                                 "arguments": json.dumps(args),
                             },
                         }
-                    )
-                except json.JSONDecodeError:
-                    # Keep original if parsing fails
-                    processed_tool_calls.append(tc)
+                    ],
+                }
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+            elif tool_calls_array:
+                # Priority 2: Use tool_calls field if present (Ollama Cloud format)
+                # Process and unnormalize coordinates in tool calls
+                processed_tool_calls = []
+                for tc in tool_calls_array:
+                    function = tc.get("function", {})
+                    fn_name = function.get("name", "computer")
+                    args_str = function.get("arguments", "{}")
 
-            fake_cm = {
-                "role": "assistant",
-                "content": content_text if content_text else "",
-                "tool_calls": processed_tool_calls,
-            }
-            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
-        else:
-            # No tool calls found in either format, return text response
-            fake_cm = {"role": "assistant", "content": content_text}
-            output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+                    try:
+                        args = json.loads(args_str)
+
+                        # Unnormalize coordinates if present
+                        if "coordinate" in args and last_rw is not None and last_rh is not None:
+                            args = await _unnormalize_coordinate(args, (last_rw, last_rh))
+
+                        # Convert Qwen format to Computer Calls format if this is a computer tool
+                        if fn_name == "computer":
+                            converted_action = convert_qwen_tool_args_to_computer_action(args)
+                            if converted_action:
+                                args = converted_action
+
+                        processed_tool_calls.append(
+                            {
+                                "type": tc.get("type", "function"),
+                                "id": tc.get("id", "call_0"),
+                                "function": {
+                                    "name": fn_name,
+                                    "arguments": json.dumps(args),
+                                },
+                            }
+                        )
+                    except json.JSONDecodeError:
+                        # Keep original if parsing fails
+                        processed_tool_calls.append(tc)
+
+                fake_cm = {
+                    "role": "assistant",
+                    "content": content_text if content_text else "",
+                    "tool_calls": processed_tool_calls,
+                }
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+            else:
+                # No tool calls found in either format, return text response
+                fake_cm = {"role": "assistant", "content": content_text}
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
 
         # Prepend any pre_output_items (e.g., simulated screenshot-taking message)
         return {"output": (pre_output_items + output_items), "usage": usage}

@@ -38,6 +38,7 @@ class YutoriAdapter(CustomLLM):
     def _build_params(self, kwargs: dict) -> dict:
         """Build parameters for the inner litellm call."""
         model = self._normalize_model(kwargs.get("model", ""))
+        api_base = kwargs.get("api_base") or self.base_url
         api_key = self._resolve_api_key(kwargs)
 
         extra_headers = {}
@@ -48,7 +49,7 @@ class YutoriAdapter(CustomLLM):
         params = {
             "model": f"openai/{model}",
             "messages": kwargs.get("messages", []),
-            "api_base": self.base_url,
+            "api_base": api_base,
             "api_key": api_key,
             "extra_headers": extra_headers,
             "stream": False,

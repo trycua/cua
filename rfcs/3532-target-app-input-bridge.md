@@ -1,12 +1,20 @@
-# Exact Target-App Input Bridge
+---
+title: Exact target-app input bridge for custom canvases
+authors:
+  - "@0xjohnnydev"
+created: 2026-09-03
+last_updated: 2026-09-03
+status: draft
+discussion: https://github.com/trycua/cua/issues/3532
+rfc_pr:
+implementation: []
+supersedes:
+superseded_by:
+---
 
-**Status:** Proposed implementation plan; no code on this branch yet
+# RFC: Exact Target-App Input Bridge for Custom Canvases
 
-**Base:** `origin/main` at `986b6f257b1afddef0cbd4815bb2744eab7eadba`
-
-**Date:** 2026-09-03
-
-## Goal
+## Summary
 
 Let Cua Driver operate custom canvases such as Blender's 3D Viewport without
 moving the real pointer or activating the target application. The driver keeps
@@ -25,7 +33,7 @@ Ordinary Accessibility, browser, and routed native input remain available.
 The bridge is an exact app-owned route inside the existing background-input
 ladder, not a second fallback system and not permission to activate an app.
 
-## Why this route is needed
+## Motivation
 
 The existing exact macOS background-input work intentionally does not promise
 support for games, Metal surfaces, or custom event loops. Those applications
@@ -54,13 +62,14 @@ event-loop route, not a universal implementation:
 The universal work should port the useful seam, not merge or extend that branch
 as-is.
 
-## Product boundary
-
-### What users get
+## Goals
 
 - The normal `click`, `drag`, `scroll`, `press_key`, `hotkey`, and `type_text`
   tools can select an app-owned route when the exact requested window
   advertises the needed capability.
+- The existing Agent Cursor follows the resolved app-local point and remains
+  aligned with the target window even when the application does not consume
+  operating-system pointer events.
 - The target can remain behind another application. The foreground
   application, physical pointer, window order, and current Space are not
   changed as implementation details.
@@ -71,7 +80,7 @@ as-is.
   They do not partially execute through the bridge and then retry through a
   different actuator.
 
-### What this does not promise
+## Non-goals
 
 - No injection into an arbitrary unmodified application that rejects the
   operating system's available background routes.
@@ -86,7 +95,63 @@ as-is.
 - No framework auto-detection by window title, process name, or geometry.
   An adapter must identify itself and the exact windows it owns.
 
-## Architecture
+## Terminology
+
+- **Target-app bridge:** the driver-owned protocol and routing contract between
+  Cua Driver and an adapter inside or explicitly loaded by a target app.
+- **Adapter:** thin app- or framework-specific code that translates typed Cua
+  input into that application's supported event API.
+- **App-owned route:** delivery through the target's event queue or input model,
+  rather than a process-routed operating-system event.
+- **Exact window:** one live operating-system window bound by process identity,
+  process generation, native window identifier, adapter window token, and
+  current coordinate revision.
+- **Agent Cursor:** Cua's visual cursor overlay. It shows the agent's resolved
+  point but does not itself deliver application input.
+
+## Current state
+
+Current `main` implements conservative exact-target background routing for
+Accessibility, browsers, native window-local pointers, and narrowly gated
+process keyboard input. It deliberately has no guarantee for custom event
+loops. The pure planner chooses one actuator or refuses, and the macOS shell
+serializes mutations per process.
+
+The Blender prototype adds a process-owned Unix socket and queues clicks through
+Blender's own event API. Its useful seam is app-owned delivery; its
+click-specific discovery, direct demo keyboard client, and branch ancestry are
+not the proposed production design.
+
+## Compatibility research
+
+The following rows identify likely compatibility gaps and supported in-process
+conversion seams. Except for Blender, these are **source or bundle inspection
+only**, not live Cua Driver results.
+
+| App or framework family | Why ordinary background input may miss | Candidate adapter seam | Current evidence |
+| --- | --- | --- | --- |
+| Blender | Its custom editor event loop discarded the process-routed pointer path used by the driver | Blender's documented [`Window.event_simulate`](https://docs.blender.org/api/current/bpy.types.Window.html#bpy.types.Window.event_simulate) on its main thread | Production click observed on the prototype branch |
+| FreeCAD, OpenSCAD, IDA, and other Qt/OpenGL tools | Canvas widgets may consume Qt or renderer-local events rather than a process-level macOS event | A loaded Qt adapter can map the native window to a `QObject` and use [`QCoreApplication::postEvent`](https://doc.qt.io/qt-6/qcoreapplication.html#postEvent); this machine's app bundles confirm Qt in those three applications | Bundle and API inspection only |
+| Godot editor and Godot applications | The engine owns propagation into viewports and game nodes | [`Input.parse_input_event`](https://docs.godotengine.org/en/stable/classes/class_input.html#class-input-method-parse-input-event) feeds an event into the game without moving the operating-system cursor | Official API inspection only |
+| Unity editor extensions and Unity applications using the Input System | Input is integrated into engine device state on frame updates | [`InputSystem.QueueEvent`](https://docs.unity3d.com/Packages/com.unity.inputsystem@1.14/manual/Events.html) queues an event for a later input update | Official API inspection only |
+| SDL applications and games | Apps poll SDL's queue or device state rather than accepting a native event sent to the process | [`SDL_PushEvent`](https://wiki.libsdl.org/SDL3/SDL_PushEvent) feeds the queue and preserves event filters | Official API inspection only; SDL warns that pushed device events do not change device state |
+| Dear ImGui tools | The UI is driven from an immediate-mode input queue rebuilt each frame | The official backend contract accepts `AddMousePosEvent`, `AddMouseButtonEvent`, `AddMouseWheelEvent`, `AddKeyEvent`, and text input through [`ImGuiIO`](https://github.com/ocornut/imgui/blob/master/docs/BACKENDS.md) | Official source inspection only |
+| Java AWT/Swing custom canvases | Input targets Java components on the AWT dispatch thread | [`EventQueue.postEvent`](https://docs.oracle.com/en/java/javase/25/docs/api/java.desktop/java/awt/EventQueue.html#postEvent(java.awt.AWTEvent)) with an exact component source | Official API inspection only |
+| Electron and browser canvas/WebGL | Native Accessibility may be sparse even though the renderer has an exact browser target | Keep the existing exact browser/CDP route ahead of the bridge; use an adapter only for native modules the browser route cannot express | Existing driver architecture; no new bridge evidence |
+| Hardened proprietary creative apps with no plug-in API | The app may reject synthetic events and offer no supported in-process integration point | No universal hook is claimed; use an existing exact route or refuse | Compatibility boundary, not a tested failure |
+
+This research changes one part of the protocol design: adapters must declare a
+delivery model, not only an action name. `event_queue` means handlers may see an
+event, while `device_state` means polling APIs also observe the corresponding
+state. SDL demonstrates why the driver cannot treat those as equivalent.
+
+The first adapters should be Blender and a small repository fixture, followed
+by Qt or Dear ImGui. Qt covers several installed creative/developer tools;
+Dear ImGui has the cleanest cross-platform input conversion surface. Live app
+support still requires the app to load the adapter and pass the conformance
+suite.
+
+## Proposal
 
 ### 1. Put typed protocol data in the functional core
 
@@ -100,6 +165,7 @@ TargetAppCapabilities
 TargetAppInputAction
 TargetAppDispatchDisposition
 TargetAppEffectEvidence
+TargetAppCursorTransform
 ```
 
 The core validates version negotiation, capability/action agreement, target
@@ -139,6 +205,7 @@ An illustrative description is:
     }
   ],
   "capabilities": {
+    "delivery_model": "event_queue",
     "pointer": {
       "click": {
         "buttons": ["left", "right", "middle"],
@@ -159,6 +226,12 @@ Protocol types should use integer pixel or logical coordinates with an
 explicit origin and scale. They should not assume all frameworks use AppKit
 window coordinates. A driver conversion is valid only when the adapter's
 fresh logical size and scale match the exact target's validated frame.
+
+The binding also publishes a content rectangle and transform used by both
+input and Agent Cursor rendering. The driver converts the requested point once,
+then gives the app-owned route and cursor overlay the same resolved local and
+screen coordinates. A stale transform refuses input rather than showing the
+cursor in one place and acting in another.
 
 ### 3. Bind the adapter to one exact live window
 
@@ -284,6 +357,13 @@ Add `MacosTargetAppBridge` as an exhaustive internal action transport and map
 it to the existing public `system_api` route. Keep the closed public
 `ActionResult` shape unchanged.
 
+Agent Cursor updates remain in the driver's existing visualization path. An
+adapter does not draw another cursor and does not gain access to session overlay
+state. For an exact app-owned pointer action, the selected route commits the
+fresh cursor transform and dispatch record together under the same per-process
+lease. A rejected or stale target does not animate a misleading successful
+click.
+
 ### 7. Keep discovery independent from pixels
 
 The prototype currently reaches adapter discovery through pixel-frame code.
@@ -303,7 +383,7 @@ This separation prevents an input-only workflow from causing a screen-recording
 permission prompt. It does not claim that Agent View can show fresh pixels
 without an authorized observation path.
 
-### 8. Authenticate both ends and bound the protocol
+## Security, privacy, and telemetry
 
 The Blender prototype already rejects non-sockets, wrong owner users, loose
 filesystem modes, and a kernel peer process that differs from the target. The
@@ -333,6 +413,11 @@ contract, the first release should require a Cua-provided launcher rather than
 weakening authentication. That is a product limitation to surface, not a
 reason to accept an unauthenticated local control socket.
 
+Adapter telemetry may contain adapter identifier/version, capability names,
+input kind, disposition, timing, and stable refusal code. It must not contain
+typed text, window titles, control values, screenshots, raw payloads, or
+application documents.
+
 ## Adapter model
 
 The driver contract is shared; event-loop integration is necessarily specific.
@@ -355,7 +440,37 @@ Do not advertise a framework row until its adapter passes the same exact-window,
 foreground-preservation, negative-control, and crash tests as the repository
 fixture.
 
-## Staged implementation
+## Alternatives considered
+
+### Continue adding operating-system injection recipes
+
+This keeps each change inside the platform adapter, but cannot make a custom
+event loop consume an event it intentionally ignores. It also accumulates
+framework guesses and private focus behavior without giving the target app a
+stable exact-window contract.
+
+### Ship a Blender-only helper
+
+This is the shortest path to the observed demo, but leaves every new app to
+invent discovery, authentication, coordinates, action semantics, and result
+reporting. The prototype should become the first adapter, not the architecture.
+
+### Inject one universal dynamic library into arbitrary apps
+
+A loaded shim can intercept common framework functions without app changes,
+but universal binary injection conflicts with hardened runtime, library
+validation, sandboxing, runtime versions, and application support contracts.
+It also makes Cua responsible for safely patching unrelated processes. The
+proposal permits explicit, app-authorized adapter loading but does not make
+covert library injection the default compatibility mechanism.
+
+### Activate, interact, and restore
+
+This can use ordinary input but visibly races the user, changes keyboard
+destination, and cannot reliably restore application state. It remains an
+explicit foreground mode, never a background compatibility fallback.
+
+## Implementation plan
 
 ### PR 1: Protocol, discovery, and production Blender click
 
@@ -366,6 +481,8 @@ fixture.
 - Port Blender `click` from `7fc9dcda7` through the typed route.
 - Add a repository-owned two-window custom-canvas fixture and an adapter
   conformance harness.
+- Route Agent Cursor visualization through the same exact window transform as
+  adapter input.
 - Keep `drag`, `scroll`, keyboard, and text capability variants defined only if
   the first implementation can validate them without widening the PR. Otherwise
   reserve protocol feature identifiers rather than shipping dead handlers.
@@ -392,7 +509,9 @@ fixture.
 Minimized, hidden, and other-Space support is separate work. It must not enter
 these stages merely because an adapter appears capable of queueing an event.
 
-## Definition of Done
+## Test and acceptance plan
+
+### Definition of Done
 
 The universal mode is ready to advertise only when all of these are true:
 
@@ -404,6 +523,8 @@ The universal mode is ready to advertise only when all of these are true:
   only the requested macOS window.
 - [ ] Foreground application, key window, physical pointer, window order, and
   current Space remain unchanged during covered background actions.
+- [ ] Agent Cursor appears at the same resolved target point used by the
+  adapter across scale factors and does not move the physical pointer.
 - [ ] Adapter discovery and keyboard/text planning do not start screen capture
   or trigger a screen-recording consent prompt.
 - [ ] Click, drag, scroll, key, hotkey, and text either work through declared
@@ -423,7 +544,7 @@ The universal mode is ready to advertise only when all of these are true:
   [PR #3530](https://github.com/trycua/cua/pull/3530), which changes the
   overlapping macOS click, mouse, and private-window route.
 
-## Test and evidence plan
+### Evidence plan
 
 Pure tests should cover protocol decoding, capability/action mismatches,
 payload bounds, target and revision comparison, process-generation changes,
@@ -452,7 +573,20 @@ Native Blender and fixture runs should record:
 The prior Blender recording remains evidence for the prototype and visual
 presentation only. It must not be cited as production keyboard/text proof.
 
-## Known integration risk
+## Compatibility and migration
+
+The bridge is additive and initially disabled unless an authenticated adapter
+describes an exact compatible window. Removing or disabling the adapter returns
+an application to the pre-bridge route ladder without changing request or
+result schemas. Unsupported platforms keep an explicit unavailable capability;
+they do not report a universal route that is not implemented.
+
+Protocol versions negotiate exact compatible ranges. A new semantic field or
+delivery model requires a new version or capability; adapters never ignore an
+unknown field that can change input meaning. The first implementation can be
+rolled back by removing route advertisement while leaving adapters inert.
+
+The main integration risk is concurrent work in the same macOS actuator:
 
 Draft PR #3530 changes the same macOS `click`, mouse, and private SkyLight
 window path that the prototype touched. Universal bridge work should not copy
@@ -461,3 +595,23 @@ fix first where practical, then add bridge capability collection and one-route
 selection around its current behavior. Until that reconciliation and fresh
 native proof exist, this branch is **prepared only**, not a working universal
 mode.
+
+## Unresolved questions
+
+- Should the first release require Cua to launch every adapter, or can an
+  already-running app establish equally strong mutual authentication?
+- Which cross-framework key namespace preserves keyboard-layout and shortcut
+  semantics without exposing platform-native key codes as the contract?
+- What app-owned readback is sufficiently separate from dispatch
+  acknowledgement to count as independent effect evidence?
+- Should the first protocol version ship only click, or include keyboard/text
+  capabilities even if their production routes land in a second PR?
+- Does Agent Cursor update on a proven pre-dispatch refusal, or only after the
+  route commits to dispatch? The default proposal is the latter.
+- Which component owns adapter distribution, compatibility ranges, and updates?
+
+## Decision record
+
+No decision yet. This RFC is a draft for review under
+[issue #3532](https://github.com/trycua/cua/issues/3532). Production routing
+implementation waits for the recorded RFC decision.

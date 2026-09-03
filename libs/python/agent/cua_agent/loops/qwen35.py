@@ -7,7 +7,6 @@ Qwen3-VL agent loop implementation using litellm with function/tool calling.
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Dict, List, Optional, Tuple
 
 import litellm
@@ -23,6 +22,10 @@ from ..responses import (
     make_reasoning_item,
 )
 from ..types import AgentCapability
+from .qwen_xml import (
+    convert_qwen_tool_args_to_computer_action,
+    parse_tool_call_from_text as parse_qwen_tool_call_from_text,
+)
 
 # ComputerUse tool schema (OpenAI function tool format)
 QWEN3_5_COMPUTER_TOOL: Dict[str, Any] = {
@@ -143,39 +146,7 @@ def _parse_tool_call_from_text(text: str) -> Optional[Dict[str, Any]]:
     1. JSON: ``<tool_call>{"name": "computer", "arguments": {...}}</tool_call>``
     2. XML-style (qwen35-4b): ``<tool_call><function=computer><parameter=action>left_click</parameter>...</tool_call>``
     """
-    # --- Format 1: JSON ---
-    m = re.search(r"<tool_call>\s*(\{[\s\S]*?\})\s*</tool_call>", text)
-    if m:
-        try:
-            return json.loads(m.group(1))
-        except Exception:
-            pass
-
-    # --- Format 2: XML-style <function=name><parameter=key>value</parameter> ---
-    fn_match = re.search(
-        r"<tool_call>\s*<function=(\w+)>([\s\S]*?)</function>\s*</tool_call>", text
-    )
-    if fn_match:
-        fn_name = fn_match.group(1)
-        params_block = fn_match.group(2)
-        # Extract all <parameter=key>value</parameter> pairs
-        params: Dict[str, Any] = {}
-        for pm in re.finditer(r"<parameter=(\w+)>\s*([\s\S]*?)\s*</parameter>", params_block):
-            key = pm.group(1)
-            val = pm.group(2).strip()
-            # Try to parse as JSON (for arrays/numbers), fall back to string
-            try:
-                params[key] = json.loads(val)
-            except (json.JSONDecodeError, ValueError):
-                params[key] = val
-        # The XML format uses <parameter=type> for the action field name,
-        # but the Qwen tool schema calls it "action".  Remap if we got
-        # "type" that looks like an action name rather than a literal type.
-        if "type" in params and "action" not in params:
-            params["action"] = params.pop("type")
-        return {"name": fn_name, "arguments": params}
-
-    return None
+    return parse_qwen_tool_call_from_text(text, tool_call_parser="qwen_xml")
 
 
 async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -> Dict[str, Any]:
@@ -189,87 +160,6 @@ async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -
     y_abs = max(0.0, min(height, (y / 1000.0) * height))
     args = {**args, "coordinate": [round(x_abs), round(y_abs)]}
     return args
-
-
-def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Convert Qwen computer tool arguments to the Computer Calls action schema.
-
-    Qwen (example):
-        {"action": "left_click", "coordinate": [114, 68]}
-
-    Target (example):
-        {"action": "left_click", "x": 114, "y": 68}
-
-    Other mappings:
-    - right_click, middle_click, double_click (triple_click -> double_click)
-    - mouse_move -> { action: "move", x, y }
-    - key -> { action: "keypress", keys: [...] }
-    - type -> { action: "type", text }
-    - scroll/hscroll -> { action: "scroll", scroll_x, scroll_y, x, y }
-    - wait -> { action: "wait" }
-    - terminate/answer are not direct UI actions; return None for now
-    """
-    if not isinstance(args, dict):
-        return None
-
-    action = args.get("action")
-    if not isinstance(action, str):
-        return None
-
-    # Coordinates helper
-    coord = args.get("coordinate")
-    x = y = None
-    if isinstance(coord, (list, tuple)) and len(coord) >= 2:
-        try:
-            x = int(round(float(coord[0])))
-            y = int(round(float(coord[1])))
-        except Exception:
-            x = y = None
-
-    # Map actions
-    a = action.lower()
-    if a in {"left_click", "right_click", "middle_click", "double_click"}:
-        if x is None or y is None:
-            return None
-        return {"action": a, "x": x, "y": y}
-    if a == "triple_click":
-        # Approximate as double_click
-        if x is None or y is None:
-            return None
-        return {"action": "double_click", "x": x, "y": y}
-    if a == "mouse_move":
-        if x is None or y is None:
-            return None
-        return {"action": "move", "x": x, "y": y}
-    if a == "key":
-        keys = args.get("keys")
-        if isinstance(keys, list) and all(isinstance(k, str) for k in keys):
-            return {"action": "keypress", "keys": keys}
-        return None
-    if a == "type":
-        text = args.get("text")
-        if isinstance(text, str):
-            return {"action": "type", "text": text}
-        return None
-    if a in {"scroll", "hscroll"}:
-        pixels = args.get("pixels") or 0
-        try:
-            pixels_val = int(round(float(pixels)))
-        except Exception:
-            pixels_val = 0
-        scroll_x = pixels_val if a == "hscroll" else 0
-        scroll_y = pixels_val if a == "scroll" else 0
-        # Include cursor position if available (optional)
-        out: Dict[str, Any] = {"action": "scroll", "scroll_x": scroll_x, "scroll_y": scroll_y}
-        if x is not None and y is not None:
-            out.update({"x": x, "y": y})
-        return out
-    if a == "wait":
-        return {"action": "wait"}
-
-    # Non-UI or terminal actions: terminate/answer -> not mapped here
-    return None
 
 
 @register_agent(models=r"(?i).*qwen35.*", priority=1)
@@ -534,7 +424,6 @@ class Qwen35Config(AsyncAgentConfig):
             output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
 
         elif tool_calls_array:
-
             output_items.append(
                 {
                     "type": "message",

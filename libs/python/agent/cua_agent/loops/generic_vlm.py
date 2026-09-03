@@ -23,6 +23,12 @@ from ..responses import (
     make_reasoning_item,
 )
 from ..types import AgentCapability
+from .qwen_xml import (
+    ToolCallParser,
+    convert_qwen_tool_args_to_computer_action,
+    parse_tool_calls_from_text,
+    strip_parsed_tool_calls_from_text,
+)
 
 # ComputerUse tool schema (OpenAI function tool format)
 QWEN3_COMPUTER_TOOL: Dict[str, Any] = {
@@ -153,87 +159,6 @@ async def _unnormalize_coordinate(args: Dict[str, Any], dims: Tuple[int, int]) -
     return args
 
 
-def convert_qwen_tool_args_to_computer_action(args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """
-    Convert Qwen computer tool arguments to the Computer Calls action schema.
-
-    Qwen (example):
-        {"action": "left_click", "coordinate": [114, 68]}
-
-    Target (example):
-        {"action": "left_click", "x": 114, "y": 68}
-
-    Other mappings:
-    - right_click, middle_click, double_click (triple_click -> double_click)
-    - mouse_move -> { action: "move", x, y }
-    - key -> { action: "keypress", keys: [...] }
-    - type -> { action: "type", text }
-    - scroll/hscroll -> { action: "scroll", scroll_x, scroll_y, x, y }
-    - wait -> { action: "wait" }
-    - terminate/answer are not direct UI actions; return None for now
-    """
-    if not isinstance(args, dict):
-        return None
-
-    action = args.get("action")
-    if not isinstance(action, str):
-        return None
-
-    # Coordinates helper
-    coord = args.get("coordinate")
-    x = y = None
-    if isinstance(coord, (list, tuple)) and len(coord) >= 2:
-        try:
-            x = int(round(float(coord[0])))
-            y = int(round(float(coord[1])))
-        except Exception:
-            x = y = None
-
-    # Map actions
-    a = action.lower()
-    if a in {"left_click", "right_click", "middle_click", "double_click"}:
-        if x is None or y is None:
-            return None
-        return {"action": a, "x": x, "y": y}
-    if a == "triple_click":
-        # Approximate as double_click
-        if x is None or y is None:
-            return None
-        return {"action": "double_click", "x": x, "y": y}
-    if a == "mouse_move":
-        if x is None or y is None:
-            return None
-        return {"action": "move", "x": x, "y": y}
-    if a == "key":
-        keys = args.get("keys")
-        if isinstance(keys, list) and all(isinstance(k, str) for k in keys):
-            return {"action": "keypress", "keys": keys}
-        return None
-    if a == "type":
-        text = args.get("text")
-        if isinstance(text, str):
-            return {"action": "type", "text": text}
-        return None
-    if a in {"scroll", "hscroll"}:
-        pixels = args.get("pixels") or 0
-        try:
-            pixels_val = int(round(float(pixels)))
-        except Exception:
-            pixels_val = 0
-        scroll_x = pixels_val if a == "hscroll" else 0
-        scroll_y = pixels_val if a == "scroll" else 0
-        # Include cursor position if available (optional)
-        out: Dict[str, Any] = {"action": "scroll", "scroll_x": scroll_x, "scroll_y": scroll_y}
-        if x is not None and y is not None:
-            out.update({"x": x, "y": y})
-        return out
-    if a == "wait":
-        return {"action": "wait"}
-
-    # Non-UI or terminal actions: terminate/answer -> not mapped here
-    return None
-
-
 @register_agent(models=r"(?i).*", priority=-100)
 class GenericVlmConfig(AsyncAgentConfig):
     async def predict_step(
@@ -245,12 +170,16 @@ class GenericVlmConfig(AsyncAgentConfig):
         stream: bool = False,
         computer_handler=None,
         use_prompt_caching: Optional[bool] = False,
+        tool_call_parser: Optional[ToolCallParser] = None,
         _on_api_start=None,
         _on_api_end=None,
         _on_usage=None,
         _on_screenshot=None,
         **kwargs,
     ) -> Dict[str, Any]:
+        if tool_call_parser not in (None, "qwen_xml"):
+            raise ValueError(f"Unsupported tool_call_parser: {tool_call_parser!r}")
+
         # Build messages using NousFnCallPrompt system with tool schema in text
         # Start with converted conversation (images/text preserved)
         converted_msgs = convert_responses_items_to_completion_messages(
@@ -427,9 +356,67 @@ class GenericVlmConfig(AsyncAgentConfig):
             output_items.append(make_reasoning_item(reasoning_text))
 
         # Priority 1: Try to parse tool call from content text (OpenRouter format)
-        tool_call = _parse_tool_call_from_text(content_text)
+        tool_call = (
+            None if tool_call_parser == "qwen_xml" else _parse_tool_call_from_text(content_text)
+        )
+        parsed_tool_calls = (
+            parse_tool_calls_from_text(content_text, tool_call_parser="qwen_xml")
+            if tool_call_parser == "qwen_xml"
+            else []
+        )
 
-        if tool_call and isinstance(tool_call, dict):
+        if parsed_tool_calls:
+            processed_tool_calls = []
+            accepted_tool_calls = []
+            for i, parsed_tool_call in enumerate(parsed_tool_calls):
+                fn_name = parsed_tool_call.get("name") or "computer"
+                raw_args = parsed_tool_call.get("arguments") or {}
+                if not isinstance(raw_args, dict):
+                    raw_args = {}
+                args = raw_args
+
+                if "coordinate" in args and last_rw is not None and last_rh is not None:
+                    args = await _unnormalize_coordinate(args, (last_rw, last_rh))
+
+                if fn_name == "computer":
+                    converted_action = convert_qwen_tool_args_to_computer_action(args)
+                    if not converted_action:
+                        continue
+                    args = converted_action
+
+                processed_tool_calls.append(
+                    {
+                        "type": "function",
+                        "id": f"call_{i}",
+                        "function": {
+                            "name": fn_name,
+                            "arguments": json.dumps(args),
+                        },
+                    }
+                )
+                accepted_tool_calls.append(parsed_tool_call)
+
+            if processed_tool_calls:
+                assistant_text = strip_parsed_tool_calls_from_text(
+                    content_text, accepted_tool_calls
+                )
+                if assistant_text:
+                    output_items.extend(
+                        convert_completion_messages_to_responses_items(
+                            [{"role": "assistant", "content": assistant_text}]
+                        )
+                    )
+
+                fake_cm = {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": processed_tool_calls,
+                }
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+            else:
+                fake_cm = {"role": "assistant", "content": content_text}
+                output_items.extend(convert_completion_messages_to_responses_items([fake_cm]))
+        elif tool_call and isinstance(tool_call, dict):
             fn_name = tool_call.get("name") or "computer"
             raw_args = tool_call.get("arguments") or {}
             # Unnormalize coordinates to actual screen size using last resized dims

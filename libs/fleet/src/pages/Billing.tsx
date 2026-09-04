@@ -9,7 +9,7 @@ import SpaceBetween from "@cloudscape-design/components/space-between";
 import Spinner from "@cloudscape-design/components/spinner";
 import { useEffect, useState } from "react";
 import { CuaButton } from "../components/CuaButton";
-import { billingApi, type BillingSummary } from "../sdk/billing";
+import { billingApi, type BillingSummary } from "../api/billing";
 
 function cardBrand(brand: string) {
 	return brand ? brand[0].toUpperCase() + brand.slice(1) : "Card";

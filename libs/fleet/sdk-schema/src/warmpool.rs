@@ -115,6 +115,15 @@ pub struct OSGymSandboxWarmPoolSpec {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoscaling: Option<WarmPoolAutoscaling>,
+    #[schemars(
+        default,
+        schema_with = "integer_schema",
+        range(min = 0, max = u32::MAX),
+        description = "Creation-age TTL in seconds. When absent, the resource is not automatically reaped based on age."
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub ttl_seconds_after_created: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema, uniffi::Record)]

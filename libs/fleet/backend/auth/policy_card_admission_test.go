@@ -142,7 +142,7 @@ func TestK8sCardAdmissionReturnsBillingMessage(t *testing.T) {
 	if response.Code != http.StatusForbidden || reached {
 		t.Fatalf("status, reached = %d, %v; want %d, false", response.Code, reached, http.StatusForbidden)
 	}
-	const want = "A payment method is required to create this resource. Add one in Billing and try again."
+	const want = BillingSetupRequiredMessage
 	if got := policyErrorMessage(t, response); got != want {
 		t.Fatalf("error = %q, want %q", got, want)
 	}

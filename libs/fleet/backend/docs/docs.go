@@ -15,6 +15,356 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
+        "/api/admin/feature-flags": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists direct non-SecureString parameters under /feature-flags/cyclops-cs/ with typed values, ownership, and SSM versions.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "List Cyclops feature flags",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/featureflagadmin.Flag"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a String parameter under /feature-flags/cyclops-cs/ with cyclops-cs-admin ownership and a typed logical value.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Create an ad hoc Cyclops feature flag",
+                "parameters": [
+                    {
+                        "description": "Feature flag to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/featureflagadmin.Flag"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/feature-flags/{key}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates the typed value when expected_version matches. Terraform and external ownership protect the key from deletion, not value edits.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Update a Cyclops feature flag value",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Flat feature flag key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Typed value and expected SSM version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/featureflagadmin.Flag"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            },
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Deletes only cyclops-cs-admin-owned flags when expected_version matches. Terraform and external keys are protected.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Delete an ad hoc Cyclops feature flag",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Flat feature flag key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Expected SSM version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.DeleteFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            }
+        },
         "/api/billing/portal-session": {
             "post": {
                 "security": [
@@ -153,7 +503,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject.",
+                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject, including whether creating pools currently requires adding a payment card.",
                 "produces": [
                     "application/json"
                 ],
@@ -179,6 +529,90 @@ const docTemplate = `{
                     },
                     "403": {
                         "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/usage": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns Stripe-backed invoice spend, trend, and current-period line-item breakdown for the authenticated Fleet subject.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Billing usage",
+                "parameters": [
+                    {
+                        "enum": [
+                            3,
+                            6,
+                            12
+                        ],
+                        "type": "integer",
+                        "default": 6,
+                        "description": "History window in months",
+                        "name": "months",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/billing.Usage"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -265,6 +699,14 @@ const docTemplate = `{
                     "chat"
                 ],
                 "summary": "List the calling user's chat conversations",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Whether to list archived conversations",
+                        "name": "archived",
+                        "in": "query"
+                    }
+                ],
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -273,6 +715,12 @@ const docTemplate = `{
                             "items": {
                                 "$ref": "#/definitions/chat.ConversationSummary"
                             }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     },
                     "401": {
@@ -391,6 +839,79 @@ const docTemplate = `{
                         }
                     }
                 }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Archive or restore a chat conversation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conversation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Archive state",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ArchiveConversationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chat.Conversation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
             }
         },
         "/api/chat/conversations/{id}/turns": {
@@ -449,6 +970,12 @@ const docTemplate = `{
                     },
                     "404": {
                         "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -890,6 +1417,211 @@ const docTemplate = `{
                 }
             }
         },
+        "/api/signed-service-urls/{namespace}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "signed-service-urls"
+                ],
+                "summary": "List signed URLs for a sandbox claim",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "K8s namespace",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Claim name",
+                        "name": "claim",
+                        "in": "query",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handlers.SignedServiceURLResponse"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a temporary bearer link for one logical sandbox service.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "signed-service-urls"
+                ],
+                "summary": "Create a signed URL for a sandbox service",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "K8s namespace",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Signed service URL details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateSignedServiceURLRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SignedServiceURLResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/signed-service-urls/{namespace}/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "signed-service-urls"
+                ],
+                "summary": "Revoke a signed URL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "K8s namespace",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Signed URL ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
         "/api/svc/{namespace}/{service}/{path}": {
             "get": {
                 "security": [
@@ -1121,7 +1853,8 @@ const docTemplate = `{
             "type": "object",
             "required": [
                 "card",
-                "payment_method_present"
+                "payment_method_present",
+                "pool_create_card_required"
             ],
             "properties": {
                 "card": {
@@ -1134,12 +1867,94 @@ const docTemplate = `{
                 },
                 "payment_method_present": {
                     "type": "boolean"
+                },
+                "pool_create_card_required": {
+                    "description": "PoolCreateCardRequired is advisory admission state the API handler\nfills in (Service.Summary always leaves it false): true when creating\na pool or any other custom resource would be denied because the\naccount has no qualifying payment card. The dashboard reads it to gate\ncreate flows before a request ever reaches the enforcing policy.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "billing.Usage": {
+            "type": "object",
+            "properties": {
+                "breakdown": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/billing.UsageBreakdownItem"
+                    }
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "current_estimate": {
+                    "type": "integer"
+                },
+                "current_period_end": {
+                    "type": "string"
+                },
+                "current_period_start": {
+                    "type": "string"
+                },
+                "previous_period_amount": {
+                    "type": "integer"
+                },
+                "range_end": {
+                    "type": "string"
+                },
+                "range_start": {
+                    "type": "string"
+                },
+                "trend": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/billing.UsagePoint"
+                    }
+                }
+            }
+        },
+        "billing.UsageBreakdownItem": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "integer"
+                }
+            }
+        },
+        "billing.UsagePoint": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "estimate": {
+                    "type": "boolean"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
                 }
             }
         },
         "chat.Conversation": {
             "type": "object",
             "properties": {
+                "archived_at": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1163,6 +1978,9 @@ const docTemplate = `{
         "chat.ConversationSummary": {
             "type": "object",
             "properties": {
+                "archived_at": {
+                    "type": "string"
+                },
                 "created_at": {
                     "type": "string"
                 },
@@ -1241,6 +2059,101 @@ const docTemplate = `{
                 }
             }
         },
+        "featureflagadmin.Flag": {
+            "type": "object",
+            "properties": {
+                "deletable": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "managed_by": {
+                    "type": "string"
+                },
+                "modified_at": {
+                    "type": "string"
+                },
+                "ownership": {
+                    "$ref": "#/definitions/featureflagadmin.Ownership"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "raw_value": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "featureflagadmin.Ownership": {
+            "type": "string",
+            "enum": [
+                "terraform",
+                "ad_hoc",
+                "external"
+            ],
+            "x-enum-varnames": [
+                "OwnershipTerraform",
+                "OwnershipAdHoc",
+                "OwnershipExternal"
+            ]
+        },
+        "featureflags.ValueType": {
+            "type": "string",
+            "enum": [
+                "boolean",
+                "number",
+                "string",
+                "json"
+            ],
+            "x-enum-varnames": [
+                "ValueBoolean",
+                "ValueNumber",
+                "ValueString",
+                "ValueJSON"
+            ]
+        },
+        "handlers.AdminAPIError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "current": {
+                    "$ref": "#/definitions/featureflagadmin.Flag"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.ArchiveConversationRequest": {
+            "type": "object",
+            "required": [
+                "archived"
+            ],
+            "properties": {
+                "archived": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.BillingSessionResponse": {
             "type": "object",
             "properties": {
@@ -1261,6 +2174,27 @@ const docTemplate = `{
                 },
                 "chat": {
                     "type": "boolean"
+                },
+                "usage": {
+                    "type": "boolean"
+                },
+                "usage_pricing": {
+                    "$ref": "#/definitions/handlers.UsagePricingConfig"
+                }
+            }
+        },
+        "handlers.CreateFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
                 }
             }
         },
@@ -1306,6 +2240,40 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.CreateSignedServiceURLRequest": {
+            "type": "object",
+            "required": [
+                "claim",
+                "expiresInSeconds",
+                "logicalService",
+                "sandbox",
+                "service"
+            ],
+            "properties": {
+                "claim": {
+                    "type": "string"
+                },
+                "expiresInSeconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 60
+                },
+                "label": {
+                    "description": "Label is optional and limited to 120 UTF-8 bytes. OpenAPI maxLength is a\ncharacter upper bound; backend byte validation remains authoritative.",
+                    "type": "string",
+                    "maxLength": 120
+                },
+                "logicalService": {
+                    "type": "string"
+                },
+                "sandbox": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.CreateUserKeyRequest": {
             "type": "object",
             "properties": {
@@ -1345,6 +2313,14 @@ const docTemplate = `{
                 },
                 "token_url": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.DeleteFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "type": "integer"
                 }
             }
         },
@@ -1406,6 +2382,44 @@ const docTemplate = `{
                 }
             }
         },
+        "handlers.SignedServiceURLResponse": {
+            "type": "object",
+            "properties": {
+                "claim": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "logicalService": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "revokedAt": {
+                    "type": "string"
+                },
+                "sandbox": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.TurnRequest": {
             "type": "object",
             "properties": {
@@ -1414,6 +2428,29 @@ const docTemplate = `{
                     "items": {
                         "$ref": "#/definitions/chat.Message"
                     }
+                }
+            }
+        },
+        "handlers.UpdateFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "type": "integer"
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
+                }
+            }
+        },
+        "handlers.UsagePricingConfig": {
+            "type": "object",
+            "properties": {
+                "memory_gib_hour_usd": {
+                    "type": "number"
+                },
+                "vcpu_hour_usd": {
+                    "type": "number"
                 }
             }
         },

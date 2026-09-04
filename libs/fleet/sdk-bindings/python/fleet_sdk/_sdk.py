@@ -480,6 +480,16 @@ def _uniffi_check_contract_api_version(lib):
         raise InternalError("UniFFI contract version mismatch: try cleaning and rebuilding your project")
 
 def _uniffi_check_api_checksums(lib):
+    if lib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status() != 3094:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_pool_display_status() != 8587:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status() != 48761:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status() != 41320:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status() != 39929:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token() != 1180:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_createclaimrequestbuilder_new() != 10967:
@@ -499,6 +509,18 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace() != 18934:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec() != 7566:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new() != 16004:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build() != 4255:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds() != 30769:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label() != 1753:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox() != 1132:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service() != 62938:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new() != 6787:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -538,6 +560,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool() != 48557:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url() != 17810:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template() != 13689:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_user_api_key() != 9174:
@@ -566,6 +590,8 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools() != 27984:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls() != 31479:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates() != 58376:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_user_api_keys() != 5949:
@@ -575,6 +601,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template() != 36469:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim() != 17505:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url() != 59989:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request() != 46699:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -921,6 +949,16 @@ _UniffiLib.uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_free_createpoolrequestbuilder.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder.restype = None
 _UniffiLib.uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder.argtypes = (
     ctypes.c_uint64,
     ctypes.POINTER(_UniffiRustCallStatus),
@@ -1040,6 +1078,27 @@ _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.argtypes = (
     ctypes.POINTER(_UniffiVTableCallbackInterfaceFleetSdkHttpClient),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_init_callback_vtable_httpclient.restype = None
+_UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status.argtypes = (
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status.restype = _UniffiRustBuffer
 _UniffiLib.uniffi_cyclops_sdk_fn_method_accesstokenprovider_get_access_token.argtypes = (
     ctypes.c_uint64,
     ctypes.c_int8,
@@ -1093,6 +1152,39 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec.argtypes =
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new.argtypes = (
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build.argtypes = (
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build.restype = _UniffiRustBuffer
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint32,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_constructor_createtemplaterequestbuilder_new.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
@@ -1199,6 +1291,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1269,6 +1366,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_pools.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_templates.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1294,6 +1396,11 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim.argtypes = (
     _UniffiRustBuffer,
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_renew_claim.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url.argtypes = (
+    ctypes.c_uint64,
+    _UniffiRustBuffer,
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1442,6 +1549,21 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_templatebuilder_spec.restype = ctypes.c_
 _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.argtypes = (
 )
 _UniffiLib.ffi_cyclops_sdk_uniffi_contract_version.restype = ctypes.c_uint32
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_removed_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_accesstokenprovider_get_access_token.restype = ctypes.c_uint16
@@ -1472,6 +1594,24 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_namespace
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new.restype = ctypes.c_uint16
@@ -1529,6 +1669,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_namespace.res
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_pool.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template.restype = ctypes.c_uint16
@@ -1571,6 +1714,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_namespaces.rest
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_pools.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_templates.restype = ctypes.c_uint16
@@ -1586,6 +1732,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_reconcile_template.r
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_renew_claim.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request.restype = ctypes.c_uint16
@@ -2239,6 +2388,138 @@ class _UniffiFfiConverterTypeCreatePoolRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.namespace, buf)
         fleet_sdk._UniffiFfiConverterTypeOSGymSandboxWarmPoolSpec.write(value.spec, buf)
 
+class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterString.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterString.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterString.read(buf) for i in range(count)
+        ]
+
+@dataclass
+class Sandbox:
+    def __init__(self, *, namespace:str, claim:str, name:str, services:typing.List[str]):
+        self.namespace = namespace
+        self.claim = claim
+        self.name = name
+        self.services = services
+
+
+
+
+    def __str__(self):
+        return "Sandbox(namespace={}, claim={}, name={}, services={})".format(self.namespace, self.claim, self.name, self.services)
+    def __eq__(self, other):
+        if self.namespace != other.namespace:
+            return False
+        if self.claim != other.claim:
+            return False
+        if self.name != other.name:
+            return False
+        if self.services != other.services:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSandbox(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return Sandbox(
+            namespace=_UniffiFfiConverterString.read(buf),
+            claim=_UniffiFfiConverterString.read(buf),
+            name=_UniffiFfiConverterString.read(buf),
+            services=_UniffiFfiConverterSequenceString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.namespace)
+        _UniffiFfiConverterString.check_lower(value.claim)
+        _UniffiFfiConverterString.check_lower(value.name)
+        _UniffiFfiConverterSequenceString.check_lower(value.services)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.namespace, buf)
+        _UniffiFfiConverterString.write(value.claim, buf)
+        _UniffiFfiConverterString.write(value.name, buf)
+        _UniffiFfiConverterSequenceString.write(value.services, buf)
+
+class _UniffiFfiConverterUInt32(_UniffiConverterPrimitiveInt):
+    CLASS_NAME = "u32"
+    VALUE_MIN = 0
+    VALUE_MAX = 2**32
+
+    @staticmethod
+    def read(buf):
+        return buf.read_u32()
+
+    @staticmethod
+    def write(value, buf):
+        buf.write_u32(value)
+
+@dataclass
+class CreateSignedServiceUrlRequest:
+    def __init__(self, *, sandbox:Sandbox, service:str, label:typing.Optional[str], expires_in_seconds:int):
+        self.sandbox = sandbox
+        self.service = service
+        self.label = label
+        self.expires_in_seconds = expires_in_seconds
+
+
+
+
+    def __str__(self):
+        return "CreateSignedServiceUrlRequest(sandbox={}, service={}, label={}, expires_in_seconds={})".format(self.sandbox, self.service, self.label, self.expires_in_seconds)
+    def __eq__(self, other):
+        if self.sandbox != other.sandbox:
+            return False
+        if self.service != other.service:
+            return False
+        if self.label != other.label:
+            return False
+        if self.expires_in_seconds != other.expires_in_seconds:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeCreateSignedServiceUrlRequest(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return CreateSignedServiceUrlRequest(
+            sandbox=_UniffiFfiConverterTypeSandbox.read(buf),
+            service=_UniffiFfiConverterString.read(buf),
+            label=_UniffiFfiConverterOptionalString.read(buf),
+            expires_in_seconds=_UniffiFfiConverterUInt32.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterTypeSandbox.check_lower(value.sandbox)
+        _UniffiFfiConverterString.check_lower(value.service)
+        _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterUInt32.check_lower(value.expires_in_seconds)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterTypeSandbox.write(value.sandbox, buf)
+        _UniffiFfiConverterString.write(value.service, buf)
+        _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterUInt32.write(value.expires_in_seconds, buf)
+
 
 
 @dataclass
@@ -2282,29 +2563,6 @@ class _UniffiFfiConverterTypeCreateTemplateRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.namespace, buf)
         _UniffiFfiConverterString.write(value.name, buf)
         fleet_sdk._UniffiFfiConverterTypeOSGymSandboxTemplateSpec.write(value.spec, buf)
-
-class _UniffiFfiConverterSequenceString(_UniffiConverterRustBuffer):
-    @classmethod
-    def check_lower(cls, value):
-        for item in value:
-            _UniffiFfiConverterString.check_lower(item)
-
-    @classmethod
-    def write(cls, value, buf):
-        items = len(value)
-        buf.write_i32(items)
-        for item in value:
-            _UniffiFfiConverterString.write(item, buf)
-
-    @classmethod
-    def read(cls, buf):
-        count = buf.read_i32()
-        if count < 0:
-            raise InternalError("Unexpected negative sequence length")
-
-        return [
-            _UniffiFfiConverterString.read(buf) for i in range(count)
-        ]
 
 @dataclass
 class CreateUserApiKeyRequest:
@@ -2427,19 +2685,6 @@ class _UniffiFfiConverterUInt64(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u64(value)
-
-class _UniffiFfiConverterUInt32(_UniffiConverterPrimitiveInt):
-    CLASS_NAME = "u32"
-    VALUE_MIN = 0
-    VALUE_MAX = 2**32
-
-    @staticmethod
-    def read(buf):
-        return buf.read_u32()
-
-    @staticmethod
-    def write(value, buf):
-        buf.write_u32(value)
 
 @dataclass
 class CyclopsConfiguration:
@@ -2904,53 +3149,195 @@ class _UniffiFfiConverterTypeNewUserApiKey(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.name, buf)
         _UniffiFfiConverterSequenceString.write(value.scope, buf)
 
+
+
+
+
+
+class PoolDisplayStatusKind(enum.Enum):
+
+    HEALTHY = 0
+
+    SCALED_TO_ZERO = 1
+
+    REMOVED = 2
+
+    TERMINATING = 3
+
+    UNKNOWN = 4
+
+
+
+class _UniffiFfiConverterTypePoolDisplayStatusKind(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        variant = buf.read_i32()
+        if variant == 1:
+            return PoolDisplayStatusKind.HEALTHY
+        if variant == 2:
+            return PoolDisplayStatusKind.SCALED_TO_ZERO
+        if variant == 3:
+            return PoolDisplayStatusKind.REMOVED
+        if variant == 4:
+            return PoolDisplayStatusKind.TERMINATING
+        if variant == 5:
+            return PoolDisplayStatusKind.UNKNOWN
+        raise InternalError("Raw enum value doesn't match any cases")
+
+    @staticmethod
+    def check_lower(value):
+        if value == PoolDisplayStatusKind.HEALTHY:
+            return
+        if value == PoolDisplayStatusKind.SCALED_TO_ZERO:
+            return
+        if value == PoolDisplayStatusKind.REMOVED:
+            return
+        if value == PoolDisplayStatusKind.TERMINATING:
+            return
+        if value == PoolDisplayStatusKind.UNKNOWN:
+            return
+        raise ValueError(value)
+
+    @staticmethod
+    def write(value, buf):
+        if value == PoolDisplayStatusKind.HEALTHY:
+            buf.write_i32(1)
+        if value == PoolDisplayStatusKind.SCALED_TO_ZERO:
+            buf.write_i32(2)
+        if value == PoolDisplayStatusKind.REMOVED:
+            buf.write_i32(3)
+        if value == PoolDisplayStatusKind.TERMINATING:
+            buf.write_i32(4)
+        if value == PoolDisplayStatusKind.UNKNOWN:
+            buf.write_i32(5)
+
+
+
 @dataclass
-class Sandbox:
-    def __init__(self, *, namespace:str, claim:str, name:str, services:typing.List[str]):
-        self.namespace = namespace
-        self.claim = claim
-        self.name = name
-        self.services = services
+class PoolDisplayStatus:
+    def __init__(self, *, kind:PoolDisplayStatusKind, label:str, indicator:str):
+        self.kind = kind
+        self.label = label
+        self.indicator = indicator
 
 
 
 
     def __str__(self):
-        return "Sandbox(namespace={}, claim={}, name={}, services={})".format(self.namespace, self.claim, self.name, self.services)
+        return "PoolDisplayStatus(kind={}, label={}, indicator={})".format(self.kind, self.label, self.indicator)
     def __eq__(self, other):
-        if self.namespace != other.namespace:
+        if self.kind != other.kind:
             return False
-        if self.claim != other.claim:
+        if self.label != other.label:
             return False
-        if self.name != other.name:
-            return False
-        if self.services != other.services:
+        if self.indicator != other.indicator:
             return False
         return True
 
-class _UniffiFfiConverterTypeSandbox(_UniffiConverterRustBuffer):
+class _UniffiFfiConverterTypePoolDisplayStatus(_UniffiConverterRustBuffer):
     @staticmethod
     def read(buf):
-        return Sandbox(
-            namespace=_UniffiFfiConverterString.read(buf),
-            claim=_UniffiFfiConverterString.read(buf),
-            name=_UniffiFfiConverterString.read(buf),
-            services=_UniffiFfiConverterSequenceString.read(buf),
+        return PoolDisplayStatus(
+            kind=_UniffiFfiConverterTypePoolDisplayStatusKind.read(buf),
+            label=_UniffiFfiConverterString.read(buf),
+            indicator=_UniffiFfiConverterString.read(buf),
         )
 
     @staticmethod
     def check_lower(value):
-        _UniffiFfiConverterString.check_lower(value.namespace)
-        _UniffiFfiConverterString.check_lower(value.claim)
-        _UniffiFfiConverterString.check_lower(value.name)
-        _UniffiFfiConverterSequenceString.check_lower(value.services)
+        _UniffiFfiConverterTypePoolDisplayStatusKind.check_lower(value.kind)
+        _UniffiFfiConverterString.check_lower(value.label)
+        _UniffiFfiConverterString.check_lower(value.indicator)
 
     @staticmethod
     def write(value, buf):
+        _UniffiFfiConverterTypePoolDisplayStatusKind.write(value.kind, buf)
+        _UniffiFfiConverterString.write(value.label, buf)
+        _UniffiFfiConverterString.write(value.indicator, buf)
+
+@dataclass
+class SignedServiceUrl:
+    def __init__(self, *, id:str, namespace:str, claim:str, sandbox:str, service:str, label:typing.Optional[str], url:str, created_at:str, expires_at:str, revoked_at:typing.Optional[str]):
+        self.id = id
+        self.namespace = namespace
+        self.claim = claim
+        self.sandbox = sandbox
+        self.service = service
+        self.label = label
+        self.url = url
+        self.created_at = created_at
+        self.expires_at = expires_at
+        self.revoked_at = revoked_at
+
+
+
+
+    def __str__(self):
+        return "SignedServiceUrl(id={}, namespace={}, claim={}, sandbox={}, service={}, label={}, url={}, created_at={}, expires_at={}, revoked_at={})".format(self.id, self.namespace, self.claim, self.sandbox, self.service, self.label, self.url, self.created_at, self.expires_at, self.revoked_at)
+    def __eq__(self, other):
+        if self.id != other.id:
+            return False
+        if self.namespace != other.namespace:
+            return False
+        if self.claim != other.claim:
+            return False
+        if self.sandbox != other.sandbox:
+            return False
+        if self.service != other.service:
+            return False
+        if self.label != other.label:
+            return False
+        if self.url != other.url:
+            return False
+        if self.created_at != other.created_at:
+            return False
+        if self.expires_at != other.expires_at:
+            return False
+        if self.revoked_at != other.revoked_at:
+            return False
+        return True
+
+class _UniffiFfiConverterTypeSignedServiceUrl(_UniffiConverterRustBuffer):
+    @staticmethod
+    def read(buf):
+        return SignedServiceUrl(
+            id=_UniffiFfiConverterString.read(buf),
+            namespace=_UniffiFfiConverterString.read(buf),
+            claim=_UniffiFfiConverterString.read(buf),
+            sandbox=_UniffiFfiConverterString.read(buf),
+            service=_UniffiFfiConverterString.read(buf),
+            label=_UniffiFfiConverterOptionalString.read(buf),
+            url=_UniffiFfiConverterString.read(buf),
+            created_at=_UniffiFfiConverterString.read(buf),
+            expires_at=_UniffiFfiConverterString.read(buf),
+            revoked_at=_UniffiFfiConverterOptionalString.read(buf),
+        )
+
+    @staticmethod
+    def check_lower(value):
+        _UniffiFfiConverterString.check_lower(value.id)
+        _UniffiFfiConverterString.check_lower(value.namespace)
+        _UniffiFfiConverterString.check_lower(value.claim)
+        _UniffiFfiConverterString.check_lower(value.sandbox)
+        _UniffiFfiConverterString.check_lower(value.service)
+        _UniffiFfiConverterOptionalString.check_lower(value.label)
+        _UniffiFfiConverterString.check_lower(value.url)
+        _UniffiFfiConverterString.check_lower(value.created_at)
+        _UniffiFfiConverterString.check_lower(value.expires_at)
+        _UniffiFfiConverterOptionalString.check_lower(value.revoked_at)
+
+    @staticmethod
+    def write(value, buf):
+        _UniffiFfiConverterString.write(value.id, buf)
         _UniffiFfiConverterString.write(value.namespace, buf)
         _UniffiFfiConverterString.write(value.claim, buf)
-        _UniffiFfiConverterString.write(value.name, buf)
-        _UniffiFfiConverterSequenceString.write(value.services, buf)
+        _UniffiFfiConverterString.write(value.sandbox, buf)
+        _UniffiFfiConverterString.write(value.service, buf)
+        _UniffiFfiConverterOptionalString.write(value.label, buf)
+        _UniffiFfiConverterString.write(value.url, buf)
+        _UniffiFfiConverterString.write(value.created_at, buf)
+        _UniffiFfiConverterString.write(value.expires_at, buf)
+        _UniffiFfiConverterOptionalString.write(value.revoked_at, buf)
 
 @dataclass
 class Template:
@@ -3305,6 +3692,14 @@ class SdkError:  # type: ignore
         def __repr__(self):
             return "SdkError.Status({})".format(str(self))
     _UniffiTempSdkError.Status = Status # type: ignore
+    class SignedServiceUrlsUnavailable(_UniffiTempSdkError):
+
+        def __init__(self):
+            pass
+
+        def __repr__(self):
+            return "SdkError.SignedServiceUrlsUnavailable({})".format(str(self))
+    _UniffiTempSdkError.SignedServiceUrlsUnavailable = SignedServiceUrlsUnavailable # type: ignore
     class UnknownService(_UniffiTempSdkError):
 
         def __init__(self, requested, available):
@@ -3405,23 +3800,26 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
                 _UniffiFfiConverterString.read(buf),
             )
         if variant == 7:
+            return SdkError.SignedServiceUrlsUnavailable(
+            )
+        if variant == 8:
             return SdkError.UnknownService(
                 _UniffiFfiConverterString.read(buf),
                 _UniffiFfiConverterSequenceString.read(buf),
             )
-        if variant == 8:
+        if variant == 9:
             return SdkError.InvalidServicePath(
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 9:
+        if variant == 10:
             return SdkError.ClaimFailed(
                 _UniffiFfiConverterString.read(buf),
                 _UniffiFfiConverterString.read(buf),
             )
-        if variant == 10:
+        if variant == 11:
             return SdkError.ClaimTimeout(
             )
-        if variant == 11:
+        if variant == 12:
             return SdkError.PoolAccessDenied(
                 _UniffiFfiConverterString.read(buf),
                 _UniffiFfiConverterString.read(buf),
@@ -3453,6 +3851,8 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
             _UniffiFfiConverterString.check_lower(value.operation)
             _UniffiFfiConverterUInt16.check_lower(value.status)
             _UniffiFfiConverterString.check_lower(value.body)
+            return
+        if isinstance(value, SdkError.SignedServiceUrlsUnavailable):
             return
         if isinstance(value, SdkError.UnknownService):
             _UniffiFfiConverterString.check_lower(value.requested)
@@ -3498,21 +3898,23 @@ class _UniffiFfiConverterTypeSdkError(_UniffiConverterRustBuffer):
             _UniffiFfiConverterString.write(value.operation, buf)
             _UniffiFfiConverterUInt16.write(value.status, buf)
             _UniffiFfiConverterString.write(value.body, buf)
-        if isinstance(value, SdkError.UnknownService):
+        if isinstance(value, SdkError.SignedServiceUrlsUnavailable):
             buf.write_i32(7)
+        if isinstance(value, SdkError.UnknownService):
+            buf.write_i32(8)
             _UniffiFfiConverterString.write(value.requested, buf)
             _UniffiFfiConverterSequenceString.write(value.available, buf)
         if isinstance(value, SdkError.InvalidServicePath):
-            buf.write_i32(8)
+            buf.write_i32(9)
             _UniffiFfiConverterString.write(value.path, buf)
         if isinstance(value, SdkError.ClaimFailed):
-            buf.write_i32(9)
+            buf.write_i32(10)
             _UniffiFfiConverterString.write(value.phase, buf)
             _UniffiFfiConverterString.write(value.status, buf)
         if isinstance(value, SdkError.ClaimTimeout):
-            buf.write_i32(10)
-        if isinstance(value, SdkError.PoolAccessDenied):
             buf.write_i32(11)
+        if isinstance(value, SdkError.PoolAccessDenied):
+            buf.write_i32(12)
             _UniffiFfiConverterString.write(value.operation, buf)
             _UniffiFfiConverterString.write(value.namespace, buf)
             _UniffiFfiConverterUInt16.write(value.status, buf)
@@ -3935,6 +4337,154 @@ class _UniffiFfiConverterTypeCreatePoolRequestBuilder:
         buf.write_u64(cls.lower(value))
 
 
+class CreateSignedServiceUrlRequestBuilderProtocol(typing.Protocol):
+
+    def build(self, ) -> CreateSignedServiceUrlRequest:
+        raise NotImplementedError
+    def expires_in_seconds(self, value: int) -> CreateSignedServiceUrlRequestBuilder:
+        raise NotImplementedError
+    def label(self, value: str) -> CreateSignedServiceUrlRequestBuilder:
+        raise NotImplementedError
+    def sandbox(self, value: Sandbox) -> CreateSignedServiceUrlRequestBuilder:
+        raise NotImplementedError
+    def service(self, value: str) -> CreateSignedServiceUrlRequestBuilder:
+        raise NotImplementedError
+
+class CreateSignedServiceUrlRequestBuilder(CreateSignedServiceUrlRequestBuilderProtocol):
+
+    _handle: ctypes.c_uint64
+    def __init__(self, ):
+        _uniffi_lowered_args = (
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new,
+            *_uniffi_lowered_args,
+        )
+        self._handle = _uniffi_ffi_result
+
+    def __del__(self):
+        # In case of partial initialization of instances.
+        handle = getattr(self, "_handle", None)
+        if handle is not None:
+            _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder, handle)
+
+    def _uniffi_clone_handle(self):
+        return _uniffi_rust_call(_UniffiLib.uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder, self._handle)
+
+    # Used by alternative constructors or any methods which return this type.
+    @classmethod
+    def _uniffi_make_instance(cls, handle):
+        # Lightly yucky way to bypass the usual __init__ logic
+        # and just create a new instance with the required handle.
+        inst = cls.__new__(cls)
+        inst._handle = handle
+        return inst
+    def build(self, ) -> CreateSignedServiceUrlRequest:
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateSignedServiceUrlRequest.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkBuildError
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def expires_in_seconds(self, value: int) -> CreateSignedServiceUrlRequestBuilder:
+
+        _UniffiFfiConverterUInt32.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt32.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def label(self, value: str) -> CreateSignedServiceUrlRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def sandbox(self, value: Sandbox) -> CreateSignedServiceUrlRequestBuilder:
+
+        _UniffiFfiConverterTypeSandbox.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSandbox.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def service(self, value: str) -> CreateSignedServiceUrlRequestBuilder:
+
+        _UniffiFfiConverterString.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterString.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeCreateSignedServiceUrlRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+
+
+
+
+
+class _UniffiFfiConverterTypeCreateSignedServiceUrlRequestBuilder:
+    @staticmethod
+    def lift(value: int) -> CreateSignedServiceUrlRequestBuilder:
+        return CreateSignedServiceUrlRequestBuilder._uniffi_make_instance(value)
+
+    @staticmethod
+    def check_lower(value: CreateSignedServiceUrlRequestBuilder):
+        if not isinstance(value, CreateSignedServiceUrlRequestBuilder):
+            raise TypeError("Expected CreateSignedServiceUrlRequestBuilder instance, {} found".format(type(value).__name__))
+
+    @staticmethod
+    def lower(value: CreateSignedServiceUrlRequestBuilder) -> ctypes.c_uint64:
+        return value._uniffi_clone_handle()
+
+    @classmethod
+    def read(cls, buf: _UniffiRustBuffer) -> CreateSignedServiceUrlRequestBuilder:
+        ptr = buf.read_u64()
+        if ptr == 0:
+            raise InternalError("Raw handle value was null")
+        return cls.lift(ptr)
+
+    @classmethod
+    def write(cls, value: CreateSignedServiceUrlRequestBuilder, buf: _UniffiRustBuffer):
+        buf.write_u64(cls.lower(value))
+
+
 class CreateTemplateRequestBuilderProtocol(typing.Protocol):
 
     def build(self, ) -> CreateTemplateRequest:
@@ -4248,6 +4798,29 @@ class _UniffiFfiConverterSequenceTypePool(_UniffiConverterRustBuffer):
             _UniffiFfiConverterTypePool.read(buf) for i in range(count)
         ]
 
+class _UniffiFfiConverterSequenceTypeSignedServiceUrl(_UniffiConverterRustBuffer):
+    @classmethod
+    def check_lower(cls, value):
+        for item in value:
+            _UniffiFfiConverterTypeSignedServiceUrl.check_lower(item)
+
+    @classmethod
+    def write(cls, value, buf):
+        items = len(value)
+        buf.write_i32(items)
+        for item in value:
+            _UniffiFfiConverterTypeSignedServiceUrl.write(item, buf)
+
+    @classmethod
+    def read(cls, buf):
+        count = buf.read_i32()
+        if count < 0:
+            raise InternalError("Unexpected negative sequence length")
+
+        return [
+            _UniffiFfiConverterTypeSignedServiceUrl.read(buf) for i in range(count)
+        ]
+
 class _UniffiFfiConverterSequenceTypeTemplate(_UniffiConverterRustBuffer):
     @classmethod
     def check_lower(cls, value):
@@ -4303,6 +4876,8 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def create_pool(self, request: CreatePoolRequest) -> Pool:
         raise NotImplementedError
+    async def create_signed_service_url(self, request: CreateSignedServiceUrlRequest) -> SignedServiceUrl:
+        raise NotImplementedError
     async def create_template(self, request: CreateTemplateRequest) -> Template:
         raise NotImplementedError
     async def create_user_api_key(self, request: CreateUserApiKeyRequest) -> NewUserApiKey:
@@ -4331,6 +4906,8 @@ class CyclopsClientProtocol(typing.Protocol):
         raise NotImplementedError
     async def list_pools(self, namespace: str) -> typing.List[Pool]:
         raise NotImplementedError
+    async def list_signed_service_urls(self, sandbox: Sandbox) -> typing.List[SignedServiceUrl]:
+        raise NotImplementedError
     async def list_templates(self, namespace: str) -> typing.List[Template]:
         raise NotImplementedError
     async def list_user_api_keys(self, ) -> typing.List[UserApiKey]:
@@ -4348,6 +4925,8 @@ class CyclopsClientProtocol(typing.Protocol):
         Deliberately narrower than a claim update: nothing else on the claim
         can be mutated through the SDK.
 """
+        raise NotImplementedError
+    async def revoke_signed_service_url(self, signed_service_url: SignedServiceUrl) -> None:
         raise NotImplementedError
     async def service_request(self, sandbox: Sandbox,service: str,path: str,request: HttpRequest) -> HttpResponse:
         raise NotImplementedError
@@ -4556,6 +5135,23 @@ class CyclopsClient(CyclopsClientProtocol):
         _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
         return await _uniffi_rust_call_async(
             _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_pool(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def create_signed_service_url(self, request: CreateSignedServiceUrlRequest) -> SignedServiceUrl:
+
+        _UniffiFfiConverterTypeCreateSignedServiceUrlRequest.check_lower(request)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeCreateSignedServiceUrlRequest.lower(request),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeSignedServiceUrl.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(*_uniffi_lowered_args),
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
@@ -4800,6 +5396,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
+    async def list_signed_service_urls(self, sandbox: Sandbox) -> typing.List[SignedServiceUrl]:
+
+        _UniffiFfiConverterTypeSandbox.check_lower(sandbox)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSandbox.lower(sandbox),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterSequenceTypeSignedServiceUrl.lift
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
     async def list_templates(self, namespace: str) -> typing.List[Template]:
 
         _UniffiFfiConverterString.check_lower(namespace)
@@ -4890,6 +5503,23 @@ class CyclopsClient(CyclopsClientProtocol):
             _UniffiLib.ffi_cyclops_sdk_rust_future_poll_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_complete_rust_buffer,
             _UniffiLib.ffi_cyclops_sdk_rust_future_free_rust_buffer,
+            _uniffi_lift_return,
+            _uniffi_error_converter,
+        )
+    async def revoke_signed_service_url(self, signed_service_url: SignedServiceUrl) -> None:
+
+        _UniffiFfiConverterTypeSignedServiceUrl.check_lower(signed_service_url)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterTypeSignedServiceUrl.lower(signed_service_url),
+        )
+        _uniffi_lift_return = lambda val: None
+        _uniffi_error_converter = _UniffiFfiConverterTypeSdkError
+        return await _uniffi_rust_call_async(
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url(*_uniffi_lowered_args),
+            _UniffiLib.ffi_cyclops_sdk_rust_future_poll_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_complete_void,
+            _UniffiLib.ffi_cyclops_sdk_rust_future_free_void,
             _uniffi_lift_return,
             _uniffi_error_converter,
         )
@@ -5640,9 +6270,68 @@ class _UniffiFfiConverterUInt8(_UniffiConverterPrimitiveInt):
     @staticmethod
     def write(value, buf):
         buf.write_u8(value)
+def healthy_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def pool_display_status(pool: Pool) -> PoolDisplayStatus:
+
+    _UniffiFfiConverterTypePool.check_lower(pool)
+    _uniffi_lowered_args = (
+        _UniffiFfiConverterTypePool.lower(pool),
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def removed_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_removed_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def terminating_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_terminating_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
+def unknown_pool_display_status() -> PoolDisplayStatus:
+    _uniffi_lowered_args = (
+    )
+    _uniffi_lift_return = _UniffiFfiConverterTypePoolDisplayStatus.lift
+    _uniffi_error_converter = None
+    _uniffi_ffi_result = _uniffi_rust_call_with_error(
+        _uniffi_error_converter,
+        _UniffiLib.uniffi_cyclops_sdk_fn_func_unknown_pool_display_status,
+        *_uniffi_lowered_args,
+    )
+    return _uniffi_lift_return(_uniffi_ffi_result)
 
 __all__ = [
     "InternalError",
+    "PoolDisplayStatusKind",
     "AccessTokenProviderError",
     "HttpError",
     "SdkBuildError",
@@ -5652,6 +6341,8 @@ __all__ = [
     "Pool",
     "CreateClaimRequest",
     "CreatePoolRequest",
+    "Sandbox",
+    "CreateSignedServiceUrlRequest",
     "CreateTemplateRequest",
     "CreateUserApiKeyRequest",
     "CyclopsConfiguration",
@@ -5661,9 +6352,15 @@ __all__ = [
     "HttpResponse",
     "Namespace",
     "NewUserApiKey",
-    "Sandbox",
+    "PoolDisplayStatus",
+    "SignedServiceUrl",
     "Template",
     "UserApiKey",
+    "healthy_pool_display_status",
+    "pool_display_status",
+    "removed_pool_display_status",
+    "terminating_pool_display_status",
+    "unknown_pool_display_status",
     "CyclopsCredentials",
     "CyclopsCredentialsProtocol",
     "AccessTokenProviderImpl",
@@ -5672,6 +6369,8 @@ __all__ = [
     "CreateClaimRequestBuilderProtocol",
     "CreatePoolRequestBuilder",
     "CreatePoolRequestBuilderProtocol",
+    "CreateSignedServiceUrlRequestBuilder",
+    "CreateSignedServiceUrlRequestBuilderProtocol",
     "CreateTemplateRequestBuilder",
     "CreateTemplateRequestBuilderProtocol",
     "CreateUserApiKeyRequestBuilder",

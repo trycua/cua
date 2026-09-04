@@ -562,6 +562,18 @@ mod list_windows_tests {
 
 // ── get_window_state ─────────────────────────────────────────────────────────
 
+/// Fold a per-call `max_dimension` cap with the configured
+/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
+/// limit", so an unlimited ceiling defers to the per-call cap; otherwise the
+/// tighter (smaller, non-zero) of the two wins.
+fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
+    match per_call {
+        Some(md) if ceiling == 0 => md,
+        Some(md) => ceiling.min(md),
+        None => ceiling,
+    }
+}
+
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
@@ -598,6 +610,14 @@ impl Tool for GetWindowStateTool {
                 the requested surface's identity, the truthful tree is returned without \
                 a screenshot and `screenshot_error.code` is \
                 `surface_identity_unproven`.\n\n\
+                The mirror image: pass `include_accessibility_tree:false` to SKIP \
+                the AT-SPI walk entirely and return just the screenshot plus \
+                window metadata (window_bounds, app_name, window_title) — the \
+                capture-only path for a live window preview / picture-in-picture. \
+                Setting BOTH `include_accessibility_tree:false` and \
+                `include_screenshot:false` is an error. Optional `max_dimension` \
+                caps the returned screenshot's long edge in pixels for a cheap \
+                thumbnail.\n\n\
                 Optional `max_elements` / `max_depth` bound the AT-SPI walk to \
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
@@ -608,13 +628,16 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer"},
                 "window_id":{"type":"integer","description":"Native window identifier from list_windows."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_accessibility_tree":{"type":"boolean",
+                    "description":"Default true — walk the AT-SPI tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AT-SPI walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean",
                     "description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string",
                     "description":"When set, write the PNG to this file path (~ expanded) instead of embedding base64 in the response. The structured output carries screenshot_file_path instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."}
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
+                "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: true, open_world: false,
         })
@@ -630,9 +653,15 @@ impl Tool for GetWindowStateTool {
             Ok(v) => v,
             Err(e) => return e,
         };
+        // Optional per-call cap on the returned screenshot's long edge, folded
+        // with the configured ceiling below (the tighter wins).
+        let max_dimension = args
+            .get("max_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as u32);
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            cfg.max_image_dimension
+            fold_max_dimension(cfg.max_image_dimension, max_dimension)
         };
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the AT-SPI tree and a screenshot now, so the agent grounds
@@ -647,6 +676,13 @@ impl Tool for GetWindowStateTool {
         // tree only (the cheap re-index path before an element ax action). A
         // screenshot_out_file still forces a capture (to disk), regardless.
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
+        // `include_accessibility_tree` (default true) mirrors include_screenshot:
+        // set false to SKIP the AT-SPI walk and return just the screenshot +
+        // window metadata (the capture-only / preview path).
+        let want_tree = args
+            .get("include_accessibility_tree")
+            .and_then(|v| v.as_bool())
+            != Some(false);
         // screenshot_out_file: when set, write the PNG to disk and surface the
         // path instead of embedding base64 in the response. `~` expands.
         let screenshot_out_file = args.opt_str("screenshot_out_file").map(|s| {
@@ -669,10 +705,16 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize);
 
         let process_is_live = crate::proc_fs::is_process_live(pid);
+        // Enumerate the pid's windows ONCE and reuse the result for both the
+        // window-ownership check (Wayland) and the additive window metadata
+        // below, instead of paying for the compositor/X11 enumeration twice.
+        // `window_meta` also names the surface + its on-screen rectangle on the
+        // capture-only path, where no AT-SPI tree identifies it.
+        let window_meta = crate::wayland::list_windows_dispatch(Some(pid))
+            .into_iter()
+            .find(|w| w.xid == xid);
         let window_matches = if crate::wayland::is_wayland() {
-            crate::wayland::list_windows_dispatch(Some(pid))
-                .iter()
-                .any(|window| window.xid == xid && window.pid == Some(pid))
+            window_meta.as_ref().is_some_and(|w| w.pid == Some(pid))
                 || crate::wayland::window_was_listed_for_pid(pid, xid)
         } else {
             crate::x11::window_belongs_to_pid(xid, pid)
@@ -689,6 +731,13 @@ impl Tool for GetWindowStateTool {
         // `include_screenshot:false` skips the grab; an unproven Wayland surface
         // returns the tree with a typed screenshot error instead of unrelated pixels.
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        if !want_tree && !should_capture {
+            return ToolResult::error(
+                "Nothing to return: both include_accessibility_tree:false and \
+                 include_screenshot:false. Set at least one to true, or pass \
+                 screenshot_out_file to force a capture.",
+            );
+        }
         let observation_only = args
             .get("_observation_only")
             .and_then(|value| value.as_bool())
@@ -697,13 +746,19 @@ impl Tool for GetWindowStateTool {
         let query_for_walk = query.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
-            let tree_result = Some(crate::atspi::walk_tree_bounded(
-                pid,
-                xid,
-                query_for_walk.as_deref(),
-                max_elements,
-                max_depth,
-            ));
+            // Skip the AT-SPI walk on the capture-only path
+            // (include_accessibility_tree:false).
+            let tree_result = if want_tree {
+                Some(crate::atspi::walk_tree_bounded(
+                    pid,
+                    xid,
+                    query_for_walk.as_deref(),
+                    max_elements,
+                    max_depth,
+                ))
+            } else {
+                None
+            };
             // Bounds and element indices come from the same captured AT-SPI
             // traversal. Joining two live walks by ordinal mis-associated
             // Chromium controls when its lazy subtree changed between walks.
@@ -923,8 +978,15 @@ impl Tool for GetWindowStateTool {
                     }
                     // ax mode + screenshot_out_file writes the PNG to disk and
                     // returns b64=None — never embed the image bytes in that case.
+                    // Keep a text content part when the image went to disk so the
+                    // response is never empty on the capture-only path (which has
+                    // no tree markdown either).
                     if let Some(b64) = b64_opt {
                         content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    } else if let Some(fp) = &file_path {
+                        content.push(cua_driver_core::protocol::Content::text(format!(
+                            "window_id={xid} pid={pid} size={w}x{h} screenshot written to {fp}"
+                        )));
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
@@ -936,9 +998,41 @@ impl Tool for GetWindowStateTool {
                         structured["screenshot_file_path"] = json!(fp);
                     }
                 }
-                if let Some(reason) = screenshot_error {
+                if let Some(reason) = &screenshot_error {
                     structured["screenshot_frame_valid"] = json!(false);
-                    structured["screenshot_error"] = surface_identity_unproven_error(xid, reason);
+                    structured["screenshot_error"] =
+                        surface_identity_unproven_error(xid, reason.clone());
+                }
+                // Window identity metadata (additive): app + title + on-screen
+                // rectangle for the requested window_id, useful on the
+                // capture-only path where no AT-SPI tree names the surface.
+                if let Some(meta) = &window_meta {
+                    if !meta.app_name.is_empty() {
+                        structured["app_name"] = json!(meta.app_name);
+                    }
+                    if !meta.title.is_empty() {
+                        structured["window_title"] = json!(meta.title);
+                    }
+                    structured["window_bounds"] = json!({
+                        "x": meta.x, "y": meta.y, "width": meta.width, "height": meta.height
+                    });
+                }
+
+                // The capture-only path (include_accessibility_tree:false) leaves
+                // `content` empty when the screenshot was also unavailable — most
+                // often on Wayland, where per-window capture cannot prove surface
+                // identity. Return a structured error rather than a "successful"
+                // response with no content parts.
+                if content.is_empty() {
+                    let reason_note = match &screenshot_error {
+                        Some(reason) => format!(" and no screenshot could be captured ({reason})"),
+                        None => " and no screenshot was returned".to_string(),
+                    };
+                    return ToolResult::error(format!(
+                        "No content produced for window_id {xid}: the accessibility tree was \
+                         skipped (include_accessibility_tree:false){reason_note}."
+                    ))
+                    .with_structured(structured);
                 }
 
                 ToolResult {

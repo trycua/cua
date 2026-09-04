@@ -1,6 +1,8 @@
 import { test, expect } from "@playwright/test"
 import {
   mockAuth,
+  mockInstanceDetailApi,
+  mockInstancesApi,
   mockNamespacesApi,
   mockPoolsApi,
   mockClaimsApi,
@@ -29,32 +31,40 @@ test.describe("Pools page header", () => {
       const topNavigation = page.locator("#cua-shell-topnav")
       const header = page.locator(".cua-pagehead")
       const semanticMain = page.getByRole("main")
-      const navigation = page.getByRole("navigation", { name: "Main navigation" })
       const table = page.locator(".cua-pagebody")
       const title = page.locator(".cua-pagehead__title")
       const refreshPools = page.getByRole("button", { name: "Refresh pools" })
       const newPool = page.getByRole("button", { name: "New pool" })
       const status = page.getByRole("columnheader", { name: "Status" })
+      const ttl = page.getByRole("columnheader", { name: "TTL" })
 
       await expect(mesh).toHaveCount(0)
+      if (viewport.width >= 768) await expect(ttl).toBeVisible()
+      await expect(page).toHaveTitle("Pools · Cua")
       await expect(page.locator(".cua-pagehead canvas")).toHaveCount(0)
-      const [topNavigationBox, navigationBox, headerBox, tableBox] = await Promise.all([
+      const navigationPanel = page.locator('[class*="awsui_navigation-container_"]').first()
+      const [topNavigationBox, headerBox, tableBox, panelBox] = await Promise.all([
         topNavigation.boundingBox(),
-        navigation.boundingBox(),
         header.boundingBox(),
         table.boundingBox(),
+        navigationPanel.boundingBox(),
       ])
-      const navigationOpen = await page
-        .getByRole("button", { name: "Close navigation" })
-        .isVisible()
+      // Neither geometry alone nor the "is-navigation-open" class is a
+      // reliable open/closed signal on its own with this AppLayout
+      // variant: a collapsed drawer still keeps a ~64px gutter for the
+      // <nav> landmark's toggle button (not 0 width), and the desktop
+      // pinned-open sidebar (a static grid column, not a toggleable
+      // overlay) never gets "is-navigation-open" at all. A width well
+      // past the gutter is what actually distinguishes "really open".
+      const navigationOpen = Boolean(panelBox && panelBox.width > 100)
       expect(topNavigationBox).not.toBeNull()
       expect(topNavigationBox!.x).toBeLessThanOrEqual(1)
       expect(Math.abs(topNavigationBox!.width - viewport.width)).toBeLessThanOrEqual(1)
       expect(headerBox).not.toBeNull()
       expect(tableBox).not.toBeNull()
 
-      const paneStart = navigationOpen && navigationBox
-        ? navigationBox.x + navigationBox.width
+      const paneStart = navigationOpen && panelBox
+        ? panelBox.x + panelBox.width
         : 0
       expect(headerBox!.x - paneStart).toBeGreaterThan(1)
       expect(viewport.width - (headerBox!.x + headerBox!.width)).toBeGreaterThan(1)
@@ -153,8 +163,9 @@ test.describe("Pools page header", () => {
           .getByRole("navigation", { name: "Main navigation" })
           .boundingBox()
         expect(openNavigationBox).not.toBeNull()
+        // Threshold bumped for the 59px top-nav height (see shell.css).
         expect(openNavigationBox!.y).toBeLessThanOrEqual(
-          viewport.width < 688 ? 1 : 50,
+          viewport.width < 688 ? 1 : 65,
         )
       }
     })
@@ -277,7 +288,7 @@ test("local visual preview keeps preview data active on pool detail", async ({
     page.getByRole("heading", { name: "prod-web-fleet" }),
   ).toBeVisible()
   await expect(page.getByText("Failed to load pool")).toHaveCount(0)
-  await expect(page.getByRole("heading", { name: "Claims" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Instances" })).toBeVisible()
 })
 
 test.describe("Pool creation", () => {
@@ -303,9 +314,75 @@ test.describe("Pool creation", () => {
     await expect(page.getByPlaceholder("my-pool")).toBeVisible()
     // Numeric inputs (vCPU, replicas)
     await expect(page.getByRole("spinbutton").first()).toBeVisible()
+    await expect(
+      page.getByRole("spinbutton", { name: "Time to live (seconds)" }),
+    ).toHaveValue("")
 
     // Services section has an "Add service" button
     await expect(page.getByRole("button", { name: "Add service" })).toBeVisible()
+  })
+
+  test("submits an optional time to live in seconds", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let submittedTtl: number | undefined
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
+      async route => {
+        if (route.request().method() !== "POST") return route.fallback()
+        const body = route.request().postDataJSON() as {
+          spec: { replicas: number; ttlSecondsAfterCreated?: number }
+        }
+        submittedTtl = body.spec.ttlSecondsAfterCreated
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify({
+            ...body,
+            status: { replicas: body.spec.replicas },
+          }),
+        })
+      },
+    )
+
+    await page.goto("/pools/new")
+    await page.getByRole("textbox", { name: "Name" }).fill("ttl-pool")
+    await page
+      .getByRole("spinbutton", { name: "Time to live (seconds)" })
+      .fill("3600")
+    await page.getByRole("button", { name: "Create" }).click()
+
+    await expect.poll(() => submittedTtl).toBe(3600)
+  })
+
+  test("rejects a negative time to live", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let createRequests = 0
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
+      route => {
+        if (route.request().method() !== "POST") return route.fallback()
+        createRequests += 1
+        return route.fulfill({ status: 500, body: "unexpected create" })
+      },
+    )
+
+    await page.goto("/pools/new")
+    await page.getByRole("textbox", { name: "Name" }).fill("ttl-pool")
+    const ttl = page.getByRole("spinbutton", {
+      name: "Time to live (seconds)",
+    })
+    await ttl.fill("-1")
+    await page.getByRole("button", { name: "Create" }).click()
+
+    await expect(ttl).toBeFocused()
+    await expect(
+      page.getByText("Time to live must be a non-negative whole number."),
+    ).toBeVisible()
+    expect(createRequests).toBe(0)
   })
 
   test("invalid submission focuses the name and cancel protects unsaved work", async ({
@@ -327,6 +404,201 @@ test.describe("Pool creation", () => {
     await expect(dialog).toBeVisible()
     await dialog.getByRole("button", { name: "Keep editing" }).click()
     await expect(name).toHaveValue("new-fleet")
+  })
+
+  test("create is blocked when the account still needs a payment card", async ({
+    page,
+  }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    const paymentGateRequests: Array<{ reason: string }> = []
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests.push(route.request().postDataJSON() as { reason: string })
+      await route.fulfill({ status: 204 })
+    })
+    await page.route("**/api/billing/summary", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: false,
+          card: null,
+          // A missing payment method must block creation even when the
+          // advisory policy result is false (for example, a grandfathered
+          // account or a failed-open policy evaluation).
+          pool_create_card_required: false,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toEqual([
+      { reason: "no_payment_method" },
+    ])
+    // Cloudscape renders reason-carrying disabled buttons with aria-disabled
+    // (kept focusable for the tooltip) rather than the disabled attribute.
+    await expect(page.getByRole("button", { name: "Create" })).toHaveAttribute(
+      "aria-disabled",
+      "true",
+    )
+    await page.getByRole("button", { name: "Create" }).hover()
+    await expect(
+      page
+        .getByRole("tooltip")
+        .getByText("Add a payment method in Settings to create pools."),
+    ).toBeVisible()
+
+    await page.goto("/pools")
+    await page.goto("/pools/new")
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toHaveLength(1)
+
+    await page.getByRole("button", { name: "Add payment method" }).click()
+    await expect(page).toHaveURL(/\/settings$/)
+  })
+
+  test("payment policy gate reports the admission reason", async ({ page }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    const paymentGateRequests: Array<{ reason: string }> = []
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests.push(route.request().postDataJSON() as { reason: string })
+      await route.fulfill({ status: 204 })
+    })
+    await page.route("**/api/billing/summary", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: true,
+          card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+          pool_create_card_required: true,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toEqual([
+      { reason: "card_admission_required" },
+    ])
+  })
+
+  test("missing payment method takes priority over the admission reason", async ({
+    page,
+  }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    const paymentGateRequests: Array<{ reason: string }> = []
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests.push(route.request().postDataJSON() as { reason: string })
+      await route.fulfill({ status: 204 })
+    })
+    await page.route("**/api/billing/summary", route =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: false,
+          card: null,
+          pool_create_card_required: true,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByText("Payment method required")).toBeVisible()
+    await expect.poll(() => paymentGateRequests).toEqual([
+      { reason: "no_payment_method" },
+    ])
+  })
+
+  test("create stays enabled once a payment card is on file", async ({
+    page,
+  }) => {
+    await mockAuth(page, { billing: true })
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let paymentGateRequests = 0
+    await page.route("**/api/analytics/payment-gate", async route => {
+      paymentGateRequests += 1
+      await route.fulfill({ status: 204 })
+    })
+    await page.route("**/api/billing/summary", (route) =>
+      route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          payment_method_present: true,
+          card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+          pool_create_card_required: false,
+        }),
+      }),
+    )
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByPlaceholder("my-pool")).toBeVisible()
+    await expect(page.getByText("Payment method required")).toHaveCount(0)
+    await expect(page.getByRole("button", { name: "Create" })).toBeEnabled()
+    expect(paymentGateRequests).toBe(0)
+  })
+
+  test("payment gate analytics stays off when billing is disabled", async ({
+    page,
+  }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    let summaryRequests = 0
+    let paymentGateRequests = 0
+    await page.route("**/api/billing/summary", route => {
+      summaryRequests += 1
+      return route.fulfill({ status: 500 })
+    })
+    await page.route("**/api/analytics/payment-gate", route => {
+      paymentGateRequests += 1
+      return route.fulfill({ status: 204 })
+    })
+
+    await page.goto("/pools/new")
+
+    await expect(page.getByPlaceholder("my-pool")).toBeVisible()
+    expect(summaryRequests).toBe(0)
+    expect(paymentGateRequests).toBe(0)
+  })
+
+  test("create failure pipes the backend error into the flash message", async ({
+    page,
+  }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    // Registered after mockPoolsApi so it wins: the pool create POST is
+    // denied the way the card-admission policy denies it.
+    const denial =
+      "A payment method is required to create this resource. Add one in Billing and try again."
+    await page.route(
+      "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
+      (route) => {
+        if (route.request().method() !== "POST") return route.fallback()
+        return route.fulfill({
+          status: 403,
+          contentType: "application/json",
+          body: JSON.stringify({ error: denial }),
+        })
+      },
+    )
+
+    await page.goto("/pools/new")
+    await page.getByRole("textbox", { name: "Name" }).fill("gated-pool")
+    await page.getByRole("button", { name: "Create" }).click()
+
+    await expect(page.getByText("Create failed")).toBeVisible()
+    await expect(page.getByText(denial)).toBeVisible()
   })
 })
 
@@ -351,6 +623,7 @@ test.describe("Pool duplication", () => {
       metadata: { name: "demo-pool", namespace: "demo-pool" },
       spec: {
         replicas: 3,
+        ttlSecondsAfterCreated: 7200,
         sandboxTemplateRef: { name: "demo-pool-template" },
       },
       status: { replicas: 3, readyReplicas: 3 },
@@ -428,14 +701,18 @@ test.describe("Pool duplication", () => {
     await expect(page.getByRole("textbox", { name: "OCI image" })).toHaveValue(
       "custom-image:v1",
     )
+    await expect(
+      page.getByRole("spinbutton", { name: "Time to live (seconds)" }),
+    ).toHaveValue("7200")
   })
 })
 
-test.describe("Pool detail with claims", () => {
-  test("pool detail page shows claims section", async ({ page }) => {
+test.describe("Pool detail instances", () => {
+  test("shows warm pool instances and claim state", async ({ page }) => {
     await mockAuth(page)
     await mockNamespacesApi(page)
     await mockPoolsApi(page)
+    await mockInstancesApi(page)
     await mockClaimsApi(page)
 
     await page.goto("/pools/demo-pool/demo-pool")
@@ -443,8 +720,7 @@ test.describe("Pool detail with claims", () => {
     // The pool name should be shown
     await expect(page.getByRole("heading", { name: "demo-pool" })).toBeVisible()
 
-    // The Claims section should be present
-    await expect(page.getByRole("heading", { name: "Claims" })).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Instances" })).toBeVisible()
 
     // The "Create claim" button should be visible
     await expect(
@@ -454,20 +730,69 @@ test.describe("Pool detail with claims", () => {
       "border-radius",
       "10px",
     )
-    await expect(page.getByRole("button", { name: "Refresh claims" })).toHaveCSS(
+    await expect(page.getByRole("button", { name: "Refresh instances" })).toHaveCSS(
       "border-radius",
       "10px",
     )
-    await expect(page.getByRole("button", { name: "Refresh claims" })).toHaveCSS(
+    await expect(page.getByRole("button", { name: "Refresh instances" })).toHaveCSS(
       "width",
       "40px",
     )
 
-    // The existing mock claim should be listed
-    const claimRow = page.getByRole("row").filter({ hasText: "claim-abc123" })
-    await expect(claimRow).toBeVisible()
-    await expect(page.getByText("Bound")).toBeVisible()
-    await expect(claimRow.getByRole("cell").nth(3)).not.toHaveText("-")
+    const claimedRow = page.getByRole("row").filter({ hasText: "vm-xyz789" })
+    await expect(claimedRow).toContainText("Ready")
+    await expect(claimedRow).toContainText("claim-abc123")
+    await expect(claimedRow).toContainText("Bound")
+    await expect(claimedRow).toContainText("30m")
+    await expect(claimedRow.getByRole("button", { name: "Release" })).toBeVisible()
+
+    const availableRow = page.getByRole("row").filter({ hasText: "vm-ready456" })
+    await expect(availableRow).toContainText("Ready")
+    await expect(availableRow).toContainText("Unclaimed")
+    await expect(availableRow.getByRole("button", { name: "Release" })).toHaveCount(0)
+    await expect(page.getByText("other-pool-instance")).toHaveCount(0)
+  })
+
+  test("opens instance details and displays guest console logs", async ({ page }) => {
+    await mockAuth(page)
+    await mockNamespacesApi(page)
+    await mockPoolsApi(page)
+    await mockInstancesApi(page)
+    await mockClaimsApi(page)
+    await mockInstanceDetailApi(page)
+    await page.context().grantPermissions(
+      ["clipboard-read", "clipboard-write"],
+      { origin: "http://localhost:5180" },
+    )
+
+    await page.goto("/pools/demo-pool/demo-pool")
+    await page.getByRole("link", { name: "vm-xyz789" }).click()
+
+    await expect(page).toHaveURL(
+      /\/pools\/demo-pool\/demo-pool\/instances\/vm-xyz789$/,
+    )
+    await expect(page.getByRole("heading", { name: "vm-xyz789" })).toBeVisible()
+    await expect(
+      page.getByRole("heading", { name: "Guest console logs", exact: true }),
+    ).toBeVisible()
+    await expect(page.getByRole("heading", { name: "Overview" })).toHaveCount(0)
+    await expect(page.getByLabel("Guest console logs")).toContainText(
+      "guest console ready",
+    )
+    await expect(
+      page.getByRole("button", { name: "Scroll logs to top" }),
+    ).toBeEnabled()
+    await expect(
+      page.getByRole("button", { name: "Scroll logs to bottom" }),
+    ).toBeEnabled()
+    await page.getByRole("button", { name: "Scroll logs to bottom" }).click()
+    await page.getByRole("button", { name: "Scroll logs to top" }).click()
+    await page.getByRole("button", { name: "Copy logs" }).click()
+    await expect(page.getByRole("button", { name: "Copied" })).toBeVisible()
+    await expect
+      .poll(() => page.evaluate(() => navigator.clipboard.readText()))
+      .toContain("guest console ready")
+    await expect(page.getByLabel("Log container")).toHaveCount(0)
   })
 })
 
@@ -481,8 +806,8 @@ test.describe("Retired navigation", () => {
 
     await expect(page.getByRole("link", { name: "Nodes" })).toHaveCount(0)
     await expect(page.getByRole("link", { name: "Operator events" })).toHaveCount(0)
-    await expect(page.getByRole("link", { name: "API keys", exact: true })).toHaveCount(0)
-    await expect(page.getByRole("link", { name: "User API keys" })).toBeVisible()
+    await expect(page.getByRole("link", { name: "User API keys" })).toHaveCount(0)
+    await expect(page.getByRole("link", { name: "API keys", exact: true })).toBeVisible()
     await expect(page.getByRole("link", { name: "Settings" })).toBeVisible()
 
     for (const route of ["/nodes", "/operator-events", "/operator-logs", "/api-keys"]) {

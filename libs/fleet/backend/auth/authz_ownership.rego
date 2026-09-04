@@ -64,6 +64,16 @@ applies {
 	input.method == "GET"
 }
 
+# Signed service URL management uses the backend service account, so it must
+# prove namespace ownership here before the handler acts.
+applies {
+	input.route == "/api/signed-service-urls/{namespace}"
+}
+
+applies {
+	input.route == "/api/signed-service-urls/{namespace}/{id}"
+}
+
 # target_namespace is the namespace this request is about: /api/svc names it
 # {namespace}, /api/namespaces/{name} names it {name}. Keyed
 # off which parameter the route bound rather than off the route itself, so the
@@ -119,6 +129,7 @@ probe_eligible {
 	applies
 	not is_github_principal
 	not authz.is_per_key_client
+	not authz.is_legacy_per_key_client
 	target_namespace != ""
 }
 

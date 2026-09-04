@@ -119,10 +119,18 @@ func TestSetupSessionParamsCopyLatestCustomerGenerationToSetupIntent(t *testing.
 		SuccessURL:      "https://run.example.test/settings?setup=success",
 		CancelURL:       "https://run.example.test/settings?setup=cancelled",
 		SetupGeneration: "server-generated-token",
+		Subject:         "subject-1",
+		Source:          "spa",
 	})
 
 	if got := params.SetupIntentData.Metadata[MetadataSetupGeneration]; got != "server-generated-token" {
 		t.Fatalf("setup intent generation = %q, want server-generated-token", got)
+	}
+	if got := params.SetupIntentData.Metadata[MetadataSubject]; got != "subject-1" {
+		t.Fatalf("setup intent subject = %q, want subject-1", got)
+	}
+	if got := params.SetupIntentData.Metadata[MetadataSetupSource]; got != "spa" {
+		t.Fatalf("setup intent source = %q, want spa", got)
 	}
 }
 

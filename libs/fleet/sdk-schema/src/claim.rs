@@ -183,4 +183,13 @@ pub struct ClaimSpec {
     #[schemars(default, schema_with = "claim_lifecycle_schema")]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub lifecycle: Option<ClaimLifecycle>,
+    #[schemars(
+        default,
+        schema_with = "integer_schema",
+        range(min = 0, max = u32::MAX),
+        description = "Creation-age TTL in seconds. When absent, the resource is not automatically reaped based on age."
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub ttl_seconds_after_created: Option<u32>,
 }

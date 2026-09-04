@@ -2,8 +2,10 @@ package billing
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/stripe/stripe-go/v85"
 )
@@ -163,6 +165,8 @@ func setupSessionParams(request SetupSessionRequest) *stripe.CheckoutSessionCrea
 	setupIntentData := &stripe.CheckoutSessionCreateSetupIntentDataParams{}
 	setupIntentData.AddMetadata("purpose", SetupPurpose)
 	setupIntentData.AddMetadata(MetadataSetupGeneration, request.SetupGeneration)
+	setupIntentData.AddMetadata(MetadataSubject, request.Subject)
+	setupIntentData.AddMetadata(MetadataSetupSource, request.Source)
 	return &stripe.CheckoutSessionCreateParams{
 		Mode:               stripe.String(string(stripe.CheckoutSessionModeSetup)),
 		Customer:           stripe.String(request.CustomerID),
@@ -190,4 +194,79 @@ func (g *StripeGateway) CreatePortalSession(ctx context.Context, request PortalS
 		return "", err
 	}
 	return session.URL, nil
+}
+
+func stripeTime(timestamp int64) time.Time {
+	if timestamp == 0 {
+		return time.Time{}
+	}
+	return time.Unix(timestamp, 0).UTC()
+}
+
+func invoiceFromStripe(source *stripe.Invoice) Invoice {
+	invoice := Invoice{
+		ID:          source.ID,
+		Currency:    string(source.Currency),
+		Total:       source.Total,
+		Status:      string(source.Status),
+		PeriodStart: stripeTime(source.PeriodStart),
+		PeriodEnd:   stripeTime(source.PeriodEnd),
+		Created:     stripeTime(source.Created),
+		Lines:       []InvoiceLine{},
+	}
+	if source.Lines == nil {
+		return invoice
+	}
+	for _, sourceLine := range source.Lines.Data {
+		if sourceLine == nil {
+			continue
+		}
+		line := InvoiceLine{
+			Description: sourceLine.Description,
+			Amount:      sourceLine.Amount,
+			Quantity:    sourceLine.Quantity,
+		}
+		if sourceLine.Period != nil {
+			line.PeriodStart = stripeTime(sourceLine.Period.Start)
+			line.PeriodEnd = stripeTime(sourceLine.Period.End)
+		}
+		invoice.Lines = append(invoice.Lines, line)
+	}
+	return invoice
+}
+
+func (g *StripeGateway) PreviewInvoice(ctx context.Context, customerID string) (*Invoice, error) {
+	invoice, err := g.client.V1Invoices.CreatePreview(ctx, &stripe.InvoiceCreatePreviewParams{
+		Customer: stripe.String(customerID),
+	})
+	if err != nil {
+		var stripeErr *stripe.Error
+		if errors.As(err, &stripeErr) && stripeErr.Code == stripe.ErrorCodeInvoiceUpcomingNone {
+			return nil, nil
+		}
+		return nil, err
+	}
+	normalized := invoiceFromStripe(invoice)
+	return &normalized, nil
+}
+
+func (g *StripeGateway) ListInvoices(ctx context.Context, customerID string, createdAfter time.Time) ([]Invoice, error) {
+	params := &stripe.InvoiceListParams{
+		ListParams: stripe.ListParams{Limit: stripe.Int64(100)},
+		Customer:   stripe.String(customerID),
+		CreatedRange: &stripe.RangeQueryParams{
+			GreaterThanOrEqual: createdAfter.Unix(),
+		},
+	}
+	invoices := make([]Invoice, 0)
+	for invoice, err := range g.client.V1Invoices.List(ctx, params).All(ctx) {
+		if err != nil {
+			return nil, err
+		}
+		if invoice == nil {
+			continue
+		}
+		invoices = append(invoices, invoiceFromStripe(invoice))
+	}
+	return invoices, nil
 }

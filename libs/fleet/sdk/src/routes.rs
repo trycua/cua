@@ -1,4 +1,4 @@
-use crate::{Sandbox, SdkError};
+use crate::SdkError;
 use url::Url;
 
 const POOL_COLLECTION_PREFIX: &str = "api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/";
@@ -9,6 +9,7 @@ const TEMPLATE_COLLECTION_SUFFIX: &str = "/osgymsandboxtemplates";
 const NAMESPACE_COLLECTION: &str = "api/namespaces";
 const NAMESPACE_PREFIX: &str = "api/namespaces/";
 const SERVICE_COLLECTION_PREFIX: &str = "api/svc/";
+const SIGNED_SERVICE_URL_COLLECTION_PREFIX: &str = "api/signed-service-urls/";
 const USER_KEY_COLLECTION: &str = "api/user-keys";
 
 pub fn pool_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
@@ -60,6 +61,71 @@ pub fn namespace_collection(base: &Url) -> Result<Url, SdkError> {
 pub fn namespace_item(base: &Url, namespace: &str) -> Result<Url, SdkError> {
     validate_dns_label_for("namespace", namespace)?;
     route(base, format!("{NAMESPACE_PREFIX}{namespace}"))
+}
+
+pub fn signed_service_url_collection(base: &Url, namespace: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    route(
+        base,
+        format!("{SIGNED_SERVICE_URL_COLLECTION_PREFIX}{namespace}"),
+    )
+}
+
+pub fn signed_service_url_list(base: &Url, namespace: &str, claim: &str) -> Result<Url, SdkError> {
+    validate_signed_service_url_claim(claim)?;
+    let mut url = signed_service_url_collection(base, namespace)?;
+    url.query_pairs_mut().append_pair("claim", claim);
+    Ok(url)
+}
+
+pub fn signed_service_url_item(base: &Url, namespace: &str, id: &str) -> Result<Url, SdkError> {
+    validate_dns_label_for("namespace", namespace)?;
+    validate_signed_service_url_id(id)?;
+    route(
+        base,
+        format!("{SIGNED_SERVICE_URL_COLLECTION_PREFIX}{namespace}/{id}"),
+    )
+}
+
+pub(crate) fn validate_signed_service_url_claim(claim: &str) -> Result<(), SdkError> {
+    let reason = if claim.is_empty() {
+        Some("must not be empty")
+    } else if claim.len() > 128 {
+        Some("must be at most 128 bytes")
+    } else if !claim
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || b"._~-".contains(&byte))
+    {
+        Some("must contain only ASCII letters, digits, periods, underscores, tildes, and hyphens")
+    } else {
+        None
+    };
+
+    match reason {
+        Some(reason) => Err(SdkError::InvalidResourceName {
+            field: "claim".into(),
+            value: claim.into(),
+            reason: reason.into(),
+        }),
+        None => Ok(()),
+    }
+}
+
+fn validate_signed_service_url_id(id: &str) -> Result<(), SdkError> {
+    let is_uuid = id.len() == 36
+        && id.bytes().enumerate().all(|(index, byte)| {
+            matches!(index, 8 | 13 | 18 | 23) && byte == b'-'
+                || !matches!(index, 8 | 13 | 18 | 23) && byte.is_ascii_hexdigit()
+        });
+    if is_uuid {
+        return Ok(());
+    }
+
+    Err(SdkError::InvalidResourceName {
+        field: "id".into(),
+        value: id.into(),
+        reason: "must be a UUID".into(),
+    })
 }
 
 pub fn user_key_collection(base: &Url) -> Result<Url, SdkError> {
@@ -141,21 +207,17 @@ pub fn claim_item(base: &Url, namespace: &str, name: &str) -> Result<Url, SdkErr
 
 pub fn service_url(
     base: &Url,
-    sandbox: &Sandbox,
-    service: &str,
+    namespace: &str,
+    service_name: &str,
     path: &str,
 ) -> Result<Url, SdkError> {
-    validate_dns_label_for("namespace", &sandbox.namespace)?;
-    validate_dns_label_for("sandbox", &sandbox.name)?;
-    validate_dns_label_for("service", service)?;
+    validate_dns_label_for("namespace", namespace)?;
+    validate_dns_label_for("service", service_name)?;
 
     let (path, query) = validate_service_path(path)?;
     let mut url = route(
         base,
-        format!(
-            "{SERVICE_COLLECTION_PREFIX}{}/{}-{}{}",
-            sandbox.namespace, sandbox.name, service, path
-        ),
+        format!("{SERVICE_COLLECTION_PREFIX}{namespace}/{service_name}{path}"),
     )?;
     url.set_query(query);
     Ok(url)
@@ -256,9 +318,38 @@ fn hex_value(byte: u8) -> Option<u8> {
 mod tests {
     use super::{
         claim_collection, claim_item, namespace_collection, namespace_item, pool_collection,
-        pool_item, template_collection, template_item,
+        pool_item, signed_service_url_collection, signed_service_url_item, signed_service_url_list,
+        template_collection, template_item,
     };
     use url::Url;
+
+    #[test]
+    fn signed_service_url_routes_validate_and_append_paths() {
+        let base = Url::parse("https://cyclops.example:8443/").unwrap();
+        let id = "31e1c9bb-8cc9-4c50-9cf4-51798b6978e4";
+
+        assert_eq!(
+            signed_service_url_collection(&base, "tenant-a")
+                .unwrap()
+                .as_str(),
+            "https://cyclops.example:8443/api/signed-service-urls/tenant-a"
+        );
+        assert_eq!(
+            signed_service_url_list(&base, "tenant-a", "claim-a")
+                .unwrap()
+                .as_str(),
+            "https://cyclops.example:8443/api/signed-service-urls/tenant-a?claim=claim-a"
+        );
+        assert_eq!(
+            signed_service_url_item(&base, "tenant-a", id)
+                .unwrap()
+                .as_str(),
+            format!("https://cyclops.example:8443/api/signed-service-urls/tenant-a/{id}")
+        );
+        assert!(signed_service_url_collection(&base, "Tenant-A").is_err());
+        assert!(signed_service_url_list(&base, "tenant-a", "bad claim").is_err());
+        assert!(signed_service_url_item(&base, "tenant-a", "bad-id").is_err());
+    }
 
     #[test]
     fn routes_append_to_root_base_without_double_slashes() {

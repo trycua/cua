@@ -47,6 +47,16 @@ fn def() -> &'static ToolDef {
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
             the tree only — the cheap path when you're just re-indexing before an \
             element ax action.\n\n\
+            The mirror image: pass `include_accessibility_tree:false` to SKIP the \
+            AX walk entirely (the expensive part, up to 20 s) and return just the \
+            screenshot plus window metadata — `window_bounds`, `screenshot_scale`, \
+            `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` \
+            — the capture-only path for rendering a live window preview / \
+            picture-in-picture without paying for perception. Setting BOTH \
+            `include_accessibility_tree:false` and `include_screenshot:false` is an \
+            error (nothing to return). Optional `max_dimension` caps the returned \
+            screenshot's long edge in pixels (aspect preserved) for a cheap \
+            thumbnail.\n\n\
             The snapshot is SCOPED to `window_id`: a window_id that no longer exists is \
             refused with `window_id_not_found`, and one owned by another process is \
             refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry \
@@ -54,8 +64,13 @@ fn def() -> &'static ToolDef {
             window belongs to the panel service, not the app). If the window is live under \
             this pid but its accessibility surface can't be resolved, the tree comes back \
             EMPTY with `degraded_reason: ax_window_unresolved` and the screenshot of the \
-            requested window — act by pixel there. This tool never returns another \
-            surface's elements under your window_id. Before exposing a screenshot, \
+            requested window — act by pixel there — unless the payload also carries \
+            `off_space: true` (issue #3458: WindowServer proves the window is off the \
+            active Space; apps whose windows are ALL off the active Space, Safari \
+            included, may expose no AXWindows at all): pixel routing refuses there too, \
+            so move the window to the active Space and re-snapshot. This tool never \
+            returns another surface's elements under your window_id. Before exposing a \
+            screenshot, \
             its raw dimensions are validated as a coherent 1x/2x representation of \
             the requested WindowServer bounds. `px_frame_mismatch` or \
             `px_capture_unavailable` omits an unprovable screenshot/pixel frame \
@@ -79,6 +94,10 @@ fn def() -> &'static ToolDef {
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_accessibility_tree": {
+                    "type": "boolean",
+                    "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, up to 20 s) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."
+                },
                 "include_screenshot": {
                     "type": "boolean",
                     "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk."
@@ -96,6 +115,11 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees."
+                },
+                "max_dimension": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default."
                 }
             },
             "additionalProperties": false
@@ -105,6 +129,19 @@ fn def() -> &'static ToolDef {
         idempotent: false,
         open_world: false,
     })
+}
+
+/// Fold a per-call `max_dimension` cap with the session/global
+/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
+/// limit", so when the ceiling is unlimited the per-call cap stands alone;
+/// otherwise the tighter (smaller, non-zero) of the two wins. Returns `0` only
+/// when neither imposes a limit.
+fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
+    match per_call {
+        Some(md) if ceiling == 0 => md,
+        Some(md) => ceiling.min(md),
+        None => ceiling,
+    }
 }
 
 fn chromium_browser_window(pid: i32) -> bool {
@@ -211,6 +248,29 @@ impl Tool for GetWindowStateTool {
         // still forces a capture (an explicit "write the frame to disk").
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        // `include_accessibility_tree` (default true) is the mirror image of
+        // `include_screenshot`: set false to SKIP the AX walk (the expensive
+        // part) and return just the screenshot + window metadata — the
+        // capture-only / preview path. With BOTH the tree and the screenshot
+        // opted out there is nothing to return, so refuse rather than emit an
+        // empty payload.
+        let want_tree = args
+            .get("include_accessibility_tree")
+            .and_then(|v| v.as_bool())
+            != Some(false);
+        if !want_tree && !should_capture {
+            return ToolResult::error(
+                "Nothing to return: both include_accessibility_tree:false and \
+                 include_screenshot:false. Set at least one to true, or pass \
+                 screenshot_out_file to force a capture.",
+            );
+        }
+        // Optional per-call cap on the returned screenshot's long edge, folded
+        // with the session/global ceiling below (the tighter wins).
+        let max_dimension = args
+            .get("max_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as u32);
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
@@ -233,8 +293,10 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        // Always walk the AX tree (perception returns both tree + screenshot).
-        let tree_result = {
+        // Walk the AX tree unless the caller opted out via
+        // `include_accessibility_tree:false` (the capture-only / preview path,
+        // which skips the expensive walk and returns screenshot + metadata).
+        let tree_result = if want_tree {
             let q = query.clone();
             // Keep the product deadline below the public client's 25-second
             // deadline so callers receive a structured driver error. The AX
@@ -263,6 +325,8 @@ impl Tool for GetWindowStateTool {
                     ));
                 }
             }
+        } else {
+            None
         };
 
         // The window can close, or its CGWindow can be re-parented onto another
@@ -299,7 +363,9 @@ impl Tool for GetWindowStateTool {
         // against. Skipped only when `include_screenshot:false` (and no
         // screenshot_out_file). With `screenshot_out_file` set, write to disk and
         // surface the path instead of embedding base64; otherwise embed base64.
-        let max_dim = effective_max_dim;
+        // Fold the per-call `max_dimension` with the session/global ceiling
+        // (the tighter of the two wins).
+        let max_dim = fold_max_dimension(effective_max_dim, max_dimension);
         // Returns the encoded/file capture, delivered dimensions, optional
         // downscale source width, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
@@ -487,7 +553,7 @@ impl Tool for GetWindowStateTool {
             .as_ref()
             .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
             .unwrap_or(0);
-        let snapshot_id = if scope_matched && !observation_only {
+        let snapshot_id = if scope_matched && !observation_only && tree_result.is_some() {
             Some(cua_driver_core::element_token::global().register_snapshot(
                 pid,
                 window_id,
@@ -588,7 +654,7 @@ impl Tool for GetWindowStateTool {
                 // generic copy misattributes for apps like Safari that expose no
                 // AXWindows at all in this state. Lazy lookup: only the degraded
                 // path pays for the space-aware enumeration.
-                let off_space = crate::windows::window_space_facts(window_id)
+                let off_space = crate::windows::window_space_facts(pid, window_id)
                     .and_then(|w| w.on_current_space)
                     == Some(false);
                 let escalation_reason = if off_space {
@@ -659,6 +725,19 @@ impl Tool for GetWindowStateTool {
         }
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
+        }
+        // Window identity metadata (additive): the owning app and the window's
+        // title for the requested window_id. A cheap WindowServer lookup that
+        // names the surface even on the capture-only path, where no AX tree is
+        // present to identify it. Omitted per-field when WindowServer reports an
+        // empty string.
+        if let Some(info) = crate::windows::window_info_by_id(window_id) {
+            if !info.app_name.is_empty() {
+                structured["app_name"] = serde_json::json!(info.app_name);
+            }
+            if !info.title.is_empty() {
+                structured["window_title"] = serde_json::json!(info.title);
+            }
         }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
@@ -1046,6 +1125,55 @@ mod window_scope_contract_tests {
                 "tool description must advertise {code}"
             );
         }
+    }
+
+    /// The capture-only fold-in: get_window_state advertises the new
+    /// `include_accessibility_tree` / `max_dimension` controls, keeps pid +
+    /// window_id required (schema not loosened), and documents the degenerate
+    /// both-false case in its description.
+    #[test]
+    fn schema_advertises_capture_only_controls() {
+        let d = def();
+        let props = &d.input_schema["properties"];
+        assert!(
+            props.get("include_accessibility_tree").is_some(),
+            "schema must advertise include_accessibility_tree"
+        );
+        assert!(
+            props.get("max_dimension").is_some(),
+            "schema must advertise max_dimension"
+        );
+        let required: Vec<&str> = d.input_schema["required"]
+            .as_array()
+            .expect("required array")
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(
+            required.contains(&"pid") && required.contains(&"window_id"),
+            "pid and window_id must stay required: {required:?}"
+        );
+        assert!(
+            d.description.contains("include_accessibility_tree:false")
+                && d.description.contains("include_screenshot:false"),
+            "description must document the both-false error"
+        );
+    }
+
+    /// The per-call `max_dimension` folds with the session/global ceiling: the
+    /// tighter non-zero cap wins, an unlimited (0) ceiling defers to the
+    /// per-call cap, and absent inputs pass the ceiling through unchanged.
+    #[test]
+    fn max_dimension_folds_tighter_cap() {
+        // Ceiling wins when it is tighter than the per-call cap.
+        assert_eq!(fold_max_dimension(1024, Some(2048)), 1024);
+        // Per-call wins when it is tighter than the ceiling.
+        assert_eq!(fold_max_dimension(4096, Some(512)), 512);
+        // Unlimited ceiling (0) defers entirely to the per-call cap.
+        assert_eq!(fold_max_dimension(0, Some(768)), 768);
+        // No per-call cap → the ceiling passes through (0 stays unlimited).
+        assert_eq!(fold_max_dimension(1600, None), 1600);
+        assert_eq!(fold_max_dimension(0, None), 0);
     }
 }
 

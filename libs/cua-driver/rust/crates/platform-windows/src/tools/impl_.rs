@@ -1064,6 +1064,18 @@ mod list_windows_z_index_tests {
 
 // ── get_window_state ─────────────────────────────────────────────────────────
 
+/// Fold a per-call `max_dimension` cap with the configured
+/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
+/// limit", so an unlimited ceiling defers to the per-call cap; otherwise the
+/// tighter (smaller, non-zero) of the two wins.
+fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
+    match per_call {
+        Some(md) if ceiling == 0 => md,
+        Some(md) => ceiling.min(md),
+        None => ceiling,
+    }
+}
+
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
@@ -1108,6 +1120,13 @@ impl Tool for GetWindowStateTool {
                 ACTION time: an element ax action (element_index/element_token → \
                 accessibility rung) or an element px action (x,y → pixel rung off this \
                 screenshot). capture_mode is deprecated and ignored.\n\n\
+                The mirror image: pass `include_accessibility_tree:false` to SKIP the \
+                UIA walk entirely and return just the screenshot plus window metadata \
+                (window_bounds, app_name, window_title) — the capture-only path for a \
+                live window preview / picture-in-picture. Setting BOTH \
+                `include_accessibility_tree:false` and `include_screenshot:false` is an \
+                error. Optional `max_dimension` caps the returned screenshot's long edge \
+                in pixels for a cheap thumbnail.\n\n\
                 Uses `IUIAutomationCacheRequest` to batch-fetch all element properties in a \
                 single COM call (Chrome's ~5000-element tree returns in ~2-3s instead of \
                 timing out at 4s with per-property RPCs).\n\n\
@@ -1130,11 +1149,13 @@ impl Tool for GetWindowStateTool {
                 "pid":{"type":"integer","description":"Process ID from `list_apps`."},
                 "window_id":{"type":"integer","description":"HWND of the target window. Must belong to `pid`. Enumerate via `list_windows` or read from `launch_app`'s `windows` array."},
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_accessibility_tree":{"type":"boolean","description":"Default true — walk the UIA tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the UIA walk entirely and return just the screenshot plus window metadata (window_bounds, app_name, window_title) — the capture-only path for a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."},
                 "include_screenshot":{"type":"boolean","description":"Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return tree only (the cheap path for re-indexing before an element ax action)."},
                 "screenshot_out_file":{"type":"string","description":"When set, write the PNG to this file path instead of embedding base64 in the response. The structured output will contain `screenshot_file_path` instead."},
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
-                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."}
+                "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
+                "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -1177,11 +1198,34 @@ impl Tool for GetWindowStateTool {
                  {pid}}})` for candidates."
             ));
         }
+        // Window identity metadata (additive): title + on-screen rectangle from
+        // the enumeration we already did, plus the owning process's executable
+        // name. Names the surface on the capture-only path, where no UIA tree
+        // identifies it.
+        let win_geom = windows_for_pid
+            .iter()
+            .find(|w| w.hwnd == hwnd)
+            .map(|w| (w.title.clone(), w.x, w.y, w.width, w.height));
+        let app_name = tokio::task::spawn_blocking(move || {
+            crate::win32::list_processes()
+                .into_iter()
+                .find(|p| p.pid == pid)
+                .map(|p| p.name)
+        })
+        .await
+        .ok()
+        .flatten();
+        use cua_driver_core::tool_args::ArgsExt;
+        // Optional per-call cap on the returned screenshot's long edge, folded
+        // with the configured ceiling (the tighter wins).
+        let max_dimension = args
+            .get("max_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as u32);
         let max_dim = {
             let cfg = self.state.config.read().unwrap();
-            cfg.max_image_dimension
+            fold_max_dimension(cfg.max_image_dimension, max_dimension)
         };
-        use cua_driver_core::tool_args::ArgsExt;
         // `capture_mode` is DEPRECATED and ignored — get_window_state always
         // returns BOTH the UIA tree and a screenshot now, so the agent grounds on
         // both and cross-checks (the UIA tree lies often enough that a grounding
@@ -1217,8 +1261,21 @@ impl Tool for GetWindowStateTool {
             .get("_observation_only")
             .and_then(|value| value.as_bool())
             == Some(true);
-        let do_tree = true;
+        // `include_accessibility_tree` (default true) mirrors include_screenshot:
+        // set false to SKIP the UIA walk and return just the screenshot + window
+        // metadata (the capture-only / preview path).
+        let do_tree = args
+            .get("include_accessibility_tree")
+            .and_then(|v| v.as_bool())
+            != Some(false);
         let do_shot = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        if !do_tree && !do_shot {
+            return ToolResult::error(
+                "Nothing to return: both include_accessibility_tree:false and \
+                 include_screenshot:false. Set at least one to true, or pass \
+                 screenshot_out_file to force a capture.",
+            );
+        }
 
         let state = self.state.clone();
         let q = query.clone();
@@ -1470,9 +1527,15 @@ impl Tool for GetWindowStateTool {
                     }
                     // base64 is embedded only when no out_file was given (vision
                     // path). With `screenshot_out_file` the bytes went to disk and
-                    // we surface the path instead — never both.
+                    // we surface the path instead — never both. Keep a text content
+                    // part when the image went to disk so the response is never
+                    // empty on the capture-only path (which has no tree markdown).
                     if let Some(b64) = b64_opt {
                         content.push(cua_driver_core::protocol::Content::image_png(b64));
+                    } else if let Some(fp) = &file_path {
+                        content.push(cua_driver_core::protocol::Content::text(format!(
+                            "window_id={hwnd} pid={pid} size={w}x{h} screenshot written to {fp}"
+                        )));
                     }
                     structured["screenshot_width"] = json!(w);
                     structured["screenshot_height"] = json!(h);
@@ -1497,12 +1560,39 @@ impl Tool for GetWindowStateTool {
                     structured["screenshot_error"] = json!(err);
                 }
 
+                // Window identity metadata (additive): title + on-screen
+                // rectangle + owning process name for the requested window_id,
+                // useful on the capture-only path where no UIA tree names it.
+                if let Some((title, x, y, w, h)) = &win_geom {
+                    if !title.is_empty() {
+                        structured["window_title"] = json!(title);
+                    }
+                    structured["window_bounds"] =
+                        json!({ "x": x, "y": y, "width": w, "height": h });
+                }
+                if let Some(name) = app_name.as_deref().filter(|n| !n.is_empty()) {
+                    structured["app_name"] = json!(name);
+                }
+
                 cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
                     &mut structured,
                     is_standalone_chromium_browser_process(pid).then_some(
                         cua_driver_core::window_inspection::BrowserChromeCaptureCoverage::NotObservable,
                     ),
                 );
+
+                // The capture-only path (include_accessibility_tree:false) leaves
+                // `content` empty if the screenshot was also unavailable. Return a
+                // structured error rather than a "successful" response with no
+                // content parts (consistent with the tree+screenshot path, which
+                // always carries at least the tree markdown).
+                if content.is_empty() {
+                    return ToolResult::error(format!(
+                        "No content produced for window_id {hwnd}: the accessibility tree was \
+                         skipped (include_accessibility_tree:false) and no screenshot was returned."
+                    ))
+                    .with_structured(structured);
+                }
 
                 ToolResult {
                     content,

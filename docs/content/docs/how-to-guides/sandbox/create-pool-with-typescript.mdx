@@ -25,7 +25,7 @@ The package provides separate runtime entry points:
 This guide uses the public Linux computer-server image:
 
 ```text
-public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57
 ```
 
 <Callout type="warn">
@@ -81,7 +81,7 @@ import {
 
 const IMAGE =
   'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
-  '@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d';
+  '@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57';
 const BASE_URL = process.env.CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
 const TOKEN_URL =
   process.env.CUA_TOKEN_URL ??
@@ -125,12 +125,13 @@ const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as Cy
 
 let claim: Claim | undefined;
 try {
-  const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const serverService = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const mcpService = new SandboxServiceBuilder().name('mcp').targetPort(3000).build();
   const vm = new VmTemplateBuilder()
     .containerDiskImage(IMAGE)
     .cpuCores(4)
     .memory('4Gi')
-    .services([service])
+    .services([serverService, mcpService])
     .build();
   const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
   const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
@@ -188,7 +189,9 @@ npx tsx create-pool.ts
 
 The script writes `sandbox.png` in the current directory. The Fleet client
 creates and waits for the claim, routes `POST /cmd` through the authenticated
-`server` service proxy, and deletes the claim before closing.
+`server` service proxy, and deletes the claim before closing. The template also
+declares the Cua Driver MCP endpoint as the `mcp` service on port `3000`, so the
+same pool works with the signed-service URL guide.
 
   </Tab>
   <Tab value="Browser">
@@ -238,7 +241,7 @@ import {
 
 const IMAGE =
   'public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04' +
-  '@sha256:82702ebdd32d1f8fc05f2ea409a7c67d0ba9f8f8e4e9f1a89ce40989d5f4475d';
+  '@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57';
 const BASE_URL = import.meta.env.VITE_CUA_FLEET_BASE_URL ?? 'https://run.cua.ai';
 const TOKEN_URL =
   import.meta.env.VITE_CUA_TOKEN_URL ??
@@ -307,12 +310,13 @@ const client = CyclopsClient.connect(configuration, new FetchHttpClient()) as Cy
 
 let claim: Claim | undefined;
 try {
-  const service = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const serverService = new SandboxServiceBuilder().name('server').targetPort(8000).build();
+  const mcpService = new SandboxServiceBuilder().name('mcp').targetPort(3000).build();
   const vm = new VmTemplateBuilder()
     .containerDiskImage(IMAGE)
     .cpuCores(4)
     .memory('4Gi')
-    .services([service])
+    .services([serverService, mcpService])
     .build();
   const templateSpec = new OsGymSandboxTemplateSpecBuilder().vmTemplate(vm).build();
   const templateRef = new SandboxTemplateRefBuilder().name(TEMPLATE_NAME).build();
@@ -388,7 +392,9 @@ npm run dev
 
 The browser SDK authenticates the Fleet API request, routes `POST /cmd` through
 the named `server` service, decodes the computer-server event-stream response,
-and displays the PNG.
+and displays the PNG. The pool also exposes the Cua Driver MCP endpoint as the
+`mcp` service on port `3000`, matching the service used by the signed-service
+URL guide.
 
   </Tab>
 </Tabs>

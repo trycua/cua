@@ -8,11 +8,13 @@ import (
 	"log/slog"
 	"os"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestBackendImageBuildsMigrationCommand(t *testing.T) {
@@ -88,6 +90,11 @@ func TestStaticRoleAlterClausesOnlyContainPermittedDrift(t *testing.T) {
 
 func TestStaticRoleSettingsContractsAreExact(t *testing.T) {
 	want := map[string]staticRoleSettingsContract{
+		"cyclops_usage_reader": {
+			staticRoleSettingDefaultTransactionReadOnly:      "on",
+			staticRoleSettingStatementTimeout:                "10000ms",
+			staticRoleSettingIdleInTransactionSessionTimeout: "10000ms",
+		},
 		"k8s_metabase": {
 			staticRoleSettingDefaultTransactionReadOnly:      "on",
 			staticRoleSettingStatementTimeout:                "20000ms",
@@ -109,13 +116,27 @@ func TestStaticRoleAlterClausesRejectUnsupportedValidUntilContract(t *testing.T)
 	}
 }
 
-func TestStaticRoleAlterClausesRejectCreateDBDrift(t *testing.T) {
-	_, err := staticRoleAlterClauses(staticRoleContract{role: "cyclops_app", login: true}, staticRoleAttributes{
-		login:    true,
-		createDB: true,
+func TestStaticRoleAlterClausesReconcileCreateDBDrift(t *testing.T) {
+	clauses, err := staticRoleAlterClauses(staticRoleContract{role: "cyclops_app", login: true, validUntil: staticRoleValidUntilInfinity}, staticRoleAttributes{
+		login:      true,
+		createDB:   true,
+		validUntil: "infinity",
 	})
-	if err == nil || !strings.Contains(err.Error(), "rolcreatedb=true") {
-		t.Fatalf("static role createdb drift error = %v, want fail-closed rolcreatedb error", err)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if clauses != "NOCREATEDB" {
+		t.Fatalf("static role createdb clauses = %q, want NOCREATEDB", clauses)
+	}
+}
+
+func TestStaticRoleAlterClausesRejectCreateDBContract(t *testing.T) {
+	_, err := staticRoleAlterClauses(
+		staticRoleContract{role: "cyclops_app", login: true, createDB: true, validUntil: staticRoleValidUntilInfinity},
+		staticRoleAttributes{login: true, validUntil: "infinity"},
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported CREATEDB contract") {
+		t.Fatalf("static role CREATEDB contract error = %v, want fail-closed unsupported contract", err)
 	}
 }
 
@@ -500,15 +521,43 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 1 {
-		t.Fatalf("expected exactly one initial migration, got %d", len(files))
+	if len(files) != 11 {
+		t.Fatalf("expected exactly eleven migrations, got %d", len(files))
 	}
-	file := files[0]
-	if file.Version != 1 || file.Name != "000001_initial_schema.sql" {
-		t.Fatalf("expected version 1 initial schema migration, got version=%d name=%q", file.Version, file.Name)
+	manifest := make([]struct {
+		Version int64
+		Name    string
+	}, 0, len(files))
+	for _, file := range files {
+		manifest = append(manifest, struct {
+			Version int64
+			Name    string
+		}{file.Version, file.Name})
 	}
-	digest := sha256.Sum256([]byte(file.SQL))
-	if file.SHA256 != hex.EncodeToString(digest[:]) {
+	if !reflect.DeepEqual(manifest, []struct {
+		Version int64
+		Name    string
+	}{
+		{1, "000001_initial_schema.sql"},
+		{2, "000002_usage_sandbox_events.sql"},
+		{3, "000003_usage_claimed_sandbox_pool.sql"},
+		{4, "000004_filter_invalid_usage_sandbox_events.sql"},
+		{5, "000005_hourly_reservation_meter.sql"},
+		{6, "000006_chat_conversations.sql"},
+		{7, "000007_metabase_hourly_reservation_usage.sql"},
+		{8, "000008_metabase_hourly_reservation_usage_excluding_tenants.sql"},
+		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
+		{10, "000010_grant_metabase_billing_meter_access.sql"},
+		{11, "000011_signed_service_urls.sql"},
+	}) {
+		t.Fatalf("migration manifest = %#v", manifest)
+	}
+	initial := files[0]
+	if initial.Version != 1 || initial.Name != "000001_initial_schema.sql" {
+		t.Fatalf("expected version 1 initial schema migration, got version=%d name=%q", initial.Version, initial.Name)
+	}
+	digest := sha256.Sum256([]byte(initial.SQL))
+	if initial.SHA256 != hex.EncodeToString(digest[:]) {
 		t.Fatal("embedded initial schema migration digest does not match its contents")
 	}
 	for _, expected := range []string{
@@ -529,12 +578,235 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 		"GRANT EXECUTE ON FUNCTION k8s_state.register_tenant_role(name, text, text) TO k8s_role_admin",
 		"GRANT EXECUTE ON FUNCTION k8s_state.unregister_tenant_role(name) TO k8s_role_admin",
 	} {
-		if !strings.Contains(file.SQL, expected) {
+		if !strings.Contains(initial.SQL, expected) {
 			t.Errorf("initial schema is missing direct tenant role contract %q", expected)
 		}
 	}
-	if strings.Contains(file.SQL, "k8s_query_broker") {
+	if strings.Contains(initial.SQL, "k8s_query_broker") {
 		t.Fatal("initial schema must not create or grant a shared query broker role")
+	}
+
+	usage := files[1]
+	if usage.Version != 2 || usage.Name != "000002_usage_sandbox_events.sql" {
+		t.Fatalf("expected version 2 usage migration, got version=%d name=%q", usage.Version, usage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE ROLE cyclops_usage_reader LOGIN NOINHERIT NOCREATEROLE NOSUPERUSER NOCREATEDB NOREPLICATION NOBYPASSRLS",
+		"CREATE INDEX resource_event_outbox_usage_lookup_idx",
+		"GRANT SELECT ON k8s_state.resource_event_outbox TO k8s_reporting_owner",
+		"CREATE FUNCTION k8s_reporting.usage_sandbox_events",
+		"SECURITY DEFINER",
+		"SET search_path = k8s_state, pg_catalog",
+		"REVOKE ALL ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) FROM PUBLIC",
+		"GRANT USAGE ON SCHEMA k8s_reporting TO cyclops_usage_reader",
+		"GRANT EXECUTE ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) TO cyclops_usage_reader",
+	} {
+		if !strings.Contains(usage.SQL, expected) {
+			t.Errorf("usage migration is missing contract %q", expected)
+		}
+	}
+	if strings.Contains(usage.SQL, "GRANT SELECT ON k8s_state.resource_event_outbox TO cyclops_usage_reader") {
+		t.Fatal("usage reader must not receive direct outbox table access")
+	}
+
+	claimedSandboxPool := files[2]
+	if claimedSandboxPool.Version != 3 || claimedSandboxPool.Name != "000003_usage_claimed_sandbox_pool.sql" {
+		t.Fatalf("expected version 3 claimed sandbox pool migration, got version=%d name=%q", claimedSandboxPool.Version, claimedSandboxPool.Name)
+	}
+	for _, expected := range []string{
+		"CREATE OR REPLACE FUNCTION k8s_reporting.usage_sandbox_events",
+		"event.object -> 'metadata' -> 'annotations' ->> 'osgym.cua.ai/origin-warmpool'",
+		"REVOKE ALL ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) FROM PUBLIC",
+		"GRANT EXECUTE ON FUNCTION k8s_reporting.usage_sandbox_events(text, timestamptz, timestamptz) TO cyclops_usage_reader",
+	} {
+		if !strings.Contains(claimedSandboxPool.SQL, expected) {
+			t.Errorf("claimed sandbox pool migration is missing contract %q", expected)
+		}
+	}
+
+	legacyFilter := files[3]
+	if legacyFilter.Version != 4 || legacyFilter.Name != "000004_filter_invalid_usage_sandbox_events.sql" {
+		t.Fatalf("expected version 4 usage filter migration, got version=%d name=%q", legacyFilter.Version, legacyFilter.Name)
+	}
+	for _, expected := range []string{
+		"CREATE OR REPLACE FUNCTION k8s_reporting.usage_sandbox_events",
+		"event.object -> 'metadata' -> 'annotations' ->> 'osgym.cua.ai/origin-warmpool'",
+		"event.object -> 'spec' -> 'vmTemplate' ->> 'runtime' <> ''",
+		"event.object -> 'status' ->> 'vmName' <> ''",
+	} {
+		if !strings.Contains(legacyFilter.SQL, expected) {
+			t.Errorf("usage filter migration is missing contract %q", expected)
+		}
+	}
+
+	meter := files[4]
+	if meter.Version != 5 || meter.Name != "000005_hourly_reservation_meter.sql" {
+		t.Fatalf("expected version 5 reservation meter migration, got version=%d name=%q", meter.Version, meter.Name)
+	}
+	for _, expected := range []string{
+		"CREATE ROLE billing_meter_owner NOLOGIN",
+		"CREATE ROLE cyclops_meter_writer LOGIN",
+		"CREATE TABLE billing_meter.reservation_hour_fact",
+		"CREATE VIEW billing_meter.reservation_hour_current",
+		"BEFORE UPDATE OR DELETE OR TRUNCATE ON billing_meter.reservation_hour_fact",
+		"CREATE FUNCTION k8s_api.sandbox_meter_tenant",
+		"CREATE FUNCTION k8s_reporting.reservation_hour_facts",
+		"GRANT SELECT, INSERT ON TABLE billing_meter.reservation_hour_collection, billing_meter.reservation_hour_fact TO cyclops_meter_writer",
+		"GRANT EXECUTE ON FUNCTION k8s_reporting.reservation_hour_facts(text, timestamptz, timestamptz) TO cyclops_usage_reader",
+	} {
+		if !strings.Contains(meter.SQL, expected) {
+			t.Errorf("reservation meter migration is missing contract %q", expected)
+		}
+	}
+
+	chatConversations := files[5]
+	if chatConversations.Version != 6 || chatConversations.Name != "000006_chat_conversations.sql" {
+		t.Fatalf("expected version 6 chat migration, got version=%d name=%q", chatConversations.Version, chatConversations.Name)
+	}
+	for _, expected := range []string{
+		"CREATE TABLE public.chat_conversations",
+		"messages jsonb NOT NULL DEFAULT '[]'::jsonb",
+		"CREATE INDEX chat_conversations_owner_active_idx",
+		"CREATE INDEX chat_conversations_owner_archived_idx",
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON TABLE public.chat_conversations TO cyclops_app",
+	} {
+		if !strings.Contains(chatConversations.SQL, expected) {
+			t.Errorf("chat conversation migration is missing contract %q", expected)
+		}
+	}
+
+	metabaseUsage := files[6]
+	if metabaseUsage.Version != 7 || metabaseUsage.Name != "000007_metabase_hourly_reservation_usage.sql" {
+		t.Fatalf("expected version 7 Metabase usage migration, got version=%d name=%q", metabaseUsage.Version, metabaseUsage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE VIEW k8s_reporting.hourly_reservation_usage",
+		"FROM billing_meter.reservation_hour_collection_current AS collection",
+		"LEFT JOIN billing_meter.reservation_hour_current AS fact",
+		"GRANT SELECT ON k8s_reporting.hourly_reservation_usage TO k8s_metabase",
+	} {
+		if !strings.Contains(metabaseUsage.SQL, expected) {
+			t.Errorf("Metabase usage migration is missing contract %q", expected)
+		}
+	}
+
+	filteredMetabaseUsage := files[7]
+	if filteredMetabaseUsage.Version != 8 || filteredMetabaseUsage.Name != "000008_metabase_hourly_reservation_usage_excluding_tenants.sql" {
+		t.Fatalf("expected version 8 filtered Metabase usage migration, got version=%d name=%q", filteredMetabaseUsage.Version, filteredMetabaseUsage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE VIEW k8s_reporting.hourly_reservation_usage_excluding_tenants",
+		"fact.capsule_tenant NOT IN",
+		"user-f039fe89-9b5f-43dc-8ccd-d100ae732246",
+		"user-30a53246-881d-4f1a-8005-979f2a07933e",
+		"GRANT SELECT ON k8s_reporting.hourly_reservation_usage_excluding_tenants TO k8s_metabase",
+	} {
+		if !strings.Contains(filteredMetabaseUsage.SQL, expected) {
+			t.Errorf("filtered Metabase usage migration is missing contract %q", expected)
+		}
+	}
+	extendedFilteredMetabaseUsage := files[8]
+	if extendedFilteredMetabaseUsage.Version != 9 || extendedFilteredMetabaseUsage.Name != "000009_extend_metabase_revenue_tenant_exclusions.sql" {
+		t.Fatalf("expected version 9 extended filtered Metabase usage migration, got version=%d name=%q", extendedFilteredMetabaseUsage.Version, extendedFilteredMetabaseUsage.Name)
+	}
+	for _, expected := range []string{
+		"CREATE OR REPLACE VIEW k8s_reporting.hourly_reservation_usage_excluding_tenants",
+		"GRANT SELECT ON k8s_reporting.hourly_reservation_usage_excluding_tenants TO k8s_metabase",
+	} {
+		if !strings.Contains(extendedFilteredMetabaseUsage.SQL, expected) {
+			t.Errorf("extended filtered Metabase usage migration is missing contract %q", expected)
+		}
+	}
+	predicate := regexp.MustCompile(`(?s)\bfact\.capsule_tenant\s+NOT\s+IN\s*\((.*?)\)`).FindStringSubmatch(extendedFilteredMetabaseUsage.SQL)
+	if len(predicate) != 2 {
+		t.Fatal("version 9 migration does not contain a fact.capsule_tenant NOT IN predicate")
+	}
+	quotedLabel := regexp.MustCompile(`'([^']*)'`)
+	labels := make([]string, 0)
+	for _, match := range quotedLabel.FindAllStringSubmatch(predicate[1], -1) {
+		labels = append(labels, match[1])
+	}
+	wantLabels := []string{
+		"user-f039fe89-9b5f-43dc-8ccd-d100ae732246",
+		"user-30a53246-881d-4f1a-8005-979f2a07933e",
+		"user-0ea07f31-b7bd-4e99-b29a-2376f6fde1be",
+		"user-a89b2628-9656-4ef0-bf01-e925b120ed1d",
+	}
+	if !reflect.DeepEqual(labels, wantLabels) {
+		t.Fatalf("version 9 filtered tenant labels = %#v, want %#v", labels, wantLabels)
+	}
+	if remaining := strings.Trim(quotedLabel.ReplaceAllString(predicate[1], ""), " \t\r\n,"); remaining != "" {
+		t.Fatalf("version 9 filtered tenant predicate contains non-label content %q", remaining)
+	}
+	billingMeterAccess := files[9]
+	if billingMeterAccess.Version != 10 || billingMeterAccess.Name != "000010_grant_metabase_billing_meter_access.sql" {
+		t.Fatalf("expected version 10 Metabase billing meter access migration, got version=%d name=%q", billingMeterAccess.Version, billingMeterAccess.Name)
+	}
+	for _, expected := range []string{
+		"SET LOCAL ROLE billing_meter_owner",
+		"GRANT USAGE ON SCHEMA billing_meter TO k8s_metabase",
+		"GRANT SELECT ON ALL TABLES IN SCHEMA billing_meter TO k8s_metabase",
+		"ALTER DEFAULT PRIVILEGES IN SCHEMA billing_meter GRANT SELECT ON TABLES TO k8s_metabase",
+	} {
+		if !strings.Contains(billingMeterAccess.SQL, expected) {
+			t.Errorf("Metabase billing meter access migration is missing contract %q", expected)
+		}
+	}
+
+	signedServiceURLs := files[10]
+	for _, fragment := range []string{
+		"CREATE TABLE public.signed_service_urls",
+		"signed_service_urls_claim_created_idx",
+		"CHECK (expires_at >= created_at + interval '1 minute')",
+		"CHECK (expires_at <= created_at + interval '24 hours')",
+		"GRANT SELECT, INSERT, UPDATE ON TABLE public.signed_service_urls TO cyclops_app",
+	} {
+		if !strings.Contains(signedServiceURLs.SQL, fragment) {
+			t.Fatalf("migration 11 missing %q", fragment)
+		}
+	}
+
+}
+
+func TestReservationMeterMigrationRetainsRecordedChecksum(t *testing.T) {
+	files, err := embeddedMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	meter := files[4]
+	if meter.SHA256 != hourlyReservationMeterOriginalSHA256 {
+		t.Fatalf("reservation meter checksum = %s, want recorded %s", meter.SHA256, hourlyReservationMeterOriginalSHA256)
+	}
+}
+
+func TestExecutableMigrationSQLRepairsLegacyPrivilegeOrder(t *testing.T) {
+	file := migrationFile{
+		Version: 5,
+		Name:    "000005_hourly_reservation_meter.sql",
+		SHA256:  hourlyReservationMeterOriginalSHA256,
+		SQL:     hourlyReservationMeterPrivilegeSequence,
+	}
+
+	executable, err := prepareMigrationExecution(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if executable.SQL != hourlyReservationMeterCompatiblePrivilegeSequence {
+		t.Fatalf("executable migration SQL = %q", executable.SQL)
+	}
+	if file.SQL != hourlyReservationMeterPrivilegeSequence {
+		t.Fatal("compatibility repair must not mutate immutable migration bytes")
+	}
+}
+
+func TestExecutableMigrationSQLRejectsAmbiguousLegacyMigration(t *testing.T) {
+	_, err := prepareMigrationExecution(migrationFile{
+		Name:   "000005_hourly_reservation_meter.sql",
+		SHA256: hourlyReservationMeterOriginalSHA256,
+		SQL:    hourlyReservationMeterPrivilegeSequence + "\n" + hourlyReservationMeterPrivilegeSequence,
+	})
+	if err == nil || !strings.Contains(err.Error(), "missing or ambiguous") {
+		t.Fatalf("expected ambiguous legacy sequence error, got %v", err)
 	}
 }
 
@@ -652,12 +924,14 @@ func TestCredentialURLsExcludeDynamicTenantRoles(t *testing.T) {
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if err != nil {
 		t.Fatalf("parse fixed runtime credentials: %v", err)
 	}
-	if len(credentials) != 5 {
-		t.Fatalf("credential count = %d, want 5", len(credentials))
+	if len(credentials) != 7 {
+		t.Fatalf("credential count = %d, want 7", len(credentials))
 	}
 	for _, credential := range credentials {
 		if credential.Role == "k8s_query_broker" || strings.HasPrefix(credential.Role, "k8s_tenant_") {
@@ -673,15 +947,18 @@ func TestStaticRoleContractsAreAllowlistedAndFixed(t *testing.T) {
 		connectionLimit                      int
 		validUntil                           staticRoleValidUntil
 	}{
-		"cyclops_app":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_state_owner":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_state_writer":    {true, false, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_state_exporter":  {true, false, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_query_tenant":    {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_query_admin":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_role_admin":      {true, false, true, false, -1, staticRoleValidUntilInfinity},
-		"k8s_reporting_owner": {false, true, false, false, -1, staticRoleValidUntilInfinity},
-		"k8s_metabase":        {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_app":          {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_owner":      {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_writer":     {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_state_exporter":   {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_query_tenant":     {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_query_admin":      {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_role_admin":       {true, false, true, false, -1, staticRoleValidUntilInfinity},
+		"k8s_reporting_owner":  {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"billing_meter_owner":  {false, true, false, false, -1, staticRoleValidUntilInfinity},
+		"k8s_metabase":         {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_usage_reader": {true, false, false, false, -1, staticRoleValidUntilInfinity},
+		"cyclops_meter_writer": {true, false, false, false, -1, staticRoleValidUntilInfinity},
 	}
 	if len(contracts) != len(want) {
 		t.Fatalf("static role contract count = %d, want %d", len(contracts), len(want))
@@ -706,6 +983,7 @@ func TestStaticMembershipContractsUsePG16Options(t *testing.T) {
 	want := []staticMembershipContract{
 		{role: "k8s_state_owner", member: "migration_owner", admin: false, inherit: false, set: true},
 		{role: "k8s_reporting_owner", member: "migration_owner", admin: false, inherit: false, set: true},
+		{role: "billing_meter_owner", member: "migration_owner", admin: false, inherit: false, set: true},
 		{role: "k8s_query_tenant", member: "k8s_role_admin", admin: true, inherit: false, set: false},
 		{role: "k8s_query_admin", member: "k8s_reporting_owner", admin: false, inherit: true, set: false},
 	}
@@ -729,6 +1007,8 @@ func TestCredentialURLsRequireExpectedRoleNames(t *testing.T) {
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if err == nil {
 		t.Fatal("expected application role-name validation")
@@ -745,27 +1025,30 @@ func TestCredentialURLsRejectEmptyPassword(t *testing.T) {
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
 	if err == nil || err.Error() != "application credential database URL must include a password" {
 		t.Fatalf("expected empty password rejection, got %v", err)
 	}
 }
 
-func TestCredentialURLParseErrorsAreSafe(t *testing.T) {
-	const username = "leaked-user"
-	const password = "leaked-password"
+func TestCredentialURLParseErrorsPreserveCauseForBoundaryClassification(t *testing.T) {
 	_, err := parseCredentialURLs(CredentialURLs{
-		Application: "postgres://" + username + ":" + password + "@%zz/cyclops",
+		Application: "postgres://leaked-user:leaked-password@%zz/cyclops",
 		Writer:      "postgres://k8s_state_writer:pw@db/cyclops",
 		Exporter:    "postgres://k8s_state_exporter:pw@db/cyclops",
 		RoleAdmin:   "postgres://k8s_role_admin:pw@db/cyclops",
 		Metabase:    "postgres://k8s_metabase:pw@db/cyclops",
+		Usage:       "postgres://cyclops_usage_reader:pw@db/cyclops",
+		Meter:       "postgres://cyclops_meter_writer:pw@db/cyclops",
 	})
-	if err == nil || err.Error() != "parse application credential database URL" {
-		t.Fatalf("expected safe credential parse error, got %v", err)
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)
 	}
-	if strings.Contains(err.Error(), username) || strings.Contains(err.Error(), password) {
-		t.Fatalf("credential parse error leaked secret data: %v", err)
+	var parseErr *pgconn.ParseConfigError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("error = %v, want preserved *pgconn.ParseConfigError", err)
 	}
 }
 
@@ -786,8 +1069,13 @@ func TestMigrationConfigAndLoggingAreSafe(t *testing.T) {
 		t.Fatalf("database target leaked secret data: %q", target)
 	}
 
-	if _, err := parseMigrationConfig("postgres://" + username + ":" + password + "@%zz/cyclops"); err == nil || err.Error() != "parse migration database URL" {
-		t.Fatalf("expected safe migration parse error, got %v", err)
+	_, err = parseMigrationConfig("postgres://" + username + ":" + password + "@%zz/cyclops")
+	if !errors.Is(err, ErrInvalidConfiguration) {
+		t.Fatalf("error = %v, want ErrInvalidConfiguration", err)
+	}
+	var parseErr *pgconn.ParseConfigError
+	if !errors.As(err, &parseErr) {
+		t.Fatalf("error = %v, want preserved *pgconn.ParseConfigError", err)
 	}
 
 	var output bytes.Buffer

@@ -1,5 +1,6 @@
-import { useMemo, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import { useBeforeUnload, useLocation, useNavigate } from "react-router-dom"
+import Alert from "@cloudscape-design/components/alert"
 import Box from "@cloudscape-design/components/box"
 import ColumnLayout from "@cloudscape-design/components/column-layout"
 import Container from "@cloudscape-design/components/container"
@@ -11,11 +12,17 @@ import Modal from "@cloudscape-design/components/modal"
 import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Toggle from "@cloudscape-design/components/toggle"
+import { billingApi } from "../api/billing"
+import { recordFleetPaymentGate, type FleetPaymentGateReason } from "../auth/analytics"
+import { kc } from "../auth/keycloak"
+import { useFeatureFlags } from "../components/FeatureFlagContext"
 import { useFlash } from "../components/FlashContext"
-import { createPool } from "../sdk/pools"
-import type { PoolTemplateConfig } from "../sdk/models"
+import { poolCreateErrorMessage } from "../error-message"
+import { createPool } from "../fleet/pools"
+import type { PoolTemplateConfig } from "../fleet/models"
 import { CuaButton } from "../components/CuaButton"
 import { PageShell } from "../components/PageShell"
+import { isReviewPreviewEnvironment } from "../preview-environment"
 
 const NAME_PATTERN = /^[a-z0-9]([-a-z0-9]*[a-z0-9])?$/
 
@@ -75,6 +82,8 @@ export function PoolNew() {
   const navigate = useNavigate()
   const location = useLocation()
   const flash = useFlash()
+  const { billing: billingEnabled } = useFeatureFlags()
+  const paymentMethodGateEnabled = !isReviewPreviewEnvironment()
 
   const navState = location.state as PoolNewState | null
   const source = navState?.source ?? null
@@ -87,6 +96,11 @@ export function PoolNew() {
   const [ociImage, setOciImage] = useState(seed.ociImage ?? DEFAULTS.ociImage)
   const [firmware, setFirmware] = useState<"bios" | "efi">(seed.firmware ?? "bios")
   const [replicas, setReplicas] = useState(String(seed.replicas ?? DEFAULTS.replicas))
+  const [ttlSecondsAfterCreated, setTtlSecondsAfterCreated] = useState(
+    seed.ttlSecondsAfterCreated === undefined
+      ? ""
+      : String(seed.ttlSecondsAfterCreated),
+  )
   const [readinessPort, setReadinessPort] = useState(
     portFromProbe(seed.probes?.readinessProbe),
   )
@@ -111,7 +125,45 @@ export function PoolNew() {
   const [dirty, setDirty] = useState(false)
   const [submitAttempted, setSubmitAttempted] = useState(false)
   const [discardOpen, setDiscardOpen] = useState(false)
+  // True once billing confirms there is no saved payment method or the
+  // card-admission policy would deny this user's pool create. Stays false
+  // while loading or when the lookup fails: the backend policy is still the
+  // enforcement point, so the gate fails open on a billing hiccup.
+  const [paymentGateReason, setPaymentGateReason] = useState<FleetPaymentGateReason | null>(null)
   const nameRef = useRef<InputProps.Ref>(null)
+  const ttlRef = useRef<InputProps.Ref>(null)
+
+  useEffect(() => {
+    if (!billingEnabled || !paymentMethodGateEnabled) return
+    let cancelled = false
+    billingApi
+      .summary()
+      .then(summary => {
+        if (!cancelled) {
+          const cardRequired =
+            !summary.payment_method_present ||
+            summary.pool_create_card_required === true
+          setPaymentGateReason(
+            !cardRequired
+              ? null
+              : !summary.payment_method_present
+                ? "no_payment_method"
+                : "card_admission_required",
+          )
+        }
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [billingEnabled, paymentMethodGateEnabled])
+
+  useEffect(() => {
+    if (!paymentGateReason) return
+    void recordFleetPaymentGate(paymentGateReason, kc.sessionId).catch(() => undefined)
+  }, [paymentGateReason])
+
+  const cardRequired = paymentGateReason !== null
 
   useBeforeUnload(event => {
     if (!dirty || submitting) return
@@ -125,6 +177,15 @@ export function PoolNew() {
     }
     return undefined
   }, [name, submitAttempted])
+
+  const ttlError = useMemo(() => {
+    if (!ttlSecondsAfterCreated.trim()) return undefined
+    const value = Number(ttlSecondsAfterCreated)
+    if (!Number.isInteger(value) || value < 0) {
+      return "Time to live must be a non-negative whole number."
+    }
+    return undefined
+  }, [ttlSecondsAfterCreated])
 
   const addService = () => {
     setDirty(true)
@@ -165,6 +226,9 @@ export function PoolNew() {
       ociImage: ociImage.trim() || DEFAULTS.ociImage,
       firmware: firmware !== "bios" ? firmware : undefined,
       replicas: parseInt(replicas, 10) || DEFAULTS.replicas,
+      ttlSecondsAfterCreated: ttlSecondsAfterCreated.trim()
+        ? Number(ttlSecondsAfterCreated)
+        : undefined,
       services: validServices.length ? validServices : undefined,
       probes: Object.keys(probes).length ? probes : undefined,
       autoscaling: autoscalingEnabled
@@ -179,8 +243,12 @@ export function PoolNew() {
 
   const create = async () => {
     setSubmitAttempted(true)
-    if (!name || nameError) {
-      nameRef.current?.focus()
+    if (!name || nameError || ttlError) {
+      if (!name || nameError) {
+        nameRef.current?.focus()
+      } else {
+        ttlRef.current?.focus()
+      }
       return
     }
     setSubmitting(true)
@@ -194,7 +262,7 @@ export function PoolNew() {
       flash.push({
         type: "error",
         header: "Create failed",
-        content: String((e as Error).message),
+        content: poolCreateErrorMessage(e, name),
       })
     } finally {
       setSubmitting(false)
@@ -217,11 +285,32 @@ export function PoolNew() {
       }
       secondaryActions={<CuaButton onClick={cancel}>Cancel</CuaButton>}
       primaryAction={
-        <CuaButton tone="primary" loading={submitting} onClick={create}>
+        <CuaButton
+          tone="primary"
+          loading={submitting}
+          disabled={cardRequired}
+          disabledReason="Add a payment method in Settings to create pools."
+          onClick={create}
+        >
           Create
         </CuaButton>
       }
     >
+      <SpaceBetween size="l">
+      {cardRequired && (
+        <Alert
+          type="warning"
+          header="Payment method required"
+          action={
+            <CuaButton onClick={() => navigate("/settings")}>
+              Add payment method
+            </CuaButton>
+          }
+        >
+          Pool creation is disabled because this account has no payment method
+          on file. Add a card in Settings, then come back to create your pool.
+        </Alert>
+      )}
       <Container header={<Header variant="h2">Configuration</Header>}>
       <div onChangeCapture={() => setDirty(true)}>
       <Form>
@@ -287,6 +376,22 @@ export function PoolNew() {
               type="number"
               value={replicas}
               onChange={({ detail }) => setReplicas(detail.value)}
+            />
+          </FormField>
+
+          <FormField
+            label="Time to live (seconds)"
+            description="Optional. Automatically deletes the pool after this many seconds. Leave blank for no expiration."
+            errorText={ttlError}
+          >
+            <Input
+              ref={ttlRef}
+              type="number"
+              value={ttlSecondsAfterCreated}
+              onChange={({ detail }) =>
+                setTtlSecondsAfterCreated(detail.value)
+              }
+              placeholder="3600"
             />
           </FormField>
 
@@ -404,6 +509,7 @@ export function PoolNew() {
       </Form>
       </div>
       </Container>
+      </SpaceBetween>
       <Modal
         visible={discardOpen}
         onDismiss={() => setDiscardOpen(false)}

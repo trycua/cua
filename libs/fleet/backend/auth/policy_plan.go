@@ -255,11 +255,24 @@ func fold(ctx context.Context, input *requestPolicyInput, children []compiledNod
 		case over.annihilator:
 			if len(errs) > 0 {
 				// The lattice drops these on purpose: an annihilator decides
-				// the fold whatever its siblings did. Correct, but it is the
-				// only trace that a fact provider is failing, and the request
-				// still gets a clean 200 or 403, so record it before it goes.
+				// the fold whatever its siblings did. Record only reviewed
+				// classification fields because provider causes may contain
+				// credentials or request-derived data.
+				joined := errors.Join(errs...)
+				class := "discarded_policy_error"
+				retryable := false
+				factNamespace := ""
+				var factErr *FactUnavailableError
+				if errors.As(joined, &factErr) {
+					class = "discarded_dependency_unavailable"
+					retryable = true
+					factNamespace = factErr.Namespace
+				}
 				slog.Warn("opa: policy error discarded; a sibling decided the verdict",
-					"allowed", over.annihilator == truthTrue, "err", errors.Join(errs...))
+					"allowed", over.annihilator == truthTrue,
+					"class", class,
+					"retryable", retryable,
+					"facts", factNamespace)
 			}
 			return verdict{truth: over.annihilator, reason: result.reason}
 		case truthError:

@@ -29,7 +29,7 @@ requires-python = ">=3.11,<3.14"
 dependencies = [
     "cua-core>=0.3.0,<0.4.0",
     "cua-auto>=0.1.2",
-    "cua-fleet==0.1.14",
+    "cua-fleet==0.1.16",
     "pydantic>=2.11,<3.0",
     "jsonschema>=4.23,<5.0",
     "websockets>=12.0",

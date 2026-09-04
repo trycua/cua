@@ -70,7 +70,7 @@ func (h Handlers) CreateUserKey(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	cid, secret, _, err := h.Admin.CreateUserKeyClient(r.Context(), req.Name, user.ID, req.Scope)
+	cid, secret, _, err := h.Admin.CreateUserKeyClient(r.Context(), req.Name, user.ID, user.Email, user.EmailVerified, req.Scope)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "keycloak: "+err.Error())
 		return

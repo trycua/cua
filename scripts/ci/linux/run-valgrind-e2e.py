@@ -186,6 +186,12 @@ def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def expect(condition: bool, message: str) -> None:
+    """Fail validation explicitly; bare assert is stripped under PYTHONOPTIMIZE."""
+    if not condition:
+        raise RunnerFailure(f"validation failed: {message}")
+
+
 def validate_results(artifact_dir: Path) -> None:
     before = load_json(artifact_dir / "config-before.json")
     after = load_json(artifact_dir / "config-after.json")
@@ -193,19 +199,34 @@ def validate_results(artifact_dir: Path) -> None:
     sessions_before = load_json(artifact_dir / "sessions-before.json")
     sessions_after = load_json(artifact_dir / "sessions-after.json")
 
-    assert before["platform"] == "linux"
-    assert after["max_image_dimension"] == 640
-    assert after["max_image_dimension"] != before["max_image_dimension"]
-    assert permissions["x11"] is True
-    assert sessions_before == {"count": 0, "sessions": []}
-    assert sessions_after == {"count": 0, "sessions": []}
+    expect(before["platform"] == "linux", f"config platform is {before.get('platform')!r}")
+    expect(
+        after["max_image_dimension"] == 640,
+        f"max_image_dimension after set_config is {after.get('max_image_dimension')!r}",
+    )
+    expect(
+        after["max_image_dimension"] != before["max_image_dimension"],
+        "set_config did not change max_image_dimension",
+    )
+    expect(permissions["x11"] is True, f"x11 permission is {permissions.get('x11')!r}")
+    expect(
+        sessions_before == {"count": 0, "sessions": []},
+        f"unexpected sessions before MCP: {sessions_before!r}",
+    )
+    expect(
+        sessions_after == {"count": 0, "sessions": []},
+        f"sessions retained after MCP teardown: {sessions_after!r}",
+    )
 
     responses = [
         json.loads(line)
         for line in (artifact_dir / "mcp-responses.jsonl").read_text(encoding="utf-8").splitlines()
     ]
     by_id = {response.get("id"): response for response in responses}
-    assert by_id[1]["result"]["serverInfo"]["name"] == "cua-driver"
+    expect(
+        by_id[1]["result"]["serverInfo"]["name"] == "cua-driver",
+        f"unexpected MCP serverInfo: {by_id[1].get('result')!r}",
+    )
     tools = by_id[2]["result"]["tools"]
     tool_names = {tool["name"] for tool in tools}
     required = {
@@ -218,13 +239,23 @@ def validate_results(artifact_dir: Path) -> None:
         "type_text",
         "press_key",
     }
-    assert required <= tool_names, f"missing tools: {sorted(required - tool_names)}"
-    assert by_id[3]["result"].get("isError", False) is not True
-    assert by_id[3]["result"]["structuredContent"]["max_image_dimension"] == 640
-    assert by_id[4]["error"] == {
-        "code": -32601,
-        "message": "Unknown method: compatibility/unknown",
-    }
+    expect(required <= tool_names, f"missing tools: {sorted(required - tool_names)}")
+    expect(
+        by_id[3]["result"].get("isError", False) is not True,
+        f"tools/call get_config returned an error: {by_id[3].get('result')!r}",
+    )
+    expect(
+        by_id[3]["result"]["structuredContent"]["max_image_dimension"] == 640,
+        f"tools/call get_config did not observe set_config: {by_id[3].get('result')!r}",
+    )
+    expect(
+        by_id[4]["error"]
+        == {
+            "code": -32601,
+            "message": "Unknown method: compatibility/unknown",
+        },
+        f"unexpected unknown-method error: {by_id[4].get('error')!r}",
+    )
 
 
 def emit_server_logs(artifact_dir: Path) -> None:
@@ -237,14 +268,20 @@ def verify_shutdown_logs(artifact_dir: Path, memcheck_disabled: bool) -> None:
     server_stderr = (artifact_dir / "server.stderr").read_text(
         encoding="utf-8", errors="replace"
     )
-    assert "Cua Driver daemon shutting down." in server_stderr
+    expect(
+        "Cua Driver daemon shutting down." in server_stderr,
+        "server stderr does not record a graceful daemon shutdown",
+    )
     if not memcheck_disabled:
         valgrind_log = (artifact_dir / "valgrind.log").read_text(
             encoding="utf-8", errors="replace"
         )
-        assert "definitely lost: 0 bytes in 0 blocks" in valgrind_log
-        assert "possibly lost: 0 bytes in 0 blocks" in valgrind_log
-        assert "ERROR SUMMARY: 0 errors from 0 contexts" in valgrind_log
+        for marker in (
+            "definitely lost: 0 bytes in 0 blocks",
+            "possibly lost: 0 bytes in 0 blocks",
+            "ERROR SUMMARY: 0 errors from 0 contexts",
+        ):
+            expect(marker in valgrind_log, f"Memcheck log lacks {marker!r}")
 
 
 def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, str]):
@@ -328,9 +365,11 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
         if not ready:
             raise RunnerFailure("cua-driver server did not become ready within 60 seconds")
 
-        assert "running" in (artifact_dir / "status.txt").read_text(
-            encoding="utf-8", errors="replace"
-        ).lower()
+        expect(
+            "running"
+            in (artifact_dir / "status.txt").read_text(encoding="utf-8", errors="replace").lower(),
+            "cua-driver status did not report a running daemon",
+        )
         recorded_commands = [
             [str(driver), "status", "--socket", str(socket_path)],
             [str(driver), "sessions", "list", "--json", "--socket", str(socket_path)],

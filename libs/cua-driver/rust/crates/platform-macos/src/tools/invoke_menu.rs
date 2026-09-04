@@ -10,7 +10,15 @@ use cua_driver_core::{
     tool::{Tool, ToolDef},
 };
 use serde_json::Value;
-use std::time::Duration;
+use std::{
+    ffi::c_void,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, SyncSender},
+        Arc,
+    },
+    time::Duration,
+};
 
 use crate::ax::bindings::{
     ax_get_window_id, copy_action_names, copy_ax_windows, copy_bool_attr, copy_children,
@@ -21,6 +29,7 @@ use crate::ax::bindings::{
 pub struct InvokeMenuTool;
 
 const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
+const MAIN_QUEUE_TIMEOUT: Duration = Duration::from_secs(5);
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
@@ -194,18 +203,7 @@ unsafe fn invoke_path(pid: i32, path: &[String]) -> Result<(), String> {
 /// disabled even though the application itself is frontmost. Raise and mark
 /// only the requested AX window, then require an exact focused-window readback
 /// before menu resolution proceeds.
-fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
-    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
-    if !native_key_requested
-        && crate::apps::frontmost_pid() != Some(pid)
-        && !crate::apps::activate_pid(pid)
-    {
-        return Err("invoke_menu: target application could not be activated".into());
-    }
-    if !native_key_requested {
-        std::thread::sleep(Duration::from_millis(120));
-    }
-
+fn focus_ax_window(pid: i32, window_id: u32) -> Result<(), String> {
     unsafe {
         let app = AXUIElementCreateApplication(pid);
         if app.is_null() {
@@ -237,6 +235,96 @@ fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
         let _ = set_bool_attr_true(target, "AXFocused");
         CFRelease(target as CFTypeRef);
     }
+    Ok(())
+}
+
+struct AxWindowFocusRequest {
+    pid: i32,
+    window_id: u32,
+    tx: SyncSender<Result<(), String>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+#[link(name = "System", kind = "framework")]
+extern "C" {
+    static _dispatch_main_q: u8;
+    fn dispatch_async_f(
+        queue: *const c_void,
+        context: *mut c_void,
+        work: unsafe extern "C" fn(*mut c_void),
+    );
+}
+
+unsafe extern "C" fn focus_ax_window_on_main(context: *mut c_void) {
+    let request = unsafe { Box::from_raw(context.cast::<AxWindowFocusRequest>()) };
+    if request.cancelled.load(Ordering::Acquire) {
+        return;
+    }
+    let result = focus_ax_window(request.pid, request.window_id);
+    let _ = request.tx.send(result);
+}
+
+fn focus_ax_window_with_thread_affinity(pid: i32, window_id: u32) -> Result<(), String> {
+    let is_main_thread = objc2_foundation::MainThreadMarker::new().is_some();
+    if !self_process_focus_needs_main_queue(pid, std::process::id(), is_main_thread) {
+        return focus_ax_window(pid, window_id);
+    }
+
+    // AX actions against another process execute in that process. An embedded
+    // driver targeting its own window is different: AppKit services AXRaise
+    // in this process, and window ordering is main-thread-only. Queue just the
+    // self-process AX mutation onto AppKit's main queue, then return to the
+    // blocking worker for readiness polling and menu traversal.
+    let (tx, rx) = mpsc::sync_channel(1);
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let request = Box::new(AxWindowFocusRequest {
+        pid,
+        window_id,
+        tx,
+        cancelled: Arc::clone(&cancelled),
+    });
+    unsafe {
+        let main_queue = &raw const _dispatch_main_q as *const c_void;
+        dispatch_async_f(
+            main_queue,
+            Box::into_raw(request).cast::<c_void>(),
+            focus_ax_window_on_main,
+        );
+    }
+    match rx.recv_timeout(MAIN_QUEUE_TIMEOUT) {
+        Ok(result) => result,
+        Err(error) => {
+            // If AppKit never serviced the request, prevent a stale focus
+            // change from firing after this tool call has already failed.
+            cancelled.store(true, Ordering::Release);
+            Err(format!(
+                "invoke_menu: failed waiting for the embedded host window on the AppKit main queue: {error}"
+            ))
+        }
+    }
+}
+
+fn self_process_focus_needs_main_queue(
+    target_pid: i32,
+    current_pid: u32,
+    is_main_thread: bool,
+) -> bool {
+    target_pid == current_pid as i32 && !is_main_thread
+}
+
+fn focus_exact_window(pid: i32, window_id: u32) -> Result<(), String> {
+    let native_key_requested = crate::input::skylight::make_exact_window_key(pid, window_id);
+    if !native_key_requested
+        && crate::apps::frontmost_pid() != Some(pid)
+        && !crate::apps::activate_pid(pid)
+    {
+        return Err("invoke_menu: target application could not be activated".into());
+    }
+    if !native_key_requested {
+        std::thread::sleep(Duration::from_millis(120));
+    }
+
+    focus_ax_window_with_thread_affinity(pid, window_id)?;
 
     // AXFocusedWindow can lead AppKit's native `isKeyWindow` state while the
     // WindowServer activation is still settling. Menu validation observes the
@@ -394,5 +482,12 @@ mod tests {
         assert!(!exact_window_is_ready(Some(8), 7, Some(42), 42));
         assert!(!exact_window_is_ready(Some(7), 7, Some(41), 42));
         assert!(!exact_window_is_ready(Some(7), 7, None, 42));
+    }
+
+    #[test]
+    fn only_background_self_process_focus_uses_the_main_queue() {
+        assert!(self_process_focus_needs_main_queue(7, 7, false));
+        assert!(!self_process_focus_needs_main_queue(7, 7, true));
+        assert!(!self_process_focus_needs_main_queue(8, 7, false));
     }
 }

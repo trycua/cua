@@ -15,6 +15,10 @@ sys.modules[SPEC.name] = RUNNER
 SPEC.loader.exec_module(RUNNER)
 
 ShutdownTimeouts = RUNNER.ShutdownTimeouts
+build_list_apps_command = RUNNER.build_list_apps_command
+build_readiness_command = RUNNER.build_readiness_command
+build_server_command = RUNNER.build_server_command
+configure_runtime_environment = RUNNER.configure_runtime_environment
 resolve_exit_status = RUNNER.resolve_exit_status
 shutdown_server = RUNNER.shutdown_server
 
@@ -26,6 +30,79 @@ HELPER_TIMEOUTS = ShutdownTimeouts(
     sigkill_wait=0.4,
     poll_interval=0.01,
 )
+
+
+class RunnerConfigurationTests(unittest.TestCase):
+    def test_runtime_environment_disables_glibc_thread_stack_cache(self):
+        env = {"GLIBC_TUNABLES": "glibc.malloc.trim_threshold=0"}
+
+        configure_runtime_environment(env)
+
+        self.assertEqual(
+            env["GLIBC_TUNABLES"],
+            "glibc.malloc.trim_threshold=0:glibc.pthread.stack_cache_size=0",
+        )
+
+    def test_runtime_environment_is_idempotent(self):
+        env = {"GLIBC_TUNABLES": "glibc.pthread.stack_cache_size=0"}
+
+        configure_runtime_environment(env)
+
+        self.assertEqual(env["GLIBC_TUNABLES"], "glibc.pthread.stack_cache_size=0")
+
+    def test_server_command_uses_focused_memcheck_options(self):
+        command = build_server_command(
+            Path("/tmp/cua-driver"),
+            Path("/tmp/artifacts"),
+            Path("/tmp/cua-driver.sock"),
+            memcheck_disabled=False,
+        )
+
+        self.assertIn("--leak-check=full", command)
+        self.assertIn("--errors-for-leak-kinds=definite,possible", command)
+        self.assertNotIn("--gen-suppressions=all", command)
+        self.assertNotIn("--num-callers=40", command)
+
+    def test_server_command_without_memcheck_runs_driver_directly(self):
+        command = build_server_command(
+            Path("/tmp/cua-driver"),
+            Path("/tmp/artifacts"),
+            Path("/tmp/cua-driver.sock"),
+            memcheck_disabled=True,
+        )
+
+        self.assertEqual(command[0], "/tmp/cua-driver")
+        self.assertNotIn("valgrind", command)
+
+    def test_readiness_uses_empty_sessions_contract(self):
+        command = build_readiness_command(Path("/tmp/cua-driver"), Path("/tmp/cua-driver.sock"))
+
+        self.assertEqual(
+            command,
+            [
+                "/tmp/cua-driver",
+                "sessions",
+                "list",
+                "--json",
+                "--socket",
+                "/tmp/cua-driver.sock",
+            ],
+        )
+
+    def test_smoke_call_uses_list_apps(self):
+        command = build_list_apps_command(Path("/tmp/cua-driver"), Path("/tmp/cua-driver.sock"))
+
+        self.assertEqual(
+            command,
+            [
+                "/tmp/cua-driver",
+                "call",
+                "list_apps",
+                "{}",
+                "--socket",
+                "/tmp/cua-driver.sock",
+            ],
+        )
 
 
 class ShutdownServerTests(unittest.TestCase):

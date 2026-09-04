@@ -944,6 +944,12 @@ class ComputerAgent:
         old_items = self._process_input(messages)
         new_items = []
 
+        reset_run_state = getattr(self.agent_loop, "reset_run_state", None)
+        if callable(reset_run_state):
+            maybe_awaitable = reset_run_state()
+            if inspect.isawaitable(maybe_awaitable):
+                await maybe_awaitable
+
         # Initialize run tracking
         run_kwargs = {
             "messages": messages,

@@ -115,10 +115,21 @@ YUTORI_N2_MAX_WAIT_SECONDS = 300
 YUTORI_N2_DEFAULT_WAIT_SECONDS = 5.0
 YUTORI_N2_MAX_SCROLL_AMOUNT = 50
 YUTORI_N2_DEFAULT_READ_LIMIT = 2000
+YUTORI_N2_READ_MAX_OUTPUT_CHARS = 256 * 1024
 YUTORI_N2_WRITE_CONTENT_MAX_CHARS = 256000
 YUTORI_N2_BASH_DEFAULT_TIMEOUT_SECONDS = 120
 YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS = 600
 YUTORI_N2_SKIPPED_TOOL_CALL_MESSAGE = "Skipped malformed Yutori N2 tool call."
+YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE = (
+    "Your previous response contained <tool_call> markup, but no valid Yutori N2 "
+    "tool call could be parsed. Retry with a valid tool call or a final answer."
+)
+YUTORI_N2_LENGTH_RETRY_MESSAGE = (
+    "Your previous response was cut off before producing a valid tool call. Retry "
+    "with only the tool call or final answer needed to continue."
+)
+YUTORI_N2_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
+YUTORI_N2_IMAGE_MAX_EDGE = 1568
 
 _YUTORI_N2_SYSTEM_PROMPT = (
     "You are a computer use agent. Use the provided desktop tools to complete the "
@@ -1018,7 +1029,7 @@ def _completion_tool_calls_to_yutori_tool_calls(
 def _function_call_with_output(
     name: str,
     arguments: Mapping[str, Any],
-    output: str,
+    output: Any,
     call_id: Optional[str],
 ) -> List[Dict[str, Any]]:
     resolved_call_id = call_id or random_id()
@@ -1030,6 +1041,16 @@ def _function_call_with_output(
             "output": output,
         },
     ]
+
+
+def _input_image_output(image_url: str, result: str) -> Dict[str, Any]:
+    return {"type": "input_image", "image_url": image_url, "result": result}
+
+
+def _base64_image_output(
+    image_b64: str, result: str, mime_type: str = "image/png"
+) -> Dict[str, Any]:
+    return _input_image_output(f"data:{mime_type};base64,{image_b64}", result)
 
 
 def _screenshot_message(screenshot_b64: str) -> Dict[str, Any]:
@@ -1201,9 +1222,30 @@ def _extra_function_tools(tools: Optional[Sequence[Mapping[str, Any]]]) -> List[
         if not isinstance(function, Mapping):
             continue
         name = function.get("name")
-        if isinstance(name, str) and name not in native_names:
-            extra_tools.append({"type": "function", "function": dict(function)})
+        if not isinstance(name, str):
+            continue
+        if name in native_names:
+            raise ValueError(f"Custom tool {name!r} shadows a native Yutori N2 tool")
+        extra_tools.append({"type": "function", "function": dict(function)})
     return extra_tools
+
+
+def _validate_disable_tools(disable_tools: Any) -> List[str]:
+    if disable_tools is None:
+        return []
+    if not isinstance(disable_tools, Sequence) or isinstance(disable_tools, (str, bytes)):
+        raise ValueError("disable_tools must be a list of Yutori N2 tool names")
+
+    disabled: List[str] = []
+    for name in disable_tools:
+        if not isinstance(name, str) or not name:
+            raise ValueError("disable_tools must contain non-empty tool names")
+        if name not in _FUNCTION_TOOLS:
+            allowed = ", ".join(sorted(_FUNCTION_TOOLS))
+            raise ValueError(f"disable_tools may only include {allowed}")
+        if name not in disabled:
+            disabled.append(name)
+    return disabled
 
 
 def _uses_yutori_api(api_base: Optional[str]) -> bool:
@@ -1672,7 +1714,7 @@ async def _execute_computer_action(
 async def _take_post_tool_screenshot(
     computer_handler: Any,
     on_screenshot: Optional[Callable[[str, str], Awaitable[None]]],
-) -> Optional[Dict[str, Any]]:
+) -> Optional[str]:
     if computer_handler is None or not hasattr(computer_handler, "screenshot"):
         return None
 
@@ -1681,7 +1723,17 @@ async def _take_post_tool_screenshot(
         return None
     if on_screenshot:
         await on_screenshot(screenshot_b64, "screenshot_after")
-    return _screenshot_message(screenshot_b64)
+    return screenshot_b64
+
+
+def _format_batch_success_line(index: int, action_name: str) -> str:
+    if action_name == "screenshot":
+        return f"actions[{index}].screenshot: screenshot captured."
+    return ""
+
+
+def _format_batch_stopped_line(index: int, action_name: str, error: BaseException | str) -> str:
+    return f"batch stopped at actions[{index}] ({action_name}): {error}"
 
 
 async def _execute_computer_batch(
@@ -1689,8 +1741,7 @@ async def _execute_computer_batch(
     computer_handler: Any,
     dimensions: Optional[Tuple[int, int]],
     on_screenshot: Optional[Callable[[str, str], Awaitable[None]]],
-) -> Tuple[str, Optional[Dict[str, Any]]]:
-    completed = 0
+) -> Tuple[str, Optional[str]]:
     result_lines = []
     index = 0
 
@@ -1701,25 +1752,24 @@ async def _execute_computer_batch(
             if index + 1 >= len(actions):
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
                 return (
-                    "[ERROR] computer_batch failed at member index "
-                    f"{index}: durationless hold_key requires a following batch member; "
-                    f"completed={completed} skipped=0. Completed members are not rolled back.",
+                    _format_batch_stopped_line(
+                        index,
+                        action_name,
+                        "durationless hold_key requires a following batch member",
+                    ),
                     screenshot,
                 )
 
             try:
                 target, pressed = await _start_hold_key(computer_handler, str(action["key"]))
             except Exception as exc:
-                skipped = len(actions) - index - 1
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
                 return (
-                    f"[ERROR] computer_batch failed at member index {index}: {exc}; "
-                    f"completed={completed} skipped={skipped}. Completed members are not rolled back.",
+                    _format_batch_stopped_line(index, action_name, exc),
                     screenshot,
                 )
 
-            completed += 1
-            result_lines.append(f"[{index}:{action_name}] success")
+            result_lines.append(_format_batch_success_line(index, action_name))
             next_index = index + 1
             next_action = actions[next_index]
             next_action_name = str(next_action["action"])
@@ -1737,31 +1787,35 @@ async def _execute_computer_batch(
 
             if next_error is not None or release_error is not None:
                 error = next_error or release_error
-                skipped = len(actions) - next_index - 1
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
                 return (
-                    f"[ERROR] computer_batch failed at member index {next_index}: {error}; "
-                    f"completed={completed} skipped={skipped}. Completed members are not rolled back.",
+                    "\n".join(
+                        [
+                            *result_lines,
+                            _format_batch_stopped_line(next_index, next_action_name, error or ""),
+                        ]
+                    ),
                     screenshot,
                 )
 
-            completed += 1
-            result_lines.append(f"[{next_index}:{next_action_name}] success")
+            result_lines.append(_format_batch_success_line(next_index, next_action_name))
             index += 2
             continue
 
         try:
             await _execute_computer_action(computer_handler, action, dimensions)
         except Exception as exc:
-            skipped = len(actions) - index - 1
             screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
             return (
-                f"[ERROR] computer_batch failed at member index {index}: {exc}; "
-                f"completed={completed} skipped={skipped}. Completed members are not rolled back.",
+                "\n".join(
+                    [
+                        *result_lines,
+                        _format_batch_stopped_line(index, action_name, exc),
+                    ]
+                ),
                 screenshot,
             )
-        completed += 1
-        result_lines.append(f"[{index}:{action_name}] success")
+        result_lines.append(_format_batch_success_line(index, action_name))
         index += 1
 
     screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
@@ -1784,6 +1838,12 @@ def _detect_text_encoding(head: bytes) -> str:
 
 def _content_fingerprint(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def _truncate_text(text: str, limit: Optional[int]) -> str:
+    if limit is None or len(text) <= limit:
+        return text
+    return text[:limit] + f"\n\n[... output truncated, {len(text) - limit} more chars ...]"
 
 
 def _record_read_fingerprint(
@@ -1818,7 +1878,37 @@ def _format_cat_numbered_text(data: bytes, offset: int, limit: int) -> str:
     lines = text.split("\n")
     start = max(0, offset - 1) if offset else 0
     window = lines[start : start + max(0, limit)]
-    return "\n".join(f"{start + i + 1:>6}\t{line}" for i, line in enumerate(window))
+    rendered = "\n".join(f"{start + i + 1:>6}\t{line}" for i, line in enumerate(window))
+    return _truncate_text(rendered, YUTORI_N2_READ_MAX_OUTPUT_CHARS)
+
+
+async def _render_image_file_result(path: Path, display_path: str) -> Dict[str, Any]:
+    def render() -> Dict[str, Any]:
+        from PIL import Image  # type: ignore
+
+        with Image.open(path) as image:
+            src_w, src_h = image.size
+            rendered = image.convert("RGB")
+            max_edge = max(src_w, src_h)
+            if max_edge > YUTORI_N2_IMAGE_MAX_EDGE:
+                scale = YUTORI_N2_IMAGE_MAX_EDGE / max_edge
+                shown_w = max(1, round(src_w * scale))
+                shown_h = max(1, round(src_h * scale))
+                resampling = getattr(Image, "Resampling", Image).LANCZOS
+                rendered = rendered.resize((shown_w, shown_h), resampling)
+            else:
+                shown_w, shown_h = src_w, src_h
+
+            buffer = io.BytesIO()
+            rendered.save(buffer, format="WEBP", quality=90)
+
+        note = f"Loaded image {display_path} ({src_w}x{src_h})"
+        if (shown_w, shown_h) != (src_w, src_h):
+            note += f", shown downscaled to {shown_w}x{shown_h}"
+        image_b64 = base64.b64encode(buffer.getvalue()).decode("ascii")
+        return _base64_image_output(image_b64, note, mime_type="image/webp")
+
+    return await asyncio.to_thread(render)
 
 
 def _edit_snippet(text: str, anchor_index: int, extra_lines: int = 0) -> str:
@@ -1933,7 +2023,7 @@ async def _execute_read(
     args: Mapping[str, Any],
     cwd: Path,
     read_fingerprints: Dict[str, str],
-) -> str:
+) -> Any:
     path, display_path = _resolve_file_path(args, cwd)
     offset = _as_positive_int(args.get("offset", 1))
     limit = _as_positive_int(args.get("limit", YUTORI_N2_DEFAULT_READ_LIMIT))
@@ -1948,6 +2038,9 @@ async def _execute_read(
         return f"ERROR: file does not exist: {display_path}"
 
     data = await asyncio.to_thread(path.read_bytes)
+    if path.suffix.lower() in YUTORI_N2_IMAGE_SUFFIXES:
+        return await _render_image_file_result(path, display_path)
+
     rendered = _format_cat_numbered_text(data, offset, limit)
     if not rendered.startswith("ERROR:"):
         _record_read_fingerprint(read_fingerprints, path, data)
@@ -2034,7 +2127,7 @@ async def _execute_file_or_shell_tool(
     args: Mapping[str, Any],
     cwd: Path,
     read_fingerprints: Dict[str, str],
-) -> Tuple[str, Optional[Path]]:
+) -> Tuple[Any, Optional[Path]]:
     if name == "bash":
         return await _execute_bash(args, cwd)
     if name == "read":
@@ -2073,16 +2166,16 @@ async def _handle_yutori_n2_tool_call(
                 ),
                 None,
             )
-        result_text, screenshot_message = await _execute_computer_batch(
+        result_text, screenshot_b64 = await _execute_computer_batch(
             actions,
             computer_handler,
             dimensions,
             on_screenshot,
         )
-        output = _function_call_with_output(name, args, result_text, call_id)
-        if screenshot_message:
-            output.append(screenshot_message)
-        return output, None
+        output_value: Any = (
+            _base64_image_output(screenshot_b64, result_text) if screenshot_b64 else result_text
+        )
+        return _function_call_with_output(name, args, output_value, call_id), None
 
     if name in _FUNCTION_TOOLS:
         try:
@@ -2110,16 +2203,16 @@ async def _handle_yutori_n2_tool_call(
                 ),
                 None,
             )
-        result_text, screenshot_message = await _execute_computer_batch(
+        result_text, screenshot_b64 = await _execute_computer_batch(
             actions,
             computer_handler,
             dimensions,
             on_screenshot,
         )
-        output = _function_call_with_output(name, args, result_text, call_id)
-        if screenshot_message:
-            output.append(screenshot_message)
-        return output, None
+        output_value = (
+            _base64_image_output(screenshot_b64, result_text) if screenshot_b64 else result_text
+        )
+        return _function_call_with_output(name, args, output_value, call_id), None
 
     return [make_function_call_item(name, args, call_id=call_id)], None
 
@@ -2127,6 +2220,9 @@ async def _handle_yutori_n2_tool_call(
 @register_agent(models=r"^yutori/.*(?:n2|n2os).*", priority=10)
 class YutoriN2Config(AsyncAgentConfig):
     def __init__(self) -> None:
+        self.reset_run_state()
+
+    def reset_run_state(self) -> None:
         self._bash_cwd: Optional[Path] = None
         self._last_yutori_request_id: Optional[str] = None
         self._read_fingerprints: Dict[str, str] = {}
@@ -2154,13 +2250,14 @@ class YutoriN2Config(AsyncAgentConfig):
         else:
             cwd = self._bash_cwd or Path(os.getcwd()).expanduser()
         tool_set = generation_kwargs.pop("tool_set", YUTORI_N2_TOOL_SET)
+        disabled_tools = _validate_disable_tools(generation_kwargs.pop("disable_tools", None))
         api_base = generation_kwargs.get("api_base")
         uses_yutori_api = _uses_yutori_api(api_base)
         extra_body = generation_kwargs.pop("extra_body", None)
 
         converted_messages = convert_responses_items_to_completion_messages(
             messages,
-            allow_images_in_tool_results=False,
+            allow_images_in_tool_results=True,
         )
         completion_messages: List[Dict[str, Any]] = list(converted_messages)
         if not uses_yutori_api:
@@ -2176,71 +2273,127 @@ class YutoriN2Config(AsyncAgentConfig):
         dimensions = await _get_computer_dimensions(computer_handler) or image_dimensions
         model_tools = _extra_function_tools(tools)
 
-        api_kwargs: Dict[str, Any] = {
-            "model": model,
-            "messages": completion_messages,
-            "tool_choice": "auto",
-            "parallel_tool_calls": True,
-            "max_retries": max_retries,
-            "stream": stream,
-            **generation_kwargs,
-        }
-        if use_prompt_caching:
-            api_kwargs["use_prompt_caching"] = use_prompt_caching
+        def build_api_kwargs(current_messages: List[Dict[str, Any]]) -> Dict[str, Any]:
+            api_kwargs: Dict[str, Any] = {
+                "model": model,
+                "messages": current_messages,
+                "tool_choice": "auto",
+                "parallel_tool_calls": True,
+                "max_retries": max_retries,
+                "stream": stream,
+                **generation_kwargs,
+            }
+            if use_prompt_caching:
+                api_kwargs["use_prompt_caching"] = use_prompt_caching
 
-        if uses_yutori_api:
-            api_kwargs["tool_set"] = tool_set
-            resolved_extra_body: Dict[str, Any] = (
-                dict(extra_body) if isinstance(extra_body, Mapping) else {}
+            if uses_yutori_api:
+                api_kwargs["tool_set"] = tool_set
+                if disabled_tools:
+                    api_kwargs["disable_tools"] = disabled_tools
+                resolved_extra_body: Dict[str, Any] = (
+                    dict(extra_body) if isinstance(extra_body, Mapping) else {}
+                )
+                if self._last_yutori_request_id:
+                    resolved_extra_body.setdefault("prev_request_id", self._last_yutori_request_id)
+                if resolved_extra_body:
+                    api_kwargs["extra_body"] = resolved_extra_body
+                if model_tools:
+                    api_kwargs["tools"] = model_tools
+            else:
+                disabled = set(disabled_tools)
+                api_kwargs["tools"] = [
+                    *(tool for tool in YUTORI_N2_TOOLS if tool["function"]["name"] not in disabled),
+                    *model_tools,
+                ]
+                if extra_body is not None:
+                    api_kwargs["extra_body"] = extra_body
+
+            return api_kwargs
+
+        async def run_completion(
+            current_messages: List[Dict[str, Any]],
+        ) -> Tuple[Dict[str, Any], Dict[str, Any], List[Dict[str, Any]], List[Dict[str, Any]], str]:
+            api_kwargs = build_api_kwargs(current_messages)
+
+            if _on_api_start:
+                await _on_api_start(api_kwargs)
+
+            response = await litellm.acompletion(**api_kwargs)
+
+            if _on_api_end:
+                await _on_api_end(api_kwargs, response)
+
+            usage = {
+                **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(  # type: ignore
+                    response.usage
+                ).model_dump(),
+                "response_cost": response._hidden_params.get("response_cost", 0.0),
+            }
+            if _on_usage:
+                await _on_usage(usage)
+
+            resp_dict = response.model_dump()  # type: ignore
+            if uses_yutori_api:
+                request_id = _response_request_id(response, resp_dict)
+                if request_id is not None:
+                    self._last_yutori_request_id = request_id
+
+            choice = (resp_dict.get("choices") or [{}])[0]
+            message = choice.get("message") or {}
+            content_text = _completion_content_to_text(message.get("content"))
+            tool_calls_array = message.get("tool_calls") or []
+            structured_tool_calls = _completion_tool_calls_to_yutori_tool_calls(tool_calls_array)
+            text_tool_calls = (
+                [] if structured_tool_calls else parse_yutori_n2_tool_calls_from_text(content_text)
             )
-            if self._last_yutori_request_id:
-                resolved_extra_body.setdefault("prev_request_id", self._last_yutori_request_id)
-            if resolved_extra_body:
-                api_kwargs["extra_body"] = resolved_extra_body
-            if model_tools:
-                api_kwargs["tools"] = model_tools
-        else:
-            api_kwargs["tools"] = [*YUTORI_N2_TOOLS, *model_tools]
-            if extra_body is not None:
-                api_kwargs["extra_body"] = extra_body
+            finish_reason = str(choice.get("finish_reason") or "")
+            return usage, message, structured_tool_calls, text_tool_calls, finish_reason
 
-        if _on_api_start:
-            await _on_api_start(api_kwargs)
+        def retry_prompt(
+            content_text: str,
+            finish_reason: str,
+            structured_tool_calls: Sequence[Mapping[str, Any]],
+            text_tool_calls: Sequence[Mapping[str, Any]],
+        ) -> Optional[str]:
+            if structured_tool_calls or text_tool_calls:
+                return None
+            if "<tool_call>" in content_text:
+                return YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE
+            if finish_reason == "length":
+                return YUTORI_N2_LENGTH_RETRY_MESSAGE
+            return None
 
-        response = await litellm.acompletion(**api_kwargs)
+        retry_messages = completion_messages
+        usage: Dict[str, Any] = {}
+        message: Dict[str, Any] = {}
+        structured_tool_calls: List[Dict[str, Any]] = []
+        text_tool_calls: List[Dict[str, Any]] = []
+        for attempt in range(2):
+            (
+                usage,
+                message,
+                structured_tool_calls,
+                text_tool_calls,
+                finish_reason,
+            ) = await run_completion(retry_messages)
+            content_text = _completion_content_to_text(message.get("content"))
+            retry_message = retry_prompt(
+                content_text,
+                finish_reason,
+                structured_tool_calls,
+                text_tool_calls,
+            )
+            if attempt == 0 and retry_message:
+                retry_messages = [*completion_messages, {"role": "user", "content": retry_message}]
+                continue
+            break
 
-        if _on_api_end:
-            await _on_api_end(api_kwargs, response)
-
-        usage = {
-            **LiteLLMCompletionResponsesConfig._transform_chat_completion_usage_to_responses_usage(  # type: ignore
-                response.usage
-            ).model_dump(),
-            "response_cost": response._hidden_params.get("response_cost", 0.0),
-        }
-        if _on_usage:
-            await _on_usage(usage)
-
-        resp_dict = response.model_dump()  # type: ignore
-        if uses_yutori_api:
-            request_id = _response_request_id(response, resp_dict)
-            if request_id is not None:
-                self._last_yutori_request_id = request_id
-
-        choice = (resp_dict.get("choices") or [{}])[0]
-        message = choice.get("message") or {}
         content_text = _completion_content_to_text(message.get("content"))
-        tool_calls_array = message.get("tool_calls") or []
         reasoning_text = message.get("reasoning") or ""
 
         output_items: List[Dict[str, Any]] = []
         if reasoning_text:
             output_items.append(make_reasoning_item(reasoning_text))
-
-        structured_tool_calls = _completion_tool_calls_to_yutori_tool_calls(tool_calls_array)
-        text_tool_calls = (
-            [] if structured_tool_calls else parse_yutori_n2_tool_calls_from_text(content_text)
-        )
         assistant_text = (
             strip_parsed_yutori_n2_tool_calls_from_text(content_text, text_tool_calls)
             if text_tool_calls

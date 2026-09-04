@@ -1,9 +1,11 @@
+import base64
 import json
 from pathlib import Path
 
 import pytest
 
 from cua_agent.loops import yutori_n2
+from cua_agent.responses import convert_responses_items_to_completion_messages
 
 PNG_1X1 = (
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
@@ -16,12 +18,19 @@ class MockUsage:
 
 
 class MockResponse:
-    def __init__(self, content: str = "", tool_calls=None, request_id: str | None = None):
+    def __init__(
+        self,
+        content: str = "",
+        tool_calls=None,
+        request_id: str | None = None,
+        finish_reason: str = "stop",
+    ):
         self.usage = {}
         self._hidden_params = {}
         self._content = content
         self._tool_calls = tool_calls or []
         self.request_id = request_id
+        self.finish_reason = finish_reason
 
     def model_dump(self):
         payload = {
@@ -31,7 +40,8 @@ class MockResponse:
                         "role": "assistant",
                         "content": self._content,
                         "tool_calls": self._tool_calls,
-                    }
+                    },
+                    "finish_reason": self.finish_reason,
                 }
             ]
         }
@@ -126,6 +136,13 @@ def structured_tool_call(name, arguments, call_id="call_0"):
     }
 
 
+def tool_result_text(item):
+    output = item["output"]
+    if isinstance(output, dict):
+        return output.get("result", "")
+    return output
+
+
 async def run_predict(
     monkeypatch,
     *,
@@ -184,6 +201,54 @@ async def test_default_yutori_api_receives_native_tool_set(monkeypatch, yutori_n
 
 
 @pytest.mark.asyncio
+async def test_default_yutori_api_forwards_disable_tools(monkeypatch, yutori_n2_test_env):
+    _, captured = await run_predict(
+        monkeypatch,
+        content="done",
+        disable_tools=["bash", "read"],
+    )
+
+    assert captured["disable_tools"] == ["bash", "read"]
+
+
+@pytest.mark.asyncio
+async def test_custom_api_base_removes_disabled_native_tools(monkeypatch, yutori_n2_test_env):
+    _, captured = await run_predict(
+        monkeypatch,
+        content="done",
+        api_base="https://baseten.example/v1",
+        disable_tools=["bash", "read"],
+    )
+
+    assert [tool["function"]["name"] for tool in captured["tools"]] == [
+        "computer_batch",
+        "edit",
+        "write",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_custom_tool_cannot_shadow_native_n2_tool(monkeypatch, yutori_n2_test_env):
+    async def fake_acompletion(**api_kwargs):
+        raise AssertionError("model should not be called")
+
+    monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
+
+    with pytest.raises(ValueError, match="shadows a native Yutori N2 tool"):
+        await yutori_n2.YutoriN2Config().predict_step(
+            messages=input_messages(),
+            model="yutori/yutori-admin/n2os-joint-test",
+            tools=[
+                {
+                    "type": "function",
+                    "function": {"name": "bash", "parameters": {"type": "object"}},
+                }
+            ],
+            computer_handler=MockComputerHandler(),
+        )
+
+
+@pytest.mark.asyncio
 async def test_structured_computer_batch_executes_as_one_logical_tool_result(
     monkeypatch,
     yutori_n2_test_env,
@@ -215,12 +280,38 @@ async def test_structured_computer_batch_executes_as_one_logical_tool_result(
     assert [item["type"] for item in result["output"]] == [
         "function_call",
         "function_call_output",
-        "message",
     ]
     assert result["output"][1]["call_id"] == "call_batch"
-    assert "[0:left_click] success" in result["output"][1]["output"]
-    assert "[1:type] success" in result["output"][1]["output"]
-    assert result["output"][2]["role"] == "user"
+    assert result["output"][1]["output"]["type"] == "input_image"
+    assert result["output"][1]["output"]["image_url"].startswith("data:image/png;base64,")
+    assert result["output"][1]["output"]["result"] == "\n"
+
+
+@pytest.mark.asyncio
+async def test_computer_batch_screenshot_action_reports_result_text(
+    monkeypatch,
+    yutori_n2_test_env,
+):
+    computer = MockComputerHandler()
+    tool_calls = [
+        structured_tool_call(
+            "computer_batch",
+            {"actions": [{"action": "screenshot"}]},
+            call_id="call_batch",
+        )
+    ]
+
+    result, _ = await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        computer_handler=computer,
+        api_base="https://baseten.example/v1",
+    )
+
+    assert computer.screenshot_count == 1
+    assert result["output"][1]["output"]["result"] == (
+        "actions[0].screenshot: screenshot captured."
+    )
 
 
 @pytest.mark.asyncio
@@ -250,8 +341,9 @@ async def test_computer_batch_stops_later_actions_after_runtime_error(
 
     assert computer.calls == [("click", 1000, 500, "left")]
     assert computer.screenshot_count == 1
-    assert "failed at member index 0" in result["output"][1]["output"]
-    assert "completed=0 skipped=1" in result["output"][1]["output"]
+    assert tool_result_text(result["output"][1]) == (
+        "batch stopped at actions[0] (left_click): click failed"
+    )
 
 
 @pytest.mark.asyncio
@@ -325,7 +417,8 @@ async def test_text_xml_tool_call_is_recovered_and_text_is_preserved(
 
     assert result["output"][0]["content"][0]["text"] == "I will type the URL."
     assert computer.calls == [("type", "https://example.com")]
-    assert result["output"][2]["output"] == "[0:type] success"
+    assert result["output"][2]["output"]["type"] == "input_image"
+    assert result["output"][2]["output"]["result"] == ""
 
 
 @pytest.mark.asyncio
@@ -353,7 +446,8 @@ async def test_recovered_click_with_button_parameter_executes(
     )
 
     assert computer.calls == [("click", 500, 60, "left")]
-    assert result["output"][1]["output"] == "[0:left_click] success"
+    assert result["output"][1]["output"]["type"] == "input_image"
+    assert result["output"][1]["output"]["result"] == ""
 
 
 @pytest.mark.asyncio
@@ -644,8 +738,9 @@ async def test_durationless_hold_key_releases_after_next_member_fails(
         ("type", "A"),
         ("key_up", "shift"),
     ]
-    assert "failed at member index 1" in result["output"][1]["output"]
-    assert "completed=1 skipped=1" in result["output"][1]["output"]
+    assert tool_result_text(result["output"][1]) == (
+        "\nbatch stopped at actions[1] (type): type failed"
+    )
 
 
 @pytest.mark.asyncio
@@ -754,6 +849,47 @@ async def test_write_read_and_edit_tools_execute_locally(
 
 
 @pytest.mark.asyncio
+async def test_read_image_file_returns_visible_image_result(
+    monkeypatch,
+    yutori_n2_test_env,
+    tmp_path: Path,
+):
+    target = tmp_path / "image.png"
+    target.write_bytes(base64.b64decode(PNG_1X1))
+    tool_calls = [
+        structured_tool_call("read", {"file_path": "image.png"}, call_id="call_read"),
+    ]
+
+    result, _ = await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        api_base="https://baseten.example/v1",
+        n2_cwd=str(tmp_path),
+    )
+
+    output = result["output"][1]["output"]
+    assert output["type"] == "input_image"
+    assert output["image_url"].startswith("data:image/webp;base64,")
+    assert output["result"] == "Loaded image image.png (1x1)"
+
+
+@pytest.mark.asyncio
+async def test_read_text_output_uses_sdk_truncation_marker(tmp_path: Path):
+    target = tmp_path / "large.txt"
+    target.write_text("x" * (yutori_n2.YUTORI_N2_READ_MAX_OUTPUT_CHARS + 20), encoding="utf-8")
+
+    output = await yutori_n2._execute_read(
+        {"file_path": "large.txt"},
+        tmp_path,
+        {},
+    )
+
+    assert output.startswith("     1\t")
+    assert "[... output truncated, " in output
+    assert " more chars ...]" in output
+
+
+@pytest.mark.asyncio
 async def test_edit_requires_prior_read(
     monkeypatch,
     yutori_n2_test_env,
@@ -805,3 +941,158 @@ async def test_default_yutori_api_chains_previous_request_id(monkeypatch, yutori
 
     assert "extra_body" not in calls[0]
     assert calls[1]["extra_body"] == {"prev_request_id": "req_1"}
+
+
+@pytest.mark.asyncio
+async def test_malformed_tool_call_text_retries_once(monkeypatch, yutori_n2_test_env):
+    calls = []
+    responses = [
+        MockResponse(content="<tool_call>not parseable", request_id="req_1"),
+        MockResponse(content="done", request_id="req_2"),
+    ]
+
+    async def fake_acompletion(**api_kwargs):
+        calls.append(api_kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
+
+    result = await yutori_n2.YutoriN2Config().predict_step(
+        messages=input_messages(),
+        model="yutori/yutori-admin/n2os-joint-test",
+        tools=[],
+        computer_handler=MockComputerHandler(),
+    )
+
+    assert len(calls) == 2
+    assert (
+        calls[1]["messages"][-1]["content"] == yutori_n2.YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE
+    )
+    assert calls[1]["extra_body"] == {"prev_request_id": "req_1"}
+    assert result["output"][0]["content"][0]["text"] == "done"
+
+
+@pytest.mark.asyncio
+async def test_length_response_without_tool_calls_retries_once(monkeypatch, yutori_n2_test_env):
+    calls = []
+    responses = [
+        MockResponse(content="partial", finish_reason="length"),
+        MockResponse(content="done"),
+    ]
+
+    async def fake_acompletion(**api_kwargs):
+        calls.append(api_kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
+
+    result = await yutori_n2.YutoriN2Config().predict_step(
+        messages=input_messages(),
+        model="yutori/yutori-admin/n2os-joint-test",
+        tools=[],
+        computer_handler=MockComputerHandler(),
+    )
+
+    assert len(calls) == 2
+    assert calls[1]["messages"][-1]["content"] == yutori_n2.YUTORI_N2_LENGTH_RETRY_MESSAGE
+    assert result["output"][0]["content"][0]["text"] == "done"
+
+
+def test_image_tool_output_result_text_is_preserved_for_next_model_call():
+    messages = [
+        {
+            "type": "function_call_output",
+            "call_id": "call_0",
+            "output": {
+                "type": "input_image",
+                "image_url": f"data:image/png;base64,{PNG_1X1}",
+                "result": "batch stopped at actions[0] (left_click): click failed",
+            },
+        }
+    ]
+
+    converted = convert_responses_items_to_completion_messages(
+        messages,
+        allow_images_in_tool_results=True,
+    )
+
+    assert converted == [
+        {
+            "role": "tool",
+            "tool_call_id": "call_0",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "batch stopped at actions[0] (left_click): click failed",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{PNG_1X1}"},
+                },
+            ],
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_computer_agent_resets_yutori_n2_state_between_independent_runs(
+    monkeypatch,
+    yutori_n2_test_env,
+    tmp_path: Path,
+):
+    from cua_agent import ComputerAgent
+
+    calls = []
+    responses = [
+        MockResponse(
+            tool_calls=[
+                structured_tool_call(
+                    "bash",
+                    {"command": "mkdir -p child && cd child && pwd", "timeout": 5},
+                    call_id="call_cd",
+                )
+            ],
+            request_id="req_1",
+        ),
+        MockResponse(content="done first", request_id="req_2"),
+        MockResponse(
+            tool_calls=[
+                structured_tool_call(
+                    "bash",
+                    {"command": "pwd", "timeout": 5},
+                    call_id="call_pwd",
+                )
+            ],
+            request_id="req_3",
+        ),
+        MockResponse(content="done second", request_id="req_4"),
+    ]
+
+    async def fake_acompletion(**api_kwargs):
+        calls.append(api_kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
+    monkeypatch.chdir(tmp_path)
+
+    agent = ComputerAgent(
+        model="yutori/yutori-admin/n2os-joint-test",
+        telemetry_enabled=False,
+    )
+
+    async def collect_run_outputs():
+        outputs = []
+        async for chunk in agent.run(input_messages()):
+            outputs.extend(chunk["output"])
+        return outputs
+
+    await collect_run_outputs()
+    second_outputs = await collect_run_outputs()
+
+    second_tool_outputs = [
+        item["output"] for item in second_outputs if item["type"] == "function_call_output"
+    ]
+    assert second_tool_outputs == [f"{tmp_path}\n"]
+    assert "extra_body" not in calls[0]
+    assert calls[1]["extra_body"] == {"prev_request_id": "req_1"}
+    assert "extra_body" not in calls[2]

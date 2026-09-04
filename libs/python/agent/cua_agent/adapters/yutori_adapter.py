@@ -73,6 +73,7 @@ class YutoriAdapter(CustomLLM):
             "max_tokens",
             "response_format",
             "extra_body",
+            "disable_tools",
         ):
             if key in kwargs:
                 params[key] = kwargs[key]

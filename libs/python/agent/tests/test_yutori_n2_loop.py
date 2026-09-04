@@ -143,6 +143,16 @@ def tool_result_text(item):
     return output
 
 
+def count_prompt_images(messages):
+    return sum(
+        1
+        for message in messages
+        if isinstance(message.get("content"), list)
+        for part in message["content"]
+        if isinstance(part, dict) and part.get("type") == "image_url"
+    )
+
+
 async def run_predict(
     monkeypatch,
     *,
@@ -198,6 +208,50 @@ async def test_default_yutori_api_receives_native_tool_set(monkeypatch, yutori_n
     assert "tools" not in captured
     assert captured["parallel_tool_calls"] is True
     assert captured["messages"][0]["role"] == "user"
+
+
+@pytest.mark.asyncio
+async def test_prompt_images_are_pruned_to_provider_safe_window(
+    monkeypatch,
+    yutori_n2_test_env,
+):
+    captured = {}
+
+    async def fake_acompletion(**api_kwargs):
+        captured.update(api_kwargs)
+        return MockResponse(content="done")
+
+    messages = [
+        *input_messages(),
+        *[
+            {
+                "type": "function_call_output",
+                "call_id": f"call_{index}",
+                "output": {
+                    "type": "input_image",
+                    "image_url": f"data:image/png;base64,{PNG_1X1}",
+                    "result": f"result {index}",
+                },
+            }
+            for index in range(yutori_n2.YUTORI_N2_MAX_PROMPT_IMAGES + 2)
+        ],
+    ]
+
+    monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
+
+    await yutori_n2.YutoriN2Config().predict_step(
+        messages=messages,
+        model="yutori/yutori-admin/n2os-joint-test",
+        tools=[],
+        computer_handler=MockComputerHandler(),
+    )
+
+    prompt_messages = captured["messages"]
+    assert count_prompt_images(prompt_messages) == yutori_n2.YUTORI_N2_MAX_PROMPT_IMAGES
+    assert prompt_messages[0]["content"] == [{"type": "text", "text": "Use the computer."}]
+    assert prompt_messages[1]["content"] == [{"type": "text", "text": "result 0"}]
+    assert prompt_messages[3]["content"][0] == {"type": "text", "text": "result 2"}
+    assert prompt_messages[3]["content"][1]["type"] == "image_url"
 
 
 @pytest.mark.asyncio

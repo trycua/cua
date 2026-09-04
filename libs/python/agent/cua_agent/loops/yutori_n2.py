@@ -128,6 +128,8 @@ YUTORI_N2_LENGTH_RETRY_MESSAGE = (
     "Your previous response was cut off before producing a valid tool call. Retry "
     "with only the tool call or final answer needed to continue."
 )
+YUTORI_N2_MAX_PROMPT_IMAGES = 16
+YUTORI_N2_OMITTED_IMAGE_TEXT = "[Image omitted from older context.]"
 YUTORI_N2_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
 YUTORI_N2_IMAGE_MAX_EDGE = 1568
 
@@ -1115,6 +1117,58 @@ def _messages_have_screenshot_notice(messages: Sequence[Mapping[str, Any]]) -> b
             if isinstance(part, Mapping) and screenshot_text in str(part.get("text") or ""):
                 return True
     return False
+
+
+def _is_completion_image_part(part: Any) -> bool:
+    if not isinstance(part, Mapping) or part.get("type") != "image_url":
+        return False
+    image_url = part.get("image_url")
+    return isinstance(image_url, Mapping) and bool(image_url.get("url"))
+
+
+def _prune_completion_images(
+    messages: Sequence[Mapping[str, Any]],
+    max_images: int = YUTORI_N2_MAX_PROMPT_IMAGES,
+) -> List[Dict[str, Any]]:
+    image_locations = []
+    for message_index, message in enumerate(messages):
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        for part_index, part in enumerate(content):
+            if _is_completion_image_part(part):
+                image_locations.append((message_index, part_index))
+
+    if len(image_locations) <= max_images:
+        return [dict(message) for message in messages]
+
+    keep_locations = set(image_locations[-max_images:])
+    pruned_messages: List[Dict[str, Any]] = []
+    for message_index, message in enumerate(messages):
+        pruned_message = dict(message)
+        content = message.get("content")
+        if not isinstance(content, list):
+            pruned_messages.append(pruned_message)
+            continue
+
+        kept_content = []
+        removed_image = False
+        for part_index, part in enumerate(content):
+            if (
+                _is_completion_image_part(part)
+                and (message_index, part_index) not in keep_locations
+            ):
+                removed_image = True
+                continue
+            kept_content.append(part)
+
+        if removed_image and not kept_content:
+            kept_content.append({"type": "text", "text": YUTORI_N2_OMITTED_IMAGE_TEXT})
+
+        pruned_message["content"] = kept_content
+        pruned_messages.append(pruned_message)
+
+    return pruned_messages
 
 
 async def _ensure_initial_screenshot(
@@ -2310,6 +2364,7 @@ class YutoriN2Config(AsyncAgentConfig):
             computer_handler,
             _on_screenshot,
         )
+        completion_messages = _prune_completion_images(completion_messages)
         image_dimensions = _add_image_resize_hints(completion_messages)
         dimensions = await _get_computer_dimensions(computer_handler) or image_dimensions
         model_tools = _extra_function_tools(tools)

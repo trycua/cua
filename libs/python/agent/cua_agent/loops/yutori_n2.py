@@ -124,10 +124,6 @@ YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE = (
     "Your previous response contained <tool_call> markup, but no valid Yutori N2 "
     "tool call could be parsed. Retry with a valid tool call or a final answer."
 )
-YUTORI_N2_LENGTH_RETRY_MESSAGE = (
-    "Your previous response was cut off before producing a valid tool call. Retry "
-    "with only the tool call or final answer needed to continue."
-)
 YUTORI_N2_MAX_PROMPT_IMAGES = 16
 YUTORI_N2_OMITTED_IMAGE_TEXT = "[Image omitted from older context.]"
 YUTORI_N2_IMAGE_SUFFIXES = {".bmp", ".gif", ".jpeg", ".jpg", ".png", ".webp"}
@@ -1833,7 +1829,6 @@ async def _execute_computer_batch(
                     "durationless hold_key requires a following batch member"
                 )
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
-                result_lines.append(_format_batch_result_line(index, action_name, error_text))
                 result_lines.append(
                     _format_batch_stopped_line(index, action_name, error_text, len(actions))
                 )
@@ -1847,7 +1842,6 @@ async def _execute_computer_batch(
             except Exception as exc:
                 error_text = _format_batch_error_text(exc)
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
-                result_lines.append(_format_batch_result_line(index, action_name, error_text))
                 result_lines.append(
                     _format_batch_stopped_line(index, action_name, error_text, len(actions))
                 )
@@ -1876,9 +1870,6 @@ async def _execute_computer_batch(
                 error_text = _format_batch_error_text(next_error or release_error or "")
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
                 result_lines.append(
-                    _format_batch_result_line(next_index, next_action_name, error_text)
-                )
-                result_lines.append(
                     _format_batch_stopped_line(
                         next_index,
                         next_action_name,
@@ -1900,7 +1891,6 @@ async def _execute_computer_batch(
         except Exception as exc:
             error_text = _format_batch_error_text(exc)
             screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
-            result_lines.append(_format_batch_result_line(index, action_name, error_text))
             result_lines.append(
                 _format_batch_stopped_line(index, action_name, error_text, len(actions))
             )
@@ -2445,7 +2435,7 @@ class YutoriN2Config(AsyncAgentConfig):
             finish_reason = str(choice.get("finish_reason") or "")
             return usage, message, structured_tool_calls, text_tool_calls, finish_reason
 
-        def retry_prompt(
+        def retry_reason(
             content_text: str,
             finish_reason: str,
             structured_tool_calls: Sequence[Mapping[str, Any]],
@@ -2454,9 +2444,9 @@ class YutoriN2Config(AsyncAgentConfig):
             if structured_tool_calls or text_tool_calls:
                 return None
             if "<tool_call>" in content_text:
-                return YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE
+                return "malformed_tool_call"
             if finish_reason == "length":
-                return YUTORI_N2_LENGTH_RETRY_MESSAGE
+                return "length"
             return None
 
         retry_messages = completion_messages
@@ -2473,17 +2463,26 @@ class YutoriN2Config(AsyncAgentConfig):
                 finish_reason,
             ) = await run_completion(retry_messages)
             content_text = _completion_content_to_text(message.get("content"))
-            retry_message = retry_prompt(
+            reason = retry_reason(
                 content_text,
                 finish_reason,
                 structured_tool_calls,
                 text_tool_calls,
             )
-            if attempt == 0 and retry_message:
+            if attempt == 0 and reason:
+                if reason == "length":
+                    retry_messages = completion_messages
+                    continue
+
                 retry_messages = [*completion_messages]
                 if content_text:
                     retry_messages.append({"role": "assistant", "content": content_text})
-                retry_messages.append({"role": "user", "content": retry_message})
+                retry_messages.append(
+                    {
+                        "role": "user",
+                        "content": YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE,
+                    }
+                )
                 continue
             break
 

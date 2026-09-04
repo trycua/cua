@@ -1,5 +1,6 @@
 import base64
 import json
+from copy import deepcopy
 from pathlib import Path
 
 import pytest
@@ -396,7 +397,6 @@ async def test_computer_batch_stops_later_actions_after_runtime_error(
     assert computer.calls == [("click", 1000, 500, "left")]
     assert computer.screenshot_count == 1
     assert tool_result_text(result["output"][1]) == (
-        "[0:left_click] ERROR: RuntimeError: click failed\n"
         "batch stopped at actions[0] (0:left_click): ERROR: RuntimeError: click failed "
         "(0 completed, 1 skipped)"
     )
@@ -796,7 +796,6 @@ async def test_durationless_hold_key_releases_after_next_member_fails(
     ]
     assert tool_result_text(result["output"][1]) == (
         "[0:hold_key] \n"
-        "[1:type] ERROR: RuntimeError: type failed\n"
         "batch stopped at actions[1] (1:type): ERROR: RuntimeError: type failed "
         "(1 completed, 1 skipped)"
     )
@@ -1007,7 +1006,7 @@ async def test_default_yutori_api_chains_previous_request_id(monkeypatch, yutori
     ]
 
     async def fake_acompletion(**api_kwargs):
-        calls.append(api_kwargs)
+        calls.append(deepcopy(api_kwargs))
         return responses.pop(0)
 
     monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
@@ -1034,7 +1033,7 @@ async def test_malformed_tool_call_text_retries_once(monkeypatch, yutori_n2_test
     ]
 
     async def fake_acompletion(**api_kwargs):
-        calls.append(api_kwargs)
+        calls.append(deepcopy(api_kwargs))
         return responses.pop(0)
 
     monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
@@ -1067,7 +1066,7 @@ async def test_length_response_without_tool_calls_retries_once(monkeypatch, yuto
     ]
 
     async def fake_acompletion(**api_kwargs):
-        calls.append(api_kwargs)
+        calls.append(deepcopy(api_kwargs))
         return responses.pop(0)
 
     monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
@@ -1080,8 +1079,7 @@ async def test_length_response_without_tool_calls_retries_once(monkeypatch, yuto
     )
 
     assert len(calls) == 2
-    assert calls[1]["messages"][-2] == {"role": "assistant", "content": "partial"}
-    assert calls[1]["messages"][-1]["content"] == yutori_n2.YUTORI_N2_LENGTH_RETRY_MESSAGE
+    assert calls[1]["messages"] == calls[0]["messages"]
     assert result["output"][0]["content"][0]["text"] == "done"
 
 
@@ -1094,7 +1092,6 @@ def test_image_tool_output_result_text_is_preserved_for_next_model_call():
                 "type": "input_image",
                 "image_url": f"data:image/png;base64,{PNG_1X1}",
                 "result": (
-                    "[0:left_click] ERROR: RuntimeError: click failed\n"
                     "batch stopped at actions[0] (0:left_click): ERROR: RuntimeError: "
                     "click failed (0 completed, 1 skipped)"
                 ),
@@ -1115,7 +1112,6 @@ def test_image_tool_output_result_text_is_preserved_for_next_model_call():
                 {
                     "type": "text",
                     "text": (
-                        "[0:left_click] ERROR: RuntimeError: click failed\n"
                         "batch stopped at actions[0] (0:left_click): ERROR: RuntimeError: "
                         "click failed (0 completed, 1 skipped)"
                     ),

@@ -837,6 +837,22 @@ async def test_bash_timeout_returns_normal_tool_result(tmp_path: Path):
 
 
 @pytest.mark.asyncio
+async def test_bash_rejects_non_boolean_run_in_background(tmp_path: Path):
+    marker = tmp_path / "should-not-run"
+
+    with pytest.raises(ValueError, match="run_in_background must be a boolean"):
+        await yutori_n2._execute_bash(
+            {
+                "command": f"touch {marker}",
+                "run_in_background": "false",
+            },
+            tmp_path,
+        )
+
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
 async def test_bash_working_directory_persists_between_calls(
     monkeypatch,
     yutori_n2_test_env,

@@ -2023,7 +2023,11 @@ async def _execute_bash(args: Mapping[str, Any], cwd: Path) -> Tuple[str, Option
             f"timeout must be between 0 and {YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS} seconds"
         )
 
-    if bool(args.get("run_in_background", False)):
+    run_in_background = args.get("run_in_background", False)
+    if not isinstance(run_in_background, bool):
+        raise ValueError("run_in_background must be a boolean")
+
+    if run_in_background:
         task_id = f"bash_{random_id().replace('-', '')[:12]}"
         output_path = Path(tempfile.gettempdir()) / f"{task_id}.output"
         start_command = (

@@ -72,12 +72,19 @@ class YutoriAdapter(CustomLLM):
             "max_completion_tokens",
             "max_tokens",
             "response_format",
+            "extra_body",
         ):
             if key in kwargs:
                 params[key] = kwargs[key]
 
         if "optional_params" in kwargs:
-            protected_keys = {"api_key", "extra_headers", "model", "api_base", "stream"}
+            protected_keys = {
+                "api_key",
+                "extra_headers",
+                "model",
+                "api_base",
+                "stream",
+            }
             filtered = {
                 k: v for k, v in kwargs["optional_params"].items() if k not in protected_keys
             }

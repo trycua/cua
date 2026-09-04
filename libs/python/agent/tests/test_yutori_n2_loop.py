@@ -16,14 +16,15 @@ class MockUsage:
 
 
 class MockResponse:
-    def __init__(self, content: str = "", tool_calls=None):
+    def __init__(self, content: str = "", tool_calls=None, request_id: str | None = None):
         self.usage = {}
         self._hidden_params = {}
         self._content = content
         self._tool_calls = tool_calls or []
+        self.request_id = request_id
 
     def model_dump(self):
-        return {
+        payload = {
             "choices": [
                 {
                     "message": {
@@ -34,6 +35,9 @@ class MockResponse:
                 }
             ]
         }
+        if self.request_id is not None:
+            payload["request_id"] = self.request_id
+        return payload
 
 
 class MockComputerHandler:
@@ -62,6 +66,8 @@ class MockComputerHandler:
 
     async def type(self, text):
         self.calls.append(("type", text))
+        if self.fail_on == "type":
+            raise RuntimeError("type failed")
 
     async def wait(self, ms=1000):
         self.calls.append(("wait", ms))
@@ -154,6 +160,7 @@ async def test_custom_api_base_receives_native_n2_tool_surface(monkeypatch, yuto
     )
 
     assert result["output"][0]["content"][0]["text"] == "done"
+    assert captured["messages"][0]["role"] == "system"
     assert captured["tool_choice"] == "auto"
     assert captured["parallel_tool_calls"] is True
     assert "tool_set" not in captured
@@ -173,6 +180,7 @@ async def test_default_yutori_api_receives_native_tool_set(monkeypatch, yutori_n
     assert captured["tool_set"] == yutori_n2.YUTORI_N2_TOOL_SET
     assert "tools" not in captured
     assert captured["parallel_tool_calls"] is True
+    assert captured["messages"][0]["role"] == "user"
 
 
 @pytest.mark.asyncio
@@ -275,6 +283,21 @@ async def test_computer_batch_validates_all_members_before_execution(
     assert computer.screenshot_count == 0
     assert "Batch validation failed" in result["output"][1]["output"]
     assert "inclusive 0-1000 range" in result["output"][1]["output"]
+
+
+def test_computer_batch_accepts_twenty_actions():
+    actions = [{"action": "wait", "duration": 0}] * 20
+
+    result = yutori_n2._validate_computer_batch({"actions": actions}, dimensions=(2000, 1000))
+
+    assert len(result) == 20
+
+
+def test_computer_batch_rejects_twenty_one_actions():
+    actions = [{"action": "wait", "duration": 0}] * 21
+
+    with pytest.raises(ValueError, match="at most 20 actions, got 21"):
+        yutori_n2._validate_computer_batch({"actions": actions}, dimensions=(2000, 1000))
 
 
 @pytest.mark.asyncio
@@ -429,6 +452,38 @@ async def test_modifier_is_held_around_click(
 
 
 @pytest.mark.asyncio
+async def test_horizontal_scroll_uses_scroll_x(
+    monkeypatch,
+    yutori_n2_test_env,
+):
+    computer = MockComputerHandler()
+    tool_calls = [
+        structured_tool_call(
+            "computer_batch",
+            {
+                "actions": [
+                    {
+                        "action": "scroll",
+                        "coordinates": [500, 500],
+                        "direction": "left",
+                        "amount": 2,
+                    }
+                ]
+            },
+        )
+    ]
+
+    await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        computer_handler=computer,
+        api_base="https://baseten.example/v1",
+    )
+
+    assert computer.calls == [("scroll", 1000, 500, -400, 0)]
+
+
+@pytest.mark.asyncio
 async def test_key_press_space_separated_sequence_executes_sequentially(
     monkeypatch,
     yutori_n2_test_env,
@@ -479,6 +534,29 @@ async def test_wait_duration_is_passed_to_computer_handler(
 
 
 @pytest.mark.asyncio
+async def test_wait_defaults_to_five_seconds(
+    monkeypatch,
+    yutori_n2_test_env,
+):
+    computer = MockComputerHandler()
+    tool_calls = [
+        structured_tool_call(
+            "computer_batch",
+            {"actions": [{"action": "wait"}]},
+        )
+    ]
+
+    await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        computer_handler=computer,
+        api_base="https://baseten.example/v1",
+    )
+
+    assert computer.calls == [("wait", 5000)]
+
+
+@pytest.mark.asyncio
 async def test_hold_key_uses_key_down_and_key_up(
     monkeypatch,
     yutori_n2_test_env,
@@ -502,6 +580,75 @@ async def test_hold_key_uses_key_down_and_key_up(
 
 
 @pytest.mark.asyncio
+async def test_durationless_hold_key_wraps_next_batch_member(
+    monkeypatch,
+    yutori_n2_test_env,
+):
+    computer = MockComputerHandler()
+    tool_calls = [
+        structured_tool_call(
+            "computer_batch",
+            {
+                "actions": [
+                    {"action": "hold_key", "key": "shift"},
+                    {"action": "type", "text": "A"},
+                    {"action": "type", "text": "B"},
+                ]
+            },
+        )
+    ]
+
+    await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        computer_handler=computer,
+        api_base="https://baseten.example/v1",
+    )
+
+    assert computer.calls == [
+        ("key_down", "shift"),
+        ("type", "A"),
+        ("key_up", "shift"),
+        ("type", "B"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_durationless_hold_key_releases_after_next_member_fails(
+    monkeypatch,
+    yutori_n2_test_env,
+):
+    computer = MockComputerHandler(fail_on="type")
+    tool_calls = [
+        structured_tool_call(
+            "computer_batch",
+            {
+                "actions": [
+                    {"action": "hold_key", "key": "shift"},
+                    {"action": "type", "text": "A"},
+                    {"action": "type", "text": "B"},
+                ]
+            },
+        )
+    ]
+
+    result, _ = await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        computer_handler=computer,
+        api_base="https://baseten.example/v1",
+    )
+
+    assert computer.calls == [
+        ("key_down", "shift"),
+        ("type", "A"),
+        ("key_up", "shift"),
+    ]
+    assert "failed at member index 1" in result["output"][1]["output"]
+    assert "completed=1 skipped=1" in result["output"][1]["output"]
+
+
+@pytest.mark.asyncio
 async def test_bash_tool_executes_and_returns_output(
     monkeypatch,
     yutori_n2_test_env,
@@ -519,8 +666,49 @@ async def test_bash_tool_executes_and_returns_output(
     )
 
     assert result["output"][0]["name"] == "bash"
-    assert "exit_code=0" in result["output"][1]["output"]
-    assert "stdout:\nok" in result["output"][1]["output"]
+    assert result["output"][1]["output"] == "ok"
+
+
+@pytest.mark.asyncio
+async def test_bash_timeout_returns_normal_tool_result(tmp_path: Path):
+    output, updated_cwd = await yutori_n2._execute_bash(
+        {
+            "command": "python -c 'import time; time.sleep(1)'",
+            "timeout": 0.01,
+        },
+        tmp_path,
+    )
+
+    assert output == "Command timed out after 0.01s"
+    assert updated_cwd is None
+
+
+@pytest.mark.asyncio
+async def test_bash_working_directory_persists_between_calls(
+    monkeypatch,
+    yutori_n2_test_env,
+    tmp_path: Path,
+):
+    tool_calls = [
+        structured_tool_call(
+            "bash",
+            {"command": "mkdir -p child && cd child && pwd", "timeout": 5},
+            call_id="call_cd",
+        ),
+        structured_tool_call("bash", {"command": "pwd", "timeout": 5}, call_id="call_pwd"),
+    ]
+
+    result, _ = await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        api_base="https://baseten.example/v1",
+        n2_cwd=str(tmp_path),
+    )
+
+    outputs = [
+        item["output"] for item in result["output"] if item["type"] == "function_call_output"
+    ]
+    assert outputs == [f"{tmp_path / 'child'}\n", f"{tmp_path / 'child'}\n"]
 
 
 @pytest.mark.asyncio
@@ -559,6 +747,61 @@ async def test_write_read_and_edit_tools_execute_locally(
     outputs = [
         item["output"] for item in result["output"] if item["type"] == "function_call_output"
     ]
-    assert any("Wrote 11 characters" in output for output in outputs)
-    assert any("Replaced 1 occurrence" in output for output in outputs)
-    assert outputs[-1] == "gamma\n"
+    assert outputs[0] == "File created successfully at: file.txt"
+    assert outputs[1].startswith("The file file.txt has been updated successfully:")
+    assert "     2\tgamma" in outputs[1]
+    assert outputs[-1] == "     2\tgamma"
+
+
+@pytest.mark.asyncio
+async def test_edit_requires_prior_read(
+    monkeypatch,
+    yutori_n2_test_env,
+    tmp_path: Path,
+):
+    target = tmp_path / "file.txt"
+    target.write_text("alpha\nbeta\n", encoding="utf-8")
+    tool_calls = [
+        structured_tool_call(
+            "edit",
+            {"file_path": "file.txt", "old_string": "beta", "new_string": "gamma"},
+            call_id="call_edit",
+        )
+    ]
+
+    result, _ = await run_predict(
+        monkeypatch,
+        tool_calls=tool_calls,
+        api_base="https://baseten.example/v1",
+        n2_cwd=str(tmp_path),
+    )
+
+    assert target.read_text(encoding="utf-8") == "alpha\nbeta\n"
+    assert result["output"][1]["output"].startswith("ERROR: you must read file.txt")
+
+
+@pytest.mark.asyncio
+async def test_default_yutori_api_chains_previous_request_id(monkeypatch, yutori_n2_test_env):
+    calls = []
+    responses = [
+        MockResponse(content="first", request_id="req_1"),
+        MockResponse(content="second", request_id="req_2"),
+    ]
+
+    async def fake_acompletion(**api_kwargs):
+        calls.append(api_kwargs)
+        return responses.pop(0)
+
+    monkeypatch.setattr(yutori_n2.litellm, "acompletion", fake_acompletion)
+    config = yutori_n2.YutoriN2Config()
+
+    for _ in range(2):
+        await config.predict_step(
+            messages=input_messages(),
+            model="yutori/yutori-admin/n2os-joint-test",
+            tools=[],
+            computer_handler=MockComputerHandler(),
+        )
+
+    assert "extra_body" not in calls[0]
+    assert calls[1]["extra_body"] == {"prev_request_id": "req_1"}

@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import hashlib
 import io
 import json
 import os
 import re
+import shlex
+import tempfile
 import textwrap
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Mapping, Optional, Sequence, Tuple
@@ -107,8 +110,9 @@ _TEXT_PARAMETER_NAMES = {
 
 YUTORI_N2_TOOL_SET = "computer_use_tools-20260830"
 YUTORI_N2_COORD_SPACE = 1000
-YUTORI_N2_MAX_BATCH_ACTIONS = 100
+YUTORI_N2_MAX_BATCH_ACTIONS = 20
 YUTORI_N2_MAX_WAIT_SECONDS = 300
+YUTORI_N2_DEFAULT_WAIT_SECONDS = 5.0
 YUTORI_N2_MAX_SCROLL_AMOUNT = 50
 YUTORI_N2_DEFAULT_READ_LIMIT = 2000
 YUTORI_N2_WRITE_CONTENT_MAX_CHARS = 256000
@@ -229,7 +233,10 @@ YUTORI_N2_TOOLS: List[Dict[str, Any]] = [
                                         "start_coordinates": _coordinate_schema(
                                             "Normalized drag start coordinates."
                                         ),
-                                        "direction": {"type": "string", "enum": ["up", "down"]},
+                                        "direction": {
+                                            "type": "string",
+                                            "enum": ["up", "down", "left", "right"],
+                                        },
                                         "amount": {
                                             "type": "integer",
                                             "minimum": 1,
@@ -324,7 +331,7 @@ YUTORI_N2_TOOLS: List[Dict[str, Any]] = [
                     "command": {"type": "string"},
                     "timeout": {
                         "type": "integer",
-                        "minimum": 1,
+                        "minimum": 0,
                         "maximum": YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS,
                         "default": YUTORI_N2_BASH_DEFAULT_TIMEOUT_SECONDS,
                     },
@@ -1205,6 +1212,23 @@ def _uses_yutori_api(api_base: Optional[str]) -> bool:
     return "api.yutori.com" in api_base
 
 
+def _response_request_id(response: Any, resp_dict: Mapping[str, Any]) -> Optional[str]:
+    request_id = getattr(response, "request_id", None)
+    if isinstance(request_id, str) and request_id:
+        return request_id
+
+    value = resp_dict.get("request_id")
+    if isinstance(value, str) and value:
+        return value
+
+    hidden_params = getattr(response, "_hidden_params", None)
+    if isinstance(hidden_params, Mapping):
+        value = hidden_params.get("request_id")
+        if isinstance(value, str) and value:
+            return value
+    return None
+
+
 def _as_number(value: Any) -> Optional[float]:
     if isinstance(value, bool):
         return None
@@ -1389,8 +1413,8 @@ def _validate_computer_action(
             dimensions,
         )
         direction = args.get("direction")
-        if direction not in {"up", "down"}:
-            raise ValueError(f"{path}.direction must be up or down")
+        if direction not in {"up", "down", "left", "right"}:
+            raise ValueError(f"{path}.direction must be up, down, left, or right")
         amount = _as_positive_int(args.get("amount"))
         if amount is None or amount < 1 or amount > YUTORI_N2_MAX_SCROLL_AMOUNT:
             raise ValueError(
@@ -1416,9 +1440,20 @@ def _validate_computer_action(
             )
             action.update({"x": x, "y": y})
 
-    if action_name in {"wait", "hold_key"}:
-        duration = args.get("duration", 1)
+    if action_name == "wait":
+        duration = args.get("duration", YUTORI_N2_DEFAULT_WAIT_SECONDS)
         duration_number = _as_number(duration)
+        if (
+            duration_number is None
+            or duration_number < 0
+            or duration_number > YUTORI_N2_MAX_WAIT_SECONDS
+        ):
+            raise ValueError(
+                f"{path}.duration must be between 0 and {YUTORI_N2_MAX_WAIT_SECONDS} seconds"
+            )
+        action["duration"] = duration_number
+    elif action_name == "hold_key" and "duration" in args:
+        duration_number = _as_number(args.get("duration"))
         if (
             duration_number is None
             or duration_number < 0
@@ -1521,6 +1556,14 @@ async def _hold_keys_around(
 
 
 async def _execute_hold_key(computer_handler: Any, key: str, duration: float) -> None:
+    target, pressed = await _start_hold_key(computer_handler, key)
+    try:
+        await asyncio.sleep(duration)
+    finally:
+        await _release_held_keys(target, pressed)
+
+
+async def _start_hold_key(computer_handler: Any, key: str) -> Tuple[Any, List[str]]:
     target = _key_target(computer_handler)
     if target is None:
         raise RuntimeError("computer handler does not support hold_key")
@@ -1534,10 +1577,15 @@ async def _execute_hold_key(computer_handler: Any, key: str, duration: float) ->
         for key_name in keys[0]:
             await target.key_down(key_name)
             pressed.append(key_name)
-        await asyncio.sleep(duration)
-    finally:
-        for key_name in reversed(pressed):
-            await target.key_up(key_name)
+    except Exception:
+        await _release_held_keys(target, pressed)
+        raise
+    return target, pressed
+
+
+async def _release_held_keys(target: Any, pressed: Sequence[str]) -> None:
+    for key_name in reversed(pressed):
+        await target.key_up(key_name)
 
 
 async def _execute_computer_action(
@@ -1578,13 +1626,22 @@ async def _execute_computer_action(
             return
         if action_name == "scroll":
             width, height = dimensions or (YUTORI_N2_COORD_SPACE, YUTORI_N2_COORD_SPACE)
+            step_x = max(1, round(width * 0.1))
             step_y = max(1, round(height * 0.1))
-            scroll_y = (
-                -action["amount"] * step_y
-                if action["direction"] == "up"
-                else action["amount"] * step_y
+            if action["direction"] == "up":
+                scroll_x, scroll_y = 0, -action["amount"] * step_y
+            elif action["direction"] == "down":
+                scroll_x, scroll_y = 0, action["amount"] * step_y
+            elif action["direction"] == "left":
+                scroll_x, scroll_y = -action["amount"] * step_x, 0
+            else:
+                scroll_x, scroll_y = action["amount"] * step_x, 0
+            await computer_handler.scroll(
+                action["x"],
+                action["y"],
+                scroll_x=scroll_x,
+                scroll_y=scroll_y,
             )
-            await computer_handler.scroll(action["x"], action["y"], scroll_x=0, scroll_y=scroll_y)
             return
         if action_name == "type":
             await computer_handler.type(action["text"])
@@ -1603,6 +1660,8 @@ async def _execute_computer_action(
             await computer_handler.left_mouse_up(action.get("x"), action.get("y"))
             return
         if action_name == "hold_key":
+            if "duration" not in action:
+                raise RuntimeError("durationless hold_key requires a following batch member")
             await _execute_hold_key(computer_handler, action["key"], float(action["duration"]))
             return
         raise RuntimeError(f"unsupported computer action: {action_name}")
@@ -1633,9 +1692,64 @@ async def _execute_computer_batch(
 ) -> Tuple[str, Optional[Dict[str, Any]]]:
     completed = 0
     result_lines = []
+    index = 0
 
-    for index, action in enumerate(actions):
+    while index < len(actions):
+        action = actions[index]
         action_name = str(action["action"])
+        if action_name == "hold_key" and "duration" not in action:
+            if index + 1 >= len(actions):
+                screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+                return (
+                    "[ERROR] computer_batch failed at member index "
+                    f"{index}: durationless hold_key requires a following batch member; "
+                    f"completed={completed} skipped=0. Completed members are not rolled back.",
+                    screenshot,
+                )
+
+            try:
+                target, pressed = await _start_hold_key(computer_handler, str(action["key"]))
+            except Exception as exc:
+                skipped = len(actions) - index - 1
+                screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+                return (
+                    f"[ERROR] computer_batch failed at member index {index}: {exc}; "
+                    f"completed={completed} skipped={skipped}. Completed members are not rolled back.",
+                    screenshot,
+                )
+
+            completed += 1
+            result_lines.append(f"[{index}:{action_name}] success")
+            next_index = index + 1
+            next_action = actions[next_index]
+            next_action_name = str(next_action["action"])
+            next_error: Optional[BaseException] = None
+            try:
+                await _execute_computer_action(computer_handler, next_action, dimensions)
+            except Exception as exc:
+                next_error = exc
+
+            release_error: Optional[BaseException] = None
+            try:
+                await _release_held_keys(target, pressed)
+            except Exception as exc:
+                release_error = exc
+
+            if next_error is not None or release_error is not None:
+                error = next_error or release_error
+                skipped = len(actions) - next_index - 1
+                screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+                return (
+                    f"[ERROR] computer_batch failed at member index {next_index}: {error}; "
+                    f"completed={completed} skipped={skipped}. Completed members are not rolled back.",
+                    screenshot,
+                )
+
+            completed += 1
+            result_lines.append(f"[{next_index}:{next_action_name}] success")
+            index += 2
+            continue
+
         try:
             await _execute_computer_action(computer_handler, action, dimensions)
         except Exception as exc:
@@ -1648,43 +1762,132 @@ async def _execute_computer_batch(
             )
         completed += 1
         result_lines.append(f"[{index}:{action_name}] success")
+        index += 1
 
     screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
     return "\n".join(result_lines), screenshot
 
 
-def _resolve_file_path(args: Mapping[str, Any], cwd: Path) -> Path:
+def _format_seconds(value: float | int) -> str:
+    return f"{float(value):g}s"
+
+
+def _detect_text_encoding(head: bytes) -> str:
+    if not head:
+        return "utf-8"
+    if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+        return "utf-16"
+    if head[:3] == b"\xef\xbb\xbf":
+        return "utf-8-sig"
+    return "utf-8"
+
+
+def _content_fingerprint(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _record_read_fingerprint(
+    read_fingerprints: Dict[str, str],
+    path: Path,
+    data: bytes,
+) -> None:
+    read_fingerprints[str(path)] = _content_fingerprint(data)
+
+
+def _check_read_before_edit(
+    read_fingerprints: Mapping[str, str],
+    path: Path,
+    display_path: str,
+    data: bytes,
+) -> Optional[str]:
+    seen = read_fingerprints.get(str(path))
+    if seen is None:
+        return f"ERROR: you must read {display_path} before editing it (read it, then edit)."
+    if seen != _content_fingerprint(data):
+        return (
+            f"ERROR: {display_path} changed since you last read it - read it again before editing."
+        )
+    return None
+
+
+def _format_cat_numbered_text(data: bytes, offset: int, limit: int) -> str:
+    if not data:
+        return "[file exists but is empty]"
+    encoding = _detect_text_encoding(data[:4096])
+    text = data.decode(encoding, "replace").replace("\r\n", "\n")
+    lines = text.split("\n")
+    start = max(0, offset - 1) if offset else 0
+    window = lines[start : start + max(0, limit)]
+    return "\n".join(f"{start + i + 1:>6}\t{line}" for i, line in enumerate(window))
+
+
+def _edit_snippet(text: str, anchor_index: int, extra_lines: int = 0) -> str:
+    lines = text.split("\n")
+    line_no = text[: max(anchor_index, 0)].count("\n") + 1
+    lo = max(1, line_no - 4)
+    hi = min(len(lines), line_no + 4 + extra_lines)
+    return "\n".join(f"{i:>6}\t{lines[i - 1]}" for i in range(lo, hi + 1))
+
+
+def _resolve_file_path(args: Mapping[str, Any], cwd: Path) -> Tuple[Path, str]:
     raw_path = args.get("file_path", args.get("path"))
     if not isinstance(raw_path, str) or not raw_path:
         raise ValueError("file_path must be a non-empty string")
     path = Path(raw_path).expanduser()
     if not path.is_absolute():
         path = cwd / path
-    return path
+    return path, raw_path
 
 
-async def _execute_bash(args: Mapping[str, Any], cwd: Path) -> str:
+async def _execute_bash(args: Mapping[str, Any], cwd: Path) -> Tuple[str, Optional[Path]]:
     command = args.get("command")
     if not isinstance(command, str) or not command:
         raise ValueError("command must be a non-empty string")
 
-    timeout = _as_positive_int(args.get("timeout", YUTORI_N2_BASH_DEFAULT_TIMEOUT_SECONDS))
-    if timeout is None or timeout < 1 or timeout > YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS:
+    timeout = _as_number(args.get("timeout", YUTORI_N2_BASH_DEFAULT_TIMEOUT_SECONDS))
+    if timeout is None or timeout < 0 or timeout > YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS:
         raise ValueError(
-            f"timeout must be an integer between 1 and {YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS}"
+            f"timeout must be between 0 and {YUTORI_N2_BASH_MAX_TIMEOUT_SECONDS} seconds"
         )
 
     if bool(args.get("run_in_background", False)):
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            cwd=str(cwd),
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+        task_id = f"bash_{random_id().replace('-', '')[:12]}"
+        output_path = Path(tempfile.gettempdir()) / f"{task_id}.output"
+        start_command = (
+            f"nohup /bin/bash -lc {shlex.quote(command)} "
+            f"> {shlex.quote(str(output_path))} 2>&1 & echo $!"
         )
-        return f"Started background command with pid {proc.pid}."
+        proc = await asyncio.create_subprocess_exec(
+            "bash",
+            "-lc",
+            start_command,
+            cwd=str(cwd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, stderr = await proc.communicate()
+        pid = stdout.decode("utf-8", errors="replace").strip().splitlines()[:1]
+        stderr_text = stderr.decode("utf-8", errors="replace").strip()
+        if proc.returncode != 0:
+            message = stderr_text or "background command failed to start"
+            return f"ERROR: failed to start background command: {message}", None
 
+        lines = [
+            f"Started background task `{task_id}`.",
+            f"stdout+stderr is streaming to: {output_path}",
+            "Use the read tool on that file to retrieve output.",
+        ]
+        if pid and pid[0]:
+            lines.append(f"Process id: {pid[0]}")
+            lines.append(f"To cancel: run bash with `kill {pid[0]}`")
+        return "\n".join(lines), None
+
+    cwd_file = Path(tempfile.gettempdir()) / f"cua-yutori-n2-cwd-{random_id()}.txt"
+    wrapped_command = (
+        f"{command}\n__cua_status=$?\npwd > {shlex.quote(str(cwd_file))}\nexit $__cua_status"
+    )
     proc = await asyncio.create_subprocess_shell(
-        command,
+        wrapped_command,
         cwd=str(cwd),
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
@@ -1693,21 +1896,45 @@ async def _execute_bash(args: Mapping[str, Any], cwd: Path) -> str:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
     except asyncio.TimeoutError:
         proc.kill()
-        await proc.wait()
-        raise TimeoutError(f"bash command timed out after {timeout} seconds")
+        stdout, stderr = await proc.communicate()
+        output = stdout.decode("utf-8", errors="replace") + stderr.decode(
+            "utf-8",
+            errors="replace",
+        )
+        result = f"Command timed out after {_format_seconds(timeout)}"
+        return result + ("\n" + output if output else ""), None
 
     stdout_text = stdout.decode("utf-8", errors="replace")
     stderr_text = stderr.decode("utf-8", errors="replace")
-    parts = [f"exit_code={proc.returncode}"]
-    if stdout_text:
-        parts.append(f"stdout:\n{stdout_text}")
-    if stderr_text:
-        parts.append(f"stderr:\n{stderr_text}")
-    return "\n".join(parts)
+    output = stdout_text + stderr_text
+
+    new_cwd: Optional[Path] = None
+    try:
+        cwd_text = await asyncio.to_thread(cwd_file.read_text, encoding="utf-8")
+        candidate = Path(cwd_text.strip())
+        if candidate.is_dir():
+            new_cwd = candidate
+    except Exception:
+        pass
+    finally:
+        try:
+            cwd_file.unlink(missing_ok=True)
+        except Exception:
+            pass
+
+    if proc.returncode is None:
+        return "ERROR: command exit code unavailable" + ("\n" + output if output else ""), new_cwd
+    if proc.returncode != 0:
+        return f"Exit code {proc.returncode}" + ("\n" + output if output else ""), new_cwd
+    return (output if output else "(Bash completed with no output)"), new_cwd
 
 
-async def _execute_read(args: Mapping[str, Any], cwd: Path) -> str:
-    path = _resolve_file_path(args, cwd)
+async def _execute_read(
+    args: Mapping[str, Any],
+    cwd: Path,
+    read_fingerprints: Dict[str, str],
+) -> str:
+    path, display_path = _resolve_file_path(args, cwd)
     offset = _as_positive_int(args.get("offset", 1))
     limit = _as_positive_int(args.get("limit", YUTORI_N2_DEFAULT_READ_LIMIT))
     if offset is None or offset < 1:
@@ -1715,57 +1942,107 @@ async def _execute_read(args: Mapping[str, Any], cwd: Path) -> str:
     if limit is None or limit < 1:
         raise ValueError("limit must be an integer greater than or equal to 1")
 
-    text = await asyncio.to_thread(path.read_text, encoding="utf-8", errors="replace")
-    lines = text.splitlines(keepends=True)
-    return "".join(lines[offset - 1 : offset - 1 + limit])
+    if await asyncio.to_thread(path.is_dir):
+        return f"ERROR: path is a directory, not a file: {display_path}"
+    if not await asyncio.to_thread(path.is_file):
+        return f"ERROR: file does not exist: {display_path}"
+
+    data = await asyncio.to_thread(path.read_bytes)
+    rendered = _format_cat_numbered_text(data, offset, limit)
+    if not rendered.startswith("ERROR:"):
+        _record_read_fingerprint(read_fingerprints, path, data)
+    return rendered
 
 
-async def _execute_write(args: Mapping[str, Any], cwd: Path) -> str:
-    path = _resolve_file_path(args, cwd)
+async def _execute_write(
+    args: Mapping[str, Any],
+    cwd: Path,
+    read_fingerprints: Dict[str, str],
+) -> str:
+    path, display_path = _resolve_file_path(args, cwd)
     content = args.get("content")
     if not isinstance(content, str):
         raise ValueError("content must be a string")
     if len(content) > YUTORI_N2_WRITE_CONTENT_MAX_CHARS:
         raise ValueError(f"content must be at most {YUTORI_N2_WRITE_CONTENT_MAX_CHARS} characters")
 
+    existed = await asyncio.to_thread(path.exists)
     await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
     await asyncio.to_thread(path.write_text, content, encoding="utf-8")
-    return f"Wrote {len(content)} characters to {path}."
+    _record_read_fingerprint(read_fingerprints, path, content.encode("utf-8"))
+    if existed:
+        return f"The file {display_path} has been updated successfully."
+    return f"File created successfully at: {display_path}"
 
 
-async def _execute_edit(args: Mapping[str, Any], cwd: Path) -> str:
-    path = _resolve_file_path(args, cwd)
+async def _execute_edit(
+    args: Mapping[str, Any],
+    cwd: Path,
+    read_fingerprints: Dict[str, str],
+) -> str:
+    path, display_path = _resolve_file_path(args, cwd)
     old_string = args.get("old_string", args.get("old"))
     new_string = args.get("new_string", args.get("new"))
     replace_all = bool(args.get("replace_all", False))
-    if not isinstance(old_string, str) or old_string == "":
-        raise ValueError("old_string must be a non-empty string")
+    if not isinstance(old_string, str):
+        raise ValueError("old_string must be a string")
     if not isinstance(new_string, str):
         raise ValueError("new_string must be a string")
+    if old_string == new_string:
+        return "ERROR: old_string and new_string are identical."
 
-    text = await asyncio.to_thread(path.read_text, encoding="utf-8", errors="replace")
+    if old_string == "":
+        if await asyncio.to_thread(path.exists):
+            return (
+                f"ERROR: cannot create {display_path}: it already exists "
+                "(use a non-empty old_string to edit, or write to overwrite)."
+            )
+        await asyncio.to_thread(path.parent.mkdir, parents=True, exist_ok=True)
+        await asyncio.to_thread(path.write_text, new_string, encoding="utf-8")
+        _record_read_fingerprint(read_fingerprints, path, new_string.encode("utf-8"))
+        return f"File created successfully at: {display_path}"
+
+    if not await asyncio.to_thread(path.is_file):
+        return f"ERROR: file does not exist: {display_path}"
+
+    data = await asyncio.to_thread(path.read_bytes)
+    stale = _check_read_before_edit(read_fingerprints, path, display_path, data)
+    if stale is not None:
+        return stale
+
+    text = data.decode("utf-8", errors="replace")
     occurrences = text.count(old_string)
     if occurrences == 0:
-        raise ValueError("old_string was not found")
+        return "ERROR: old_string not found in file (it must match exactly, including whitespace)."
     if occurrences > 1 and not replace_all:
-        raise ValueError("old_string appears multiple times; set replace_all to true")
+        return (
+            f"ERROR: old_string is not unique ({occurrences} occurrences). "
+            "Add context or pass replace_all=true."
+        )
 
     count = -1 if replace_all else 1
     updated = text.replace(old_string, new_string, count)
     await asyncio.to_thread(path.write_text, updated, encoding="utf-8")
-    replaced = occurrences if replace_all else 1
-    return f"Replaced {replaced} occurrence{'s' if replaced != 1 else ''} in {path}."
+    _record_read_fingerprint(read_fingerprints, path, updated.encode("utf-8"))
+    anchor = updated.find(new_string) if new_string else text.find(old_string)
+    snippet = _edit_snippet(updated, anchor, new_string.count("\n"))
+    return f"The file {display_path} has been updated successfully:\n{snippet}"
 
 
-async def _execute_file_or_shell_tool(name: str, args: Mapping[str, Any], cwd: Path) -> str:
+async def _execute_file_or_shell_tool(
+    name: str,
+    args: Mapping[str, Any],
+    cwd: Path,
+    read_fingerprints: Dict[str, str],
+) -> Tuple[str, Optional[Path]]:
     if name == "bash":
         return await _execute_bash(args, cwd)
     if name == "read":
-        return await _execute_read(args, cwd)
+        return await _execute_read(args, cwd, read_fingerprints), None
     if name == "write":
-        return await _execute_write(args, cwd)
+        return await _execute_write(args, cwd, read_fingerprints), None
     if name == "edit":
-        return await _execute_edit(args, cwd)
+        return await _execute_edit(args, cwd, read_fingerprints), None
     raise ValueError(f"unsupported Yutori N2 tool: {name}")
 
 
@@ -1774,8 +2051,9 @@ async def _handle_yutori_n2_tool_call(
     computer_handler: Any,
     dimensions: Optional[Tuple[int, int]],
     cwd: Path,
+    read_fingerprints: Dict[str, str],
     on_screenshot: Optional[Callable[[str, str], Awaitable[None]]],
-) -> List[Dict[str, Any]]:
+) -> Tuple[List[Dict[str, Any]], Optional[Path]]:
     name = str(tool_call.get("name") or "")
     args = _normalize_args(tool_call.get("arguments") or {})
     call_id = tool_call.get("_call_id")
@@ -1786,11 +2064,14 @@ async def _handle_yutori_n2_tool_call(
         try:
             actions = _validate_computer_batch(args, dimensions)
         except ValueError as exc:
-            return _function_call_with_output(
-                name,
-                args,
-                f"[ERROR] Batch validation failed: {exc}; completed=0 failed_index=none skipped=0.",
-                call_id,
+            return (
+                _function_call_with_output(
+                    name,
+                    args,
+                    f"[ERROR] Batch validation failed: {exc}; completed=0 failed_index=none skipped=0.",
+                    call_id,
+                ),
+                None,
             )
         result_text, screenshot_message = await _execute_computer_batch(
             actions,
@@ -1801,24 +2082,33 @@ async def _handle_yutori_n2_tool_call(
         output = _function_call_with_output(name, args, result_text, call_id)
         if screenshot_message:
             output.append(screenshot_message)
-        return output
+        return output, None
 
     if name in _FUNCTION_TOOLS:
         try:
-            result_text = await _execute_file_or_shell_tool(name, args, cwd)
+            result_text, updated_cwd = await _execute_file_or_shell_tool(
+                name,
+                args,
+                cwd,
+                read_fingerprints,
+            )
         except Exception as exc:
             result_text = f"[ERROR] {name} failed: {exc}"
-        return _function_call_with_output(name, args, result_text, call_id)
+            updated_cwd = None
+        return _function_call_with_output(name, args, result_text, call_id), updated_cwd
 
     if name in {"computer", "computer_use", *_COMPUTER_FUNCTIONS}:
         try:
             actions = _single_computer_actions(name, args, dimensions)
         except ValueError as exc:
-            return _function_call_with_output(
-                name,
-                args,
-                f"[ERROR] Computer action validation failed: {exc}",
-                call_id,
+            return (
+                _function_call_with_output(
+                    name,
+                    args,
+                    f"[ERROR] Computer action validation failed: {exc}",
+                    call_id,
+                ),
+                None,
             )
         result_text, screenshot_message = await _execute_computer_batch(
             actions,
@@ -1829,13 +2119,18 @@ async def _handle_yutori_n2_tool_call(
         output = _function_call_with_output(name, args, result_text, call_id)
         if screenshot_message:
             output.append(screenshot_message)
-        return output
+        return output, None
 
-    return [make_function_call_item(name, args, call_id=call_id)]
+    return [make_function_call_item(name, args, call_id=call_id)], None
 
 
 @register_agent(models=r"^yutori/.*(?:n2|n2os).*", priority=10)
 class YutoriN2Config(AsyncAgentConfig):
+    def __init__(self) -> None:
+        self._bash_cwd: Optional[Path] = None
+        self._last_yutori_request_id: Optional[str] = None
+        self._read_fingerprints: Dict[str, str] = {}
+
     async def predict_step(
         self,
         messages: List[Dict[str, Any]],
@@ -1852,18 +2147,24 @@ class YutoriN2Config(AsyncAgentConfig):
         **kwargs,
     ) -> Dict[str, Any]:
         generation_kwargs = dict(kwargs)
-        cwd = Path(str(generation_kwargs.pop("n2_cwd", os.getcwd()))).expanduser()
+        raw_cwd = generation_kwargs.pop("n2_cwd", None)
+        if raw_cwd is not None:
+            cwd = Path(str(raw_cwd)).expanduser()
+            self._bash_cwd = cwd
+        else:
+            cwd = self._bash_cwd or Path(os.getcwd()).expanduser()
         tool_set = generation_kwargs.pop("tool_set", YUTORI_N2_TOOL_SET)
         api_base = generation_kwargs.get("api_base")
+        uses_yutori_api = _uses_yutori_api(api_base)
+        extra_body = generation_kwargs.pop("extra_body", None)
 
         converted_messages = convert_responses_items_to_completion_messages(
             messages,
             allow_images_in_tool_results=False,
         )
-        completion_messages: List[Dict[str, Any]] = [
-            {"role": "system", "content": _YUTORI_N2_SYSTEM_PROMPT},
-            *converted_messages,
-        ]
+        completion_messages: List[Dict[str, Any]] = list(converted_messages)
+        if not uses_yutori_api:
+            completion_messages.insert(0, {"role": "system", "content": _YUTORI_N2_SYSTEM_PROMPT})
 
         pre_output_items = await _ensure_initial_screenshot(
             completion_messages,
@@ -1887,12 +2188,21 @@ class YutoriN2Config(AsyncAgentConfig):
         if use_prompt_caching:
             api_kwargs["use_prompt_caching"] = use_prompt_caching
 
-        if _uses_yutori_api(api_base):
+        if uses_yutori_api:
             api_kwargs["tool_set"] = tool_set
+            resolved_extra_body: Dict[str, Any] = (
+                dict(extra_body) if isinstance(extra_body, Mapping) else {}
+            )
+            if self._last_yutori_request_id:
+                resolved_extra_body.setdefault("prev_request_id", self._last_yutori_request_id)
+            if resolved_extra_body:
+                api_kwargs["extra_body"] = resolved_extra_body
             if model_tools:
                 api_kwargs["tools"] = model_tools
         else:
             api_kwargs["tools"] = [*YUTORI_N2_TOOLS, *model_tools]
+            if extra_body is not None:
+                api_kwargs["extra_body"] = extra_body
 
         if _on_api_start:
             await _on_api_start(api_kwargs)
@@ -1912,6 +2222,11 @@ class YutoriN2Config(AsyncAgentConfig):
             await _on_usage(usage)
 
         resp_dict = response.model_dump()  # type: ignore
+        if uses_yutori_api:
+            request_id = _response_request_id(response, resp_dict)
+            if request_id is not None:
+                self._last_yutori_request_id = request_id
+
         choice = (resp_dict.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         content_text = _completion_content_to_text(message.get("content"))
@@ -1941,15 +2256,18 @@ class YutoriN2Config(AsyncAgentConfig):
 
         yutori_tool_calls = structured_tool_calls or text_tool_calls
         for tool_call in yutori_tool_calls:
-            output_items.extend(
-                await _handle_yutori_n2_tool_call(
-                    tool_call,
-                    computer_handler,
-                    dimensions,
-                    cwd,
-                    _on_screenshot,
-                )
+            tool_output, updated_cwd = await _handle_yutori_n2_tool_call(
+                tool_call,
+                computer_handler,
+                dimensions,
+                cwd,
+                self._read_fingerprints,
+                _on_screenshot,
             )
+            output_items.extend(tool_output)
+            if updated_cwd is not None:
+                cwd = updated_cwd
+                self._bash_cwd = updated_cwd
 
         if text_tool_calls and not output_items:
             output_items.extend(

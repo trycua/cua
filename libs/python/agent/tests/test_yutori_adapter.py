@@ -23,6 +23,7 @@ def test_yutori_adapter_routes_prefixed_model_to_openai_and_uses_api_base(monkey
         api_key="call-key",
         parallel_tool_calls=True,
         tool_set="computer_use_tools-20260830",
+        extra_body={"prev_request_id": "req_1"},
     )
 
     assert captured["model"] == "openai/yutori-admin/n2os-joint-test"
@@ -31,6 +32,7 @@ def test_yutori_adapter_routes_prefixed_model_to_openai_and_uses_api_base(monkey
     assert captured["extra_headers"]["Authorization"] == "Bearer call-key"
     assert captured["parallel_tool_calls"] is True
     assert captured["tool_set"] == "computer_use_tools-20260830"
+    assert captured["extra_body"] == {"prev_request_id": "req_1"}
 
 
 @pytest.mark.asyncio

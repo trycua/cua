@@ -38,6 +38,7 @@
 //! into a panic, so a gate cannot pass without exercising the driver.
 
 pub mod ax;
+pub mod boundary_fuzz;
 mod browser_fixture;
 mod cli;
 mod daemon;

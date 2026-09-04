@@ -1726,14 +1726,39 @@ async def _take_post_tool_screenshot(
     return screenshot_b64
 
 
+def _format_batch_label(index: int, action_name: str) -> str:
+    return f"{index}:{action_name}"
+
+
+def _format_batch_result_line(index: int, action_name: str, text: str) -> str:
+    return f"[{_format_batch_label(index, action_name)}] {text}"
+
+
 def _format_batch_success_line(index: int, action_name: str) -> str:
-    if action_name == "screenshot":
-        return f"actions[{index}].screenshot: screenshot captured."
-    return ""
+    text = "screenshot queued (delivered after the batch)" if action_name == "screenshot" else ""
+    return _format_batch_result_line(index, action_name, text)
 
 
-def _format_batch_stopped_line(index: int, action_name: str, error: BaseException | str) -> str:
-    return f"batch stopped at actions[{index}] ({action_name}): {error}"
+def _format_batch_error_text(error: BaseException | str) -> str:
+    if isinstance(error, BaseException):
+        return f"ERROR: {type(error).__name__}: {error}"
+    if error.startswith("ERROR"):
+        return error
+    return f"ERROR: {error}"
+
+
+def _format_batch_stopped_line(
+    index: int,
+    action_name: str,
+    error_text: str,
+    action_count: int,
+) -> str:
+    remaining = action_count - index - 1
+    label = _format_batch_label(index, action_name)
+    return (
+        f"batch stopped at actions[{index}] ({label}): {error_text} "
+        f"({index} completed, {remaining} skipped)"
+    )
 
 
 async def _execute_computer_batch(
@@ -1750,22 +1775,30 @@ async def _execute_computer_batch(
         action_name = str(action["action"])
         if action_name == "hold_key" and "duration" not in action:
             if index + 1 >= len(actions):
+                error_text = _format_batch_error_text(
+                    "durationless hold_key requires a following batch member"
+                )
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+                result_lines.append(_format_batch_result_line(index, action_name, error_text))
+                result_lines.append(
+                    _format_batch_stopped_line(index, action_name, error_text, len(actions))
+                )
                 return (
-                    _format_batch_stopped_line(
-                        index,
-                        action_name,
-                        "durationless hold_key requires a following batch member",
-                    ),
+                    "\n".join(result_lines),
                     screenshot,
                 )
 
             try:
                 target, pressed = await _start_hold_key(computer_handler, str(action["key"]))
             except Exception as exc:
+                error_text = _format_batch_error_text(exc)
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+                result_lines.append(_format_batch_result_line(index, action_name, error_text))
+                result_lines.append(
+                    _format_batch_stopped_line(index, action_name, error_text, len(actions))
+                )
                 return (
-                    _format_batch_stopped_line(index, action_name, exc),
+                    "\n".join(result_lines),
                     screenshot,
                 )
 
@@ -1786,15 +1819,21 @@ async def _execute_computer_batch(
                 release_error = exc
 
             if next_error is not None or release_error is not None:
-                error = next_error or release_error
+                error_text = _format_batch_error_text(next_error or release_error or "")
                 screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+                result_lines.append(
+                    _format_batch_result_line(next_index, next_action_name, error_text)
+                )
+                result_lines.append(
+                    _format_batch_stopped_line(
+                        next_index,
+                        next_action_name,
+                        error_text,
+                        len(actions),
+                    )
+                )
                 return (
-                    "\n".join(
-                        [
-                            *result_lines,
-                            _format_batch_stopped_line(next_index, next_action_name, error or ""),
-                        ]
-                    ),
+                    "\n".join(result_lines),
                     screenshot,
                 )
 
@@ -1805,14 +1844,14 @@ async def _execute_computer_batch(
         try:
             await _execute_computer_action(computer_handler, action, dimensions)
         except Exception as exc:
+            error_text = _format_batch_error_text(exc)
             screenshot = await _take_post_tool_screenshot(computer_handler, on_screenshot)
+            result_lines.append(_format_batch_result_line(index, action_name, error_text))
+            result_lines.append(
+                _format_batch_stopped_line(index, action_name, error_text, len(actions))
+            )
             return (
-                "\n".join(
-                    [
-                        *result_lines,
-                        _format_batch_stopped_line(index, action_name, exc),
-                    ]
-                ),
+                "\n".join(result_lines),
                 screenshot,
             )
         result_lines.append(_format_batch_success_line(index, action_name))
@@ -2076,11 +2115,13 @@ async def _execute_edit(
     path, display_path = _resolve_file_path(args, cwd)
     old_string = args.get("old_string", args.get("old"))
     new_string = args.get("new_string", args.get("new"))
-    replace_all = bool(args.get("replace_all", False))
+    replace_all = args.get("replace_all", False)
     if not isinstance(old_string, str):
         raise ValueError("old_string must be a string")
     if not isinstance(new_string, str):
         raise ValueError("new_string must be a string")
+    if not isinstance(replace_all, bool):
+        raise ValueError("replace_all must be a boolean")
     if old_string == new_string:
         return "ERROR: old_string and new_string are identical."
 
@@ -2384,7 +2425,10 @@ class YutoriN2Config(AsyncAgentConfig):
                 text_tool_calls,
             )
             if attempt == 0 and retry_message:
-                retry_messages = [*completion_messages, {"role": "user", "content": retry_message}]
+                retry_messages = [*completion_messages]
+                if content_text:
+                    retry_messages.append({"role": "assistant", "content": content_text})
+                retry_messages.append({"role": "user", "content": retry_message})
                 continue
             break
 

@@ -284,7 +284,7 @@ async def test_structured_computer_batch_executes_as_one_logical_tool_result(
     assert result["output"][1]["call_id"] == "call_batch"
     assert result["output"][1]["output"]["type"] == "input_image"
     assert result["output"][1]["output"]["image_url"].startswith("data:image/png;base64,")
-    assert result["output"][1]["output"]["result"] == "\n"
+    assert result["output"][1]["output"]["result"] == "[0:left_click] \n[1:type] "
 
 
 @pytest.mark.asyncio
@@ -310,7 +310,7 @@ async def test_computer_batch_screenshot_action_reports_result_text(
 
     assert computer.screenshot_count == 1
     assert result["output"][1]["output"]["result"] == (
-        "actions[0].screenshot: screenshot captured."
+        "[0:screenshot] screenshot queued (delivered after the batch)"
     )
 
 
@@ -342,7 +342,9 @@ async def test_computer_batch_stops_later_actions_after_runtime_error(
     assert computer.calls == [("click", 1000, 500, "left")]
     assert computer.screenshot_count == 1
     assert tool_result_text(result["output"][1]) == (
-        "batch stopped at actions[0] (left_click): click failed"
+        "[0:left_click] ERROR: RuntimeError: click failed\n"
+        "batch stopped at actions[0] (0:left_click): ERROR: RuntimeError: click failed "
+        "(0 completed, 1 skipped)"
     )
 
 
@@ -418,7 +420,7 @@ async def test_text_xml_tool_call_is_recovered_and_text_is_preserved(
     assert result["output"][0]["content"][0]["text"] == "I will type the URL."
     assert computer.calls == [("type", "https://example.com")]
     assert result["output"][2]["output"]["type"] == "input_image"
-    assert result["output"][2]["output"]["result"] == ""
+    assert result["output"][2]["output"]["result"] == "[0:type] "
 
 
 @pytest.mark.asyncio
@@ -447,7 +449,7 @@ async def test_recovered_click_with_button_parameter_executes(
 
     assert computer.calls == [("click", 500, 60, "left")]
     assert result["output"][1]["output"]["type"] == "input_image"
-    assert result["output"][1]["output"]["result"] == ""
+    assert result["output"][1]["output"]["result"] == "[0:left_click] "
 
 
 @pytest.mark.asyncio
@@ -739,7 +741,10 @@ async def test_durationless_hold_key_releases_after_next_member_fails(
         ("key_up", "shift"),
     ]
     assert tool_result_text(result["output"][1]) == (
-        "\nbatch stopped at actions[1] (type): type failed"
+        "[0:hold_key] \n"
+        "[1:type] ERROR: RuntimeError: type failed\n"
+        "batch stopped at actions[1] (1:type): ERROR: RuntimeError: type failed "
+        "(1 completed, 1 skipped)"
     )
 
 
@@ -917,6 +922,29 @@ async def test_edit_requires_prior_read(
 
 
 @pytest.mark.asyncio
+async def test_edit_rejects_non_boolean_replace_all(tmp_path: Path):
+    target = tmp_path / "file.txt"
+    target.write_text("alpha\nalpha\n", encoding="utf-8")
+    read_fingerprints = {}
+    data = target.read_bytes()
+    yutori_n2._record_read_fingerprint(read_fingerprints, target, data)
+
+    with pytest.raises(ValueError, match="replace_all must be a boolean"):
+        await yutori_n2._execute_edit(
+            {
+                "file_path": "file.txt",
+                "old_string": "alpha",
+                "new_string": "beta",
+                "replace_all": "false",
+            },
+            tmp_path,
+            read_fingerprints,
+        )
+
+    assert target.read_text(encoding="utf-8") == "alpha\nalpha\n"
+
+
+@pytest.mark.asyncio
 async def test_default_yutori_api_chains_previous_request_id(monkeypatch, yutori_n2_test_env):
     calls = []
     responses = [
@@ -965,6 +993,10 @@ async def test_malformed_tool_call_text_retries_once(monkeypatch, yutori_n2_test
     )
 
     assert len(calls) == 2
+    assert calls[1]["messages"][-2] == {
+        "role": "assistant",
+        "content": "<tool_call>not parseable",
+    }
     assert (
         calls[1]["messages"][-1]["content"] == yutori_n2.YUTORI_N2_MALFORMED_TOOL_CALL_RETRY_MESSAGE
     )
@@ -994,6 +1026,7 @@ async def test_length_response_without_tool_calls_retries_once(monkeypatch, yuto
     )
 
     assert len(calls) == 2
+    assert calls[1]["messages"][-2] == {"role": "assistant", "content": "partial"}
     assert calls[1]["messages"][-1]["content"] == yutori_n2.YUTORI_N2_LENGTH_RETRY_MESSAGE
     assert result["output"][0]["content"][0]["text"] == "done"
 
@@ -1006,7 +1039,11 @@ def test_image_tool_output_result_text_is_preserved_for_next_model_call():
             "output": {
                 "type": "input_image",
                 "image_url": f"data:image/png;base64,{PNG_1X1}",
-                "result": "batch stopped at actions[0] (left_click): click failed",
+                "result": (
+                    "[0:left_click] ERROR: RuntimeError: click failed\n"
+                    "batch stopped at actions[0] (0:left_click): ERROR: RuntimeError: "
+                    "click failed (0 completed, 1 skipped)"
+                ),
             },
         }
     ]
@@ -1023,7 +1060,11 @@ def test_image_tool_output_result_text_is_preserved_for_next_model_call():
             "content": [
                 {
                     "type": "text",
-                    "text": "batch stopped at actions[0] (left_click): click failed",
+                    "text": (
+                        "[0:left_click] ERROR: RuntimeError: click failed\n"
+                        "batch stopped at actions[0] (0:left_click): ERROR: RuntimeError: "
+                        "click failed (0 completed, 1 skipped)"
+                    ),
                 },
                 {
                     "type": "image_url",

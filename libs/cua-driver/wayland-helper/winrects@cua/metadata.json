@@ -2,6 +2,6 @@
   "uuid": "winrects@cua",
   "name": "WinRects",
   "description": "Expose window geometry, capture, cursor, and verified activation for cua-driver on Wayland.",
-  "shell-version": ["45", "46", "47", "48", "49", "50"],
+  "shell-version": ["45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60"],
   "version": 8
 }

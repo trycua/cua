@@ -186,6 +186,64 @@ def load_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def configure_runtime_environment(env: dict[str, str]) -> None:
+    # Do not let glibc retain joined thread stacks, which obscures ownership at exit.
+    stack_cache_tunable = "glibc.pthread.stack_cache_size=0"
+    current = env.get("GLIBC_TUNABLES", "")
+    if stack_cache_tunable not in current.split(":"):
+        env["GLIBC_TUNABLES"] = f"{current}:{stack_cache_tunable}".lstrip(":")
+
+
+def build_server_command(
+    driver: Path,
+    artifact_dir: Path,
+    socket_path: Path,
+    *,
+    memcheck_disabled: bool,
+) -> list[str]:
+    driver_command = [
+        str(driver),
+        "serve",
+        "--socket",
+        str(socket_path),
+        "--no-overlay",
+        "--dangerously-bypass-approvals",
+    ]
+    if memcheck_disabled:
+        return driver_command
+    return [
+        "valgrind",
+        "--leak-check=full",
+        "--show-leak-kinds=definite,possible",
+        "--errors-for-leak-kinds=definite,possible",
+        "--error-exitcode=99",
+        f"--log-file={artifact_dir / 'valgrind.log'}",
+        *driver_command,
+    ]
+
+
+def build_readiness_command(driver: Path, socket_path: Path) -> list[str]:
+    return [
+        str(driver),
+        "sessions",
+        "list",
+        "--json",
+        "--socket",
+        str(socket_path),
+    ]
+
+
+def build_list_apps_command(driver: Path, socket_path: Path) -> list[str]:
+    return [
+        str(driver),
+        "call",
+        "list_apps",
+        "{}",
+        "--socket",
+        str(socket_path),
+    ]
+
+
 def expect(condition: bool, message: str) -> None:
     """Fail validation explicitly; bare assert is stripped under PYTHONOPTIMIZE."""
     if not condition:
@@ -195,7 +253,7 @@ def expect(condition: bool, message: str) -> None:
 def validate_results(artifact_dir: Path) -> None:
     before = load_json(artifact_dir / "config-before.json")
     after = load_json(artifact_dir / "config-after.json")
-    permissions = load_json(artifact_dir / "permissions.json")
+    apps = load_json(artifact_dir / "apps.json")
     sessions_before = load_json(artifact_dir / "sessions-before.json")
     sessions_after = load_json(artifact_dir / "sessions-after.json")
 
@@ -208,7 +266,7 @@ def validate_results(artifact_dir: Path) -> None:
         after["max_image_dimension"] != before["max_image_dimension"],
         "set_config did not change max_image_dimension",
     )
-    expect(permissions["x11"] is True, f"x11 permission is {permissions.get('x11')!r}")
+    expect(isinstance(apps.get("apps"), list), f"list_apps did not return an app list: {apps!r}")
     expect(
         sessions_before == {"count": 0, "sessions": []},
         f"unexpected sessions before MCP: {sessions_before!r}",
@@ -290,31 +348,13 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
     commands_log = artifact_dir / "commands.log"
     memcheck_disabled = env.get("CUA_DRIVER_MEMCHECK_DISABLE", "0") == "1"
 
-    server_command = [
-        "valgrind",
-        "--leak-check=full",
-        "--gen-suppressions=all",
-        "--num-callers=40",
-        "--show-leak-kinds=definite,possible",
-        "--errors-for-leak-kinds=definite,possible",
-        "--error-exitcode=99",
-        f"--log-file={artifact_dir / 'valgrind.log'}",
-        str(driver),
-        "serve",
-        "--socket",
-        str(socket_path),
-        "--no-overlay",
-        "--dangerously-bypass-approvals",
-    ]
-    if memcheck_disabled:
-        server_command = [
-            str(driver),
-            "serve",
-            "--socket",
-            str(socket_path),
-            "--no-overlay",
-            "--dangerously-bypass-approvals",
-        ]
+    configure_runtime_environment(env)
+    server_command = build_server_command(
+        driver,
+        artifact_dir,
+        socket_path,
+        memcheck_disabled=memcheck_disabled,
+    )
 
     commands_log.write_text(f"server command: {shlex.join(server_command)}\n", encoding="utf-8")
     server_stdout = (artifact_dir / "server.stdout").open("wb")
@@ -349,10 +389,10 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
                 raise RunnerFailure("cua-driver server exited before readiness")
             try:
                 completed = run_client(
-                    [str(driver), "status", "--socket", str(socket_path)],
+                    build_readiness_command(driver, socket_path),
                     env=env,
                     timeout=3,
-                    stdout=artifact_dir / "status.txt",
+                    stdout=artifact_dir / "readiness.json",
                     stderr=client_log,
                     check=False,
                 )
@@ -365,13 +405,12 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
         if not ready:
             raise RunnerFailure("cua-driver server did not become ready within 60 seconds")
 
+        readiness = load_json(artifact_dir / "readiness.json")
         expect(
-            "running"
-            in (artifact_dir / "status.txt").read_text(encoding="utf-8", errors="replace").lower(),
-            "cua-driver status did not report a running daemon",
+            readiness == {"count": 0, "sessions": []},
+            f"fresh daemon reported unexpected sessions: {readiness!r}",
         )
         recorded_commands = [
-            [str(driver), "status", "--socket", str(socket_path)],
             [str(driver), "sessions", "list", "--json", "--socket", str(socket_path)],
             [str(driver), "call", "get_config", "{}", "--socket", str(socket_path)],
             [
@@ -382,7 +421,7 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
                 "--socket",
                 str(socket_path),
             ],
-            [str(driver), "call", "check_permissions", "{}", "--socket", str(socket_path)],
+            build_list_apps_command(driver, socket_path),
             [str(driver), "mcp", "--socket", str(socket_path)],
             stop_command,
         ]
@@ -421,10 +460,10 @@ def run_e2e(driver: Path, artifact_dir: Path, smoke_dir: Path, env: dict[str, st
             stdout=artifact_dir / "config-after.json",
         )
         run_client(
-            [str(driver), "call", "check_permissions", "{}", "--socket", str(socket_path)],
+            build_list_apps_command(driver, socket_path),
             env=env,
             timeout=10,
-            stdout=artifact_dir / "permissions.json",
+            stdout=artifact_dir / "apps.json",
         )
 
         requests = smoke_dir / "mcp-requests.jsonl"

@@ -753,8 +753,10 @@ impl ToolInput for PressKeyInput {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema, PartialEq, uniffi::Record)]
 #[serde(deny_unknown_fields)]
 pub struct HotkeyInput {
-    /// Enforced by the parser as well as the schema so a typed input can never
-    /// carry a combination the platform runtimes would refuse.
+    // Enforced by the parser as well as the schema so a typed input can never
+    // carry a combination the platform runtimes would refuse. Not a doc
+    // comment: that would become a schema description and change the
+    // published contract.
     #[schemars(length(min = 2))]
     #[serde(deserialize_with = "at_least_two_keys")]
     pub keys: Vec<String>,

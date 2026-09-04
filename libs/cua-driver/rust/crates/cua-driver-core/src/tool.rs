@@ -1067,6 +1067,22 @@ impl ToolRegistry {
             return ToolResult::error(format!("Unknown tool: {name}"));
         };
 
+        // MCP types `arguments` as an object and transports substitute `{}`
+        // when it is absent, but a client can still send any JSON value.
+        // Everything below indexes into the object (session stamping,
+        // protected-resource fingerprints, replay rewrites), so refuse other
+        // shapes here instead of panicking the dispatcher on a caller's input.
+        if !args.is_object() {
+            return ToolResult::error(format!(
+                "{resolved_name}: invalid arguments: expected a JSON object"
+            ))
+            .with_structured(serde_json::json!({
+                "code": "invalid_arguments",
+                "tool": resolved_name,
+                "detail": "arguments must be a JSON object",
+            }));
+        }
+
         // Normalize deprecated public argument spellings before any policy,
         // consent, recording, or implementation layer interprets the call.
         normalize_delivery_mode_args(tool.def(), &mut args);

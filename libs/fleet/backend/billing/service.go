@@ -18,11 +18,16 @@ const (
 	SetupPurpose              = "fleet_default_card"
 	MetadataSetupGeneration   = "fleet_setup_generation"
 	MetadataSetupSource       = "fleet_source"
+	MetadataIdentityClass     = "fleet_identity_class"
 )
 
 var (
-	ErrCustomerNotFound      = errors.New("billing customer not found")
-	ErrPaymentMethodNotFound = errors.New("default payment method not found")
+	ErrCustomerNotFound       = errors.New("billing customer not found")
+	ErrPaymentMethodNotFound  = errors.New("default payment method not found")
+	ErrSetupSessionNotFound   = errors.New("billing setup session not found")
+	ErrSetupSessionNotOwned   = errors.New("billing setup session not owned by subject")
+	ErrSetupSessionIncomplete = errors.New("billing setup session is not complete")
+	ErrSetupSessionInvalid    = errors.New("billing setup session is invalid")
 )
 
 type Customer struct {
@@ -44,6 +49,24 @@ type SetupSessionRequest struct {
 	SetupGeneration string
 	Subject         string
 	Source          string
+	IdentityClass   string
+}
+
+type SetupSession struct {
+	ID                    string
+	Mode                  string
+	Status                string
+	CustomerID            string
+	SetupIntentID         string
+	SetupIntentStatus     string
+	SetupIntentCustomerID string
+	PaymentMethodID       string
+	Metadata              map[string]string
+}
+
+type SetupCompletion struct {
+	Applied       bool
+	SetupIntentID string
 }
 
 type PortalSessionRequest struct {
@@ -59,6 +82,7 @@ type Gateway interface {
 	ListAttachedCards(ctx context.Context, customerID string) ([]SavedCard, error)
 	SetDefaultPaymentMethodForSetupGeneration(ctx context.Context, customerID, paymentMethodID, generation string) (bool, error)
 	CreateSetupSession(ctx context.Context, request SetupSessionRequest) (string, error)
+	RetrieveSetupSession(ctx context.Context, sessionID string) (SetupSession, error)
 	CreatePortalSession(ctx context.Context, request PortalSessionRequest) (string, error)
 	PreviewInvoice(ctx context.Context, customerID string) (*Invoice, error)
 	ListInvoices(ctx context.Context, customerID string, createdAfter time.Time) ([]Invoice, error)
@@ -351,9 +375,10 @@ func (s *Service) Usage(ctx context.Context, subject string, months int, now tim
 }
 
 type SetupOptions struct {
-	SuccessURL string
-	CancelURL  string
-	Source     string
+	SuccessURL    string
+	CancelURL     string
+	Source        string
+	IdentityClass string
 }
 
 func (s *Service) CreateSetupSession(ctx context.Context, subject string, options SetupOptions) (string, error) {
@@ -372,6 +397,7 @@ func (s *Service) CreateSetupSession(ctx context.Context, subject string, option
 		SetupGeneration: generation,
 		Subject:         subject,
 		Source:          options.Source,
+		IdentityClass:   options.IdentityClass,
 	})
 	if err != nil {
 		return "", err
@@ -380,6 +406,52 @@ func (s *Service) CreateSetupSession(ctx context.Context, subject string, option
 		return "", err
 	}
 	return url, nil
+}
+
+func (s *Service) CompleteSetupSession(ctx context.Context, subject, source, identityClass, sessionID string) (SetupCompletion, error) {
+	if subject == "" || source == "" || identityClass == "" || sessionID == "" {
+		return SetupCompletion{}, ErrSetupSessionInvalid
+	}
+	customer, err := s.findCustomerReadOnly(ctx, subject)
+	if errors.Is(err, ErrCustomerNotFound) {
+		return SetupCompletion{}, ErrSetupSessionNotOwned
+	}
+	if err != nil {
+		return SetupCompletion{}, err
+	}
+	session, err := s.gateway.RetrieveSetupSession(ctx, sessionID)
+	if err != nil {
+		return SetupCompletion{}, err
+	}
+	if session.CustomerID != customer.ID ||
+		session.SetupIntentCustomerID != customer.ID ||
+		session.Metadata[MetadataSubject] != subject {
+		return SetupCompletion{}, ErrSetupSessionNotOwned
+	}
+	if session.ID != sessionID || session.Mode != "setup" ||
+		session.Metadata["purpose"] != SetupPurpose ||
+		session.Metadata[MetadataSetupSource] != source ||
+		session.Metadata[MetadataIdentityClass] != identityClass ||
+		session.SetupIntentID == "" ||
+		session.Metadata[MetadataSetupGeneration] == "" {
+		return SetupCompletion{}, ErrSetupSessionInvalid
+	}
+	if session.Status != "complete" || session.SetupIntentStatus != "succeeded" {
+		return SetupCompletion{}, ErrSetupSessionIncomplete
+	}
+	if session.PaymentMethodID == "" {
+		return SetupCompletion{}, ErrSetupSessionInvalid
+	}
+	applied, err := s.SetDefaultPaymentMethodForSetupGeneration(
+		ctx,
+		customer.ID,
+		session.PaymentMethodID,
+		session.Metadata[MetadataSetupGeneration],
+	)
+	if err != nil {
+		return SetupCompletion{}, err
+	}
+	return SetupCompletion{Applied: applied, SetupIntentID: session.SetupIntentID}, nil
 }
 
 func (s *Service) CreatePortalSession(ctx context.Context, subject, returnURL string) (string, error) {

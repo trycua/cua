@@ -184,6 +184,8 @@ func setupRouter(c handlers.Handlers) http.Handler {
 		withAuthenticatedMiddlewares("/api/billing/usage", c.GetBillingUsage))
 	r.Handle("POST /api/billing/setup-session",
 		withAuthenticatedMiddlewares("/api/billing/setup-session", c.CreateBillingSetupSession))
+	r.Handle("POST /api/billing/setup-session/complete",
+		withAuthenticatedMiddlewares("/api/billing/setup-session/complete", c.CompleteBillingSetupSession))
 	r.Handle("POST /api/billing/portal-session",
 		withAuthenticatedMiddlewares("/api/billing/portal-session", c.CreateBillingPortalSession))
 	r.Handle("POST /api/billing/webhook",

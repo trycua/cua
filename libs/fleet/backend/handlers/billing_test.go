@@ -37,6 +37,13 @@ type fakeBillingService struct {
 	defaultApplied         bool
 	defaultCalls           int
 	defaultErr             error
+	completeSubject        string
+	completeSource         string
+	completeIdentityClass  string
+	completeSessionID      string
+	completeResult         billing.SetupCompletion
+	completeCalls          int
+	completeErr            error
 	usageMonths            int
 	usageSubject           string
 	usageResponse          billing.Usage
@@ -85,6 +92,15 @@ func (f *fakeBillingService) CreatePortalSession(_ context.Context, subject, ret
 	f.portalSubject = subject
 	f.portalReturnURL = returnURL
 	return "https://billing.stripe.test/session", nil
+}
+
+func (f *fakeBillingService) CompleteSetupSession(_ context.Context, subject, source, identityClass, sessionID string) (billing.SetupCompletion, error) {
+	f.completeCalls++
+	f.completeSubject = subject
+	f.completeSource = source
+	f.completeIdentityClass = identityClass
+	f.completeSessionID = sessionID
+	return f.completeResult, f.completeErr
 }
 
 func (f *fakeBillingService) Usage(_ context.Context, subject string, months int, _ time.Time) (billing.Usage, error) {
@@ -280,7 +296,7 @@ func TestCreateSetupSessionUsesAuthenticatedSubjectAndNoClientInput(t *testing.T
 		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
 		Stripe: config.StripeConfiguration{
 			SecretKey:          "sk_test",
-			CheckoutSuccessURL: "https://run.example.test/settings?setup=success",
+			CheckoutSuccessURL: "https://run.example.test/settings?checkout=success&session_id={CHECKOUT_SESSION_ID}",
 			CheckoutCancelURL:  "https://run.example.test/settings?setup=cancelled",
 		},
 	}
@@ -325,6 +341,114 @@ func TestCreateSetupSessionUsesAuthenticatedSubjectAndNoClientInput(t *testing.T
 		event.Properties["identity_class"] != productanalytics.IdentityExternal ||
 		event.Properties["status_code"] != http.StatusOK {
 		t.Fatalf("properties = %#v", event.Properties)
+	}
+}
+
+func TestCompleteSetupSessionUsesAuthenticatedOwnershipAndEmitsPrivacySafeSuccess(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{completeResult: billing.SetupCompletion{Applied: true, SetupIntentID: "seti_owned"}}
+	capture := &analyticsCapture{}
+	h := Handlers{
+		Billing: service, Analytics: capture,
+		AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+		Stripe:  config.StripeConfiguration{SecretKey: "sk_test"},
+	}
+	response := httptest.NewRecorder()
+	h.CompleteBillingSetupSession(response, newBillingRequest(
+		http.MethodPost,
+		"/api/billing/setup-session/complete",
+		`{"session_id":"cs_test_owned"}`,
+		billingAlice,
+	))
+
+	if response.Code != http.StatusOK || service.completeCalls != 1 {
+		t.Fatalf("status/calls = %d/%d; body = %s", response.Code, service.completeCalls, response.Body.String())
+	}
+	if service.completeSubject != billingAlice.ID || service.completeSource != productanalytics.SourceSPA ||
+		service.completeIdentityClass != string(productanalytics.IdentityExternal) || service.completeSessionID != "cs_test_owned" {
+		t.Fatalf("completion ownership = %q/%q/%q/%q", service.completeSubject, service.completeSource, service.completeIdentityClass, service.completeSessionID)
+	}
+	var body BillingSetupCompletionResponse
+	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || !body.Applied {
+		t.Fatalf("response = %#v, error = %v", body, err)
+	}
+	if len(capture.events) != 1 {
+		t.Fatalf("events = %#v", capture.events)
+	}
+	event := capture.events[0]
+	if event.Name != productanalytics.EventPaymentMethodSetup || event.DistinctID != billingAlice.ID ||
+		event.InsertID != "fleet-payment-setup:seti_owned" ||
+		event.Properties["outcome"] != productanalytics.OutcomeSuccess ||
+		event.Properties["source"] != productanalytics.SourceSPA ||
+		event.Properties["principal_type"] != auth.PrincipalTypeUser ||
+		event.Properties["identity_class"] != productanalytics.IdentityExternal {
+		t.Fatalf("event = %#v", event)
+	}
+	if err := productanalytics.ValidateEvent(event); err != nil {
+		t.Fatalf("privacy-safe event validation failed: %v", err)
+	}
+}
+
+func TestCompleteSetupSessionDoesNotEmitForIdempotentReplay(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{completeResult: billing.SetupCompletion{SetupIntentID: "seti_owned"}}
+	capture := &analyticsCapture{}
+	h := Handlers{
+		Billing: service, Analytics: capture,
+		AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+		Stripe:  config.StripeConfiguration{SecretKey: "sk_test"},
+	}
+	response := httptest.NewRecorder()
+	h.CompleteBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session/complete", `{"session_id":"cs_test_owned"}`, billingAlice))
+	if response.Code != http.StatusOK || len(capture.events) != 0 {
+		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
+	}
+}
+
+func TestCompleteSetupSessionRejectsUnownedAndIncompleteSessions(t *testing.T) {
+	setBillingFlag(t, true)
+	for _, testCase := range []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "unowned", err: billing.ErrSetupSessionNotOwned, want: http.StatusNotFound},
+		{name: "incomplete", err: billing.ErrSetupSessionIncomplete, want: http.StatusConflict},
+		{name: "invalid", err: billing.ErrSetupSessionInvalid, want: http.StatusBadRequest},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			service := &fakeBillingService{completeErr: testCase.err}
+			h := Handlers{
+				Billing: service,
+				AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+				Stripe:  config.StripeConfiguration{SecretKey: "sk_test"},
+			}
+			response := httptest.NewRecorder()
+			h.CompleteBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session/complete", `{"session_id":"cs_test_owned"}`, billingAlice))
+			if response.Code != testCase.want {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, testCase.want, response.Body.String())
+			}
+		})
+	}
+}
+
+func TestCompleteSetupSessionRejectsClientControlledFields(t *testing.T) {
+	setBillingFlag(t, true)
+	service := &fakeBillingService{}
+	h := Handlers{
+		Billing: service,
+		AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+		Stripe:  config.StripeConfiguration{SecretKey: "sk_test"},
+	}
+	response := httptest.NewRecorder()
+	h.CompleteBillingSetupSession(response, newBillingRequest(
+		http.MethodPost,
+		"/api/billing/setup-session/complete",
+		`{"session_id":"cs_test_owned","customer":"cus_attacker"}`,
+		billingAlice,
+	))
+	if response.Code != http.StatusBadRequest || service.completeCalls != 0 {
+		t.Fatalf("status/calls = %d/%d; body = %s", response.Code, service.completeCalls, response.Body.String())
 	}
 }
 
@@ -387,6 +511,15 @@ func TestBillingEndpointsRejectWhenFlagDisabled(t *testing.T) {
 				return service.portalCalls
 			},
 		},
+		{
+			name:   "setup completion",
+			handle: func(h Handlers, w http.ResponseWriter, r *http.Request) { h.CompleteBillingSetupSession(w, r) },
+			method: http.MethodPost,
+			path:   "/api/billing/setup-session/complete",
+			invoked: func(service *fakeBillingService) int {
+				return service.completeCalls
+			},
+		},
 	}
 
 	for _, test := range tests {
@@ -396,7 +529,7 @@ func TestBillingEndpointsRejectWhenFlagDisabled(t *testing.T) {
 				Billing: service,
 				Stripe: config.StripeConfiguration{
 					SecretKey:          "sk_test",
-					CheckoutSuccessURL: "https://run.example.test/settings?setup=success",
+					CheckoutSuccessURL: "https://run.example.test/settings?checkout=success&session_id={CHECKOUT_SESSION_ID}",
 					CheckoutCancelURL:  "https://run.example.test/settings?setup=cancelled",
 					PortalReturnURL:    "https://run.example.test/billing",
 				},
@@ -423,7 +556,7 @@ func TestCreateSetupSessionProviderFailureEmitsFailureEvent(t *testing.T) {
 		Billing:   service,
 		Analytics: capture,
 		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
-		Stripe:    config.StripeConfiguration{SecretKey: "sk_test", CheckoutSuccessURL: "https://run.example.test/success", CheckoutCancelURL: "https://run.example.test/cancel"},
+		Stripe:    config.StripeConfiguration{SecretKey: "sk_test", CheckoutSuccessURL: "https://run.example.test/success?session_id={CHECKOUT_SESSION_ID}", CheckoutCancelURL: "https://run.example.test/cancel"},
 	}
 	response := httptest.NewRecorder()
 	h.CreateBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session", "", billingAlice))
@@ -442,7 +575,7 @@ func TestCreateSetupSessionProviderFailureEmitsFailureEvent(t *testing.T) {
 	}
 }
 
-func TestCreateSetupSessionDoesNotCaptureUnknownSource(t *testing.T) {
+func TestCreateSetupSessionRejectsUnknownSource(t *testing.T) {
 	setBillingFlag(t, true)
 	service := &fakeBillingService{}
 	capture := &analyticsCapture{}
@@ -452,13 +585,13 @@ func TestCreateSetupSessionDoesNotCaptureUnknownSource(t *testing.T) {
 		Billing:   service,
 		Analytics: capture,
 		AuthCfg:   config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
-		Stripe:    config.StripeConfiguration{SecretKey: "sk_test", CheckoutSuccessURL: "https://run.example.test/success", CheckoutCancelURL: "https://run.example.test/cancel"},
+		Stripe:    config.StripeConfiguration{SecretKey: "sk_test", CheckoutSuccessURL: "https://run.example.test/success?session_id={CHECKOUT_SESSION_ID}", CheckoutCancelURL: "https://run.example.test/cancel"},
 	}
 	response := httptest.NewRecorder()
 
 	h.CreateBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session", "", &user))
 
-	if response.Code != http.StatusOK || len(capture.events) != 0 {
-		t.Fatalf("status/events = %d/%#v, want 200/no events", response.Code, capture.events)
+	if response.Code != http.StatusForbidden || service.setupCalls != 0 || len(capture.events) != 0 {
+		t.Fatalf("status/calls/events = %d/%d/%#v, want 403/no calls/no events", response.Code, service.setupCalls, capture.events)
 	}
 }

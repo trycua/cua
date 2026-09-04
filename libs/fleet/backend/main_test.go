@@ -206,6 +206,9 @@ func TestSwaggerUsesBillingSetupSessionRoute(t *testing.T) {
 	if _, ok := spec.Paths["/api/billing/setup-session"]; !ok {
 		t.Fatal("swagger.json missing /api/billing/setup-session")
 	}
+	if _, ok := spec.Paths["/api/billing/setup-session/complete"]; !ok {
+		t.Fatal("swagger.json missing /api/billing/setup-session/complete")
+	}
 	if _, ok := spec.Paths["/api/billing/usage"]; !ok {
 		t.Fatal("swagger.json missing /api/billing/usage")
 	}
@@ -459,6 +462,10 @@ func (routerBillingService) CreatePortalSession(context.Context, string, string)
 	return "https://billing.stripe.test/session", nil
 }
 
+func (routerBillingService) CompleteSetupSession(context.Context, string, string, string, string) (billing.SetupCompletion, error) {
+	return billing.SetupCompletion{Applied: true, SetupIntentID: "seti_router"}, nil
+}
+
 func (routerBillingService) SetDefaultPaymentMethodForSetupGeneration(context.Context, string, string, string) (bool, error) {
 	return true, nil
 }
@@ -505,6 +512,7 @@ func TestBillingRouterAuthorizationBoundaries(t *testing.T) {
 		path string
 	}{
 		{name: "setup", path: "/api/billing/setup-session"},
+		{name: "setup completion", path: "/api/billing/setup-session/complete"},
 		{name: "portal", path: "/api/billing/portal-session"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

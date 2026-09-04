@@ -225,6 +225,16 @@ definitions:
       url:
         type: string
     type: object
+  handlers.BillingSetupCompletionRequest:
+    properties:
+      session_id:
+        type: string
+    type: object
+  handlers.BillingSetupCompletionResponse:
+    properties:
+      applied:
+        type: boolean
+    type: object
   handlers.ConfigResponse:
     properties:
       admin:
@@ -783,6 +793,73 @@ paths:
       security:
       - BearerAuth: []
       summary: Create Stripe card setup Session
+      tags:
+      - billing
+  /api/billing/setup-session/complete:
+    post:
+      consumes:
+      - application/json
+      description: Reconciles an authenticated subject's completed Stripe Checkout
+        Session and configures its card as the default payment method.
+      parameters:
+      - description: Completed Checkout Session
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handlers.BillingSetupCompletionRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/handlers.BillingSetupCompletionResponse'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "401":
+          description: Unauthorized
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "403":
+          description: Forbidden
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "409":
+          description: Conflict
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "502":
+          description: Bad Gateway
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "503":
+          description: Service Unavailable
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      security:
+      - BearerAuth: []
+      summary: Complete Stripe card setup Session
       tags:
       - billing
   /api/billing/summary:

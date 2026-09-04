@@ -74,7 +74,7 @@ func ChatRoutePolicy() Node {
 }
 
 // BillingRoutePolicy guards the Stripe-hosted billing browser routes. Its module
-// matches a prefix rather than three literals, so a billing route added to
+// matches a prefix rather than individual literals, so a billing route added to
 // main.go and bound here is covered without a policy change.
 func BillingRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-billing", "data.authz_billing.allow"))
@@ -298,10 +298,11 @@ var routeSurfaces = map[string]string{
 	"/api/chat/conversations/{id}":       "chat",
 	"/api/chat/conversations/{id}/turns": "chat",
 
-	"/api/billing/summary":        "billing",
-	"/api/billing/usage":          "billing",
-	"/api/billing/setup-session":  "billing",
-	"/api/billing/portal-session": "billing",
+	"/api/billing/summary":                "billing",
+	"/api/billing/usage":                  "billing",
+	"/api/billing/setup-session":          "billing",
+	"/api/billing/setup-session/complete": "billing",
+	"/api/billing/portal-session":         "billing",
 
 	"/api/keys":      "keys",
 	"/api/keys/{id}": "keys",

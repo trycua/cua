@@ -26,12 +26,16 @@ concurrency:
 jobs:
   memcheck:
     name: Driver server E2E Memcheck
-    runs-on: ubuntu-latest
+    # Memcheck results depend on the image's valgrind/glibc pairing, so pin
+    # the runner instead of tracking ubuntu-latest migrations.
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
-      - uses: dtolnay/rust-toolchain@stable
+      # Keep in sync with libs/cua-driver/rust/rust-toolchain.toml; the action
+      # exports RUSTUP_TOOLCHAIN, which outranks the toolchain file.
+      - uses: dtolnay/rust-toolchain@1.97.1
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:
           workspaces: "libs/cua-driver/rust -> target"

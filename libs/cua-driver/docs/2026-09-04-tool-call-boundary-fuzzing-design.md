@@ -104,8 +104,10 @@ every contract input type through `parse_typed_input`. This exercises serde
 edge cases (numbers, escapes, duplicate keys, deep nesting) that a structured
 generator rarely reaches. Invariant: the same idempotent re-serialisation rule,
 plus the canonical re-serialised form of every accepted value validates
-against `T::input_schema()`, so the driver never normalises to a shape the
-published contract does not advertise. The raw input is not validated: serde
+structurally against `T::input_schema()` (types, required keys, enums,
+unknown properties), so the driver never normalises to a shape the
+published contract does not advertise. Range and length keywords are
+ignored for now; see the findings below for why. The raw input is not validated: serde
 is allowed to be more lenient than the schema (an explicit `null` for an
 optional field, unknown keys on types without `deny_unknown_fields`).
 
@@ -162,8 +164,58 @@ message and reproduce command to the job summary, and uploads the crash file
 and log. Discovered inputs go to an ignored `fuzz/work/<target>` directory so
 the committed seed corpus stays hand-picked.
 
+## First results
+
+The first smoke run of `registry_invoke` found a real crash: a non-object
+`arguments` value (for example `true`) for any registered tool reached the
+session-stamping index assignment in `ToolRegistry::invoke_authorized` and
+panicked. The stdio proxy dispatches inline, so one malformed request from an
+MCP client terminated the driver process. The fix rejects non-object
+arguments at the dispatch boundary with an `invalid_arguments` refusal, with a
+regression test in `crates/cua-driver-core/tests/tool_arguments_boundary.rs`
+and a seed in `fuzz/corpus/mcp_request/bool_arguments.json`.
+
+The same run also showed that serde accepts an explicit `null` for optional
+contract fields that the published schema types as plain strings
+(`get_session.session` and its siblings). That is benign leniency rather than
+drift, and it is why the schema invariant validates the canonical form.
+
+The first libFuzzer runs (90 seconds per target, `--sanitizer none`, stable
+toolchain) found one more contract drift within seconds on both argument
+targets: `HotkeyInput` advertised `minItems: 2` for `keys`, and every platform
+runtime refuses fewer than two keys, but the contract parser accepted
+`{"keys": []}` and `{"keys": ["ctrl"]}`. The parser now enforces the minimum
+through a `deserialize_with` check, with a unit test in the contract crate and
+the crash inputs kept as seeds. `mcp_request` and `registry_invoke` ran clean
+for their full budget.
+
+The re-run after that fix immediately found the same class again on
+`set_agent_cursor_theme.theme_id` (schema `minLength: 1`, parser accepts
+`""`). This is systemic rather than a one-off: the contract schemas advertise
+numeric range and length bounds that the typed parser does not enforce and
+the platform runtimes check later. Affected fields:
+
+| Tool                     | Field                       | Advertised bound     |
+| ------------------------ | --------------------------- | -------------------- |
+| `escalate_session`       | `detail`                    | `maxLength: 200`     |
+| `set_agent_cursor_theme` | `theme_id`                  | length 1 to 200      |
+| `set_window_frame`       | `pid`, `window_id`          | `minimum: 1`         |
+| `set_window_frame`       | `width`, `height`           | `minimum: 1`         |
+| `invoke_menu`            | `pid`, `window_id`          | `minimum: 1`         |
+| `invoke_menu`            | `path`                      | 1 to 16 items, each 1 to 200 chars |
+| `click`                  | `count`                     | 1 to 3               |
+| `drag`                   | `duration_ms`, `steps`      | 0 to 10000, 1 to 200 |
+| `scroll`                 | `amount`                    | 1 to 50              |
+
+The fuzz invariant therefore checks structural agreement only (types,
+required keys, enums, unknown properties) and ignores range and length
+keywords. Enforcing those bounds in the contract parser, the way `hotkey.keys`
+now is, is a follow-up; once it lands, drop the keyword filter in
+`boundary_fuzz::is_value_bound_error` so the fuzzer guards the full schema.
+
 ## Out of scope for this change
 
-- Fixing what the fuzzers find. This change introduces the harness; its first
-  findings are fixed in a separate change stacked on top so the failures stay
-  visible in this one's CI.
+- Enforcing the remaining advertised range and length bounds in the
+  contract parser (listed under findings). Once they are enforced, drop the
+  keyword filter in `boundary_fuzz::is_value_bound_error` so the fuzzer
+  guards the full schema.

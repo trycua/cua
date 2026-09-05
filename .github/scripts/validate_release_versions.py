@@ -84,6 +84,21 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
             base / "rust/Skills/cua-driver/SKILL.md",
             r"^version:\s*([^\s#]+)",
         ),
+        "plugins/cua-driver/.claude-plugin/plugin.json": str(
+            json.loads(
+                (base / "plugins/cua-driver/.claude-plugin/plugin.json").read_text()
+            )["version"]
+        ),
+        "plugins/cua-driver/.codex-plugin/plugin.json": str(
+            json.loads(
+                (base / "plugins/cua-driver/.codex-plugin/plugin.json").read_text()
+            )["version"]
+        ),
+        "plugins/cua-driver/.grok-plugin/plugin.json": str(
+            json.loads(
+                (base / "plugins/cua-driver/.grok-plugin/plugin.json").read_text()
+            )["version"]
+        ),
         "docs/cli-reference.mdx:metadata": read_match(
             docs / "cli-reference.mdx", r"^  Version: (\S+)$"
         ),

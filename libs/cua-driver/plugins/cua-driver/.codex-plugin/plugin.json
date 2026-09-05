@@ -1,0 +1,40 @@
+{
+  "name": "cua-driver",
+  "version": "0.22.0",
+  "description": "Drive native macOS, Windows, and Linux applications through Cua Driver with snapshot-bound, verified UI actions.",
+  "author": {
+    "name": "Cua AI, Inc.",
+    "url": "https://cua.ai"
+  },
+  "homepage": "https://cua.ai/docs/cua-driver",
+  "repository": "https://github.com/trycua/cua",
+  "license": "MIT",
+  "keywords": [
+    "cua",
+    "cua driver",
+    "cua-driver",
+    "computer use"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Cua Driver",
+    "shortDescription": "Drive native apps with verified Cua Driver actions.",
+    "longDescription": "Connects an agent to the locally installed Cua Driver MCP server and teaches the snapshot, action, and verification workflow for safe desktop automation across macOS, Windows, and Linux.",
+    "developerName": "Cua AI, Inc.",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "websiteURL": "https://cua.ai",
+    "privacyPolicyURL": "https://cua.ai/privacy-policy",
+    "termsOfServiceURL": "https://cua.ai/terms-of-service",
+    "brandColor": "#20C997",
+    "defaultPrompt": [
+      "List the visible apps and windows without interacting with them.",
+      "Inspect the selected app and explain what is visible.",
+      "Complete this desktop task and verify each action from fresh state."
+    ]
+  }
+}

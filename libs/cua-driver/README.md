@@ -9,6 +9,11 @@ Background computer-use driver for any agents. Speaks MCP over stdio; drives nat
 - **Cua as an agent MCP or CLI:** MCP-capable agents connect directly to
   `cua-driver mcp`; shell-oriented agents and automation can use
   `cua-driver call`. No generated Cua language client is required.
+- **Cua as an agent plugin:** the generated package under
+  [`plugins/cua-driver`](plugins/cua-driver) combines the same MCP entry point
+  with the canonical Cua Driver skill for Claude Code, Grok Build, and Codex
+  CLI. Marketplace catalogs point to this package instead of maintaining
+  vendor-specific copies.
 - **Cua as an application SDK:** Python applications import `cua_driver`;
   TypeScript applications import `@trycua/cua-driver`. Both package roots call
   the same in-process native runtime through generated UniFFI bindings. The

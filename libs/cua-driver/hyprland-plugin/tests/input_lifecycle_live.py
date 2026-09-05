@@ -129,7 +129,11 @@ def run(args):
         started_ns = time.monotonic_ns()
         future = executor.submit(client.tool, 'drag', {**input_args(),
             'from_x': plan['from'][0], 'from_y': plan['from'][1],
-            'to_x': plan['to'][0], 'to_y': plan['to'][1], 'duration_ms': 2000})
+            'to_x': plan['to'][0], 'to_y': plan['to'][1],
+            # Leave room for a fresh snapshot before the expiry admission
+            # check. The expiry response, not natural drag completion, must
+            # explain the eventual release after the compositor resumes.
+            'duration_ms': 1000 if args.case == 'expiry' else 2000})
         wait_for(lambda: any(row['kind'] == 'button-press' for row in journal(args.background_journal)[background_offset:]), 3)
         assert time.monotonic_ns() - started_ns < 900_000_000, 'too late to distinguish cancellation from completion'
         fault_ns = time.monotonic_ns()

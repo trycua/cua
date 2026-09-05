@@ -1,6 +1,6 @@
 ---
 title: Drive your first app with Cua Driver
-description: Install Cua Driver, connect your agent, and ask it in plain English to drive a desktop app in the background on macOS, Windows, or Linux.
+description: Install Cua Driver, connect your agent, and verify a result in a desktop app on macOS, Windows, or Linux.
 ---
 
 import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
@@ -8,8 +8,9 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 By the end of this tutorial, your agent will open Calculator, compute 6 × 7,
 and report 42 through **Cua Driver**. You will install the driver, connect
-Claude Code, Codex, Prime Agent, or Hermes, and run the same prompt on macOS, Windows, or
-Linux.
+your agent, and run a prompt that matches its integration on macOS, Windows, or
+Linux. Have an agent installed and a desktop calculator available before you
+begin. On Linux, use your distribution's calculator, such as GNOME Calculator.
 
 New to agents that operate applications? Start with [What is computer use?](/concepts/what-is-computer-use) for the model behind the workflow, then return here to build one.
 
@@ -89,11 +90,15 @@ Use the same one-line installer on every platform; it picks the right path for t
     cua-driver autostart kick
     ```
 
-    The installer registers Cua Driver to start automatically at sign-in. `kick` starts it immediately, so you do not need to sign out or restart Windows before continuing.
+    The installer attempts to register Cua Driver to start automatically at sign-in. `kick` starts that task immediately. If registration was skipped or failed, run `cua-driver serve` in a terminal in the interactive desktop session and leave it open. Use a second terminal for the checks below.
 
   </Tab>
   <Tab value="Linux">
     Requires an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2.
+    On a minimal Debian or Ubuntu image, install `libxi6` and `at-spi2-core`
+    first; see [Linux requirements](/how-to-guides/driver/install). Run this
+    tutorial inside the desktop session, where the driver can reach its display
+    and accessibility bus.
 
     ```bash
     /bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"
@@ -117,7 +122,14 @@ Use the same one-line installer on every platform; it picks the right path for t
 
 ## 2. Verify it is working
 
-Before you hand control to an agent, confirm the driver can see your desktop. Run the cross-platform probe:
+First confirm that the daemon is reachable:
+
+```bash
+cua-driver status
+```
+
+Expect `Cua Driver daemon is running`. If it is not running, repeat your
+platform's startup step above. Then check the environment:
 
 ```bash
 cua-driver doctor
@@ -129,19 +141,33 @@ Then list the running GUI apps the driver can reach:
 cua-driver call list_apps
 ```
 
-If you see your running apps listed, the plumbing works. That is the only CLI you run by hand; from here the agent does the driving.
+Read the `doctor` report, including warnings: a zero exit code does not prove
+desktop readiness. On macOS, also confirm both grants with
+`cua-driver permissions status`. Continue when the required permissions and
+desktop services are available, and `list_apps` includes a GUI app you recognize. An
+empty list is not a successful desktop check: open Calculator in that session
+and retry. Resolve permission or display errors before connecting the agent.
 
 ## 3. Connect your agent
 
-Register Cua Driver with your agent harness once.
+Choose one integration for your agent. A skill teaches the agent to use the
+Cua Driver CLI; MCP registration exposes Cua Driver as a tool server.
+`mcp-config` only prints setup instructions: you must run the registration
+command it prints. Use the output from your machine, not the illustrative
+paths below.
 
 <Tabs items={['Claude Code', 'Codex', 'Prime Agent', 'OpenClaw', 'Hermes']}>
   <Tab value="Claude Code">
-    Install the Claude Code skill. This is turnkey: the skill teaches Claude Code how to drive apps through Cua Driver, and you then ask in plain English.
+    Install the Cua Driver skill for Claude Code:
 
     ```bash
     cua-driver skills install
+    cua-driver skills status
     ```
+
+    Confirm that the status includes a Claude Code skill link, then start a
+    fresh Claude Code session. If the link is missing, follow
+    [Install the agent skill](/how-to-guides/driver/install-agent-skill).
 
     Prefer plain MCP instead of the skill? Print the Claude Code registration command:
 
@@ -168,7 +194,9 @@ Register Cua Driver with your agent harness once.
     codex mcp add cua-driver -- /Users/you/.local/bin/cua-driver mcp
     ```
 
-    Restart Codex or open a fresh Codex session after registration so the new tools appear.
+    Run `codex mcp list` to confirm the `cua-driver` registration. Start a fresh
+    Codex session and use `/mcp` to check that the server is active. See the
+    [official Codex MCP instructions](https://learn.chatgpt.com/docs/extend/mcp).
   </Tab>
   <Tab value="Prime Agent">
     Install the Cua Driver skill pack. Prime Agent discovers it from its native
@@ -177,7 +205,7 @@ Register Cua Driver with your agent harness once.
 
     ```bash
     cua-driver skills install
-    cua-driver mcp-config --client prime-agent
+    cua-driver skills status
     ```
 
     Run `/reload` in Prime Agent or start a new session after installation so
@@ -222,64 +250,74 @@ Using Cursor, Gemini/Antigravity, OpenCode, or Pi instead? See [Connect your age
 
 ## 4. Ask your agent
 
-You can now prompt your agent in plain English, and it will drive Cua Driver for you.
+Use the prompt that matches the setup you chose. Ask the agent to read the
+calculator's displayed result after acting, so it verifies the GUI instead of
+answering the arithmetic from memory.
 
-<Tabs items={['Claude Code', 'Codex', 'Prime Agent']}>
+<Tabs items={['Claude Code', 'Codex', 'Prime Agent', 'OpenClaw', 'Hermes']}>
   <Tab value="Claude Code">
     ```text
-    > Using the cua-computer-use MCP, open the Calculator, compute 6 × 7, and tell me the result.
-
-    → launch_app Calculator
-    → get_window_state
-    → click 7 [element_index=12]
-    → click × [element_index=20]
-    → click 6 [element_index=11]
-    → click = [element_index=22]
-    → get_window_state
-    ✓ The result is 42.
+    Using the Cua Driver skill, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
     ```
+
+    If you chose MCP registration instead, replace “Cua Driver skill” with
+    “cua-computer-use MCP server.”
   </Tab>
   <Tab value="Codex">
     ```text
-    > Using the Cua Driver skill, open the Calculator, compute 6 × 7, and read the result back.
-
-    → launch_app Calculator
-    → get_window_state
-    → click 7 [element_index=12]
-    → click × [element_index=20]
-    → click 6 [element_index=11]
-    → click = [element_index=22]
-    → get_window_state
-    ✓ The result is 42.
+    Using the cua-driver MCP server, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
     ```
   </Tab>
   <Tab value="Prime Agent">
     ```text
-    > Using the Cua Driver skill, open the Calculator, compute 6 × 7, and read the result back.
-
-    → launch_app Calculator
-    → get_window_state
-    → click 7
-    → click ×
-    → click 6
-    → click =
-    → verify_state
-    ✓ The result is 42.
+    Using the Cua Driver skill, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+  </Tab>
+  <Tab value="OpenClaw">
+    ```text
+    Using the cua-driver MCP server, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
+    ```
+  </Tab>
+  <Tab value="Hermes">
+    ```text
+    Using the computer_use toolset, open the installed calculator app,
+    compute 6 × 7, and read the displayed result back from a fresh snapshot.
     ```
   </Tab>
 </Tabs>
 
-Everything runs in the background, and the agent picks the right calculator for your OS (Calculator on macOS and Windows, the system calculator on Linux), so the same prompt works on all three platforms.
+The app name, controls, and action sequence vary by platform and calculator.
+The agent must discover them from fresh state; element indices from another
+run are not reusable. If no calculator is installed, install one through your
+platform's normal app or package manager, then repeat the prompt.
 
 To understand capture and delivery modes, see [Capture and delivery modalities](/concepts/capture-and-delivery-modalities).
 
 ## 5. Confirm what happened
 
-The agent reports 42. Cua Driver kept the calculator in the background the whole time. It never stole your keyboard focus and never moved your cursor. That is best-effort background: the agent drives the app while you keep working. See [Best-effort background](/concepts/the-no-foreground-contract).
+Confirm that the calculator displays **42** and that the agent's final
+observation reports that value. A correct answer alone does not prove that the
+agent operated the app.
+
+Cua Driver uses best-effort background delivery. Observe whether your active
+app, keyboard focus, and real pointer stay unchanged during the interaction;
+do not infer this from the answer. The visible agent cursor is a separate
+overlay. macOS and Windows accessibility actions can operate supported
+controls in the background, but some apps require explicit foreground
+delivery. Linux AT-SPI actions and X11 routes can also work in the background;
+native Wayland depends on compositor support and has raw-keyboard limits.
+Launching an app can itself raise a window. See
+[Best-effort background](/concepts/the-no-foreground-contract) for these
+platform differences.
 
 ## What you did
 
-You installed Cua Driver, verified it could see your desktop, connected your agent harness, and asked in plain English for a result computed inside a real desktop app. The agent did the driving through Cua Driver, in the background, on your platform.
+You installed Cua Driver, checked its daemon and desktop access, connected your
+agent, and verified a result computed inside a desktop app.
 
 ## Next steps
 

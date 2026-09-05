@@ -40,8 +40,10 @@ jobs:
           echo "$RUNNER_TEMP/hyprland-plugin-tools/bin" >> "$GITHUB_PATH"
       - name: Check helper syntax
         run: |
-          python3 -c 'import ast; from pathlib import Path; ast.parse(Path("tests/live_discovery.py").read_text())'
+          python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for p in Path("tests").glob("*.py")]'
           bash -n packaging/arch/PKGBUILD
+      - name: Check lifecycle runner cleanup
+        run: python3 -m unittest discover -s tests -p '*_test.py' -v
       # No real Hyprland headers, module load, or desktop certification in this job.
       - name: Configure unit and mock tests
         run: |

@@ -79,6 +79,30 @@ state, a live foreground grab, hardware input isolation, or a different-UID
 peer. Those remain separate acceptance rows. The reload option unloads and
 reloads the named module; omit it for a transport-only check.
 
+To test two-instance isolation and clean restart inside a disposable Hyprland
+Wayland desktop, run the owned-process lifecycle runner:
+
+```bash
+python3 tests/nested_lifecycle.py --module /absolute/path/to/cua-hyprland-plugin.so
+```
+
+The runner starts two nested Hyprland processes with temporary configs, finds
+each by its exact child PID, and loads the matching module only into those
+processes. It runs the live refusal check in both, restarts one, and checks old
+connection closure, socket removal, fresh socket/epoch, and sibling liveness.
+It stops both owned processes on success or failure and preserves temporary
+logs. Forced termination is a failure, not a clean-restart pass. The parent
+must still answer version queries afterward; its config is never edited and
+the module is never loaded into it. Use a disposable parent because nested
+windows can affect its focus and compositor startup can update session state.
+
+Record the source SHA, module digest, environment, stdout, stderr, and retained
+logs. The JSON result distinguishes this check from application delivery and
+physical input isolation. It does not certify package installation, direct DRM
+startup, arbitrary ABI combinations, or the complete driver desktop matrix.
+Hosted CI tests the runner's cleanup/error paths with mocks; native results
+require running it in the Fleet guest or another declared Wayland environment.
+
 ## Fleet packaging lane
 
 Build an Omarchy/Arch Fleet image from the monorepo source using

@@ -467,16 +467,60 @@ fn metadata_json() -> Result<String, AbiFailure> {
     .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
 }
 
-fn abi_executor() -> Result<&'static tokio::runtime::Runtime, AbiFailure> {
-    static EXECUTOR: OnceLock<Result<tokio::runtime::Runtime, String>> = OnceLock::new();
-    match EXECUTOR.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
-            .worker_threads(2)
-            .thread_name("cua-driver-abi")
-            .enable_all()
-            .build()
-            .map_err(|error| error.to_string())
-    }) {
+#[derive(Debug)]
+struct AbiExecutor {
+    runtime: tokio::runtime::Runtime,
+    #[cfg(target_os = "windows")]
+    threads: Arc<platform_windows::dpi::OwnedThreadDpi>,
+}
+
+impl AbiExecutor {
+    fn handle(&self) -> &tokio::runtime::Handle {
+        self.runtime.handle()
+    }
+
+    fn check_ready(&self) -> Result<(), AbiFailure> {
+        #[cfg(target_os = "windows")]
+        self.threads
+            .check()
+            .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?;
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        self.check_ready().is_ok()
+    }
+}
+
+fn abi_executor() -> Result<&'static AbiExecutor, AbiFailure> {
+    let executor = abi_executor_for_cleanup()?;
+    executor.check_ready()?;
+    Ok(executor)
+}
+
+fn embedded_runtime_is_available(
+    runtime_running: bool,
+    executor: Result<&AbiExecutor, AbiFailure>,
+) -> bool {
+    runtime_running && executor.is_ok_and(AbiExecutor::is_ready)
+}
+
+fn admit_trusted_session(executor: Result<&AbiExecutor, AbiFailure>) -> Result<(), AbiFailure> {
+    executor?.check_ready()
+}
+
+// Shutdown must still revoke sessions and finalize recordings after DPI
+// failure. It neither admits GUI work nor reports physical-pixel results.
+fn abi_executor_for_cleanup() -> Result<&'static AbiExecutor, AbiFailure> {
+    static EXECUTOR: OnceLock<Result<AbiExecutor, String>> = OnceLock::new();
+    initialized_abi_executor(&EXECUTOR, build_abi_executor)
+}
+
+fn initialized_abi_executor<'a>(
+    executor: &'a OnceLock<Result<AbiExecutor, String>>,
+    initialize: impl FnOnce() -> Result<AbiExecutor, String>,
+) -> Result<&'a AbiExecutor, AbiFailure> {
+    match executor.get_or_init(initialize) {
         Ok(executor) => Ok(executor),
         Err(error) => Err(AbiFailure::new(
             CuaDriverStatus::RuntimeUnavailable,
@@ -485,7 +529,144 @@ fn abi_executor() -> Result<&'static tokio::runtime::Runtime, AbiFailure> {
     }
 }
 
+fn build_abi_executor() -> Result<AbiExecutor, String> {
+    #[cfg(target_os = "windows")]
+    {
+        return build_windows_abi_executor(Arc::new(
+            platform_windows::dpi::use_per_monitor_v2_for_current_thread,
+        ));
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .thread_name("cua-driver-abi")
+            .enable_all()
+            .build()
+            .map(|runtime| AbiExecutor { runtime })
+            .map_err(|error| error.to_string())
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn build_windows_abi_executor(
+    initialize_thread: Arc<dyn Fn() -> Result<(), String> + Send + Sync>,
+) -> Result<AbiExecutor, String> {
+    let threads = Arc::new(platform_windows::dpi::OwnedThreadDpi::new(
+        initialize_thread,
+    ));
+    let callback_threads = threads.clone();
+    let (thread_started, thread_ready) = std::sync::mpsc::channel();
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder
+        .worker_threads(2)
+        .thread_name("cua-driver-abi")
+        .enable_all()
+        .on_thread_start(move || {
+            callback_threads.initialize_current_thread();
+            let _ = thread_started.send(());
+        });
+    let executor = builder.build().map_err(|error| error.to_string())?;
+
+    // Validate both eagerly-created async workers and one blocking worker at
+    // startup. This is NOT a substitute for the per-operation/per-thread gates:
+    // the blocking pool can grow later and a task can migrate between workers.
+    for _ in 0..2 {
+        thread_ready
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|error| format!("start Cua Driver ABI async worker: {error}"))?;
+    }
+
+    let (blocking_started, blocking_ready) = std::sync::mpsc::channel();
+    executor.spawn_blocking(move || {
+        let _ = blocking_started.send(());
+    });
+    blocking_ready
+        .recv_timeout(Duration::from_secs(5))
+        .map_err(|error| format!("start Cua Driver ABI blocking worker: {error}"))?;
+
+    threads.check()?;
+    Ok(AbiExecutor {
+        runtime: executor,
+        threads,
+    })
+}
+
 fn spawn_completion<F>(
+    executor: tokio::runtime::Handle,
+    future: F,
+    callback: CuaDriverCompletionV1,
+    context: *mut c_void,
+) -> Result<*mut CuaDriverOperation, AbiFailure>
+where
+    F: Future<Output = Result<String, AbiFailure>> + Send + 'static,
+{
+    spawn_cleanup_completion(
+        executor,
+        async move {
+            #[cfg(target_os = "windows")]
+            {
+                platform_windows::dpi::guard_future(future)
+                    .await
+                    .map_err(|error| AbiFailure::new(CuaDriverStatus::RuntimeUnavailable, error))?
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                future.await
+            }
+        },
+        callback,
+        context,
+    )
+}
+
+#[derive(Debug, Clone, Copy)]
+enum InvokeMode {
+    Regular,
+    TrustedAdapter,
+}
+
+async fn invoke_runtime_to_json(
+    runtime: Arc<DriverRuntime>,
+    name: String,
+    arguments: Value,
+    mode: InvokeMode,
+) -> Result<String, AbiFailure> {
+    let shutdown_message = match mode {
+        InvokeMode::Regular => "the Cua Driver SDK has been shut down",
+        InvokeMode::TrustedAdapter => "the owning Cua Driver runtime has been shut down",
+    };
+    let result = match mode {
+        InvokeMode::Regular => runtime.invoke(&name, arguments).await,
+        InvokeMode::TrustedAdapter => runtime.invoke_from_trusted_adapter(&name, arguments).await,
+    }
+    .ok_or_else(|| AbiFailure::new(CuaDriverStatus::Shutdown, shutdown_message))?;
+    serde_json::to_string(&result)
+        .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
+}
+
+// All embedded GUI invocations, including trusted adapter calls, enter through
+// this one dispatcher. The future is guarded on the ABI-owned executor, while
+// OperationGuard preserves cancellation when a Rust caller drops its await.
+fn start_invoke_completion(
+    runtime: Arc<DriverRuntime>,
+    name: String,
+    arguments: Value,
+    mode: InvokeMode,
+    callback: CuaDriverCompletionV1,
+    context: *mut c_void,
+) -> Result<*mut CuaDriverOperation, AbiFailure> {
+    let executor = abi_executor()?.handle().clone();
+    spawn_completion(
+        executor,
+        invoke_runtime_to_json(runtime, name, arguments, mode),
+        callback,
+        context,
+    )
+}
+
+fn spawn_cleanup_completion<F>(
     executor: tokio::runtime::Handle,
     future: F,
     callback: CuaDriverCompletionV1,
@@ -615,6 +796,10 @@ pub unsafe extern "C" fn cua_driver_create_v1(
             })?
         };
         let runtime_options = runtime_options_from_abi(options)?;
+        // The embedded runtime promises physical-pixel capture and input on
+        // Windows. Refuse creation if its owned executor cannot establish
+        // that contract instead of returning virtualized results later.
+        abi_executor()?;
         let runtime = DriverRuntime::create(runtime_options).map_err(runtime_create_failure)?;
         *out_handle = Box::into_raw(Box::new(CuaDriverHandle { runtime }));
         Ok(())
@@ -650,7 +835,11 @@ pub unsafe extern "C" fn cua_driver_is_available_v1(
                 "out_available must not be null",
             )
         })?;
-        *out_available = driver.runtime.is_running();
+        // `runtime.is_running()` only describes shutdown state. An embedded
+        // Windows runtime is also unavailable once its owned executor has
+        // lost the physical-pixel DPI contract.
+        *out_available =
+            embedded_runtime_is_available(driver.runtime.is_running(), abi_executor_for_cleanup());
         Ok(())
     })
 }
@@ -760,20 +949,11 @@ pub unsafe extern "C" fn cua_driver_invoke_v1(
                 "tool arguments must be a JSON object",
             ));
         }
-        let runtime = driver.runtime.clone();
-        let executor = abi_executor()?.handle().clone();
-        *out_operation = spawn_completion(
-            executor,
-            async move {
-                let result = runtime.invoke(&name, arguments).await.ok_or_else(|| {
-                    AbiFailure::new(
-                        CuaDriverStatus::Shutdown,
-                        "the Cua Driver SDK has been shut down",
-                    )
-                })?;
-                serde_json::to_string(&result)
-                    .map_err(|error| AbiFailure::new(CuaDriverStatus::Internal, error.to_string()))
-            },
+        *out_operation = start_invoke_completion(
+            driver.runtime.clone(),
+            name,
+            arguments,
+            InvokeMode::Regular,
             callback,
             context,
         )?;
@@ -812,6 +992,10 @@ pub unsafe extern "C" fn cua_driver_session_create_v1(
                 "public_session must not be empty",
             ));
         }
+        // Creating a trusted session is a new GUI-work admission boundary. Do
+        // not issue fresh authority after the embedded executor has entered a
+        // terminal DPI failure; cleanup of existing sessions remains allowed.
+        admit_trusted_session(abi_executor_for_cleanup())?;
         let capability_manifest = options
             .capability_manifest_path()?
             .map(|path| {
@@ -970,8 +1154,8 @@ pub unsafe extern "C" fn cua_driver_shutdown_v1(
         })?;
         *out_operation = ptr::null_mut();
         let runtime = driver.runtime.clone();
-        let executor = abi_executor()?.handle().clone();
-        *out_operation = spawn_completion(
+        let executor = abi_executor_for_cleanup()?.handle().clone();
+        *out_operation = spawn_cleanup_completion(
             executor,
             async move {
                 runtime.shutdown().await;
@@ -1252,6 +1436,9 @@ impl NativeAbiDriver {
     }
 
     pub(crate) fn create_for_host(options: RuntimeOptions) -> Result<Self, DriverError> {
+        abi_executor().map_err(|error| DriverError::Protocol {
+            reason: error.message,
+        })?;
         let runtime = DriverRuntime::create(options).map_err(map_runtime_create_error)?;
         let runtime_scope_key = runtime.runtime_scope_key();
         let handle = Box::into_raw(Box::new(CuaDriverHandle { runtime })).cast::<ffi::Handle>();
@@ -1438,12 +1625,47 @@ impl NativeAbiDriver {
                     .clone()
             }
         };
-        let result = runtime
-            .invoke_from_trusted_adapter(name, arguments)
-            .await
-            .ok_or(DriverError::Shutdown)?;
-        serde_json::to_value(result).map_err(|error| DriverError::Protocol {
-            reason: format!("serialize {name} trusted-adapter result: {error}"),
+        if !arguments.is_object() {
+            return Err(DriverError::InvalidArguments {
+                tool: name.into(),
+                reason: "arguments must be a JSON object".into(),
+            });
+        }
+
+        let (receiver, guard) = {
+            let (sender, receiver) = oneshot::channel();
+            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+            let operation = match start_invoke_completion(
+                runtime,
+                name.to_owned(),
+                arguments,
+                InvokeMode::TrustedAdapter,
+                rust_completion,
+                context,
+            ) {
+                Ok(operation) => operation,
+                Err(error) => {
+                    unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
+                    return Err(map_status(error.status, error.message, name));
+                }
+            };
+            (
+                receiver,
+                OperationGuard {
+                    operation: operation.cast::<ffi::Operation>(),
+                    completed: false,
+                },
+            )
+        };
+        let completed = receiver.await.map_err(|_| DriverError::Protocol {
+            reason: format!("{name} trusted-adapter completion callback was dropped"),
+        })?;
+        guard.complete();
+        if completed.status != CuaDriverStatus::Ok {
+            return Err(map_status(completed.status, completed.error, name));
+        }
+        serde_json::from_str(&completed.result).map_err(|error| DriverError::Protocol {
+            reason: format!("{name} returned invalid trusted-adapter JSON: {error}"),
         })
     }
 
@@ -1613,6 +1835,248 @@ mod tests {
         assert!(cua_driver_abi_is_compatible_v1(1, 1));
         assert!(!cua_driver_abi_is_compatible_v1(1, 2));
         assert!(!cua_driver_abi_is_compatible_v1(2, 0));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_executor_threads_use_per_monitor_v2() {
+        let executor = abi_executor().unwrap();
+        let (worker_is_per_monitor_v2, blocking_is_per_monitor_v2) =
+            executor.runtime.block_on(async {
+                let worker = executor
+                    .runtime
+                    .spawn(async { platform_windows::dpi::current_thread_uses_per_monitor_v2() })
+                    .await
+                    .unwrap();
+                let blocking = executor
+                    .runtime
+                    .spawn_blocking(platform_windows::dpi::current_thread_uses_per_monitor_v2)
+                    .await
+                    .unwrap();
+                (worker, blocking)
+            });
+
+        assert!(worker_is_per_monitor_v2);
+        assert!(blocking_is_per_monitor_v2);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_executor_refuses_a_rejected_windows_dpi_initializer() {
+        let executor = OnceLock::new();
+        let error = initialized_abi_executor(&executor, || {
+            build_windows_abi_executor(Arc::new(|| Err("simulated PMv2 rejection".to_owned())))
+        })
+        .unwrap_err();
+
+        assert_eq!(error.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(error
+            .message
+            .contains("initialize Windows physical-pixel context"));
+        assert!(error.message.contains("simulated PMv2 rejection"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_late_blocking_thread_failure_prevents_work_and_reaches_completion() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let reject_new_threads = Arc::new(AtomicBool::new(false));
+        let reject = reject_new_threads.clone();
+        let cell = OnceLock::new();
+        let executor = initialized_abi_executor(&cell, || {
+            build_windows_abi_executor(Arc::new(move || {
+                if reject.load(Ordering::SeqCst) {
+                    Err("late blocking worker DPI rejection".into())
+                } else {
+                    platform_windows::dpi::use_per_monitor_v2_for_current_thread()
+                }
+            }))
+        })
+        .unwrap();
+
+        // Hold the prewarmed blocking worker so the operation must create a
+        // NEW worker after successful runtime initialization. No timing sleeps.
+        let (occupied, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let held = executor.runtime.spawn_blocking(move || {
+            occupied.send(()).unwrap();
+            released.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        reject_new_threads.store(true, Ordering::SeqCst);
+
+        let body_ran = Arc::new(AtomicBool::new(false));
+        let body = body_ran.clone();
+        let (sender, receiver) = oneshot::channel();
+        let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+        let mut operation = spawn_completion(
+            executor.handle().clone(),
+            async move {
+                // Deliberately swallow the native task error like an optional
+                // screenshot fallback. ABI completion must still refuse success.
+                let _ = platform_windows::dpi::spawn_blocking(move || {
+                    body.store(true, Ordering::SeqCst);
+                })
+                .await;
+                Ok("must not report physical-pixel success".into())
+            },
+            rust_completion,
+            context,
+        )
+        .unwrap();
+        let completed = executor
+            .runtime
+            .block_on(async { tokio::time::timeout(Duration::from_secs(5), receiver).await });
+        // Core recording calls native capture hooks directly. Refuse before
+        // obtaining geometry or PNG bytes even without the tool-task wrapper.
+        let capture_errors = executor
+            .runtime
+            .block_on(executor.runtime.spawn_blocking(|| {
+                (
+                    platform_windows::capture::screenshot_display_bytes()
+                        .unwrap_err()
+                        .to_string(),
+                    platform_windows::capture::screenshot_window_bytes_with_occlusion(0)
+                        .unwrap_err()
+                        .to_string(),
+                )
+            }));
+        let _ = release.send(());
+        executor.runtime.block_on(held).unwrap();
+        unsafe { cua_driver_operation_release_v1(&mut operation) };
+
+        let completed = completed.unwrap().unwrap();
+        assert_eq!(completed.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(completed.result.is_empty());
+        assert!(completed
+            .error
+            .contains("late blocking worker DPI rejection"));
+        assert!(!body_ran.load(Ordering::SeqCst));
+        let (display_error, window_error) = capture_errors.unwrap();
+        assert!(display_error.contains("late blocking worker DPI rejection"));
+        assert!(window_error.contains("late blocking worker DPI rejection"));
+        // A later ABI submission cannot revive the poisoned executor.
+        let error = initialized_abi_executor(&cell, || unreachable!())
+            .unwrap()
+            .check_ready()
+            .unwrap_err();
+        assert_eq!(error.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(!initialized_abi_executor(&cell, || unreachable!())
+            .unwrap()
+            .is_ready());
+        assert!(!embedded_runtime_is_available(
+            true,
+            initialized_abi_executor(&cell, || unreachable!()),
+        ));
+        let session_error =
+            admit_trusted_session(initialized_abi_executor(&cell, || unreachable!())).unwrap_err();
+        assert_eq!(session_error.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(session_error
+            .message
+            .contains("late blocking worker DPI rejection"));
+        // Teardown must still run after failure, without admitting GUI work.
+        let (sender, receiver) = oneshot::channel();
+        let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+        let mut cleanup = spawn_cleanup_completion(
+            executor.handle().clone(),
+            async { Ok("cleanup completed".into()) },
+            rust_completion,
+            context,
+        )
+        .unwrap();
+        let completed = executor
+            .runtime
+            .block_on(async { tokio::time::timeout(Duration::from_secs(5), receiver).await });
+        unsafe { cua_driver_operation_release_v1(&mut cleanup) };
+        let completed = completed.unwrap().unwrap();
+        assert_eq!(completed.status, CuaDriverStatus::Ok);
+        assert_eq!(completed.result, "cleanup completed");
+        // Failure is executor-local; it does not poison the global healthy one.
+        abi_executor().unwrap();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_child_thread_failure_stops_work_and_async_resumption() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let reject_new_threads = Arc::new(AtomicBool::new(false));
+        let reject = reject_new_threads.clone();
+        let executor = build_windows_abi_executor(Arc::new(move || {
+            if reject.load(Ordering::SeqCst) {
+                Err("late owned thread DPI rejection".into())
+            } else {
+                platform_windows::dpi::use_per_monitor_v2_for_current_thread()
+            }
+        }))
+        .unwrap();
+        let child_ran = Arc::new(AtomicBool::new(false));
+        let child = child_ran.clone();
+        let resumed = Arc::new(AtomicBool::new(false));
+        let resumed_body = resumed.clone();
+        let (sender, receiver) = oneshot::channel();
+        let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
+        let mut operation = spawn_completion(
+            executor.handle().clone(),
+            async move {
+                reject_new_threads.store(true, Ordering::SeqCst);
+                let result = std::thread::spawn(platform_windows::dpi::owned_thread(move || {
+                    child.store(true, Ordering::SeqCst);
+                }))
+                .join()
+                .unwrap();
+                assert!(result
+                    .unwrap_err()
+                    .contains("late owned thread DPI rejection"));
+                // Force another poll after the owner failed, then prove the
+                // remainder of the async operation is never entered.
+                tokio::task::yield_now().await;
+                resumed_body.store(true, Ordering::SeqCst);
+                Ok("must not resume".into())
+            },
+            rust_completion,
+            context,
+        )
+        .unwrap();
+        let completed = executor
+            .runtime
+            .block_on(async { tokio::time::timeout(Duration::from_secs(5), receiver).await });
+        unsafe { cua_driver_operation_release_v1(&mut operation) };
+        let completed = completed.unwrap().unwrap();
+        assert_eq!(completed.status, CuaDriverStatus::RuntimeUnavailable);
+        assert!(completed.result.is_empty());
+        assert!(!child_ran.load(Ordering::SeqCst));
+        assert!(!resumed.load(Ordering::SeqCst));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn abi_late_blocking_worker_and_child_thread_use_physical_pixels() {
+        let executor = build_abi_executor().unwrap();
+        let (occupied, ready) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let held = executor.runtime.spawn_blocking(move || {
+            occupied.send(()).unwrap();
+            released.recv_timeout(Duration::from_secs(10)).unwrap();
+        });
+        ready.recv_timeout(Duration::from_secs(5)).unwrap();
+        let result = executor.runtime.block_on(executor.runtime.spawn(async {
+            platform_windows::dpi::spawn_blocking(|| {
+                let blocking = platform_windows::dpi::current_thread_uses_per_monitor_v2();
+                let child = std::thread::spawn(platform_windows::dpi::owned_thread(
+                    platform_windows::dpi::current_thread_uses_per_monitor_v2,
+                ))
+                .join()
+                .unwrap()
+                .unwrap();
+                (blocking, child)
+            })
+            .await
+        }));
+        let _ = release.send(());
+        executor.runtime.block_on(held).unwrap();
+        assert_eq!(result.unwrap().unwrap(), (true, true));
     }
 
     #[test]

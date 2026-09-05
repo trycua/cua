@@ -222,6 +222,7 @@ pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
 /// user / LLM should attach an explicit warning. See `target_is_obscured`
 /// for the sampling heuristic.
 pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, bool)> {
+    crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
         Ok(capture) => Ok(capture),
         Err(primary_error) => {
@@ -571,6 +572,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
 
 /// Capture the primary display (full screen), returning raw PNG bytes.
 pub fn screenshot_display_bytes() -> Result<Vec<u8>> {
+    crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     unsafe {
         use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
         // Under Per-Monitor V2 DPI awareness, GetSystemMetrics returns

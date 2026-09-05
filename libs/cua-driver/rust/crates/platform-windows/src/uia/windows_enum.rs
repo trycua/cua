@@ -115,16 +115,17 @@ impl UiaSingleFlight {
         let cancelled = Arc::new(AtomicBool::new(false));
         let worker_cancelled = Arc::clone(&cancelled);
         let worker_gate = Arc::clone(self);
+        let guard = InFlightGuard {
+            gate: worker_gate,
+            cancelled: Arc::clone(&worker_cancelled),
+        };
         let spawn = thread::Builder::new()
             .name(format!("cua-uia-{stage}"))
-            .spawn(move || {
-                let _guard = InFlightGuard {
-                    gate: worker_gate,
-                    cancelled: Arc::clone(&worker_cancelled),
-                };
+            .spawn(crate::dpi::owned_thread(move || {
+                let _guard = guard;
                 let result = f(worker_cancelled);
                 let _ = tx.send(result);
-            });
+            }));
 
         if let Err(e) = spawn {
             self.in_flight.store(false, Ordering::Release);

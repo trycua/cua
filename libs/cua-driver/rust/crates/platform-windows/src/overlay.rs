@@ -525,11 +525,21 @@ pub fn run_on_thread() {
         return;
     }
 
+    let work = move || run_overlay_thread(cfg, rx);
+    #[cfg(target_os = "windows")]
+    // Registry construction can run on the host thread. In that case this
+    // starts an independent owner, not the ABI executor's shared failure state.
+    let work = crate::dpi::owned_thread(work);
     std::thread::Builder::new()
         .name("cua-overlay-win".into())
         .spawn(move || {
             // Windows message loops must run on the same thread that created the window.
-            run_overlay_thread(cfg, rx);
+            #[cfg(target_os = "windows")]
+            if let Err(error) = work() {
+                tracing::error!("Windows overlay thread refused: {error}");
+            }
+            #[cfg(not(target_os = "windows"))]
+            work();
         })
         .expect("spawn overlay thread");
 }

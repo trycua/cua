@@ -8,5 +8,12 @@ func commandDocumentationCoversRegistry() {
 
     #expect(coverage.missing.isEmpty)
     #expect(coverage.extra.isEmpty)
-    #expect(CommandDocExtractor.extractAll().commands.contains { $0.name == "sip" })
+    let commands = CommandDocExtractor.extractAll().commands
+    #expect(commands.contains { $0.name == "sip" })
+
+    let importDoc = commands.first { $0.name == "import" }
+    let exportDoc = commands.first { $0.name == "export" }
+    #expect(importDoc?.subcommands.contains { $0.name == "utm" } == true)
+    #expect(exportDoc?.subcommands.contains { $0.name == "utm" } == true)
+    #expect(!commands.contains { $0.name == "import-utm" || $0.name == "export-utm" })
 }

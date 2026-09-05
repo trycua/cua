@@ -28,13 +28,15 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install offline-test dependencies
-        run: python -m pip install pytest==8.4.2 markdown-it-py==3.0.0 lancedb==0.37.1 pyarrow==25.0.1 boto3==1.40.22
+        run: python -m pip install pytest==8.4.2 markdown-it-py==3.0.0 lancedb==0.37.1 pyarrow==25.0.1 boto3==1.40.22 modal==1.5.2
       - name: Verify corpus parity and interrupted publication
         run: >-
           python -m pytest -q
           docs/scripts/tests/test_docs_index_corpus.py
           docs/scripts/tests/test_docs_index_publication.py
           docs/scripts/tests/test_docs_index_sync.py
+      - name: Validate Modal application definitions with the supported SDK
+        run: python -c "import runpy; runpy.run_path('docs/scripts/modal_app.py')"
       - name: Check Python syntax
         run: >-
           python -m py_compile

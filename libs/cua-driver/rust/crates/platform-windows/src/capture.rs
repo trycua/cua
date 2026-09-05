@@ -285,8 +285,9 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     let hwnd_raw = hwnd;
     let hwnd = HWND(hwnd as *mut _);
 
-    // Bail loudly on minimized (iconic) windows BEFORE attempting any
-    // capture path. On Windows, `GetWindowRect` on an iconic HWND returns
+    // Give WGC one chance to read compositor-owned pixels from a minimized
+    // (iconic) window before rejecting the capture. On Windows,
+    // `GetWindowRect` on an iconic HWND returns
     // the off-screen "iconic position" (typically `(-32000, -32000,
     // -31840, -31972)` i.e. w=160, h=28, both positive) and `PrintWindow`
     // paints nothing into the bitmap. The result is a heavily-compressed
@@ -294,19 +295,30 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // apart from a real "blank screen" capture — wasting model turns
     // retrying against a window that's literally minimized to the taskbar.
     //
-    // The WGC sibling path at `wgc.rs:58` already short-circuits this case;
-    // the GDI/PrintWindow fallback below + the screen-region BitBlt fallback
-    // both happily produced the degenerate PNG. Guarding here covers both
-    // and matches the WGC error shape so callers can `list_windows` and
-    // restore the window before retrying.
+    // WGC can still produce compositor-owned pixels for some minimized or
+    // cloaked windows, so try it first. If WGC cannot produce a frame, stop
+    // here: the GDI/PrintWindow and screen-region BitBlt fallbacks below both
+    // happily produce the degenerate PNG. This keeps the failure explicit so
+    // callers can `list_windows` and restore the window before retrying.
     if IsIconic(hwnd).as_bool() {
-        bail!(
-            "cannot capture minimized window 0x{hwnd_raw:x}: it has no \
-             rendered content. Call bring_to_front with this window_id to \
-             restore it first. The PrintWindow GDI path and the screen-region \
-             BitBlt fallback both return an all-black bitmap for iconic \
-             windows."
-        );
+        match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
+            Ok((pixels, width, height)) => {
+                return Ok((
+                    cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
+                    false,
+                ));
+            }
+            Err(wgc_error) => {
+                bail!(
+                    "cannot capture minimized window 0x{hwnd_raw:x}: WGC composited \
+                     capture failed: {wgc_error}. Call bring_to_front with this \
+                     window_id to restore it first. `get_window_state` still returns \
+                     the UIA tree (the screenshot is reported unavailable). The \
+                     PrintWindow GDI path and the screen-region BitBlt fallback both \
+                     return an all-black bitmap for iconic windows."
+                );
+            }
+        }
     }
 
     // CUA-542 routing: for known XAML / WinUI3 / UWP targets, the

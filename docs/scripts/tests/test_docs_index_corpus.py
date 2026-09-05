@@ -1,14 +1,86 @@
 """Offline corpus parity tests, using real SQLite/FTS and synthetic Lance vectors."""
 
+import ast
+import asyncio
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import lancedb
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "docs-mcp-server"))
 import docs_index as index
+
+
+@pytest.fixture(params=["crawl_docs.py", "modal_app.py"])
+def load_docs_page(request):
+    """Exercise both production helpers without starting Modal or Playwright."""
+    path = Path(__file__).resolve().parents[1] / request.param
+    function = next(
+        node
+        for node in ast.parse(path.read_text()).body
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "load_docs_page"
+    )
+    namespace = {}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(path), "exec"), namespace)
+    return namespace["load_docs_page"]
+
+
+def docs_page(response):
+    return SimpleNamespace(
+        goto=AsyncMock(return_value=response),
+        wait_for_selector=AsyncMock(),
+        content=AsyncMock(return_value="<main><article>Docs body</article></main>"),
+    )
+
+
+def test_page_readiness_does_not_require_network_idle(load_docs_page):
+    page = docs_page(SimpleNamespace(ok=True, status=200))
+
+    async def navigate(url, *, wait_until, timeout):
+        if wait_until == "networkidle":
+            raise TimeoutError("Background requests never become idle")
+        return SimpleNamespace(ok=True, status=200)
+
+    page.goto.side_effect = navigate
+    assert (
+        asyncio.run(load_docs_page(page, "https://example.com/docs")) == page.content.return_value
+    )
+    page.goto.assert_awaited_once_with(
+        "https://example.com/docs", wait_until="domcontentloaded", timeout=30_000
+    )
+    page.wait_for_selector.assert_awaited_once_with(
+        "article, main", state="attached", timeout=30_000
+    )
+
+
+@pytest.mark.parametrize("status", [None, 404, 500])
+def test_page_readiness_rejects_missing_or_failed_response(load_docs_page, status):
+    page = docs_page(None if status is None else SimpleNamespace(ok=False, status=status))
+    with pytest.raises(RuntimeError, match=f"HTTP {status if status else 'no response'}"):
+        asyncio.run(load_docs_page(page, "https://example.com/docs"))
+    page.wait_for_selector.assert_not_awaited()
+    page.content.assert_not_awaited()
+
+
+def test_page_readiness_rejects_missing_docs_body(load_docs_page):
+    page = docs_page(SimpleNamespace(ok=True, status=200))
+    page.wait_for_selector.side_effect = TimeoutError("Docs body never attached")
+    with pytest.raises(TimeoutError, match="Docs body never attached"):
+        asyncio.run(load_docs_page(page, "https://example.com/docs"))
+    page.content.assert_not_awaited()
+
+
+def test_page_readiness_propagates_navigation_timeout(load_docs_page):
+    page = docs_page(SimpleNamespace(ok=True, status=200))
+    page.goto.side_effect = TimeoutError("Navigation timeout")
+    with pytest.raises(TimeoutError, match="Navigation timeout"):
+        asyncio.run(load_docs_page(page, "https://example.com/docs"))
+    page.wait_for_selector.assert_not_awaited()
+    page.content.assert_not_awaited()
 
 
 def corpus():
@@ -89,7 +161,6 @@ def test_failed_embedding_build_preserves_previous_generation(tmp_path):
 
 
 def test_reader_writer_dependency_pins_match():
-    import ast
     import tomllib
 
     scripts = Path(__file__).resolve().parents[1]

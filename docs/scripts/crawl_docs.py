@@ -25,6 +25,16 @@ MAX_CONCURRENT = 5  # Limit concurrent requests to be polite
 DELAY_BETWEEN_REQUESTS = 0.5  # seconds
 
 
+async def load_docs_page(page, url: str) -> str:
+    """Wait for the docs body, not unrelated background network activity."""
+    response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+    if response is None or not response.ok:
+        status = response.status if response is not None else "no response"
+        raise RuntimeError(f"HTTP {status}")
+    await page.wait_for_selector("article, main", state="attached", timeout=30_000)
+    return await page.content()
+
+
 class HTMLToMarkdown(HTMLParser):
     """Small dependency-free HTML-to-Markdown converter for crawled docs pages.
 
@@ -251,14 +261,7 @@ class CuaDocsCrawler:
                 print(f"Crawling: {url}")
 
                 page = await browser.new_page()
-                response = await page.goto(url, wait_until="networkidle", timeout=30_000)
-                if response is None or not response.ok:
-                    status = response.status if response else "no response"
-                    print(f"Failed to crawl {url}: HTTP {status}")
-                    self.failed_urls.add(url)
-                    return None
-
-                page_html = await page.content()
+                page_html = await load_docs_page(page, url)
                 metadata = extract_metadata(page_html, await page.title())
 
                 # Extract new links from the page

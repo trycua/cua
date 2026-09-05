@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"browser_download","arguments":{"session":"public","_session_id":"forged","_transport_session_id":"forged","_cua_browser_download_mcp_host_approved":false}}}

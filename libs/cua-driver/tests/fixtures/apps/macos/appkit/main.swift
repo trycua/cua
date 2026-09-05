@@ -569,6 +569,17 @@ func writeBringToFrontWindowReport(
 
 // MARK: - Menu bar (Mac-specific scenario: ns_menubar)
 
+func writeNativeSheetResult(_ result: String) {
+    guard let path = ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL_ORACLE"] else {
+        return
+    }
+    do {
+        try (result + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fputs("failed to write native sheet result: \(error)\n", stderr)
+    }
+}
+
 func installMenuBar(target: HarnessWindowController) {
     let main = NSMenu()
     let appItem = NSMenuItem()
@@ -617,7 +628,10 @@ struct CuaAppKitHarness {
         if ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL"] == "1" {
             openPanel = NSOpenPanel()
             openPanel?.title = "CuaTestHarness Native Open Panel"
-            openPanel?.beginSheetModal(for: controller.window) { _ in }
+            writeNativeSheetResult("pending")
+            openPanel?.beginSheetModal(for: controller.window) { response in
+                writeNativeSheetResult(response == .cancel ? "cancelled" : "other")
+            }
         }
         var matrixWindows: BringToFrontMatrixWindows?
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {

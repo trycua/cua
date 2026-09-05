@@ -33,6 +33,8 @@ pub mod permissions;
 #[cfg(target_os = "macos")]
 pub mod pip;
 #[cfg(target_os = "macos")]
+mod post_action_observer;
+#[cfg(target_os = "macos")]
 pub mod recording_hooks;
 #[cfg(target_os = "macos")]
 pub mod session;
@@ -42,8 +44,6 @@ pub mod terminal;
 pub mod tools;
 #[cfg(target_os = "macos")]
 pub mod video_sckit;
-#[cfg(target_os = "macos")]
-pub mod window_change_detector;
 #[cfg(target_os = "macos")]
 pub mod windows;
 

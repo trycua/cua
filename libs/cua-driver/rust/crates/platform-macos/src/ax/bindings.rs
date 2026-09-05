@@ -693,7 +693,16 @@ pub unsafe fn ax_get_window_id(element: AXUIElementRef) -> Option<u32> {
 ///
 /// `element` must be valid, and the caller must release every returned element.
 pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
-    let attr = CFStr::new("AXWindows");
+    copy_element_array_attr(element, "AXWindows")
+}
+
+/// Read an AX attribute containing an array of accessibility elements.
+/// Every returned element is retained and must be released by the caller.
+pub unsafe fn copy_element_array_attr(
+    element: AXUIElementRef,
+    attribute: &str,
+) -> Vec<AXUIElementRef> {
+    let attr = CFStr::new(attribute);
     let mut value: CFTypeRef = std::ptr::null();
     let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
     if err != kAXErrorSuccess || value.is_null() {

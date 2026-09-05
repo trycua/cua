@@ -188,11 +188,14 @@ class CleanupTest(unittest.TestCase):
             plan_path.write_text(json.dumps(plan))
             module = root / "module.so"
             module.write_bytes(b"synthetic module")
+            (root / "driver").write_bytes(b"synthetic driver")
+            (root / "grab").write_bytes(b"synthetic primary helper")
             wire = root / "wire.log"
             wire.write_text("wl_pointer#2.button(5, 123, 272, 1)\n")
             args = SimpleNamespace(evidence=root / "attempt", plan=plan_path, mode="control", case="move",
                 source_sha="a" * 40, module=module, control=None, driver=root / "driver",
-                driver_socket=root / "driver.sock", compositor_pid=100, instance="synthetic",
+                driver_socket=root / "driver.sock", observer_driver_socket=root / "observer.sock",
+                compositor_pid=100, instance="synthetic",
                 disposable=True, lock_fixture=None, compositor_exe=root / "Hyprland",
                 primary_grab=root / "grab", input_directory=root,
                 background_journal=root / "bg.jsonl", foreground_journal=root / "fg.jsonl",
@@ -218,7 +221,7 @@ class CleanupTest(unittest.TestCase):
             initial["experiment"]["lease_active"] = False
             primary = {"held": True, "clicks": 0, "keys": "", "scroll": 0, "motion": 0}
             with patch("desktop_faults.FaultController", return_value=fault), \
-                 patch("desktop_state_live.MCP", side_effect=[observer, client]), \
+                 patch("desktop_state_live.MCP", side_effect=[observer, client]) as connections, \
                  patch("desktop_state_live.Trace", return_value=tracer), \
                  patch("desktop_state_live.subprocess.check_output", return_value=json.dumps(initial)), \
                  patch("desktop_state_live.subprocess.Popen", return_value=grab), \
@@ -233,11 +236,14 @@ class CleanupTest(unittest.TestCase):
             grab.terminate.assert_called_once()
             client.close.assert_called_once()
             observer.close.assert_called_once()
+            self.assertEqual(connections.call_args_list[0].args[0].driver_socket, args.observer_driver_socket)
+            self.assertEqual(connections.call_args_list[1].args[0].driver_socket, args.driver_socket)
             tracer.close.assert_called_once()
             result = json.loads((args.evidence / "result.json").read_text())
             self.assertEqual(result["result"], "failed")
             self.assertEqual(result["error"], "synthetic fault failure")
             self.assertTrue(result["cleanup_errors"])
+            self.assertTrue(result["identity"]["separate_observer_runtime"])
             self.assertTrue((args.evidence / "foreground-wire-final.log").is_file())
             self.assertTrue((args.evidence / "failed-primary-trace.json").is_file())
 

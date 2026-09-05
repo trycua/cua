@@ -58,6 +58,10 @@ def run(args):
         target, foreground = plan["background"], plan["foreground"]
         result["identity"] = {"case": args.case, "source_sha": args.source_sha,
             "module_sha256": hashlib.sha256(args.module.read_bytes()).hexdigest(),
+            "driver_sha256": hashlib.sha256(args.driver.read_bytes()).hexdigest(),
+            "primary_grab_sha256": hashlib.sha256(args.primary_grab.read_bytes()).hexdigest(),
+            "lock_fixture_sha256": hashlib.sha256(args.lock_fixture.read_bytes()).hexdigest() if args.lock_fixture else None,
+            "separate_observer_runtime": args.observer_driver_socket is not None,
             "harness_sha256": {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
                                for name in ("desktop_state_live.py", "desktop_state_evidence.py", "desktop_faults.py",
                                             "driver_input_live.py", "input_lifecycle_live.py", "lifecycle_evidence.py",
@@ -77,8 +81,9 @@ def run(args):
         def new_client(name):
             directory = args.evidence / name
             directory.mkdir()
+            endpoint = args.observer_driver_socket if name == "observer" and args.observer_driver_socket else args.driver_socket
             return MCP(SimpleNamespace(evidence=directory, driver=args.driver,
-                                       driver_socket=args.driver_socket))
+                                       driver_socket=endpoint))
 
         def snapshot(mcp, selection):
             response = mcp.tool("get_window_state", {**selection, "max_elements": 80})
@@ -145,6 +150,7 @@ def run(args):
             assert lane in (0, 1), "unknown experimental lane"
             input_path = args.input_directory / ("cua-input-test.sock" if lane == 0 else "cua-input-test-2.sock")
             operator, _ = connect(input_path)
+            assert wm()["pid"] == foreground["pid"], "set up the exact foreground actor before approval"
             assert exchange(operator, grant["packet"])["ok"] is True
 
         desktop = observer.tool("get_desktop_state", {})["structuredContent"]
@@ -276,6 +282,7 @@ def run(args):
             result["fresh_approval_required"] = True
             fresh_grant = receive_grant(fresh, "recovery")
             assert fresh_grant["packet"] != grant["packet"], "recovery reused revoked approval"
+            assert wm()["pid"] == foreground["pid"], "restore the foreground actor before recovery approval"
             assert exchange(operator, fresh_grant["packet"])["ok"] is True
             snapshot(client, recovery_target)
             recovery_offset = len(journal(recovery_journal))
@@ -383,6 +390,8 @@ if __name__ == "__main__":
                  "primary-grab", "background-journal", "foreground-journal", "foreground-wire"):
         parser.add_argument("--" + name, type=Path, required=True)
     parser.add_argument("--control", type=Path)
+    parser.add_argument("--observer-driver-socket", type=Path,
+                        help="independent Driver runtime for video and observations; excludes synchronous action-recording capture from cancellation timing")
     parser.add_argument("--lock-fixture", type=Path)
     parser.add_argument("--source-sha", required=True)
     parser.add_argument("--compositor-pid", type=int, required=True)

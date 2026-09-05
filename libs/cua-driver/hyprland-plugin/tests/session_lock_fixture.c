@@ -4,10 +4,10 @@
  * ext-session-lock-v1.xml, then link this file and generated C with
  * pkg-config --cflags --libs wayland-client. Output binary: session_lock_fixture.
  *
- * No surfaces are necessary: ext-session-lock-v1 requires the compositor to
- * blank outputs before sending locked. Recovery sends unlock_and_destroy and
- * waits for a wl_display.sync acknowledgment. Never kill this client to unlock;
- * the protocol deliberately leaves a crashed client's session locked.
+ * Supply an opaque lock surface on each advertised output. Waiting for the
+ * compositor's missing-surface fallback would measure its grace period rather
+ * than a normally configured lock. Recovery sends unlock_and_destroy and waits
+ * for a wl_display.sync acknowledgment. Never kill this client to unlock.
  */
 #define _GNU_SOURCE
 #include <wayland-client.h>
@@ -20,11 +20,20 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
 #include <time.h>
 #include <unistd.h>
 
 static struct ext_session_lock_manager_v1 *manager;
 static struct ext_session_lock_v1 *lock;
+static struct wl_compositor *compositor;
+static struct wl_shm *shm;
+static struct output {
+    struct wl_output *output;
+    struct wl_surface *surface;
+    struct ext_session_lock_surface_v1 *lock_surface;
+} outputs[16];
+static unsigned output_count;
 static int locked, finished, synced;
 static volatile sig_atomic_t release_requested;
 
@@ -39,11 +48,42 @@ static void event(const char *name) {
     fflush(stdout);
 }
 static void release(int sig) { (void)sig; release_requested = 1; }
+static void buffer_released(void *data, struct wl_buffer *buffer) {
+    (void)data; wl_buffer_destroy(buffer);
+}
+static const struct wl_buffer_listener buffer_listener = {buffer_released};
+static void configure(void *data, struct ext_session_lock_surface_v1 *surface,
+                      uint32_t serial, uint32_t width, uint32_t height) {
+    struct output *output = data;
+    if (!width || !height || width > 8192 || height > 8192) exit(1);
+    size_t bytes = (size_t)width * height * 4;
+    int fd = memfd_create("test-lock-black", MFD_CLOEXEC);
+    if (fd < 0 || ftruncate(fd, (off_t)bytes)) exit(1);
+    /* A fresh memfd is zero-filled. XRGB ignores alpha, so it is opaque black. */
+    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, (int32_t)bytes);
+    struct wl_buffer *buffer = wl_shm_pool_create_buffer(pool, 0, (int32_t)width,
+        (int32_t)height, (int32_t)width * 4, WL_SHM_FORMAT_XRGB8888);
+    wl_shm_pool_destroy(pool); close(fd);
+    wl_buffer_add_listener(buffer, &buffer_listener, NULL);
+    ext_session_lock_surface_v1_ack_configure(surface, serial);
+    wl_surface_attach(output->surface, buffer, 0, 0);
+    wl_surface_damage(output->surface, 0, 0, (int32_t)width, (int32_t)height);
+    wl_surface_commit(output->surface);
+}
+static const struct ext_session_lock_surface_v1_listener surface_listener = {configure};
 static void global(void *data, struct wl_registry *registry, uint32_t name,
                    const char *interface, uint32_t version) {
     (void)data; (void)version;
     if (!strcmp(interface, "ext_session_lock_manager_v1"))
         manager = wl_registry_bind(registry, name, &ext_session_lock_manager_v1_interface, 1);
+    else if (!strcmp(interface, "wl_compositor"))
+        compositor = wl_registry_bind(registry, name, &wl_compositor_interface, 1);
+    else if (!strcmp(interface, "wl_shm"))
+        shm = wl_registry_bind(registry, name, &wl_shm_interface, 1);
+    else if (!strcmp(interface, "wl_output")) {
+        if (output_count == 16) exit(1);
+        outputs[output_count++].output = wl_registry_bind(registry, name, &wl_output_interface, 1);
+    }
 }
 static void removed(void *data, struct wl_registry *registry, uint32_t name) {
     (void)data; (void)registry; (void)name;
@@ -110,7 +150,7 @@ int main(int argc, char **argv) {
     uint64_t deadline = now_ns() + 2000000000ULL;
     while (!synced && now_ns() < deadline && !release_requested)
         if (pump(display, 0) < 0) return 1;
-    if (!synced || !manager || release_requested) return 1;
+    if (!synced || !manager || !compositor || !shm || !output_count || release_requested) return 1;
     event("ready");
     /* Byte-wise bounded input prevents an incomplete command from blocking the
      * independent deadline. No arbitrary commands or real credentials exist. */
@@ -127,6 +167,13 @@ int main(int argc, char **argv) {
     if (used != sizeof(command) || memcmp(command, "LOCK\n", sizeof(command)) || release_requested) return 1;
     lock = ext_session_lock_manager_v1_lock(manager);
     ext_session_lock_v1_add_listener(lock, &lock_listener, NULL);
+    for (unsigned i = 0; i < output_count; ++i) {
+        outputs[i].surface = wl_compositor_create_surface(compositor);
+        outputs[i].lock_surface = ext_session_lock_v1_get_lock_surface(lock,
+            outputs[i].surface, outputs[i].output);
+        ext_session_lock_surface_v1_add_listener(outputs[i].lock_surface,
+            &surface_listener, &outputs[i]);
+    }
     deadline = now_ns() + (uint64_t)duration * 1000000ULL;
     while (!finished && !locked && now_ns() < deadline)
         if (pump(display, 1) < 0) return 1;
@@ -143,7 +190,14 @@ int main(int argc, char **argv) {
         if (pump(display, 0) < 0) return 1;
     if (!synced) return 1;
     event("unlocked");
+    for (unsigned i = 0; i < output_count; ++i) {
+        ext_session_lock_surface_v1_destroy(outputs[i].lock_surface);
+        wl_surface_destroy(outputs[i].surface);
+        wl_output_destroy(outputs[i].output);
+    }
     ext_session_lock_manager_v1_destroy(manager);
+    wl_shm_destroy(shm);
+    wl_compositor_destroy(compositor);
     wl_registry_destroy(registry);
     wl_display_flush(display);
     wl_display_disconnect(display);

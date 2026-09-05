@@ -185,10 +185,17 @@ Wayland wire logs. The helper refuses an arbitrary process as its target.
 For each `--case destroy|move|resize|lock|dpms`, run `--mode control` before
 `--mode action --control PATH_TO_CONTROL_RESULT`. Use the same foreground
 fixture, geometry, source SHA, module digest, and selected fault in both runs.
+The identity also binds the Driver and adversary binaries and the harness files.
 The control measures the compositor effects of the fault without agent input.
 A lock can legitimately change focus; matching cursor endpoints alone does
 not prove that the agent added no interference. The comparison checks exact
 foreground state, ordered cursor movement, input events, and focus transitions.
+
+Use `--observer-driver-socket` to select a second Driver service built from the
+same source for observations and video. The action service must have no active
+recording. This separates input-response latency from synchronous post-action
+trajectory capture; both services still use real Driver MCP. A second MCP
+connection to the same service does not isolate that recording overhead.
 
 Pass the lifecycle runner's fixture paths, plus `--source-sha`, `--module`,
 `--compositor-pid`, `--compositor-exe`, `--instance`, and `--disposable`.
@@ -213,11 +220,16 @@ and supplies distinct signed grants with capabilities `10`. The runner waits
 it also requests a separately launched replacement through `recovery-plan.json`.
 Recovery must refuse old authority, require a fresh grant, deliver exactly one
 Escape press/release pair, and preserve foreground input and compositor state.
+Before either approval, the foreground actor must already own primary focus.
+A newly launched target may take focus during setup; restore the foreground
+actor explicitly before measuring background delivery. Setup is not isolation
+evidence, and a grant revoked by a primary-target conflict is not a fault test.
 
 Build `session_lock_fixture.c` with the generated `ext-session-lock-v1`
 client protocol and pass it through `--lock-fixture`. It uses a real protocol
-lock and waits for compositor acknowledgments. The no-surface test depends on
-the protocol's mandatory output blanking; it is not a production lock screen.
+lock, supplies opaque black surfaces on every advertised output, and waits for
+compositor acknowledgments. Without surfaces, Hyprland's missing-surface grace
+period delays acknowledgment. The fixture is not a production lock screen.
 Independent watchdogs restore DPMS or request graceful unlock. Never kill a
 lock client to unlock the session: a crashed client can leave it locked, in
 which case discard the disposable guest.

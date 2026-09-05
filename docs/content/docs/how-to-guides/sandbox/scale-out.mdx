@@ -59,26 +59,44 @@ asyncio.run(main())
 
 ## Process a dynamic queue of tasks
 
-Use `asyncio.Queue` when tasks arrive at runtime.
+Use `asyncio.Queue` when tasks arrive at runtime. For maximum throughput, have
+each worker dequeue a task and then claim a sandbox from an existing Fleet
+pool. Claims are effectively instant when warm capacity is available, so each
+task can start without launching a new ephemeral sandbox.
+
+Before running this example, create a Fleet pool with enough warm capacity for
+`num_workers`, authenticate with `FLEETS_TOKEN` or OAuth client credentials,
+and set `CUA_POOL_NAME` to the pool name. Exiting the `async with` block after
+each task releases its claim and returns the sandbox to the pool.
 
 ```python
 import asyncio
-from cua import Sandbox, Image
+import os
 
-async def worker(queue: asyncio.Queue, worker_id: int):
+from cua_sandbox import Pool
+
+async def worker(queue: asyncio.Queue[str | None], pool: Pool, worker_id: int) -> None:
     while True:
         task = await queue.get()
-        if task is None:
-            break
-        async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
-            result = await sb.shell.run(task)
-            print(f'[worker-{worker_id}] {result.stdout.strip()}')
-        queue.task_done()
+        try:
+            if task is None:
+                return
+            async with pool.claim(time_to_start=900) as sb:
+                result = await sb.shell.run(task)
+                if result.success:
+                    print(f'[worker-{worker_id}] {result.stdout.strip()}')
+                else:
+                    print(f'[worker-{worker_id}] FAILED: {result.stderr.strip()}')
+        finally:
+            queue.task_done()
 
-async def main():
-    queue: asyncio.Queue = asyncio.Queue()
+async def main() -> None:
+    pool = await Pool.get(os.environ['CUA_POOL_NAME'])
+    queue: asyncio.Queue[str | None] = asyncio.Queue()
     num_workers = 4
-    workers = [asyncio.create_task(worker(queue, i)) for i in range(num_workers)]
+    workers = [
+        asyncio.create_task(worker(queue, pool, i)) for i in range(num_workers)
+    ]
     for i in range(10):
         await queue.put(f"echo 'job {i}'")
     for _ in range(num_workers):

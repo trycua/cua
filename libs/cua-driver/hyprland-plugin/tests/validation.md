@@ -138,7 +138,39 @@ A subsequent successful account-level SDK namespace listing returned no matching
 namespace. Direct lookup still returned `403`; that response alone is not
 treated as proof of deletion.
 
-## Remaining gates
+## Reproducible lifecycle follow-up at `0a67bf5c8`
+
+The checked-in [nested lifecycle runner](nested_lifecycle.py) passed on Cua
+Cloud Fleet at `0a67bf5c844f5b358651737fb3545aaed5522007` on September 5, 2026
+(UTC), through the Cua Sandbox SDK. The committed plugin, workflow, and license
+archive had SHA-256
+`960beaebeba6b4b10e9b08cdeb56e3843313b5e41a4154ca95693615e2a06ce0`.
+
+The guest had Omarchy `4.0.1-1`, Hyprland `0.56.2-1`, portal `1.4.1-1`, and
+installed driver `0.22.2`. This run reused the matching-toolchain module from
+the `3789f0e6e` build, SHA-256
+`693d6470a011956e58320de67fae8ed8d4628476e605f74cea018eb2eb5d5705`.
+Plugin C++, headers, CMake, and packaging were unchanged between that build and
+this candidate; this run tests the new orchestration, not a new package build.
+
+Both exact-PID-owned nested compositors passed the live six-mutation refusal
+and measured-state check. One restarted with a fresh socket and epoch; its old
+connection closed and socket disappeared. The sibling's connection remained
+responsive through restart and shutdown. Both owned processes stopped, only
+the original parent remained in the instance inventory, and the parent's
+plugin list was empty. Seven runner control-flow/cleanup tests also passed on
+the guest and on the macOS review host. Hosted CI now runs those tests alongside
+the existing six CTests; CI itself does not launch nested Hyprland.
+
+The guest still lacked `renderD128` and passwordless package-install access.
+No driver was installed, no system package transaction ran, and no input
+capability was enabled. Nested startup can affect the disposable parent's
+focus, so parent foreground preservation is not claimed by this lifecycle run.
+Application delivery, foreground-grab isolation, and direct-DRM behavior remain
+outside its evidence. The report-only follow-up does not change the tested
+runner or executable sources.
+
+## Outstanding acceptance gates
 
 System installation with `pacman -U`, dependency-upgrade refusal, the complete
 Fleet baseline, and physical-host certification remain unverified. Native

@@ -22,14 +22,38 @@ For OpenTofu, run the same commands with `tofu` in place of `terraform`.
 
 ## Authentication
 
-The provider three OAuth user-key
+The provider accepts either `CYCLOPS_ACCESS_TOKEN` or all three OAuth user-key
 variables: `CYCLOPS_CLIENT_ID`, `CYCLOPS_CLIENT_SECRET`, and
-`CYCLOPS_TOKEN_URL`. Configure the run.cua.ai endpoint separately:
+`CYCLOPS_TOKEN_URL`. First, [create a Fleet user API key and check access](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials).
+That setup covers account access, payment-method requirements, and revocation.
+
+Use the same key with the provider's variable names:
+
+```bash
+export CYCLOPS_ENDPOINT="https://run.cua.ai"
+export CYCLOPS_CLIENT_ID="<your-client-id>"
+export CYCLOPS_CLIENT_SECRET="<your-client-secret>"
+export CYCLOPS_TOKEN_URL="https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+unset CYCLOPS_ACCESS_TOKEN
+```
+
+`CYCLOPS_CLIENT_ID` and `CYCLOPS_CLIENT_SECRET` are **Client ID** and
+**Client Secret** from Fleet's **API key created** dialog. The token endpoint
+above is for `run.cua.ai`. Unlike the Sandbox SDK, the provider requires an
+explicit token URL when using client credentials.
+
+For a short-lived workflow with an existing Fleet access token, use:
 
 ```bash
 export CYCLOPS_ENDPOINT="https://run.cua.ai"
 export CYCLOPS_ACCESS_TOKEN="<your-access-token>"
 ```
+
+`CYCLOPS_ACCESS_TOKEN` takes precedence over the client credentials. A pasted
+token cannot renew itself; replace it when it expires before running Terraform
+again. Provider arguments take precedence over their corresponding environment
+variables. `cua auth login`, `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, and
+`FLEETS_TOKEN` do not configure the Terraform provider.
 
 ## Choose a sizing mode
 

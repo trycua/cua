@@ -109,6 +109,71 @@ startup, arbitrary ABI combinations, or the complete driver desktop matrix.
 Hosted CI tests the runner's cleanup/error paths with mocks; native results
 require running it in the Fleet guest or another declared Wayland environment.
 
+## Held-input lifecycle faults
+
+The [native reliability record](lifecycle-validation.md) identifies the tested
+source, measured results, recordings, setup failures, and remaining limits.
+
+Run `input_lifecycle_live.py` only in a disposable Fleet guest with the
+experimental build explicitly loaded, a source-built Driver service started
+with `--permission-mode unrestricted --dangerously-bypass-approvals`, and two
+native GTK fixtures. The normal build does not support this test.
+
+First observe both fixture windows through Driver. Supply a reviewed JSON plan
+containing `background` and `foreground` PID/window pairs, their matching
+`background_bounds` and `foreground_bounds`, two window-image points (`from`
+and `to`), and a window-local `foreground_point` for the independent primary
+grab. The runner rejects changed geometry and takes fresh Driver snapshots
+before and after application actions.
+
+Pass the exact paths through `--plan`, `--evidence`, `--driver`,
+`--driver-socket`, `--input-directory`, `--primary-grab`,
+`--background-journal`, `--foreground-journal`, and `--foreground-wire`.
+The journals and wire log belong to the existing isolated-input fixtures.
+Use `--record-video` for supporting Driver video evidence.
+
+The runner writes `request-initial.json` and waits up to 35 seconds. Review the
+exact pending target on the host and sign its epoch/challenge/target with
+`input_operator.py`. Grant only capabilities `10` (drag and the recovery key
+probe), with a bounded lifetime. Transfer only the signed grant as
+`grant-initial.json`; keep the private key outside the guest. The runner has
+no signing or implicit approval path.
+
+Choose one fault per run:
+
+- `--case stop` revokes input through the separate operator connection.
+- `--case disconnect` terminates the exact agent MCP proxy while its drag is
+  held. The observer remains connected independently.
+- `--case expiry --compositor-pid PID` deliberately stalls the explicitly
+  selected Hyprland process past lease expiry. Use a short grant, such as
+  10 seconds. A separate PID-fd watchdog resumes that same process within
+  four seconds if the caller fails. When launching through systemd, use
+  `KillMode=process` so caller termination does not also kill the watchdog.
+- `--case reload --reload-module PATH` unloads the exact experimental module
+  while input is held, then loads it again and requires a different epoch
+  and fresh authorization on a new MCP connection.
+
+The application must receive a press before fault injection and a matching
+release within 750 ms. The fault lands early in a two-second drag, so natural
+completion cannot satisfy the Stop/disconnect/unload bound. For expiry, the
+bound starts at compositor resume, and a 500 ms drag must report
+`lease_expired`: the desktop is deliberately frozen during the stall. This
+case proves expiry cleanup after resumption, not uninterrupted
+foreground operation or cleanup while the compositor cannot run.
+
+The primary fixture must retain its grab, click count, and keyboard state.
+Its independent Wayland wire log must contain no pointer or keyboard input
+events during the fault window. Matching cursor endpoints alone cannot pass
+this check. Raw logs and grants remain private; publish only categorical
+results, timings, source and artifact digests, and stated limitations.
+
+Reload cleanup does not prove that surviving clients bind replacement seats
+or accept subsequent input. Client rebinding and a production resource-lifetime
+contract remain separate gates. Atomic key packets do not expose a held-key
+stream, so these cases make a held-pointer claim only. These focused tests
+supplement, rather than replace, the canonical desktop matrix and physical
+host validation.
+
 ## Fleet packaging lane
 
 Build an Omarchy/Arch Fleet image from the monorepo source using

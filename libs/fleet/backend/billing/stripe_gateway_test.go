@@ -121,6 +121,7 @@ func TestSetupSessionParamsCopyLatestCustomerGenerationToSetupIntent(t *testing.
 		SetupGeneration: "server-generated-token",
 		Subject:         "subject-1",
 		Source:          "spa",
+		IdentityClass:   "external",
 	})
 
 	if got := params.SetupIntentData.Metadata[MetadataSetupGeneration]; got != "server-generated-token" {
@@ -131,6 +132,60 @@ func TestSetupSessionParamsCopyLatestCustomerGenerationToSetupIntent(t *testing.
 	}
 	if got := params.SetupIntentData.Metadata[MetadataSetupSource]; got != "spa" {
 		t.Fatalf("setup intent source = %q, want spa", got)
+	}
+	if got := params.SetupIntentData.Metadata[MetadataIdentityClass]; got != "external" {
+		t.Fatalf("setup intent identity class = %q, want external", got)
+	}
+}
+
+func TestRetrieveSetupSessionExpandsAndSanitizesSetupIntent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/checkout/sessions/cs_test_owned" {
+			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
+		}
+		if expanded := r.URL.Query()["expand[0]"]; !reflect.DeepEqual(expanded, []string{"setup_intent"}) {
+			t.Fatalf("expand = %#v, want setup_intent", r.URL.Query())
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `{
+			"id":"cs_test_owned","object":"checkout.session","mode":"setup","status":"complete",
+			"customer":"cus_owned",
+			"setup_intent":{
+				"id":"seti_owned","object":"setup_intent","status":"succeeded",
+				"customer":"cus_owned","payment_method":"pm_card",
+				"metadata":{"purpose":"fleet_default_card","fleet_subject":"subject-123","fleet_source":"spa","fleet_identity_class":"external","fleet_setup_generation":"current"}
+			}
+		}`)
+	}))
+	defer server.Close()
+
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL)})
+	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend}))
+	gateway := &StripeGateway{client: client}
+
+	got, err := gateway.RetrieveSetupSession(context.Background(), "cs_test_owned")
+	if err != nil {
+		t.Fatalf("RetrieveSetupSession() error = %v", err)
+	}
+	want := successfulSetupSession()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("session = %#v, want %#v", got, want)
+	}
+}
+
+func TestRetrieveSetupSessionMapsMissingStripeResource(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = io.WriteString(w, `{"error":{"code":"resource_missing","message":"No such checkout session","type":"invalid_request_error"}}`)
+	}))
+	defer server.Close()
+
+	backend := stripe.GetBackendWithConfig(stripe.APIBackend, &stripe.BackendConfig{URL: stripe.String(server.URL)})
+	client := stripe.NewClient("sk_test", stripe.WithBackends(&stripe.Backends{API: backend, Connect: backend, Uploads: backend, MeterEvents: backend}))
+	_, err := (&StripeGateway{client: client}).RetrieveSetupSession(context.Background(), "cs_test_missing")
+	if !errors.Is(err, ErrSetupSessionNotFound) {
+		t.Fatalf("error = %v, want %v", err, ErrSetupSessionNotFound)
 	}
 }
 

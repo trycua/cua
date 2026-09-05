@@ -104,6 +104,8 @@ func (h Handlers) HandleBillingWebhook(w http.ResponseWriter, r *http.Request) {
 }
 
 func capturePaymentSetup(capturer productanalytics.Capturer, event billing.WebhookEvent, outcome, errorClass string) {
+	// This event represents a terminal Stripe outcome; setup-session launch
+	// attempts are recorded separately by the authenticated billing handler.
 	if event.Subject == "" || (event.Source != productanalytics.SourceSPA && event.Source != productanalytics.SourceUserKey) {
 		return
 	}
@@ -116,6 +118,9 @@ func capturePaymentSetup(capturer productanalytics.Capturer, event billing.Webho
 	}
 	properties := map[string]any{
 		"outcome": outcome, "source": event.Source, "principal_type": principalType,
+	}
+	if event.IdentityClass != "" {
+		properties["identity_class"] = productanalytics.IdentityClass(event.IdentityClass)
 	}
 	if errorClass != "" {
 		properties["error_class"] = errorClass

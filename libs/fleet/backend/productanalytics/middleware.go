@@ -165,7 +165,10 @@ func routeObserver(route string, capturer Capturer, spaClientID string, qualifie
 						Properties: properties,
 					})
 					capturer.Capture(Event{
-						Name: EventFleetActivation, DistinctID: user.ID, InsertID: "fleet-activation:" + user.ID,
+						// This marker is emitted for every qualifying request. Activation
+						// queries must take each identity's earliest timestamp until the
+						// backend has durable once-per-user state.
+						Name: EventFleetActivation, DistinctID: user.ID,
 						SetOnce:    map[string]any{firstActivationProperty: time.Now().UTC().Format(time.RFC3339)},
 						Properties: properties,
 					})
@@ -309,7 +312,7 @@ func (rw *analyticsResponseWriter) Write(body []byte) (int, error) {
 			remaining = len(body)
 		}
 		rw.bodySample = append(rw.bodySample, body[:remaining]...)
-		if bytes.Contains(rw.bodySample, []byte("A payment method is required to create this resource")) {
+		if bytes.Contains(rw.bodySample, []byte(auth.BillingSetupRequiredMessage)) {
 			rw.paymentRequired = true
 		}
 	}

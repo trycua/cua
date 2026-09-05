@@ -3,9 +3,13 @@ package handlers
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/config"
@@ -115,7 +119,6 @@ func spaUser(sub string) *auth.User {
 // ── The provider ────────────────────────────────────────────────────────────
 
 func TestNamespaceRBACFacts_ProbeShape(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -148,7 +151,6 @@ func TestNamespaceRBACFacts_ProbeShape(t *testing.T) {
 // has to reach the same namespace the Rego does from it — see
 // TestOwnedNamespaceMatchesRego for the other half of that agreement.
 func TestNamespaceRBACFacts_ReadsTheNameParameter(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -162,71 +164,115 @@ func TestNamespaceRBACFacts_ReadsTheNameParameter(t *testing.T) {
 	}
 }
 
-// The TTL cache that made the old handler check affordable has to survive the
-// move. The policy library's own fact cache is per request, so if the provider
-// had reimplemented the probe instead of wrapping it, this would be 3.
-func TestNamespaceRBACFacts_VerdictCachedAcrossRequests(t *testing.T) {
-	resetOwnershipCache()
-	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
-	defer fk.server.Close()
-	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+// The verdict is cached per request and no longer than that: the policy
+// library's fact cache is the only one, so sequential loads each cost a probe,
+// allowed and denied alike. A revoked or re-created namespace is seen on the
+// very next request rather than after a TTL.
+func TestNamespaceRBACFacts_VerdictNotReusedAcrossRequests(t *testing.T) {
+	for _, testCase := range []struct {
+		name    string
+		status  int
+		body    string
+		allowed bool
+	}{
+		{"allowed", http.StatusOK, `{"items":[]}`, true},
+		{"denied", http.StatusForbidden, `{"kind":"Status"}`, false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			fk := newFakeK8s(testCase.status, testCase.body)
+			defer fk.server.Close()
+			overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
 
-	provider := NamespaceRBACFacts(testHandlers())
-	for i := 0; i < 3; i++ {
-		facts, err := provider.LoadFacts(context.Background(),
-			factRequest(spaUser("test-uuid"), svcRoute, map[string]string{"namespace": "other-ns"}))
-		if err != nil || facts["allowed"] != true {
-			t.Fatalf("load %d: facts = %#v, err = %v", i, facts, err)
-		}
-	}
-	if len(fk.requests) != 1 {
-		t.Fatalf("expected 1 probe across 3 loads (cached), got %d", len(fk.requests))
-	}
-}
-
-func TestNamespaceRBACFacts_NegativeVerdictCached(t *testing.T) {
-	resetOwnershipCache()
-	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
-	defer fk.server.Close()
-	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
-
-	provider := NamespaceRBACFacts(testHandlers())
-	for i := 0; i < 2; i++ {
-		facts, err := provider.LoadFacts(context.Background(),
-			factRequest(spaUser("intruder-uuid"), svcRoute, map[string]string{"namespace": "other-ns"}))
-		if err != nil || facts["allowed"] != false {
-			t.Fatalf("load %d: facts = %#v, err = %v", i, facts, err)
-		}
-	}
-	if len(fk.requests) != 1 {
-		t.Fatalf("expected 1 probe across 2 loads (negative cached), got %d", len(fk.requests))
+			provider := NamespaceRBACFacts(testHandlers())
+			for i := 0; i < 3; i++ {
+				facts, err := provider.LoadFacts(context.Background(),
+					factRequest(spaUser("test-uuid"), svcRoute, map[string]string{"namespace": "other-ns"}))
+				if err != nil || facts["allowed"] != testCase.allowed {
+					t.Fatalf("load %d: facts = %#v, err = %v", i, facts, err)
+				}
+			}
+			if len(fk.requests) != 3 {
+				t.Fatalf("expected 3 probes across 3 loads (no cross-request cache), got %d", len(fk.requests))
+			}
+		})
 	}
 }
 
-func TestNamespaceRBACFacts_CacheIsPerUser(t *testing.T) {
-	resetOwnershipCache()
-	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
-	defer fk.server.Close()
-	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
+// Singleflight is now the only thing standing between a burst of parallel
+// requests — noVNC's first load — and a probe per request, so its collapse is
+// pinned directly: concurrent loads for one (sub, ns) share one probe.
+//
+// The fake here is not fakeK8s, whose recorder is not safe for concurrent
+// requests; a counter is all this needs. The first probe is held in the
+// handler until every other loader has joined the in-flight call, so the
+// merge is forced rather than raced for.
+func TestNamespaceRBACFacts_ConcurrentLoadsShareOneProbe(t *testing.T) {
+	var probes atomic.Int64
+	firstProbe := make(chan struct{})
+	release := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseProbes := func() { releaseOnce.Do(func() { close(release) }) }
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if probes.Add(1) == 1 {
+			close(firstProbe)
+		}
+		<-release
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"items":[]}`))
+	}))
+	// Unblock any parked handler before Close, which waits for them; closing
+	// the channel rather than sending is what lets an unmerged second probe
+	// through to fail the count below instead of deadlocking the server.
+	defer server.Close()
+	defer releaseProbes()
+	overrideK8sClient(server.Client(), server.URL, "fake-sa-token")
 
 	provider := NamespaceRBACFacts(testHandlers())
-	for _, sub := range []string{"user-a", "user-b"} {
-		if _, err := provider.LoadFacts(context.Background(),
-			factRequest(spaUser(sub), svcRoute, map[string]string{"namespace": "other-ns"})); err != nil {
-			t.Fatalf("load for %s: %v", sub, err)
+	request := factRequest(spaUser("test-uuid"), svcRoute, map[string]string{"namespace": "other-ns"})
+
+	const loaders = 8
+	results := make(chan error, loaders)
+	load := func() {
+		facts, err := provider.LoadFacts(context.Background(), request)
+		if err == nil && facts["allowed"] != true {
+			err = fmt.Errorf("facts = %#v, want allowed:true", facts)
+		}
+		results <- err
+	}
+
+	go load()
+	// The shared probe is now in flight, parked in the handler above.
+	<-firstProbe
+
+	var started sync.WaitGroup
+	for i := 1; i < loaders; i++ {
+		started.Add(1)
+		go func() {
+			started.Done()
+			load()
+		}()
+	}
+	started.Wait()
+	// Done runs just before LoadFacts, so give the loaders a moment to reach
+	// the singleflight before the probe is allowed to answer. A loader that
+	// somehow missed the merge issues a second probe, which the closed channel
+	// lets straight through to fail the count below — late, not deadlocked.
+	time.Sleep(100 * time.Millisecond)
+	releaseProbes()
+
+	for i := 0; i < loaders; i++ {
+		if err := <-results; err != nil {
+			t.Fatalf("load %d: %v", i, err)
 		}
 	}
-	// A cached verdict for user-a must not leak to user-b.
-	if len(fk.requests) != 2 {
-		t.Fatalf("expected 2 probes (one per user), got %d", len(fk.requests))
+	if got := probes.Load(); got != 1 {
+		t.Fatalf("probes = %d across %d concurrent loads, want 1 (singleflight)", got, loaders)
 	}
 }
 
 // An unreachable apiserver is a FactUnavailableError rather than a bare one,
-// which is what keeps the response a 502 instead of a 500; and it is not cached,
-// so a flapping apiserver cannot pin a verdict.
+// which is what keeps the response a 502 instead of a 500.
 func TestNamespaceRBACFacts_UnavailableIsTypedAndUncached(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusInternalServerError, `oops`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -251,7 +297,6 @@ func TestNamespaceRBACFacts_UnavailableIsTypedAndUncached(t *testing.T) {
 // Neither degenerate input is a policy judgement: they are questions the probe
 // cannot form. Both deny, and neither costs a round trip.
 func TestNamespaceRBACFacts_DegenerateInputsDenyWithoutProbing(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -283,12 +328,11 @@ func TestNamespaceRBACFacts_DegenerateInputsDenyWithoutProbing(t *testing.T) {
 
 // ── The authorization stage ─────────────────────────────────────────────────
 
-// The noVNC case, end to end: a burst of asset requests from one user for one
-// namespace costs one probe, not one each. This is the property the move had to
-// preserve — the policy library's fact cache is per request, and only the
-// probe's own TTL cache spans them.
-func TestSvcRoute_SPAUser_OwnedNamespace_AllowedAndProbedOnce(t *testing.T) {
-	resetOwnershipCache()
+// The noVNC case, end to end: the verdict is per request, so sequential
+// requests each cost a probe — only singleflight collapses concurrent ones,
+// and these are serial on purpose. What the requests share is the answer, not
+// a cache.
+func TestSvcRoute_SPAUser_OwnedNamespace_AllowedAndProbedPerRequest(t *testing.T) {
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -302,13 +346,12 @@ func TestSvcRoute_SPAUser_OwnedNamespace_AllowedAndProbedOnce(t *testing.T) {
 				i, w.Code, *reached, w.Body.String())
 		}
 	}
-	if len(fk.requests) != 1 {
-		t.Fatalf("expected 1 probe across 5 requests (TTL-cached), got %d", len(fk.requests))
+	if len(fk.requests) != 5 {
+		t.Fatalf("expected 5 probes across 5 requests (per-request verdicts), got %d", len(fk.requests))
 	}
 }
 
 func TestSvcRoute_SPAUser_NonOwnedNamespace_Forbidden(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status","status":"Failure","reason":"Forbidden"}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -324,7 +367,6 @@ func TestSvcRoute_SPAUser_NonOwnedNamespace_Forbidden(t *testing.T) {
 }
 
 func TestSvcRoute_OAuth2ProxyUser_NonOwnedNamespace_Forbidden(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status","status":"Failure","reason":"Forbidden"}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -342,7 +384,6 @@ func TestSvcRoute_OAuth2ProxyUser_NonOwnedNamespace_Forbidden(t *testing.T) {
 // Per-key clients are bound to their namespace claim, which is a check over the
 // token: allowed or denied, it must never cost a probe.
 func TestSvcRoute_PerKey_NamespaceMatch_Allowed_NoProbe(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -361,7 +402,6 @@ func TestSvcRoute_PerKey_NamespaceMatch_Allowed_NoProbe(t *testing.T) {
 }
 
 func TestSvcRoute_PerKey_NamespaceMismatch_Forbidden_NoProbe(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -382,7 +422,6 @@ func TestSvcRoute_PerKey_NamespaceMismatch_Forbidden_NoProbe(t *testing.T) {
 }
 
 func TestSignedServiceURLsRoute_PerKey_NamespaceMismatch_ForbiddenBeforeHandler(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -400,7 +439,6 @@ func TestSignedServiceURLsRoute_PerKey_NamespaceMismatch_ForbiddenBeforeHandler(
 }
 
 func TestSvcRoute_GitHubPrincipal_ClaimAllows_NoProbe(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -427,7 +465,6 @@ func TestSvcRoute_GitHubPrincipal_ClaimAllows_NoProbe(t *testing.T) {
 // false for a GitHub token, so the conjunction is decided before the leaf
 // carrying the provider is reached. The fake would have said yes.
 func TestSvcRoute_GitHubPrincipal_UngrantedNamespace_Forbidden_NoProbe(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -453,7 +490,6 @@ func TestSvcRoute_GitHubPrincipal_UngrantedNamespace_Forbidden_NoProbe(t *testin
 // And this is the other short-circuit: a cheap sibling of the ownership
 // conjunct — the surface's DNS-label check — denying before it runs at all.
 func TestSvcRoute_InvalidNamespace_Forbidden_NoProbe(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, `{"items":[]}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -475,7 +511,6 @@ func TestSvcRoute_InvalidNamespace_Forbidden_NoProbe(t *testing.T) {
 // the caller can retry, not a 500. Through the lattice it would have been a 500
 // without FactUnavailableError.
 func TestSvcRoute_K8sUnavailable_FailsClosedWith502(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusInternalServerError, `oops`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -496,7 +531,6 @@ func TestSvcRoute_K8sUnavailable_FailsClosedWith502(t *testing.T) {
 }
 
 func TestNamespacesRoute_GetOtherTenant_Forbidden(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -522,7 +556,6 @@ func TestNamespacesRoute_GetOtherTenant_Forbidden(t *testing.T) {
 // boundary, and the list route names no namespace to probe for in the first
 // place.
 func TestNamespacesSurface_RoutesOutsideTheBoundaryDoNotProbe(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusForbidden, `{"kind":"Status"}`)
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")

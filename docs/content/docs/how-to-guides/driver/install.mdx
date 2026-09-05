@@ -60,6 +60,11 @@ sudo apt install libxi6 at-spi2-core
 
 The installer downloads the binary to `~/.cua-driver/packages/releases/`, points `~/.cua-driver/packages/current` at that release, and creates the `~/.local/bin/cua-driver` symlink. It does not use sudo.
 
+If `cua-driver` is not found, open a new terminal to pick up the installer's
+PATH change. Installing the binary does not start the Linux daemon. Follow
+[Start the daemon on Linux](#start-the-daemon-on-linux) below before calling
+desktop tools.
+
 X11 support has toolkit-specific limits. Native Wayland remains opt-in with
 `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and has compositor-specific limits. Sway is
 supported with limits, GNOME requires the maintained WinRects helper, and KDE
@@ -81,6 +86,9 @@ the driver does not enable isolated raw background input on Omarchy.
 
 ## Verify the install
 
+The version and paths in the following output are illustrative; your installed
+release and machine determine the actual values.
+
 ```bash
 cua-driver --version
 # cua-driver 0.13.0
@@ -96,7 +104,11 @@ cua-driver doctor
 # ...
 ```
 
-`doctor` checks the version, install layout, and telemetry setup on every platform. It also runs platform probes for TCC on macOS, the interactive session on Windows, and AT-SPI plus the display server on Linux.
+`doctor` checks the version, install layout, and telemetry setup on every
+platform. It also probes the interactive session on Windows and AT-SPI plus
+the display server on Linux. On macOS, use `cua-driver permissions status`
+after starting the daemon to check its Accessibility and Screen Recording
+grants.
 
 ## Follow the nightly channel
 
@@ -133,7 +145,9 @@ cua-driver update --apply
 
 Nightlies are immutable builds of exact `main` commits. Copy the full
 `nightly-cua-driver-rs-v…` tag from the component's GitHub release, then pin
-that tag during installation:
+that tag during installation. The tag below illustrates the format and is
+not a verified release: replace the entire tag with one that exists and has
+an asset for your platform before running either command.
 
 <Tabs items={['macOS and Linux', 'Windows']}>
   <Tab value="macOS and Linux">
@@ -196,6 +210,20 @@ open -n -g -a CuaDriver --args serve \
 
 See [Permission modes](/reference/cua-driver/permission-modes) for exactly what each profile allows, and [Write a capability manifest](/how-to-guides/driver/write-a-bounded-manifest) for a tested manifest. To keep a non-default profile across reboots, its flags belong in the autostart entry — see [Pin a permission mode](/how-to-guides/driver/keep-running#pin-a-permission-mode).
 
+## Start the daemon on Linux
+
+In a terminal inside your graphical desktop session, start the daemon:
+
+```bash
+cua-driver serve
+```
+
+Leave that terminal open. `serve` stays in the foreground; it must have access
+to the same display and accessibility bus as the apps you want to drive. Run
+the readiness checks below from a second terminal in that session. To start
+the daemon automatically at sign-in, see
+[Keep Cua Driver running](/how-to-guides/driver/keep-running).
+
 ## Grant TCC permissions (macOS only)
 
 **Start the daemon first** so macOS attributes the TCC request to `CuaDriver.app` instead of your terminal:
@@ -256,6 +284,26 @@ cua-driver permissions status
 <Callout type="info">
   `cua-driver permissions status` reads the driver's actual grant state through the daemon. When no daemon is running, it reports `❓ unknown` instead of reporting your terminal's grants, and it does not claim `granted` unless the driver has that permission.
 </Callout>
+
+## Verify desktop readiness
+
+After starting the daemon and granting any required platform permissions, run:
+
+```bash
+cua-driver status
+cua-driver doctor
+cua-driver call list_apps
+```
+
+`status` should report `Cua Driver daemon is running`. Read the `doctor` report
+for interactive-session, display, or accessibility-bus warnings and errors;
+warnings can still produce a zero exit code. On macOS, confirm both grants
+with `cua-driver permissions status`. Then confirm that `list_apps` includes a GUI app you recognize. If the list is
+empty, open an app in the same desktop session and retry. A version string
+alone verifies the binary, not desktop access.
+
+If the Windows autostart task was not registered, run `cua-driver serve` in an
+interactive desktop terminal and use a second terminal for these checks.
 
 ## Next steps
 

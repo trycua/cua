@@ -174,6 +174,7 @@ func characterizationCases() map[string][]routeCase {
 	simple("/api/config", "/api/config")
 	simple("/api/analytics/session", "/api/analytics/session")
 	simple("/api/analytics/attribution", "/api/analytics/attribution")
+	simple("/api/analytics/payment-gate", "/api/analytics/payment-gate")
 	simple("/api/state/query", "/api/state/query")
 	simple("/api/usage/overview", "/api/usage/overview")
 	simple("/api/usage/pool", "/api/usage/pool")
@@ -182,12 +183,14 @@ func characterizationCases() map[string][]routeCase {
 	simple("/api/billing/summary", "/api/billing/summary")
 	simple("/api/billing/usage", "/api/billing/usage")
 	simple("/api/billing/setup-session", "/api/billing/setup-session")
+	simple("/api/billing/setup-session/complete", "/api/billing/setup-session/complete")
 	simple("/api/billing/portal-session", "/api/billing/portal-session")
 	simple("/api/keys", "/api/keys")
 	simple("/api/namespaces", "/api/namespaces")
 	simple("/api/user-keys", "/api/user-keys")
 	simple("/api/github-trust-policies", "/api/github-trust-policies")
 	simple("/api/admin/feature-flags", "/api/admin/feature-flags")
+	simple("/api/admin/account-lookup", "/api/admin/account-lookup")
 	cases["/api/admin/feature-flags/{key}"] = []routeCase{{name: "key", params: map[string]string{"key": "example"}, path: "/api/admin/feature-flags/example"}}
 
 	withID := func(route, prefix string) {

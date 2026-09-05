@@ -74,7 +74,7 @@ func ChatRoutePolicy() Node {
 }
 
 // BillingRoutePolicy guards the Stripe-hosted billing browser routes. Its module
-// matches a prefix rather than three literals, so a billing route added to
+// matches a prefix rather than individual literals, so a billing route added to
 // main.go and bound here is covered without a policy change.
 func BillingRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-billing", "data.authz_billing.allow"))
@@ -174,11 +174,15 @@ func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
-const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+const BillingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
 
 // FeatureFlagsRoutePolicy guards the admin-only feature-flag management API.
 func FeatureFlagsRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-feature-flags", "data.authz_feature_flags.allow"))
+}
+
+func AccountLookupRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-account-lookup", "data.authz_account_lookup.allow"))
 }
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
@@ -217,7 +221,7 @@ func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
-		Because(CustomResourceCreationAdmissionPolicy(), billingSetupRequiredMessage),
+		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
 		Policy(
 			Modules(
 				Registered("authz"),
@@ -259,6 +263,7 @@ const featureFlagAuditBodyLimit = 64 << 10
 // surfacePolicies is every surface, by name. A surface owning no route fails
 // TestEveryPolicySurfaceOwnsARoute; a route naming no surface cannot start.
 var surfacePolicies = map[string]surfacePolicy{
+	"account-lookup":      {tree: AccountLookupRoutePolicy, options: []MiddlewareOption{WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
 	"keys":                {tree: KeysRoutePolicy},
 	"config":              {tree: ConfigRoutePolicy},
 	"chat":                {tree: ChatRoutePolicy},
@@ -285,22 +290,24 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":                "config",
-	"/api/analytics/session":     "config",
-	"/api/analytics/attribution": "config",
-	"/api/state/query":           "state-query",
-	"/api/usage/overview":        "usage",
-	"/api/usage/pool":            "usage",
-	"/api/usage/browser-timings": "usage",
+	"/api/config":                 "config",
+	"/api/analytics/session":      "config",
+	"/api/analytics/attribution":  "config",
+	"/api/analytics/payment-gate": "config",
+	"/api/state/query":            "state-query",
+	"/api/usage/overview":         "usage",
+	"/api/usage/pool":             "usage",
+	"/api/usage/browser-timings":  "usage",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",
 	"/api/chat/conversations/{id}/turns": "chat",
 
-	"/api/billing/summary":        "billing",
-	"/api/billing/usage":          "billing",
-	"/api/billing/setup-session":  "billing",
-	"/api/billing/portal-session": "billing",
+	"/api/billing/summary":                "billing",
+	"/api/billing/usage":                  "billing",
+	"/api/billing/setup-session":          "billing",
+	"/api/billing/setup-session/complete": "billing",
+	"/api/billing/portal-session":         "billing",
 
 	"/api/keys":      "keys",
 	"/api/keys/{id}": "keys",
@@ -322,6 +329,7 @@ var routeSurfaces = map[string]string{
 
 	"/api/k8s/{path...}":             "k8s",
 	"/api/admin/feature-flags":       "feature-flags",
+	"/api/admin/account-lookup":      "account-lookup",
 	"/api/admin/feature-flags/{key}": "feature-flags",
 }
 

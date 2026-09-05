@@ -28,3 +28,9 @@ allow {
 	input.method == "POST"
 	input.user.azp == "cyclops-cs-spa"
 }
+
+allow {
+	input.route == "/api/analytics/payment-gate"
+	input.method == "POST"
+	input.user.azp == "cyclops-cs-spa"
+}

@@ -1,79 +1,105 @@
 ---
 title: Forward a port from a sandbox
-description: Expose a sandbox port on localhost so local tools can connect to it.
+description: Reach a sandbox service through a local startup mapping, a Fleet service request, or a supported tunnel transport.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+Choose the connection method for your sandbox's transport. In `cua-sandbox`
+0.4.3, local VM `HTTPTransport` and pool-backed `FleetTransport` do not implement
+`sb.tunnel.forward()`. Use the supported paths below; see
+[Sandbox runtime support](/reference/sandbox-sdk/runtime-support#ports-and-transports)
+for the versioned transport contract.
 
-`sb.tunnel.forward()` exposes a port (or Android abstract socket) running inside the sandbox on the local host.
+## Expose a local QEMU service at startup
 
-## Forward a single port
-
-Start the service inside the sandbox, then forward its port.
-
-```python
-from cua import Sandbox, Image
-
-async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
-    await sb.shell.run('python3 -m http.server 8080 &')
-
-    async with sb.tunnel.forward(8080) as t:
-        print(t.url)   # http://localhost:49823
-        print(t.host, t.port)  # localhost, 49823
-```
-
-The tunnel **closes automatically** when the async with block exits.
-
-## Forward multiple ports at once
-
-Pass multiple ports to get a `dict[port, TunnelInfo]`.
+Declare the port on the image before starting a bare-metal QEMU VM, then read the
+host mapping from `sb.exposed_ports`. This example requires QEMU, a compatible
+host, `cua==0.1.6`, and `httpx`:
 
 ```python
-async with sb.tunnel.forward(8080, 9222) as tunnels:
-    app_url      = tunnels[8080].url
-    devtools_url = tunnels[9222].url
+import asyncio
+import httpx
+from cua import Image, QEMURuntime, Sandbox
+
+async def main():
+    image = Image.linux().expose(8080)
+    async with Sandbox.ephemeral(
+        image, local=True, runtime=QEMURuntime(mode='bare-metal')
+    ) as sb:
+        await sb.shell.run(
+            'nohup python3 -m http.server 8080 --bind 0.0.0.0 '
+            '>/tmp/docs-http-server.log 2>&1 </dev/null &'
+        )
+        host_port = sb.exposed_ports[8080]
+        url = f'http://127.0.0.1:{host_port}/'
+        async with httpx.AsyncClient(timeout=5.0) as client:
+            for attempt in range(30):
+                try:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    print(f'Service is ready at {url}')
+                    break
+                except httpx.HTTPError:
+                    if attempt == 29:
+                        raise
+                    await asyncio.sleep(1)
+
+asyncio.run(main())
 ```
 
-## Close a tunnel manually
+The service must listen on a guest-reachable address, not only guest localhost.
+The mapping lasts for the VM's lifetime; exiting the ephemeral context stops
+the VM and removes the mapping. Other local runtimes may expose ports differently.
 
-If you need the tunnel outside an `async with` block, close it yourself.
+For multiple ports, chain declarations such as
+`Image.linux().expose(8080).expose(9222)` and read each guest port's entry from
+`sb.exposed_ports` after startup.
+
+## Request a named Fleet service
+
+Configure [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
+and use a pool whose guest starts the desired service. Within the claimed
+sandbox's context, send an authenticated request by service name:
 
 ```python
-t = await sb.tunnel.forward(8080)
-print(t.url)
-# ... do work ...
-await t.close()
+response = await sb.services.request('port-3000', method='GET', path='/healthz')
+response.raise_for_status()
+print(response.text)
 ```
 
-## Android abstract sockets
+An image's `.expose(3000)` declaration creates the `port-3000` service in the
+default pool template. It does not start an application on that port or create
+a localhost listener. See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
+for the complete image and claim workflow. External clients need the Fleet
+service URL and authentication; an endpoint URL is not anonymous access.
 
-Pass a string instead of a port number.
+## Forward through SSH or ADB
+
+For an existing sandbox connected through `SSHTransport` or `ADBTransport`, the
+tunnel helper creates a localhost forwarding endpoint. Start the guest service
+first, then keep its tunnel open for as long as the client needs it:
 
 ```python
-async with sb.tunnel.forward('chrome_devtools_remote') as t:
-    print(t.url)  # http://localhost:<random>
+# sb must use a transport that implements forwarding, such as SSH or ADB.
+async with sb.tunnel.forward(8080) as tunnel:
+    print(tunnel.url)
+    # Connect your local client before leaving this context.
 ```
 
-<Callout type="info">
-  Abstract socket names are Linux-only (Android). On Linux and macOS sandboxes use integer port numbers.
-</Callout>
+For several ports, `sb.tunnel.forward(8080, 9222)` returns a dictionary keyed by
+guest port. When using `tunnel = await sb.tunnel.forward(8080)` without a context
+manager, call `await tunnel.close()` after the client finishes.
 
-## Reference
+### Android abstract sockets
 
-See [Sandbox SDK interfaces](/reference/sandbox-sdk/interfaces) for the full `TunnelInfo` shape.
-
-## Example: Chrome DevTools Protocol
-
-Start Chrome with remote debugging enabled, then read the DevTools target list through the forwarded port.
+ADB also accepts a guest abstract socket name, such as the DevTools socket of a
+running Android Chrome instance:
 
 ```python
-from cua import Sandbox, Image
-
-async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
-    await sb.shell.run('google-chrome --remote-debugging-port=9222 --headless &')
-
-    async with sb.tunnel.forward(9222) as t:
-        import httpx
-        targets = httpx.get(f'{t.url}/json').json()
-        print(targets)
+# sb must be connected to the Android guest through ADBTransport.
+async with sb.tunnel.forward('chrome_devtools_remote') as tunnel:
+    print(tunnel.url)
 ```
+
+A socket name or integer port does not enable forwarding on an unsupported
+transport. See [Sandbox SDK interfaces](/reference/sandbox-sdk/interfaces) for
+the tunnel handle's fields and cleanup behavior.

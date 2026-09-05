@@ -128,7 +128,6 @@ func nsCreatedResponse(name string) string {
 }
 
 func TestGetNamespace_Success(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, nsCreatedResponse("demo"))
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")
@@ -228,7 +227,6 @@ func TestGetNamespace_PreservesForbiddenAndNotFound(t *testing.T) {
 // calling it directly serves the namespace it was given. Same shape as
 // TestK8sProxy_DirectHandlerLeavesAdmissionToMiddleware.
 func TestGetNamespace_DirectHandlerLeavesOwnershipToPolicy(t *testing.T) {
-	resetOwnershipCache()
 	fk := newFakeK8s(http.StatusOK, nsCreatedResponse("other-tenant"))
 	defer fk.server.Close()
 	overrideK8sClient(fk.server.Client(), fk.server.URL, "fake-sa-token")

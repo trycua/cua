@@ -1,0 +1,108 @@
+---
+title: Prepare and reference a Fleet image
+description: Publish a Fleet-compatible OCI image and reference it from the Sandbox SDK.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Fleet does not build a sandbox environment from the full SDK image-builder surface. Instead, Fleet expects a **prebuilt OCI artifact** that already carries the bootable guest image for the pool.
+
+<Callout type="info">
+  Configure [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials) before running the SDK example. The image-based `Sandbox.ephemeral()` path in `cua-sandbox` 0.4.3 accepts only the default region, `us-east-1`.
+</Callout>
+
+## Before you start
+
+This guide uses `cua-sandbox` 0.4.3 through `cua` 0.1.6. Choose a bootable guest
+artifact compatible with your Fleet deployment and a registry that deployment
+can pull from. SDK acceptance does not establish registry access or successful boot.
+
+You can use the built-in Ubuntu 24.04 or Windows Server 2022 VM image without
+publishing your own artifact. Follow this guide when you need software or startup
+configuration baked into a custom image. See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
+for the accepted image inputs and customization limits.
+
+<Callout type="warn">
+  Treat Fleet as a published-image workflow. Build first, publish first, then reference the resulting registry artifact from the SDK.
+</Callout>
+
+## 1. Build the guest image outside the claim path
+
+Prepare the operating system, installed software, startup behavior, and service layout before you ask Fleet to boot it.
+
+The published OCI artifact must already carry the bootable guest image Fleet expects. The Sandbox SDK's Fleet VM template references a containerDisk artifact, with a guest disk at `/disk/disk.img`; an ordinary application container is not a substitute. The SDK does not build that artifact, convert a disk file, or apply SDK layers on your behalf.
+
+## 2. Publish the OCI artifact immutably
+
+Push the finished artifact to a registry and prefer an immutable digest over a mutable tag.
+
+```text
+registry.example/fleet/workspace@sha256:...
+```
+
+Pinned digests make it possible to say exactly which boot image a pool launched. Mutable tags weaken that guarantee because the same pool spec can resolve to different guest images over time.
+
+## 3. Reference the published image from the SDK
+
+Use `Image.from_registry(...)` with any additional Fleet services declared through `.expose(...)`.
+
+With the SDK's default service configuration used here, your published image must
+already start the computer-server service on port `8000`. The generated template
+declares the `server` service and probes that port for readiness; the SDK also
+waits for its `/status` endpoint. Extra `.expose(...)` ports declare additional
+services your image starts. Explicit pool configurations can use a different
+service layout; see the [Pool reference](/reference/sandbox-sdk/pool).
+
+Replace the example reference with your published Linux VM artifact. For a Windows
+VM artifact, use `os_type='windows', kind='vm'`; the OS hint controls the generated
+firmware configuration and is not inferred from the disk.
+
+```python
+import asyncio
+from cua import Image, Sandbox
+
+async def main():
+    image = (
+        Image.from_registry(
+            "registry.example/fleet/workspace@sha256:...",
+            os_type="linux",
+            kind="vm",
+        )
+        .expose(3000)
+    )
+
+    async with Sandbox.ephemeral(image) as sb:
+        result = await sb.shell.run("uname -a")
+        print(result.stdout)
+
+asyncio.run(main())
+```
+
+## 4. Expose only the services your image actually starts
+
+`expose()` is how you declare additional named Fleet services that your guest brings up after boot.
+
+If your image only needs the default computer-server endpoint on `8000`, you do not need extra exposed ports. If it serves additional application traffic on another port, expose that port on the registry image you reference.
+
+## 5. Request the Fleet service through the authenticated connection
+
+Within the sandbox context, use `sb.services.request()` to send an authenticated
+HTTP request to the named service. Replace `/healthz` with a route your service
+implements:
+
+```python
+response = await sb.services.request("port-3000", method="GET", path="/healthz")
+response.raise_for_status()
+print(response.text)
+```
+
+The image-based `Sandbox.ephemeral()` example creates a temporary pool and claim
+and uses the same `FleetTransport` as `Pool.claim()` and `Sandbox.create(pool=...)`.
+It does not create a localhost listener, and that transport does not implement
+`tunnel.forward()` in 0.4.3. See [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
+
+## Related pages
+
+- [How Fleet images work](/concepts/how-fleet-images-work)
+- [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
+- [Image reference](/reference/sandbox-sdk/image)

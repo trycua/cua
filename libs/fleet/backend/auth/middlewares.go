@@ -83,7 +83,11 @@ var surfacePolicySources = map[string]struct {
 	"authz-signed-service-urls": {"authz_signed_service_urls.rego", authzSignedServiceURLsPolicy},
 	"authz-state-query":         {"authz_state_query.rego", authzStateQueryPolicy},
 	"authz-feature-flags":       {"authz_feature_flags.rego", authzFeatureFlagsPolicy},
+	"authz-account-lookup":      {"authz_account_lookup.rego", authzAccountLookupPolicy},
 }
+
+//go:embed authz_account_lookup.rego
+var authzAccountLookupPolicy string
 
 //go:embed authz_base.rego
 var authzBasePolicy string

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { errorMessage } from "../src/error-message.ts"
+import {
+  errorMessage,
+  poolCreateErrorMessage,
+} from "../src/error-message.ts"
 
 // Structural stand-ins for uniffi enum errors (e.g. the fleet SDK's
 // SdkError): a real one is an Error whose message is just the variant name
@@ -66,6 +69,42 @@ test("handles PoolAccessDenied's {status, body} payload like Status", () => {
     body: JSON.stringify({ error: "namespace demo is not yours" }),
   })
   assert.equal(errorMessage(error), "namespace demo is not yours")
+})
+
+test("explains that pool names are globally unique on create access denial", () => {
+  const error = uniffiError("PoolAccessDenied", {
+    operation: "create pool",
+    namespace: "demo",
+    status: 403,
+    body:
+      'osgymsandboxwarmpools.osgym.cua.ai is forbidden: cannot create resource "osgymsandboxwarmpools"',
+  })
+  assert.equal(
+    poolCreateErrorMessage(error, "demo"),
+    'Pool names must be globally unique across all accounts, similar to DNS names. "demo" may already be in use. Try a different name.',
+  )
+})
+
+test("keeps unrelated pool create errors unchanged", () => {
+  assert.equal(
+    poolCreateErrorMessage(new Error("upstream unavailable"), "demo"),
+    "upstream unavailable",
+  )
+})
+
+// The card-admission gate denies pool creation through the same
+// PoolAccessDenied variant, but its message is the actionable one — telling
+// the user to pick a different name would send them down the wrong path.
+test("preserves policy denials that are not name conflicts", () => {
+  const denial =
+    "A payment method is required to create this resource. Add one in Billing and try again."
+  const error = uniffiError("PoolAccessDenied", {
+    operation: "create pool",
+    namespace: "demo",
+    status: 403,
+    body: JSON.stringify({ error: denial }),
+  })
+  assert.equal(poolCreateErrorMessage(error, "demo"), denial)
 })
 
 test("surfaces reason-only variants like Transport", () => {

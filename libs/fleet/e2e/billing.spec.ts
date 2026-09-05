@@ -247,6 +247,53 @@ test("settings displays the saved default card", async ({ page }) => {
 	).toHaveCount(0);
 });
 
+test("settings reconciles a returned Checkout Session before showing the saved card", async ({
+	page,
+}) => {
+	await setBillingFlag(page, true);
+	let completionCalls = 0;
+	await page.route("**/api/billing/setup-session/complete", async (route) => {
+		completionCalls++;
+		expect(route.request().method()).toBe("POST");
+		expect(route.request().postDataJSON()).toEqual({
+			session_id: "cs_test_owned",
+		});
+		await new Promise((resolve) => setTimeout(resolve, 150));
+		await route.fulfill({ json: { applied: true } });
+	});
+	await page.route("**/api/billing/summary", (route) =>
+		route.fulfill({
+			json: {
+				payment_method_present: true,
+				card: { brand: "visa", last4: "4242", exp_month: 12, exp_year: 2030 },
+			},
+		}),
+	);
+
+	await page.goto(
+		"/settings?checkout=success&session_id=cs_test_owned&utm_source=github",
+	);
+	await expect(page.getByText("Confirming payment method")).toBeVisible();
+	await expect(page.getByText("Visa ending in 4242")).toBeVisible();
+	await expect(page.getByText("Payment method saved")).toBeVisible();
+	await expect(page).toHaveURL(/\/settings\?utm_source=github$/);
+	expect(completionCalls).toBe(1);
+});
+
+test("settings removes a failed Checkout Session ID without claiming success", async ({
+	page,
+}) => {
+	await setBillingFlag(page, true);
+	await page.route("**/api/billing/setup-session/complete", (route) =>
+		route.fulfill({ status: 409, json: { error: "setup is incomplete" } }),
+	);
+
+	await page.goto("/settings?checkout=success&session_id=cs_test_incomplete");
+	await expect(page.getByText("Billing is temporarily unavailable")).toBeVisible();
+	await expect(page.getByText("Payment method saved")).toHaveCount(0);
+	await expect(page).toHaveURL(/\/settings$/);
+});
+
 test("settings shows a billing load error", async ({ page }) => {
 	await setBillingFlag(page, true);
 	await page.route("**/api/billing/summary", (route) =>

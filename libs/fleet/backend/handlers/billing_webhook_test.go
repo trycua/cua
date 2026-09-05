@@ -207,12 +207,12 @@ func runBillingWebhookWithAnalytics(t *testing.T, service *fakeBillingService, e
 func TestBillingWebhookEmitsAppliedPaymentSuccess(t *testing.T) {
 	service := &fakeBillingService{defaultApplied: true}
 	capture := &analyticsCapture{}
-	response := runBillingWebhookWithAnalytics(t, service, billing.WebhookEvent{ID: "evt_123", Type: "setup_intent.succeeded", Purpose: billing.SetupPurpose, Subject: "subject-1", Source: productanalytics.SourceSPA, CustomerID: "cus_owned", PaymentMethodID: "pm_card", SetupGeneration: "current"}, capture)
+	response := runBillingWebhookWithAnalytics(t, service, billing.WebhookEvent{ID: "evt_123", Type: "setup_intent.succeeded", Purpose: billing.SetupPurpose, Subject: "subject-1", Source: productanalytics.SourceSPA, IdentityClass: string(productanalytics.IdentityExternal), CustomerID: "cus_owned", PaymentMethodID: "pm_card", SetupGeneration: "current"}, capture)
 	if response.Code != http.StatusNoContent || len(capture.events) != 1 {
 		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
 	}
 	event := capture.events[0]
-	if event.Name != productanalytics.EventPaymentMethodSetup || event.DistinctID != "subject-1" || event.InsertID != "evt_123" || event.Properties["outcome"] != productanalytics.OutcomeSuccess {
+	if event.Name != productanalytics.EventPaymentMethodSetup || event.DistinctID != "subject-1" || event.InsertID != "evt_123" || event.Properties["outcome"] != productanalytics.OutcomeSuccess || event.Properties["identity_class"] != productanalytics.IdentityExternal {
 		t.Fatalf("event = %#v", event)
 	}
 }
@@ -233,7 +233,7 @@ func TestBillingWebhookEmitsTrustedTerminalPaymentFailure(t *testing.T) {
 		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
 	}
 	event := capture.events[0]
-	if event.InsertID != "evt_failed" || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
+	if event.Name != productanalytics.EventPaymentMethodSetup || event.InsertID != "evt_failed" || event.Properties["outcome"] != productanalytics.OutcomeFailure || event.Properties["error_class"] != "payment_provider" {
 		t.Fatalf("event = %#v", event)
 	}
 }

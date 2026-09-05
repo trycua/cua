@@ -30,8 +30,10 @@ boundary and resident-module unload workaround are not a production contract.
 See the [input experiment validation](tests/input-validation.md) for the exact
 single-seat artifacts and the [concurrent real-app
 validation](tests/realapp-validation.md) for two-lane Calc/Inkscape evidence,
-event-level primary-cursor measurement, and Cancel/Stop results. Apps needed
-restarting after plugin reload to bind replacement synthetic resources; this
+event-level primary-cursor measurement, and Cancel/Stop results. Those
+historical candidates needed app restarts after plugin reload. The candidate
+keeps seats across config toggles and requires a desktop restart for plugin
+replacement; native verification of that lifecycle remains pending. This
 experiment does not establish production hot-reload support.
 
 The [desktop-state safety record](tests/desktop-state-validation.md) covers

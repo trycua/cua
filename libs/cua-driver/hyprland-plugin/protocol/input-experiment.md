@@ -57,8 +57,12 @@ labels do not grant a lane or input authority.
   accepted drag first sends `{"ok":true,"phase":"started"}`, then its final
   delivery result or cancellation refusal. Driver starts the visible drag
   only after this acknowledgement; an animation is not delivery evidence.
-- `CANCEL`: revoke only this endpoint's lease and synthetic input state.
-- `STOP`: revoke both endpoints and release only synthetic-seat state.
+- `CANCEL`: revoke this endpoint's active and pending grants and release its
+  synthetic input state. Keep the lane reservation and control connections;
+  a new action needs a fresh target token and approval.
+- `STOP`: apply the same revocation to both endpoints. Previously signed but
+  unused grants and renewals also refuse. Release only synthetic-seat state;
+  operator and trace connections remain available.
 - `TRACE_START`, `TRACE_STOP`, `TRACE_READ <after>`: explicitly start, stop,
   or page the test-only in-memory primary-input trace. Pages contain at most
   eight events; collection must retain sequence numbers and completeness flags.

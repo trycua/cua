@@ -147,8 +147,13 @@ def run_live(path, pid, address, x, y, grant_input=sys.stdin, output=sys.stdout)
                 stopped = exchange(operator_client, "STOP")
                 if stopped.get("ok") is not True:
                     raise AssertionError(f"STOP failed: {stopped}")
-            refused(exchange(operator_client, packet), "invalid_grant")
-            refused(exchange(client, f"CLICK 8 {token} {revision} {x} {y} 272 1"), "pending_operator_approval")
+            refused(exchange(operator_client, packet), "stale_target")
+            refused(exchange(client, f"CLICK 8 {token} {revision} {x} {y} 272 1"), "stale_target")
+            fresh = exchange(client, f"TARGET {pid} {address}")
+            if fresh.get("ok") is not True or fresh.get("target") == token:
+                raise AssertionError("Stop must require a fresh target binding")
+            refused(exchange(operator_client, packet), "stale_target")
+            refused(exchange(client, f"CLICK 9 {fresh['target']} {fresh['revision']} {x} {y} 272 1"), "pending_operator_approval")
     print(json.dumps({"result": "passed", "missing_grant": "refused", "malformed_grant": "refused",
                       "forged_grant": "refused", "grant_replay": "refused", "grant_replay_after_stop": "refused", "sequence_replay": "refused",
                       "invalid_coordinates": "refused", "stop": "revoked", "accepted_clicks": 1,
@@ -169,7 +174,8 @@ class TransportTest(unittest.TestCase):
             responses += [refusal("primary_target_busy"), {"ok": True}]
         else:
             responses += [{"ok": True, "effect": "unverifiable", "route": "synthetic_events"},
-                          refusal("replay"), {"ok": True}, refusal("invalid_grant"), refusal("pending_operator_approval")]
+                          refusal("replay"), {"ok": True}, refusal("stale_target"), refusal("stale_target"),
+                          {**target, "target": "f" * 32}, refusal("stale_target"), refusal("pending_operator_approval")]
         connections = [(MagicMock(), hello), (MagicMock(), {**hello, "challenge": "e" * 32})]
         output = io.StringIO()
         with patch(__name__ + ".connect", side_effect=connections), patch(__name__ + ".exchange", side_effect=responses) as send:

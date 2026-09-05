@@ -389,6 +389,9 @@ struct InputExperiment::Impl {
     void invalidate(Client& c) {
         if (lease == &c) revoke("stale_target");
         c.token.clear(); c.window.reset(); c.surface.reset();
+        // Replay high-water belongs to the old target binding. A genuinely
+        // new token may receive a shorter grant after Stop or target change.
+        c.approved_deadline = 0;
     }
     void leave() {
         for (auto& p : pointers) {
@@ -418,6 +421,15 @@ struct InputExperiment::Impl {
         if (lease && trace) trace->mark("agent_cancel", lane + 1);
         if (drag && drag->client && !drag->client->dead) send(*drag->client, refusal(reason));
         drag.reset(); leave(); lease = nullptr; capabilities = 0;
+    }
+    void cancel_authority(std::string_view reason) {
+        revoke(reason);
+        // Stop is also a boundary for grants that have not been redeemed yet,
+        // including a signed renewal with a later deadline. Invalidating every
+        // target makes those signatures unusable without closing operator or
+        // trace channels. Action connections keep their lane reservation, but
+        // must select a fresh target token and obtain new operator approval.
+        for (auto& c : clients) invalidate(*c);
     }
     void desktop_transition() {
         // Signals can fire before Hyprland updates its aggregate state. Revoke
@@ -593,10 +605,10 @@ struct InputExperiment::Impl {
             send(c, std::format(R"({{"ok":true,"lane":{}}})", lane)); return;
         }
         if (command == "STOP" && f.size() == 1) {
-            for (auto* peer : peers) if (peer) peer->revoke("stopped");
+            for (auto* peer : peers) if (peer) peer->cancel_authority("stopped");
             send(c, R"({"ok":true})"); return;
         }
-        if (command == "CANCEL" && f.size() == 1) { revoke("cancelled"); send(c, R"({"ok":true})"); return; }
+        if (command == "CANCEL" && f.size() == 1) { cancel_authority("cancelled"); send(c, R"({"ok":true})"); return; }
         if (trace && ((command == "TRACE_START" || command == "TRACE_STOP") && f.size() == 1)) {
             send(c, trace->request(command)); return;
         }

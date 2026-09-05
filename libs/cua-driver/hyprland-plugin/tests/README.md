@@ -120,6 +120,8 @@ requires a new admission epoch and approval, and keeps the same applications
 running. It refuses the historical `reload` case before input or unload when
 status requires a desktop restart. Separate unload/replacement-refusal and
 fresh-desktop tests remain required; a config toggle does not prove them.
+The one-way retirement runner below covers the first of those gates when run
+natively. Adding the runner and passing its helper tests is not native evidence.
 
 The portable suite covers seat-owner reuse across 20 toggles, failed transport
 recovery, restart-required lifetime markers, and inode-aware socket cleanup.
@@ -163,10 +165,12 @@ Choose one fault per run:
   selected Hyprland process past lease expiry. Use a short grant, such as
   10 seconds. A separate PID-fd watchdog resumes that same process within
   four seconds if the caller fails. When launching through systemd, use
-  `KillMode=process` so caller termination does not also kill the watchdog.
-- `--case reload --reload-module PATH` unloads the exact experimental module
-  while input is held, then loads it again and requires a different epoch
-  and fresh authorization on a new MCP connection.
+    `KillMode=process` so caller termination does not also kill the watchdog.
+- `--case toggle --toggle-file PATH` disables and re-enables admission while
+  preserving the seats and existing application processes.
+- Historical candidates only: `--case reload --reload-module PATH` tests
+  unload/reload recovery. The restart-required candidate refuses this case;
+  use the separate retirement runner instead.
 
 The application must receive a press before fault injection and a matching
 release within 750 ms. The fault lands early in a two-second drag, so natural
@@ -182,12 +186,79 @@ events during the fault window. Matching cursor endpoints alone cannot pass
 this check. Raw logs and grants remain private; publish only categorical
 results, timings, source and artifact digests, and stated limitations.
 
-Reload cleanup does not prove that surviving clients bind replacement seats
-or accept subsequent input. Client rebinding and a production resource-lifetime
-contract remain separate gates. Atomic key packets do not expose a held-key
+Historical reload cleanup does not prove that surviving clients bind replacement
+seats or accept subsequent input. The session-lifetime candidate instead requires
+surviving-client recovery after config toggles and fresh-desktop recovery after
+replacement. Atomic key packets do not expose a held-key
 stream, so these cases make a held-pointer claim only. These focused tests
 supplement, rather than replace, the canonical desktop matrix and physical
 host validation.
+
+### Pending authority revocation
+
+`input_authority_live.py` tests Stop and Cancel before signed grants are
+redeemed. It does not dispatch input or establish application delivery.
+Run each command separately with `--command STOP` or `--command CANCEL`,
+`--input-directory`, `--plan`, `--evidence`, and `--disposable`.
+Both lanes must be idle and unclaimed. The plan is a JSON array of exactly
+two observed native disposable-fixture targets in separate processes, each
+with a positive `pid` and lowercase hexadecimal `address` without `0x`.
+
+The runner writes `request-before.json`. On the host, sign the named requests
+with `input_operator.py`, using only click capability `1`. Give `renewal-0`
+a later expiry than `active-0`, and transfer the public grants as
+`grants-before.json`, an object keyed by request name. The runner redeems
+`active-0`, but leaves the renewal and `pending-1` unused before revocation.
+Stop must reject both unused grants; per-lane Cancel must preserve the
+sibling's pending grant. Old grants must remain refused after target rebinding.
+
+Sign `request-after.json` into `grants-after.json` in the same format to prove
+fresh authorization still works. Lane 0's fresh grant must still be valid but
+expire before its revoked grant, as indicated by `expires_before_unix_ms`.
+This checks that an old target's replay high-water mark cannot reject a
+shorter grant for a new target binding. Allow time for both stages: for example,
+sign the initial grant for 50 seconds, its renewal for 60 seconds, and the
+fresh grant for 10 seconds, completing the second transfer before the initial
+deadline. Each transfer has a 40-second limit; grants
+must satisfy the protocol's 60-second ceiling and remain valid when submitted.
+The runner checks unchanged dispatch counters, no held/focused synthetic state,
+surviving operator connections, and final Stop cleanup. Keep grants and target
+identifiers in local evidence. `input_authority_test.py` tests the runner with
+scripted peers; those tests do not execute compositor code.
+
+### One-way seat retirement
+
+`input_retirement_live.py` unloads the plugin while a real Driver MCP drag is
+held, then checks that same-path and different-path replacement modules refuse
+until desktop restart. Use a fresh disposable session and a clean, committed
+candidate. Both native GTK fixtures must have Wayland wire logs from startup
+showing that they bound both synthetic seats. Start with both lanes idle.
+
+Supply the lifecycle runner's plan, journals, Driver and input socket paths,
+primary-grab binary, and evidence directory. Additionally supply both fixture
+wire logs, `--compositor-pid`, `--driver-service-pid`, `--source-sha`,
+`--module`, `--replacement-module`, their `--module-sha256` and
+`--replacement-module-sha256`, and `--driver-sha256`. The replacement must
+already be staged at a different canonical path and inode. A copy of the same
+build tests different-path refusal, not a different-build upgrade. The required
+`--disposable-session-restart-required` flag acknowledges the one-way transition.
+Use `--help` for exact argument names.
+
+The host signs `grant-request.json` into `grant.json` with capabilities `10`
+(drag and key probe), with 15–60 seconds remaining. The runner verifies a
+matching application press/release within the 750 ms cancellation bound,
+`plugin_shutdown`, closed old connections, removed sockets, both seat
+capabilities becoming zero, global removal, and unchanged primary input.
+Compositor and client identities, heartbeats, and fresh Driver snapshots must
+remain valid. Each replacement attempt must produce an explicit runtime
+restart refusal in enabled, ABI-matched plugin status; an absent plugin or
+failed ABI check cannot pass.
+
+The successful run leaves the plugin unloaded and its lifetime marker intact.
+Restart the disposable desktop before subsequent input tests. Fresh-desktop
+delivery and late-client cleanup still require separate native coverage.
+`retirement_evidence_test.py` checks the evidence oracles and preflight failures
+with synthetic data; it is not native retirement evidence.
 
 ## Desktop-state fault controls
 

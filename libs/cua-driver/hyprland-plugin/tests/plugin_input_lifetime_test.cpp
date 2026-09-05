@@ -75,9 +75,12 @@ int main() {
     toggle(true);
     check(created == 1 && access(socket.c_str(), F_OK) == 0,
           "retry after transport failure reuses seat owner");
+    const auto suspended_before_exit = suspended;
     pluginExit();
     check(destroyed == 1 && suspended >= 20 && access(socket.c_str(), F_OK) != 0,
           "unload retires the single seat owner and stops transport");
+    check(suspended == suspended_before_exit,
+          "unload retires directly without first sending config-disable cancellation");
     check(Event::bus()->m_events.config.reloaded.active_count() == 0,
           "unload detaches configuration listener");
     check(rmdir(instance.c_str()) == 0 && rmdir(hypr.c_str()) == 0 &&

@@ -235,6 +235,9 @@ def run(args):
         if args.case in ('disconnect', 'reload', 'toggle'):
             assert fresh['challenge'] != pending['challenge'], 'reconnect inherited old authority'
             refused(exchange(operator, grant['packet']), 'stale_target', 'invalid_grant')
+        elif args.case == 'stop':
+            assert fresh['target'] != pending['target'], 'Stop retained the old target binding'
+            refused(exchange(operator, grant['packet']), 'stale_target')
         else:
             refused(exchange(operator, grant['packet']), 'invalid_grant')
         result.update(result='passed', fresh_approval_required=True, old_grant_refused=True)

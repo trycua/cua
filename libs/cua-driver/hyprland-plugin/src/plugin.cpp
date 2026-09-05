@@ -321,10 +321,12 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_config_listener.reset();
-    static_cast<void>(stop_server());
 #ifdef CUA_HYPRLAND_TEST_INPUT
+    // Retire input directly so an in-flight action receives plugin_shutdown,
+    // not the config-disable reason from stop_server()'s suspend path.
     g_experiment.reset();
 #endif
+    static_cast<void>(stop_server());
     g_status_command.reset();
     g_enabled.reset();
     g_socket_path.clear();

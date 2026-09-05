@@ -28,7 +28,7 @@
 //!        Returns an actionable error if neither path works.
 
 use async_trait::async_trait;
-use cua_driver_core::page::{ClickElementResult, PageBackend};
+use cua_driver_core::page::{ClickElementResult, PageBackend, PageReadResult};
 
 use windows::core::Interface;
 use windows::Win32::Foundation::HWND;
@@ -60,11 +60,12 @@ impl Default for WindowsPageBackend {
 
 #[async_trait]
 impl PageBackend for WindowsPageBackend {
-    async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<String> {
+    async fn get_text(&self, _pid: i32, window_id: u64) -> anyhow::Result<PageReadResult> {
         let hwnd = window_id;
-        tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
+        let content = tokio::task::spawn_blocking(move || unsafe { get_text_blocking(hwnd) })
             .await
-            .map_err(|e| anyhow::anyhow!("join error: {e}"))?
+            .map_err(|e| anyhow::anyhow!("join error: {e}"))??;
+        Ok(PageReadResult::text(content))
     }
 
     async fn query_dom(
@@ -73,13 +74,16 @@ impl PageBackend for WindowsPageBackend {
         window_id: u64,
         css_selector: &str,
         attributes: &[String],
-    ) -> anyhow::Result<String> {
+    ) -> anyhow::Result<PageReadResult> {
         let hwnd = window_id;
         let selector = css_selector.to_owned();
         let attrs: Vec<String> = attributes.to_vec();
-        tokio::task::spawn_blocking(move || unsafe { query_dom_blocking(hwnd, &selector, &attrs) })
-            .await
-            .map_err(|e| anyhow::anyhow!("join error: {e}"))?
+        let content = tokio::task::spawn_blocking(move || unsafe {
+            query_dom_blocking(hwnd, &selector, &attrs)
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("join error: {e}"))??;
+        Ok(PageReadResult::text(content))
     }
 
     async fn execute_javascript(

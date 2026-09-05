@@ -190,6 +190,7 @@ func characterizationCases() map[string][]routeCase {
 	simple("/api/user-keys", "/api/user-keys")
 	simple("/api/github-trust-policies", "/api/github-trust-policies")
 	simple("/api/admin/feature-flags", "/api/admin/feature-flags")
+	simple("/api/admin/account-lookup", "/api/admin/account-lookup")
 	cases["/api/admin/feature-flags/{key}"] = []routeCase{{name: "key", params: map[string]string{"key": "example"}, path: "/api/admin/feature-flags/example"}}
 
 	withID := func(route, prefix string) {

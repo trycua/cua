@@ -35,6 +35,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"cyclops-cs-backend/accountlookup"
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/billing"
 	"cyclops-cs-backend/chat"
@@ -127,6 +128,18 @@ func onlyLog(route string, h http.HandlerFunc) http.Handler {
 }
 
 func setupRouter(c handlers.Handlers) http.Handler {
+	// Observe validated, owner-normalized identities without blocking requests.
+	authenticated := withAuthenticatedMiddlewares
+	withAuthenticatedMiddlewares := func(route string, handler http.HandlerFunc, observers ...auth.Middleware) http.Handler {
+		if c.AccountLookup != nil {
+			observers = append([]auth.Middleware{c.AccountLookup.Observe}, observers...)
+		}
+		wrapped := authenticated(route, handler, observers...)
+		if route == "/api/admin/account-lookup" {
+			return handlers.PrivateAccountLookup(wrapped)
+		}
+		return wrapped
+	}
 	// The namespace-ownership conjunct on /api/svc and
 	// /api/namespaces/{name} asks Kubernetes a question, through a probe that
 	// is a handlers method. auth cannot import handlers, so the policy names
@@ -172,6 +185,7 @@ func setupRouter(c handlers.Handlers) http.Handler {
 	r.Handle("GET /api/usage/pool", withAuthenticatedMiddlewares("/api/usage/pool", c.GetUsagePoolDetail))
 	r.Handle("POST /api/usage/browser-timings", withAuthenticatedMiddlewares("/api/usage/browser-timings", c.RecordUsageBrowserTimings))
 	r.Handle("GET /api/admin/feature-flags", withAuthenticatedMiddlewares("/api/admin/feature-flags", c.ListFeatureFlags))
+	r.Handle("POST /api/admin/account-lookup", withAuthenticatedMiddlewares("/api/admin/account-lookup", c.LookupAccount, c.AuditAccountLookupAccess))
 	r.Handle("POST /api/admin/feature-flags", withAuthenticatedMiddlewares("/api/admin/feature-flags", c.CreateFeatureFlag))
 	r.Handle("PUT /api/admin/feature-flags/{key}", withAuthenticatedMiddlewares("/api/admin/feature-flags/{key}", c.UpdateFeatureFlag))
 	r.Handle("DELETE /api/admin/feature-flags/{key}", withAuthenticatedMiddlewares("/api/admin/feature-flags/{key}", c.DeleteFeatureFlag))
@@ -400,6 +414,9 @@ func run() error {
 
 	h := handlers.New(admin, cfg)
 	h.Analytics = analyticsClient
+	lookupService, closeLookup, lookupErr := initializeAccountLookup(ctx, cfg, admin)
+	h.AccountLookup = lookupService
+	defer closeLookup()
 	signedServiceURLsContext, cancelSignedServiceURLs := context.WithCancel(ctx)
 	defer cancelSignedServiceURLs()
 	var signedServiceURLsRetry sync.WaitGroup
@@ -421,7 +438,7 @@ func run() error {
 	defer shutdownSignedServiceURLs(cancelSignedServiceURLs, &signedServiceURLsRetry, &signedServiceURLsMu, &closeSignedServiceURLs)
 	usageProvider, closeUsageProvider, err := initializeUsageProvider(ctx, cfg.Usage)
 	if err != nil {
-		return errors.Join(fmt.Errorf("initialize usage provider: %w", err), startupErrors, telemetryErr)
+		return errors.Join(fmt.Errorf("initialize usage provider: %w", err), startupErrors, telemetryErr, lookupErr)
 	}
 	defer closeUsageProvider()
 	h.Usage = usageProvider
@@ -435,7 +452,7 @@ func run() error {
 		if cfg.Database.URL != "" {
 			conversationStore, conversationStoreErr := chat.NewPostgresConversationStore(ctx, cfg.Database.URL)
 			if conversationStoreErr != nil {
-				return errors.Join(fmt.Errorf("initialize chat conversation store: %w", conversationStoreErr), startupErrors, telemetryErr)
+				return errors.Join(fmt.Errorf("initialize chat conversation store: %w", conversationStoreErr), startupErrors, telemetryErr, lookupErr)
 			}
 			defer conversationStore.Close()
 			h.Conversations = conversationStore
@@ -484,7 +501,22 @@ func run() error {
 	router := setupRouter(h)
 
 	srv := &http.Server{Addr: cfg.WebServer.Addr, Handler: router}
-	return errors.Join(serveUntilCanceled(ctx, srv), startupErrors, telemetryErr)
+	return errors.Join(serveUntilCanceled(ctx, srv), startupErrors, telemetryErr, lookupErr)
+}
+
+// Lazy pool connections keep this optional feature independent of serving readiness.
+func initializeAccountLookup(ctx context.Context, cfg *config.Configuration, admin *keycloak.Admin) (*accountlookup.Service, func(), error) {
+	if cfg.Database.URL == "" || cfg.ProductAnalytics.IdentityKey == "" {
+		return nil, func() {}, nil
+	}
+	store, err := accountlookup.NewStore(ctx, cfg.Database.URL)
+	if err != nil {
+		slog.Warn("account lookup unavailable: invalid database configuration")
+		return nil, func() {}, err
+	}
+	lookupCtx, cancel := context.WithCancel(ctx)
+	service := accountlookup.New(lookupCtx, store, admin, cfg.Keycloak.Realm, cfg.ProductAnalytics.IdentityKey, cfg.ProductAnalytics.ExcludedSubjects)
+	return service, func() { cancel(); service.Wait(); store.Close() }, nil
 }
 
 // startSignedServiceURLs installs the signed service URL dependency on first

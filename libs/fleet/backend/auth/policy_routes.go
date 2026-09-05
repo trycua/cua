@@ -181,6 +181,10 @@ func FeatureFlagsRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-feature-flags", "data.authz_feature_flags.allow"))
 }
 
+func AccountLookupRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-account-lookup", "data.authz_account_lookup.allow"))
+}
+
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
 // as every other route, with two admission conjuncts: card-or-admin admission
 // for custom-resource creation, and pool admission over the request body.
@@ -259,6 +263,7 @@ const featureFlagAuditBodyLimit = 64 << 10
 // surfacePolicies is every surface, by name. A surface owning no route fails
 // TestEveryPolicySurfaceOwnsARoute; a route naming no surface cannot start.
 var surfacePolicies = map[string]surfacePolicy{
+	"account-lookup":      {tree: AccountLookupRoutePolicy, options: []MiddlewareOption{WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
 	"keys":                {tree: KeysRoutePolicy},
 	"config":              {tree: ConfigRoutePolicy},
 	"chat":                {tree: ChatRoutePolicy},
@@ -324,6 +329,7 @@ var routeSurfaces = map[string]string{
 
 	"/api/k8s/{path...}":             "k8s",
 	"/api/admin/feature-flags":       "feature-flags",
+	"/api/admin/account-lookup":      "account-lookup",
 	"/api/admin/feature-flags/{key}": "feature-flags",
 }
 

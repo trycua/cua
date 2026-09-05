@@ -2,6 +2,9 @@
 
 This is a nonshipping implementation spike for [RFC #3550](https://github.com/trycua/cua/issues/3550),
 not its accepted production protocol. The normal build remains discovery-only.
+The [host authority implementation boundary](host-authority-boundary.md)
+records a disabled shared lifecycle primitive and the remaining production
+bridge requirements; it does not replace this experiment's signer.
 The experiment requires a separate compile-time opt-in and an Ed25519 public
 key selected by the operator. Never install this build on an unreviewed host.
 

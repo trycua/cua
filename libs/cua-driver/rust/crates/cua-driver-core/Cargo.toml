@@ -8,6 +8,8 @@ publish = false
 default = ["yaml", "rego"]
 yaml = ["dep:serde_yaml_ng", "dep:regex"]
 rego = ["dep:regorus"]
+# Nonshipping host-lifetime primitive; no transport or input route enables it.
+experimental-isolated-input-authority = []
 
 [dependencies]
 cua-driver-contract = { path = "../cua-driver-contract" }

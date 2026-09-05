@@ -1,0 +1,151 @@
+---
+title: TypeScript Fleet reference
+description: Entry points, client methods, resource types, and lifecycle contracts for @trycua/fleet 0.1.1.
+---
+
+This page describes the published [`@trycua/fleet` 0.1.1](https://www.npmjs.com/package/@trycua/fleet/v/0.1.1)
+package. It provides Fleet resource operations through WebAssembly bindings.
+Its `Pool` and `Sandbox` exports are resource records, not the Python
+`Pool.apply()` and computer-control `Sandbox` classes.
+
+## Package and entry points
+
+The package is installed with:
+
+```bash
+npm install @trycua/fleet@0.1.1
+```
+
+Choose the entry point for the execution environment:
+
+| Import | Contract |
+| --- | --- |
+| `@trycua/fleet/node` | Loads the bundled WebAssembly file from disk; exports `FetchHttpClient` |
+| `@trycua/fleet/browser` | Loads WebAssembly in a browser; uses browser-compatible client construction |
+| `@trycua/fleet` | Package root has conditional exports; explicit `/node` or `/browser` avoids depending on resolver condition ordering |
+
+The package does not declare a Node.js `engines` range. Its Node HTTP adapter
+uses global `fetch` and `AbortSignal.timeout`; import availability alone does
+not establish compatibility with every Node.js release or browser bundler.
+
+## Initialization and authentication
+
+`uniffiInitAsync(): Promise<void>` initializes the WebAssembly bindings. Await it
+before using generated builders or client constructors. Repeated calls reuse
+the initialization promise.
+
+The Node entry point provides this helper:
+
+```ts
+declare function createFleetClient(
+  configuration: CyclopsTokenProviderConfiguration,
+  accessToken: string,
+): Promise<CyclopsClient>;
+```
+
+This helper initializes the bindings and constructs a client with a supplied
+bearer token. It does not read Python SDK environment variables or acquire a
+token. The browser entry point instead exposes
+`CyclopsClient.connectBrowserWithAccessToken(configuration, accessToken)` after
+`uniffiInitAsync()`. For credential acquisition, see
+[Fleet pools need their own credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials).
+
+The token-based configuration has these fields:
+
+| Field | Type | Purpose |
+| --- | --- | --- |
+| `baseUrl` | `string` | Fleet API base URL |
+| `poolPollIntervalMs` | `bigint` | Pool polling interval in milliseconds |
+| `poolPollLimit` | `number` | Pool polling attempt limit |
+| `claimPollIntervalMs` | `bigint` | Claim polling interval in milliseconds |
+| `claimPollLimit` | `number` | Claim polling attempt limit |
+
+For explicit OAuth client credentials in Node, initialize the bindings and use
+`CyclopsClient.connect(configuration, new FetchHttpClient())`. Its
+`CyclopsConfiguration` adds `tokenUrl: string` and
+`credentials: CyclopsCredentials` to the polling and API fields above.
+`CyclopsCredentials` accepts the client ID and secret. Keep client secrets out
+of browser bundles; the browser entry point accepts a bearer token obtained by
+the application's authentication flow.
+
+## Client methods
+
+These methods belong to `CyclopsClientLike`, the interface implemented by the
+client. Each async method accepts a final optional `{ signal: AbortSignal }`
+argument. Types below use the exported TypeScript names.
+
+| Method | Return type | Contract |
+| --- | --- | --- |
+| `createPool(request: CreatePoolRequest)` | `Promise<Pool>` | Creates a pool |
+| `reconcilePool(request: CreatePoolRequest)` | `Promise<Pool>` | Creates or reconciles a pool |
+| `getPool(name: string)` | `Promise<Pool>` | Gets a named pool |
+| `listPools(namespace: string)` | `Promise<Pool[]>` | Lists pools in a namespace |
+| `updatePool(pool: Pool)` | `Promise<Pool>` | Updates a pool resource |
+| `deletePool(pool: Pool)` | `Promise<void>` | Deletes a pool |
+| `createTemplate(request: CreateTemplateRequest)` | `Promise<Template>` | Creates a template |
+| `reconcileTemplate(request: CreateTemplateRequest)` | `Promise<Template>` | Creates or reconciles a template |
+| `getTemplate(namespace: string, name: string)` | `Promise<Template>` | Gets a template |
+| `listTemplates(namespace: string)` | `Promise<Template[]>` | Lists templates |
+| `updateTemplate(template: Template)` | `Promise<Template>` | Updates a template |
+| `deleteTemplate(template: Template)` | `Promise<void>` | Deletes a template |
+| `createClaim(request: CreateClaimRequest)` | `Promise<Claim>` | Creates a claim without waiting for binding |
+| `getClaim(claim: Claim)` | `Promise<Claim>` | Refreshes a claim resource |
+| `listClaims(namespace: string)` | `Promise<Claim[]>` | Lists claims |
+| `waitClaim(claim: Claim)` | `Promise<Sandbox>` | Waits for binding and returns sandbox identity and services |
+| `renewClaim(claim: Claim, shutdownTime: string)` | `Promise<Claim>` | Updates the absolute shutdown time |
+| `deleteClaim(claim: Claim)` | `Promise<void>` | Releases a claim |
+
+The application owns cleanup. A returned `Sandbox` is a record; it has no
+Python-style `close()` or async context manager. Keep the `Claim` for
+`deleteClaim()`, and manage pool and template deletion separately. Renewal must
+occur before the shutdown deadline. `waitClaim()` establishes binding; it does
+not establish that an application service is ready.
+
+## Service access
+
+These operations address a service on a bound `Sandbox`:
+
+| Method | Return type |
+| --- | --- |
+| `serviceRequest(sandbox, service: string, path: string, request: HttpRequest)` | `Promise<HttpResponse>` |
+| `createSignedServiceUrl(request: CreateSignedServiceUrlRequest)` | `Promise<SignedServiceUrl>` |
+| `listSignedServiceUrls(sandbox: Sandbox)` | `Promise<SignedServiceUrl[]>` |
+| `revokeSignedServiceUrl(signedServiceUrl: SignedServiceUrl)` | `Promise<void>` |
+
+`HttpRequest` carries `method`, `url`, `headers`, optional `body`, and optional
+`timeoutSecs`. `HttpResponse` carries `status`, `headers`, and `body`. Headers
+are `{ name: string, value: string }[]`; bodies use `ArrayBuffer`, and
+`timeoutSecs` uses `bigint`.
+
+Signed URLs grant access to their selected service without a separate bearer
+header. See [Share a service with a signed URL](/how-to-guides/sandbox/share-service-with-signed-url)
+for creation, expiry, and revocation usage.
+
+## Resource types and builders
+
+Fleet records use camelCase field names:
+
+| Type | Fields |
+| --- | --- |
+| `ResourceMetadata` | `namespace`, `name`, optional `labels`, optional `creationTimestamp` |
+| `Pool`, `Template`, `Claim` | `apiVersion`, `kind`, `metadata`, `spec`; pools and claims also have optional `status` |
+| `Sandbox` | `namespace`, `claim`, `name`, `services` |
+| `CreatePoolRequest` | `namespace`, `spec: OsGymSandboxWarmPoolSpec` |
+| `CreateTemplateRequest` | `namespace`, `name`, `spec: OsGymSandboxTemplateSpec` |
+| `CreateClaimRequest` | `pool`, optional `spec: ClaimSpec`, optional `name` |
+| `CreateSignedServiceUrlRequest` | `sandbox`, `service`, `expiresInSeconds: number`, optional `label` |
+
+Builders include `CreatePoolRequestBuilder`, `CreateTemplateRequestBuilder`,
+`CreateClaimRequestBuilder`, `CreateSignedServiceUrlRequestBuilder`,
+`OsGymSandboxWarmPoolSpecBuilder`, `OsGymSandboxTemplateSpecBuilder`,
+`SandboxTemplateRefBuilder`, `VmTemplateBuilder`, `SandboxServiceBuilder`, and
+`WarmPoolAutoscalingBuilder`. Each has named setters and `build()`.
+
+Runtime and protocol values use `RuntimeKind`, `Firmware`, and
+`ServiceProtocol`. Availability in the schema does not guarantee deployment
+support. The exported `SdkError` variants include status/transport failures,
+`ClaimFailed`, `ClaimTimeout`, `PoolAccessDenied`, `UnknownService`, and
+`SignedServiceUrlsUnavailable`.
+
+For a complete provisioning example, see
+[Create a pool with TypeScript](/how-to-guides/sandbox/create-pool-with-typescript).

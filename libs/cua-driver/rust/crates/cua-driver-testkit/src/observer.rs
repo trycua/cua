@@ -915,7 +915,6 @@ pub mod linux {
     enum SessionKind {
         X11,
         Sway,
-        Hyprland,
         Gnome,
         CuaCompositor,
         Missing,
@@ -937,8 +936,6 @@ pub mod linux {
             let session = if explicit_wayland {
                 if cua_compositor_available() {
                     SessionKind::CuaCompositor
-                } else if hyprland_available() {
-                    SessionKind::Hyprland
                 } else if sway_available() {
                     SessionKind::Sway
                 } else if gnome_windows().is_ok() {
@@ -979,12 +976,6 @@ pub mod linux {
                     cursor: true,
                     leaked_input: false,
                 },
-                SessionKind::Hyprland => ObserverCapabilities {
-                    focus: true,
-                    z_order: true,
-                    cursor: true,
-                    leaked_input: false,
-                },
                 SessionKind::Sway | SessionKind::Gnome | SessionKind::CuaCompositor => {
                     ObserverCapabilities {
                         focus: true,
@@ -1001,7 +992,6 @@ pub mod linux {
             match self.session {
                 SessionKind::X11 => x11_snapshot(target),
                 SessionKind::Sway => sway_snapshot(target),
-                SessionKind::Hyprland => hyprland_snapshot(target),
                 SessionKind::Gnome => gnome_snapshot(target),
                 SessionKind::CuaCompositor => cua_compositor_snapshot(target),
                 SessionKind::Missing => Ok(DesktopSnapshot {
@@ -1029,7 +1019,6 @@ pub mod linux {
                 let focus_identity = || match session {
                     SessionKind::X11 => x11_focus_identity(),
                     SessionKind::Sway => sway_focus_identity(),
-                    SessionKind::Hyprland => hyprland_focus_identity(),
                     SessionKind::Gnome => gnome_focus_identity(),
                     SessionKind::CuaCompositor => cua_compositor_focus_identity(),
                     SessionKind::Missing => Ok(None),
@@ -1105,150 +1094,6 @@ pub mod linux {
 
     fn sway_available() -> bool {
         std::env::var_os("SWAYSOCK").is_some_and(|value| !value.is_empty()) && sway_tree().is_ok()
-    }
-
-    fn hyprland_available() -> bool {
-        std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|value| !value.is_empty())
-    }
-
-    #[derive(Clone, Debug, Deserialize)]
-    struct HyprWorkspace {
-        id: i64,
-    }
-
-    #[derive(Clone, Debug, Deserialize)]
-    struct HyprClient {
-        address: String,
-        #[serde(default = "hypr_true")]
-        mapped: bool,
-        #[serde(default)]
-        hidden: bool,
-        #[serde(default = "hypr_true")]
-        visible: bool,
-        pid: u32,
-        workspace: HyprWorkspace,
-    }
-
-    fn hypr_true() -> bool {
-        true
-    }
-
-    fn parse_hypr_address(address: &str) -> Option<u64> {
-        let text = address.trim();
-        let hex = text
-            .strip_prefix("0x")
-            .or_else(|| text.strip_prefix("0X"))
-            .unwrap_or(text);
-        u64::from_str_radix(hex, 16).ok()
-    }
-
-    fn parse_hypr_cursorpos(text: &str) -> Result<(f64, f64), ObserverError> {
-        let text = text.trim();
-        let mut parts = text.split(',');
-        let x = parts
-            .next()
-            .and_then(|part| part.trim().parse::<f64>().ok());
-        let y = parts
-            .next()
-            .and_then(|part| part.trim().parse::<f64>().ok());
-        match (x, y, parts.next()) {
-            (Some(x), Some(y), None) => Ok((x, y)),
-            _ => Err(ObserverError::new(format!(
-                "unrecognized hyprctl cursorpos output: {text:?}"
-            ))),
-        }
-    }
-
-    fn hyprctl_output(args: &[&str]) -> Result<String, ObserverError> {
-        let output = Command::new("hyprctl")
-            .args(args)
-            .output()
-            .map_err(|error| ObserverError::new(format!("hyprctl {:?} failed: {error}", args)))?;
-        if !output.status.success() {
-            return Err(ObserverError::new(format!(
-                "hyprctl {:?} exited with {}: {}",
-                args,
-                output.status,
-                String::from_utf8_lossy(&output.stderr)
-            )));
-        }
-        Ok(String::from_utf8_lossy(&output.stdout).into_owned())
-    }
-
-    fn hypr_clients() -> Result<Vec<HyprClient>, ObserverError> {
-        let raw = hyprctl_output(&["-j", "clients"])?;
-        serde_json::from_str(&raw)
-            .map_err(|error| ObserverError::new(format!("invalid hyprctl clients JSON: {error}")))
-    }
-
-    fn hypr_active_window() -> Result<Option<HyprClient>, ObserverError> {
-        let raw = hyprctl_output(&["-j", "activewindow"])?;
-        let trimmed = raw.trim();
-        if trimmed.is_empty() || trimmed == "{}" || trimmed == "null" {
-            return Ok(None);
-        }
-        serde_json::from_str(trimmed).map(Some).map_err(|error| {
-            ObserverError::new(format!("invalid hyprctl activewindow JSON: {error}"))
-        })
-    }
-
-    fn classify_hyprland_target(
-        target: Option<&HyprClient>,
-        focused: Option<u64>,
-        focused_workspace: Option<i64>,
-    ) -> TargetZ {
-        let Some(target) = target else {
-            return TargetZ::NotFound;
-        };
-        if !target.mapped || target.hidden {
-            return TargetZ::Minimized;
-        }
-        let address = parse_hypr_address(&target.address);
-        if address.is_some() && address == focused {
-            return TargetZ::Foreground;
-        }
-        if !target.visible || Some(target.workspace.id) != focused_workspace {
-            return TargetZ::BackgroundOccluded;
-        }
-        TargetZ::BackgroundVisible
-    }
-
-    fn hypr_target<'a>(clients: &'a [HyprClient], target: TargetWindow) -> Option<&'a HyprClient> {
-        clients
-            .iter()
-            .find(|client| parse_hypr_address(&client.address) == Some(target.native_id))
-            .or_else(|| {
-                clients
-                    .iter()
-                    .filter(|client| client.pid == target.pid)
-                    .max_by_key(|client| parse_hypr_address(&client.address).unwrap_or(0))
-            })
-    }
-
-    fn hyprland_snapshot(target: TargetWindow) -> Result<DesktopSnapshot, ObserverError> {
-        let clients = hypr_clients()?;
-        let active = hypr_active_window()?;
-        let focused = active
-            .as_ref()
-            .and_then(|window| parse_hypr_address(&window.address));
-        let focused_workspace = active.as_ref().map(|window| window.workspace.id);
-        let target_z =
-            classify_hyprland_target(hypr_target(&clients, target), focused, focused_workspace);
-        let cursor_pos = hyprctl_output(&["cursorpos"])
-            .ok()
-            .and_then(|text| parse_hypr_cursorpos(&text).ok());
-        Ok(DesktopSnapshot {
-            foreground: focused,
-            input_focus: focused,
-            target_z,
-            cursor_pos,
-        })
-    }
-
-    fn hyprland_focus_identity() -> Result<Option<u64>, ObserverError> {
-        Ok(hypr_active_window()?
-            .as_ref()
-            .and_then(|window| parse_hypr_address(&window.address)))
     }
 
     #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -2018,73 +1863,6 @@ pub mod linux {
             assert_eq!(
                 classify_gnome_target(&windows, target),
                 TargetZ::BackgroundVisible
-            );
-        }
-
-        #[test]
-        fn hypr_cursorpos_parses_hyprctl_text() {
-            assert_eq!(parse_hypr_cursorpos("598, 317\n").unwrap(), (598.0, 317.0));
-            assert_eq!(parse_hypr_cursorpos("0,0").unwrap(), (0.0, 0.0));
-            assert!(parse_hypr_cursorpos("unknown").is_err());
-        }
-
-        #[test]
-        fn hypr_address_parses_hex_pointer() {
-            assert_eq!(parse_hypr_address("0x55bee4550880"), Some(0x55bee4550880));
-            assert_eq!(parse_hypr_address("not-an-address"), None);
-        }
-
-        fn hypr_client(address: &str, pid: u32, workspace: i64, visible: bool) -> HyprClient {
-            HyprClient {
-                address: address.to_owned(),
-                mapped: true,
-                hidden: false,
-                visible,
-                pid,
-                workspace: HyprWorkspace { id: workspace },
-            }
-        }
-
-        #[test]
-        fn hyprland_unfocused_visible_client_is_background_visible() {
-            let chromium = hypr_client("0x55bee4550880", 33498, 1, true);
-            assert_eq!(
-                classify_hyprland_target(
-                    Some(&chromium),
-                    parse_hypr_address("0x55bee43ce1d0"),
-                    Some(1)
-                ),
-                TargetZ::BackgroundVisible
-            );
-        }
-
-        #[test]
-        fn hyprland_focused_client_is_foreground() {
-            let foot = hypr_client("0x55bee43ce1d0", 29680, 1, true);
-            assert_eq!(
-                classify_hyprland_target(
-                    Some(&foot),
-                    parse_hypr_address("0x55bee43ce1d0"),
-                    Some(1)
-                ),
-                TargetZ::Foreground
-            );
-        }
-
-        #[test]
-        fn hyprland_off_workspace_is_occluded() {
-            let chromium = hypr_client("0x55bee4550880", 33498, 1, true);
-            assert_eq!(
-                classify_hyprland_target(Some(&chromium), parse_hypr_address("0xabc"), Some(2)),
-                TargetZ::BackgroundOccluded
-            );
-        }
-
-        #[test]
-        fn hyprland_missing_target_is_not_found() {
-            assert_eq!(
-                classify_hyprland_target(None, parse_hypr_address("0x1"), Some(1)),
-                TargetZ::NotFound
             );
         }
 

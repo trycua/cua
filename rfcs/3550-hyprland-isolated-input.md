@@ -117,6 +117,38 @@ isolated-input capability.
 The agent-seat direction builds on Dillon DuPont's (@ddupont808) prototype
 lineage, already credited in #3547. Credit does not imply approval of this RFC.
 
+### Related contributor proposals
+
+Austin Dixson's (@austindixson)
+[proposal #3552](https://github.com/trycua/cua/issues/3552) independently
+proposes a permission-gated agent seat. The shared direction is to preserve
+primary-seat state, keep direct-resource delivery an internal implementation
+choice, and avoid treating a portal/libei connection as proof of isolation.
+This RFC remains the decision record through #3550; the related proposal is
+retained as a source of feedback, not marked accepted or superseded here.
+
+Three differences need explicit review:
+
+- A binary-path permission and an ASK policy are a proposed entry point, not
+  proof of protected approval, connection delegation, or revocation. The
+  operator-control requirements below still apply.
+- The reported `send_shortcut` keyboard results are client-specific evidence,
+  not proof of modifier, repeat, grab, or concurrent foreground isolation.
+  They do not authorize substituting primary-seat dispatch for the proposed
+  agent-seat keyboard capability.
+- InputCapture and RemoteDesktop have different roles. Receiving an EIS file
+  descriptor does not establish input delivery or an isolated seat. A portable
+  portal implementation must prove both separately.
+
+The cursor-observer investigation in
+[#2194](https://github.com/trycua/cua/issues/2194), including contributions by
+@LikelyLucid and @austindixson, and
+[draft PR #3553](https://github.com/trycua/cua/pull/3553) provide a separate
+evidence workstream. The PR reports Hyprland cursor queries and live canaries;
+those reports are not independently certified by this RFC. Review its overlap
+with #3052 before integrating the observer. Cursor observation does not itself
+implement input delivery.
+
 ## Proposal
 
 ### Ownership and integration boundary
@@ -395,6 +427,16 @@ focus, stacking, workspace, cursor, primary-seat held-state, and input-leak
 oracles. An unobservable oracle is an evidence gap, not a pass. Declared
 unsupported cells must refuse before delivery; an all-refusal matrix cannot
 satisfy a delivered-input milestone.
+
+For the Hyprland cursor oracle, require a working compositor-owned query plus
+positive and negative preflight canaries in the disposable test session. The
+positive canary deliberately moves the cursor and proves observation before
+restoring it; the negative canary checks that observation does not change
+cursor, focus, or workspace. A session environment variable alone is not
+capability evidence. Distinguish unsupported observation from environment
+errors; missing samples must not pass an equality comparison. Before/after
+position equality also does not rule out transient motion, so any stronger
+claim needs independently validated sampling or motion-stream coverage.
 
 The existing [plugin acceptance baseline](https://github.com/trycua/cua/blob/1c000fb07f88f73f1c3111d09ac326c5e3aa7647/libs/cua-driver/hyprland-plugin/tests/README.md)
 names Omarchy `4.0.2-1`, Hyprland `0.56.2`, portal `1.4.1`, and driver

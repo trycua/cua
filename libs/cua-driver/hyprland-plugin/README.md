@@ -34,6 +34,11 @@ event-level primary-cursor measurement, and Cancel/Stop results. Apps needed
 restarting after plugin reload to bind replacement synthetic resources; this
 experiment does not establish production hot-reload support.
 
+The [desktop-state safety record](tests/desktop-state-validation.md) covers
+matched fault-only controls and background drags during target movement,
+resizing, destruction, real session lock, and display-off. It documents the
+tested artifacts and remaining gates, not production certification.
+
 This design builds on Dillon DuPont's Hyprland injection prototype. That credit
 records the prototype lineage; it does not claim that the prototype or input
 mutation support has shipped in Cua Driver.

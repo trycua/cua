@@ -176,6 +176,10 @@ host validation.
 
 ## Desktop-state fault controls
 
+The [native desktop-state validation record](desktop-state-validation.md)
+contains five matched fault/control pairs, artifact identities, measured
+cancellation and cleanup times, retained failures, and limits.
+
 `desktop_state_live.py` is a focused experimental safety test, not the canonical
 desktop matrix. It requires a disposable Fleet guest, the explicitly loaded
 input experiment, and a source-built Driver service with unrestricted

@@ -138,6 +138,10 @@ helpers against new synthetic fixtures.
 
 ## Remaining gates
 
+The later [desktop-state pass](desktop-state-validation.md) separately covers
+target loss, geometry changes, lock, and DPMS with its own candidate and matched
+controls. It does not change the scope of the lifecycle results recorded here.
+
 These tests prove held-pointer cleanup only. Atomic key packets do not expose a
 held-key stream. They do not establish physical-mouse behavior, target-loss or
 mid-action geometry handling, lock/DPMS behavior, broad app/toolkit compatibility,

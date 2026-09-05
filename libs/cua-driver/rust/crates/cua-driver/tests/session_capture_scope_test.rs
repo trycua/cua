@@ -78,8 +78,15 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
         "get_screen_size",
         json!({"session": "scope-desktop"}),
     );
+    // Every error result now carries a refusal marker, so "no code at all" no
+    // longer distinguishes a permitted call from one that failed for an
+    // unrelated environment reason (a runner with no display, say). Assert
+    // what this test is actually about: the scope policy did not refuse it.
     assert!(
-        code(&desktop_screen_size).is_none(),
+        !matches!(
+            code(&desktop_screen_size),
+            Some("desktop_scope_disabled" | "desktop_escalation_required")
+        ),
         "desktop scope should permit global screen geometry: {desktop_screen_size}"
     );
 

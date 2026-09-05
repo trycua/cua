@@ -66,6 +66,7 @@ pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
 pub mod image_utils;
+pub mod mcp_result;
 pub mod page;
 pub mod pip_hook;
 pub mod policy;
@@ -90,5 +91,5 @@ pub mod video_ffmpeg;
 pub mod window_inspection;
 pub mod window_target;
 
-pub use cua_driver_contract::{CaptureScope, EscalationReason};
+pub use cua_driver_contract::{CaptureScope, EscalationReason, TOOL_INVOCATION_FAILED_CODE};
 pub use recording::RecordingSession;

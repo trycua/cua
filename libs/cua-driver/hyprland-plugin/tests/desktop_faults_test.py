@@ -205,7 +205,7 @@ class DesktopFaultTest(unittest.TestCase):
                  patch('desktop_faults._same_compositor'), \
                  patch('desktop_faults._hypr', side_effect=['ok', '[{"dpmsStatus":true}]']) as hypr:
                 faults._watchdog(config, 8, -1)
-            self.assertEqual(hypr.call_args_list[0].args, ('selected', 'dispatch', 'dpms', 'on'))
+            self.assertEqual(hypr.call_args_list[0].args, ('selected', 'dispatch', 'hl.dsp.dpms({ action = "enable" })'))
             self.assertTrue(json.loads(Path(config['record']).read_text())['restored'])
 
     def test_watchdog_cancel_does_not_mutate_desktop(self):

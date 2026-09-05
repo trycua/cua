@@ -31,6 +31,13 @@ def _hypr(instance, *args):
                                    text=True, timeout=2).strip()
 
 
+def _dpms_dispatch(value):
+    if value not in ('on', 'off'):
+        raise ValueError('explicit DPMS state required')
+    action = 'enable' if value == 'on' else 'disable'
+    return 'hl.dsp.dpms({ action = "' + action + '" })'
+
+
 def _same_compositor(identity, instance):
     if _identity(identity['pid']) != identity:
         raise RuntimeError('selected compositor identity changed')
@@ -67,7 +74,7 @@ def _watchdog(config, cancel_fd, target_fd):
             signal.pidfd_send_signal(target_fd, signal.SIGUSR1)
             record['unlock_requested'] = True
         else:
-            if _hypr(config['instance'], 'dispatch', 'dpms', 'on') != 'ok':
+            if _hypr(config['instance'], 'dispatch', _dpms_dispatch('on')) != 'ok':
                 raise RuntimeError('DPMS recovery dispatcher refused')
             def recovered():
                 _same_compositor(config['compositor'], config['instance'])
@@ -174,7 +181,14 @@ class FaultController:
             self._validate_fixture()
             if self.snapshot()['target'] is None:
                 raise RuntimeError('fixture disappeared before dispatch')
-        if _hypr(self.instance, 'dispatch', command, value) != 'ok':
+        if command == 'dpms':
+            dispatch = _dpms_dispatch(value)
+        else:
+            x, y = value.split(',')[0].split()[1:]
+            operation = 'move' if command == 'movewindowpixel' else 'resize'
+            dispatch = ('hl.dsp.window.' + operation + '({ window = "address:' +
+                        self.target['address'] + '", x = ' + x + ', y = ' + y + ' })')
+        if _hypr(self.instance, 'dispatch', dispatch) != 'ok':
             raise RuntimeError('fault dispatcher did not acknowledge request')
 
     def _arm(self, kind):

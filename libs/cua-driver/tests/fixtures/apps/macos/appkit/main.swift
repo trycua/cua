@@ -15,6 +15,7 @@
 //   context_menu   — NSButton + NSMenu (Cut/Copy/Paste → menu_action=)
 //   scroll_target  — NSScrollView with a tall body and offset label
 //   ns_menubar     — main menu item with known title (Mac-specific)
+//   native_sheet   — NSOpenPanel exposes controls beneath the parent AX window
 //   exit           — NSButton terminates the app
 //
 // AX identifiers (via `setAccessibilityIdentifier(_:)`) match the IDs in
@@ -568,6 +569,17 @@ func writeBringToFrontWindowReport(
 
 // MARK: - Menu bar (Mac-specific scenario: ns_menubar)
 
+func writeNativeSheetResult(_ result: String) {
+    guard let path = ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL_ORACLE"] else {
+        return
+    }
+    do {
+        try (result + "\n").write(toFile: path, atomically: true, encoding: .utf8)
+    } catch {
+        fputs("failed to write native sheet result: \(error)\n", stderr)
+    }
+}
+
 func installMenuBar(target: HarnessWindowController) {
     let main = NSMenu()
     let appItem = NSMenuItem()
@@ -612,6 +624,15 @@ struct CuaAppKitHarness {
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
         controller.show()
+        var openPanel: NSOpenPanel?
+        if ProcessInfo.processInfo.environment["CUA_HARNESS_OPEN_PANEL"] == "1" {
+            openPanel = NSOpenPanel()
+            openPanel?.title = "CuaTestHarness Native Open Panel"
+            writeNativeSheetResult("pending")
+            openPanel?.beginSheetModal(for: controller.window) { response in
+                writeNativeSheetResult(response == .cancel ? "cancelled" : "other")
+            }
+        }
         var matrixWindows: BringToFrontMatrixWindows?
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)
@@ -619,6 +640,6 @@ struct CuaAppKitHarness {
         app.activate(ignoringOtherApps: true)
         writeBringToFrontWindowReport(main: controller.window, matrix: matrixWindows)
         app.run()
-        _ = matrixWindows
+        _ = (openPanel, matrixWindows)
     }
 }

@@ -44,7 +44,7 @@ def exchange(client, packet):
     return value
 
 
-def connect(path):
+def connect(path, *, claim=False):
     metadata = Path(path).stat()
     if not stat.S_ISSOCK(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o600:
         raise ValueError("expected a mode-0600 experiment socket")
@@ -58,6 +58,10 @@ def connect(path):
         for name in ("epoch", "challenge"):
             if re.fullmatch(r"[0-9a-f]{32}", hello.get(name, "")) is None:
                 raise ValueError("invalid HELLO token")
+        if claim:
+            claimed = exchange(client, "CLAIM")
+            if claimed.get("ok") is not True or type(claimed.get("lane")) is not int or claimed["lane"] not in (0, 1):
+                raise ValueError("input lane claim failed")
         return client, hello
     except BaseException:
         client.close()
@@ -96,7 +100,7 @@ def run_live(path, pid, address, x, y, grant_input=sys.stdin, output=sys.stdout)
         raise ValueError("expected a positive PID and a lowercase hexadecimal address without 0x")
     if not math.isfinite(x) or not math.isfinite(y) or x < 0 or y < 0:
         raise ValueError("click coordinates must be finite and nonnegative")
-    client, hello = connect(path)
+    client, hello = connect(path, claim=True)
     with client:
         target = exchange(client, f"TARGET {pid} {address}")
         if target.get("ok") is not True or re.fullmatch(r"[0-9a-f]{32}", target.get("target", "")) is None:

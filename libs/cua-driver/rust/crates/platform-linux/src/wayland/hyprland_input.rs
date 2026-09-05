@@ -14,6 +14,7 @@ use serde_json::{json, Value};
 const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
+const MAX_LANES: usize = 2;
 
 pub fn enabled() -> bool {
     std::env::var("CUA_DRIVER_EXPERIMENTAL_HYPRLAND_INPUT").as_deref() == Ok("1")
@@ -50,6 +51,8 @@ pub enum Action {
 
 struct Client {
     socket: socket2::Socket,
+    // Assigned by the compositor to this connection, never by the local pool.
+    lane: Option<usize>,
     owner: String,
     path: PathBuf,
     pid: u32,
@@ -158,7 +161,13 @@ impl Client {
         Ok(())
     }
 
-    fn connect(path: PathBuf, owner: String, pid: u32, address: u64) -> Result<Self> {
+    fn connect(
+        path: PathBuf,
+        owner: String,
+        pid: u32,
+        address: u64,
+        lane: usize,
+    ) -> Result<Option<Self>> {
         let socket = socket2::Socket::new(
             socket2::Domain::UNIX,
             socket2::Type::from(libc::SOCK_SEQPACKET),
@@ -168,6 +177,7 @@ impl Client {
         socket.set_nonblocking(true)?;
         let mut client = Self {
             socket,
+            lane: None,
             owner,
             path,
             pid,
@@ -177,14 +187,37 @@ impl Client {
             sequence: 0,
         };
         client.attest()?;
-        let hello = client.request("HELLO")?;
+        if client.handshake(lane)? {
+            Ok(Some(client))
+        } else {
+            Ok(None)
+        }
+    }
+
+    /// Only an explicit busy reservation permits another endpoint attempt.
+    /// Malformed replies and connection errors have unknown outcomes.
+    fn handshake(&mut self, expected_lane: usize) -> Result<bool> {
+        ensure!(expected_lane < MAX_LANES, "invalid experimental lane");
+        let hello = self.request("HELLO")?;
         ensure!(
             hello["ok"] == true && hello["protocol"].as_u64() == Some(0),
             "experimental protocol 0 unavailable"
         );
-        client.epoch = hex_field(&hello, "epoch")?;
-        client.challenge = hex_field(&hello, "challenge")?;
-        Ok(client)
+        self.epoch = hex_field(&hello, "epoch")?;
+        self.challenge = hex_field(&hello, "challenge")?;
+        let claim = self.request("CLAIM")?;
+        if claim["ok"] == false {
+            if claim["code"] == "lane_busy" && claim["detail"] == "lane_busy" {
+                return Ok(false);
+            }
+            bail!("experimental lane claim refused: {claim}");
+        }
+        ensure!(
+            claim["lane"].as_u64() == Some(expected_lane as u64),
+            "invalid experimental lane claim"
+        );
+        self.lane = Some(expected_lane);
+        Ok(true)
     }
 
     fn request(&self, packet: &str) -> Result<Value> {
@@ -256,6 +289,7 @@ impl Client {
         action: Action,
         started: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Result<Value> {
+        ensure!(self.lane.is_some(), "experimental lane is not claimed");
         self.attest()?;
         let target = self.request(&format!("TARGET {} {:x}", self.pid, self.address))?;
         if target["ok"] == false {
@@ -386,8 +420,18 @@ impl Action {
 }
 
 struct SessionClient {
-    lane: usize,
     client: Mutex<Option<Client>>,
+}
+
+/// The compositor owns the cross-process allocation. No target or action has
+/// been sent while this bounded search is running, and errors never fall back.
+fn claim_available(mut connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
+    for lane in 0..MAX_LANES {
+        if let Some(client) = connect(lane)? {
+            return Ok(client);
+        }
+    }
+    bail!("both experimental input seats are in use; end an owning session first")
 }
 
 static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<SessionClient>>>> = OnceLock::new();
@@ -409,11 +453,11 @@ fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
     if let Some(client) = clients.get(owner) {
         return Ok(client.clone());
     }
-    let lane = (0..2)
-        .find(|lane| clients.values().all(|client| client.lane != *lane))
-        .context("both experimental input seats are in use; end an owning session first")?;
+    ensure!(
+        clients.len() < MAX_LANES,
+        "both experimental input session slots are in use; end an owning session first"
+    );
     let client = Arc::new(SessionClient {
-        lane,
         client: Mutex::new(None),
     });
     clients.insert(owner.to_owned(), client.clone());
@@ -470,29 +514,44 @@ pub fn execute_with_started(
         .client
         .lock()
         .map_err(|_| anyhow::anyhow!("input connection poisoned"))?;
-    let path = socket_path(client.lane)?;
-    if slot
-        .as_ref()
-        .is_some_and(|client| client.pid != pid || client.address != address || client.path != path)
-    {
-        *slot = None;
+    if let Some(client) = slot.as_ref() {
+        let lane = client.lane.context("missing claimed input lane")?;
+        if client.pid != pid || client.address != address || client.path != socket_path(lane)? {
+            *slot = None;
+        }
     }
     if slot.is_none() {
-        *slot = Some(Client::connect(path, owner, pid, address)?);
+        *slot = Some(claim_available(|lane| {
+            Client::connect(socket_path(lane)?, owner.clone(), pid, address, lane)
+        })?);
     }
+    let lane = slot
+        .as_ref()
+        .and_then(|client| client.lane)
+        .context("missing claimed input lane")?;
     let mut result = slot
         .as_mut()
         .context("missing input connection")?
         .execute(action, started);
-    if result.is_err() {
+    if result.as_ref().map_or(true, terminal_connection_result) {
         *slot = None;
     }
     if let Ok(value) = &mut result {
         // A bounded slot number lets the external test operator select the
         // correct endpoint. It is not a credential or a caller-selected seat.
-        value["lane"] = json!(client.lane);
+        value["lane"] = json!(lane);
     }
     result
+}
+
+fn terminal_connection_result(value: &Value) -> bool {
+    value["ok"] == false
+        && matches!(
+            value["code"].as_str(),
+            Some(
+                "desktop_changed" | "plugin_disabled" | "plugin_shutdown" | "generation_exhausted"
+            )
+        )
 }
 
 #[cfg(test)]
@@ -502,12 +561,36 @@ mod tests {
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
 
     #[test]
-    fn independent_lifecycles_have_bounded_distinct_seats_and_cleanup() {
+    fn revoked_connections_are_dropped_without_replaying_the_action() {
+        for code in [
+            "desktop_changed",
+            "plugin_disabled",
+            "plugin_shutdown",
+            "generation_exhausted",
+        ] {
+            assert!(terminal_connection_result(
+                &json!({"ok": false, "code": code})
+            ));
+        }
+        for value in [
+            json!({"ok": true}),
+            json!({"ok": false, "code": "pending_operator_approval"}),
+            json!({"ok": false, "code": "primary_target_busy"}),
+        ] {
+            assert!(!terminal_connection_result(&value));
+        }
+    }
+
+    #[test]
+    fn independent_lifecycles_have_bounded_serialization_slots_and_cleanup() {
         assert!(session_client("").is_err());
         assert!(session_client("default").is_err());
         let a = session_client("input-pool-test-a").unwrap();
         let b = session_client("input-pool-test-b").unwrap();
-        assert_ne!(a.lane, b.lane);
+        let pool = Arc::new(Mutex::new([None, None]));
+        *a.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        *b.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        assert!(!Arc::ptr_eq(&a, &b));
         assert!(Arc::ptr_eq(
             &a,
             &session_client("input-pool-test-a").unwrap()
@@ -519,7 +602,10 @@ mod tests {
         drop(a_lock);
         cleanup_session("input-pool-test-a");
         let c = session_client("input-pool-test-c").unwrap();
-        assert_eq!(c.lane, a.lane);
+        assert!(!Arc::ptr_eq(&c, &a));
+        let reclaimed = claim_available(|lane| fake_claim(lane, &pool)).unwrap();
+        assert_eq!(reclaimed.lane, Some(0));
+        *c.client.lock().unwrap() = Some(reclaimed);
         assert!(Arc::ptr_eq(
             &b,
             &session_client("input-pool-test-b").unwrap()
@@ -534,7 +620,7 @@ mod tests {
             &session_client("__cua_runtime_other:pending").unwrap()
         ));
         let reused = session_client("input-pool-test-reused").unwrap();
-        assert_eq!(reused.lane, runtime.lane);
+        assert!(!Arc::ptr_eq(&reused, &runtime));
         cleanup_session("__cua_runtime_other:pending");
         cleanup_session("input-pool-test-reused");
     }
@@ -638,6 +724,7 @@ mod tests {
         (
             Client {
                 socket,
+                lane: None,
                 owner: "input-unregistered-test-client".into(),
                 path: PathBuf::new(),
                 pid: 1,
@@ -648,6 +735,186 @@ mod tests {
             },
             peer,
         )
+    }
+
+    fn read_packet(peer: &socket2::Socket) -> String {
+        let mut bytes = [0u8; MAX_PACKET];
+        let count =
+            unsafe { libc::recv(peer.as_raw_fd(), bytes.as_mut_ptr().cast(), bytes.len(), 0) };
+        assert!(count > 0);
+        String::from_utf8(bytes[..count as usize].to_vec()).unwrap()
+    }
+
+    fn hello_reply() -> Value {
+        json!({"ok":true,"protocol":0,"epoch":TOKEN,"challenge":TOKEN})
+    }
+
+    // A compositor-side pool, deliberately independent of Driver's CLIENTS.
+    // Retaining the peer models a reservation until the claimant disconnects.
+    fn fake_claim(
+        lane: usize,
+        pool: &Arc<Mutex<[Option<socket2::Socket>; MAX_LANES]>>,
+    ) -> Result<Option<Client>> {
+        let (mut client, peer) = test_connection();
+        let pool = pool.clone();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "HELLO");
+            peer.send(hello_reply().to_string().as_bytes()).unwrap();
+            assert_eq!(read_packet(&peer), "CLAIM");
+            let mut pool = pool.lock().unwrap();
+            if let Some(occupied) = pool[lane].as_ref() {
+                let mut byte = [0u8];
+                let count = unsafe {
+                    libc::recv(
+                        occupied.as_raw_fd(),
+                        byte.as_mut_ptr().cast(),
+                        1,
+                        libc::MSG_DONTWAIT,
+                    )
+                };
+                if count == 0 {
+                    pool[lane] = None;
+                } else {
+                    assert_eq!(count, -1);
+                    assert_eq!(
+                        std::io::Error::last_os_error().kind(),
+                        std::io::ErrorKind::WouldBlock
+                    );
+                }
+            }
+            if pool[lane].is_some() {
+                peer.send(br#"{"ok":false,"code":"lane_busy","detail":"lane_busy"}"#)
+                    .unwrap();
+            } else {
+                peer.send(json!({"ok":true,"lane":lane}).to_string().as_bytes())
+                    .unwrap();
+                pool[lane] = Some(peer);
+            }
+        });
+        let result = client.handshake(lane);
+        server.join().unwrap();
+        result.map(|claimed| claimed.then_some(client))
+    }
+
+    #[test]
+    fn independent_claimants_use_compositor_reservations_and_disconnect_reuses_lane() {
+        let pool = Arc::new(Mutex::new([None, None]));
+        let mut attempts = Vec::new();
+        let a = claim_available(|lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .unwrap();
+        assert_eq!(a.lane, Some(0));
+        assert_eq!(attempts, [0]);
+        attempts.clear();
+        let b = claim_available(|lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .unwrap();
+        assert_eq!(b.lane, Some(1));
+        assert_eq!(attempts, [0, 1]);
+        attempts.clear();
+        assert!(claim_available(|lane| {
+            attempts.push(lane);
+            fake_claim(lane, &pool)
+        })
+        .is_err());
+        assert_eq!(attempts, [0, 1]);
+        drop(a);
+        let c = claim_available(|lane| fake_claim(lane, &pool)).unwrap();
+        assert_eq!(c.lane, Some(0));
+        assert_eq!(b.lane, Some(1));
+        drop(b);
+        let d = claim_available(|lane| fake_claim(lane, &pool)).unwrap();
+        assert_eq!(d.lane, Some(1));
+    }
+
+    #[test]
+    fn malformed_or_unexpected_handshake_never_tries_another_lane() {
+        let cases = [
+            (
+                json!({"ok":true,"protocol":1,"epoch":TOKEN,"challenge":TOKEN}),
+                None,
+            ),
+            (
+                json!({"ok":true,"protocol":0,"epoch":"bad","challenge":TOKEN}),
+                None,
+            ),
+            (
+                json!({"ok":false,"code":"lane_busy","detail":"lane_busy"}),
+                None,
+            ),
+            (hello_reply(), Some(json!({"ok":true}))),
+            (hello_reply(), Some(json!({"ok":true,"lane":1}))),
+            (hello_reply(), Some(json!({"ok":true,"lane":2}))),
+            (hello_reply(), Some(json!({"ok":true,"lane":"0"}))),
+            (hello_reply(), Some(json!({"ok":false,"code":"lane_busy"}))),
+            (
+                hello_reply(),
+                Some(json!({"ok":false,"code":"lane_busy","detail":"unknown"})),
+            ),
+            (
+                hello_reply(),
+                Some(json!({"ok":false,"code":"stopped","detail":"stopped"})),
+            ),
+        ];
+        for (hello, claim) in cases {
+            let mut attempts = Vec::new();
+            assert!(claim_available(|lane| {
+                attempts.push(lane);
+                let (mut client, peer) = test_connection();
+                let hello = hello.clone();
+                let claim = claim.clone();
+                let server = std::thread::spawn(move || {
+                    assert_eq!(read_packet(&peer), "HELLO");
+                    peer.send(hello.to_string().as_bytes()).unwrap();
+                    if let Some(claim) = claim {
+                        assert_eq!(read_packet(&peer), "CLAIM");
+                        peer.send(claim.to_string().as_bytes()).unwrap();
+                    }
+                });
+                let result = client.handshake(lane);
+                server.join().unwrap();
+                assert!(client.lane.is_none());
+                result.map(|claimed| claimed.then_some(client))
+            })
+            .is_err());
+            assert_eq!(attempts, [0]);
+        }
+    }
+
+    #[test]
+    fn unknown_claim_outcome_and_connection_errors_never_try_another_lane() {
+        for reply in [None, Some("not-json")] {
+            let mut attempts = Vec::new();
+            assert!(claim_available(|lane| {
+                attempts.push(lane);
+                let (mut client, peer) = test_connection();
+                let server = std::thread::spawn(move || {
+                    assert_eq!(read_packet(&peer), "HELLO");
+                    peer.send(hello_reply().to_string().as_bytes()).unwrap();
+                    assert_eq!(read_packet(&peer), "CLAIM");
+                    if let Some(reply) = reply {
+                        peer.send(reply.as_bytes()).unwrap();
+                    }
+                    // The claim may have succeeded before connection loss.
+                });
+                let result = client.handshake(lane);
+                server.join().unwrap();
+                result.map(|claimed| claimed.then_some(client))
+            })
+            .is_err());
+            assert_eq!(attempts, [0]);
+        }
+        let mut attempts = Vec::new();
+        assert!(claim_available(|lane| {
+            attempts.push(lane);
+            bail!("connection unavailable")
+        })
+        .is_err());
+        assert_eq!(attempts, [0]);
     }
 
     #[test]

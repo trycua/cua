@@ -90,6 +90,24 @@ if(UNIX)
     set_target_properties(cua_hyprland_transport PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     if(BUILD_TESTING)
+        foreach(lifetime_test IN ITEMS owned_socket_path seat_lifetime)
+            add_executable(cua_hyprland_${lifetime_test}_test tests/${lifetime_test}_test.cpp)
+            target_compile_features(cua_hyprland_${lifetime_test}_test PRIVATE cxx_std_26)
+            target_include_directories(cua_hyprland_${lifetime_test}_test PRIVATE src)
+            target_compile_options(cua_hyprland_${lifetime_test}_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+            add_test(NAME cua_hyprland_${lifetime_test}_test COMMAND cua_hyprland_${lifetime_test}_test)
+        endforeach()
+        add_executable(cua_hyprland_plugin_input_lifetime_test
+            tests/plugin_input_lifetime_test.cpp src/plugin.cpp)
+        target_compile_features(cua_hyprland_plugin_input_lifetime_test PRIVATE cxx_std_26)
+        target_include_directories(cua_hyprland_plugin_input_lifetime_test PRIVATE tests tests/mock-hyprland include src)
+        target_compile_definitions(cua_hyprland_plugin_input_lifetime_test PRIVATE
+            CUA_HYPRLAND_PLUGIN_VERSION="${PROJECT_VERSION}" CUA_HYPRLAND_SOCKET1_API=0 CUA_HYPRLAND_TEST_INPUT=1)
+        target_compile_options(cua_hyprland_plugin_input_lifetime_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror -Wno-return-type-c-linkage)
+        target_link_libraries(cua_hyprland_plugin_input_lifetime_test PRIVATE cua_hyprland_transport)
+        add_test(NAME cua_hyprland_plugin_input_lifetime_test COMMAND cua_hyprland_plugin_input_lifetime_test)
+
         add_executable(cua_hyprland_transport_test tests/transport_test.cpp)
         target_compile_options(cua_hyprland_transport_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
         target_link_libraries(cua_hyprland_transport_test PRIVATE cua_hyprland_transport)

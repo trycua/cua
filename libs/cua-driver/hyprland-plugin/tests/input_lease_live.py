@@ -14,7 +14,7 @@ from input_transport_test import connect, exchange, refused, approved_packet
 
 def run(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
-    client, hello = connect(args.socket)
+    client, hello = connect(args.socket, claim=True)
     operator, _ = connect(args.socket)
     try:
         target = exchange(client, f"TARGET {args.pid} {args.address}")
@@ -39,7 +39,7 @@ def run(args):
         else:
             client.close()
             time.sleep(0.1)
-            client, fresh = connect(args.socket)
+            client, fresh = connect(args.socket, claim=True)
             assert fresh["challenge"] != hello["challenge"]
             assert fresh["epoch"] == hello["epoch"]
             target = exchange(client, f"TARGET {args.pid} {args.address}")

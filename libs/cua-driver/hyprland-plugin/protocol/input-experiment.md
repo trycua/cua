@@ -25,13 +25,20 @@ Integers are decimal except address, nonce, epoch, target, and signature, which
 are hexadecimal. Unknown commands, extra fields, overflow, and nonfinite or
 out-of-bounds coordinates refuse without input. Each endpoint owns one seat,
 one active lease, and independent pointer, keyboard, XKB, and drag state.
-Driver allocates the two endpoints to distinct authenticated lifecycle
-identities, not caller-selected lane numbers. A third concurrent lifecycle
-refuses until an owner ends. This bounded research allocation does not define
-a production scheduler or coordinate multiple Driver services.
+The compositor reserves each endpoint for one action connection. Driver tries
+the endpoints only during admission, before sending a target or action, and
+only an explicit `lane_busy` reply permits trying the second endpoint.
+Connection errors or unknown results do not trigger retries. This coordinates
+independent Driver processes without sharing seat state. The process-local
+registry still bounds and serializes private lifecycle owners; public session
+labels do not grant a lane or input authority.
 
 - `HELLO`: negotiate experimental protocol 0; return `epoch` and connection
   `challenge`. A reconnect gets a new challenge.
+- `CLAIM`: reserve this endpoint for the connection, or return `lane_busy`.
+  A successful response includes `lane` (zero or one). Repeating a claim on the
+  same connection is idempotent. Target selection and input require a claim;
+  operator and trace connections do not claim a lane. Disconnect frees it.
 - `TARGET <pid> <address>`: attest a live native top-level and return `target`,
   `revision`, logical `width` and `height`. The address is discovery input,
   never a lifetime token. A recreated/unmapped surface invalidates its token.
@@ -84,14 +91,28 @@ Hyprland 0.56.2 and its matching compiler/runtime. Driver additionally requires
 not enable input. This experiment adds `Cua-Test-Agent` and `Cua-Test-Agent-2`;
 Driver excludes both from foreground virtual-pointer/keyboard routes.
 
-Unloading revokes the lease, closes the socket, disables seat capabilities,
-and removes the seat global. It deliberately retains inert protocol objects
-and executable callbacks until the compositor exits. Immediately destroying
-those objects disconnected a real foot client during testing: late client
-cleanup requests addressed objects that had already been destroyed. The
-experimental ELF module therefore uses `NODELETE`, and each module admits at
-most eight retired two-seat instances before requiring a compositor restart.
-This is a bounded test workaround, not a production hot-unload contract.
+Disabling input revokes leases and closes input connections, but keeps both
+seat globals and client-owned resources. Re-enabling opens fresh transports
+with new epochs; existing applications keep their seats and need fresh input
+approval. Keymap replacement refreshes independent XKB state and keyboard
+resources, and revokes old authority without replacing the seats.
+
+Plugin replacement requires a desktop restart. Unload revokes input, disables
+seat capabilities, removes the globals, and retains inert protocol objects
+and `NODELETE` callbacks for late client cleanup. A marker in the private
+compositor-instance directory refuses replacement modules for that desktop
+lifetime, including a different module filename. It is a trusted-local
+lifecycle guard, not a boundary against a hostile same-user process. The old
+eight-reload workaround is no longer the upgrade contract. A new compositor
+instance gets its own directory and new seats.
+
+Synchronous lock/unlock, DPMS, session-active, and monitor-transition listeners
+revoke active and pending action connections even when a state returns to its
+original value between timer ticks. Operator and trace connections remain
+available. Dispatch-time state checks remain a second guard. These listeners
+cover stock Hyprland manager paths, not arbitrary third-party code bypassing
+them. Input socket cleanup preserves a replaced socket, file, or symlink and
+reports the cleanup outcome in lane status.
 
 The first input slice supports exact native top-level click, physical key and
 hotkey, scroll, and complete bounded drag. It refuses XWayland, child/subsurface
@@ -118,7 +139,9 @@ Test the exact source/module/Driver pair on the selected VM. Prove target
 effects through normal Driver MCP calls and independent application state,
 while observing primary pointer focus, keyboard focus, coordinates, and a
 foreground gesture. Exercise invalid grants, replay, expiry, disconnect,
-target loss, geometry changes, and unload. GTK and Qt successes do not imply
+target loss, geometry changes, config-toggle recovery, and unload/replacement
+refusal. The historical unload/reload delivery test is not applicable to the
+restart-required candidate. GTK and Qt successes do not imply
 Chromium/Electron compatibility, Unicode support, physical-host acceptance,
 or production readiness.
 

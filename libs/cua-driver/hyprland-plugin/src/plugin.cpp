@@ -147,7 +147,8 @@ std::uint64_t make_epoch() {
 
 std::string stop_server() {
 #ifdef CUA_HYPRLAND_TEST_INPUT
-    g_experiment.reset();
+    if (g_experiment)
+        g_experiment->suspend();
 #endif
     if (!g_server)
         return {};
@@ -184,8 +185,10 @@ void reconcile_server() {
     if (server->start()) {
         g_epoch = epoch;
 #ifdef CUA_HYPRLAND_TEST_INPUT
-        g_experiment = std::make_unique<cua::hyprland::InputExperiment>(
-            std::filesystem::path{g_socket_path}.parent_path().string(), g_experiment_handle);
+        if (!g_experiment)
+            g_experiment = std::make_unique<cua::hyprland::InputExperiment>(
+                std::filesystem::path{g_socket_path}.parent_path().string(), g_experiment_handle);
+        g_experiment->resume();
 #endif
     }
     g_server = std::move(server);
@@ -319,6 +322,9 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 APICALL EXPORT void PLUGIN_EXIT() {
     g_config_listener.reset();
     static_cast<void>(stop_server());
+#ifdef CUA_HYPRLAND_TEST_INPUT
+    g_experiment.reset();
+#endif
     g_status_command.reset();
     g_enabled.reset();
     g_socket_path.clear();

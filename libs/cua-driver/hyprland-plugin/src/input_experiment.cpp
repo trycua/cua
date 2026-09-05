@@ -3,11 +3,16 @@
 #include "input_experiment.hpp"
 #include "drag_geometry.hpp"
 #include "primary_trace.hpp"
+#include "seat_lifetime.hpp"
+#include "owned_socket_path.hpp"
 
 #include <src/Compositor.hpp>
 #include <src/devices/IKeyboard.hpp>
+#include <src/event/EventBus.hpp>
 #include <src/managers/SeatManager.hpp>
+#include <src/output/Monitor.hpp>
 #include <src/protocols/core/Compositor.hpp>
+#include <src/state/MonitorState.hpp>
 #include <wayland.hpp>
 
 #include <openssl/evp.h>
@@ -22,6 +27,7 @@
 #include <cmath>
 #include <cstring>
 #include <filesystem>
+#include <fcntl.h>
 #include <format>
 #include <memory>
 #include <optional>
@@ -38,7 +44,6 @@ using Clock = std::chrono::steady_clock;
 constexpr std::size_t kMaxPacket = 2048;
 constexpr std::size_t kMaxClients = 8;
 constexpr std::size_t kMaxResources = 512;
-unsigned retired_experiments = 0;
 
 std::uint64_t unix_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -141,6 +146,8 @@ struct InputExperiment::Impl {
     wl_event_source* listen_source = nullptr;
     wl_event_source* timer = nullptr;
     wl_global* global = nullptr;
+    OwnedSocketPath socket_path;
+    std::string_view socket_cleanup = "not_bound";
     std::string path, epoch = nonce(), keymap_text;
     std::vector<unsigned char> public_key;
     std::vector<std::unique_ptr<Client>> clients;
@@ -149,6 +156,8 @@ struct InputExperiment::Impl {
     std::vector<std::unique_ptr<Keyboard>> keyboards;
     std::vector<std::unique_ptr<Touch>> touches;
     Client* lease = nullptr;
+    Client* reservation = nullptr;
+    std::uint64_t desktop_generation = 1;
     std::uint64_t capabilities = 0, dispatches = 0;
     Clock::time_point expires{};
     std::optional<Drag> drag;
@@ -157,14 +166,13 @@ struct InputExperiment::Impl {
     xkb_context* xkb_context_ = nullptr;
     xkb_keymap* keymap = nullptr;
     xkb_state* keyboard_state = nullptr;
-    bool retired = false;
+    int keymap_fd = -1;
+    bool retired = false, suspended = true;
     unsigned lane;
     std::array<Impl*, 2> peers{};
     PrimaryTrace* trace = nullptr;
 
     explicit Impl(const std::string& directory, unsigned index) : lane(index) {
-        if (retired_experiments >= 16)
-            throw std::runtime_error("restart compositor after eight experimental seat reloads");
         public_key = unhex(CUA_HYPRLAND_TEST_OPERATOR_KEY);
         if (public_key.size() != 32)
             throw std::runtime_error("invalid test operator public key");
@@ -174,16 +182,54 @@ struct InputExperiment::Impl {
         // No private key or input-enabled default exists in this component.
     }
 
-    void start() {
+    void sync_keymap() {
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        if (keyboard && keyboard->m_xkbKeymapV1FD.get() >= 0 && !keyboard->m_xkbKeymapV1String.empty()) {
-            keymap_text = keyboard->m_xkbKeymapV1String;
-            xkb_context_ = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
-            if (xkb_context_)
-                keymap = xkb_keymap_new_from_string(xkb_context_, keymap_text.c_str(), XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS);
-            if (keymap) keyboard_state = xkb_state_new(keymap);
-            if (!keyboard_state) throw std::runtime_error("independent XKB state unavailable");
+        if (!keyboard || keyboard->m_xkbKeymapV1FD.get() < 0 || keyboard->m_xkbKeymapV1String.empty() ||
+            (keyboard_state && keymap_text == keyboard->m_xkbKeymapV1String)) return;
+        // Prepare a complete replacement before retiring the old independent
+        // state. Keep our own fd: primary keyboard replacement must not leave
+        // later seat bindings referring to a closed compositor fd.
+        auto* context = xkb_context_new(XKB_CONTEXT_NO_FLAGS);
+        auto* map = context ? xkb_keymap_new_from_string(context, keyboard->m_xkbKeymapV1String.c_str(),
+            XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS) : nullptr;
+        auto* state = map ? xkb_state_new(map) : nullptr;
+        const auto fd = fcntl(keyboard->m_xkbKeymapV1FD.get(), F_DUPFD_CLOEXEC, 0);
+        if (!state || fd < 0) {
+            if (fd >= 0) close(fd);
+            if (state) xkb_state_unref(state);
+            if (map) xkb_keymap_unref(map);
+            if (context) xkb_context_unref(context);
+            throw std::runtime_error("independent XKB state unavailable");
         }
+        desktop_transition();
+        if (keyboard_state) xkb_state_unref(keyboard_state);
+        if (keymap) xkb_keymap_unref(keymap);
+        if (xkb_context_) xkb_context_unref(xkb_context_);
+        if (keymap_fd >= 0) close(keymap_fd);
+        keyboard_state = state; keymap = map; xkb_context_ = context; keymap_fd = fd;
+        keymap_text = keyboard->m_xkbKeymapV1String;
+        for (auto& k : keyboards)
+            if (!k->dead && k->wl->resource())
+                k->wl->sendKeymap(WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, keymap_fd, keymap_text.size() + 1);
+        for (auto& seat : seats)
+            if (!seat->dead && seat->wl->resource())
+                seat->wl->sendCapabilities(static_cast<wl_seat_capability>(WL_SEAT_CAPABILITY_POINTER | WL_SEAT_CAPABILITY_KEYBOARD));
+    }
+    void start() {
+        sync_keymap();
+        timer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, tick, this);
+        if (!timer) throw std::runtime_error("input timer registration failed");
+        global = wl_global_create(g_pCompositor->m_wlDisplay, &wl_seat_interface, 9, this, bind_seat);
+        if (!global) throw std::runtime_error("synthetic seat unavailable");
+        wl_event_source_timer_update(timer, 16);
+    }
+    void resume() {
+        if (retired || desktop_generation == UINT64_MAX)
+            throw std::runtime_error("restart desktop before replacing input seats");
+        if (!suspended) return;
+        sync_keymap();
+        // Every new admission period has fresh identity and no inherited grant.
+        epoch = nonce();
         listener = socket(AF_UNIX, SOCK_SEQPACKET | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
         if (listener < 0) throw std::runtime_error("input socket unavailable");
         sockaddr_un address{};
@@ -192,36 +238,49 @@ struct InputExperiment::Impl {
         // Never unlink a pre-existing socket owned by another plugin instance.
         if (bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) != 0)
             throw std::runtime_error("input socket bind refused");
-        bound = true;
+        if (!socket_path.capture(path))
+            throw std::runtime_error("input socket ownership unavailable");
+        socket_cleanup = "bound";
         if (chmod(path.c_str(), 0600) != 0 || listen(listener, 8) != 0)
             throw std::runtime_error("input socket setup failed");
         listen_source = wl_event_loop_add_fd(g_pCompositor->m_wlEventLoop, listener, WL_EVENT_READABLE, accept_ready, this);
-        timer = wl_event_loop_add_timer(g_pCompositor->m_wlEventLoop, tick, this);
-        if (!listen_source || !timer) throw std::runtime_error("input event loop registration failed");
-        global = wl_global_create(g_pCompositor->m_wlDisplay, &wl_seat_interface, 9, this, bind_seat);
-        if (!global) throw std::runtime_error("synthetic seat unavailable");
-        wl_event_source_timer_update(timer, 16);
+        if (!listen_source) throw std::runtime_error("input event loop registration failed");
+        suspended = false;
     }
-    bool bound = false;
-    void retire() {
-        // wl_global removal does not revoke existing protocol objects. Destroying
-        // those objects immediately disconnects clients that still send release
-        // or cursor requests (observed with foot). Retain inert resources and
-        // callbacks until compositor exit; the experimental module is NODELETE.
-        revoke("plugin_shutdown");
-        retired = true;
-        ++retired_experiments;
-        for (auto& seat : seats)
-            if (!seat->dead && seat->wl->resource())
-                seat->wl->sendCapabilities(static_cast<wl_seat_capability>(0));
-        if (global) wl_global_remove(global);
+    void cleanup_socket() {
+        using Result = OwnedSocketPath::CleanupResult;
+        switch (socket_path.cleanup()) {
+            case Result::NotCaptured: break;
+            case Result::Removed: socket_cleanup = "removed"; break;
+            case Result::AlreadyAbsent: socket_cleanup = "absent"; break;
+            case Result::Replaced: socket_cleanup = "replacement_preserved"; break;
+            case Result::Failed: socket_cleanup = "failed"; break;
+        }
+    }
+    void suspend(std::string_view reason = "plugin_disabled") {
+        suspended = true;
+        revoke(reason);
+        reservation = nullptr;
         if (listen_source) wl_event_source_remove(listen_source);
         listen_source = nullptr;
         clients.clear();
         if (listener >= 0) close(listener);
         listener = -1;
-        if (bound) unlink(path.c_str());
-        bound = false;
+        cleanup_socket();
+        // Keep the globals, capabilities, and client resources stable. Removing
+        // and recreating them makes existing apps lose their agent input path.
+    }
+    void retire() {
+        // wl_global removal does not revoke existing protocol objects. Destroying
+        // those objects immediately disconnects clients that still send release
+        // or cursor requests (observed with foot). Retain inert resources and
+        // callbacks until compositor exit; the experimental module is NODELETE.
+        suspend("plugin_shutdown");
+        retired = true;
+        for (auto& seat : seats)
+            if (!seat->dead && seat->wl->resource())
+                seat->wl->sendCapabilities(static_cast<wl_seat_capability>(0));
+        if (global) wl_global_remove(global);
     }
     ~Impl() {
         revoke("plugin_shutdown");
@@ -232,14 +291,15 @@ struct InputExperiment::Impl {
         // Destroy all plugin-owned resources before unloading code callbacks.
         pointers.clear(); keyboards.clear(); touches.clear(); seats.clear();
         if (listener >= 0) close(listener);
-        if (bound) unlink(path.c_str());
+        cleanup_socket();
         if (keyboard_state) xkb_state_unref(keyboard_state);
         if (keymap) xkb_keymap_unref(keymap);
         if (xkb_context_) xkb_context_unref(xkb_context_);
+        if (keymap_fd >= 0) close(keymap_fd);
     }
     std::uint32_t serial() const { return wl_display_next_serial(g_pCompositor->m_wlDisplay); }
     bool available() const {
-        return !retired && g_pCompositor->m_sessionActive && g_pCompositor->m_dpmsStateOn &&
+        return !retired && !suspended && g_pCompositor->m_sessionActive && g_pCompositor->m_dpmsStateOn &&
             !g_pCompositor->m_isShuttingDown && !g_pSessionLockManager->isSessionLocked();
     }
     static void bind_seat(wl_client* client, void* data, std::uint32_t version, std::uint32_t id) {
@@ -275,15 +335,13 @@ struct InputExperiment::Impl {
     }
     void add_keyboard(CWlSeat* seat, std::uint32_t id) {
         if (!keyboard_state || keyboards.size() >= kMaxResources) { seat->noMemory(); return; }
-        const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        if (!keyboard || keyboard->m_xkbKeymapV1String != keymap_text) { seat->noMemory(); return; }
         auto k = std::make_unique<Keyboard>(); auto* entry = k.get();
         k->wl = makeShared<CWlKeyboard>(seat->client(), seat->version(), id);
         if (!k->wl->resource()) { seat->noMemory(); return; }
         k->wl->setData(nullptr);
         k->wl->setRelease([entry](CWlKeyboard*) { entry->dead = true; });
         k->wl->setOnDestroy([entry](CWlKeyboard*) { entry->dead = true; });
-        k->wl->sendKeymap(WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, keyboard->m_xkbKeymapV1FD.get(), keymap_text.size() + 1);
+        k->wl->sendKeymap(WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1, keymap_fd, keymap_text.size() + 1);
         if (seat->version() >= 4) k->wl->sendRepeatInfo(0, 0);
         keyboards.push_back(std::move(k));
     }
@@ -361,6 +419,28 @@ struct InputExperiment::Impl {
         if (drag && drag->client && !drag->client->dead) send(*drag->client, refusal(reason));
         drag.reset(); leave(); lease = nullptr; capabilities = 0;
     }
+    void desktop_transition() {
+        // Signals can fire before Hyprland updates its aggregate state. Revoke
+        // unconditionally; an off/on pair between timer ticks must not revive
+        // authority. Kill pending connections as well as the active lease so
+        // a pre-transition signed grant cannot be approved after unlock.
+        revoke("desktop_changed");
+        for (auto& c : clients) {
+            // Observers and operator-control connections own no action target.
+            // Keep them alive so Stop/status/evidence survives a transition.
+            if (reservation != c.get() && c->token.empty()) continue;
+            c->dead = true;
+            if (c->source) wl_event_source_remove(c->source);
+            c->source = nullptr;
+            if (c->fd >= 0) close(c->fd);
+            c->fd = -1;
+        }
+        reservation = nullptr;
+        if (desktop_generation == UINT64_MAX)
+            suspended = true;
+        else
+            ++desktop_generation;
+    }
     void send(Client& c, const std::string& packet) {
         if (c.dead) return;
         const auto n = ::send(c.fd, packet.data(), packet.size(), MSG_DONTWAIT | MSG_NOSIGNAL);
@@ -397,7 +477,10 @@ struct InputExperiment::Impl {
             try { self.request(c, fields(std::string_view(buffer.data(), n))); }
             catch (...) { self.send(c, refusal("invalid_request")); }
         }
-        if (c.dead && self.lease == &c) self.revoke("disconnected");
+        if (c.dead) {
+            if (self.lease == &c) self.revoke("disconnected");
+            if (self.reservation == &c) self.reservation = nullptr;
+        }
         return 0;
     }
     bool valid_signature(const std::string& message, const std::string& signature) const {
@@ -419,6 +502,7 @@ struct InputExperiment::Impl {
             return !peer->dead && peer->hello && peer->challenge == f[1] && peer->token == f[2] && !peer->token.empty();
         });
         if (found == clients.end() || !refresh(**found)) { send(c, refusal("stale_target")); return; }
+        if (reservation != found->get()) { send(c, refusal("lane_not_claimed")); return; }
         if (lease) { send(c, refusal("lease_busy")); return; }
         if (agent_conflict(**found)) { send(c, refusal("agent_target_busy")); return; }
         if (deadline <= (*found)->approved_deadline) { send(c, refusal("invalid_grant")); return; }
@@ -494,6 +578,8 @@ struct InputExperiment::Impl {
         }
     }
     void request(Client& c, const std::vector<std::string>& f) {
+        sync_keymap();
+        if (c.dead) return;
         const auto& command = f[0];
         if (command == "HELLO") {
             if (f.size() != 1 || c.hello) { send(c, refusal("invalid_request")); return; }
@@ -501,6 +587,11 @@ struct InputExperiment::Impl {
             send(c, std::format(R"({{"ok":true,"protocol":0,"epoch":"{}","challenge":"{}"}})", epoch, c.challenge)); return;
         }
         if (!c.hello) { send(c, refusal("invalid_request")); return; }
+        if (command == "CLAIM" && f.size() == 1) {
+            if (reservation && reservation != &c) { send(c, refusal("lane_busy")); return; }
+            reservation = &c;
+            send(c, std::format(R"({{"ok":true,"lane":{}}})", lane)); return;
+        }
         if (command == "STOP" && f.size() == 1) {
             for (auto* peer : peers) if (peer) peer->revoke("stopped");
             send(c, R"({"ok":true})"); return;
@@ -515,6 +606,7 @@ struct InputExperiment::Impl {
             send(c, trace->request(command, after)); return;
         }
         if (command == "APPROVE") { approve(c, f); return; }
+        if (reservation != &c) { send(c, refusal("lane_not_claimed")); return; }
         if (command == "TARGET") {
             if (f.size() != 3 || drag) { send(c, refusal("invalid_request")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
@@ -597,6 +689,7 @@ struct InputExperiment::Impl {
         wl_event_source_timer_update(self.timer, self.retired ? 500 : 16); return 0;
     }
     void step() {
+        if (!retired) sync_keymap();
         if (lease) {
             if (Clock::now() >= expires) revoke("lease_expired");
             else if (lease->dead || !available() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
@@ -615,6 +708,7 @@ struct InputExperiment::Impl {
         }
         for (auto& c : clients) if (Clock::now() - c->activity > std::chrono::seconds(c->hello ? 60 : 5)) c->dead = true;
         if (lease && lease->dead) revoke("disconnected");
+        if (reservation && reservation->dead) reservation = nullptr;
         std::erase_if(clients, [](auto& c) { return c->dead; });
         std::erase_if(pointers, [](auto& p) { return p->dead; });
         std::erase_if(keyboards, [](auto& k) { return k->dead; });
@@ -623,7 +717,49 @@ struct InputExperiment::Impl {
     }
 };
 
+// Hyprland 0.56.2 signals run synchronously on the compositor thread. Keep
+// their ownership explicit and detach before retiring the seats. No polling
+// or aggregate-state comparison substitutes for this transition boundary.
+struct InputExperiment::DesktopListeners {
+    struct MonitorListeners {
+        PHLMONITORREF monitor;
+        CHyprSignalListener dpms, mode;
+    };
+    InputExperiment& owner;
+    std::vector<MonitorListeners> monitors;
+    CHyprSignalListener lock, unlock, active, layout, added, removed, destroyed;
+
+    explicit DesktopListeners(InputExperiment& input) : owner(input) {
+        lock = g_pSessionLockManager->m_events.lock.listen([this] { changed(); });
+        unlock = g_pSessionLockManager->m_events.unlock.listen([this] { changed(); });
+        if (g_pCompositor->m_aqBackend->hasSession())
+            active = g_pCompositor->m_aqBackend->session->events.changeActive.listen([this] { changed(); });
+        layout = Event::bus()->m_events.monitor.layoutChanged.listen([this] { changed(); });
+        added = Event::bus()->m_events.monitor.preAdded.listen([this](PHLMONITOR monitor) {
+            changed(); watch(monitor);
+        });
+        removed = Event::bus()->m_events.monitor.preRemoved.listen([this](PHLMONITOR) { changed(); });
+        destroyed = Event::bus()->m_events.monitor.destroyMon.listen([this](PHLMONITOR monitor) {
+            changed();
+            std::erase_if(monitors, [&](const auto& entry) { return !entry.monitor || entry.monitor == monitor; });
+        });
+        for (const auto& monitor : State::monitorState()->allMonitors()) watch(monitor);
+    }
+    void changed() {
+        for (auto& lane : owner.lanes_) lane->desktop_transition();
+    }
+    void watch(PHLMONITOR monitor) {
+        if (!monitor || std::ranges::any_of(monitors, [&](const auto& entry) { return entry.monitor == monitor; })) return;
+        MonitorListeners listeners;
+        listeners.monitor = monitor;
+        listeners.dpms = monitor->m_events.dpmsChanged.listen([this] { changed(); });
+        listeners.mode = monitor->m_events.modeChanged.listen([this] { changed(); });
+        monitors.push_back(std::move(listeners));
+    }
+};
+
 InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
+    SeatLifetime lifetime(directory);
     for (unsigned i = 0; i < lanes_.size(); ++i) lanes_[i] = std::make_unique<Impl>(directory, i);
     for (auto& lane : lanes_) { lane->peers = {lanes_[0].get(), lanes_[1].get()}; lane->start(); }
     trace_ = std::make_unique<PrimaryTrace>(plugin, [this](wl_resource* resource) {
@@ -634,14 +770,29 @@ InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
         return 0u;
     });
     for (auto& lane : lanes_) lane->trace = trace_.get();
+    desktop_listeners_ = std::make_unique<DesktopListeners>(*this);
+    lifetime.publish();
 }
 InputExperiment::~InputExperiment() {
+    desktop_listeners_.reset();
     for (auto& lane : lanes_) { lane->retire(); lane->trace = nullptr; lane->peers = {}; }
     trace_.reset();
     // Intentional process-lifetime ownership: callbacks, removed global, and
-    // remaining client-owned resources cannot outlive their Impl. Bound reload
-    // count limits accumulation. A production unload contract is not claimed.
+    // remaining client-owned resources cannot outlive their Impl. The instance
+    // marker refuses replacement modules, so this retains at most two lanes.
     for (auto& lane : lanes_) (void)lane.release();
+}
+void InputExperiment::suspend() {
+    for (auto& lane : lanes_) lane->suspend();
+}
+void InputExperiment::resume() {
+    try {
+        for (auto& lane : lanes_) lane->resume();
+    } catch (...) {
+        // Partial transport setup must not leave one admitted lane behind.
+        suspend();
+        throw;
+    }
 }
 std::string InputExperiment::status_json() const {
     std::string states;
@@ -649,13 +800,13 @@ std::string InputExperiment::status_json() const {
         if (!states.empty()) states += ',';
         const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
         const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
-        states += std::format(R"({{"lane":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
-            lane->lane, lane->epoch, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
+        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
+            lane->lane, lane->epoch, lane->desktop_generation, lane->reservation != nullptr, lane->socket_cleanup, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
             lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
     }
     // Aggregate legacy fields remain available to existing test probes.
-    return std::format(R"({{"protocol":0,"test_only":true,"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
-        lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
+    return std::format(R"({{"protocol":0,"test_only":true,"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
+        !lanes_[0]->suspended && !lanes_[1]->suspended, lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
         lanes_[0]->seats.size() + lanes_[1]->seats.size(), lanes_[0]->pointers.size() + lanes_[1]->pointers.size(),
         lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, states);
 }

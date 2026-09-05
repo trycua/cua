@@ -111,6 +111,21 @@ require running it in the Fleet guest or another declared Wayland environment.
 
 ## Held-input lifecycle faults
 
+The session-lifetime candidate replaces hot-reload recovery with config-toggle
+recovery. For that candidate, use `--case toggle --toggle-file PATH`, where
+`PATH` is a test-owned Lua include sourced by the disposable compositor config
+and contains exactly `hl.config({plugin = {cua = {enabled = true}}})` followed
+by a newline. The runner verifies disable and re-enable through plugin status,
+requires a new admission epoch and approval, and keeps the same applications
+running. It refuses the historical `reload` case before input or unload when
+status requires a desktop restart. Separate unload/replacement-refusal and
+fresh-desktop tests remain required; a config toggle does not prove them.
+
+The portable suite covers seat-owner reuse across 20 toggles, failed transport
+recovery, restart-required lifetime markers, and inode-aware socket cleanup.
+These mock/unit checks do not establish native seat delivery, keymap refresh,
+brief desktop-transition revocation, or real multi-process lane behavior.
+
 The [native reliability record](lifecycle-validation.md) identifies the tested
 source, measured results, recordings, setup failures, and remaining limits.
 

@@ -16,8 +16,8 @@ REFUSALS = {
     "destroy": {"cancelled", "stale_target"},
     "move": {"cancelled", "stale_target"},
     "resize": {"cancelled", "stale_target"},
-    "lock": {"cancelled", "background_unavailable"},
-    "dpms": {"cancelled", "background_unavailable"},
+    "lock": {"cancelled", "background_unavailable", "desktop_changed"},
+    "dpms": {"cancelled", "background_unavailable", "desktop_changed"},
 }
 PRIMARY_FIELDS = {"application_delta", "wire_inputs", "wire_focus", "compositor_inputs",
                   "compositor_focus", "max_cursor_displacement", "cursor_path", "wm_before", "wm_after"}

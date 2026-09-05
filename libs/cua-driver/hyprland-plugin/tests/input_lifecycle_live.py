@@ -18,6 +18,7 @@ from input_transport_test import connect, exchange, refused
 from lifecycle_evidence import held_release, primary_wire_events, unchanged_primary
 from realapp_proof import cleanup_all
 from compositor_stall import stall_past_expiry
+from input_config_toggle import InputConfigToggle
 
 
 def validate_plan(plan):
@@ -40,6 +41,14 @@ def validate_plan(plan):
 
 
 def run(args):
+    # Refuse the historical hot-reload test before starting input or unloading
+    # a restart-required module. Its replacement is config-toggle recovery.
+    status = json.loads(subprocess.check_output(['hyprctl', '-j', 'cua:status'], timeout=5))
+    if args.case == 'reload' and status.get('experiment', {}).get('upgrade') == 'desktop_restart':
+        raise ValueError('use the toggle case; plugin replacement requires a desktop restart')
+    if args.case == 'toggle' and not args.toggle_file:
+        raise ValueError('toggle case requires an explicit test-owned Lua include')
+    toggle = InputConfigToggle(args.toggle_file) if args.case == 'toggle' else None
     args.evidence.mkdir(parents=True, exist_ok=False)
     plan = json.loads(args.plan.read_text())
     validate_plan(plan)
@@ -154,6 +163,10 @@ def run(args):
             fault_ns = stall['resume_ns']
             result.update(compositor_stall_ms=stall['stall_ms'], release_bound_origin='compositor_resume',
                           uninterrupted_desktop=False)
+        elif args.case == 'toggle':
+            toggle.disable()
+            operator.close()
+            operator = None
         elif args.case == 'reload':
             assert args.reload_module and args.reload_module.is_file()
             output = subprocess.check_output(['hyprctl', 'plugin', 'unload', str(args.reload_module)], text=True, timeout=5)
@@ -171,7 +184,7 @@ def run(args):
                 assert response.get('isError') and result['action_refusal'] == 'stopped', response
             if args.case == 'expiry':
                 assert response.get('isError') and result['action_refusal'] == 'lease_expired', response
-            if args.case == 'reload':
+            if args.case in ('reload', 'toggle'):
                 assert response.get('isError'), response
         except (RuntimeError, OSError, ValueError) as error:
             if args.case != 'disconnect':
@@ -187,6 +200,12 @@ def run(args):
         assert result['release_latency_ms'] <= 750, 'held input was not released within the cancellation bound'
         assert not state(args.background_journal)['held'], 'application still holds synthetic button'
         result['observed_release'] = True
+        if args.case == 'toggle':
+            toggle.restore()
+            operator, hello = connect(input_path)
+            assert hello['epoch'] != pending['epoch'], 'toggle retained old admission epoch'
+            result['new_epoch'] = True
+            result['same_application_processes'] = True
         if args.case == 'reload':
             output = subprocess.check_output(['hyprctl', 'plugin', 'load', str(args.reload_module)], text=True, timeout=5)
             assert output.strip() == 'ok', output
@@ -213,7 +232,7 @@ def run(args):
             # public label. Use a genuinely new episode and obtain a new grant.
             label += '-new'
         fresh = request_grant(client, 'recovery')
-        if args.case in ('disconnect', 'reload'):
+        if args.case in ('disconnect', 'reload', 'toggle'):
             assert fresh['challenge'] != pending['challenge'], 'reconnect inherited old authority'
             refused(exchange(operator, grant['packet']), 'stale_target', 'invalid_grant')
         else:
@@ -225,6 +244,8 @@ def run(args):
         raise
     finally:
         def restore_module():
+            if toggle:
+                toggle.restore()
             if unloaded:
                 output = subprocess.check_output(['hyprctl', 'plugin', 'load', str(args.reload_module)], text=True, timeout=5)
                 assert output.strip() == 'ok', output
@@ -270,11 +291,13 @@ if __name__ == '__main__':
     if not __debug__:
         raise RuntimeError('assertions must remain enabled')
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--case', choices=('disconnect', 'stop', 'expiry', 'reload'), required=True)
+    parser.add_argument('--case', choices=('disconnect', 'stop', 'expiry', 'reload', 'toggle'), required=True)
     for name in ('plan', 'evidence', 'driver', 'driver-socket', 'input-directory',
                  'primary-grab', 'background-journal', 'foreground-journal', 'foreground-wire'):
         parser.add_argument('--' + name, type=Path, required=True)
     parser.add_argument('--record-video', action='store_true')
     parser.add_argument('--compositor-pid', type=int)
     parser.add_argument('--reload-module', type=Path)
+    parser.add_argument('--toggle-file', type=Path,
+                        help='Explicit test-owned Lua include for config-toggle recovery')
     run(parser.parse_args())

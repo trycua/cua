@@ -66,6 +66,10 @@ impl Harness {
     }
 
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, None)
+    }
+
+    fn launch_with_options(command_oracle: Option<&Path>, discovery_mode: Option<&str>) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -78,6 +82,9 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if let Some(mode) = discovery_mode {
+            command.env("CUA_HARNESS_AX_WINDOW_DISCOVERY", mode);
         }
         let app = command
             .spawn()
@@ -159,16 +166,38 @@ fn run_case(
     case: cua_driver_testkit::e2e::CaseSpec,
     test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
 ) {
+    run_case_with_discovery_mode(case, None, test);
+}
+
+fn run_case_with_discovery_mode(
+    case: cua_driver_testkit::e2e::CaseSpec,
+    discovery_mode: Option<&str>,
+    test: impl FnOnce(u32, u64, &mut McpDriver) -> Observation,
+) {
     let cell_id = case.cell_id.clone();
     let delivery = case.delivery;
     execute_case(case, |evidence| {
         let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
             .expect("start installed macOS daemon proxy");
         *evidence = recording_evidence(driver.recording_dir());
-        let harness = Harness::launch();
-        let (wid, _) = driver
+        let harness = Harness::launch_with_options(None, discovery_mode);
+        let (wid, title) = driver
             .find_window(harness.pid as i64, "CuaTestHarness AppKit")
             .expect("AppKit main window not found");
+        let wid = if title == "CuaTestHarness AppKit" {
+            wid
+        } else {
+            let windows = driver.call("list_windows", serde_json::json!({ "pid": harness.pid }));
+            windows.structured()["windows"]
+                .as_array()
+                .and_then(|windows| {
+                    windows
+                        .iter()
+                        .find(|window| window["title"] == "CuaTestHarness AppKit")
+                })
+                .and_then(|window| window["window_id"].as_u64())
+                .expect("exact AppKit main window not found")
+        };
         if delivery != cua_driver_testkit::e2e::Delivery::Background {
             driver.start_behavior_recording();
         }
@@ -208,6 +237,215 @@ fn run_background_case_targeting(
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_appkit_window_discovery_snapshot() {
+    for mode in [
+        "main",
+        "focused",
+        "both",
+        "listed-sibling",
+        "none",
+        "invalid",
+    ] {
+        let case = native_readonly_case(
+            "appkit",
+            &format!("ax_window_discovery_snapshot_{mode}"),
+            Targeting::Ax,
+            DriverRoute::AxRead,
+            vec![OracleKind::AxState],
+        );
+        run_case_with_discovery_mode(case, Some(mode), |pid, window_id, driver| {
+            let snapshot = snapshot_elements(driver, pid, window_id);
+            assert!(!snapshot.is_error(), "{mode}: {}", snapshot.text());
+            if matches!(mode, "none" | "invalid") {
+                assert_eq!(snapshot.structured()["degraded"], true, "{mode}");
+                assert_eq!(snapshot.structured()["element_count"], 0, "{mode}");
+                assert!(
+                    snapshot.tree_text().is_empty(),
+                    "{mode}: {}",
+                    snapshot.text()
+                );
+            } else {
+                assert!(
+                    snapshot.tree_text().contains("HARNESS_TEXT_MARKER_v1"),
+                    "{mode}: {}",
+                    snapshot.text()
+                );
+                assert!(
+                    snapshot.tree_text().contains("counter=0"),
+                    "{mode}: {}",
+                    snapshot.text()
+                );
+                assert!(
+                    !snapshot
+                        .tree_text()
+                        .contains("bring_to_front secondary ordinary window"),
+                    "{mode}: {}",
+                    snapshot.text()
+                );
+                assert_eq!(
+                    snapshot.structured()["background_input"]["routes"][2]["reason"],
+                    "keyboard_scope_unresolved",
+                    "{mode}: {}",
+                    snapshot.text()
+                );
+            }
+            Observation::delivered(vec![OracleKind::AxState], Evidence::default())
+        });
+    }
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_main_focused_window_discovery() {
+    for mode in ["main", "focused", "both", "listed-sibling"] {
+        let case = native_background_case(
+            "appkit",
+            &format!("ax_window_discovery_{mode}"),
+            Targeting::Ax,
+            DriverRoute::MacosAxAction,
+        );
+        run_case_with_discovery_mode(case, Some(mode), |pid, window_id, driver| {
+            let (_, passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: window_id,
+                },
+                |driver| {
+                    let before = snapshot_elements(driver, pid, window_id);
+                    assert!(!before.is_error(), "{mode}: {}", before.text());
+                    assert!(
+                        before.tree_text().contains("counter=0"),
+                        "{mode}: {}",
+                        before.text()
+                    );
+                    let token = element_token_by_id(&before, "btn-increment");
+                    let clicked = driver.call(
+                        "click",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": window_id,
+                            "element_token": token,
+                            "action": "press",
+                            "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(!clicked.is_error(), "{mode}: {}", clicked.text());
+                    let after = snapshot_elements(driver, pid, window_id);
+                    assert!(
+                        after.tree_text().contains("counter=1"),
+                        "{mode}: {}",
+                        after.text()
+                    );
+                    let field = element_token_by_id(&after, "txt-input");
+                    let changed = driver.call(
+                        "set_value",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": window_id,
+                            "element_token": field,
+                            "value": "exact-window-recovery"
+                        }),
+                    );
+                    assert!(!changed.is_error(), "{mode}: {}", changed.text());
+                    let final_state = snapshot_elements(driver, pid, window_id);
+                    assert!(
+                        final_state.tree_text().contains("exact-window-recovery"),
+                        "{mode}: {}",
+                        final_state.text()
+                    );
+                    let refused = driver.call(
+                        "press_key",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": window_id,
+                            "element_token": element_token_by_id(&final_state, "txt-input"),
+                            "key": "a",
+                            "delivery_mode": "background"
+                        }),
+                    );
+                    assert!(refused.is_error(), "{mode}: {}", refused.text());
+                    assert_eq!(refused.structured()["code"], "keyboard_scope_unresolved");
+                    assert!(snapshot_elements(driver, pid, window_id)
+                        .tree_text()
+                        .contains("exact-window-recovery"));
+                },
+            )
+            .unwrap_or_else(|error| panic!("{mode}: background desktop contract failed: {error}"));
+            Observation::delivered_with_fixture_state(passed)
+        });
+    }
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_unresolved_window_discovery_refuses() {
+    for mode in ["none", "invalid"] {
+        let mut case = native_background_case(
+            "appkit",
+            &format!("ax_window_discovery_{mode}"),
+            Targeting::Ax,
+            DriverRoute::MacosCgEventPid,
+        )
+        .expecting_refusal(vec![RefusalCode::OffSpaceOrAxUnresolved]);
+        case.oracles
+            .retain(|oracle| *oracle != OracleKind::FixtureState);
+        case.oracles.push(OracleKind::AxState);
+        run_case_with_discovery_mode(case, Some(mode), |pid, window_id, driver| {
+            let snapshot = snapshot_elements(driver, pid, window_id);
+            assert!(!snapshot.is_error(), "{mode}: {}", snapshot.text());
+            assert_eq!(
+                snapshot.structured()["degraded"],
+                true,
+                "{mode}: {}",
+                snapshot.text()
+            );
+            assert_eq!(
+                snapshot.structured()["element_count"],
+                0,
+                "{mode}: {}",
+                snapshot.text()
+            );
+            assert!(!snapshot.tree_text().contains("HARNESS_TEXT_MARKER_v1"));
+            let (refused, mut passed) = run_with_background_oracles(
+                driver,
+                TargetWindow {
+                    pid,
+                    native_id: window_id,
+                },
+                |driver| {
+                    driver.call(
+                        "press_key",
+                        serde_json::json!({
+                            "pid": pid as i64,
+                            "window_id": window_id,
+                            "key": "a",
+                            "delivery_mode": "background"
+                        }),
+                    )
+                },
+            )
+            .unwrap_or_else(|error| panic!("{mode}: background desktop contract failed: {error}"));
+            assert!(refused.is_error(), "{mode}: {}", refused.text());
+            assert_eq!(
+                refused.structured()["code"],
+                "off_space_or_ax_unresolved",
+                "{mode}: {}",
+                refused.text()
+            );
+            passed.push(OracleKind::AxState);
+            Observation::refused(
+                RefusalCode::OffSpaceOrAxUnresolved,
+                passed,
+                refused.text(),
+                Evidence::default(),
+            )
+        });
+    }
+}
 
 #[test]
 #[ignore]

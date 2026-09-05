@@ -118,19 +118,20 @@ does not imply arbitrary raw background PX delivery on Wayland.
 
 ---
 
-## Off-Space SwiftUI windows strip their AX tree
+## Off-Space windows can disappear from AX enumeration
 
-**Symptom:** `get_window_state({pid, window_id})` on a window on a different Space (e.g. System Settings parked on Space 2 while on Space 1) returns a minimal tree that contains only the menu bar, or just the `AXApplication` root.
+**Symptom:** `get_window_state({pid, window_id})` can return an empty, degraded tree for a live window on another Space. This can affect AppKit as well as SwiftUI, including when all of an application's windows are off the active Space.
 
-**Cause:** macOS 14+ strips AX detail from non-current-Space SwiftUI windows as a privacy/performance tradeoff. AppKit apps are not affected. There is no workaround that keeps the window off-Space.
+**Recovery:** An empty application `AXWindows` array does not necessarily mean the window's accessibility tree is gone. Cua Driver also queries fresh `AXMainWindow` and `AXFocusedWindow` references, validates their process and window role, and joins them to the requested CGWindowID. When an exact candidate is available, reads and semantic actions can work without switching Spaces. A main/focused reference is never substituted for a different requested window.
 
-**Response shape:** Every `get_window_state` response on an off-current-Space window carries `off_space: true`, so callers can decide to switch Space, pick a different window, or skip the turn.
+**Remaining limit:** These references do not enumerate every off-Space sibling, and some applications may still expose no usable exact candidate or controls. An unresolved target returns an empty tree with `degraded_reason` beginning with `ax_window_unresolved`; background input, including pixel input, refuses with `off_space_or_ax_unresolved`. Older builds can omit `off_space` entirely: its absence is not proof that a window is on the current Space.
 
-**Workarounds:**
+**Agent guidance:**
 
-1. Switch the user to the target's Space first. This breaks the no-Space-bounce promise.
-2. Target an AppKit equivalent of the app if one exists.
-3. Limit off-Space automation to AppKit apps where the tree stays populated.
+1. Read the exact window and prefer a fresh `element_token` for a supported semantic action; verify the target's resulting state.
+2. Inspect `background_input` for route-specific refusal reasons. A window recovered only through main/focused references does not prove process-wide keyboard scope: PID-routed keys refuse with `keyboard_scope_unresolved`; use a semantic action instead. Pixel input also requires a valid target capture/coordinate frame; `px_capture_unavailable` is a separate failure, not an AX discovery failure.
+3. Do not retry an unresolved AX action as a pixel click to bypass the refusal, or assume that starting a capture stream restores AX enumeration.
+4. If the exact surface remains unresolved, ask before switching Space or foregrounding. There is no general recovery guarantee for arbitrary off-Space windows.
 
 ---
 

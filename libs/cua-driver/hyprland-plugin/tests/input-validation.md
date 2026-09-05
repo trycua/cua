@@ -1,5 +1,10 @@
 # Isolated-input VM validation
 
+This is the historical single-seat record. The later
+[concurrent real-app validation](realapp-validation.md) covers two independent
+lanes, Calc and Inkscape, moving-primary measurement, Cancel, and Stop on a
+different explicitly identified candidate.
+
 On 2026-09-05, the nonshipping input experiment passed a focused native GTK3
 test in an existing Omarchy Fleet VM. Real Driver MCP calls delivered click,
 key, hotkey, scroll, and drag events to a background application while a

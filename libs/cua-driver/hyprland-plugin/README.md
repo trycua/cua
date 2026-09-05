@@ -28,7 +28,11 @@ This branch also contains a separate, opt-in
 It is not enabled by the normal build or package. Its test-only operator
 boundary and resident-module unload workaround are not a production contract.
 See the [input experiment validation](tests/input-validation.md) for the exact
-tested artifacts, application evidence, and remaining gaps.
+single-seat artifacts and the [concurrent real-app
+validation](tests/realapp-validation.md) for two-lane Calc/Inkscape evidence,
+event-level primary-cursor measurement, and Cancel/Stop results. Apps needed
+restarting after plugin reload to bind replacement synthetic resources; this
+experiment does not establish production hot-reload support.
 
 This design builds on Dillon DuPont's Hyprland injection prototype. That credit
 records the prototype lineage; it does not claim that the prototype or input

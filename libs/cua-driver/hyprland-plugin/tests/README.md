@@ -6,6 +6,9 @@ exercise a path. The separately selected, nonshipping
 [input experiment](../protocol/input-experiment.md) has an explicit build flag
 and external test-operator grant. Its
 [VM validation record](input-validation.md) is not production acceptance.
+The [concurrent real-app follow-up](realapp-validation.md) records two-lane
+Calc/Inkscape tasks, moving-primary measurement, a warp-and-return negative
+control, per-lane Cancel, and global Stop on its exact tested candidate.
 
 Neither stable Cua Driver `0.23.2` nor nightly provides isolated background
 input through this plugin. Normal-build discovery covers protocol negotiation,

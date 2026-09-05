@@ -530,7 +530,7 @@ impl RecordingSession {
             args.get("element_token").and_then(Value::as_str),
         ) {
             if let Ok((resolved_window, resolved_index)) =
-                crate::element_token::global().resolve(pid, token)
+                crate::element_token::global().resolve_wide(pid, token)
             {
                 window_id = Some(u64::from(resolved_window));
                 element_index = u64::try_from(resolved_index).ok();

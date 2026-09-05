@@ -774,7 +774,7 @@ impl Tool for GetWindowStateTool {
             // Tuple: (Option<b64>, Option<file_path>, w, h, Option<original_w>).
             let mut screenshot_error = None;
             let screenshot = if should_capture {
-                match crate::wayland::screenshot_dispatch(xid) {
+                match crate::wayland::screenshot_dispatch_with_pid(xid, pid) {
                     Ok(raw) => {
                         let orig_w = crate::capture::png_dimensions_pub(&raw)
                             .map(|(w, _)| w)
@@ -838,9 +838,21 @@ impl Tool for GetWindowStateTool {
                     // by an opaque per-snapshot `element_token` alongside
                     // its existing integer `element_index`. The integer
                     // surface stays unchanged — the token is additive.
-                    let snapshot_id = (!observation_only).then(|| {
-                        cua_driver_core::element_token::global()
-                            .register_snapshot(pid as i32, xid as u32, count)
+                    let target_scoped = !(crate::wayland::is_wayland()
+                        && crate::wayland::hyprland::is_session())
+                        || tr.window_scoped;
+                    if !observation_only && !target_scoped {
+                        cua_driver_core::element_token::global().invalidate_window(pid as i32, xid);
+                    }
+                    let snapshot_id = (!observation_only && target_scoped).then(|| {
+                        cua_driver_core::element_token::global().register_snapshot_indices(
+                            pid as i32,
+                            xid,
+                            &tr.nodes
+                                .iter()
+                                .filter_map(|node| node.element_index)
+                                .collect::<Vec<_>>(),
+                        )
                     });
 
                     // Structured `elements` array: one entry per actionable node.
@@ -936,7 +948,10 @@ impl Tool for GetWindowStateTool {
                     // daemon isn't on the desktop session bus so the registry is
                     // empty), or it's a non-AX surface (canvas/WebGL). Mark it
                     // degraded so callers don't read `elements: []` as authoritative.
-                    if !source_trusted {
+                    if !target_scoped {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!("accessibility_window_identity_unproven: tree is application-scoped; exact-window element tokens and bounds are unavailable");
+                    } else if !source_trusted {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(source_degraded_reason
                             .unwrap_or_else(|| {
@@ -1525,7 +1540,11 @@ fn resolve_element_local_coords(
     idx: usize,
     xid_hint: Option<u64>,
 ) -> anyhow::Result<(u64, f64, f64)> {
-    let (bx, by, bw, bh) = crate::atspi::get_element_bounds(pid, idx)?;
+    let (bx, by, bw, bh) = if let Some(xid) = xid_hint {
+        crate::atspi::get_element_bounds_for_window(pid, xid, idx)?
+    } else {
+        crate::atspi::get_element_bounds(pid, idx)?
+    };
     let screen_cx = bx as f64 + bw as f64 / 2.0;
     let screen_cy = by as f64 + bh as f64 / 2.0;
 
@@ -1572,8 +1591,11 @@ fn resolve_element_local_coords(
     Ok((xid, local_x, local_y))
 }
 
-fn element_screen_center(pid: u32, idx: usize) -> anyhow::Result<(f64, f64)> {
-    let (bx, by, bw, bh) = crate::atspi::get_element_bounds(pid, idx)?;
+fn element_screen_center(pid: u32, idx: usize, xid: Option<u64>) -> anyhow::Result<(f64, f64)> {
+    let (bx, by, bw, bh) = match xid {
+        Some(xid) => crate::atspi::get_element_bounds_for_window(pid, xid, idx)?,
+        None => crate::atspi::get_element_bounds(pid, idx)?,
+    };
     Ok((bx as f64 + bw as f64 / 2.0, by as f64 + bh as f64 / 2.0))
 }
 
@@ -2226,7 +2248,7 @@ fn explicit_keyboard_cursor_target(
     pixel_target: Option<(f64, f64)>,
 ) -> Option<(f64, f64)> {
     if let Some(element_index) = element_index {
-        let (sx, sy) = element_screen_center(pid, element_index).ok()?;
+        let (sx, sy) = element_screen_center(pid, element_index, (xid != 0).then_some(xid)).ok()?;
         return Some((sx, sy));
     }
 
@@ -2619,12 +2641,12 @@ impl Tool for ClickTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            window_id_arg.map(|v| v as u32),
+            window_id_arg,
             "click",
         ) {
             Ok(r) => r,
@@ -2650,27 +2672,31 @@ impl Tool for ClickTool {
             // matching the coordinate path below and the macOS/Windows backends.
             // Previously perform_action ran inside this spawn_blocking, so the
             // app updated before the cursor visibly arrived.
-            let (xid, sx, sy) = tokio::task::spawn_blocking(move || -> (u64, f64, f64) {
-                let (cx, cy) = element_screen_center(pid, idx).unwrap_or((0.0, 0.0));
-                let xid = xid_hint
-                    .or_else(|| {
-                        crate::x11::list_windows(Some(pid))
-                            .into_iter()
-                            .next()
-                            .map(|w| w.xid)
-                    })
-                    .unwrap_or(0);
-                (xid, cx, cy)
-            })
-            .await
-            .unwrap_or((0, 0.0, 0.0));
-            if xid != 0 {
-                crate::overlay::send_command_for(
-                    cursor_id.clone(),
-                    cursor_overlay::OverlayCommand::PinAbove(xid),
-                );
+            let placement =
+                tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
+                    let (cx, cy) = element_screen_center(pid, idx, xid_hint)?;
+                    let xid = xid_hint
+                        .or_else(|| {
+                            crate::x11::list_windows(Some(pid))
+                                .into_iter()
+                                .next()
+                                .map(|w| w.xid)
+                        })
+                        .unwrap_or(0);
+                    Ok((xid, cx, cy))
+                })
+                .await
+                .ok()
+                .and_then(Result::ok);
+            if let Some((xid, sx, sy)) = placement {
+                if xid != 0 {
+                    crate::overlay::send_command_for(
+                        cursor_id.clone(),
+                        cursor_overlay::OverlayCommand::PinAbove(xid),
+                    );
+                }
+                reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
             }
-            reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
@@ -2712,6 +2738,8 @@ impl Tool for ClickTool {
                 // ignore a targeted XSendEvent; limiting XTest to modified
                 // clicks made those rows addressable but not selectable.
                 if delivery.is_foreground() && !crate::wayland::wayland_input_enabled() {
+                    let (_, sx, sy) = placement
+                        .ok_or_else(|| anyhow::anyhow!("element screen bounds unavailable"))?;
                     crate::input::with_x11_foreground(xid2, 80, || {
                         crate::input::send_click_xtest_desktop_with_modifiers(
                             sx.round() as i32,
@@ -3103,12 +3131,12 @@ impl Tool for TypeTextTool {
         // Surface 6: resolve element_token / element_index for the
         // optional pre-typing focus glide below. The token also carries
         // the window_id when supplied so the caller can omit window_id.
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id").map(|v| v as u32),
+            args.opt_u64("window_id"),
             "type_text",
         ) {
             Ok(r) => r,
@@ -3724,12 +3752,12 @@ impl Tool for PressKeyTool {
         let element_token_arg = args.opt_str("element_token");
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             element_index_arg,
             element_token_arg.as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            window_id_arg.map(|v| v as u32),
+            window_id_arg,
             "press_key",
         ) {
             Ok(r) => r,
@@ -4052,12 +4080,12 @@ impl Tool for HotkeyTool {
         let pid = args.u64_or("pid", 0) as u32;
         let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|value| value as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             element_index_arg,
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            window_id_arg.map(|value| value as u32),
+            window_id_arg,
             "hotkey",
         ) {
             Ok(resolved) => resolved,
@@ -4337,12 +4365,12 @@ impl Tool for SetValueTool {
             Err(e) => return e,
         };
         // Surface 6: element_token / element_index precedence resolution.
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id").map(|v| v as u32),
+            args.opt_u64("window_id"),
             "set_value",
         ) {
             Ok(r) => r,
@@ -4473,12 +4501,12 @@ impl Tool for ScrollTool {
         // element (X11 scroll buttons go to the window root), but the
         // token still needs to be accepted + validated so a stale
         // token surfaces an error instead of silently no-op'ing.
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id").map(|v| v as u32),
+            args.opt_u64("window_id"),
             "scroll",
         ) {
             Ok(r) => r,
@@ -4859,12 +4887,12 @@ impl Tool for DoubleClickTool {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id").map(|v| v as u32),
+            args.opt_u64("window_id"),
             "double_click",
         ) {
             Ok(r) => r,
@@ -4890,8 +4918,10 @@ impl Tool for DoubleClickTool {
             .await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    if let Ok(Ok((sx, sy))) =
-                        tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
+                    if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || {
+                        element_screen_center(pid, idx, Some(xid))
+                    })
+                    .await
                     {
                         crate::overlay::send_command_for(
                             cursor_id.clone(),
@@ -5085,12 +5115,12 @@ impl Tool for RightClickTool {
             return refusal;
         }
         // Surface 6: element_token / element_index precedence.
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
             args.opt_u64("element_index").map(|v| v as usize),
             args.opt_str("element_token").as_deref(),
             args.opt_str("snapshot_id").as_deref(),
-            args.opt_u64("window_id").map(|v| v as u32),
+            args.opt_u64("window_id"),
             "right_click",
         ) {
             Ok(r) => r,
@@ -5116,8 +5146,10 @@ impl Tool for RightClickTool {
             .await;
             return match result {
                 Ok(Ok((xid, lx, ly))) => {
-                    if let Ok(Ok((sx, sy))) =
-                        tokio::task::spawn_blocking(move || element_screen_center(pid, idx)).await
+                    if let Ok(Ok((sx, sy))) = tokio::task::spawn_blocking(move || {
+                        element_screen_center(pid, idx, Some(xid))
+                    })
+                    .await
                     {
                         crate::overlay::send_command_for(
                             cursor_id.clone(),

@@ -46,6 +46,9 @@ meval = "0.2"
 wayland-client = "0.31"
 wayland-backend = "0.3"
 wayland-scanner = "0.31"
+# Vendored toplevel-export bindings and bounded compositor IPC connections.
+bitflags = "2"
+socket2 = "0.6"
 wayland-protocols-wlr = { version = "0.3", features = ["client"] }
 # Wayland staging protocols: ext-foreign-toplevel-list-v1,
 # ext-image-capture-source-v1, ext-image-copy-capture-v1 (per-window

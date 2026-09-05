@@ -9,9 +9,14 @@ use crate::e2e::OracleKind;
 use crate::observer::{DesktopObserver, NativeObserver, TargetWindow};
 use crate::{harness_app, spawn_in_job, BehaviorRecording, ChildReaper, Driver};
 
+#[cfg(any(target_os = "linux", test))]
+#[path = "sentinel_hyprland.rs"]
+mod hyprland;
+
 /// A foreground Electron window that journals focus and leaked input while it
 /// fully occludes the background target.
 pub struct ForegroundSentinel {
+    cursor_calibrated: bool,
     journal_path: std::path::PathBuf,
     target: TargetWindow,
     _reaper: ChildReaper,
@@ -131,10 +136,19 @@ impl ForegroundSentinel {
                 "focused by setup click",
             );
         }
+        let cursor_calibrated = !is_wayland_session();
+        #[cfg(target_os = "linux")]
+        let cursor_calibrated = if hyprland::is_session() {
+            hyprland::calibrate(driver, target)?;
+            true
+        } else {
+            cursor_calibrated
+        };
         fs::write(&journal_path, "")
             .map_err(|error| format!("reset focused sentinel journal: {error}"))?;
 
         Ok(Self {
+            cursor_calibrated,
             journal_path,
             target,
             _reaper: reaper,
@@ -250,19 +264,7 @@ impl ForegroundSentinel {
 
         #[cfg(target_os = "linux")]
         set_sway_fullscreen(driver, self.target, false)?;
-        let raised = driver.call(
-            "bring_to_front",
-            serde_json::json!({
-                "pid": background_target.pid,
-                "window_id": background_target.native_id,
-            }),
-        );
-        if raised.is_error() {
-            return Err(format!(
-                "focus-loss canary could not raise the background target: {}",
-                raised.text()
-            ));
-        }
+        raise_for_focus_canary(driver, background_target)?;
         #[cfg(target_os = "linux")]
         focus_sway_target(driver, background_target)?;
         if is_wayland_session() {
@@ -378,10 +380,7 @@ impl ForegroundSentinel {
             ));
         }
         let mut native_oracles = vec![OracleKind::Focus, OracleKind::ZOrder];
-        if std::env::var("XDG_SESSION_TYPE")
-            .map(|session| !session.eq_ignore_ascii_case("wayland"))
-            .unwrap_or(true)
-        {
+        if self.cursor_calibrated {
             native_oracles.push(OracleKind::Cursor);
         }
         let (result, delta) = observer
@@ -476,10 +475,34 @@ fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
         .unwrap_or_else(|error| panic!("could not activate foreground sentinel: {error}"));
 }
 
+fn raise_for_focus_canary(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if hyprland::is_session() {
+        return hyprland::activate(driver, target).map_err(|error| {
+            format!("Hyprland focus-loss canary could not raise target over fullscreen sentinel: {error}")
+        });
+    }
+    let raised = driver.call(
+        "bring_to_front",
+        serde_json::json!({ "pid": target.pid, "window_id": target.native_id }),
+    );
+    if raised.is_error() {
+        return Err(format!(
+            "focus-loss canary could not raise the background target: {}",
+            raised.text()
+        ));
+    }
+    Ok(())
+}
+
 fn try_activate_native_foreground(
     driver: &mut impl Driver,
     target: TargetWindow,
 ) -> Result<(), String> {
+    #[cfg(target_os = "linux")]
+    if hyprland::is_session() {
+        return hyprland::activate(driver, target);
+    }
     let response = driver.call(
         "bring_to_front",
         serde_json::json!({

@@ -246,6 +246,14 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
     native::get_element_bounds(pid, idx)
 }
 
+pub fn get_element_bounds_for_window(
+    pid: u32,
+    xid: u64,
+    idx: usize,
+) -> Result<(i32, i32, u32, u32)> {
+    native::get_element_bounds_for_window(pid, xid, idx)
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Minimal X11 property-based tree (fallback when AT-SPI is unavailable).

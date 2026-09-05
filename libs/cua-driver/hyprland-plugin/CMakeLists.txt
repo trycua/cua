@@ -3,6 +3,8 @@ cmake_minimum_required(VERSION 3.30)
 project(cua_hyprland_plugin VERSION 0.1.0 LANGUAGES CXX)
 
 option(CUA_HYPRLAND_BUILD_PLUGIN "Build the ABI-pinned Hyprland plugin" ON)
+option(CUA_HYPRLAND_TEST_INPUT "Build nonshipping isolated-input VM experiment" OFF)
+set(CUA_HYPRLAND_TEST_OPERATOR_KEY "" CACHE STRING "Test operator Ed25519 public key (hex); never a private key")
 set(CUA_HYPRLAND_EXPECTED_VERSION "" CACHE STRING
     "Require an exact hyprland pkg-config version when building the plugin")
 
@@ -138,6 +140,24 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
     endif()
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
+    if(CUA_HYPRLAND_TEST_INPUT)
+        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
+            message(FATAL_ERROR "Input experiment is pinned to Hyprland 0.56.2")
+        endif()
+        if(NOT CUA_HYPRLAND_TEST_OPERATOR_KEY MATCHES "^[0-9a-f]+$")
+            message(FATAL_ERROR "Test input requires a lowercase Ed25519 public key")
+        endif()
+        string(LENGTH "${CUA_HYPRLAND_TEST_OPERATOR_KEY}" key_length)
+        if(NOT key_length EQUAL 64)
+            message(FATAL_ERROR "Test operator public key must be 32 bytes")
+        endif()
+        find_package(OpenSSL REQUIRED)
+        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE
+            CUA_HYPRLAND_TEST_INPUT=1
+            CUA_HYPRLAND_TEST_OPERATOR_KEY="${CUA_HYPRLAND_TEST_OPERATOR_KEY}")
+        target_link_libraries(cua_hyprland_plugin PRIVATE OpenSSL::Crypto)
+    endif()
     target_compile_features(cua_hyprland_plugin PRIVATE cxx_std_26)
     target_compile_definitions(cua_hyprland_plugin PRIVATE
         CUA_HYPRLAND_PLUGIN_VERSION="${PROJECT_VERSION}"
@@ -158,6 +178,16 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
         CXX_VISIBILITY_PRESET hidden
         PREFIX ""
         OUTPUT_NAME "cua-hyprland-plugin")
+    if(CUA_HYPRLAND_TEST_INPUT)
+        # Hyprland exports inline manager globals. Hidden visibility would bind
+        # a private null copy instead of the running compositor's managers.
+        # GNU-unique definitions also pin a module in memory across dlclose.
+        set_target_properties(cua_hyprland_plugin PROPERTIES CXX_VISIBILITY_PRESET default)
+        target_compile_options(cua_hyprland_plugin PRIVATE -fno-gnu-unique)
+        # Retired seat resources must accept late client release requests after
+        # global removal. Keep their inert callbacks mapped until process exit.
+        target_link_options(cua_hyprland_plugin PRIVATE -Wl,-z,nodelete)
+    endif()
 
     if(NOT CMAKE_READELF)
         message(FATAL_ERROR "readelf is required to verify the plugin C++ runtime")

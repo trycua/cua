@@ -23,6 +23,11 @@ Neither stable Cua Driver `0.23.2` nor nightly provides isolated background
 input through this plugin. Here, discovery means negotiation, status, and
 liveness; it does not mean application target discovery or input delivery.
 
+This branch also contains a separate, opt-in
+[isolated-input compatibility experiment](protocol/input-experiment.md).
+It is not enabled by the normal build or package. Its test-only operator
+boundary and resident-module unload workaround are not a production contract.
+
 This design builds on Dillon DuPont's Hyprland injection prototype. That credit
 records the prototype lineage; it does not claim that the prototype or input
 mutation support has shipped in Cua Driver.

@@ -76,7 +76,9 @@ class NestedCompositor:
                 self.instance = matches[0]["instance"]
                 try:
                     json.loads(self.ctl("-j", "version"))
-                    return True
+                    monitors = json.loads(self.ctl("-j", "monitors"))
+                    workspace = json.loads(self.ctl("-j", "activeworkspace"))
+                    return bool(monitors) and isinstance(workspace.get("id"), int)
                 except (subprocess.CalledProcessError, json.JSONDecodeError):
                     return False
             return False
@@ -84,6 +86,20 @@ class NestedCompositor:
         wait_for(ready, "owned nested compositor did not become ready")
         assert self.ctl("plugin", "load", str(self.module)) == "ok"
         assert self.ctl("reload") == "ok"
+
+        def desktop_ready():
+            # Socket1 can answer before nested output creation/config reload
+            # finishes. Discovery tests require an actual initialized desktop.
+            try:
+                status = json.loads(self.ctl("-j", "cua:status"))
+                monitors = json.loads(self.ctl("-j", "monitors"))
+                workspace = json.loads(self.ctl("-j", "activeworkspace"))
+                return (status["transport"]["ready"] and bool(monitors)
+                        and isinstance(workspace.get("id"), int))
+            except (subprocess.CalledProcessError, json.JSONDecodeError, KeyError):
+                return False
+
+        wait_for(desktop_ready, "owned nested desktop/transport did not become ready")
         env = dict(os.environ, HYPRLAND_INSTANCE_SIGNATURE=self.instance)
         result = json.loads(command(sys.executable, str(Path(live.__file__)), env=env))
         assert result["mutation_refusals"] == 6

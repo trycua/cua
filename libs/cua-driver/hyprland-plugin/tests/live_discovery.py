@@ -21,10 +21,14 @@ def hyprctl(*args):
 
 def status():
     value = json.loads(hyprctl("-j", "cua:status"))
-    assert value["state"] == "discovery_only"
+    if value.get("experiment"):
+        assert value["state"] == "input_experiment"
+        assert value["experiment"]["test_only"] is True
+    else:
+        assert value["state"] == "discovery_only"
     assert value["abi"]["match"] is True
     assert value["capabilities"]["supported"] == ["discovery"]
-    assert value["capabilities"]["enabled"] == ["discovery"]
+    assert value["capabilities"]["enabled"] == ["discovery"], value
     assert value["transport"]["ready"] is True
     assert value["compositor_epoch"] != 0
     assert value["protocol"] == {"major": 2, "minor": 0, "max_frame_bytes": 4120}

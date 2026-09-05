@@ -2009,6 +2009,98 @@ fn linux_input_error(error: anyhow::Error) -> ToolResult {
     }
 }
 
+fn experimental_hyprland_background(delivery: crate::input::delivery::DeliveryMode) -> bool {
+    !delivery.is_foreground() && crate::wayland::hyprland_input::enabled()
+}
+
+fn experimental_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
+    let detail = detail.into();
+    ToolResult::error(format!("background_unavailable: {detail}")).with_structured(json!({
+        "ok": false, "code": "background_unavailable", "reason": "unsupported_operation",
+        "detail": detail, "route": "synthetic_events", "verified": false
+    }))
+}
+
+fn experimental_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
+    match result {
+        Ok(value) if value["ok"] == true => {
+            use cua_driver_core::action_record::{
+                ActionEffect, ActionExecutionRecord, ActionTransport,
+                ActualDelivery, RequestedDelivery,
+            };
+            ToolResult::text("Dispatched experimental Hyprland input; application effect is unverifiable.")
+                .with_action_record(ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::LinuxHyprlandIsolatedInput,
+                    RequestedDelivery::Background,
+                ).actual_delivery(ActualDelivery::Background)
+                    .build().expect("experimental input record is valid"))
+        }
+        Ok(mut value) => {
+            let code = value["code"].as_str().unwrap_or("protocol_error").to_owned();
+            let detail = value["detail"].as_str().unwrap_or("input refused").to_owned();
+            value["reason"] = json!(code);
+            value["code"] = json!("background_unavailable");
+            value["route"] = json!("synthetic_events");
+            value["verified"] = json!(false);
+            ToolResult::error(format!("background_unavailable ({code}): {detail}"))
+                .with_structured(value)
+        }
+        Err(error) => ToolResult::error(format!("background_unavailable: {error}")).with_structured(json!({
+            "ok": false, "code": "background_unavailable", "reason": "transport_or_protocol_error",
+            "detail": error.to_string(), "route": "synthetic_events", "verified": false,
+            "effect": "unverifiable"
+        })),
+    }
+}
+
+async fn experimental_hyprland_action(
+    pid: u32,
+    xid: u64,
+    action: crate::wayland::hyprland_input::Action,
+) -> ToolResult {
+    match tokio::task::spawn_blocking(move || {
+        crate::wayland::hyprland_input::execute(pid, xid, action)
+    })
+    .await
+    {
+        Ok(result) => experimental_hyprland_result(result),
+        Err(error) => experimental_hyprland_refusal(format!("input task failed: {error}")),
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn experimental_pending_grant_is_an_error_with_operator_context() {
+    let result = experimental_hyprland_result(Ok(json!({
+        "ok": false, "code": "permission_required", "detail": "external approval pending",
+        "epoch": "epoch", "challenge": "challenge", "target": "target", "revision": 3
+    })));
+    assert_eq!(result.is_error, Some(true));
+    let value = result.structured_content.unwrap();
+    assert_eq!(value["code"], "background_unavailable");
+    assert_eq!(value["reason"], "permission_required");
+    assert_eq!(value["challenge"], "challenge");
+    assert_eq!(value["target"], "target");
+    assert_eq!(value["revision"], 3);
+    assert_eq!(value["verified"], false);
+}
+
+#[cfg(test)]
+#[test]
+fn experimental_dispatch_does_not_claim_application_success() {
+    let result = experimental_hyprland_result(Ok(json!({
+        "ok": true, "effect": "unverifiable", "route": "synthetic_events"
+    })));
+    assert_ne!(result.is_error, Some(true));
+    let public = result.action_record.unwrap().public_result().unwrap();
+    public.validate_invariants().unwrap();
+    let value = serde_json::to_value(public).unwrap();
+    assert_eq!(value["effect"], "unverifiable");
+    assert_eq!(value["route"], "synthetic_events");
+    assert!(value.get("verified").is_none());
+}
+
 #[cfg(test)]
 #[test]
 fn uinput_failure_has_a_stable_structured_code() {
@@ -2717,6 +2809,36 @@ impl Tool for ClickTool {
                         .with_structured(structured);
                 }
             }
+            if experimental_hyprland_background(delivery) {
+                if !modifiers.is_empty() {
+                    return experimental_hyprland_refusal(
+                        "modified clicks are unsupported by the experiment",
+                    );
+                }
+                let Some(exact_xid) = window_id_resolved else {
+                    return experimental_hyprland_refusal(
+                        "an exact window_id or window-bound element token is required",
+                    );
+                };
+                return match tokio::task::spawn_blocking(move || {
+                    let (_, x, y) = resolve_element_local_coords(pid, idx, Some(exact_xid))?;
+                    crate::wayland::hyprland_input::execute(
+                        pid,
+                        exact_xid,
+                        crate::wayland::hyprland_input::Action::Click {
+                            x,
+                            y,
+                            button: u32::from(button),
+                            count,
+                        },
+                    )
+                })
+                .await
+                {
+                    Ok(result) => experimental_hyprland_result(result),
+                    Err(error) => experimental_hyprland_refusal(error.to_string()),
+                };
+            }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
@@ -2781,8 +2903,10 @@ impl Tool for ClickTool {
             };
         }
 
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
+        if !experimental_hyprland_background(delivery) {
+            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+                return refusal;
+            }
         }
 
         // Coordinate-based path.
@@ -2841,6 +2965,35 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+        if experimental_hyprland_background(delivery) {
+            if !modifiers.is_empty() {
+                return experimental_hyprland_refusal(
+                    "modified clicks are unsupported by the experiment",
+                );
+            }
+            if button == 1 && count == 1 {
+                let semantic = tokio::task::spawn_blocking(move || {
+                    crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
+                })
+                .await;
+                if matches!(semantic, Ok(Ok(Some(_)))) {
+                    return ToolResult::text("Dispatched AT-SPI click.").with_structured(json!({
+                        "path": "wayland_atspi", "verified": false, "effect": "unverifiable"
+                    }));
+                }
+            }
+            return experimental_hyprland_action(
+                pid,
+                xid,
+                crate::wayland::hyprland_input::Action::Click {
+                    x,
+                    y,
+                    button: u32::from(button),
+                    count,
+                },
+            )
+            .await;
+        }
         let cursor_id_for_task = cursor_id.clone();
         let modifiers_for_task = modifiers.clone();
         // delivery_mode: background (default) = no-focus-steal injection;
@@ -3798,6 +3951,28 @@ impl Tool for PressKeyTool {
         // background path (the focus-click already handled fronting when fg). Pass x,y
         // (no element_index) for Chromium/Electron surfaces the AX path can't focus.
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
+        if experimental_hyprland_background(delivery) {
+            if xid_opt.is_none() {
+                return experimental_hyprland_refusal(
+                    "an exact window_id is required for experimental keys",
+                );
+            }
+            if resolved_element_index.is_some()
+                || args.get("x").is_some()
+                || args.get("y").is_some()
+            {
+                return experimental_hyprland_refusal("experimental keys address the exact top-level; first click the child explicitly");
+            }
+            return experimental_hyprland_action(
+                pid,
+                xid,
+                crate::wayland::hyprland_input::Action::Key {
+                    key,
+                    modifiers: mods,
+                },
+            )
+            .await;
+        }
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
@@ -4149,6 +4324,41 @@ impl Tool for HotkeyTool {
         let mods_for_wayland = mods.clone();
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
 
+        if experimental_hyprland_background(delivery) {
+            if xid_opt.is_none() {
+                return experimental_hyprland_refusal(
+                    "an exact window_id is required for experimental hotkeys",
+                );
+            }
+            if resolved_element_index.is_some()
+                || args.get("x").is_some()
+                || args.get("y").is_some()
+            {
+                return experimental_hyprland_refusal("experimental hotkeys address the exact top-level; first click the child explicitly");
+            }
+            if let Some(keys) = args.get("keys").and_then(Value::as_array) {
+                if keys
+                    .iter()
+                    .filter(|value| value.as_str().is_some_and(|key| !is_modifier(key)))
+                    .count()
+                    != 1
+                    || keys.iter().any(|value| !value.is_string())
+                {
+                    return experimental_hyprland_refusal(
+                        "experimental hotkeys require exactly one non-modifier key",
+                    );
+                }
+            }
+            return experimental_hyprland_action(
+                pid,
+                xid,
+                crate::wayland::hyprland_input::Action::Key {
+                    key,
+                    modifiers: mods,
+                },
+            )
+            .await;
+        }
         if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
             return refusal;
         }
@@ -4582,8 +4792,10 @@ impl Tool for ScrollTool {
         }
 
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
+        if !experimental_hyprland_background(delivery) {
+            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+                return refusal;
+            }
         }
         if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
             &resolved
@@ -4615,6 +4827,36 @@ impl Tool for ScrollTool {
                     }));
                 }
             }
+        }
+
+        if experimental_hyprland_background(delivery) {
+            if xid_opt.is_none() {
+                return experimental_hyprland_refusal(
+                    "an exact window_id or window-bound element token is required",
+                );
+            }
+            return match tokio::task::spawn_blocking(move || {
+                let point = if let Some(idx) = resolved_element_index {
+                    let (_, x, y) = resolve_element_local_coords(pid, idx, Some(xid))?;
+                    Some((x, y))
+                } else {
+                    pixel_target
+                };
+                crate::wayland::hyprland_input::execute(
+                    pid,
+                    xid,
+                    crate::wayland::hyprland_input::Action::Scroll {
+                        point,
+                        direction,
+                        amount,
+                    },
+                )
+            })
+            .await
+            {
+                Ok(result) => experimental_hyprland_result(result),
+                Err(error) => experimental_hyprland_refusal(error.to_string()),
+            };
         }
 
         if crate::wayland::is_inject_mode() {
@@ -5394,17 +5636,19 @@ impl Tool for DragTool {
             None => return ToolResult::error("window_id is required on Linux."),
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
-            return refusal;
-        }
-        if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
-            return refusal;
+        if !experimental_hyprland_background(delivery) {
+            if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
+                return refusal;
+            }
+            if let Some(refusal) = unavailable_webkit_background(pid, delivery) {
+                return refusal;
+            }
+            if let Some(refusal) = unavailable_gtk_pointer_background(pid, delivery) {
+                return refusal;
+            }
+            if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
+                return refusal;
+            }
         }
 
         let coerce = |key: &str| -> Option<f64> {
@@ -5455,6 +5699,24 @@ impl Tool for DragTool {
             from_y *= ratio;
             to_x *= ratio;
             to_y *= ratio;
+        }
+
+        if experimental_hyprland_background(delivery) {
+            if button_str != "left" || args.get("modifier").is_some_and(|value| !value.is_null()) {
+                return experimental_hyprland_refusal(
+                    "experimental drag supports only an unmodified left button",
+                );
+            }
+            return experimental_hyprland_action(
+                pid,
+                xid,
+                crate::wayland::hyprland_input::Action::Drag {
+                    from: (from_x, from_y),
+                    to: (to_x, to_y),
+                    duration_ms,
+                },
+            )
+            .await;
         }
 
         crate::overlay::send_command_for(

@@ -13,6 +13,7 @@ pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod hyprland;
 pub mod hyprland_capture;
+pub mod hyprland_input;
 pub mod kwin_helper;
 pub mod overlay;
 pub mod persistent_vptr;
@@ -21,6 +22,7 @@ pub mod portal_screenshot;
 pub mod shell_helper;
 pub mod sway_ipc;
 mod virtual_keyboard;
+mod primary_seat;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 // PipeWire ScreenCast capture remains separately gated for modern/Nix builds.
 #[cfg(feature = "portal-input")]
@@ -385,7 +387,7 @@ struct State {
     // Live handles + a seat, kept so `click` can `activate` a target toplevel by
     // its window_id (foreign-toplevel protocol id) — the focus-based input model.
     handles: HashMap<u32, ZwlrForeignToplevelHandleV1>,
-    seat: Option<WlSeat>,
+    seats: primary_seat::Seats<WlSeat>,
     // Virtual-pointer manager + output dimensions, so `click` can land a real
     // button press at the output centre (over the just-activated window).
     vptr_manager: Option<ZwlrVirtualPointerManagerV1>,
@@ -419,7 +421,7 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     Some(registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, v, qh, ()));
             } else if interface == WlSeat::interface().name {
                 let v = version.min(7);
-                state.seat = Some(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
+                state.seats.add(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
             } else if interface == ZwlrVirtualPointerManagerV1::interface().name {
                 state.vptr_manager = Some(registry.bind::<ZwlrVirtualPointerManagerV1, _, _>(
                     name,
@@ -448,15 +450,16 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
 
 impl Dispatch<WlSeat, ()> for State {
     fn event(
-        _: &mut Self,
-        _: &WlSeat,
-        _: wayland_client::protocol::wl_seat::Event,
+        state: &mut Self,
+        seat: &WlSeat,
+        event: wayland_client::protocol::wl_seat::Event,
         _: &(),
         _: &Connection,
         _: &QueueHandle<Self>,
     ) {
-        // Seat name/capabilities events are irrelevant here — we only need the
-        // seat object to pass to foreign-toplevel `activate`.
+        if let wayland_client::protocol::wl_seat::Event::Name { name } = event {
+            state.seats.name(seat, name);
+        }
     }
 }
 
@@ -1306,7 +1309,7 @@ pub fn open_vptr_session(activate_window_id: Option<u64>) -> anyhow::Result<Vptr
         anyhow::bail!("compositor does not expose zwlr_foreign_toplevel_manager_v1");
     }
 
-    let seat = state.seat.clone().ok_or_else(|| {
+    let seat = state.seats.selected().ok_or_else(|| {
         anyhow::anyhow!("compositor exposed no wl_seat for virtual-pointer input")
     })?;
 
@@ -1383,7 +1386,7 @@ pub fn activate_window_for_input_target(
 
     if let (Some(_), Some(seat), Some(handle)) = (
         state.manager.as_ref(),
-        state.seat.clone(),
+        state.seats.selected(),
         matching_handle(&state, window_id),
     ) {
         let protocol_id = handle.id().protocol_id();

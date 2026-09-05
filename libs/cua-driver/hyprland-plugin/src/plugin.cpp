@@ -1,4 +1,7 @@
 #include "inject_server.hpp"
+#ifdef CUA_HYPRLAND_TEST_INPUT
+#include "input_experiment.hpp"
+#endif
 
 #include "cua_hyprland/protocol.hpp"
 #include "cua_hyprland/status.hpp"
@@ -45,6 +48,9 @@ std::string g_runtime_abi_hash;
 std::uint64_t g_epoch = 0;
 std::string g_socket_path;
 std::string g_reconcile_error;
+#ifdef CUA_HYPRLAND_TEST_INPUT
+std::unique_ptr<cua::hyprland::InputExperiment> g_experiment;
+#endif
 
 bool safe_instance_signature(const std::string& signature) {
     if (signature.empty())
@@ -139,6 +145,9 @@ std::uint64_t make_epoch() {
 }
 
 std::string stop_server() {
+#ifdef CUA_HYPRLAND_TEST_INPUT
+    g_experiment.reset();
+#endif
     if (!g_server)
         return {};
     g_server->stop();
@@ -171,8 +180,13 @@ void reconcile_server() {
             .enabled_capabilities =
                 cua::hyprland::capability(cua::hyprland::Capability::discovery),
         });
-    if (server->start())
+    if (server->start()) {
         g_epoch = epoch;
+#ifdef CUA_HYPRLAND_TEST_INPUT
+        g_experiment = std::make_unique<cua::hyprland::InputExperiment>(
+            std::filesystem::path{g_socket_path}.parent_path().string());
+#endif
+    }
     g_server = std::move(server);
 }
 
@@ -198,8 +212,24 @@ std::string status_output(bool json) {
         .malformed_frames = snapshot.malformed_frames,
     };
 
-    if (json)
-        return cua::hyprland::render_status_json(report);
+    if (json) {
+        auto result = cua::hyprland::render_status_json(report);
+#ifdef CUA_HYPRLAND_TEST_INPUT
+        if (g_experiment) {
+            const std::string old_state = "\"state\":\"discovery_only\"";
+            const auto state_at = result.find(old_state);
+            if (state_at != std::string::npos)
+                result.replace(state_at, old_state.size(), "\"state\":\"input_experiment\"");
+            const std::string old_mutation = "disabled_pending_rfc_and_agent_seat";
+            const auto mutation_at = result.find(old_mutation);
+            if (mutation_at != std::string::npos)
+                result.replace(mutation_at, old_mutation.size(), "separate_operator_gated_experiment");
+            result.pop_back();
+            result += ",\"experiment\":" + g_experiment->status_json() + "}";
+        }
+#endif
+        return result;
+    }
 
     return cua::hyprland::render_status_text(report);
 }

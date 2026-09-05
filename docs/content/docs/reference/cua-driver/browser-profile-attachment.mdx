@@ -208,8 +208,10 @@ helper API v4 and an immutable D-Bus owner that resolves to the current user's
 system-installed GNOME Shell process. Cua Driver refuses generic Wayland
 sessions that cannot prove exact process, window, and geometry identity.
 
-The setup adapters currently recognize the products' English accessibility
-labels. Other UI locales fail closed without toggling an unrecognized control.
+The setup-page adapters currently recognize the products' English accessibility
+labels. Other UI locales fail closed without toggling an unrecognized setup
+control. The native Chromium consent dialogs on macOS and Windows are matched
+from their exact dialog structure rather than localized button text.
 Safari, Firefox, Brave, Vivaldi, Opera, Arc, and Electron do not have an
 existing-profile setup descriptor and return a structured refusal. An already
 available endpoint does not bypass existing-profile authorization for a

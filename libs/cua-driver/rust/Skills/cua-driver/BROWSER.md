@@ -167,8 +167,10 @@ On supported Chrome, Chromium, and Edge combinations, the approved operation
 may open that product's fixed remote-debugging page in the exact approved
 window, toggle its uniquely labelled per-instance checkbox, prove that the
 loopback endpoint belongs to the approved process, and close the temporary
-tab. The result reports all visible `side_effects`. Missing, localized, or
-ambiguous controls are refused; never click a similar-looking prompt yourself.
+tab. The result reports all visible `side_effects`. Missing, localized
+setup-page, or ambiguous controls are refused; never click a similar-looking
+prompt yourself. Native Chromium consent dialogs on macOS and Windows are
+matched from their exact dialog structure rather than localized button text.
 On current macOS Chrome, the internal page may omit its web AX subtree. The
 driver's bounded fallback is limited to a temporary tab it created and
 navigated. It requires the committed fixed URL, expected selected-tab title,

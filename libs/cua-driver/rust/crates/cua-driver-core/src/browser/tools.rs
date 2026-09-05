@@ -2470,7 +2470,9 @@ impl Tool for BrowserSetInputFilesTool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::browser::platform::{BrowserPlatform, PrepareOutcome, PrepareRequest};
+    use crate::browser::platform::{
+        BrowserPlatform, BrowserVisualAction, PrepareOutcome, PrepareRequest,
+    };
     use crate::browser::types::{
         BrowserClassification, BrowserEngineFamily, BrowserProduct, NativeWindowInfo,
         OwnedEndpoint, ProcessFingerprint,
@@ -2483,6 +2485,8 @@ mod tests {
 
     #[async_trait]
     impl BrowserPlatform for MockPlatform {
+        async fn visualize_browser_action(&self, _action: BrowserVisualAction) {}
+
         async fn classify_browser(
             &self,
             pid: i64,

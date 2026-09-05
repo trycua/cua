@@ -1,11 +1,14 @@
 # Hyprland plugin test plan
 
-The plugin is optional, disabled by default, and discovery-only until the
-second-seat design is proven and its RFC is accepted. Tests must fail closed;
-they must not enable mutation merely to exercise a path.
+The normal plugin build is optional, disabled by default, and discovery-only.
+Tests of that build must fail closed; they must not enable mutation merely to
+exercise a path. The separately selected, nonshipping
+[input experiment](../protocol/input-experiment.md) has an explicit build flag
+and external test-operator grant. Its
+[VM validation record](input-validation.md) is not production acceptance.
 
 Neither stable Cua Driver `0.23.2` nor nightly provides isolated background
-input through this plugin. Discovery currently covers protocol negotiation,
+input through this plugin. Normal-build discovery covers protocol negotiation,
 status, and liveness only; application target discovery and input mutation are
 not enabled.
 

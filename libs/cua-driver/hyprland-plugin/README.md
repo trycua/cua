@@ -27,6 +27,8 @@ This branch also contains a separate, opt-in
 [isolated-input compatibility experiment](protocol/input-experiment.md).
 It is not enabled by the normal build or package. Its test-only operator
 boundary and resident-module unload workaround are not a production contract.
+See the [input experiment validation](tests/input-validation.md) for the exact
+tested artifacts, application evidence, and remaining gaps.
 
 This design builds on Dillon DuPont's Hyprland injection prototype. That credit
 records the prototype lineage; it does not claim that the prototype or input
@@ -212,7 +214,7 @@ The exact initial host acceptance baseline is:
 This baseline is an acceptance target, not a statement that the reported host
 or its Hyprland/plugin ABI pair has passed validation. It is also not a claim
 that isolated background input ships in stable `0.23.2` or nightly. The plugin
-remains discovery-only. The final physical run has explicit foreground
+remains discovery-only in its normal build. The final physical run has explicit foreground
 activation observation, GTK3, GTK4, Qt6, LibreOffice, Chromium/Ozone, Electron,
 DPMS-off refusal, and one-shot and long-lived graphical-session client rows;
 see `tests/README.md` for the required evidence.

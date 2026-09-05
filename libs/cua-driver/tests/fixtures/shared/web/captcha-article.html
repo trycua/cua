@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>cua-driver Web Harness - CAPTCHA article</title>
+</head>
+<body>
+  <main>
+    <article>
+      <h1>How CAPTCHA systems changed the web</h1>
+      <p>ARTICLE_ABOUT_CAPTCHA_MARKER_v1</p>
+      <p>
+        This article explains CAPTCHA accessibility tradeoffs and reviews the
+        history of challenge-response tests. It mentions Cloudflare Turnstile,
+        hCaptcha, and reCAPTCHA as products discussed by researchers.
+      </p>
+      <p>
+        The article is ordinary editorial content. It does not ask the reader
+        to verify an identity, complete a security check, or interact with a
+        challenge widget.
+      </p>
+    </article>
+  </main>
+  <script>
+    window.addEventListener('load', () => {
+      fetch(window.__CUA_E2E_FIXTURE_JOURNAL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ ready: { text: 'WEB_HARNESS_MARKER_v1' } }),
+      });
+    }, { once: true });
+  </script>
+</body>
+</html>

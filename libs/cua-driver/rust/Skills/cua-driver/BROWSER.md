@@ -263,6 +263,15 @@ viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`
 only to scope later reads. A content ref is not an action capability.
 
+`semantic_v2` snapshots include an advisory `challenge` object. When
+`challenge.required` is `true`, the page looks like a CAPTCHA or
+bot-verification challenge. The report does not halt the session or choose a
+policy. Pause actions to that origin and require either explicit caller resume
+or user handoff, then call `get_browser_state` again before continuing. Signals
+contain fixed source/reason classifications rather than copied URL paths,
+queries, or page text. Provider guesses such as reCAPTCHA, hCaptcha, Turnstile,
+or generic verification are heuristic evidence only.
+
 The snapshot ranks active dialogs and visible controls before near-viewport
 and offscreen content. It excludes CSS-hidden retained state before applying
 the output budget. Inspect `snapshot.complete`, `snapshot.omitted`, and

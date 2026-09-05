@@ -1,0 +1,24 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>cua-driver Web Harness - Verify you are human</title>
+</head>
+<body>
+  <main>
+    <h1>Complete the security check</h1>
+    <p>LIVE_CAPTCHA_CHALLENGE_MARKER_v1</p>
+    <p>Please verify you are human before continuing.</p>
+    <div aria-label="reCAPTCHA challenge">I'm not a robot</div>
+  </main>
+  <script>
+    window.addEventListener('load', () => {
+      fetch(window.__CUA_E2E_FIXTURE_JOURNAL_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ ready: { text: 'WEB_HARNESS_MARKER_v1' } }),
+      });
+    }, { once: true });
+  </script>
+</body>
+</html>

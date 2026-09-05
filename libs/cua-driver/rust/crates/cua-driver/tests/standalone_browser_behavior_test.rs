@@ -31,6 +31,10 @@ use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
 const FIXTURE_HTML: &str = include_str!("../../../../tests/fixtures/shared/web/index.html");
+const CAPTCHA_ARTICLE_HTML: &str =
+    include_str!("../../../../tests/fixtures/shared/web/captcha-article.html");
+const CAPTCHA_CHALLENGE_HTML: &str =
+    include_str!("../../../../tests/fixtures/shared/web/captcha-challenge.html");
 static STANDALONE_BROWSER_TEST_LOCK: Mutex<()> = Mutex::new(());
 
 fn standalone_fixture_html() -> String {
@@ -1525,6 +1529,20 @@ fn foreground_page_case(browser: &str, action: &str) -> CaseSpec {
     )
 }
 
+fn browser_read_case(browser: &str, action: &str) -> CaseSpec {
+    CaseSpec::delivered(
+        format!("{}-{browser}-standalone-{action}", std::env::consts::OS),
+        browser,
+        "standalone-chromium",
+        action,
+        Targeting::Page,
+        Delivery::NotApplicable,
+        Scope::Window,
+        DriverRoute::CdpRead,
+        vec![OracleKind::FixtureState],
+    )
+}
+
 #[cfg(target_os = "macos")]
 fn generic_type_text_case(browser: &str) -> CaseSpec {
     CaseSpec::delivered(
@@ -1830,6 +1848,120 @@ fn run_semantic_state(spec: &BrowserSpec) {
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         })
     });
+}
+
+fn run_challenge_article_false_positive(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-challenge-article-false-positive",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        browser_read_case(&spec.name, "browser_challenge_article_false_positive"),
+        |evidence| {
+            let mut fixture =
+                launch_browser_with_html(spec, &scenario, CAPTCHA_ARTICLE_HTML.to_owned());
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-challenge-article-{}", fixture.pid);
+            let (target, tab, _) = bind(&mut fixture, &session);
+            fixture.driver.start_behavior_recording();
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                }),
+            );
+
+            assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            assert!(
+                snapshot.structured()["outline"]
+                    .as_str()
+                    .is_some_and(|outline| outline.contains("ARTICLE_ABOUT_CAPTCHA_MARKER_v1")),
+                "article fixture marker missing from semantic outline: {}",
+                snapshot.raw
+            );
+            assert_eq!(
+                snapshot.structured()["challenge"]["required"],
+                false,
+                "ordinary editorial coverage must not be reported as a live challenge: {}",
+                snapshot.raw
+            );
+            assert_eq!(
+                snapshot.structured()["challenge"]["signals"],
+                serde_json::json!([]),
+                "a false challenge signal leaves callers unable to distinguish editorial copy: {}",
+                snapshot.raw
+            );
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
+}
+
+fn run_challenge_positive(spec: &BrowserSpec) {
+    let scenario = format!(
+        "{}-{}-standalone-challenge-positive",
+        std::env::consts::OS,
+        spec.name
+    );
+    execute_case(
+        browser_read_case(&spec.name, "browser_challenge_positive"),
+        |evidence| {
+            let mut fixture =
+                launch_browser_with_html(spec, &scenario, CAPTCHA_CHALLENGE_HTML.to_owned());
+            *evidence = recording_evidence(fixture.driver.recording_dir());
+            let session = format!("standalone-challenge-positive-{}", fixture.pid);
+            let (target, tab, _) = bind(&mut fixture, &session);
+            fixture.driver.start_behavior_recording();
+            let snapshot = fixture.driver.call(
+                "get_browser_state",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                    "snapshot_format": "semantic_v2",
+                }),
+            );
+
+            assert_eq!(snapshot.structured()["status"], "ok", "{}", snapshot.raw);
+            assert!(
+                snapshot.structured()["outline"]
+                    .as_str()
+                    .is_some_and(|outline| outline.contains("LIVE_CAPTCHA_CHALLENGE_MARKER_v1")),
+                "challenge fixture marker missing from semantic outline: {}",
+                snapshot.raw
+            );
+            let challenge = &snapshot.structured()["challenge"];
+            assert_eq!(challenge["required"], true, "{}", snapshot.raw);
+            assert_eq!(challenge["kind"], "anti_bot_challenge", "{}", snapshot.raw);
+            assert_eq!(challenge["requires_user"], true, "{}", snapshot.raw);
+            assert_eq!(
+                challenge["handling"], "explicit_resume_or_user_handoff",
+                "{}",
+                snapshot.raw
+            );
+            let expected_origin = fixture
+                .server
+                .page_url()
+                .strip_suffix("/fixture")
+                .expect("fixture page URL suffix");
+            assert_eq!(challenge["origin"], expected_origin, "{}", snapshot.raw);
+            let signals = challenge["signals"].as_array().expect("challenge signals");
+            assert!(!signals.is_empty(), "{}", snapshot.raw);
+            assert!(
+                signals
+                    .iter()
+                    .all(|signal| signal.get("evidence").is_none()),
+                "challenge signals must not echo page content: {}",
+                snapshot.raw
+            );
+
+            Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+        },
+    );
 }
 
 fn run_background_type(spec: &BrowserSpec) {
@@ -4814,6 +4946,14 @@ standalone_browser_test!(
     run_trust_gated_dom_click
 );
 standalone_browser_test!(standalone_browser_semantic_state, run_semantic_state);
+standalone_browser_test!(
+    standalone_browser_challenge_positive,
+    run_challenge_positive
+);
+standalone_browser_test!(
+    standalone_browser_challenge_article_false_positive,
+    run_challenge_article_false_positive
+);
 standalone_browser_test!(standalone_browser_background_type, run_background_type);
 standalone_browser_test!(standalone_browser_type_replace, run_type_replace);
 #[cfg(target_os = "macos")]

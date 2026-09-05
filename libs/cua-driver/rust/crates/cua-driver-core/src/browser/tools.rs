@@ -15,6 +15,7 @@ use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
+use super::challenge::browser_challenge_value;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
 use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
@@ -250,10 +251,11 @@ impl GetBrowserStateTool {
                 dom_refs_v1 compatibility format returns composed DOM refs. \
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
-                semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                semantic outline, typed action refs, content refs, scoped reads, an \
+                opaque continuation, and an advisory challenge report when page state \
+                conservatively indicates CAPTCHA or bot verification. Never performs setup — \
+                a missing endpoint is a structured browser_requires_setup refusal \
+                pointing at browser_prepare."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -396,6 +398,21 @@ impl Tool for GetBrowserStateTool {
                             .iter()
                             .map(semantic_ref_value)
                             .collect::<Vec<_>>();
+                        let challenge_texts = std::iter::once(outcome.outline.as_str()).chain(
+                            outcome
+                                .refs
+                                .iter()
+                                .chain(outcome.content_refs.iter())
+                                .flat_map(|listed| {
+                                    [
+                                        listed.node.role.as_str(),
+                                        listed.node.name.as_deref().unwrap_or_default(),
+                                        listed.node.value.as_deref().unwrap_or_default(),
+                                    ]
+                                }),
+                        );
+                        let challenge =
+                            browser_challenge_value(&outcome.url, &outcome.title, challenge_texts);
                         ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
                             outcome.snapshot_id,
@@ -434,6 +451,7 @@ impl Tool for GetBrowserStateTool {
                             "outline": outcome.outline,
                             "refs": refs,
                             "content_refs": content_refs,
+                            "challenge": challenge,
                             "oopif": {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),

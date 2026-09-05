@@ -44,6 +44,10 @@ impl ClickTool {
     }
 }
 
+fn should_route_web_element_to_pointer(button: &str, action: &str, in_web_content: bool) -> bool {
+    in_web_content && button == "left" && matches!(action, "press" | "click")
+}
+
 static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 /// Focus posture for the raw pixel transport after AX hit-testing has failed.
@@ -437,6 +441,82 @@ impl Tool for ClickTool {
                 }
             };
             let element_ptr = element_guard.as_ptr();
+
+            // Codex/Sky does not use AXPress for rendered web content when a
+            // normal pointer event is required. AXPress can return success in
+            // Chromium/Electron while the DOM never receives the click. Keep
+            // native AppKit controls on the semantic path, but route web
+            // content through the target-window CGEvent implementation.
+            let web_element_pointer_route =
+                if button_str == "left" && matches!(action.as_str(), "press" | "click") {
+                    let web_element_ptr = element_ptr;
+                    let in_web_content = tokio::task::spawn_blocking(move || {
+                        super::type_text::target_in_web_area(
+                            pid,
+                            Some((web_element_ptr, Some(idx))),
+                            Some(wid),
+                        )
+                    })
+                    .await
+                    .unwrap_or(false);
+                    should_route_web_element_to_pointer(&button_str, &action, in_web_content)
+                } else {
+                    false
+                };
+            if web_element_pointer_route {
+                let center = match tokio::task::spawn_blocking(move || unsafe {
+                    crate::ax::bindings::element_screen_center(element_ptr as AXUIElementRef)
+                })
+                .await
+                {
+                    Ok(Some(center)) => center,
+                    Ok(None) => {
+                        return ToolResult::error(format!(
+                            "Web-content element [{idx}] has no usable screen center; refusing to synthesize a pointer click."
+                        ))
+                    }
+                    Err(error) => {
+                        return ToolResult::error(format!(
+                            "Web-content element [{idx}] center lookup failed: {error}"
+                        ))
+                    }
+                };
+                let frame = match super::px_frame::resolve_or_refuse(wid).await {
+                    Ok(frame) => frame,
+                    Err(refusal) => return refusal,
+                };
+                let local_x = center.0 - frame.bounds.x;
+                let local_y = center.1 - frame.bounds.y;
+                if local_x < 0.0
+                    || local_y < 0.0
+                    || local_x > frame.bounds.width
+                    || local_y > frame.bounds.height
+                {
+                    return ToolResult::error(format!(
+                        "Web-content element [{idx}] center ({local_x:.1}, {local_y:.1}) lies outside window {wid}; refusing to dispatch."
+                    ));
+                }
+                let resize_ratio = self
+                    .state
+                    .resize_registry
+                    .ratio(pid, Some(wid))
+                    .unwrap_or(1.0);
+                let pixel_x = local_x * frame.scale / resize_ratio;
+                let pixel_y = local_y * frame.scale / resize_ratio;
+                let mut pixel_args = args.clone();
+                let Some(object) = pixel_args.as_object_mut() else {
+                    return ToolResult::error("click arguments must be a JSON object".to_owned());
+                };
+                object.remove("element_token");
+                object.remove("element_index");
+                object.remove("snapshot_id");
+                object.insert("x".to_owned(), serde_json::json!(pixel_x));
+                object.insert("y".to_owned(), serde_json::json!(pixel_y));
+                // Re-enter the existing pixel path so it owns the complete
+                // Codex/Sky-compatible focus guard, pointer routing, and
+                // foreground restoration logic.
+                return Tool::invoke(self, pixel_args).await;
+            }
 
             // ── Exact-target background gate (macOS background input v1) ──
             // The element branch is semantic AX delivery, except button=middle
@@ -912,8 +992,20 @@ impl Tool for ClickTool {
                         CFRelease(element as _);
                         return Ok(false);
                     }
+                    let in_web_content = !focus_only
+                        && super::type_text::target_in_web_area(
+                            pid,
+                            Some((element as usize, None)),
+                            Some(hit_test_wid),
+                        );
                     let delivered = if focus_only {
                         crate::input::ax_actions::focus_element(element as usize).is_ok()
+                    } else if in_web_content {
+                        // A successful AXPress is not evidence that a
+                        // Chromium/Electron renderer received a DOM click.
+                        // Fall through to the stamped target-window CGEvent
+                        // route, which is the Codex/Sky behavior.
+                        false
                     } else {
                         let press = core_foundation::string::CFString::new("AXPress");
                         AXUIElementPerformAction(element, press.as_concrete_TypeRef())
@@ -1490,7 +1582,19 @@ fn map_action(action: &str) -> &'static str {
 mod tests {
     use super::*;
 
-    /// Surface 5: schema must advertise the new `button` field with the three
+    #[test]
+    fn web_content_clicks_use_pointer_route_only_for_primary_press() {
+        assert!(should_route_web_element_to_pointer("left", "press", true));
+        assert!(should_route_web_element_to_pointer("left", "click", true));
+        assert!(!should_route_web_element_to_pointer("right", "press", true));
+        assert!(!should_route_web_element_to_pointer(
+            "left",
+            "show_menu",
+            true
+        ));
+        assert!(!should_route_web_element_to_pointer("left", "press", false));
+    }
+
     /// canonical values and default to "left". Hermes / Codex / Claude Code
     /// consumers branch on this enum being present.
     #[test]

@@ -21,10 +21,15 @@ fn def() -> &'static ToolDef {
             - kind: `\"desktop\"` for `.app` bundles on macOS.\n\
             - last_used: RFC3339 timestamp from the bundle's filesystem mtime, \
             when readable; otherwise null.\n\n\
-            Only apps with NSApplicationActivationPolicyRegular are included — \
-            background helpers and system UI agents are filtered out. Installed \
-            apps come from scanning /Applications, /Applications/Utilities, \
-            ~/Applications, /System/Applications, and /System/Applications/Utilities.\n\n\
+            Standalone running entries include only apps with \
+            NSApplicationActivationPolicyRegular — background helpers and \
+            system UI agents are filtered out. Installed apps resolve their \
+            running/pid state against all live processes by bundle identifier, \
+            so an installed app whose process runs as an accessory \
+            (LSUIElement / menu-bar apps, e.g. Cua Driver itself) still reports \
+            its live pid. Installed apps come from scanning /Applications, \
+            /Applications/Utilities, ~/Applications, /System/Applications, and \
+            /System/Applications/Utilities.\n\n\
             Use this for \"is X installed?\" as well as \"is X running?\". For \
             per-window state — on-screen, on-current-Space, minimized, \
             window titles — call list_windows instead. For just opening an \

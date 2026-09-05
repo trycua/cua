@@ -134,6 +134,9 @@ No system package was installed and no autoload setting was added.
 The SDK accepted deletion of the follow-up pool. Immediate lookup still
 returned it; later pool and namespace lookups returned `403`, so final resource
 absence could not be independently confirmed with that credential.
+A subsequent successful account-level SDK namespace listing returned no matching
+namespace. Direct lookup still returned `403`; that response alone is not
+treated as proof of deletion.
 
 ## Remaining gates
 

@@ -19,10 +19,10 @@ pub mod overlay;
 pub mod persistent_vptr;
 pub(crate) mod portal;
 pub mod portal_screenshot;
+mod primary_seat;
 pub mod shell_helper;
 pub mod sway_ipc;
 mod virtual_keyboard;
-mod primary_seat;
 // RemoteDesktop/libei input is portable and ships in release binaries.
 // PipeWire ScreenCast capture remains separately gated for modern/Nix builds.
 #[cfg(feature = "portal-input")]
@@ -421,7 +421,9 @@ impl Dispatch<wl_registry::WlRegistry, ()> for State {
                     Some(registry.bind::<ZwlrForeignToplevelManagerV1, _, _>(name, v, qh, ()));
             } else if interface == WlSeat::interface().name {
                 let v = version.min(7);
-                state.seats.add(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
+                state
+                    .seats
+                    .add(registry.bind::<WlSeat, _, _>(name, v, qh, ()));
             } else if interface == ZwlrVirtualPointerManagerV1::interface().name {
                 state.vptr_manager = Some(registry.bind::<ZwlrVirtualPointerManagerV1, _, _>(
                     name,

@@ -48,8 +48,9 @@
 # (~/.cua-driver/packages/, legacy ~/.cua-driver-rs/, CuaDriverRs.app,
 # the LaunchAgent/systemd unit, or current Rust telemetry state).
 #
-# Also scrubs Claude MCP registrations in ~/.claude.json that match
-# the active backend.
+# Also scrubs release-owned Claude MCP registrations in ~/.claude.json.
+# Shared names are removed only when their command resolves into this release
+# package home/app bundle. Local, Swift, and side-by-side entries are kept.
 #
 # Revokes TCC grants on macOS by default (Accessibility + Screen Recording)
 # so the next install prompts cleanly under the new signing identity. Pass
@@ -521,6 +522,16 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
+    # Ownership-aware Claude cleanup currently uses Python's JSON + realpath
+    # support. If a Claude config exists but Python is unavailable, stop before
+    # touching the release so uninstall cannot report success while leaving a
+    # current shared-name registration behind.
+    CLAUDE_JSON="$HOME/.claude.json"
+    if [[ -f "$CLAUDE_JSON" ]] && ! command -v python3 >/dev/null 2>&1; then
+        printf 'error: python3 is required to safely inspect Claude MCP ownership before uninstalling a release with %s; install python3 and retry. No release files were removed.\n' "$CLAUDE_JSON" >&2
+        exit 1
+    fi
+
     DAEMON_PID_FILE="$(daemon_pid_file_path)"
     DAEMON_STOP_HELPER="$(select_daemon_stop_helper || true)"
 
@@ -536,6 +547,213 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         log "verified no running release cua-driver daemon"
     else
         log "no Rust install marker; leaving any running cua-driver process untouched"
+    fi
+
+    # --- Claude Code MCP registrations ---
+    # Inspect registrations before deleting the launcher/package tree. Claude
+    # allows the same server name in multiple scopes, so a name is not proof
+    # of ownership. Resolve each command while its target still exists and
+    # remove only entries whose command belongs to this selected release.
+    CLAUDE_JSON="$HOME/.claude.json"
+    if [[ -f "$CLAUDE_JSON" ]] && command -v python3 >/dev/null 2>&1; then
+        PY_OUTPUT="$(
+            CLAUDE_JSON="$CLAUDE_JSON" \
+            HOME_DIR="$HOME_DIR" \
+            LEGACY_HOME_DIR="$LEGACY_HOME_DIR" \
+            APP_BUNDLE="$APP_BUNDLE" \
+            LEGACY_APP_BUNDLE="$LEGACY_APP_BUNDLE" \
+            USER_BIN_LINK="$USER_BIN_LINK" \
+            RUST_INSTALL_PRESENT="$RUST_INSTALL_PRESENT" \
+            python3 <<'PYCLAUDE'
+import json
+import os
+import shutil
+import sys
+import tempfile
+import time
+
+path = os.environ["CLAUDE_JSON"]
+home_dir = os.path.abspath(os.environ["HOME_DIR"])
+legacy_home_dir = os.path.abspath(os.environ["LEGACY_HOME_DIR"])
+app_bundle = os.path.abspath(os.environ["APP_BUNDLE"])
+legacy_app_bundle = os.path.abspath(os.environ["LEGACY_APP_BUNDLE"])
+canonical_launcher = os.path.abspath(os.environ["USER_BIN_LINK"])
+rust_install_present = os.environ.get("RUST_INSTALL_PRESENT", "0") == "1"
+
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception as exc:
+    print(f"could not read Claude config {path}: {exc}", file=sys.stderr)
+    raise SystemExit(0)
+
+removed = []
+preserved_local = []
+
+
+def normalize(value):
+    return os.path.abspath(os.path.expanduser(value))
+
+
+def is_under(candidate, root):
+    try:
+        return os.path.commonpath((candidate, root)) == root
+    except (ValueError, OSError):
+        return False
+
+
+def text_parts(value):
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        return [item for item in value if isinstance(item, str)]
+    return []
+
+
+def invokes_unambiguous_legacy_rust(server):
+    if not isinstance(server, dict):
+        return False
+    parts = []
+    parts.extend(text_parts(server.get("command")))
+    parts.extend(text_parts(server.get("args")))
+    joined = " ".join(parts)
+    return (
+        "CuaDriverRs.app" in joined
+        or ".cua-driver-rs" in joined
+        or "cua-driver-rs" in joined
+    )
+
+
+def release_owned_command(server):
+    if not isinstance(server, dict):
+        return False
+    command = server.get("command")
+    if not isinstance(command, str) or not command:
+        return False
+
+    command_path = normalize(command)
+    resolved = os.path.realpath(command_path)
+    candidates = (command_path, resolved)
+
+    legacy_roots = (
+        os.path.join(legacy_home_dir, "packages"),
+        legacy_app_bundle,
+    )
+    if any(
+        is_under(candidate, root)
+        for candidate in candidates
+        for root in legacy_roots
+    ):
+        return True
+
+    if not rust_install_present:
+        return False
+
+    release_roots = (
+        os.path.join(home_dir, "packages"),
+        app_bundle,
+    )
+    if any(
+        is_under(candidate, root)
+        for candidate in candidates
+        for root in release_roots
+    ):
+        return True
+
+    # The canonical launcher is the only safe path-only fallback, and only
+    # when it no longer resolves to a live target. A live launcher at the same
+    # filename but pointing elsewhere belongs to that other installation.
+    return command_path == canonical_launcher and not os.path.exists(command_path)
+
+
+def is_local_launcher(server):
+    if not isinstance(server, dict):
+        return False
+    command = server.get("command")
+    if not isinstance(command, str) or not command:
+        return False
+    return os.path.basename(normalize(command)) == "cua-driver-local"
+
+
+def should_remove(name, server):
+    if name == "cua-driver-rs" or invokes_unambiguous_legacy_rust(server):
+        return True
+    return release_owned_command(server)
+
+
+def scrub_servers(servers, scope):
+    if not isinstance(servers, dict):
+        return
+    for name in list(servers):
+        server = servers[name]
+        if should_remove(name, server):
+            del servers[name]
+            removed.append(f"{scope}:{name}")
+        elif is_local_launcher(server):
+            preserved_local.append(f"{scope}:{name}")
+
+
+scrub_servers(data.get("mcpServers"), "user")
+projects = data.get("projects")
+if isinstance(projects, dict):
+    for project_name, project in projects.items():
+        if isinstance(project, dict):
+            scrub_servers(project.get("mcpServers"), f"project:{project_name}")
+
+if removed:
+    backup = f"{path}.bak-cua-driver-rs-uninstall-{int(time.time())}"
+    shutil.copy2(path, backup)
+    directory = os.path.dirname(path) or "."
+    fd, tmp_path = tempfile.mkstemp(
+        prefix=".claude.json.",
+        suffix=".tmp",
+        dir=directory,
+        text=True,
+    )
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(data, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
+    print(f"removed Claude MCP registration(s): {', '.join(removed)}")
+    print(f"backed up Claude config to {backup}")
+
+if preserved_local:
+    print(
+        "preserved local Claude MCP registration(s): "
+        + ", ".join(preserved_local)
+        + "; remove cua-driver-local with libs/cua-driver/scripts/uninstall-local.sh from the source checkout"
+    )
+PYCLAUDE
+        )"
+        if [[ -n "$PY_OUTPUT" ]]; then
+            while IFS= read -r line; do
+                log "$line"
+            done <<< "$PY_OUTPUT"
+        else
+            log "no release-owned Claude MCP registrations found in $CLAUDE_JSON"
+        fi
+    else
+        log "no Claude config cleanup via python3 (missing $CLAUDE_JSON or python3)"
+    fi
+
+    # `cua-driver-rs` was release-only, so its legacy name-based fallback is
+    # safe. Do not feed cua-driver/cua-computer-use through every scope: owning
+    # one scope says nothing about a same-named entry in another scope.
+    if command -v claude >/dev/null 2>&1; then
+        for SCOPE in local project user; do
+            if claude mcp remove cua-driver-rs -s "$SCOPE" >/dev/null 2>&1; then
+                log "removed Claude MCP server cua-driver-rs from $SCOPE scope"
+            fi
+        done
+    else
+        log "claude CLI not found (skipping legacy Claude MCP CLI cleanup)"
     fi
 
     # --- CLI symlink ---
@@ -736,137 +954,6 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         done
     else
         log "no Rust install marker; leaving agent skill symlinks untouched"
-    fi
-
-    # --- Claude Code MCP registrations ---
-    # Same scrub shape as the Swift branch, keyed on the cua-driver-rs
-    # binary name + the per-platform install paths. Unrelated MCP
-    # servers are left alone.
-    CLAUDE_JSON="$HOME/.claude.json"
-    if [[ -f "$CLAUDE_JSON" ]] && command -v python3 >/dev/null 2>&1; then
-        PY_OUTPUT="$(
-            CLAUDE_JSON="$CLAUDE_JSON" HOME_DIR="$HOME_DIR" RUST_INSTALL_PRESENT="$RUST_INSTALL_PRESENT" python3 <<'PY'
-import json
-import os
-import shutil
-import sys
-import tempfile
-import time
-
-path = os.environ["CLAUDE_JSON"]
-home_dir = os.environ.get("HOME_DIR", "")
-rust_install_present = os.environ.get("RUST_INSTALL_PRESENT", "0") == "1"
-
-try:
-    with open(path, "r", encoding="utf-8") as f:
-        data = json.load(f)
-except Exception as exc:
-    print(f"could not read Claude config {path}: {exc}", file=sys.stderr)
-    raise SystemExit(0)
-
-removed = []
-
-def text_parts(value):
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, str)]
-    return []
-
-def invokes_cua_driver_rs(server):
-    if not isinstance(server, dict):
-        return False
-    parts = []
-    parts.extend(text_parts(server.get("command")))
-    parts.extend(text_parts(server.get("args")))
-    joined = " ".join(parts)
-    # Match the Rust-port-specific anchors: bundle name, package home,
-    # explicit ".cua-driver-rs" segment. Plain "cua-driver" alone is
-    # ambiguous (the Swift binary uses the same filename). The shared
-    # /Applications/CuaDriver.app path is ALSO ambiguous (Rust took
-    # over the Swift bundle id) — only count it as Rust when a Rust
-    # install marker is on disk; otherwise it is almost certainly a
-    # Swift registration we should not scrub.
-    if home_dir and home_dir in joined:
-        return True
-    if "CuaDriverRs.app" in joined or ".cua-driver-rs" in joined or "cua-driver-rs" in joined:
-        return True
-    if rust_install_present and "/Applications/CuaDriver.app" in joined:
-        return True
-    return False
-
-def should_remove(name, server):
-    return name in {"cua-driver-rs"} or invokes_cua_driver_rs(server)
-
-def scrub_servers(servers, scope):
-    if not isinstance(servers, dict):
-        return
-    for name in list(servers.keys()):
-        if should_remove(name, servers[name]):
-            del servers[name]
-            removed.append(f"{scope}:{name}")
-
-scrub_servers(data.get("mcpServers"), "user")
-
-projects = data.get("projects")
-if isinstance(projects, dict):
-    for project in projects.values():
-        if isinstance(project, dict):
-            scrub_servers(project.get("mcpServers"), "project")
-
-if not removed:
-    raise SystemExit(0)
-
-backup = f"{path}.bak-cua-driver-rs-uninstall-{int(time.time())}"
-shutil.copy2(path, backup)
-
-directory = os.path.dirname(path) or "."
-fd, tmp_path = tempfile.mkstemp(
-    prefix=".claude.json.",
-    suffix=".tmp",
-    dir=directory,
-    text=True,
-)
-try:
-    with os.fdopen(fd, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
-except Exception:
-    try:
-        os.unlink(tmp_path)
-    except OSError:
-        pass
-    raise
-
-print(f"removed Claude MCP registration(s): {', '.join(removed)}")
-print(f"backed up Claude config to {backup}")
-PY
-        )"
-        if [[ -n "$PY_OUTPUT" ]]; then
-            while IFS= read -r line; do
-                log "$line"
-            done <<< "$PY_OUTPUT"
-        else
-            log "no Claude MCP registrations for cua-driver-rs found in $CLAUDE_JSON"
-        fi
-    else
-        log "no Claude config cleanup via python3 (missing $CLAUDE_JSON or python3)"
-    fi
-
-    # Best-effort CLI cleanup. `claude mcp remove` only touches the
-    # active project / user scopes — fine to run; it's a no-op when the
-    # entries were already scrubbed above.
-    if command -v claude >/dev/null 2>&1; then
-        for SERVER in cua-driver-rs; do
-            for SCOPE in local project user; do
-                if claude mcp remove "$SERVER" -s "$SCOPE" >/dev/null 2>&1; then
-                    log "removed Claude MCP server $SERVER from $SCOPE scope"
-                fi
-            done
-        done
-    else
-        log "claude CLI not found (skipping Claude MCP CLI cleanup)"
     fi
 
     # --- Closing message ---

@@ -3,12 +3,14 @@ title: Isolated background input on Hyprland
 authors:
   - f-trycua
 created: 2026-09-04
-last_updated: 2026-09-04
+last_updated: 2026-09-05
 status: review
 discussion: https://github.com/trycua/cua/issues/3550
 rfc_pr: https://github.com/trycua/cua/pull/3551
 implementation:
   - https://github.com/trycua/cua/pull/3547
+  - https://github.com/trycua/cua/pull/3557
+  - https://github.com/trycua/cua/pull/3572
 supersedes: null
 superseded_by: null
 ---
@@ -19,16 +21,25 @@ superseded_by: null
 
 Add an optional, explicitly authorized Hyprland input integration that delivers
 to an exact background target without borrowing the user's primary-seat
-focus. Prefer an independent synthetic seat, with compositor-owned target
+focus. Use two independent synthetic seats, with compositor-owned target
 identity, bounded complete actions, revocable authorization, and separate
 transport, dispatch, and application-effect results. Keep the portable Cua
 Driver contract unchanged where possible and refuse unsupported clients or
 actions. This is a proposal for Cua, not an accepted upstream Hyprland API.
 
-The requirements below are proposed decisions. `status: review` invites
-feedback; it does not authorize input implementation or production rollout.
-The operator-control mechanism and real client compatibility remain blocking
-design questions.
+The [maintainer-selected delivery scope](https://github.com/trycua/cua/issues/3550#issuecomment-5555206901)
+authorizes continuing the existing implementation workstreams toward released
+Driver packages and a verified Omarchy Fleet image. The intended end state is
+usable, supported input for a qualified client/operation matrix, not a demo.
+`status: review` remains in effect: implementation authorization is not final
+contract acceptance, native certification, or permission to bypass the
+repository's review and release gates.
+
+The selected initial direction is two lanes, native Calc/Inkscape operations,
+trusted-local use with shared Driver policy, and session-lifetime seats with
+restart-required plugin upgrades. Production host delegation, operator
+indication/Stop, and the exact qualified matrix must be implemented and
+reviewed before input can ship.
 
 ## Motivation
 
@@ -70,7 +81,9 @@ KWin, and XWayland.
   to ordinary background actions.
 - Unlock the session, wake displays, raise windows, switch workspaces, modify
   the clipboard, or fall back to primary-seat input to rescue a failed action.
-- Provide multiple concurrent synthetic seats in the first input milestone.
+- Provide more than two concurrent agent seats in the initial release.
+- Claim initial Chromium/Electron, XWayland, IME, popup/subsurface, or arbitrary
+  display-layout support without separate qualification.
 - Claim protection from a compromised compositor, root, or an unrestricted
   hostile local-user account without a separate enforceable OS boundary.
 
@@ -89,7 +102,7 @@ KWin, and XWayland.
 ## Current state
 
 The [foundation PR #3547](https://github.com/trycua/cua/pull/3547), inspected at
-`1c000fb07f88f73f1c3111d09ac326c5e3aa7647`, adds an optional plugin with:
+`fc6d064d9287cb04a16152d056f87a809b8e3cf6`, adds an optional plugin with:
 
 - exact Hyprland ABI checks and a matching compiler/runtime requirement;
 - disabled-by-default, bounded same-UID `SOCK_SEQPACKET` transport;
@@ -98,15 +111,26 @@ The [foundation PR #3547](https://github.com/trycua/cua/pull/3547), inspected at
   integration; and
 - `background_unavailable` for every defined mutation message.
 
-The [v2 protocol](https://github.com/trycua/cua/blob/1c000fb07f88f73f1c3111d09ac326c5e3aa7647/libs/cua-driver/hyprland-plugin/protocol/cua-inject-v2.md)
+The [v2 protocol](https://github.com/trycua/cua/blob/fc6d064d9287cb04a16152d056f87a809b8e3cf6/libs/cua-driver/hyprland-plugin/protocol/cua-inject-v2.md)
 authenticates a Unix UID, not a Cua process or operator approval. It explicitly
 gates input on an authorization contract and second-seat evidence.
 
-The [validation report](https://github.com/trycua/cua/blob/1c000fb07f88f73f1c3111d09ac326c5e3aa7647/libs/cua-driver/hyprland-plugin/tests/validation.md)
+The [validation report](https://github.com/trycua/cua/blob/fc6d064d9287cb04a16152d056f87a809b8e3cf6/libs/cua-driver/hyprland-plugin/tests/validation.md)
 records native build and repeated lifecycle tests on Hyprland `0.56.2-1`.
 Its Fleet environment used Omarchy `4.0.1-1` and Cua Driver `0.22.2`.
 The report identifies the tested source archive and subsequent non-executable
 changes; it is not application-delivery or physical-input-isolation evidence.
+
+The [input implementation #3572](https://github.com/trycua/cua/pull/3572)
+contains historical two-lane Calc/Inkscape delivery, saved-output, foreground
+input, and fault/recovery evidence at explicitly recorded source revisions.
+Its `22d4c863576a300ba561b4783822b90ba173423a` checkpoint adds persistent
+seats, keymap refresh, compositor-owned lane reservations, and synchronous
+desktop-transition revocation. Ten host CTests and 82 Python checks passed;
+that checkpoint has not been native-certified and does not inherit the old
+recordings as proof. Input remains compile-time gated and uses a test-only
+external signer. The [observation dependency #3557](https://github.com/trycua/cua/pull/3557)
+retains its separate certification gates.
 
 The separate [driver integration PR #3052](https://github.com/trycua/cua/pull/3052)
 reports capture and desktop-contract evidence on its own branch. Its passing
@@ -177,19 +201,30 @@ this missing boundary is supplied by its same-UID socket. See
 
 ### Initial scope and capability negotiation
 
-Start with one active agent input lease per compositor instance, one target
-per lease, and one executing action at a time. Other clients may perform
-bounded discovery. Competing input requests receive a typed busy/refusal
-outcome rather than sharing a seat or interleaving state. Additional agents
-and seats require a separately negotiated extension and evidence.
+Start with two independent lanes per compositor instance, one target and one
+executing action per lane. Driver-private lifecycle owners reserve lanes
+through the compositor so two Driver processes cannot independently assume
+ownership of the same lane. Per-lane serialization must not serialize the
+other lane's bounded drag. A third owner receives a typed busy outcome. Cancel
+affects its selected lane; operator Stop revokes both. Same-Wayland-client
+conflicts between lanes or with primary input refuse.
 
 Keep pointer motion, button actions, scrolling, drag, key chords, and text as
 distinct capabilities. Enable only individually certified capabilities. The
-first delivery increment is a complete click on a native Wayland GTK fixture;
-it does not imply keyboard, text, drag, popup, or XWayland support.
+initial supported matrix targets native Calc and Inkscape complete clicks,
+physical key/chord actions, scroll, and bounded drag, qualifying each operation
+and runtime separately. GTK fixtures supply reproducible faults and oracles,
+not an application-support claim. Chromium/Electron, raw text/IME, XWayland,
+popup/subsurface delivery, modified pointer gestures, and unqualified display
+layouts remain explicit refusals.
 
-Do not route public raw key-down/button-down streams or parallel drag tools
-through this first version. Complete click, bounded drag, and complete key
+Eligibility uses host/compositor-observed live client identity and qualified
+runtime details, not an app name supplied by the caller. An eligibility list
+is a compatibility policy, not a sandbox: a supported application may itself
+run scripts, extensions, or subprocesses.
+
+Do not route public raw key-down/button-down streams through this first
+version. Complete click, bounded drag, and complete key
 chord operations own their press/release lifecycle. Unsupported public tool
 shapes retain an explicit refusal or their existing independently safe route.
 
@@ -232,6 +267,9 @@ Do not temporarily borrow and restore primary-seat focus.
 
 Use a valid compositor keymap and explicit agent modifier/repeat state. Do not
 inherit the person's held modifiers or trigger global compositor shortcuts.
+Keymap replacement revokes old authority and updates independent state and
+client resources; it must not disconnect applications or require replacing
+their seats. Qualify layouts and physical modifier interactions separately.
 Client-visible agent-seat focus is distinct from activating the desktop
 window. Toolkit policies may still reject it; report those limits rather than
 pretending synthetic events were accepted.
@@ -281,6 +319,13 @@ cleanup; it does not silently recompute a new path. Cancellation reports
 partial dispatch when events have already escaped; it cannot undo an
 application's prior text insertion or click.
 
+Observe desktop transitions synchronously, not only by comparing sampled
+state. Lock/unlock or DPMS off/on between two timer ticks must still invalidate
+old active and pending authority. Keep dispatch-time guards as defense in
+depth. Revocation generations are monotonic, and exhaustion requires restart
+rather than wrapping. Operator status and Stop remain reachable after an
+action connection is revoked.
+
 ### Results and public parity
 
 Keep three facts separate: receipt by the transport, dispatch by the
@@ -321,7 +366,7 @@ reviewed before mutation is enabled.
 | Borrow primary-seat focus and restore it       | Restoration cannot establish that no intervening grab/key state changed. Reject as the isolation contract.                                                                                                      |
 | Patch Hyprland directly                        | May expose cleaner internal APIs, but adds distribution/upstream maintenance. Keep as a fallback decision requiring maintainer feedback, not assumed upstream acceptance.                                       |
 | Nested compositor or private VM                | Useful controlled environments with different capture/input boundaries. They do not establish isolated input in the user's existing Hyprland session.                                                           |
-| Several simultaneous agent seats immediately   | Broader functionality, but expands client, scheduling, and authority risks. Defer until the single-lease contract is proven.                                                                                    |
+| One agent seat initially                       | Simpler admission, but does not meet the selected two-agent workflow. Use two bounded independent lanes with conflict/refusal and concurrent-fault evidence; defer additional lanes.                          |
 
 ## Compatibility and migration
 
@@ -336,16 +381,28 @@ waits for the accepted RFC, reviewed wire/authorization contracts, integrated
 driver support, and evidence below. Switching driver channels alone does not
 install the plugin. No release or image update silently grants input authority.
 
-Rollback first revokes leases, drains/cancels work, and releases agent-owned
-state, then disables/unloads the module. The ordinary driver remains usable.
-If cancellation or unload cannot be proven safe, do not hot-upgrade an active
-desktop; use a planned session restart with operator approval.
+Create the two seats once per compositor session. Disable/re-enable revokes
+authority and replaces the transport epoch, not the seat globals or existing
+client bindings. Existing applications must recover after fresh approval
+without restart or accumulating replacement resources.
+
+Plugin upgrades and rollback require a planned desktop restart. Before the
+restart, revoke leases, cancel work, and release agent-owned state. Unexpected
+unload must leave surviving client requests safe and refuse replacement input
+modules in the same desktop lifetime. It is not a supported hot-upgrade path.
+The ordinary Driver remains usable without plugin input.
 
 ## Security, privacy, and telemetry
 
 The plugin executes inside the compositor and can affect the whole session.
 Review bounds, threading, lifecycle, and privileges as part of its trust
 boundary, not merely as performance tuning.
+
+The initial trust model is a local operator and trusted Driver host running
+within the same desktop account. It does not contain an unrestricted hostile
+same-user shell or promise an unspoofable desktop against that process. Such a
+threat requires a separate enforceable OS/process boundary, not an app list,
+socket mode, executable-name check, or cursor overlay.
 
 Same-UID peer checks, socket permissions, public session names, executable
 names, and requested capability bits do not authorize input. Require a
@@ -367,6 +424,15 @@ same-user threat model honestly. No current protected Hyprland collector or
 delegation mechanism is claimed here. If no adequate mechanism is available,
 mutation remains disabled.
 
+Reuse Driver's shared permission engine and immutable trusted-host callback
+instead of adding agent-facing approval tools. The callback is not invoked for
+every routine or in-manifest operation, so the production bridge must also
+delegate already-authorized operations to a private, target-bound compositor
+lease. Unrestricted Driver mode alone does not issue a lease. Bind delegation
+to runtime/lifecycle ownership and policy generation; host loss and Stop
+revoke it. The test signer and compiled test public key are not a deployable
+replacement, and no private signing key may be baked into an image.
+
 Lock revokes input; unlocking does not automatically renew a lease. DPMS-off
 is a separate visibility/precondition failure for this first version, not a
 reason to wake displays or report a black capture as successful evidence.
@@ -382,25 +448,29 @@ enabled by plugin use.
 
 ## Implementation plan
 
-These are proposed increments, not newly scheduled implementation issues:
+Continue the existing selected workstreams; do not create competing PRs:
 
 1. Complete foundation CI and package/lifecycle evidence in #3547 while
    keeping mutation disabled. This does not depend on choosing input semantics.
-2. Record the RFC decision, including authority and seat-compatibility
-   requirements. Following acceptance, use disposable native Hyprland sessions
-   for an isolated-seat spike; if it disproves the design, return to the RFC
-   before choosing a different implementation.
+2. Reconcile the recorded implementation direction with this RFC and record
+   its final disposition, including the operator delegation/wire contract and
+   qualified client matrix. Preserve the existing spike's lineage and limits.
 3. Add reviewed v3 framing, lease/target/geometry state, bounded scheduling,
    replay handling, and cancellation with protocol tests. Keep input feature
    flags off until the protected operator path is implemented.
-4. Integrate one complete native GTK click through the shared driver contract
-   and prove target effect plus simultaneous foreground-grab preservation.
-5. Add gestures, keyboard, and text only as separately tested capabilities.
-   Expand toolkit, geometry, and lifecycle coverage without converting
-   unsupported rows into silent success.
-6. Build a pinned Fleet candidate, complete package/runtime certification,
-   then run the physical Omarchy gate. Update public support claims only for
-   accepted cells; image/default promotion requires separate release approval.
+4. Qualify both native application lanes through normal Driver calls, saved
+   application outputs, and independent primary-input oracles. Exercise
+   concurrent faults, distinct Driver processes, brief state transitions,
+   keymap changes, and surviving-client config-toggle recovery.
+5. Run final-candidate certification, review and merge the dependency chain,
+   and verify component-tagged Driver artifacts and canonical installers.
+   Unsupported rows must remain refusals, not implicit success.
+6. Use the canonical amd64 image build/publish pipeline for the pinned Omarchy
+   candidate. Verify package install/upgrade refusal, restart/rollback, and
+   fresh SDK-driven Fleet instances. Retain the physical Omarchy gate before
+   making bare-metal claims; Fleet and physical evidence are not substitutes.
+   The selected shipping goal includes release/image delivery only after
+   these substantive gates pass.
 
 ## Test and acceptance plan
 
@@ -413,7 +483,7 @@ an unmerged PR's runner is present on main.
 | Gate                             | Required evidence                                                                                                                                                                                                                                 |
 | -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Protocol and authority           | Malformed/oversized requests, queue/replay exhaustion, denied or unavailable approval, nondelegated same-UID peers, wrong target/epoch/lease/sequence, expiry, scope expansion, and disconnect races all refuse without unsafe dispatch.          |
-| Package and compositor lifecycle | Real package install, package dependency-upgrade refusal, genuine cross-version ABI refusal, two real compositor instances, clean restart, disable/re-enable, and repeated load/unload at the tested source/package identities.                   |
+| Package and compositor lifecycle | Real package install, dependency-upgrade and cross-version ABI refusal, two real compositor instances, clean restart, repeated config toggles without resource growth, surviving-client recovery, and unload/replacement refusal.                  |
 | First delivered action           | Normal Cua Driver call through the plugin changes the exact GTK fixture, while an independent foreground fixture continues its active grab without leaked events or changed primary-seat state.                                                   |
 | Client matrix                    | Native GTK3, GTK4, Qt6, LibreOffice, Chromium/Ozone, Electron, and XWayland each declare supported/refused actions separately. Record actual toolkit/backend/version/flags; do not force another backend silently.                                |
 | Gesture and text state           | Held buttons, physical modifiers, agent chords, drag cancellation, key repeat, scroll completion, and Unicode/IME behavior for every capability proposed for promotion.                                                                           |
@@ -458,8 +528,9 @@ release-path checks remain separate delivery requirements.
    Hyprland actually support, including reliable indication and Stop? Which
    same-user threats remain outside its enforceable boundary?
 2. Can the independent seat satisfy real client focus/grab/serial/keymap
-   semantics without changing primary state? Which initial client/action cells
-   should qualify, and what evidence would reject this direction?
+   semantics without changing primary state across the selected Calc/Inkscape
+   operation matrix? Which exact versions/layouts qualify, and what evidence
+   would reject a cell or the two-lane direction?
 3. What exact surface-tree roles and geometry-change behavior are safe for
    the first increment? Which popup and same-target interactions must refuse?
 4. What are the reviewed lease TTLs, action/queue quotas, cancellation bounds,
@@ -472,7 +543,9 @@ release-path checks remain separate delivery requirements.
 
 ## Decision record
 
-No maintainer decision has been recorded. Discussion is tracked in
+The [2026-09-05 maintainer selection](https://github.com/trycua/cua/issues/3550#issuecomment-5555206901)
+sets the implementation and delivery direction above. It does not mark the
+RFC accepted or completed. The final contract disposition remains tracked in
 [#3550](https://github.com/trycua/cua/issues/3550). This proposal changes an
 input permission boundary and should receive at least the normal seven-day
 review window in [the RFC process](README.md), unless a maintainer records an

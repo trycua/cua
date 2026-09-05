@@ -4,7 +4,7 @@ build-backend = "pdm.backend"
 
 [project]
 name = "cua-computer-server"
-version = "0.3.42"
+version = "0.3.45"
 
 description = "Server component for the Computer-Use Interface (CUI) framework powering Cua"
 authors = [
@@ -55,7 +55,7 @@ vnc = [
     "vncdotool>=1.2.0"
 ]
 driver = [
-    "cua-driver>=0.12.2,<0.13.0"
+    "cua-driver>=0.22.2,<0.23.0"
 ]
 
 [project.urls]

@@ -30,15 +30,20 @@ that exact commit.
 - Keep the named golden VM stopped and never run tests in it directly.
 - Put no repository credentials, signing secrets, or maintainer private SSH
   keys in the guest. A host public key is sufficient for source sync.
-- Grant TCC permissions through `CuaDriverLocal.app`. Do not edit `TCC.db`.
+- For reusable private seeds, request the app-owned Accessibility and Screen
+  Recording grants through `CuaDriverLocal.app`. For disposable SIP-off workers
+  that are not cloned from a granted seed, use the checked-in `seed-tcc.sh`
+  helper below. Do not hand-edit `TCC.db`.
 - Require a certificate-backed local signature. An ad-hoc signature invalidates
   the inherited grants on the next build.
 - Clone one worker per run, retrieve its evidence, then delete the worker.
 
-SIP-off does not grant or bypass TCC. It makes the disposable behavior lane
-repeatable while the private seed carries grants obtained through the normal
-`CuaDriverLocal.app` prompt flow. The SIP-on check below owns the separate claim that
-the supported permission flow still works with normal platform protection.
+SIP-off alone does not grant Accessibility, Screen Recording, Automation, or
+direct-capture consent. The reusable private seed still carries grants approved
+through the normal `CuaDriverLocal.app` prompt flow. The helper below is only for
+disposable SIP-off workers that need the same app-owned Accessibility and Screen
+Recording grants without preserving a granted seed. The SIP-on check below proves
+the normal user-facing permission flow still works with platform protection.
 
 ## Reuse a prepared private seed
 
@@ -227,7 +232,8 @@ direct-capture prompt. CuaDriverLocal app enumeration must not ask for System
 Events. Target-specific Automation prompts may still appear later when a user
 explicitly requests an Apple Events-backed browser or app operation; do not
 pre-grant those in the seed. These are normal macOS consent flows; do not edit
-`TCC.db`. Rerun the commands and require them to finish without another prompt.
+`TCC.db` by hand while building a reusable seed. Rerun the commands and require
+them to finish without another prompt.
 Notification banners can cover Tahoe's consent controls; swipe the banners away
 before acting instead of clicking through them. After enabling Screen Recording,
 restart the app-owned daemon once before checking status so the live process
@@ -255,12 +261,66 @@ the second is intentionally prompt-capable and must be run by the human:
 ~/.local/bin/cua-driver-local permissions status --json | jq -e '
   .accessibility == true
   and .screen_recording == true
+  and .screen_recording_capturable == null
+  and .direct_capture_status == "not_checked"
+  and .direct_capture_verification.source == "permissions_grant"
+  and (.direct_capture_verification.verified_at | endswith("Z"))
+  and .direct_capture_verification.bundle_id == "com.trycua.driver.local"
 '
 codesign -d -r- /Applications/CuaDriverLocal.app 2>&1 | grep 'certificate leaf'
 csrutil status
 ```
 
 All five commands must succeed, and `csrutil status` must report disabled.
+
+### Seed app-owned grants in disposable SIP-off workers
+
+The public [Run Cua Driver in a macOS Lume VM](https://cua.ai/docs/how-to-guides/driver/run-in-macos-lume-vm)
+guide grants macOS consent through the VM display. Keep using that prompt flow
+for reusable private seeds. For automated disposable workers that are not cloned
+from a granted seed, run the host helper after `CuaDriverLocal.app` is installed
+in each running worker with a certificate-backed identity:
+
+```bash
+WORKER_A=cua-driver-macos-e2e-a
+WORKER_B=cua-driver-macos-e2e-b
+libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh "$WORKER_A" "$WORKER_B"
+```
+
+Add `--storage <name-or-path>` when the workers live outside the default Lume
+storage.
+
+The wrapper resolves each VM's IP with `lume get`, copies
+`seed-tcc-guest.sh` with `scp`, then runs it with `ssh` and guest `sudo`.
+Use the default `lume` SSH password, set `LUME_SSH_PASSWORD`, or pass
+`--ssh-password`. Password mode uses OpenSSH's askpass path; leave the password
+empty when the VM accepts host SSH keys.
+The guest helper refuses to write unless `sysctl -n hw.model` reports a
+`VirtualMac*` VM and `csrutil status` reports disabled SIP. It derives the
+permission identity from `/Applications/CuaDriverLocal.app`, writes only the
+Accessibility and Screen Recording entries for that app, restarts `tccd`, and
+verifies both entries.
+
+After seeding, restart `CuaDriverLocal.app` before checking permission status if
+`install-local --autostart` or an earlier probe may have started the daemon:
+
+```bash
+~/.local/bin/cua-driver-local stop
+open -a CuaDriverLocal
+```
+
+If the VM sudo password is not the default `lume`, pass it without putting it
+on the command line:
+
+```bash
+printf '%s\n' "$VM_SUDO_PASSWORD" \
+  | libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh \
+      --sudo-password-stdin "$WORKER_A" "$WORKER_B"
+```
+
+This helper is for SIP-off disposable VMs only. Keep the SIP-on permission-flow
+check below as the proof that the normal user-facing consent path still works.
+
 Stop the builder and clone it to a date/version-named private seed plus two
 stopped backups:
 

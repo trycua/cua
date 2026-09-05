@@ -175,7 +175,7 @@ bash libs/cua-driver/scripts/install-local.sh --release --autostart
 ```
 
 Require the message `signed staged app with a stable local identity`. Do not
-grant TCC permissions to an ad-hoc build.
+approve macOS consent for an ad-hoc build.
 
 ### Grant the seed's consent paths
 
@@ -207,8 +207,10 @@ Choose **Allow** for:
 - Terminal controlling System Events;
 - CuaDriver direct screen capture without the system picker.
 
-These are normal macOS consent flows. Do not edit `TCC.db`. Rerun all three
-probes and require them to finish without another prompt.
+These are normal macOS consent flows. Do not hand-edit `TCC.db` while building a
+reusable seed. The checked-in SIP-off seed helper is only for disposable workers
+that are not cloned from a granted seed. Rerun all three probes and require them
+to finish without another prompt.
 
 Verify the app-owned grants, signature, capture result, and SIP state:
 
@@ -223,8 +225,11 @@ Verify the app-owned grants, signature, capture result, and SIP state:
 
 "$DRIVER" permissions grant
 "$DRIVER" permissions status --json | jq -e '
-  .screen_recording_capturable == true
-  and .direct_capture_status == "ready"
+  .screen_recording_capturable == null
+  and .direct_capture_status == "not_checked"
+  and .direct_capture_verification.source == "permissions_grant"
+  and (.direct_capture_verification.verified_at | endswith("Z"))
+  and .direct_capture_verification.bundle_id == "com.trycua.driver"
 '
 
 jq -e '

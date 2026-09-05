@@ -2,14 +2,18 @@ package telemetry
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetrichttp"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
+	sdkmetric "go.opentelemetry.io/otel/sdk/metric"
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 	semconv "go.opentelemetry.io/otel/semconv/v1.26.0"
@@ -40,16 +44,26 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		return nil, fmt.Errorf("build resource: %w", err)
 	}
 
-	exporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.Endpoint))
+	traceExporter, err := otlptracehttp.New(ctx, otlptracehttp.WithEndpointURL(cfg.Endpoint))
 	if err != nil {
 		return nil, fmt.Errorf("create otlp http trace exporter: %w", err)
 	}
 
-	provider := sdktrace.NewTracerProvider(
-		sdktrace.WithBatcher(exporter),
+	traceProvider := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(traceExporter),
 		sdktrace.WithResource(res),
 	)
-	otel.SetTracerProvider(provider)
+	metricExporter, err := otlpmetrichttp.New(ctx, otlpmetrichttp.WithEndpointURL(cfg.Endpoint))
+	if err != nil {
+		_ = traceProvider.Shutdown(ctx)
+		return nil, fmt.Errorf("create otlp http metric exporter: %w", err)
+	}
+	metricProvider := sdkmetric.NewMeterProvider(
+		sdkmetric.WithReader(sdkmetric.NewPeriodicReader(metricExporter, sdkmetric.WithInterval(15*time.Second))),
+		sdkmetric.WithResource(res),
+	)
+	otel.SetTracerProvider(traceProvider)
+	otel.SetMeterProvider(metricProvider)
 	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
 		propagation.TraceContext{},
 		propagation.Baggage{},
@@ -59,7 +73,7 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 	return func(ctx context.Context) error {
 		var shutdownErr error
 		once.Do(func() {
-			shutdownErr = provider.Shutdown(ctx)
+			shutdownErr = errors.Join(metricProvider.Shutdown(ctx), traceProvider.Shutdown(ctx))
 		})
 		return shutdownErr
 	}, nil

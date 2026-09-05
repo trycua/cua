@@ -8,7 +8,7 @@
 # SPA only — not cua-cli, not user keys. These endpoints hand back Stripe-hosted
 # URLs meant to be opened in the browser session that asked for them.
 #
-# The prefix match rather than three literals is deliberate: a new billing
+# The prefix match rather than individual literals is deliberate: a new billing
 # browser route is covered the day it is registered. /api/billing/webhook is
 # excluded because it is not an authenticated route at all — Stripe signature
 # verification is its authentication boundary, and it is registered without the

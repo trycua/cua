@@ -1,0 +1,223 @@
+---
+title: Run Omarchy on Fleet
+description: Provision an amd64 Omarchy desktop on Cua Fleet and control it with the Cua Sandbox SDK.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use the Cua Sandbox SDK to provision an amd64 Omarchy desktop on
+[Cua Fleet](/tutorials/your-first-cloud-fleet). Fleet runs the Omarchy system
+as a KubeVirt `containerDisk`; the guest starts Hyprland and exposes both the
+`cua-computer-server` API and the Cua Driver MCP service.
+
+<Callout type="info">
+  This guide is for the amd64 Fleet image. The [Omarchy on Apple Silicon
+  guide](/how-to-guides/lume/run-omarchy-arm64) builds a separate ARM64 VM for local Lume use and
+  does not run on Fleet.
+</Callout>
+
+## Before you start
+
+You need:
+
+- Python `>=3.11,<3.14`;
+- [`uv`](https://docs.astral.sh/uv/);
+- `cua-sandbox==0.4.3`; and
+- a Fleet access token or OAuth client credentials that can manage pools.
+
+The Fleet-verified public image reference is:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab
+```
+
+The image is an amd64 KubeVirt containerDisk. It is not an ordinary OCI
+application image: the image contains a bootable disk at `/disk/disk.img`.
+Fleet pulls the public image, so you do not need AWS credentials on the
+machine that runs this script.
+
+## Authenticate with Fleet
+
+The SDK connects to `https://run.cua.ai` by default. Export one supported
+credential set before running the example:
+
+```bash
+export FLEETS_TOKEN="<your-access-token>"
+```
+
+Or use OAuth client credentials:
+
+```bash
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+```
+
+Keep credentials in your shell environment or a secret manager. Do not put
+them in the image definition or commit them to source control.
+
+Choose a globally unique, lowercase DNS-label pool name:
+
+```bash
+export CUA_POOL_NAME="<unique-lowercase-name>"
+```
+
+## Provision and claim an Omarchy desktop
+
+Save this script as `run_omarchy_fleet.py`:
+
+```python title="run_omarchy_fleet.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox==0.4.3",
+# ]
+# ///
+
+import asyncio
+import os
+from pathlib import Path
+
+from cua_sandbox import Image, Pool
+
+
+IMAGE = os.environ.get(
+    "OMARCHY_IMAGE",
+    "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace"
+    "@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab",
+)
+POOL_NAME = os.environ["CUA_POOL_NAME"]
+
+
+async def main() -> None:
+    image = Image.from_registry(IMAGE, os_type="linux", kind="vm")
+    pool = await Pool.apply(
+        image,
+        name=POOL_NAME,
+        replicas=1,
+        cpu=4,
+        memory_mb=6144,
+        services={"server": 8000, "mcp": 3000},
+        ttl_seconds_after_created=21600,
+    )
+
+    try:
+        async with pool.claim(service="server", time_to_start=1800) as sandbox:
+            print(f"Sandbox: {sandbox.name}")
+            print(f"Screen: {await sandbox.get_dimensions()}")
+
+            result = await sandbox.shell.run("pgrep -a Hyprland")
+            if not result.success:
+                raise RuntimeError(result.stderr)
+            print(result.stdout.strip())
+
+            screenshot = Path("omarchy-fleet.png")
+            screenshot.write_bytes(await sandbox.screenshot())
+            print(f"Screenshot: {screenshot.resolve()}")
+
+            await sandbox.clipboard.set("hello from Omarchy Fleet")
+            if await sandbox.clipboard.get() != "hello from Omarchy Fleet":
+                raise RuntimeError("clipboard round trip failed")
+
+            width, height = await sandbox.get_dimensions()
+            await sandbox.mouse.click(width // 2, height // 2)
+            await sandbox.keyboard.keypress(["cmd", "2"])
+            print("Screenshot, shell, clipboard, click, and workspace hotkey passed")
+    finally:
+        await pool.delete()
+
+
+asyncio.run(main())
+```
+
+Run the script:
+
+```bash
+uv run run_omarchy_fleet.py
+```
+
+`Pool.apply()` creates or reconciles the named pool and its template. The
+`server` service on port `8000` carries screenshot, shell, keyboard, mouse, and
+clipboard operations. The `mcp` service on port `3000` carries the Cua Driver
+MCP endpoint at `/mcp` for an MCP client.
+
+The pool name is globally unique across Cua accounts. If the name is already
+in use, choose another name and run the script again:
+
+```bash
+export CUA_POOL_NAME="my-team-omarchy-pool"
+uv run run_omarchy_fleet.py
+```
+
+## View the desktop
+
+Use `sandbox.screenshot()` to inspect the desktop and the mouse, keyboard,
+shell, clipboard, and window interfaces to control it without a live display.
+
+For an interactive browser display, expose a Fleet service named `vnc` and
+configure the guest's existing WayVNC process with a noVNC bridge. Follow
+[Connect to an Omarchy Fleet desktop with
+noVNC](/how-to-guides/sandbox/connect-to-omarchy-with-novnc). Fleet carries the
+display through its authenticated HTTP and WebSocket service proxy; it does
+not expose a public raw VNC TCP socket.
+
+## Connect an MCP client
+
+The claim exposes the Cua Driver MCP service as the named Fleet service
+`mcp`. Use the SDK service interface while the claim is active:
+
+```python
+response = await sandbox.services.request(
+    "mcp",
+    method="POST",
+    path="/mcp",
+    headers={
+        "content-type": "application/json",
+        "accept": "application/json, text/event-stream",
+    },
+    json={
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "initialize",
+        "params": {
+            "protocolVersion": "2025-03-26",
+            "capabilities": {},
+            "clientInfo": {"name": "my-agent", "version": "0.1.0"},
+        },
+    },
+)
+response.raise_for_status()
+```
+
+For a complete MCP client, use the [Cua Driver MCP tool reference](/reference/cua-driver/mcp-tools)
+and keep the authenticated Fleet claim alive for the duration of the client
+session.
+
+## Keep or delete the pool
+
+The example sets a six-hour creation-age TTL and deletes the pool in `finally`.
+That is a good default for jobs and CI. If you want a reusable warm pool, omit
+the `finally` deletion and release only the claim; delete the pool explicitly
+when you are finished:
+
+```python
+await pool.delete()
+```
+
+Deleting the pool removes its template and sandboxes. Save screenshots or
+files that you need before the claim and pool are deleted.
+
+## Troubleshoot startup
+
+- **HTTP 403 during `Pool.apply()`:** confirm the image repository is included
+  in Fleet admission policy and that your credentials can create a pool in the
+  selected namespace.
+- **Claim timeout:** verify that the image is an amd64 KubeVirt containerDisk,
+  the image reference includes the exact digest, and the `server` service is
+  configured on port `8000`.
+- **Black or empty screenshot:** check the image's unattended Hyprland boot and
+  the `cua-computer-server` service before debugging the Fleet transport.
+- **MCP connection failure:** claim the sandbox with the `mcp` service exposed
+  on port `3000` and send requests to `/mcp` through `sandbox.services`.
+
+For local Omarchy development and ARM64 compatibility notes, see [Run Omarchy on
+Apple Silicon](/how-to-guides/lume/run-omarchy-arm64).

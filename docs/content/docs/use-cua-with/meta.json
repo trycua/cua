@@ -11,6 +11,7 @@
     "meta",
     "qwen",
     "kimi",
+    "minimax",
     "---Agent harnesses---",
     "claude-code",
     "codex",

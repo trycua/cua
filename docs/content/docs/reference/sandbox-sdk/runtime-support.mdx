@@ -1,0 +1,113 @@
+---
+title: Sandbox runtime support
+description: Versioned image, runtime, customization, and transport support for the Sandbox SDK.
+---
+
+This reference describes the Python Sandbox SDK in `cua-sandbox` **0.4.3**, exported
+by `cua` **0.1.6**. An accepted image specification or generated Fleet template is
+evidence of SDK behavior, not proof that a guest boots on every host or deployment.
+
+## Operating systems and image kinds
+
+Local execution uses `local=True`. Fleet execution uses managed pools and claims.
+The same guest OS can have different image formats, runtime requirements, and
+available operations on those two paths.
+
+| Image input | Guest and kind | Local runtime selection | Fleet SDK acceptance in 0.4.3 | Verification boundary |
+| --- | --- | --- | --- | --- |
+| `Image.linux()` | Ubuntu 24.04 VM | Bare-metal QEMU; requires `qemu-system-x86_64` | Maps to a built-in registry artifact | Mapping and runtime selection checked; host and Fleet boot not tested here |
+| `Image.linux(kind='container')` | Ubuntu 24.04 container | Docker | Rejected; no built-in Fleet mapping | Constructor and rejection checked; Docker image readiness not tested here |
+| `Image.linux('ubuntu', '22.04')` | Ubuntu 22.04 VM | Bare-metal QEMU | Rejected; no built-in Fleet mapping | Runtime selection alone does not establish a usable boot image |
+| `Image.windows()` | Windows Server 2022 VM | Hyper-V when available on Windows; otherwise Docker-wrapped QEMU, or bare-metal QEMU when Docker is unavailable | Maps to a built-in registry artifact; template selects EFI | Mapping and firmware selection checked; deployment boot not tested here |
+| `Image.windows('11')` | Windows 11 VM | Windows runtime selection; local ISO installation path | Rejected; no built-in Fleet mapping | Requires a suitable host, installation media, and guest setup |
+| `Image.macos()` / `Image.macos('15')` | macOS 26 / 15 VM | Lume on a compatible Apple silicon host | Rejected as built-in Fleet inputs | Constructor and selection checked; no macOS Fleet deployment established |
+| `Image.android()` | Android 14 VM | Android emulator | Rejected as a built-in Fleet input | Constructor and selection checked; emulator boot not tested here |
+| `Image.from_registry(...)` | Explicit guest OS and optional kind | Set `kind='vm'` or pass a compatible runtime when kind is unresolved | Registry reference accepted | Acceptance does not validate artifact contents, registry access, guest support, or readiness |
+| `Image.from_file(...)` | Disk or ISO with explicit guest OS | Compatible local VM runtime | Rejected | Format and guest requirements depend on the runtime |
+
+The built-in registry mappings in 0.4.3 are:
+
+| Built-in image | Registry artifact |
+| --- | --- |
+| Ubuntu 24.04 VM | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34` |
+| Windows Server 2022 VM | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3` |
+
+These are versioned tags selected by the package. Use an immutable digest when
+artifact identity must remain fixed independently of a registry tag.
+
+### Windows firmware
+
+In released 0.4.3, `FleetCloudTransport` generates `Firmware.EFI` when
+`image.os_type == 'windows'`. The earlier claim that Windows always receives the
+default BIOS template does not apply to this release. This mapping does not prove
+that a particular account, registry artifact, or Fleet deployment can boot it.
+
+`Image.from_registry()` defaults to `os_type='linux'` and `kind=None`; it does not
+inspect the disk to infer its OS. For a Windows VM artifact, specify
+`os_type='windows', kind='vm'`.
+
+## Image customization
+
+| Operation | Local execution | Fleet execution in 0.4.3 |
+| --- | --- | --- |
+| Package and setup layers, including `apt_install()`, `pip_install()`, and `run()` | Applied through local image setup; commands must match the guest OS | Rejected |
+| `env()` and `copy()` | Applied through local image setup | Rejected |
+| `expose()` | Backend-specific startup port mapping; bare-metal QEMU returns mappings in `sb.exposed_ports` | Declares named services on the pool template |
+| Prebuilt registry artifact | Requires a compatible runtime and bootable guest payload | Accepted as the boot artifact; software must already be installed |
+| `Sandbox.snapshot()` | Not implemented | Not implemented; snapshot-derived image inputs are also rejected |
+
+The package retains snapshot code on its legacy `CloudTransport`. That does not
+enable snapshots on local connections or pool-backed Fleet connections.
+
+Fleet customization means preparing and publishing a compatible guest artifact
+before pool creation. See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image).
+
+## Ports and transports
+
+| Sandbox connection | `sb.tunnel.forward()` in 0.4.3 | Connection behavior |
+| --- | --- | --- |
+| Local VM through `HTTPTransport` | Not implemented | Use the runtime's startup mapping where available, such as bare-metal QEMU's `sb.exposed_ports` |
+| Fleet pool claim through base `FleetTransport` | Not implemented | Use `sb.services.request()` for authenticated requests to a named service |
+| SSH or ADB transport | Implemented by those transports | Forwarding depends on the transport; ADB also accepts Android socket names |
+
+`Pool.claim()`, `Sandbox.create(pool=...)`, and the Fleet image path of
+`Sandbox.ephemeral(image)` all return the base `FleetTransport`. For persistent
+Fleet sandboxes, `Sandbox.create(image)` rejects a registry image without an
+explicitly named pool. Apply the pool first, then claim from it.
+
+The older `FleetCloudTransport` class implements a numeric-port helper, but its
+presence in the package does not make that helper available on the pool-backed
+creation paths above. A method on the common Sandbox interface does not establish
+support on all transports.
+
+Fleet service URLs require authentication. `sb.services.request()` uses the Fleet
+connection's authenticated lease. The lower-level Python Fleet SDK's
+`request_service()` sends authenticated service requests; the TypeScript SDK
+exposes `serviceRequest()`. A URL alone does not grant access. See
+[Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
+and [Sandbox SDK interfaces](/reference/sandbox-sdk/interfaces).
+
+The Fleet image path of `Sandbox.ephemeral()` in 0.4.3 accepts only the default
+`region='us-east-1'`; `Pool.apply()` has no region argument.
+Registry access, account permissions, resource limits, capacity, and readiness are
+deployment requirements that SDK validation cannot establish.
+
+## Evidence and limits
+
+The contracts above were checked against these public release artifacts:
+
+- [`cua-sandbox` 0.4.3 on PyPI](https://pypi.org/project/cua-sandbox/0.4.3/):
+  `image.py` (constructors and registry mappings), `sandbox.py` (runtime selection),
+  `pool.py` (claims), `transport/fleet_cloud.py` (validation, EFI, and services),
+  and the transport and runtime implementations.
+- [`cua` 0.1.6 on PyPI](https://pypi.org/project/cua/0.1.6/): public Python exports.
+- [`cua-fleet` 0.1.14 on PyPI](https://pypi.org/project/cua-fleet/0.1.14/): Python
+  bound-claim service requests.
+- [`@trycua/fleet` 0.1.1 npm version metadata](https://registry.npmjs.org/@trycua/fleet/0.1.1):
+  TypeScript service request surface.
+
+Verification covers released source and offline contract checks. It does not
+include provisioned Fleet boots, authenticated service requests, local VM or
+container boots, or a deployment-wide operating-system certification. Specific
+recipe observations, such as the [Windows Minecraft workflow](/how-to-guides/sandbox/minecraft),
+describe their own tested environment and do not broaden these guarantees.

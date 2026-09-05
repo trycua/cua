@@ -140,6 +140,14 @@ fn active_proxy_sessions() -> &'static Mutex<HashSet<String>> {
     ACTIVE_PROXY_SESSIONS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
+fn release_active_proxy_sessions() {
+    if let Some(sessions) = ACTIVE_PROXY_SESSIONS.get() {
+        let mut sessions = sessions.lock().unwrap();
+        sessions.clear();
+        sessions.shrink_to_fit();
+    }
+}
+
 fn is_active_proxy_session(session: Option<&str>) -> bool {
     session.is_some_and(|session| active_proxy_sessions().lock().unwrap().contains(session))
 }
@@ -203,9 +211,9 @@ fn is_session_lifecycle_tool(tool_name: &str) -> bool {
 fn history_control_response(
     registry: &crate::sdk_adapter::SdkAdapter,
     request: &DaemonRequest,
-    trusted_cli_connection: bool,
+    trusted_cli_request: bool,
 ) -> DaemonResponse {
-    if !trusted_cli_connection
+    if !trusted_cli_request
         || request.client_kind != Some(cua_driver_core::daemon::DaemonClientKind::Cli)
         || request.observation_origin != Some(ToolObservationOrigin::Direct)
     {
@@ -319,7 +327,7 @@ fn history_control_response(
 async fn history_control_response_async(
     registry: std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     request: DaemonRequest,
-    trusted_cli_connection: bool,
+    trusted_cli_request: bool,
 ) -> DaemonResponse {
     // Native credential stores are synchronous at this boundary. Linux's
     // Secret Service adapter may drive its own async runtime internally, which
@@ -327,7 +335,7 @@ async fn history_control_response_async(
     // deletion, and encrypted-store I/O off the daemon's async executor on all
     // platforms so one control request cannot stall unrelated clients.
     tokio::task::spawn_blocking(move || {
-        history_control_response(&registry, &request, trusted_cli_connection)
+        history_control_response(&registry, &request, trusted_cli_request)
     })
     .await
     .unwrap_or_else(|error| {
@@ -337,9 +345,9 @@ async fn history_control_response_async(
 
 fn history_relaunch_state_response(
     request: &DaemonRequest,
-    trusted_cli_connection: bool,
+    trusted_cli_request: bool,
 ) -> DaemonResponse {
-    if !trusted_cli_connection
+    if !trusted_cli_request
         || request.client_kind != Some(cua_driver_core::daemon::DaemonClientKind::Cli)
         || request.observation_origin != Some(ToolObservationOrigin::Direct)
     {
@@ -460,6 +468,9 @@ async fn invoke_daemon_tool(
     sdk: &std::sync::Arc<crate::sdk_adapter::SdkAdapter>,
     req: DaemonRequest,
 ) -> DaemonResponse {
+    if let Some(response) = permission_gate_pending_response(&req) {
+        return response;
+    }
     let observation_transport = daemon_observation_transport(&req);
     let direct_client_kind = req.client_kind;
     let raw_name = req.name.as_deref().unwrap_or("").to_owned();
@@ -634,10 +645,79 @@ fn prepare_embedded_socket_path(socket_path: &str, embedded: bool) -> anyhow::Re
     }
 }
 
+static PERMISSION_GATE_PENDING: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Mark whether the macOS first-launch gate is still waiting for TCC grants.
+/// The daemon socket and lifecycle diagnostics remain reachable, but tool calls
+/// are rejected before execution until fresh child-process probes confirm grants.
+pub fn set_permission_gate_pending(pending: bool) {
+    PERMISSION_GATE_PENDING.store(pending, std::sync::atomic::Ordering::Release);
+}
+
+fn permission_gate_pending_response(request: &DaemonRequest) -> Option<DaemonResponse> {
+    permission_gate_response_for_state(
+        request,
+        PERMISSION_GATE_PENDING.load(std::sync::atomic::Ordering::Acquire),
+    )
+}
+
+fn permission_gate_response_for_state(
+    _request: &DaemonRequest,
+    pending: bool,
+) -> Option<DaemonResponse> {
+    if !pending {
+        return None;
+    }
+    Some(DaemonResponse::err(
+        "permissions_pending: macOS Accessibility or Screen Recording permission is still pending; no action started, retry after the permission gate completes",
+        75,
+    ))
+}
+
 fn daemon_metadata_response() -> DaemonResponse {
     DaemonResponse::ok(
         serde_json::to_value(cua_driver_core::daemon::current_daemon_metadata())
             .expect("daemon metadata is serializable"),
+    )
+}
+
+fn shutdown_response(request: &DaemonRequest) -> (DaemonResponse, bool) {
+    if request.method == "shutdown" {
+        return (
+            DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+            true,
+        );
+    }
+    let expected_pid = request
+        .args
+        .as_ref()
+        .and_then(|args| args.get("expected_pid"))
+        .and_then(serde_json::Value::as_u64)
+        .and_then(|pid| u32::try_from(pid).ok())
+        .filter(|pid| *pid != 0);
+    let Some(expected_pid) = expected_pid else {
+        return (
+            DaemonResponse::err(
+                "shutdown_if_pid requires a positive integer expected_pid",
+                64,
+            ),
+            false,
+        );
+    };
+    let actual_pid = std::process::id();
+    if expected_pid != actual_pid {
+        return (
+            DaemonResponse::err(
+                format!("daemon pid mismatch (expected {expected_pid}, found {actual_pid})"),
+                1,
+            ),
+            false,
+        );
+    }
+    (
+        DaemonResponse::ok(serde_json::json!({"shutdown": true})),
+        true,
     )
 }
 
@@ -691,7 +771,9 @@ fn authenticate_embedded_host_connection(stream: &tokio::net::UnixStream) -> any
 }
 
 #[cfg(target_os = "macos")]
-fn authenticate_history_cli_connection(stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+fn history_cli_executable_path(
+    stream: &tokio::net::UnixStream,
+) -> anyhow::Result<std::path::PathBuf> {
     use std::os::unix::ffi::OsStringExt as _;
 
     let peer_pid = stream
@@ -710,21 +792,46 @@ fn authenticate_history_cli_connection(stream: &tokio::net::UnixStream) -> anyho
         .position(|byte| *byte == 0)
         .unwrap_or(length as usize);
     buffer.truncate(path_length);
-    let path = std::path::PathBuf::from(std::ffi::OsString::from_vec(buffer));
-    crate::history_runtime::verify_history_cli_executable_path(&path)
+    Ok(std::path::PathBuf::from(std::ffi::OsString::from_vec(
+        buffer,
+    )))
 }
 
 #[cfg(target_os = "linux")]
-fn authenticate_history_cli_connection(stream: &tokio::net::UnixStream) -> anyhow::Result<()> {
+fn history_cli_executable_path(
+    stream: &tokio::net::UnixStream,
+) -> anyhow::Result<std::path::PathBuf> {
     let peer_pid = stream
         .peer_cred()
         .map_err(|error| anyhow::anyhow!("read history control peer credentials: {error}"))?
         .pid()
         .ok_or_else(|| anyhow::anyhow!("history control peer PID is unavailable"))?;
-    let path = std::fs::read_link(format!("/proc/{peer_pid}/exe")).map_err(|error| {
-        anyhow::anyhow!("history control peer executable is unavailable: {error}")
-    })?;
-    crate::history_runtime::verify_history_cli_executable_path(&path)
+    std::fs::read_link(format!("/proc/{peer_pid}/exe"))
+        .map_err(|error| anyhow::anyhow!("history control peer executable is unavailable: {error}"))
+}
+
+fn history_cli_authentication_path(
+    method: &str,
+    executable_path: Option<&std::path::Path>,
+) -> Option<std::path::PathBuf> {
+    if !matches!(method, "history_control" | "history_relaunch_state") {
+        return None;
+    }
+    executable_path.map(std::path::Path::to_path_buf)
+}
+
+async fn authenticate_history_cli_request(
+    method: &str,
+    executable_path: Option<&std::path::Path>,
+) -> bool {
+    let Some(executable_path) = history_cli_authentication_path(method, executable_path) else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || {
+        crate::history_runtime::verify_history_cli_executable_path(&executable_path).is_ok()
+    })
+    .await
+    .unwrap_or(false)
 }
 
 fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Value {
@@ -756,8 +863,8 @@ fn service_authorization_status(trusted_host_connection: bool) -> serde_json::Va
 #[cfg(all(test, unix))]
 mod peer_authentication_tests {
     use super::{
-        authenticate_unix_peer, authenticate_unix_uid, history_relaunch_state_response,
-        DaemonRequest, ToolObservationOrigin,
+        authenticate_unix_peer, authenticate_unix_uid, history_cli_authentication_path,
+        history_relaunch_state_response, shutdown_response, DaemonRequest, ToolObservationOrigin,
     };
 
     #[tokio::test]
@@ -771,6 +878,27 @@ mod peer_authentication_tests {
     fn foreign_unix_uid_is_rejected_before_request_parsing() {
         let error = authenticate_unix_uid(501, 502).unwrap_err();
         assert!(error.to_string().contains("reject Unix peer uid 502"));
+    }
+
+    #[test]
+    fn only_history_methods_select_the_peer_for_authentication() {
+        let path = std::path::Path::new("/installed/cua-driver");
+        for method in [
+            "list",
+            "metadata",
+            "authorization_status",
+            "call",
+            "shutdown",
+        ] {
+            assert_eq!(history_cli_authentication_path(method, Some(path)), None);
+        }
+        for method in ["history_control", "history_relaunch_state"] {
+            assert_eq!(
+                history_cli_authentication_path(method, Some(path)).as_deref(),
+                Some(path)
+            );
+            assert_eq!(history_cli_authentication_path(method, None), None);
+        }
     }
 
     #[test]
@@ -790,6 +918,40 @@ mod peer_authentication_tests {
             Some("history_relaunch_state_requires_local_cli")
         );
         assert!(history_relaunch_state_response(&request, true).ok);
+    }
+
+    fn shutdown_request(expected_pid: serde_json::Value) -> DaemonRequest {
+        DaemonRequest {
+            method: "shutdown_if_pid".to_owned(),
+            name: None,
+            args: Some(serde_json::json!({"expected_pid": expected_pid})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pid_bound_shutdown_accepts_only_the_current_process() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(std::process::id().into()));
+        assert!(response.ok);
+        assert!(should_shutdown);
+
+        let wrong_pid = if std::process::id() == 1 { 2 } else { 1 };
+        let (response, should_shutdown) = shutdown_response(&shutdown_request(wrong_pid.into()));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert!(response.error.unwrap().contains("daemon pid mismatch"));
+    }
+
+    #[test]
+    fn pid_bound_shutdown_rejects_malformed_pid() {
+        let (response, should_shutdown) =
+            shutdown_response(&shutdown_request(serde_json::json!("1")));
+        assert!(!response.ok);
+        assert!(!should_shutdown);
+        assert_eq!(response.exit_code, Some(64));
     }
 }
 
@@ -838,6 +1000,7 @@ pub async fn run_serve(
     let shutdown_tx = std::sync::Arc::new(tokio::sync::Mutex::new(Some(shutdown_tx)));
     let trusted_resume_registry: TrustedResumeRegistry =
         std::sync::Arc::new(tokio::sync::Mutex::new(HashMap::new()));
+    let mut connection_tasks = tokio::task::JoinSet::new();
     let parent_liveness = async {
         if cua_driver_core::parent_liveness_stdin_enabled() {
             wait_for_parent_stdin_eof().await;
@@ -863,13 +1026,12 @@ pub async fn run_serve(
                 }
                 let trusted_host_connection =
                     authenticate_embedded_host_connection(&stream).is_ok();
-                let trusted_history_cli_connection =
-                    authenticate_history_cli_connection(&stream).is_ok();
+                let history_cli_executable_path = history_cli_executable_path(&stream).ok();
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
                 let trusted_resume_registry = trusted_resume_registry.clone();
 
-                tokio::spawn(async move {
+                connection_tasks.spawn(async move {
                     let (reader, mut writer) = stream.into_split();
                     let mut lines = BufReader::new(reader).lines();
 
@@ -896,6 +1058,11 @@ pub async fn run_serve(
                             }
                         };
 
+                        let trusted_history_cli_request = authenticate_history_cli_request(
+                            &req.method,
+                            history_cli_executable_path.as_deref(),
+                        ).await;
+
                         match req.method.as_str() {
                             "metadata" => {
                                 let resp = daemon_metadata_response();
@@ -906,17 +1073,20 @@ pub async fn run_serve(
                             "history_relaunch_state" => {
                                 let resp = history_relaunch_state_response(
                                     &req,
-                                    trusted_history_cli_connection,
+                                    trusted_history_cli_request,
                                 );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() {
                                     let _ = tx.send(());
@@ -971,7 +1141,7 @@ pub async fn run_serve(
                                 let resp = history_control_response_async(
                                     reg.clone(),
                                     req,
-                                    trusted_history_cli_connection,
+                                    trusted_history_cli_request,
                                 ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -1233,6 +1403,11 @@ pub async fn run_serve(
             }
         }
     }
+
+    // Accepted connections may still own SDK/session state after the listener
+    // stops. Abort and join them before tearing down the SDK runtime.
+    connection_tasks.shutdown().await;
+    release_active_proxy_sessions();
 
     // Do not unlink a replacement socket created after this listener was bound.
     remove_owned_socket(socket_path, bound_socket);
@@ -1600,11 +1775,8 @@ pub async fn run_serve(
                         expected_host_process_id,
                         client_process_id,
                     );
-                let trusted_history_cli_connection = client_process_id
-                    .and_then(platform_windows::history::process_executable_path)
-                    .is_some_and(|path| {
-                        crate::history_runtime::verify_history_cli_executable_path(&path).is_ok()
-                    });
+                let history_cli_executable_path =
+                    client_process_id.and_then(platform_windows::history::process_executable_path);
 
                 let reg = sdk.clone();
                 let shutdown_tx2 = shutdown_tx.clone();
@@ -1634,6 +1806,11 @@ pub async fn run_serve(
                             }
                         };
 
+                        let trusted_history_cli_request = authenticate_history_cli_request(
+                            &req.method,
+                            history_cli_executable_path.as_deref(),
+                        ).await;
+
                         match req.method.as_str() {
                             "metadata" => {
                                 let resp = daemon_metadata_response();
@@ -1644,17 +1821,20 @@ pub async fn run_serve(
                             "history_relaunch_state" => {
                                 let resp = history_relaunch_state_response(
                                     &req,
-                                    trusted_history_cli_connection,
+                                    trusted_history_cli_request,
                                 );
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
                             }
-                            "shutdown" => {
-                                let resp = DaemonResponse::ok(serde_json::json!({"shutdown": true}));
+                            "shutdown" | "shutdown_if_pid" => {
+                                let (resp, should_shutdown) = shutdown_response(&req);
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
                                 ).await;
+                                if !should_shutdown {
+                                    continue;
+                                }
                                 let mut guard = shutdown_tx2.lock().await;
                                 if let Some(tx) = guard.take() { let _ = tx.send(()); }
                                 return;
@@ -1692,7 +1872,7 @@ pub async fn run_serve(
                                 let resp = history_control_response_async(
                                     reg.clone(),
                                     req,
-                                    trusted_history_cli_connection,
+                                    trusted_history_cli_request,
                                 ).await;
                                 let _ = writer.write_all(
                                     (serde_json::to_string(&resp).unwrap() + "\n").as_bytes()
@@ -2046,7 +2226,11 @@ pub fn run_serve_cmd(
             std::process::exit(1);
         }
     };
-    if let Err(e) = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref())) {
+    let result = rt.block_on(run_serve(sdk, &socket_path, pid_file_path.as_deref()));
+    rt.shutdown_timeout(std::time::Duration::from_secs(30));
+    cua_driver_core::session_authorization::release_configured_registry_for_shutdown();
+    cua_driver_core::session::release_process_state_for_shutdown();
+    if let Err(e) = result {
         eprintln!("cua-driver serve error: {e}");
         std::process::exit(1);
     }
@@ -2607,6 +2791,40 @@ mod gate_tests {
         let _ = tokio::task::spawn_blocking(move || send_request(&socket5, &shutdown)).await;
         let _ = server.await;
         let _ = std::fs::remove_file(&socket);
+    }
+}
+
+#[cfg(test)]
+mod permission_gate_routing_tests {
+    use super::{permission_gate_response_for_state, DaemonRequest};
+
+    fn call(name: &str) -> DaemonRequest {
+        DaemonRequest {
+            method: "call".into(),
+            name: Some(name.into()),
+            args: Some(serde_json::json!({})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        }
+    }
+
+    #[test]
+    fn pending_gate_rejects_desktop_calls_with_typed_retry() {
+        let response = permission_gate_response_for_state(&call("list_windows"), true)
+            .expect("pending gate must reject desktop calls");
+        assert!(!response.ok);
+        assert!(response
+            .error
+            .as_deref()
+            .is_some_and(|message| message.starts_with("permissions_pending:")));
+        assert_eq!(response.exit_code, Some(75));
+    }
+
+    #[test]
+    fn calls_resume_only_after_the_gate_completes() {
+        assert!(permission_gate_response_for_state(&call("check_permissions"), true).is_some());
+        assert!(permission_gate_response_for_state(&call("list_windows"), false).is_none());
     }
 }
 

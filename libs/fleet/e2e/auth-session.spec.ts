@@ -29,7 +29,15 @@ test("gates the protected shell until standard PKCE authentication resolves", as
   const auth = await mockAuth(page, {}, { holdAuth: true })
 
   await page.goto("/settings")
-  await expect(page.getByText("Signing in…")).toBeVisible()
+  const bootSurface = page.locator("#cua-boot")
+  await expect(bootSurface).toBeVisible()
+  await expect(bootSurface.getByText("Signing you in")).toBeVisible()
+  await expect(bootSurface.getByText("Continuing to auth.cua.ai")).toBeVisible()
+  await expect
+    .poll(() =>
+      bootSurface.evaluate(element => getComputedStyle(element).backgroundImage),
+    )
+    .toContain("radial-gradient")
   await expect(page.getByRole("navigation")).toHaveCount(0)
 
   const initOptions = await page.evaluate(keycloakState).then(state => state.initOptions)
@@ -41,7 +49,7 @@ test("gates the protected shell until standard PKCE authentication resolves", as
   })
 
   await auth.releaseAuth()
-  await expect(page.getByText("Signing in…")).toHaveCount(0)
+  await expect(bootSurface).toHaveCount(0)
   await expect(page.getByRole("button", { name: "testuser" })).toBeVisible()
 })
 
@@ -80,7 +88,12 @@ test("rejected callback fails closed without rendering the shell", async ({ page
 
   await page.goto("/settings?error=access_denied&state=opaque")
 
-  await expect(page.getByText("Auth error: Error: rejected callback")).toBeVisible()
+  await expect(
+    page.getByRole("heading", { name: "We couldn't sign you in" }),
+  ).toBeVisible()
+  await expect(page.getByText("Error: rejected callback")).toBeVisible()
+  await expect(page.getByRole("button", { name: "Try again" })).toBeVisible()
+  await expect(page.locator("#cua-boot")).toHaveCount(0)
   await expect(page.getByRole("button", { name: "testuser" })).toHaveCount(0)
 })
 

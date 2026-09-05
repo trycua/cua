@@ -12,11 +12,11 @@ class TestCuaFleetReleaseWiring(unittest.TestCase):
     def test_publisher_promotes_cua_fleet_0_1_14(self) -> None:
         workflow = (REPO_ROOT / ".github/workflows/cd-py-fleet.yml").read_text()
         expected_sources = {
-            "cua_fleet-0.1.14-py3-none-manylinux_2_34_x86_64.whl": "2dc70e98b3e8c691bf0fff0494b0a85d2405e872f1ca99dbfa2680473cea565b",
-            "cua_fleet-0.1.14-py3-none-manylinux_2_34_aarch64.whl": "d6ea25902cf9ffc89779530b6ae7cff5413383ea7dc3c632a4fb47e00699a6d4",
-            "cua_fleet-0.1.14-py3-none-macosx_10_12_x86_64.whl": "d370f83773574da8edcca080e9d86aec8eb7ed758d6c551b900482a8575f6810",
-            "cua_fleet-0.1.14-py3-none-macosx_11_0_arm64.whl": "e19784c0ce8aa2d9a77bf096fc6ff10e990842f05c67bdfb96a16ecd5e7123e2",
-            "cua_fleet-0.1.14-py3-none-win_amd64.whl": "3e73327b7c99dc95a4b4194628d3575a8707cab77d6929ed1bf34a82192a4464",
+            "cua_fleet-0.1.16-py3-none-manylinux_2_34_x86_64.whl": "6d1b2b2095b5cb629a303cdc314b8223c1205a49b0647a0d50a966f9a572131e",
+            "cua_fleet-0.1.16-py3-none-manylinux_2_34_aarch64.whl": "d29cc4cc2768ce2e9b48df9180ab1e544c5b659416f9d130af99f002fa9dd2f2",
+            "cua_fleet-0.1.16-py3-none-macosx_10_12_x86_64.whl": "27a8621170df2a14d4af8912f902266a0cc32c1ed91ebb592f6ddb3bcf600bb1",
+            "cua_fleet-0.1.16-py3-none-macosx_11_0_arm64.whl": "31d0373884f2d04dac8c3a88d06da7669491e5cb0c9d7c47ec839f8e42dc4e76",
+            "cua_fleet-0.1.16-py3-none-win_amd64.whl": "ccd088f6a3d167a48f106518d24d3c601e3190d946f663f4c4ccec160b33ac8e",
         }
 
         self.assertIn("https://wheels.cua.ai/simple/cua-fleet/$WHEEL", workflow)

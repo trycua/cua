@@ -342,7 +342,7 @@ impl Tool for GetSessionStateTool {
         let state = get_session(&id)
             .unwrap_or_else(|| crate::capture_scope::SessionCaptureScope::new(CaptureScope::Auto));
         ToolResult::text(format!(
-            "Session '{id}' uses capture_scope='{}' (effective_scope='{}').",
+            "Session '{id}' uses capture_scope='{}' (effective_scope='{}'); desktop_unlocked reports desktop capture authorization, not the host lock-screen state.",
             state.policy,
             state.effective_scope().as_str()
         ))
@@ -726,6 +726,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_state_explains_desktop_unlocked_compatibility_field() {
+        let id = format!("session-tool-scope-wording-{}", std::process::id());
+        let started = StartSessionTool
+            .invoke(json!({"session": id, "capture_scope": "auto"}))
+            .await;
+        assert_ne!(started.is_error, Some(true));
+
+        let state = GetSessionStateTool.invoke(json!({"session": id})).await;
+        assert_ne!(state.is_error, Some(true));
+        assert_eq!(
+            state.structured_content.as_ref().unwrap()["desktop_unlocked"],
+            false
+        );
+        assert_eq!(
+            state.structured_content.as_ref().unwrap()["desktop_capture_authorized"],
+            false
+        );
+        match &state.content[0] {
+            crate::protocol::Content::Text { text, .. } => assert!(text.contains(
+                "desktop_unlocked reports desktop capture authorization, not the host lock-screen state"
+            )),
+            other => panic!("expected text content, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
     async fn auto_requires_explicit_bounded_escalation() {
         let id = format!("session-tool-auto-{}", std::process::id());
         let started = StartSessionTool
@@ -745,6 +771,7 @@ mod tests {
         assert_ne!(escalated.is_error, Some(true));
         let structured = escalated.structured_content.as_ref().unwrap();
         assert_eq!(structured["effective_scope"], "desktop");
+        assert_eq!(structured["desktop_capture_authorized"], true);
         assert_eq!(structured["desktop_unlocked"], true);
 
         let twice = EscalateSessionTool

@@ -1851,6 +1851,31 @@ impl BrowserPlatform for WindowsBrowserPlatform {
         })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Windows process-id range",
+            )
+        })?;
+        let dismissed_before = crate::browser_consent_ui::dismiss(pid, request.window_id)?;
+        let closed_setup_page = crate::browser_setup_ui::disable(request.window_id, descriptor)?;
+        let dismissed_after = crate::browser_consent_ui::dismiss(pid, request.window_id)?;
+        Ok(dismissed_before || closed_setup_page || dismissed_after)
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,

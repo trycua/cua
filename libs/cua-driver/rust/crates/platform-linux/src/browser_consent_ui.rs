@@ -72,9 +72,10 @@ fn remote_debugging_prompt_present(nodes: &[AtspiNode]) -> bool {
         && body.contains("navigate to any url")
 }
 
-fn exact_allow_button(
+fn exact_prompt_button(
     nodes: &[AtspiNode],
     bounds: &[(usize, i32, i32, u32, u32)],
+    label: &str,
 ) -> Result<Option<usize>, BrowserRefusal> {
     if !remote_debugging_prompt_present(nodes) {
         return Ok(None);
@@ -82,7 +83,7 @@ fn exact_allow_button(
     let matches = trusted_prompt_nodes(nodes)
         .filter(|node| {
             role_is(node, &["push button", "button"])
-                && normalized_text(node) == "allow"
+                && normalized_text(node) == label
                 && !node.actions.is_empty()
                 && node.element_index.is_some()
         })
@@ -125,7 +126,7 @@ fn exact_allow_button(
         [(index, ..)] => Ok(Some(*index)),
         _ => Err(refusal(
             BrowserRefusalCode::BrowserWrongTargetRefused,
-            "multiple exact Allow actions matched the browser consent prompt",
+            format!("multiple exact {label} actions matched the browser consent prompt"),
         )
         .with_detail(serde_json::json!({
             "candidates": matches.iter().map(|(element_index, element_key, depth, role, actions, parent_element_index)| {
@@ -144,6 +145,20 @@ fn exact_allow_button(
             })}).collect::<Vec<_>>()
         }))),
     }
+}
+
+fn exact_allow_button(
+    nodes: &[AtspiNode],
+    bounds: &[(usize, i32, i32, u32, u32)],
+) -> Result<Option<usize>, BrowserRefusal> {
+    exact_prompt_button(nodes, bounds, "allow")
+}
+
+fn exact_cancel_button(
+    nodes: &[AtspiNode],
+    bounds: &[(usize, i32, i32, u32, u32)],
+) -> Result<Option<usize>, BrowserRefusal> {
+    exact_prompt_button(nodes, bounds, "cancel")
 }
 
 fn prove_window_owner(pid: u32, window_id: u64) -> Result<(), BrowserRefusal> {
@@ -165,13 +180,7 @@ fn with_target_foreground<T>(
     body: impl FnOnce() -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-        if let Some(window) =
-            crate::wayland::sway_ipc::window_for_id(window_id).filter(|window| window.pid == pid)
-        {
-            crate::wayland::sway_ipc::with_focused_container(window.id, body)
-        } else {
-            crate::wayland::shell_helper::with_focused_window(pid, window_id, body)
-        }
+        crate::wayland::with_target_foreground(pid, window_id, body)
     } else {
         crate::input::with_x11_foreground(window_id, 80, body)
     }
@@ -204,11 +213,45 @@ fn trusted_allow_click(pid: u32, window_id: u64) -> anyhow::Result<()> {
             })?;
         let (center_x, center_y) = exact_button_center(&tree.bounds, index)?;
         if std::env::var_os("WAYLAND_DISPLAY").is_some() {
-            crate::wayland::click_desktop(center_x, center_y, 1, 1)
+            crate::wayland::click_focused(center_x, center_y, 1, 1)
         } else {
             crate::input::send_click_xtest_desktop(center_x, center_y, 1, 1)
         }
     })
+}
+
+pub fn dismiss(pid: u32, window_id: u64) -> Result<bool, BrowserRefusal> {
+    prove_window_owner(pid, window_id)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut dismissed = false;
+    loop {
+        prove_window_owner(pid, window_id)?;
+        let tree = crate::atspi::walk_tree(pid, window_id, None);
+        let prompt_present = remote_debugging_prompt_present(&tree.nodes);
+        if !prompt_present {
+            return Ok(dismissed);
+        }
+        let index = exact_cancel_button(&tree.nodes, &tree.bounds)?.ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact remote-debugging consent prompt exposed no semantic cancel action",
+            )
+        })?;
+        crate::atspi::perform_action(pid, index).map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                format!("the exact browser consent cancel action failed: {error}"),
+            )
+        })?;
+        dismissed = true;
+        if Instant::now() >= deadline {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the remote-debugging consent prompt remained after its exact cancel action",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub async fn handle(
@@ -344,6 +387,7 @@ mod tests {
     #[test]
     fn matcher_requires_exact_security_prompt_and_unique_allow_action() {
         assert_eq!(exact_allow_button(&prompt(), &[]).unwrap(), Some(7));
+        assert_eq!(exact_cancel_button(&prompt(), &[]).unwrap(), Some(7));
         assert!(
             exact_allow_button(&[node("push button", "Allow", &["click"])], &[])
                 .unwrap()

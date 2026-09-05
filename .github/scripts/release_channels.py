@@ -406,6 +406,23 @@ def _git(root: Path, *args: str) -> str:
     return result.stdout.strip()
 
 
+def nightly_attribution_preflight(
+    *,
+    root: Path,
+    previous_tag: str | None,
+    source_ref: str,
+    paths: Sequence[str],
+    config_path: Path,
+) -> list[dict[str, str]]:
+    """Find unresolved squash-generated coauthors before an expensive build."""
+    try:
+        config = read_json(config_path)
+        commits = release_attribution.commits_in_range(root, previous_tag, source_ref, paths)
+        return release_attribution.unresolved_coauthor_identities(commits, config)
+    except release_attribution.ReleaseError as error:
+        raise ChannelError(f"nightly attribution preflight failed: {error}") from error
+
+
 def plan_nightly(
     name: str,
     source_sha: str,
@@ -416,6 +433,7 @@ def plan_nightly(
     force: bool = False,
     registry_path: Path = DEFAULT_REGISTRY,
     root: Path = ROOT,
+    attribution_config_path: Path | None = None,
 ) -> dict[str, Any]:
     if not SHA_RE.fullmatch(source_sha):
         raise ChannelError(f"source SHA must be 40 lowercase hex characters: {source_sha!r}")
@@ -458,6 +476,18 @@ def plan_nightly(
         changed = _git(root, "diff", "--name-only", previous_sha, source_sha, "--", *paths)
         should_build = bool(changed)
         reason = "relevant-changes" if should_build else "component-unchanged"
+    attribution_issues: list[dict[str, str]] = []
+    if should_build and attribution_config_path is not None:
+        attribution_issues = nightly_attribution_preflight(
+            root=root,
+            previous_tag=attribution_base_tag,
+            source_ref=source_sha,
+            paths=paths,
+            config_path=attribution_config_path,
+        )
+        if attribution_issues:
+            should_build = False
+            reason = "held-attribution"
     return {
         "component": name,
         "channel": "nightly",
@@ -472,6 +502,7 @@ def plan_nightly(
         "attributionBaseSha": attribution_base_sha,
         "shouldBuild": should_build,
         "reason": reason,
+        "attributionIssues": attribution_issues,
     }
 
 
@@ -662,6 +693,7 @@ def parser() -> argparse.ArgumentParser:
     plan.add_argument("--run", required=True)
     plan.add_argument("--releases", type=Path, required=True)
     plan.add_argument("--force", action="store_true")
+    plan.add_argument("--attribution-config", type=Path)
     plan.add_argument("--output", type=Path)
     plan.add_argument("--github-output", type=Path)
 
@@ -729,6 +761,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 force=args.force,
                 registry_path=args.registry,
                 root=root,
+                attribution_config_path=args.attribution_config,
             )
             rendered = json.dumps(result, indent=2) + "\n"
             if args.output:

@@ -27,8 +27,8 @@ import {
   listUserKeys,
   type NewUserApiKey,
   type UserApiKey,
-} from "../sdk/userKeys"
-import { listNamespaces } from "../sdk/pools"
+} from "../fleet/userKeys"
+import { listNamespaces } from "../fleet/pools"
 import { errorMessage } from "../error-message"
 import { CuaButton } from "../components/CuaButton"
 import { useFlash } from "../components/FlashContext"
@@ -139,9 +139,8 @@ export function UserApiKeys() {
   return (
     <PageShell
       eyebrow="Account"
-      title="User API keys"
+      title="API keys"
       counter={loading || loadError ? undefined : `(${keys.length})`}
-      description="Create credentials for tools and automation that call Cua on your behalf."
       secondaryActions={
         <CuaButton
           tone="icon"
@@ -155,10 +154,7 @@ export function UserApiKeys() {
       <SpaceBetween size="l">
         <Container
           header={
-            <Header
-              variant="h2"
-              description="The key is saved to your Cua account as soon as it is created. Its secret is shown only once."
-            >
+            <Header variant="h2">
               Create API key
             </Header>
           }
@@ -179,13 +175,11 @@ export function UserApiKeys() {
             <FormField
               controlId="api-key-name"
               label="Name"
-              description="A label to identify this key"
             >
               <Input value={name} onChange={e => setName(e.detail.value)} />
             </FormField>
             <FormField
-              label="Scope (optional)"
-              description="Restrict this key to specific namespaces. Leave empty for full access."
+              label="Allowed Namespaces (optional)"
             >
               <Multiselect
                 selectedOptions={selectedScope}
@@ -194,7 +188,11 @@ export function UserApiKeys() {
                 }
                 options={nsOptions}
                 placeholder="All namespaces (no restriction)"
+                filteringType="auto"
+                filteringPlaceholder="Filter namespaces"
+                filteringAriaLabel="Filter namespaces"
                 loadingText="Loading namespaces..."
+                noMatch="No matching namespaces"
                 statusType={loading ? "loading" : "finished"}
                 empty="No namespaces found"
               />
@@ -236,7 +234,7 @@ export function UserApiKeys() {
           { id: "client_id", header: "Client ID", cell: r => <code>{r.clientId}</code> },
           {
             id: "scope",
-            header: "Scope",
+            header: "Namespaces",
             cell: r =>
               r.scope && r.scope.length > 0
                 ? r.scope.join(", ")
@@ -273,10 +271,7 @@ export function UserApiKeys() {
           </PageEmpty>
             }
             header={
-          <Header
-            variant="h2"
-            description="Revocations are saved remotely and take effect immediately."
-          >
+          <Header variant="h2">
             API keys
           </Header>
             }

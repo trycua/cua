@@ -61,7 +61,7 @@ func TestLiteLLMCompleteStreamsContentAndRequest(t *testing.T) {
 		if body.Messages[0].Role != "system" {
 			t.Fatalf("first message role = %q, want system", body.Messages[0].Role)
 		}
-		for _, fragment := range []string{"Cyclops CS", "listPools", "getPool", "listClaims", "JSON array", "query_docs_db", "query_docs_vectors", "query_code_db", "query_code_vectors", "JSON object", "component@version:path", "no network access"} {
+		for _, fragment := range []string{"Cyclops CS", "listPools", "getPool", "listClaims", "query_docs_db", "query_docs_vectors", "query_code_db", "query_code_vectors", "-h", "before first use", "same conversation", "Present to the user", "no network access"} {
 			if !strings.Contains(body.Messages[0].Content, fragment) {
 				t.Errorf("system prompt missing %q", fragment)
 			}

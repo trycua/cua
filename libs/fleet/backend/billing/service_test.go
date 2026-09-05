@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 type fakeGateway struct {
@@ -32,7 +33,16 @@ type fakeGateway struct {
 	defaultGeneration      string
 	defaultApplied         bool
 	setupRequest           SetupSessionRequest
+	setupSession           SetupSession
+	setupSessionID         string
+	setupSessionErr        error
 	portalRequest          PortalSessionRequest
+	previewInvoice         *Invoice
+	previewErr             error
+	invoices               []Invoice
+	invoicesErr            error
+	invoiceCustomerID      string
+	invoiceCreatedAfter    time.Time
 }
 
 func (f *fakeGateway) SearchCustomers(_ context.Context, subject string) ([]Customer, error) {
@@ -50,8 +60,9 @@ func (f *fakeGateway) CreateCustomer(_ context.Context, metadata map[string]stri
 func (f *fakeGateway) UpdateCustomerMetadata(_ context.Context, customerID string, metadata map[string]string) (Customer, error) {
 	f.operations = append(f.operations, "publish")
 	f.updatedMetadata = metadata
-	if f.updateErr != nil {
-		return Customer{}, f.updateErr
+	updateErr := f.updateErr
+	if updateErr != nil {
+		return Customer{}, updateErr
 	}
 	if f.updatedCustomer.ID != "" {
 		return f.updatedCustomer, nil
@@ -78,15 +89,83 @@ func (f *fakeGateway) SetDefaultPaymentMethodForSetupGeneration(_ context.Contex
 func (f *fakeGateway) CreateSetupSession(_ context.Context, request SetupSessionRequest) (string, error) {
 	f.operations = append(f.operations, "create")
 	f.setupRequest = request
-	if f.setupErr != nil {
-		return "", f.setupErr
+	setupErr := f.setupErr
+	if setupErr != nil {
+		return "", setupErr
 	}
 	return "https://checkout.stripe.test/session", nil
+}
+
+func (f *fakeGateway) RetrieveSetupSession(_ context.Context, sessionID string) (SetupSession, error) {
+	f.setupSessionID = sessionID
+	return f.setupSession, f.setupSessionErr
 }
 
 func (f *fakeGateway) CreatePortalSession(_ context.Context, request PortalSessionRequest) (string, error) {
 	f.portalRequest = request
 	return "https://billing.stripe.test/session", nil
+}
+
+func (f *fakeGateway) PreviewInvoice(_ context.Context, customerID string) (*Invoice, error) {
+	f.invoiceCustomerID = customerID
+	return f.previewInvoice, f.previewErr
+}
+
+func (f *fakeGateway) ListInvoices(_ context.Context, customerID string, createdAfter time.Time) ([]Invoice, error) {
+	f.invoiceCustomerID = customerID
+	f.invoiceCreatedAfter = createdAfter
+	return f.invoices, f.invoicesErr
+}
+
+func TestUsageAggregatesInvoiceHistoryAndPreviewLines(t *testing.T) {
+	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	previousStart := time.Date(2026, time.July, 1, 0, 0, 0, 0, time.UTC)
+	currentStart := time.Date(2026, time.August, 1, 0, 0, 0, 0, time.UTC)
+	gateway := &fakeGateway{
+		customers: []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+		invoices: []Invoice{{
+			ID: "in_previous", Currency: "usd", Total: 3200, Status: "paid",
+			PeriodStart: previousStart, PeriodEnd: currentStart,
+		}},
+		previewInvoice: &Invoice{
+			ID: "upcoming", Currency: "usd", Total: 2500, Status: "draft",
+			PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0),
+			Lines: []InvoiceLine{
+				{Description: "Linux runtime", Amount: 1500, Quantity: 20, PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0)},
+				{Description: "Linux runtime", Amount: 500, Quantity: 5, PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0)},
+				{Description: "Storage", Amount: 500, Quantity: 10, PeriodStart: currentStart, PeriodEnd: currentStart.AddDate(0, 1, 0)},
+			},
+		},
+	}
+
+	usage, err := NewService(gateway).Usage(context.Background(), "subject-123", 6, now)
+	if err != nil {
+		t.Fatalf("Usage() error = %v", err)
+	}
+	if usage.CurrentEstimate != 2500 || usage.PreviousPeriodAmount != 3200 {
+		t.Fatalf("amounts = current %d previous %d", usage.CurrentEstimate, usage.PreviousPeriodAmount)
+	}
+	if len(usage.Trend) != 2 || !usage.Trend[1].Estimate {
+		t.Fatalf("trend = %#v", usage.Trend)
+	}
+	if len(usage.Breakdown) != 2 || usage.Breakdown[0].Name != "Linux runtime" || usage.Breakdown[0].Amount != 2000 || usage.Breakdown[0].Quantity != 25 {
+		t.Fatalf("breakdown = %#v", usage.Breakdown)
+	}
+	wantStart := now.AddDate(0, -6, 0)
+	if !gateway.invoiceCreatedAfter.Equal(wantStart) {
+		t.Fatalf("created after = %v, want %v", gateway.invoiceCreatedAfter, wantStart)
+	}
+}
+
+func TestUsageReturnsEmptyDataWithoutBillingCustomer(t *testing.T) {
+	now := time.Date(2026, time.August, 22, 12, 0, 0, 0, time.UTC)
+	usage, err := NewService(&fakeGateway{}).Usage(context.Background(), "subject-123", 3, now)
+	if err != nil {
+		t.Fatalf("Usage() error = %v", err)
+	}
+	if usage.Currency != "usd" || len(usage.Trend) != 0 || len(usage.Breakdown) != 0 {
+		t.Fatalf("usage = %#v", usage)
+	}
 }
 
 func TestFindOrCreateCustomerUsesExactControlledMetadata(t *testing.T) {
@@ -241,7 +320,7 @@ func TestSummaryJSONContract(t *testing.T) {
 		{
 			name:    "cardless",
 			summary: Summary{},
-			want:    `{"payment_method_present":false,"card":null}`,
+			want:    `{"payment_method_present":false,"card":null,"pool_create_card_required":false}`,
 		},
 		{
 			name: "saved card",
@@ -249,7 +328,14 @@ func TestSummaryJSONContract(t *testing.T) {
 				PaymentMethodPresent: true,
 				Card:                 &CardSummary{Brand: "visa", Last4: "4242", ExpMonth: 12, ExpYear: 2030},
 			},
-			want: `{"payment_method_present":true,"card":{"brand":"visa","last4":"4242","exp_month":12,"exp_year":2030}}`,
+			want: `{"payment_method_present":true,"card":{"brand":"visa","last4":"4242","exp_month":12,"exp_year":2030},"pool_create_card_required":false}`,
+		},
+		{
+			name: "card required for pool creation",
+			summary: Summary{
+				PoolCreateCardRequired: true,
+			},
+			want: `{"payment_method_present":false,"card":null,"pool_create_card_required":true}`,
 		},
 	}
 
@@ -271,8 +357,10 @@ func TestCreateSetupSessionUsesServerRequestAndOwnedCustomer(t *testing.T) {
 	service := NewService(gateway)
 
 	url, err := service.CreateSetupSession(context.Background(), "subject-123", SetupOptions{
-		SuccessURL: "https://run.example.test/billing?checkout=success",
-		CancelURL:  "https://run.example.test/billing?checkout=cancelled",
+		SuccessURL:    "https://run.example.test/billing?checkout=success",
+		CancelURL:     "https://run.example.test/billing?checkout=cancelled",
+		Source:        "spa",
+		IdentityClass: "external",
 	})
 	if err != nil {
 		t.Fatalf("CreateSetupSession() error = %v", err)
@@ -285,6 +373,9 @@ func TestCreateSetupSessionUsesServerRequestAndOwnedCustomer(t *testing.T) {
 		SuccessURL:      "https://run.example.test/billing?checkout=success",
 		CancelURL:       "https://run.example.test/billing?checkout=cancelled",
 		SetupGeneration: gateway.updatedMetadata[MetadataSetupGeneration],
+		Subject:         "subject-123",
+		Source:          "spa",
+		IdentityClass:   "external",
 	}
 	if want.SetupGeneration == "" || !reflect.DeepEqual(gateway.setupRequest, want) {
 		t.Fatalf("setup request = %#v, want %#v", gateway.setupRequest, want)
@@ -321,6 +412,123 @@ func TestSetDefaultPaymentMethodForSetupGenerationDelegatesToGateway(t *testing.
 	}
 	if gateway.defaultCustomerID != "cus_owned" || gateway.defaultPaymentMethodID != "pm_card" || gateway.defaultGeneration != "current" {
 		t.Fatalf("default update = %q/%q/%q", gateway.defaultCustomerID, gateway.defaultPaymentMethodID, gateway.defaultGeneration)
+	}
+}
+
+func successfulSetupSession() SetupSession {
+	return SetupSession{
+		ID:                    "cs_test_owned",
+		Mode:                  "setup",
+		Status:                "complete",
+		CustomerID:            "cus_owned",
+		SetupIntentID:         "seti_owned",
+		SetupIntentStatus:     "succeeded",
+		SetupIntentCustomerID: "cus_owned",
+		PaymentMethodID:       "pm_card",
+		Metadata: map[string]string{
+			"purpose":               SetupPurpose,
+			MetadataSubject:         "subject-123",
+			MetadataSetupSource:     "spa",
+			MetadataIdentityClass:   "external",
+			MetadataSetupGeneration: "current",
+		},
+	}
+}
+
+func TestCompleteSetupSessionVerifiesOwnershipAndAppliesCurrentGeneration(t *testing.T) {
+	gateway := &fakeGateway{
+		customers:      []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+		setupSession:   successfulSetupSession(),
+		defaultApplied: true,
+	}
+
+	result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+	if err != nil {
+		t.Fatalf("CompleteSetupSession() error = %v", err)
+	}
+	if result != (SetupCompletion{Applied: true, SetupIntentID: "seti_owned"}) {
+		t.Fatalf("result = %#v", result)
+	}
+	if gateway.setupSessionID != "cs_test_owned" || gateway.defaultCustomerID != "cus_owned" ||
+		gateway.defaultPaymentMethodID != "pm_card" || gateway.defaultGeneration != "current" {
+		t.Fatalf("retrieval/default update = %q/%q/%q/%q", gateway.setupSessionID, gateway.defaultCustomerID, gateway.defaultPaymentMethodID, gateway.defaultGeneration)
+	}
+}
+
+func TestCompleteSetupSessionRejectsUnownedSessionWithoutUpdatingCustomer(t *testing.T) {
+	session := successfulSetupSession()
+	session.CustomerID = "cus_attacker"
+	gateway := &fakeGateway{
+		customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+		setupSession: session,
+	}
+
+	_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+	if !errors.Is(err, ErrSetupSessionNotOwned) || gateway.defaultCustomerID != "" {
+		t.Fatalf("error/default customer = %v/%q, want ownership rejection/no update", err, gateway.defaultCustomerID)
+	}
+}
+
+func TestCompleteSetupSessionRejectsMismatchedTrustedMetadata(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*SetupSession)
+		want   error
+	}{
+		{name: "subject", mutate: func(session *SetupSession) { session.Metadata[MetadataSubject] = "other" }, want: ErrSetupSessionNotOwned},
+		{name: "source", mutate: func(session *SetupSession) { session.Metadata[MetadataSetupSource] = "user_key" }, want: ErrSetupSessionInvalid},
+		{name: "identity class", mutate: func(session *SetupSession) { session.Metadata[MetadataIdentityClass] = "internal" }, want: ErrSetupSessionInvalid},
+		{name: "purpose", mutate: func(session *SetupSession) { session.Metadata["purpose"] = "other" }, want: ErrSetupSessionInvalid},
+		{name: "generation", mutate: func(session *SetupSession) { delete(session.Metadata, MetadataSetupGeneration) }, want: ErrSetupSessionInvalid},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			session := successfulSetupSession()
+			testCase.mutate(&session)
+			gateway := &fakeGateway{
+				customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+				setupSession: session,
+			}
+			_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+			if !errors.Is(err, testCase.want) || gateway.defaultCustomerID != "" {
+				t.Fatalf("error/default customer = %v/%q, want %v/no update", err, gateway.defaultCustomerID, testCase.want)
+			}
+		})
+	}
+}
+
+func TestCompleteSetupSessionRequiresTerminalSuccess(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*SetupSession)
+	}{
+		{name: "checkout open", mutate: func(session *SetupSession) { session.Status = "open" }},
+		{name: "setup intent processing", mutate: func(session *SetupSession) { session.SetupIntentStatus = "processing" }},
+	}
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			session := successfulSetupSession()
+			testCase.mutate(&session)
+			gateway := &fakeGateway{
+				customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+				setupSession: session,
+			}
+			_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+			if !errors.Is(err, ErrSetupSessionIncomplete) || gateway.defaultCustomerID != "" {
+				t.Fatalf("error/default customer = %v/%q, want incomplete/no update", err, gateway.defaultCustomerID)
+			}
+		})
+	}
+}
+
+func TestCompleteSetupSessionDuplicateIsSuccessfulWithoutReapplying(t *testing.T) {
+	gateway := &fakeGateway{
+		customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+		setupSession: successfulSetupSession(),
+	}
+	result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+	if err != nil || result.Applied || result.SetupIntentID != "seti_owned" {
+		t.Fatalf("result/error = %#v/%v, want safe duplicate", result, err)
 	}
 }
 

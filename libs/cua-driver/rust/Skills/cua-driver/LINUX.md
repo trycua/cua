@@ -34,8 +34,11 @@ AT-SPI is talked to natively over D-Bus (the `atspi`/zbus crate) — no
   clicked" case.
 - The **agent cursor** is a synthetic overlay showing where the run is
   acting; it never moves the real pointer (same model as macOS/Windows).
-  It glides on clicks and `move_cursor`; issue `move_cursor` to make it
-  track a field while typing advances focus across cells.
+  It glides on clicks and ordinary `move_cursor` calls; cursor-bearing and
+  keyboard actions re-show it automatically. Only the explicit
+  `move_cursor({x,y,scope:"desktop"})` escape hatch moves the compositor
+  cursor. Do not use desktop scope unless the user asked for real-pointer
+  control.
 
 ## `delivery_mode` — the background/foreground ladder
 
@@ -54,6 +57,12 @@ and Windows surface:
   window**. The explicit escalation when a background inject didn't land —
   e.g. a GTK dialog button or a widget that only reads input while focused.
   A brief focus swap unless the target was already active.
+
+Foreground is a user-visible takeover boundary. Never select it automatically.
+Use it only when the user already authorized foreground control for the
+workflow or after asking for approval. If background delivery refuses and that
+authorization is absent, return the refusal instead of changing the user's
+focus, workspace, or compositor cursor.
 
 ### Persistent focus-proxy exception
 
@@ -226,8 +235,9 @@ control. Other focus-bound background pointer and keyboard shapes return an
 exact `background_unavailable` result. They do not report success after a
 silent drop.
 
-Use `delivery_mode:"foreground"` for raw Wayland input. The driver activates
-the selected target through a verified compositor adapter before dispatch. If
+Raw Wayland input requires explicitly authorized `delivery_mode:"foreground"`.
+The driver activates the selected target through a verified compositor adapter
+before dispatch. If
 the compositor has no target-addressable activation or input backend, the call
 refuses before sending input. Reconstructing coordinates alone does not make
 raw background PX possible on a standard compositor.

@@ -203,6 +203,38 @@ pub struct Sandbox {
 }
 
 #[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SdkBuildError)]
+pub struct CreateSignedServiceUrlRequest {
+    pub sandbox: Sandbox,
+    pub service: String,
+    pub label: Option<String>,
+    pub expires_in_seconds: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, uniffi::Record)]
+#[serde(rename_all = "camelCase")]
+pub struct SignedServiceUrl {
+    pub id: String,
+    pub namespace: String,
+    pub claim: String,
+    pub sandbox: String,
+    pub service: String,
+    pub label: Option<String>,
+    pub url: String,
+    pub created_at: String,
+    pub expires_at: String,
+    pub revoked_at: Option<String>,
+}
+
+#[derive(
     Clone, Debug, Serialize, Deserialize, uniffi::Record, uniffi_builder_derive::UniffiBuilder,
 )]
 #[uniffi_builder(crate::SdkBuildError)]

@@ -47,6 +47,17 @@ class GeneratedOptionsTests(unittest.TestCase):
             EmbeddedDriverHostOptions(**required, no_overlay=True).no_overlay
         )
 
+    def test_embedded_diagnostics_record_is_public(self) -> None:
+        from cua_driver import EmbeddedDriverDiagnostics
+
+        diagnostics = EmbeddedDriverDiagnostics(
+            lifecycle_phase="startup",
+            exit_code=7,
+            stderr_tail="failed",
+            stderr_truncated=False,
+        )
+        self.assertEqual(diagnostics.exit_code, 7)
+
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 @unittest.skipIf(os.name == "nt", "Unix socket fixture")

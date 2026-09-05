@@ -822,6 +822,57 @@ const FfiConverterTypeEmbeddedDriverConnection = (() => {
     return new FFIConverter();
 })();
 
+export type EmbeddedDriverDiagnostics = {
+    lifecyclePhase: string,
+    exitCode?: number,
+    stderrTail: string,
+    stderrTruncated: boolean
+}
+
+/**
+ * Generated factory for {@link EmbeddedDriverDiagnostics} record objects.
+ */
+export const EmbeddedDriverDiagnostics = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<EmbeddedDriverDiagnostics, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<EmbeddedDriverDiagnostics>,
+    });
+})();
+
+const FfiConverterTypeEmbeddedDriverDiagnostics = (() => {
+    type TypeName = EmbeddedDriverDiagnostics;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                lifecyclePhase: FfiConverterString.read(from),
+                exitCode: FfiConverterOptionalInt32.read(from),
+                stderrTail: FfiConverterString.read(from),
+                stderrTruncated: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.lifecyclePhase, into);
+            FfiConverterOptionalInt32.write(value.exitCode, into);
+            FfiConverterString.write(value.stderrTail, into);
+            FfiConverterBool.write(value.stderrTruncated, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.lifecyclePhase) +
+             FfiConverterOptionalInt32.allocationSize(value.exitCode) +
+             FfiConverterString.allocationSize(value.stderrTail) +
+             FfiConverterBool.allocationSize(value.stderrTruncated);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type EmbeddedDriverExit = {
     generation: string,
     code?: number,
@@ -918,7 +969,8 @@ export type EmbeddedDriverHostOptions = {
     dangerouslyBypassApprovals: boolean,
     environment: Array<EmbeddedEnvironmentVariable>,
     inheritStderr: boolean,
-    noOverlay: boolean
+    noOverlay: boolean,
+    captureStderr: boolean
 }
 
 /**
@@ -928,7 +980,8 @@ export const EmbeddedDriverHostOptions = (() => {
     const defaults = () => ({
         capabilityManifestPath: undefined,
         approveCapabilityManifest: false,
-        noOverlay: false
+        noOverlay: false,
+        captureStderr: false
     });
     const create = (() => {
         return uniffiCreateRecord<EmbeddedDriverHostOptions, ReturnType<typeof defaults>>(defaults);
@@ -958,7 +1011,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
                 dangerouslyBypassApprovals: FfiConverterBool.read(from),
                 environment: FfiConverterSequenceTypeEmbeddedEnvironmentVariable.read(from),
                 inheritStderr: FfiConverterBool.read(from),
-                noOverlay: FfiConverterBool.read(from)
+                noOverlay: FfiConverterBool.read(from),
+                captureStderr: FfiConverterBool.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
@@ -976,6 +1030,7 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
             FfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, into);
             FfiConverterBool.write(value.inheritStderr, into);
             FfiConverterBool.write(value.noOverlay, into);
+            FfiConverterBool.write(value.captureStderr, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.binaryPath) +
@@ -991,7 +1046,8 @@ const FfiConverterTypeEmbeddedDriverHostOptions = (() => {
              FfiConverterBool.allocationSize(value.dangerouslyBypassApprovals) +
              FfiConverterSequenceTypeEmbeddedEnvironmentVariable.allocationSize(value.environment) +
              FfiConverterBool.allocationSize(value.inheritStderr) +
-             FfiConverterBool.allocationSize(value.noOverlay);
+             FfiConverterBool.allocationSize(value.noOverlay) +
+             FfiConverterBool.allocationSize(value.captureStderr);
 
         }
     };
@@ -5371,6 +5427,7 @@ const uniffiCallbackInterfaceDriverAuthorizationHost: { vtable: any; register: (
 export interface EmbeddedCuaDriverHostLike {
 
     connection(): EmbeddedDriverConnection | undefined;
+    lastDiagnostics(): EmbeddedDriverDiagnostics | undefined;
     restart(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<EmbeddedDriverConnection>;
     start(asyncOpts_?: { signal: AbortSignal }) /*throws*/: Promise<EmbeddedDriverConnection>;
     state(): EmbeddedDriverHostState;
@@ -5430,6 +5487,23 @@ export class EmbeddedCuaDriverHost extends UniffiAbstractObject implements Embed
     })(uniffiCaller.rustCall(
             /*caller:*/ (callStatus) => {
                 return nativeModule().uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_connection(
+                uniffiTypeEmbeddedCuaDriverHostObjectFactory.clonePointer(this),
+                callStatus);
+            },
+            /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+    ));
+    }
+
+    lastDiagnostics(): EmbeddedDriverDiagnostics | undefined {
+    return ((__rb: Uint8Array) => {
+        try {
+            return FfiConverterOptionalTypeEmbeddedDriverDiagnostics.lift(__rb);
+        } finally {
+            nativeModule().rustbuffer_free(__rb);
+        }
+    })(uniffiCaller.rustCall(
+            /*caller:*/ (callStatus) => {
+                return nativeModule().uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_last_diagnostics(
                 uniffiTypeEmbeddedCuaDriverHostObjectFactory.clonePointer(this),
                 callStatus);
             },
@@ -5689,6 +5763,9 @@ const FfiConverterOptionalTypeVerifyStateOutput = new FfiConverterOptional(FfiCo
 
 // FfiConverter for EmbeddedDriverConnection | undefined
 const FfiConverterOptionalTypeEmbeddedDriverConnection = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverConnection);
+
+// FfiConverter for EmbeddedDriverDiagnostics | undefined
+const FfiConverterOptionalTypeEmbeddedDriverDiagnostics = new FfiConverterOptional(FfiConverterTypeEmbeddedDriverDiagnostics);
 
 // FfiConverter for DriverOptions | undefined
 const FfiConverterOptionalTypeDriverOptions = new FfiConverterOptional(FfiConverterTypeDriverOptions);
@@ -5964,6 +6041,9 @@ function uniffiEnsureInitialized() {
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection() !== 44467) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_connection");
     }
+    if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics() !== 57979) {
+        throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_last_diagnostics");
+    }
     if (nativeModule().uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart() !== 27248) {
         throw new UniffiInternalError.ApiChecksumMismatch("uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_restart");
     }
@@ -6005,6 +6085,7 @@ export default Object.freeze({
     FfiConverterTypeDriverOptions,
     FfiConverterTypeEmbeddedCuaDriverHost,
     FfiConverterTypeEmbeddedDriverConnection,
+    FfiConverterTypeEmbeddedDriverDiagnostics,
     FfiConverterTypeEmbeddedDriverError,
     FfiConverterTypeEmbeddedDriverExit,
     FfiConverterTypeEmbeddedDriverHostOptions,

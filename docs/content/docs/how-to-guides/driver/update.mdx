@@ -7,6 +7,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Cua Driver gives you three update paths: a passive banner at launch time, a CLI command that only checks, and a separate command that installs the update. Keep the **check and apply steps separate** so you can decide when to change the installed binary.
 
+Version numbers, timestamps, and release links in the sample output below are
+illustrative. Use your command's actual output to identify the installed and
+available releases; the 0.13.0 migration notes describe that historical upgrade.
+
 ## Before updating from 0.12.x to 0.13.0
 
 The installer command, CLI/MCP connection flow, tool names, and Python and
@@ -36,10 +40,15 @@ restarting a long-running daemon or worker.
 ## Check for updates
 
 Checks use the saved channel. Existing installations default to `stable`.
-Inspect or change it with:
+Inspect it with:
 
 ```bash
 cua-driver channel status
+```
+
+To switch to nightly and install that channel's release:
+
+```bash
 cua-driver channel set nightly
 cua-driver update --apply
 ```
@@ -95,11 +104,28 @@ Installed Cua Driver 0.13.0.
 
 `update --apply` calls the canonical installer script, the same one-line installer used for the first install.
 
-If the daemon was running before the update, restart it so it uses the new binary:
+If the daemon was running before the update, restart it so it uses the new
+binary. Stop it first:
 
 ```bash
-cua-driver stop && cua-driver serve
+cua-driver stop
 ```
+
+The installer may already have stopped the old daemon. If `stop` reports that
+it is not running, continue with startup.
+
+Then use your platform's startup command: on macOS, run
+`open -n -g -a CuaDriver --args serve` to preserve app-bundle permission
+attribution; on Windows with autostart enabled, run `cua-driver autostart kick`;
+on Linux or Windows without autostart, run `cua-driver serve` and leave that
+terminal open. Preserve any non-default permission-mode flags from your
+original launch.
+
+In a second terminal if `serve` occupies the first, run `cua-driver --version`,
+`cua-driver status`, and `cua-driver call list_apps`. Confirm the expected
+installed version, a running daemon, and access to a known GUI app. See
+[Verify desktop readiness](/how-to-guides/driver/install#verify-desktop-readiness)
+if the daemon cannot reach your desktop.
 
 On Windows with autostart enabled, the Scheduled Task uses the new binary on its next invocation. `autostart enable` is idempotent, and the task path resolves through the `current` junction.
 

@@ -79,19 +79,77 @@ Correcting the runtime search path produced a module linked to the compositor's
 shared C++ runtime. A fresh Fleet passed the repeated lifecycle checks above.
 The build now rejects modules without a shared C++ runtime dependency.
 
+## Follow-up at `3789f0e6e`
+
+A second Fleet run on September 4, 2026 (September 5 UTC), tested commit
+`3789f0e6eeb350587fe48c4da35b327975a5bd9c` through the Cua Sandbox SDK.
+The image had the same component versions listed above. The source archive
+contained the committed plugin directory and repository license, with SHA-256
+`27835f9192a35d9b721396642e91a81eb18088075d15c5b4ed2f1f912e159aa4`.
+
+The matching signed compiler package and shared runtime were used again.
+The Arch recipe built successfully with `makepkg --nodeps`; all six native
+CTests passed. The downloaded artifacts matched the guest hashes:
+
+| Artifact        | SHA-256                                                            |
+| --------------- | ------------------------------------------------------------------ |
+| Arch package    | `2c4881b4a17aef554edcaa1181f73ae2453e39b05c7bb5169db8ae9be34adebf` |
+| Packaged module | `693d6470a011956e58320de67fae8ed8d4628476e605f74cea018eb2eb5d5705` |
+
+Additional native checks passed:
+
+- Two simultaneous Hyprland `0.56.2` processes, nested under the Fleet desktop,
+  exposed distinct discovery sockets and epochs. The live discovery harness
+  passed all six mutation refusals and its compositor-state comparison in each.
+- Restarting one nested compositor closed its old connection and removed its
+  socket. Its replacement used a fresh instance socket and epoch. The other
+  compositor's existing discovery connection remained responsive through both
+  restart and shutdown of its sibling.
+- A genuine Hyprland `0.56.1-3` Arch package, verified against its signature,
+  ran as another nested compositor. Loading the unmodified `0.56.2` plugin
+  explicitly failed with an ABI fingerprint mismatch. No plugin, status
+  command, or discovery socket remained registered, and the compositor still
+  answered version queries. This closes the earlier synthetic-only ABI gap
+  for this specific version pair, not arbitrary upgrades.
+
+The lifecycle orchestration was task-local; these additional checks are not
+automated by `live_discovery.py` alone. Initial headless startup failed before
+loading the plugin; nested Wayland startup succeeded. The nested tests do not
+certify direct DRM startup, physical input, application delivery, or isolation
+during a foreground grab. All input mutations remained disabled.
+
+The SDK shell ran as an unprivileged desktop user. `sudo -n -l` required a
+password, and the SDK shell interface provided no user-selection parameter.
+System installation and upgrade-transaction checks therefore remain open;
+package construction is not evidence of `pacman -U` installation.
+
+The [hosted Linux CI run](https://github.com/trycua/cua/actions/runs/33937061198)
+also passed all six tests at this SHA, using Ubuntu 24.04, Clang 18.1.3, and
+CMake 3.31.6. It covers the native Unix transport and mocked compositor APIs,
+not a loaded compositor module. A fresh macOS Debug build passed six tests.
+
+All test compositor units were stopped, the plugin was unloaded, and the
+original desktop remained responsive with its configuration hash unchanged.
+No system package was installed and no autoload setting was added.
+The SDK accepted deletion of the follow-up pool. Immediate lookup still
+returned it; later pool and namespace lookups returned `403`, so final resource
+absence could not be independently confirmed with that credential.
+
 ## Remaining gates
 
-System installation with `pacman -U`, dependency-upgrade refusal, a genuine
-cross-version ABI mismatch, two real compositor instances, clean compositor
-restart, the complete Fleet baseline, and physical-host certification remain
-unverified. Second-seat delivery, target tokens, operator authorization, driver
+System installation with `pacman -U`, dependency-upgrade refusal, the complete
+Fleet baseline, and physical-host certification remain unverified. Native
+two-instance and clean-restart evidence is limited to nested compositors.
+Second-seat delivery, target tokens, operator authorization, driver
 integration, and the application/foreground-grab matrix remain future work.
 
-The final source differs from the Fleet-tested tree only in documentation and
+The initial source differed from the first Fleet-tested tree only in documentation and
 formatting: shutdown wording describes the worker join accurately, this report
 records the evidence, and Markdown/Python formatting follows repository tools.
 The Python harness's parsed syntax tree is checked against the tested copy.
 Plugin C++ source, CMake files, and packaging are unchanged.
 
-The guest configuration was restored, the plugin unloaded, and both disposable
-Fleet pools deleted with fresh lookups confirming their removal.
+The guest configuration was restored, the plugin unloaded, and both initial
+disposable Fleet pools deleted with fresh lookups confirming their removal.
+The follow-up report changes only this Markdown file after testing
+`3789f0e6e`; it does not change the plugin, packaging, CI, or test harness.

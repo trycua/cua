@@ -192,6 +192,15 @@ def run(args):
         if args.case in ('disconnect', 'reload'):
             client.close()
             client = new_client('reconnected')
+            snapshot(client, target)
+            ended = client.tool('press_key', {**input_args(), 'key': 'Escape'})
+            snapshot(observer, target)
+            assert ended.get('isError') and any('has ended' in item.get('text', '')
+                                                for item in ended.get('content', [])), ended
+            result['ended_label_refused'] = True
+            # A new transport cannot revive the old lifecycle by guessing its
+            # public label. Use a genuinely new episode and obtain a new grant.
+            label += '-new'
         fresh = request_grant(client, 'recovery')
         if args.case in ('disconnect', 'reload'):
             assert fresh['challenge'] != pending['challenge'], 'reconnect inherited old authority'

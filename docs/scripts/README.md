@@ -45,7 +45,7 @@ Garbage collection is a separate operator action.
 Run focused offline verification with synthetic embeddings:
 
 ```bash
-uv run --no-project --with pytest --with pytest-asyncio --with markdown-it-py --with lancedb==0.37.1 --with pyarrow==25.0.1 python -m pytest -q docs/scripts/tests/test_docs_index_corpus.py docs/scripts/tests/test_docs_index_publication.py
+uv run --no-project --with pytest --with pytest-asyncio --with markdown-it-py --with lancedb==0.37.1 --with pyarrow==25.0.1 python -m pytest -q docs/scripts/tests/test_docs_index_corpus.py docs/scripts/tests/test_docs_index_publication.py docs/scripts/tests/test_docs_index_sync.py
 uv lock --project docs/scripts/docs-mcp-server --check --offline
 ```
 
@@ -89,10 +89,31 @@ The storage consumer must implement this contract:
    Compare every `pages.url` with an exact-URL vector query, including short pages,
    and check a deliberately excluded empty page against the manifest.
 
+The container includes `sync_docs_index.py` for S3 consumers. Run it separately
+from the serving process, with write access to the docs directory and read-only
+S3 credentials supplied through the standard AWS credential chain:
+
+```bash
+python /app/sync_docs_index.py --bucket DOCS_BUCKET --root /data/docs_db
+```
+
+Replace `DOCS_BUCKET` with the source bucket name. The consumer downloads only
+the manifest's allowlisted files, rejects symlinks and unsafe paths, verifies
+the exact file inventory and hashes, and serializes writers with a local advisory
+lock. It retains existing generations and legacy files. Only its own incomplete
+staging directory is removed after a failed download. A repeat run verifies the
+installed generation before reusing it.
+
+For initial migration only, `--allow-missing-pointer` permits a missing remote
+pointer when no local pointer exists. It never tolerates denied access, a corrupt
+generation, or a missing remote pointer after local activation. Omit this flag
+once the initial generation is installed. `--lock-timeout` bounds the lock wait
+in seconds and defaults to 300.
+
 For a local filesystem mirror, `docs_index.copy_generation` implements validated
-copy and pointer activation. Object-store download and deployment configuration
-are outside this directory. Copying the bucket wholesale with an unordered sync
-is not an activation protocol.
+copy and pointer activation. Deployment configuration remains outside this
+directory. Copying the bucket wholesale with an unordered sync is not an
+activation protocol.
 
 Roll out the consumer's staged-copy support first, generate and publish one
 validated pair, and verify that its files are installed. Then deploy the reader

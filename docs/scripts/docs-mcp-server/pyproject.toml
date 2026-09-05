@@ -7,6 +7,8 @@ authors = [
     {name = "TryCua", email = "gh@trycua.com"}
 ]
 dependencies = [
+    # The docs-only storage consumer uses the same image before reader rollout.
+    "boto3==1.40.22",
     # Held on the 2.x line: main.py is written against the fastmcp 2 API
     # (FastMCP(...), @mcp.tool(), mcp.http_app()). Moving to 3.x is a
     # deliberate upgrade, not something a rebuild should pick up silently.

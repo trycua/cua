@@ -26,7 +26,7 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN uv sync --locked --no-dev --no-install-project
 
 # Copy application code
-COPY main.py docs_index.py ./
+COPY main.py docs_index.py sync_docs_index.py ./
 
 # Production image
 FROM python:3.12-slim AS runtime
@@ -38,7 +38,7 @@ WORKDIR /app
 
 # Copy virtual environment from builder
 COPY --from=builder /app/.venv /app/.venv
-COPY --from=builder /app/main.py /app/docs_index.py /app/
+COPY --from=builder /app/main.py /app/docs_index.py /app/sync_docs_index.py /app/
 
 # Set environment variables
 ENV VIRTUAL_ENV=/app/.venv

@@ -135,10 +135,15 @@ def run(args):
             # Leave room for a fresh snapshot before the expiry admission
             # check. The expiry response, not natural drag completion, must
             # explain the eventual release after the compositor resumes.
-            'duration_ms': 1000 if args.case == 'expiry' else 2000})
-        wait_for(lambda: any(row['kind'] == 'button-press' for row in journal(args.background_journal)[background_offset:]), 3)
-        assert time.monotonic_ns() - started_ns < 900_000_000, 'too late to distinguish cancellation from completion'
+            'duration_ms': 500 if args.case == 'expiry' else 2000})
+        press = wait_for(lambda: next((row for row in journal(args.background_journal)[background_offset:]
+                                      if row['kind'] == 'button-press'), None), 5)
         fault_ns = time.monotonic_ns()
+        # Driver may record pre-action screenshots before delivering input.
+        # Only the app's actual press starts the held interval, not RPC entry.
+        limit_ns = 200_000_000 if args.case == 'expiry' else 900_000_000
+        assert fault_ns - press['time'] < limit_ns, 'too late to distinguish cancellation from completion'
+        result['dispatch_to_press_ms'] = (press['time'] - started_ns) / 1_000_000
         if args.case == 'disconnect':
             client.process.terminate()
             client.process.wait(timeout=3)

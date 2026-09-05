@@ -37,7 +37,7 @@ The trade-off is startup latency versus OS fidelity. Containers are suited to fa
 
 An `Image` is the **immutable** description of the sandbox's starting environment. It is not the running sandbox. An `Image` defines the OS type, distro or OS version, packages, environment variables, copied files, and setup commands that should exist when a sandbox starts.
 
-The image builder composes layers such as `apt_install`, `pip_install`, `run`, `copy`, and `env`. Those layers are applied once at launch to produce the sandbox's initial state. Installing another package later changes that sandbox, not the Image.
+The image builder composes layers such as `apt_install`, `pip_install`, `run`, `copy`, and `env`. Local execution applies those layers at launch to produce the sandbox's initial state. Fleet instead boots a prebuilt registry artifact and rejects these builder layers. Installing another package later changes that sandbox, not the Image. [How Fleet images work](/concepts/how-fleet-images-work) explains the published-artifact model.
 
 This separation makes environments reproducible. The `Image` describes what a fresh sandbox should look like. The sandbox is the live machine created from that description.
 
@@ -51,14 +51,25 @@ Connect mode attaches to an already-running sandbox. It does not create a sandbo
 
 ## Snapshots and forks
 
-A _snapshot_ captures the disk state of a running sandbox and returns a new `Image`. That `Image` can start any number of fresh sandboxes from the captured point.
+A _snapshot_ records a machine's state for later reuse. A _fork_ starts a separate
+machine from that captured state. These mechanisms can avoid repeating expensive
+setup, but they require support from the provisioning and storage system.
 
-Snapshots are useful when setup is expensive. Packages can be installed once, models can be downloaded once, and data can be prepared once. After the snapshot is created, new sandboxes can start from that prepared state instead of repeating the setup work.
-
-Each _fork_ starts from the same snapshot but gets its own writable disk. Changes in one fork do not affect the snapshot or sibling forks. On copy-on-write storage, forks can be near-instant because unchanged blocks are shared until a sandbox writes to them.
+In `cua-sandbox` 0.4.3, `Sandbox.snapshot()` is not implemented for local sandboxes
+or the Fleet creation paths. Fleet also rejects snapshot-derived image inputs.
+For these paths, prepare a reusable boot artifact instead. See
+[Sandbox runtime support](/reference/sandbox-sdk/runtime-support#image-customization)
+for the versioned limits and [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
+for the published-artifact workflow.
 
 ## Local execution
 
 Local mode runs on the developer's hardware. Linux containers use Docker Desktop, macOS VMs use Lume, and VM backends can use QEMU or Hyper-V. Local execution depends on the machine's available CPU, memory, disk, and virtualization support. Select it with `local=True`.
 
-The sandbox still starts from an `Image`, exposes a code half and a GUI half, and can be ephemeral or persistent. See [Choose and build a sandbox image](/how-to-guides/sandbox/images#how-a-linux-image-runs-locally) for local runtime details, or [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet) for a guided hosted path.
+The sandbox still starts from an `Image`, exposes a code half and a GUI half, and can be ephemeral or persistent. See [Choose and build a sandbox image](/how-to-guides/sandbox/images#how-a-linux-image-runs-locally) for local setup.
+
+## Fleet execution
+
+Fleet runs sandboxes as managed capacity. A pool defines the boot artifact and capacity; a claim reserves a sandbox for a workload. Preparing the image and acquiring a running sandbox are separate operations, so the guest's dependencies and services must already be part of the published artifact.
+
+Choosing local execution or Fleet changes the provisioning and connection path, not the idea of an isolated computer. It can also change which image inputs, customization methods, snapshots, and port connections are available. Use [Sandbox runtime support](/reference/sandbox-sdk/runtime-support) for the versioned contract, or [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet) for a guided hosted path.

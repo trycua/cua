@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 // Copyright (c) 2026 Cua AI, Inc.
 
-use crate::{CaptureScope, EscalationReason, Platform};
-use schemars::{generate::SchemaSettings, JsonSchema};
+use crate::{schema_settings, CaptureScope, EscalationReason, Platform};
+use schemars::JsonSchema;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -56,11 +56,12 @@ pub fn advertised_output_schema(success: Value) -> Value {
 }
 
 fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {
-    let mut settings = SchemaSettings::draft2020_12();
-    settings.inline_subschemas = true;
-    settings.meta_schema = None;
-    let mut schema = serde_json::to_value(settings.into_generator().into_root_schema_for::<T>())
-        .expect("JSON Schema serializes");
+    let mut schema = serde_json::to_value(
+        schema_settings()
+            .into_generator()
+            .into_root_schema_for::<T>(),
+    )
+    .expect("JSON Schema serializes");
     strip_schema_titles(&mut schema);
     if let Some(object) = schema.as_object_mut() {
         object.insert(

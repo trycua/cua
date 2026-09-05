@@ -67,12 +67,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -128,7 +126,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -468,12 +465,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -531,7 +526,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -843,39 +837,30 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -895,11 +880,9 @@
           "position": {
             "properties": {
               "x": {
-                "format": "double",
                 "type": "number"
               },
               "y": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -954,7 +937,6 @@
           "visual_state": {
             "properties": {
               "frame": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -968,7 +950,6 @@
                 "type": "string"
               },
               "preempted_count": {
-                "format": "uint64",
                 "minimum": 0,
                 "type": "integer"
               },
@@ -1268,12 +1249,10 @@
             "type": "boolean"
           },
           "expires_in_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
           "idle_seconds": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -1475,12 +1454,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -1529,7 +1506,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -1700,7 +1676,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -1838,7 +1813,6 @@
           },
           "limit": {
             "description": "Maximum number of content-free summaries to return (default 50, max\n100). Ordinary agent transports are scoped to their own lease.",
-            "format": "uint32",
             "minimum": 0,
             "type": [
               "integer",
@@ -1879,12 +1853,10 @@
                   "type": "boolean"
                 },
                 "expires_in_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
                 "idle_seconds": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -1990,12 +1962,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2052,7 +2022,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2215,12 +2184,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2269,7 +2236,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2444,12 +2410,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -2506,7 +2470,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -2687,42 +2650,36 @@
         "additionalProperties": false,
         "properties": {
           "arc_flow": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "arc_size": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "dwell_after_click_ms": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "end_handle": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "glide_duration_ms": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "idle_hide_ms": {
-            "format": "double",
             "type": [
               "number",
               "null"
@@ -2732,21 +2689,18 @@
             "type": "string"
           },
           "spring": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "start_handle": {
-            "format": "double",
             "type": [
               "number",
               "null"
             ]
           },
           "turn_radius": {
-            "format": "double",
             "type": [
               "number",
               "null"
@@ -2764,39 +2718,30 @@
           "motion": {
             "properties": {
               "arc_flow": {
-                "format": "double",
                 "type": "number"
               },
               "arc_size": {
-                "format": "double",
                 "type": "number"
               },
               "dwell_after_click_ms": {
-                "format": "double",
                 "type": "number"
               },
               "end_handle": {
-                "format": "double",
                 "type": "number"
               },
               "glide_duration_ms": {
-                "format": "double",
                 "type": "number"
               },
               "idle_hide_ms": {
-                "format": "double",
                 "type": "number"
               },
               "spring": {
-                "format": "double",
                 "type": "number"
               },
               "start_handle": {
-                "format": "double",
                 "type": "number"
               },
               "turn_radius": {
-                "format": "double",
                 "type": "number"
               }
             },
@@ -2990,7 +2935,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3286,12 +3230,10 @@
                         "type": "string"
                       },
                       "pid": {
-                        "format": "uint32",
                         "minimum": 0,
                         "type": "integer"
                       },
                       "window_id": {
-                        "format": "uint64",
                         "minimum": 0,
                         "type": "integer"
                       }
@@ -3343,7 +3285,6 @@
             "additionalProperties": false,
             "properties": {
               "delivered_count": {
-                "format": "uint32",
                 "minimum": 0,
                 "type": [
                   "integer",
@@ -3633,7 +3574,6 @@
         "additionalProperties": true,
         "properties": {
           "elapsed_ms": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },
@@ -3641,7 +3581,6 @@
             "items": {
               "properties": {
                 "index": {
-                  "format": "uint64",
                   "minimum": 0,
                   "type": "integer"
                 },
@@ -3694,7 +3633,6 @@
             "type": "array"
           },
           "samples": {
-            "format": "uint64",
             "minimum": 0,
             "type": "integer"
           },

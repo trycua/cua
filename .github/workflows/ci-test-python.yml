@@ -23,6 +23,11 @@ jobs:
           - mcp-server
           - som
           - cua-auto
+        include:
+          # computer-server's VNC backend tests assert what vncdotool puts on
+          # the wire, so the job needs the package's own `vnc` extra.
+          - package: computer-server
+            extras: "[vnc]"
 
     steps:
       - name: Checkout code
@@ -42,7 +47,7 @@ jobs:
           cd libs/python/${{ matrix.package }}
           # Install the package in editable mode with dev dependencies
           if [ -f pyproject.toml ]; then
-            uv pip install --system -e .
+            uv pip install --system -e ".${{ matrix.extras }}"
           fi
         shell: bash
 

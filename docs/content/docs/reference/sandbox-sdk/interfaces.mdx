@@ -1,11 +1,17 @@
 ---
 title: Sandbox interfaces reference
-description: API reference for sb.shell, sb.mouse, sb.keyboard, sb.screen, sb.clipboard, sb.tunnel, sb.terminal, sb.window, and sb.mobile.
+description: Python Sandbox computer-control, file, service, tunnel, and application interfaces in cua-sandbox 0.4.3.
 ---
+
+These interfaces are exposed by `Sandbox` in the published `cua-sandbox` 0.4.3
+package. A method's presence does not guarantee support by every transport.
+Fleet claims route computer-server operations through the selected named
+service; local and legacy transports have different capabilities.
 
 | Attribute | Class | Purpose |
 |-----------|-------|---------|
 | sb.shell | Shell | Run shell commands |
+| sb.files | Files | Read, write, and transfer files |
 | sb.mouse | Mouse | Mouse control |
 | sb.keyboard | Keyboard | Keyboard control |
 | sb.screen | Screen | Screenshots and screen info |
@@ -14,11 +20,13 @@ description: API reference for sb.shell, sb.mouse, sb.keyboard, sb.screen, sb.cl
 | sb.terminal | Terminal | PTY terminal sessions |
 | sb.window | Window | Window management |
 | sb.mobile | Mobile | Mobile (Android) touch and hardware-key control |
+| sb.services | Services | Send requests to named services |
+| sb.apps | Apps | Install and launch catalog applications |
 
 ## Shell
 
 ```python
-async def run(command: str, timeout: int = 30) -> CommandResult
+async def run(command: str, timeout: int = 30, background: bool = False) -> CommandResult
 ```
 
 ### CommandResult
@@ -60,7 +68,7 @@ async def key_up(key: str) -> None
 
 ```python
 async def screenshot(format: str = 'png', quality: int = 95) -> bytes
-# format: 'png' (lossless) or 'jpeg' (lossy, ~5-10x smaller). quality: 1-95, ignored for PNG.
+# format: 'png' (lossless) or 'jpeg' (lossy). quality: 1-95, ignored for PNG.
 
 async def screenshot_base64(format: str = 'png', quality: int = 95) -> str
 # Screenshot as base64-encoded string.
@@ -85,11 +93,19 @@ async def set(text: str) -> None
 def forward(*ports) -> _TunnelContext
 ```
 
-Forwards one or more sandbox ports (or Android abstract sockets) to the host.
+Requests forwarding for one or more sandbox ports or Android abstract sockets
+from the connected transport. Supports `await` and `async with`; context exit
+closes the forwards.
+
+In 0.4.3, the `FleetTransport` used by `Pool.claim()` does not implement
+`tunnel.forward()`. Use `sb.services.request()` for authenticated HTTP requests
+to a Fleet service. Local HTTP transports also do not implement this tunnel
+API; use `sb.exposed_ports` for ports forwarded at local startup.
 
 *ports* may be int (TCP port) or str (Android abstract socket name, e.g. 'chrome_devtools_remote').
 
 Returns:
+
 - single TunnelInfo when one target is given
 - dict[sandbox_port, TunnelInfo] when multiple targets are given
 
@@ -97,15 +113,66 @@ Returns:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| host | str | Always 'localhost' |
-| port | int | Host-side port assigned |
+| host | str | Host chosen by the transport |
+| port | int | Port chosen by the transport |
 | sandbox_port | int or str | Original port/socket inside the sandbox |
-| url | str (property) | `http://{host}:{port}` |
+| url | str (property) | Explicit transport URL, or `http://{host}:{port}` when none is supplied |
 
 ```python
 async def close() -> None
 # Close this tunnel. No-op if already closed or inside a context manager.
 ```
+
+## Services
+
+Sends an authenticated request to a named service on the connected sandbox:
+
+```python
+async def request(
+    name: str, *, method: str, path: str, json: Any = None,
+    headers: dict[str, str] | None = None,
+) -> Any: ...
+```
+
+For Fleet claims, `name` must be in the bound sandbox's service list. The return
+value is an `httpx.Response`. `method` is the HTTP method, `path` is the service
+request path, `json` is an optional JSON body, and `headers` adds request headers.
+Transports without named service support raise `NotImplementedError`.
+
+The released 0.4.3 `Services` interface has `request()` only. Signed service URL
+creation is available in the [TypeScript Fleet client](/reference/sandbox-sdk/typescript#service-access);
+`create_signed_url()`, `list_signed_urls()`, and `revoke_signed_url()` are not
+part of this Python release.
+
+## Files
+
+Paths refer to the sandbox unless a parameter explicitly names a local path.
+These async methods use the connected computer-server file operations:
+
+| Method | Return type | Purpose |
+| --- | --- | --- |
+| `exists(path: str)` | `bool` | Tests whether a file exists |
+| `is_dir(path: str)` | `bool` | Tests whether a directory exists |
+| `size(path: str)` | `int` | Gets file size in bytes |
+| `list(path: str)` | `list[FileEntry]` | Lists directory entries |
+| `make_dir(path: str)` | `None` | Creates a directory |
+| `remove_dir(path: str)` | `None` | Removes a directory through the server |
+| `remove(path: str)` | `None` | Removes a file |
+| `read_text(path: str)` | `str` | Reads text |
+| `write_text(path: str, content: str)` | `None` | Writes text |
+| `read_bytes(path: str, offset=0, length=None)` | `bytes` | Reads bytes, with an optional byte range |
+| `write_bytes(path: str, content: bytes)` | `None` | Writes bytes |
+| `upload(local_path, remote_path: str)` | `None` | Copies a host file into the sandbox |
+| `download(remote_path: str, local_path)` | `None` | Copies a sandbox file to the host |
+
+Local paths accept `str` or `pathlib.Path`. `FileEntry` has `name: str`,
+`path: str`, `is_dir: bool`, and `size: int or None`.
+
+## Apps
+
+`await sb.apps.install(app_id: str)` and `await sb.apps.launch(app_id: str)`
+return `CommandResult`. They use the application catalog and guest installer;
+an application ID does not establish availability on every guest OS.
 
 ## Terminal
 
@@ -145,7 +212,7 @@ async def scroll_down(x: int, y: int, distance: int = 600, duration_ms: int = 40
 async def scroll_left(x: int, y: int, distance: int = 400, duration_ms: int = 300) -> None
 async def scroll_right(x: int, y: int, distance: int = 400, duration_ms: int = 300) -> None
 async def fling(x1: int, y1: int, x2: int, y2: int) -> None
-async def gesture(duration_ms: int = 400, steps: int = 0, *finger_paths) -> None
+async def gesture(*finger_paths: tuple[int, int], duration_ms: int = 400, steps: int = 0) -> None
 # N-finger gesture via MT Protocol B sendevent. Each positional arg is (x,y) waypoints for one finger.
 # steps=0 = auto (duration_ms // 20, min 5).
 async def pinch_in(cx: int, cy: int, spread: int = 300, duration_ms: int = 400) -> None

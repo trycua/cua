@@ -7,6 +7,7 @@ on:
       - docs/content/docs/how-to-guides/driver/install.mdx
       - docs/content/docs/how-to-guides/driver/update.mdx
       - docs/scripts/verify-driver-first-run-linux.py
+      - docs/scripts/tests/test_driver_first_run_smoke.py
       - .github/workflows/docs-driver-first-run-smoke.yml
       - libs/cua-driver/scripts/install.sh
       - libs/cua-driver/scripts/_install-rust.sh
@@ -26,6 +27,8 @@ jobs:
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
+      - name: Test the display-result oracle
+        run: python3 -m unittest discover -s docs/scripts/tests -p test_driver_first_run_smoke.py
       - name: Install disposable desktop dependencies
         run: |
           sudo apt-get update

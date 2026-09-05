@@ -184,9 +184,16 @@ def snapshot(mcp, target, label):
 
 
 def displays_42(state):
-    values = [str(e.get("value", "")).strip() for e in state["elements"]]
-    tree = state.get("tree_markdown", "")
-    return "42" in values or bool(re.search(r'\bvalue[=: ]+[\"\']?42(?:[\"\']|\s|$)', tree))
+    # GTK's read-only Calculator display exposes its AT-SPI text as the
+    # accessible label, not Value. Ignore buttons and snapshot indices so a
+    # matching control name or element number cannot masquerade as the result.
+    text_roles = {"text", "label", "entry", "statictext", "text field"}
+    return any(
+        str(element.get("role", "")).lower() in text_roles
+        and any(str(element.get(field, "")).strip() == "42"
+                for field in ("value", "label"))
+        for element in state.get("elements", [])
+    )
 
 
 def doctor(binary, env, evidence, label, *, require_window):

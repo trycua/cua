@@ -13,6 +13,10 @@ from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import Browser, async_playwright
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent / "docs-mcp-server"))
+from docs_index import capture_corpus, write_json
+
 # Configuration
 BASE_URL = "https://cua.ai"
 DOCS_URL = f"{BASE_URL}/docs"
@@ -170,7 +174,7 @@ class CuaDocsCrawler:
             return False
 
         # Only crawl /docs paths
-        if not parsed.path.startswith("/docs"):
+        if parsed.path != "/docs" and not parsed.path.startswith("/docs/"):
             return False
 
         # Skip non-page resources
@@ -303,17 +307,8 @@ class CuaDocsCrawler:
         """Main crawl loop"""
         OUTPUT_DIR.mkdir(exist_ok=True)
 
-        # Start with the docs URL and key sections based on typical CUA docs structure
-        seed_urls = [
-            DOCS_URL,
-            f"{DOCS_URL}/cua",
-            f"{DOCS_URL}/cua/guide",
-            f"{DOCS_URL}/cua/guide/get-started",
-            f"{DOCS_URL}/cua/reference",
-            f"{DOCS_URL}/cua/reference/computer-sdk",
-            f"{DOCS_URL}/cua-bench",
-            f"{BASE_URL}/llms.txt",  # LLM-optimized content if available
-        ]
+        # Discover the public corpus from its canonical root.
+        seed_urls = [DOCS_URL]
 
         for url in seed_urls:
             normalized = self.normalize_url(url)
@@ -350,6 +345,11 @@ class CuaDocsCrawler:
                     )
             finally:
                 await browser.close()
+
+        corpus = capture_corpus(self.all_data, self.visited_urls, self.failed_urls)
+        temporary = OUTPUT_DIR / "_corpus.pending.json"
+        write_json(temporary, corpus)
+        temporary.replace(OUTPUT_DIR / "_corpus.json")
 
         # Save summary
         summary = {

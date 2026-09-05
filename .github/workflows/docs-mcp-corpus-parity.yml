@@ -1,0 +1,45 @@
+name: "Docs: MCP corpus parity"
+
+on:
+  pull_request:
+    paths:
+      - docs/scripts/docs-mcp-server/**
+      - docs/scripts/crawl_docs.py
+      - docs/scripts/generate_db.py
+      - docs/scripts/generate_sqlite.py
+      - docs/scripts/modal_app.py
+      - docs/scripts/tests/test_docs_index_*.py
+      - docs/scripts/tests/fixtures/indexing/**
+      - .github/workflows/docs-mcp-corpus-parity.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  corpus-parity:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.12"
+      - name: Install offline-test dependencies
+        run: python -m pip install pytest==8.4.2 markdown-it-py==3.0.0 lancedb==0.37.1 pyarrow==25.0.1
+      - name: Verify corpus parity and interrupted publication
+        run: >-
+          python -m pytest -q
+          docs/scripts/tests/test_docs_index_corpus.py
+          docs/scripts/tests/test_docs_index_publication.py
+      - name: Check Python syntax
+        run: >-
+          python -m py_compile
+          docs/scripts/crawl_docs.py
+          docs/scripts/generate_db.py
+          docs/scripts/generate_sqlite.py
+          docs/scripts/modal_app.py
+          docs/scripts/docs-mcp-server/main.py
+          docs/scripts/docs-mcp-server/docs_index.py

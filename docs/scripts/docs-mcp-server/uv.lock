@@ -447,15 +447,15 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "fastmcp", specifier = ">=2.14.0,<3" },
-    { name = "lancedb", specifier = ">=0.4.0" },
+    { name = "lancedb", specifier = "==0.37.1" },
     { name = "markdown-it-py", specifier = ">=3.0.0" },
     { name = "opentelemetry-api", specifier = ">=1.20.0" },
     { name = "opentelemetry-exporter-otlp-proto-http", specifier = ">=1.20.0" },
     { name = "opentelemetry-sdk", specifier = ">=1.20.0" },
     { name = "pandas", specifier = ">=2.0.0" },
-    { name = "pyarrow", specifier = ">=14.0.1" },
+    { name = "pyarrow", specifier = "==25.0.1" },
     { name = "pydantic", specifier = ">=2.0.0" },
-    { name = "sentence-transformers", specifier = ">=2.2.0" },
+    { name = "sentence-transformers", specifier = "==5.7.0" },
     { name = "uvicorn", specifier = ">=0.23.0" },
 ]
 

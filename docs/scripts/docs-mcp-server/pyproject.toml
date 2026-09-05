@@ -16,9 +16,9 @@ dependencies = [
     # lancedb.embeddings.get_registry(), so a version split between reader and
     # writer silently breaks vector search. Exact versions come from uv.lock;
     # when you relock, update the pins in modal_app.py to match.
-    "lancedb>=0.4.0",
-    "sentence-transformers>=2.2.0",
-    "pyarrow>=14.0.1",
+    "lancedb==0.37.1",
+    "sentence-transformers==5.7.0",
+    "pyarrow==25.0.1",
     "pydantic>=2.0.0",
     "pandas>=2.0.0",
     "markdown-it-py>=3.0.0",

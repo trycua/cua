@@ -31,7 +31,7 @@ Parameters:
 | --- | --- | --- |
 | `query` | string | Natural language query, embedded and matched against documentation vectors. |
 | `limit` | int | Maximum number of matches. Default `10`, maximum `100`. |
-| `where` | string, optional | SQL-like filter, for example `category = 'cua'`. |
+| `where` | string, optional | SQL-like filter, for example `category = 'reference'`. |
 | `select` | list of strings, optional | Columns to return. The vector column is always excluded. |
 
 Returns matching document chunks with a `_distance` similarity score.
@@ -79,8 +79,9 @@ Documentation pages.
 | `id` | INTEGER PRIMARY KEY | Row identifier. |
 | `url` | TEXT | Unique full URL of the page. |
 | `title` | TEXT | Page title. |
-| `category` | TEXT | Category, for example `cua`, `cuabench`, or `llms.txt`. |
+| `category` | TEXT | URL category, for example `concepts`, `how-to-guides`, `reference`, or `tutorials`. |
 | `content` | TEXT | Plain text content with markdown stripped. |
+| `build_id` | TEXT | Paired-generation identifier; available after the migration described below. |
 
 The `pages_fts` FTS5 virtual table mirrors `pages` for full text search. The `content` column is indexed. The `url`, `title`, and `category` columns are unindexed.
 
@@ -102,6 +103,42 @@ The `code_files_fts` FTS5 virtual table mirrors `code_files` for full text searc
 
 ## Version indexing
 
-Source code is indexed per released version. Each row in `code_files` is keyed by `(component, version, file_path)`, so the same file exists once per version it appeared in. Components are named units such as `agent` and `computer`. Versions are release strings such as `0.7.3`, drawn from the project's git tags.
+The indexer derives component and version labels from parseable repository tags.
+Each row is keyed by `(component, version, file_path)`. A component label identifies
+a tag family; it does not establish that a standalone product's implementation is
+covered. At each tag, the indexer scans matching source files across the repository.
 
-A query can target one version, compare across versions, or enumerate them, for example `SELECT DISTINCT version FROM code_files WHERE component = 'agent'`. The index is rebuilt daily.
+The source filter covers Python (`.py`), TypeScript (`.ts`, `.tsx`), and JavaScript
+(`.js`). It does not index Rust or Swift files. SQLite includes files up to
+1,000,000 decoded characters, and vector search includes files up to 100,000
+decoded characters.
+
+Enumerate the serving index before relying on a component, version, or language:
+
+```sql
+SELECT DISTINCT component FROM code_files;
+SELECT DISTINCT language FROM code_files;
+SELECT DISTINCT version FROM code_files WHERE component = 'agent';
+```
+
+The source jobs are scheduled daily. A successful build, publication, and reader
+refresh are all required for updated content to reach this endpoint. SQL and
+vector results must be checked separately; a page in SQL does not by itself
+establish vector availability.
+
+## Docs generation identity
+
+The paired-generation reader exposes `index_metadata` through `query_docs_db`:
+
+```sql
+SELECT build_id, corpus_id, captured_at, source FROM index_metadata;
+```
+
+Docs rows and vector chunks carry the same `build_id`. The generation manifest
+records the discovered URL set and any pages excluded because they contain no
+searchable text. Short pages are included in both indexes.
+
+This schema requires deployment of the paired-generation writer, storage consumer,
+and reader. An endpoint without `index_metadata` is serving the older schema;
+its crawl schedule does not prove corpus parity. Operators can find the generation
+layout and rollout contract in the repository's `docs/scripts/README.md`.

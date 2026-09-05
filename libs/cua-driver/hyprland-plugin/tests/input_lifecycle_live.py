@@ -116,8 +116,10 @@ def run(args):
         assert exchange(operator, grant['packet'])['ok']
         # Native recording is supporting evidence, never the cleanup oracle.
         if args.record_video:
-            response = observer.tool('start_recording', {'output_dir': str(args.evidence / 'recording')})
+            response = observer.tool('start_recording', {'output_dir': str(args.evidence / 'recording'),
+                                                        'record_video': True})
             assert not response.get('isError'), response
+            assert response.get('structuredContent', {}).get('video_active') is True, 'video did not start'
             recording = True
         if args.case == 'expiry':
             assert args.compositor_pid, 'expiry fault requires an explicitly selected disposable compositor'
@@ -237,6 +239,9 @@ def run(args):
             if recording:
                 response = observer.tool('stop_recording', {})
                 assert not response.get('isError'), response
+                video = response.get('structuredContent', {}).get('last_video_path')
+                assert video and Path(video).is_file() and Path(video).stat().st_size > 0, 'video missing after stop'
+                result['video_file'] = Path(video).name
         operations = [('operator_stop', stop_operator), ('primary_release', release_primary),
                       ('recording_stop', stop_recording), ('restore_module', restore_module)]
         if executor:

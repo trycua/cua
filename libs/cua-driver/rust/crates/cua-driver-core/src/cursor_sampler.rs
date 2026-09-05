@@ -143,15 +143,49 @@ fn sample_cursor() -> Option<(f64, f64)> {
 
 #[cfg(target_os = "linux")]
 fn sample_cursor() -> Option<(f64, f64)> {
-    // Wayland has no equivalent portable poll; on X11 use XQueryPointer.
-    // We try the X11 path via the `x11` crate if available; otherwise
-    // return None and the sampler writes an empty cursor.jsonl.
-    //
-    // The X11 dep isn't always present in cua-driver's Linux build
-    // (Wayland-only hosts), so this fallback is "no-op when X11 isn't
-    // wired up" — the renderer copes by falling back to click-point-
-    // only zoom (no cursor-follow between actions).
-    None
+    // Stock Wayland has no portable pointer query. Hyprland exposes one via
+    // `hyprctl cursorpos` (global layout coordinates). Other compositors keep
+    // returning None so cursor.jsonl stays empty and zoom falls back to the
+    // click-point path. See trycua/cua#2194.
+    sample_hyprland_cursor()
+}
+
+#[cfg(target_os = "linux")]
+fn sample_hyprland_cursor() -> Option<(f64, f64)> {
+    if !std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|value| !value.is_empty()) {
+        return None;
+    }
+    let output = std::process::Command::new("hyprctl")
+        .arg("cursorpos")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    parse_hypr_cursorpos(&String::from_utf8_lossy(&output.stdout))
+}
+
+#[cfg(target_os = "linux")]
+fn parse_hypr_cursorpos(text: &str) -> Option<(f64, f64)> {
+    let text = text.trim();
+    let mut parts = text.split(',');
+    let x = parts.next()?.trim().parse::<f64>().ok()?;
+    let y = parts.next()?.trim().parse::<f64>().ok()?;
+    if parts.next().is_some() {
+        return None;
+    }
+    Some((x, y))
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod linux_cursor_tests {
+    use super::parse_hypr_cursorpos;
+
+    #[test]
+    fn hyprctl_cursorpos_text_parses() {
+        assert_eq!(parse_hypr_cursorpos("598, 317\n"), Some((598.0, 317.0)));
+        assert_eq!(parse_hypr_cursorpos("unknown"), None);
+    }
 }
 
 #[cfg(not(any(target_os = "windows", target_os = "macos", target_os = "linux")))]

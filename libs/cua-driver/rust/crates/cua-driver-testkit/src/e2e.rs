@@ -79,6 +79,17 @@ impl DisplayServer {
             panic!("unsupported E2E display server")
         }
     }
+
+    /// Exact before/after cursor equality. Wayland only when the compositor
+    /// exposes a trusted pointer query. Hyprland does via `hyprctl cursorpos`
+    /// (trycua/cua#2194). Sway/GNOME/KWin remain unsupported until proven.
+    pub fn cursor_oracle_supported() -> bool {
+        match Self::current() {
+            Self::Win32 | Self::Quartz | Self::X11 => true,
+            Self::Wayland => std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE")
+                .is_some_and(|value| !value.is_empty()),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
@@ -629,7 +640,7 @@ pub fn native_background_case(
         OracleKind::ZOrder,
         OracleKind::NoLeakedInput,
     ];
-    if DisplayServer::current() != DisplayServer::Wayland {
+    if DisplayServer::cursor_oracle_supported() {
         oracles.push(OracleKind::Cursor);
     }
     CaseSpec::delivered(
@@ -2548,11 +2559,14 @@ mod tests {
             OracleKind::FixtureState,
             OracleKind::Focus,
             OracleKind::ZOrder,
-            OracleKind::Cursor,
             OracleKind::NoLeakedInput,
         ] {
             assert!(background.oracles.contains(&oracle));
         }
+        assert_eq!(
+            background.oracles.contains(&OracleKind::Cursor),
+            DisplayServer::cursor_oracle_supported()
+        );
         background.validate().expect("background case is valid");
 
         let foreground = native_foreground_case(

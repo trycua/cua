@@ -7,6 +7,7 @@ app output assertions live in the reviewed plan and are independently read.
 """
 import argparse
 from concurrent.futures import ThreadPoolExecutor
+import hashlib
 import json
 import math
 import os
@@ -21,6 +22,29 @@ import xml.etree.ElementTree as ET
 
 from driver_input_live import MCP, wait_for, state, wm
 from primary_trace import Trace, analyze
+
+
+def cleanup_all(operations):
+    """Attempt every independent cleanup even after transport/recorder failure."""
+    errors = []
+    for name, operation in operations:
+        try:
+            operation()
+        except Exception as error:
+            errors.append({'operation': name, 'error': str(error)})
+    return errors
+
+
+def released_synthetic_input(data):
+    """Balance wire-level press/release events independently for both seats."""
+    balances = {(actor, kind): 0 for actor in (1, 2) for kind in ('pointer_button', 'keyboard_key')}
+    for row in data['events']:
+        key = (row[5], row[2])
+        if key in balances:
+            balances[key] += 1 if row[6] else -1
+            assert balances[key] >= 0, 'release without a captured synthetic press'
+    assert not any(balances.values()), 'synthetic input remains held at trace end'
+    return True
 
 
 def rect_position(node):
@@ -42,6 +66,10 @@ def validate_plan(plan):
         agents = [step['agent'] for step in steps]
         assert len(agents) == len(set(agents)), 'one MCP connection cannot serve concurrent steps'
         assert all(type(index) is int and 0 <= index < len(plan['agents']) for index in agents)
+        if 'control' in phase:
+            assert 'parallel' in phase and len(agents) == 2
+            assert phase['control']['command'] in ('CANCEL', 'STOP')
+            assert phase['control']['agent'] in agents
     for oracle in plan.get('outputs', []):
         if 'rect_translation' in oracle:
             assert len(oracle['rect_translation']) == 2
@@ -52,6 +80,7 @@ def run(args):
     args.evidence.mkdir(parents=True, exist_ok=False)
     plan = json.loads(args.plan.read_text())
     validate_plan(plan)
+    (args.evidence / 'plan.json').write_text(json.dumps(plan, indent=2))
     # A public label cannot be adopted by a new transport after a prior run.
     # Evidence directories are exclusive, making these names run-specific.
     for spec in plan['agents']:
@@ -62,6 +91,7 @@ def run(args):
     grab = None
     watcher = None
     mover = None
+    result = None
     motion_done = threading.Event()
     expected_motion = [] if plan.get('moving_primary') else None
     motion_errors = []
@@ -98,7 +128,10 @@ def run(args):
                           'session': spec['name'], 'delivery_mode': 'background'})
         mark('action_response', agent=index, tool=step['tool'], error=bool(result.get('isError')))
         after = snapshot(mcp, spec['target'], spec['name'])
-        assert not result.get('isError'), result
+        if 'expect_refusal' in step:
+            assert result.get('isError') and result.get('structuredContent', {}).get('reason') == step['expect_refusal'], result
+        else:
+            assert not result.get('isError'), result
         assert result['structuredContent']['route'] == 'synthetic_events', 'not plugin input evidence'
         assert after['window_bounds'] == before['window_bounds']
         primary_now = wm()
@@ -170,14 +203,6 @@ def run(args):
             (args.evidence / f'grant-request-{index}.json').write_text(json.dumps(request))
         print('GRANTS_REQUIRED', flush=True)
         wait_for(lambda: all((args.evidence / f'grant-{i}.json').exists() for i in range(len(clients))), 180)
-        for index in range(len(clients)):
-            request = json.loads((args.evidence / f'grant-request-{index}.json').read_text())
-            grant = json.loads((args.evidence / f'grant-{index}.json').read_text())
-            assert all(grant[key] == request[key] for key in ('epoch', 'challenge', 'target'))
-            endpoint = 'cua-input-test.sock' if request['lane'] == 0 else 'cua-input-test-2.sock'
-            operator = Trace(args.input_directory / endpoint)
-            operators.append(operator)
-            operator.exchange(grant['packet'])
         recorder = client(args.evidence / 'observer')
         snapshot(recorder, foreground)
         desktop = recorder.tool('get_desktop_state', {})['structuredContent']
@@ -194,6 +219,16 @@ def run(args):
         primary_before = wm()
         assert primary_before['pid'] == foreground['pid']
         baseline = state(args.foreground_journal)
+        # Establish the independent primary hold before approval. A grant for a
+        # currently foreground client is correctly revoked by the compositor.
+        for index in range(len(clients)):
+            request = json.loads((args.evidence / f'grant-request-{index}.json').read_text())
+            grant = json.loads((args.evidence / f'grant-{index}.json').read_text())
+            assert all(grant[key] == request[key] for key in ('epoch', 'challenge', 'target'))
+            endpoint = 'cua-input-test.sock' if request['lane'] == 0 else 'cua-input-test-2.sock'
+            operator = Trace(args.input_directory / endpoint)
+            operators.append(operator)
+            operator.exchange(grant['packet'])
         trace.exchange('TRACE_START')
         watcher = threading.Thread(target=watch)
         watcher.start()
@@ -220,8 +255,22 @@ def run(args):
                 assert wm() == primary_before, 'negative control must return to identical endpoints'
             elif 'parallel' in phase:
                 ready = threading.Barrier(len(phase['parallel']))
+                control_offset = trace.exchange('TRACE_READ 0')['count']
                 with ThreadPoolExecutor(max_workers=len(clients)) as pool:
                     futures = [pool.submit(action, step['agent'], step, ready) for step in phase['parallel']]
+                    if 'control' in phase:
+                        started_actors = set()
+                        def both_drags_started():
+                            nonlocal control_offset
+                            page = trace.exchange('TRACE_READ ' + str(control_offset))
+                            control_offset += len(page['events'])
+                            started_actors.update(row[5] for row in page['events'] if row[2] == 'agent_drag_start')
+                            return started_actors == {1, 2}
+                        wait_for(both_drags_started, 12)
+                        time.sleep(0.25)
+                        control = phase['control']
+                        mark('operator_control', command=control['command'], agent=control['agent'])
+                        operators[control['agent']].exchange(control['command'])
                     results.extend(future.result() for future in futures)
             else:
                 results.append(action(phase['agent'], phase))
@@ -255,9 +304,14 @@ def run(args):
             assert report['result'] == 'passed', report
         if plan.get('require_overlap'):
             assert report['agent_drag_overlap_ms'] >= 100, report
+        assert released_synthetic_input(data)
         outputs = []
-        for oracle in plan.get('outputs', []):
+        for output_index, oracle in enumerate(plan.get('outputs', [])):
             content = Path(oracle['path']).read_bytes()
+            saved = args.evidence / 'saved-outputs'
+            saved.mkdir(exist_ok=True)
+            (saved / f'{output_index}-before{Path(oracle["path"]).suffix}').write_bytes(before_app_files[oracle['path']])
+            (saved / f'{output_index}-after{Path(oracle["path"]).suffix}').write_bytes(content)
             assert content != before_app_files[oracle['path']], 'application did not save a changed file'
             tree = ET.fromstring(content)
             node = tree.find(oracle['xpath'], oracle.get('namespaces', {}))
@@ -274,10 +328,10 @@ def run(args):
             outputs.append({'path': Path(oracle['path']).name, 'verified': True, 'attributes': node.attrib})
         result = {'result': 'passed', 'isolation': report, 'outputs': outputs,
                   'driver_actions': len(results), 'autonomous_model_benchmark': False,
+                  'synthetic_input_released': True,
+                  'harness_sha256': hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
                   'negative_control': bool(plan.get('expect_detected_theft')),
                   'video': str(args.evidence / 'video' / 'recording.mp4')}
-        (args.evidence / 'result.json').write_text(json.dumps(result, indent=2))
-        print(json.dumps(result), flush=True)
     finally:
         motion_done.set()
         if mover: mover.join(timeout=5)
@@ -290,16 +344,28 @@ def run(args):
                 (args.evidence / 'trace.json').write_text(json.dumps(data, indent=2))
                 (args.evidence / 'isolation.json').write_text(json.dumps(analyze(data, expected_motion=expected_motion), indent=2))
         except (OSError, RuntimeError): pass
+        operations = []
         if recorder:
-            try: recorder.tool('stop_recording', {})
-            finally: recorder.close()
-        for operator in operators:
-            try: operator.exchange('CANCEL')
-            finally: operator.close()
-        if grab and grab.poll() is None:
-            grab.terminate(); grab.wait(timeout=5)
-        for mcp in clients: mcp.close()
-        trace.close()
+            operations += [('stop_video', lambda: recorder.tool('stop_recording', {})), ('close_recorder', recorder.close)]
+        for index, operator in enumerate(operators):
+            operations += [(f'cancel_{index}', lambda op=operator: op.exchange('CANCEL')),
+                           (f'close_operator_{index}', operator.close)]
+        def release_primary():
+            if grab and grab.poll() is None:
+                grab.terminate(); grab.wait(timeout=5)
+            if grab:
+                wait_for(lambda: not state(args.foreground_journal)['held'])
+        operations.append(('release_primary', release_primary))
+        operations.extend((f'close_agent_{i}', mcp.close) for i, mcp in enumerate(clients))
+        operations.append(('close_trace', trace.close))
+        cleanup_errors = cleanup_all(operations)
+        (args.evidence / 'cleanup.json').write_text(json.dumps({'errors': cleanup_errors}, indent=2))
+        if args.metrics and (result is None or cleanup_errors):
+            args.metrics.write_text(json.dumps({'status': 'failed', 'cursor_violations': None,
+                'focus_events': None, 'releases': None, 'actions': None}))
+    assert not cleanup_errors, cleanup_errors
+    (args.evidence / 'result.json').write_text(json.dumps(result, indent=2))
+    print(json.dumps(result), flush=True)
 
 
 if __name__ == '__main__':

@@ -58,6 +58,10 @@ def run(args):
         target, foreground = plan["background"], plan["foreground"]
         result["identity"] = {"case": args.case, "source_sha": args.source_sha,
             "module_sha256": hashlib.sha256(args.module.read_bytes()).hexdigest(),
+            "harness_sha256": {name: hashlib.sha256(Path(__file__).with_name(name).read_bytes()).hexdigest()
+                               for name in ("desktop_state_live.py", "desktop_state_evidence.py", "desktop_faults.py",
+                                            "driver_input_live.py", "input_lifecycle_live.py", "lifecycle_evidence.py",
+                                            "primary_trace.py", "input_transport_test.py", "realapp_proof.py")},
             "foreground": foreground, "foreground_bounds": plan["foreground_bounds"],
             "background_bounds": plan["background_bounds"],
             "foreground_point": plan["foreground_point"],

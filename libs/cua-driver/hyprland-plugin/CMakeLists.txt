@@ -32,6 +32,12 @@ cua_hyprland_harden(cua_hyprland_protocol)
 set_target_properties(cua_hyprland_protocol PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(BUILD_TESTING)
+    add_executable(cua_hyprland_drag_geometry_test tests/drag_geometry_test.cpp)
+    target_compile_features(cua_hyprland_drag_geometry_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_drag_geometry_test PRIVATE src)
+    target_compile_options(cua_hyprland_drag_geometry_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_drag_geometry_test COMMAND cua_hyprland_drag_geometry_test)
+
     add_test(NAME cua_hyprland_cmake_api_test
         COMMAND ${CMAKE_COMMAND}
             -S ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake-api

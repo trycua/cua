@@ -1,6 +1,7 @@
 // Independent-seat design adapted from Dillon DuPont's Hyprland prototype.
 // All resource dispatch below belongs to this seat, never CSeatManager's focus.
 #include "input_experiment.hpp"
+#include "drag_geometry.hpp"
 #include "primary_trace.hpp"
 
 #include <src/Compositor.hpp>
@@ -134,6 +135,7 @@ struct InputExperiment::Impl {
         double x1, y1, x2, y2;
         Clock::time_point start;
         unsigned duration;
+        DragGeometry geometry;
     };
     int listener = -1;
     wl_event_source* listen_source = nullptr;
@@ -580,7 +582,8 @@ struct InputExperiment::Impl {
                 if (Clock::now() + std::chrono::milliseconds(duration + 50) >= expires) { send(c, refusal("lease_expired")); return; }
                 if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
                 if (trace) trace->mark("agent_drag_start", lane + 1);
-                button(272, true); drag = Drag{&c, x, y, x2, y2, Clock::now(), static_cast<unsigned>(duration)};
+                button(272, true);
+                drag.emplace(Drag{&c, x, y, x2, y2, Clock::now(), static_cast<unsigned>(duration), DragGeometry{c.revision}});
                 send(c, R"({"ok":true,"phase":"started"})"); return;
             }
         }
@@ -595,10 +598,9 @@ struct InputExperiment::Impl {
     }
     void step() {
         if (lease) {
-            const auto revision = lease->revision;
             if (Clock::now() >= expires) revoke("lease_expired");
             else if (lease->dead || !available() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
-                (drag && lease->revision != revision)) revoke("cancelled");
+                (drag && !drag->geometry.matches(lease->revision))) revoke("cancelled");
         }
         if (drag) {
             const auto d = *drag;
@@ -645,8 +647,11 @@ std::string InputExperiment::status_json() const {
     std::string states;
     for (const auto& lane : lanes_) {
         if (!states.empty()) states += ',';
-        states += std::format(R"({{"lane":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{}}})",
-            lane->lane, lane->epoch, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches);
+        const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
+        const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
+        states += std::format(R"({{"lane":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
+            lane->lane, lane->epoch, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
+            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
     }
     // Aggregate legacy fields remain available to existing test probes.
     return std::format(R"({{"protocol":0,"test_only":true,"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",

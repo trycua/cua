@@ -174,6 +174,61 @@ stream, so these cases make a held-pointer claim only. These focused tests
 supplement, rather than replace, the canonical desktop matrix and physical
 host validation.
 
+## Desktop-state fault controls
+
+`desktop_state_live.py` is a focused experimental safety test, not the canonical
+desktop matrix. It requires a disposable Fleet guest, the explicitly loaded
+input experiment, and a source-built Driver service with unrestricted
+permissions. Use native GTK raw-event fixtures and keep their journals and
+Wayland wire logs. The helper refuses an arbitrary process as its target.
+
+For each `--case destroy|move|resize|lock|dpms`, run `--mode control` before
+`--mode action --control PATH_TO_CONTROL_RESULT`. Use the same foreground
+fixture, geometry, source SHA, module digest, and selected fault in both runs.
+The control measures the compositor effects of the fault without agent input.
+A lock can legitimately change focus; matching cursor endpoints alone does
+not prove that the agent added no interference. The comparison checks exact
+foreground state, ordered cursor movement, input events, and focus transitions.
+
+Pass the lifecycle runner's fixture paths, plus `--source-sha`, `--module`,
+`--compositor-pid`, `--compositor-exe`, `--instance`, and `--disposable`.
+Extend its plan with the exact `background_address` and a changed `move_to`
+or `resize_to` pair where applicable. Geometry faults require an already
+floating fixture. For destruction, capture `pre_target_resources` from both
+experimental lanes before launching the background fixture, after the other
+clients have settled. Resource counts must return to that baseline after
+destruction; expired weak focus references are not sufficient evidence.
+
+The action runner waits for the application's received button press before
+injecting the fault into a two-second drag. It requires a typed refusal and
+cleared authority, held input, and agent focus within 750 ms of fault dispatch,
+with enough time left that natural completion cannot satisfy the deadline.
+Surviving targets must receive a matching button release. A destroyed surface
+cannot acknowledge release, so that case uses disappearance and pruned
+resources instead. Unexpected keyboard or scroll input fails every drag case.
+
+The host operator reviews `request-initial.json` and `request-recovery.json`
+and supplies distinct signed grants with capabilities `10`. The runner waits
+35 seconds for each grant and never receives the signing key. After destruction,
+it also requests a separately launched replacement through `recovery-plan.json`.
+Recovery must refuse old authority, require a fresh grant, deliver exactly one
+Escape press/release pair, and preserve foreground input and compositor state.
+
+Build `session_lock_fixture.c` with the generated `ext-session-lock-v1`
+client protocol and pass it through `--lock-fixture`. It uses a real protocol
+lock and waits for compositor acknowledgments. The no-surface test depends on
+the protocol's mandatory output blanking; it is not a production lock screen.
+Independent watchdogs restore DPMS or request graceful unlock. Never kill a
+lock client to unlock the session: a crashed client can leave it locked, in
+which case discard the disposable guest.
+
+Both modes require finalized Driver video. Preserve failed runs and cleanup
+results as well as passing evidence. Publish only sanitized outcomes, timings,
+versions, and digests. These cases test sustained lock or display-off states
+observed by the compositor loop; they do not prove that an off/on transition
+entirely between samples is latched. Atomic key packets provide recovery
+evidence, not an interrupted held-key-stream guarantee.
+
 ## Fleet packaging lane
 
 Build an Omarchy/Arch Fleet image from the monorepo source using

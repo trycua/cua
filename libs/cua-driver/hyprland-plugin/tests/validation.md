@@ -4,6 +4,9 @@ The discovery-only plugin passed a native build and lifecycle checks on Cua
 Cloud Fleet on September 4, 2026. These results support review of the foundation;
 the full promotion gates in [the test plan](README.md) remain open.
 
+The [September 5 merge-readiness pass](#merge-readiness-revalidation-september-5-2026)
+records a fresh candidate build and the remaining system-installation gate.
+
 ## Candidate and environment
 
 The tested source was based on Cua commit
@@ -188,3 +191,57 @@ The guest configuration was restored, the plugin unloaded, and both initial
 disposable Fleet pools deleted with fresh lookups confirming their removal.
 The follow-up report changes only this Markdown file after testing
 `3789f0e6e`; it does not change the plugin, packaging, CI, or test harness.
+
+## Merge-readiness revalidation (September 5, 2026)
+
+Tested source: `e254619817e75019d025e2714a395378ea533a28`, after merging
+`1336a5e419c933eb750bfefe2d9db6aad63235de` from main. The merge resolved one
+installation-document conflict without changing the plugin implementation.
+The test-helper follow-up refuses optimized Python before validation or
+compositor access; four regression tests cover that guard and packet exchange.
+The plugin remains version `0.1.0`, discovery-only, and outside the Driver
+installation/release path. There are no Rust delivery changes in this PR.
+
+A fresh disposable Cua Cloud Fleet claim used Omarchy `4.0.1-1`, Hyprland
+`0.56.2-1`, and portal `1.4.1-1`. The installed Driver remained `0.22.2` and
+was not replaced or used as input-delivery evidence. Hyprland's ELF compiler
+record and the selected plugin compiler both reported GCC `16.1.1 20260728`;
+the guest's default compiler was `16.2.1` and was not used for the plugin.
+The module linked the guest's shared `libstdc++.so.6.0.36`.
+
+Validation results:
+
+- The unchanged Arch recipe built with CMake `4.4.3` and Ninja `1.13.2`.
+  `makepkg --nodeps` skipped dependency-database checks because CMake/Ninja
+  were task-local wheels; the recipe's exact installed Hyprland and header
+  checks ran. All six native Release CTests passed.
+- All 11 Python helper tests passed on the guest and macOS review host.
+  Six portable Release CTests also passed on macOS; those are not Linux proof.
+- Package metadata pins `hyprland=0.56.2-1`. Its payload contains only the
+  module and license plus their parent directories, with no autoload config.
+- `nested_lifecycle.py` passed against the freshly built module: two actual
+  owned compositors, six mutation refusals per start, a clean restart, old
+  connection/socket closure, fresh socket and epoch, and sibling liveness.
+  Both children stopped; the original compositor remained responsive and its
+  plugin list was empty. This does not claim unchanged parent focus during
+  nested-window startup.
+- A real `sudo -n pacman -U` attempt refused because the guest requires a sudo
+  password. A subsequent package query confirmed that the plugin was not
+  installed. **System installation and dependency-upgrade refusal remain
+  unverified**; package creation and metadata inspection do not replace them.
+
+| Artifact                                   | SHA-256                                                            |
+| ------------------------------------------ | ------------------------------------------------------------------ |
+| Exported plugin source and license archive | `4feaafc406f6557ea21b358a5f883cd77053d70a31623483d2ac06b82b4d90e9` |
+| Arch package                               | `300cb04ba8c001daeb84f37232fedc135920e5c424ea651d3db1b3cbb3b6d23c` |
+| Native module                              | `e179eaa165a20d2f0365e0062c1cca8ac4c4caa9532124417636a603ee4ba73d` |
+
+The remaining merge gates are a recorded discovery-only RFC disposition and
+the system package-transaction evidence above. Direct-DRM restart, the exact
+physical-host baseline, and input/client certification remain separate
+promotion gates. The nonshipping input experiment in #3572 is not included
+in this foundation's scope or results.
+
+The claim and pool were deleted after evidence collection. A fresh successful
+SDK namespace inventory found zero matching namespaces. The local evidence
+archive is retained; no Fleet image or package was published.

@@ -14,7 +14,8 @@ use std::path::PathBuf;
 
 use super::refusal::BrowserRefusal;
 use super::types::{
-    BrowserClassification, BrowserProduct, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint,
+    BrowserClassification, BrowserInputAction, BrowserProduct, NativeWindowInfo, OwnedEndpoint,
+    ProcessFingerprint,
 };
 
 /// Select the first installed, non-redirected candidate and return its
@@ -279,10 +280,15 @@ pub trait BrowserPlatform: Send + Sync {
         ))
     }
 
-    /// Explain why a trusted CDP Input route cannot preserve background
-    /// posture for a standalone browser on this platform. Embedded Chromium
-    /// routes are independently proven and do not consult this capability.
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+    /// Explain why one trusted CDP Input action cannot preserve background
+    /// posture for a standalone browser product on this platform. Each action
+    /// is gated independently. Embedded Chromium routes are separately proven
+    /// and do not consult this capability.
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        _product: BrowserProduct,
+        _action: BrowserInputAction,
+    ) -> Option<&'static str> {
         None
     }
 

@@ -17,12 +17,13 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
+use super::input::{ref_point, trusted_input_refusal, trusted_ref_point};
 use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
-use super::types::BindingQuality;
+use super::types::{BindingQuality, BrowserInputAction};
 
 /// Register the complete browser surface against one shared engine. Platform
 /// crates call this from their `register_all` after constructing the
@@ -997,26 +998,13 @@ impl Tool for BrowserClickTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
-        if route == "trusted" && validated.record.cdp_window_id.is_some() {
-            if let Some(limitation) = self
-                .engine
-                .platform
-                .standalone_trusted_input_background_limitation()
-            {
-                return BrowserRefusal::new(
-                    BrowserRefusalCode::BrowserInputTrustUnavailable,
-                    format!(
-                        "{limitation}; use input_route=\"dom_event\" with a ref for a synthetic full-background click"
-                    ),
-                )
-                .with_detail(json!({
-                    "requested_route": "trusted",
-                    "limitation": limitation,
-                    "alternative_route": "dom_event",
-                    "alternative_requires_ref": true,
-                    "trusted_delivery_attempted": false,
-                }))
-                .to_tool_result();
+        if route == "trusted" {
+            if let Some(refusal) = trusted_input_refusal(
+                self.engine.platform.as_ref(),
+                &validated.record,
+                BrowserInputAction::Click,
+            ) {
+                return refusal.to_tool_result();
             }
         }
 
@@ -1099,35 +1087,19 @@ impl Tool for BrowserClickTool {
                     .to_tool_result()
                 }
             };
-            // Cursor feedback is best-effort and visual-only. A missing box
+            // Cursor feedback is best-effort and visual-only. Geometry failure
             // must not turn a valid DOM-event action into a refusal.
-            let _ = conn
-                .call(
-                    Some(cdp),
-                    "DOM.scrollIntoViewIfNeeded",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await;
-            if let Ok(box_model) = conn
-                .call(
-                    Some(cdp),
-                    "DOM.getBoxModel",
-                    json!({ "backendNodeId": backend }),
-                )
-                .await
-            {
-                if let Some((x, y)) = quad_center(&box_model) {
-                    self.engine
-                        .visualize_browser_action(
-                            &session,
-                            &validated,
-                            cdp,
-                            x,
-                            y,
-                            BrowserVisualActionKind::Click,
-                        )
-                        .await;
-                }
+            if let Ok((x, y)) = ref_point(conn, cdp, backend).await {
+                self.engine
+                    .visualize_browser_action(
+                        &session,
+                        &validated,
+                        cdp,
+                        x,
+                        y,
+                        BrowserVisualActionKind::Click,
+                    )
+                    .await;
             }
             return match conn
                 .call(
@@ -1165,43 +1137,10 @@ impl Tool for BrowserClickTool {
 
         // Trusted route: resolve a click point, then Input.dispatchMouseEvent.
         let (x, y) = match (backend_node_id, coords) {
-            (Some(backend), _) => {
-                // Best effort scroll-into-view; ignore failure (older Chromium).
-                let _ = conn
-                    .call(
-                        Some(cdp),
-                        "DOM.scrollIntoViewIfNeeded",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await;
-                let box_model = match conn
-                    .call(
-                        Some(cdp),
-                        "DOM.getBoxModel",
-                        json!({ "backendNodeId": backend }),
-                    )
-                    .await
-                {
-                    Ok(v) => v,
-                    Err(_) => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node has no layout box — it left the DOM or is hidden",
-                        )
-                        .to_tool_result()
-                    }
-                };
-                match quad_center(&box_model) {
-                    Some(pt) => pt,
-                    None => {
-                        return BrowserRefusal::new(
-                            BrowserRefusalCode::BrowserRefStale,
-                            "the ref's node returned an unusable layout box",
-                        )
-                        .to_tool_result()
-                    }
-                }
-            }
+            (Some(backend), _) => match trusted_ref_point(conn, cdp, backend).await {
+                Ok(point) => point,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
             (None, Some(pt)) => pt,
             (None, None) => unreachable!("validated above"),
         };
@@ -1296,21 +1235,6 @@ impl Tool for BrowserClickTool {
             "y": y,
         }))
     }
-}
-
-/// Center of the content quad from a `DOM.getBoxModel` result.
-fn quad_center(box_model: &Value) -> Option<(f64, f64)> {
-    let quad = box_model.get("model")?.get("content")?.as_array()?;
-    if quad.len() < 8 {
-        return None;
-    }
-    let nums: Vec<f64> = quad.iter().filter_map(Value::as_f64).collect();
-    if nums.len() < 8 {
-        return None;
-    }
-    let xs = [nums[0], nums[2], nums[4], nums[6]];
-    let ys = [nums[1], nums[3], nums[5], nums[7]];
-    Some((xs.iter().sum::<f64>() / 4.0, ys.iter().sum::<f64>() / 4.0))
 }
 
 // ── browser_type ─────────────────────────────────────────────────────────────
@@ -1693,35 +1617,19 @@ impl Tool for BrowserTypeTool {
             .to_tool_result();
         }
 
-        // Give the recording a visual target before text delivery. Keep this
-        // best-effort: editability/input semantics never depend on the overlay.
-        let _ = conn
-            .call(
-                Some(cdp),
-                "DOM.scrollIntoViewIfNeeded",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await;
-        if let Ok(box_model) = conn
-            .call(
-                Some(cdp),
-                "DOM.getBoxModel",
-                json!({ "backendNodeId": entry.backend_node_id }),
-            )
-            .await
-        {
-            if let Some((x, y)) = quad_center(&box_model) {
-                self.engine
-                    .visualize_browser_action(
-                        &session,
-                        &validated,
-                        cdp,
-                        x,
-                        y,
-                        BrowserVisualActionKind::Type,
-                    )
-                    .await;
-            }
+        // Give the recording a visual target before text delivery. Geometry is
+        // best-effort because input semantics never depend on the overlay.
+        if let Ok((x, y)) = ref_point(conn, cdp, entry.backend_node_id).await {
+            self.engine
+                .visualize_browser_action(
+                    &session,
+                    &validated,
+                    cdp,
+                    x,
+                    y,
+                    BrowserVisualActionKind::Type,
+                )
+                .await;
         }
 
         let requested_chars = text.chars().count();
@@ -3015,6 +2923,7 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
+                product_kind: BrowserProduct::GoogleChrome,
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
@@ -3076,6 +2985,7 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
+                product_kind: BrowserProduct::GoogleChrome,
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,
@@ -3122,6 +3032,7 @@ mod tests {
             crate::browser::store::TargetRecord {
                 target_id: String::new(),
                 pid: 1,
+                product_kind: BrowserProduct::GoogleChrome,
                 window_id: 7,
                 ws_url: "ws://127.0.0.1:9222/devtools/browser/x".into(),
                 endpoint_owner_pid: 1,

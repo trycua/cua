@@ -296,10 +296,10 @@ browser_click({
 ```
 
 Use viewport `x` and `y` instead of `ref` when the page snapshot cannot name
-the rendered target. Standalone Chrome and Edge on Windows have passing
-full-background evidence for this route. Standalone Chromium on macOS and Linux
-returns `browser_input_trust_unavailable` because dispatching the trusted
-pointer event activates the native browser window.
+the rendered target. Standalone Chrome on macOS and Chrome and Edge on Windows
+have passing full-background evidence for this route. Other macOS Chromium
+products and Linux return `browser_input_trust_unavailable` where background
+posture is not validated.
 
 To request a synthetic full-background DOM click deliberately, pass
 `input_route: "dom_event"` with a ref:

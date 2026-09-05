@@ -32,9 +32,10 @@ use super::tools::{
     BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
-    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
-    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserInputAction, BrowserProcessRole,
+    BrowserProduct, EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport,
+    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
+    ProcessFingerprint, Rect,
 };
 
 // ── Scripted Chromium fixture ────────────────────────────────────────────────
@@ -63,6 +64,7 @@ struct FixtureState {
     viewport_css_width: f64,
     viewport_css_height: f64,
     tab_visible: bool,
+    trusted_ref_hit_test_passes: bool,
     /// Every incoming CDP call: (sessionId, method, params).
     calls: Vec<(Option<String>, String, Value)>,
 }
@@ -89,6 +91,7 @@ impl Default for FixtureState {
             viewport_css_width: 800.0,
             viewport_css_height: 600.0,
             tab_visible: true,
+            trusted_ref_hit_test_passes: true,
             calls: Vec::new(),
         }
     }
@@ -533,8 +536,8 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 "cssVisualViewport": {
                     "pageX": 0.0,
                     "pageY": 0.0,
-                    "clientWidth": st.viewport_css_width,
-                    "clientHeight": st.viewport_css_height
+                    "clientWidth": if is_oopif { 2_000.0 } else { st.viewport_css_width },
+                    "clientHeight": if is_oopif { 2_000.0 } else { st.viewport_css_height }
                 }
             })),
             "Runtime.evaluate"
@@ -648,9 +651,25 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             | "Emulation.setFocusEmulationEnabled"
             | "Input.dispatchMouseEvent"
             | "Input.insertText" => MockReply::ok(json!({})),
+            "DOM.getNodeForLocation" => {
+                let x = call.params["x"].as_f64().unwrap_or_default();
+                let backend = if st.trusted_ref_hit_test_passes {
+                    ((x - 10.0) / 10.0).round() as i64
+                } else {
+                    999
+                };
+                MockReply::ok(json!({ "backendNodeId": backend }))
+            }
             "DOM.resolveNode" => MockReply::ok(json!({
                 "object": { "objectId": format!("obj-{}", call.params["backendNodeId"]) }
             })),
+            "Runtime.callFunctionOn"
+                if call.params["functionDeclaration"]
+                    .as_str()
+                    .is_some_and(|function| function.contains("cua_trusted_ref_hit_test")) =>
+            {
+                MockReply::ok(json!({ "result": { "value": st.trusted_ref_hit_test_passes } }))
+            }
             "Runtime.callFunctionOn" => MockReply::ok(json!({ "result": { "value": true } })),
             other => MockReply::method_not_found(other),
         }
@@ -673,7 +692,11 @@ struct FixturePlatform {
 
 #[async_trait]
 impl BrowserPlatform for FixturePlatform {
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        _product: BrowserProduct,
+        _action: BrowserInputAction,
+    ) -> Option<&'static str> {
         self.trusted_input_limited
             .then_some("fixture trusted input raises the standalone window")
     }
@@ -2096,6 +2119,64 @@ async fn click_validates_same_process_iframe_loader_and_uses_the_tab_session() {
 }
 
 #[tokio::test]
+async fn trusted_ref_click_refuses_when_the_live_point_is_covered() {
+    let f = fixture_with(|state| state.trusted_ref_hit_test_passes = false).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "trusted", "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["refusal"]["code"],
+        "browser_wrong_target_refused"
+    );
+    assert_eq!(
+        structured(&result)["refusal"]["detail"]["hit_test"],
+        "covered"
+    );
+    assert_eq!(
+        structured(&result)["refusal"]["detail"]["trusted_delivery_attempted"],
+        false
+    );
+    assert!(!recorded_calls(&f, "DOM.scrollIntoViewIfNeeded").is_empty());
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Emulation.setFocusEmulationEnabled").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_ref_click_refuses_when_scroll_does_not_reach_the_viewport() {
+    let f = fixture_with(|state| state.viewport_css_width = 50.0).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let main_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "ref": main_ref,
+            "input_route": "trusted", "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&result)["refusal"]["code"],
+        "browser_wrong_target_refused"
+    );
+    assert_eq!(
+        structured(&result)["refusal"]["detail"]["hit_test"],
+        "outside_viewport"
+    );
+    assert!(!recorded_calls(&f, "DOM.scrollIntoViewIfNeeded").is_empty());
+    assert!(recorded_calls(&f, "DOM.getNodeForLocation").is_empty());
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+}
+
+#[tokio::test]
 async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable() {
     let f = fixture_with_platform(|_| {}, true).await;
     let (target, tab) = bind(&f).await;
@@ -2159,6 +2240,31 @@ async fn trusted_click_refuses_when_standalone_background_posture_is_unavailable
     assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn trusted_pointer_uses_the_shared_background_refusal() {
+    let f = fixture_with_platform(|_| {}, true).await;
+    let (target, tab) = bind(&f).await;
+
+    let trusted = BrowserPointerTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target, "tab_id": tab, "action": "hover",
+            "x": 20, "y": 20, "input_route": "trusted", "session": SESSION
+        }))
+        .await;
+
+    assert_eq!(
+        structured(&trusted)["refusal"]["code"],
+        "browser_input_trust_unavailable"
+    );
+    assert_eq!(structured(&trusted)["refusal"]["detail"]["action"], "hover");
+    assert_eq!(
+        structured(&trusted)["refusal"]["detail"]["trusted_delivery_attempted"],
+        false
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Emulation.setFocusEmulationEnabled").is_empty());
 }
 
 #[tokio::test]

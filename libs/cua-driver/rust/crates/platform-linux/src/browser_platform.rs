@@ -14,9 +14,10 @@ use cua_driver_core::browser::platform::{
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
-    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
-    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserInputAction, BrowserProcessRole,
+    BrowserProduct, EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport,
+    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
+    ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
@@ -489,7 +490,11 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         ))
     }
 
-    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+    fn standalone_trusted_input_background_limitation(
+        &self,
+        _product: BrowserProduct,
+        _action: BrowserInputAction,
+    ) -> Option<&'static str> {
         Some("Chromium's trusted CDP Input route activates its standalone browser window on Linux")
     }
 

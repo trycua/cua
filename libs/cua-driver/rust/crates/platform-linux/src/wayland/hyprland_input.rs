@@ -12,6 +12,7 @@ use anyhow::{bail, ensure, Context, Result};
 use serde_json::{json, Value};
 
 const TIMEOUT: Duration = Duration::from_secs(3);
+const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 
 pub fn enabled() -> bool {
@@ -49,6 +50,7 @@ pub enum Action {
 
 struct Client {
     socket: socket2::Socket,
+    owner: String,
     path: PathBuf,
     pid: u32,
     address: u64,
@@ -103,8 +105,12 @@ fn validate_reply(value: &Value) -> Result<()> {
     }
 }
 
-fn wait(socket: &socket2::Socket, events: i16, deadline: Instant) -> Result<()> {
+fn wait(socket: &socket2::Socket, owner: &str, events: i16, deadline: Instant) -> Result<()> {
     loop {
+        ensure!(
+            !cua_driver_core::session::is_session_ending(owner),
+            "Hyprland input session ending; dispatch effect is unknown"
+        );
         let remaining = deadline.saturating_duration_since(Instant::now());
         ensure!(
             !remaining.is_zero(),
@@ -115,7 +121,8 @@ fn wait(socket: &socket2::Socket, events: i16, deadline: Instant) -> Result<()> 
             events,
             revents: 0,
         };
-        let result = unsafe { libc::poll(&mut fd, 1, remaining.as_millis().max(1) as i32) };
+        let interval = remaining.min(CANCELLATION_POLL);
+        let result = unsafe { libc::poll(&mut fd, 1, interval.as_millis().max(1) as i32) };
         if result < 0 {
             let error = std::io::Error::last_os_error();
             if error.kind() == std::io::ErrorKind::Interrupted {
@@ -123,9 +130,12 @@ fn wait(socket: &socket2::Socket, events: i16, deadline: Instant) -> Result<()> 
             }
             return Err(error.into());
         }
+        if result == 0 {
+            continue;
+        }
         ensure!(
-            result > 0,
-            "Hyprland input timeout; dispatch effect is unknown"
+            !cua_driver_core::session::is_session_ending(owner),
+            "Hyprland input session ending; dispatch effect is unknown"
         );
         ensure!(
             fd.revents & (libc::POLLERR | libc::POLLNVAL) == 0,
@@ -148,7 +158,7 @@ impl Client {
         Ok(())
     }
 
-    fn connect(path: PathBuf, pid: u32, address: u64) -> Result<Self> {
+    fn connect(path: PathBuf, owner: String, pid: u32, address: u64) -> Result<Self> {
         let socket = socket2::Socket::new(
             socket2::Domain::UNIX,
             socket2::Type::from(libc::SOCK_SEQPACKET),
@@ -158,6 +168,7 @@ impl Client {
         socket.set_nonblocking(true)?;
         let mut client = Self {
             socket,
+            owner,
             path,
             pid,
             address,
@@ -183,7 +194,7 @@ impl Client {
         );
         let deadline = Instant::now() + TIMEOUT;
         loop {
-            wait(&self.socket, libc::POLLOUT, deadline)?;
+            wait(&self.socket, &self.owner, libc::POLLOUT, deadline)?;
             let count = unsafe {
                 libc::send(
                     self.socket.as_raw_fd(),
@@ -211,7 +222,7 @@ impl Client {
     fn receive(&self, deadline: Instant) -> Result<Value> {
         let mut bytes = [0u8; MAX_PACKET];
         loop {
-            wait(&self.socket, libc::POLLIN, deadline)?;
+            wait(&self.socket, &self.owner, libc::POLLIN, deadline)?;
             let count = unsafe {
                 libc::recv(
                     self.socket.as_raw_fd(),
@@ -412,7 +423,8 @@ fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
 pub fn cleanup_session(owner: &str) {
     let client = clients().lock().unwrap().get(owner).cloned();
     if let Some(client) = client {
-        // The normal lifecycle barrier waits for in-flight actions first.
+        // In-flight waits observe the common termination signal and drop
+        // their owned socket promptly. Final cleanup still uses the barrier.
         // Closing the exact connection revokes this lane, never another one.
         *client.client.lock().unwrap() = None;
         clients().lock().unwrap().remove(owner);
@@ -466,7 +478,7 @@ pub fn execute_with_started(
         *slot = None;
     }
     if slot.is_none() {
-        *slot = Some(Client::connect(path, pid, address)?);
+        *slot = Some(Client::connect(path, owner, pid, address)?);
     }
     let mut result = slot
         .as_mut()
@@ -626,6 +638,7 @@ mod tests {
         (
             Client {
                 socket,
+                owner: "input-unregistered-test-client".into(),
                 path: PathBuf::new(),
                 pid: 1,
                 address: 1,
@@ -635,6 +648,79 @@ mod tests {
             },
             peer,
         )
+    }
+
+    #[test]
+    fn pending_termination_interrupts_receive_before_cleanup_barrier() {
+        use cua_driver_core::session::{self, SessionClientKind, SessionTransport};
+        let owner = "input-cancellation-owner";
+        let sid = "input-cancellation-runtime-id";
+        let guard = session::begin_session_dispatch(
+            sid,
+            None,
+            owner,
+            true,
+            SessionTransport::McpStdio,
+            SessionClientKind::Mcp,
+        )
+        .unwrap();
+        let (mut client, peer) = test_connection();
+        client.owner = sid.into();
+        let terminator = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            assert!(session::end_session_for_owner(sid, owner));
+        });
+        let start = Instant::now();
+        assert!(client
+            .receive(start + TIMEOUT)
+            .unwrap_err()
+            .to_string()
+            .contains("session ending"));
+        assert!(start.elapsed() < Duration::from_millis(750));
+        terminator.join().unwrap();
+        assert!(
+            !session::is_session_ended(sid),
+            "cleanup still waits for the guard"
+        );
+        drop(client); // execute_with_started drops exactly this connection on error.
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0
+        );
+        let (other, other_peer) = test_connection();
+        other_peer.send(br#"{"ok":true}"#).unwrap();
+        assert_eq!(other.receive(Instant::now() + TIMEOUT).unwrap()["ok"], true);
+        drop(guard);
+        assert!(session::is_session_ended(sid));
+    }
+
+    #[test]
+    fn terminated_session_never_sends_even_when_socket_is_ready() {
+        let (mut client, peer) = test_connection();
+        client.owner = "input-terminated-runtime-id".into();
+        cua_driver_core::session::end_session(&client.owner);
+        assert!(client
+            .request("HELLO")
+            .unwrap_err()
+            .to_string()
+            .contains("session ending"));
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe {
+                libc::recv(
+                    peer.as_raw_fd(),
+                    byte.as_mut_ptr().cast(),
+                    1,
+                    libc::MSG_DONTWAIT,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]

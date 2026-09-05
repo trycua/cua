@@ -596,7 +596,8 @@ struct InputExperiment::Impl {
     void step() {
         if (lease) {
             const auto revision = lease->revision;
-            if (lease->dead || Clock::now() >= expires || !available() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
+            if (Clock::now() >= expires) revoke("lease_expired");
+            else if (lease->dead || !available() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && lease->revision != revision)) revoke("cancelled");
         }
         if (drag) {

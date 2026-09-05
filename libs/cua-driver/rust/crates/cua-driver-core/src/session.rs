@@ -1379,6 +1379,24 @@ pub fn is_session_ended(session_id: &str) -> bool {
     ended_sessions().lock().unwrap().contains_key(session_id)
 }
 
+/// Whether termination has been requested for a runtime-private lifecycle.
+///
+/// Long-running adapters may use this to relinquish held input before their
+/// dispatch guard drops. Cleanup hooks still run only after admitted work has
+/// unwound. This read-only cancellation signal neither grants authority nor
+/// revives a session; callers must use the registry's private id, not a label.
+pub fn is_session_ending(session_id: &str) -> bool {
+    // Match admission/termination lock order and observe pending termination
+    // and completed termination in one read-side critical section.
+    let ended = ended_sessions().lock().unwrap();
+    ended.contains_key(session_id)
+        || lifecycle_records()
+            .lock()
+            .unwrap()
+            .get(session_id)
+            .is_some_and(|record| record.pending_end.is_some())
+}
+
 /// Revive a previously-ended session id by clearing its tombstone, so a fresh
 /// `start_session` with a recycled id works as a caller would expect: the id
 /// becomes live again and its actions stop being rejected by the resurrection
@@ -1997,7 +2015,12 @@ mod tests {
         )
         .expect("idempotent start must preserve the live dispatch record");
 
+        assert!(!is_session_ending(sid));
+        assert!(!end_session_for_owner(sid, "unrelated-owner"));
+        assert!(!is_session_ending(sid));
         assert!(end_session_for_owner(sid, owner));
+        assert!(is_session_ending(sid));
+        assert_eq!(cleanup_calls.load(Ordering::SeqCst), 0);
         let snapshot = session_snapshot(sid, owner, DEFAULT_SESSION_IDLE_TTL).unwrap();
         assert!(snapshot.ending);
         assert!(!is_session_ended(sid));
@@ -2007,6 +2030,7 @@ mod tests {
 
         drop(guard);
         assert!(is_session_ended(sid));
+        assert!(is_session_ending(sid));
         assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);
         assert!(end_session_for_owner(sid, owner));
         assert_eq!(cleanup_calls.load(Ordering::SeqCst), 1);

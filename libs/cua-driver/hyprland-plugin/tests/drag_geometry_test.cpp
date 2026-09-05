@@ -1,8 +1,12 @@
 #include "drag_geometry.hpp"
 
 #include <array>
-#include <cassert>
+#include <cstdlib>
 #include <cstdint>
+
+namespace {
+void check(bool condition) { if (!condition) std::abort(); }
+}
 
 int main() {
     using cua::hyprland::DragGeometry;
@@ -12,7 +16,7 @@ int main() {
         if (actual != cached) { cached = actual; ++revision; }
     };
     const DragGeometry drag{revision};
-    assert(drag.matches(revision));
+    check(drag.matches(revision));
 
     // Simulate a resize consumed by request()/approve() before their busy
     // refusal. The timer refresh sees no new change; the drag must still fail.
@@ -20,14 +24,14 @@ int main() {
     refresh(resized);
     const auto before_tick = revision;
     refresh(resized);
-    assert(before_tick == revision);
-    assert(!drag.matches(revision));
+    check(before_tick == revision);
+    check(!drag.matches(revision));
 
     // Moving back cannot revive old coordinates or old authority.
     refresh({10, 10, 640, 480});
-    assert(!drag.matches(revision));
+    check(!drag.matches(revision));
     const DragGeometry newly_authorized{revision};
-    assert(newly_authorized.matches(revision));
+    check(newly_authorized.matches(revision));
     refresh({20, 30, 640, 480});
-    assert(!newly_authorized.matches(revision));
+    check(!newly_authorized.matches(revision));
 }

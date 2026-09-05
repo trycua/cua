@@ -68,6 +68,10 @@ impl Tool for PidOnlyWindowTargetGuard {
         self.inner.def()
     }
 
+    fn has_independent_input_lane(&self, args: &Value) -> bool {
+        self.inner.has_independent_input_lane(args)
+    }
+
     async fn protected_resource_ownership(
         &self,
         adapter_id: &str,

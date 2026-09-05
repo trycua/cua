@@ -86,6 +86,7 @@ pub enum ActionTransport {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    LinuxHyprlandIsolatedInput,
     LinuxX11ConfigureWindow,
     BrowserCdpInputMouse,
     BrowserCdpInputKey,
@@ -122,6 +123,7 @@ impl ActionTransport {
         Self::LinuxLibei,
         Self::LinuxWaylandVirtualPointer,
         Self::LinuxCuaCompositorInject,
+        Self::LinuxHyprlandIsolatedInput,
         Self::LinuxX11ConfigureWindow,
         Self::BrowserCdpInputMouse,
         Self::BrowserCdpInputKey,
@@ -147,7 +149,8 @@ impl ActionTransport {
             Self::MacosCgEventPid
             | Self::WindowsPostMessage
             | Self::LinuxPty
-            | Self::LinuxXSendEvent => ActionRoute::SyntheticEvents,
+            | Self::LinuxXSendEvent
+            | Self::LinuxHyprlandIsolatedInput => ActionRoute::SyntheticEvents,
             Self::MacosCgEventHid
             | Self::WindowsTargetedInjection
             | Self::WindowsSendInput
@@ -1026,6 +1029,7 @@ fn transport_name(transport: ActionTransport) -> &'static str {
         ActionTransport::LinuxLibei => "linux_libei",
         ActionTransport::LinuxWaylandVirtualPointer => "linux_wayland_virtual_pointer",
         ActionTransport::LinuxCuaCompositorInject => "linux_cua_compositor_inject",
+        ActionTransport::LinuxHyprlandIsolatedInput => "linux_hyprland_isolated_input",
         ActionTransport::LinuxX11ConfigureWindow => "linux_x11_configure_window",
         ActionTransport::BrowserCdpInputMouse => "browser_cdp_input_mouse",
         ActionTransport::BrowserCdpInputKey => "browser_cdp_input_key",

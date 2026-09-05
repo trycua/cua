@@ -66,6 +66,8 @@ pub mod ffmpeg_install;
 pub mod health_report;
 pub mod history;
 pub mod image_utils;
+#[cfg(any(test, feature = "experimental-isolated-input-authority"))]
+pub mod isolated_input_authority;
 pub mod page;
 pub mod pip_hook;
 pub mod policy;

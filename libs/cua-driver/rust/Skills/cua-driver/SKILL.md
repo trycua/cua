@@ -668,7 +668,20 @@ pixel addressing path, not a different capture.
 | backgrounded / visible     | ✅                                                                                             | ✅                           | ✅                                                    | ✅                             |
 | **minimized**              | ✅                                                                                             | ✅ (actions fire in place)   | ❌ silent no-op — use `set_value` or click equivalent | ❌ no on-screen bounds         |
 | hidden                     | ✅                                                                                             | ✅                           | depends                                               | ❌                             |
-| on another desktop / Space | ⚠️ tree may be stripped on some apps — response carries `off_space: true` so you can detect it | ✅                           | ✅                                                    | ❌ not in current-desktop list |
+| on another desktop / Space | ⚠️ macOS tries exact main/focused-window recovery; the tree may still be unresolved | only with an exact exposed control | route-specific; not guaranteed | macOS requires exact AX resolution and a valid capture frame |
+
+**Off-Space macOS windows.** An empty application window list can affect both
+AppKit and SwiftUI. The driver also checks fresh main/focused AX windows, but
+never substitutes one for a different requested `window_id`. Prefer semantic
+actions on fresh tokens when recovery succeeds and verify the resulting state.
+If `degraded_reason` begins with `ax_window_unresolved` or a route refuses with
+`off_space_or_ax_unresolved`, do not retry as a pixel click: unresolved targets
+remain observation-only. Missing `off_space` is not proof of current-Space
+membership. A recovered main/focused window does not establish process-wide
+keyboard scope: respect `keyboard_scope_unresolved` and use `set_value` or an
+exact semantic action rather than retrying raw keys. Screenshot availability
+is separate from AX recovery; respect `px_capture_unavailable` and route refusals.
+Ask before switching the user's Space or foregrounding an unresolved window.
 
 **Critical cell — minimized + keyboard commit.** The keystroke
 reaches the app but accessibility focus doesn't propagate to renderer

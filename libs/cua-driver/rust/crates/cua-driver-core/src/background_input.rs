@@ -57,8 +57,8 @@ pub enum ElementAncestry {
 pub struct BackgroundTargetFacts {
     pub window_server: WindowServerOwnership,
     /// The requested CGWindowID is claimed by one of the application's fresh
-    /// `AXWindows` (mapped through `_AXUIElementGetWindow`). Absent means
-    /// off-Space or AX-unresolved: observation-only.
+    /// AX window candidates (mapped through `_AXUIElementGetWindow`). Absent
+    /// means its AX surface remains unresolved: observation-only.
     pub ax_window_present: bool,
     /// `AXMinimized` on the exact target window. `None` means the attribute
     /// could not be read — an unproven fact, which fails closed for pointer
@@ -67,11 +67,11 @@ pub struct BackgroundTargetFacts {
     /// `AXHidden` on the owning application. `None` fails closed like
     /// `target_minimized`.
     pub app_hidden: Option<bool>,
-    /// Same-pid top-level windows, other than the target, that could receive
-    /// process-scoped keyboard input (enumerated from WindowServer so an
-    /// off-Space sibling that AX cannot see still counts; proven-minimized
-    /// siblings are excluded because they cannot be the key window).
-    pub competing_keyboard_destinations: usize,
+    /// Same-pid top-level keyboard destinations other than the target, joined
+    /// between WindowServer and fresh AX enumeration. Proven-minimized siblings
+    /// are excluded. `None` means enumeration is unresolved: alternate exact
+    /// window references do not establish process-wide keyboard scope.
+    pub competing_keyboard_destinations: Option<usize>,
     /// Ancestry proof for an explicitly addressed element, when one exists.
     pub element: ElementAncestry,
 }
@@ -109,6 +109,7 @@ pub mod refusal_codes {
     pub const OFF_SPACE_OR_AX_UNRESOLVED: &str = "off_space_or_ax_unresolved";
     pub const MINIMIZED_OR_HIDDEN: &str = "minimized_or_hidden_window";
     pub const SAME_PID_KEYBOARD_AMBIGUITY: &str = "same_pid_keyboard_ambiguity";
+    pub const KEYBOARD_SCOPE_UNRESOLVED: &str = "keyboard_scope_unresolved";
     pub const ELEMENT_OUTSIDE_TARGET_WINDOW: &str = "element_outside_target_window";
 }
 
@@ -230,7 +231,7 @@ pub fn decide_background_input(
         return refuse(
             refusal_codes::OFF_SPACE_OR_AX_UNRESOLVED,
             format!(
-                "window {} is not among the process's current AXWindows (another Space, \
+                "window {} is not among the process's freshly resolved AX windows (another Space, \
                  or its AX surface is unresolved); background input is refused so a \
                  sibling window cannot receive it. Observation (capture/list_windows) \
                  remains available",
@@ -286,7 +287,20 @@ pub fn decide_background_input(
                 );
             }
             debug_assert!(action.is_pid_keyboard());
-            if facts.competing_keyboard_destinations > 0 {
+            let Some(competing_destinations) = facts.competing_keyboard_destinations else {
+                return refuse(
+                    refusal_codes::KEYBOARD_SCOPE_UNRESOLVED,
+                    format!(
+                        "window {} is resolved, but process-wide keyboard destination \
+                         enumeration is unresolved; an alternate window reference does not \
+                         prove that PID-routed keys cannot reach a sibling. Use an exact \
+                         semantic element action instead",
+                        target.window_id
+                    ),
+                    Some("accessibility"),
+                );
+            };
+            if competing_destinations > 0 {
                 return refuse(
                     refusal_codes::SAME_PID_KEYBOARD_AMBIGUITY,
                     format!(
@@ -294,7 +308,7 @@ pub fn decide_background_input(
                          key events cannot be proven to reach window {} and could mutate a \
                          sibling window. Use an exact element action, the page tool for \
                          browser content, or delivery_mode:\"foreground\"",
-                        target.pid, facts.competing_keyboard_destinations, target.window_id
+                        target.pid, competing_destinations, target.window_id
                     ),
                     Some("accessibility"),
                 );
@@ -378,7 +392,7 @@ mod tests {
             ax_window_present: true,
             target_minimized: Some(false),
             app_hidden: Some(false),
-            competing_keyboard_destinations: 0,
+            competing_keyboard_destinations: Some(0),
             element: ElementAncestry::NotAddressed,
         }
     }
@@ -404,7 +418,7 @@ mod tests {
     #[test]
     fn two_window_process_refuses_background_keyboard_for_both_text_and_keys() {
         let facts = BackgroundTargetFacts {
-            competing_keyboard_destinations: 1,
+            competing_keyboard_destinations: Some(1),
             ..matched_facts()
         };
         for action in [BackgroundAction::InsertText, BackgroundAction::GenericKey] {
@@ -605,7 +619,7 @@ mod tests {
             ax_window_present: false,
             target_minimized: Some(true),
             app_hidden: Some(true),
-            competing_keyboard_destinations: 3,
+            competing_keyboard_destinations: Some(3),
             element: ElementAncestry::OutsideTargetWindow,
         };
         assert_eq!(
@@ -669,6 +683,34 @@ mod tests {
     }
 
     #[test]
+    fn recovered_window_does_not_prove_process_keyboard_scope() {
+        let facts = BackgroundTargetFacts {
+            competing_keyboard_destinations: None,
+            ..matched_facts()
+        };
+        for action in [BackgroundAction::InsertText, BackgroundAction::GenericKey] {
+            assert_eq!(
+                code_of(decide_background_input(TARGET, &facts, action)),
+                refusal_codes::KEYBOARD_SCOPE_UNRESOLVED
+            );
+        }
+        for action in [
+            BackgroundAction::AxSemantic,
+            BackgroundAction::WindowPointer,
+        ] {
+            assert!(decide_background_input(TARGET, &facts, action).is_execute());
+        }
+        let report = background_input_capability_report(TARGET, &facts, None);
+        assert_eq!(report["exact_window"]["status"], "matched");
+        assert_eq!(report["routes"][0]["status"], "available");
+        assert_eq!(report["routes"][2]["status"], "refused");
+        assert_eq!(
+            report["routes"][2]["reason"],
+            refusal_codes::KEYBOARD_SCOPE_UNRESOLVED
+        );
+    }
+
+    #[test]
     fn capability_report_refusals_carry_stable_reason_codes() {
         let facts = BackgroundTargetFacts {
             ax_window_present: false,
@@ -683,7 +725,7 @@ mod tests {
         assert_eq!(report["observation"]["one_shot_capture"], "unavailable");
 
         let two_windows = BackgroundTargetFacts {
-            competing_keyboard_destinations: 1,
+            competing_keyboard_destinations: Some(1),
             ..matched_facts()
         };
         let report = background_input_capability_report(TARGET, &two_windows, None);

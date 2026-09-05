@@ -343,6 +343,9 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
       --ignored --nocapture --test-threads=1
     for appkit_test in \
     harness_appkit_smoke \
+    harness_appkit_main_focused_window_discovery \
+    harness_appkit_window_discovery_snapshot \
+    harness_appkit_unresolved_window_discovery_refuses \
     harness_appkit_query_projects_structured_elements \
     harness_appkit_stale_element_token_fails_closed \
     harness_appkit_invoke_menu_live_path \

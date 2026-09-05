@@ -20,7 +20,7 @@ REFUSALS = {
     "dpms": {"cancelled", "background_unavailable"},
 }
 PRIMARY_FIELDS = {"application_delta", "wire_inputs", "wire_focus", "compositor_inputs",
-                  "compositor_focus", "max_cursor_displacement", "wm_changed"}
+                  "compositor_focus", "max_cursor_displacement", "cursor_path", "wm_before", "wm_after"}
 
 
 def focus_transitions(events):
@@ -85,9 +85,9 @@ def cancellation(case, rows, *, fault_ns, observed_ns, response_ns, response,
     reason = response.get("structuredContent", {}).get("reason")
     assert reason in REFUSALS[case], "missing case-specific structured refusal"
     result = agent_cleared(status, lane)
+    assert not any(row["kind"] in ("key-press", "key-release", "scroll") for row in rows), "unexpected non-drag input delivery"
     if case == "destroy":
         assert target_destroyed is True, "target disappearance not independently observed"
-        assert not any(row["kind"] == "key-press" for row in rows), "unexpected key delivery"
         result["release_oracle"] = "destroyed_surface_not_receivable"
     else:
         result.update(held_release(rows, fault_ns=fault_ns, maximum_latency_ms=maximum_latency_ms))
@@ -95,6 +95,17 @@ def cancellation(case, rows, *, fault_ns, observed_ns, response_ns, response,
     return {**result, "action_refusal": reason,
             "refusal_latency_ms": (response_ns - fault_ns) / 1_000_000,
             "cleanup_latency_ms": (status_ns - fault_ns) / 1_000_000}
+
+
+def recovery_input(rows, status, lane):
+    keys = [row for row in rows if row["kind"] in ("key-press", "key-release")]
+    assert [row["kind"] for row in keys] == ["key-press", "key-release"], "recovery key pair missing or duplicated"
+    assert all(row.get("key") == "Escape" for row in keys), "unexpected recovery key"
+    assert keys[0]["time"] <= keys[1]["time"], "unordered recovery keys"
+    assert not any(row["kind"] in ("button-press", "button-release", "scroll") for row in rows), "unexpected recovery pointer input"
+    selected = [row for row in status["experiment"]["lanes"] if row["lane"] == lane]
+    assert len(selected) == 1 and selected[0].get("held_keys") == 0 and selected[0].get("held_button") == 0
+    return {"freshly_approved_recovery_received": True, "recovery_key_balanced": True}
 
 
 def primary_effect(before, after, wire, trace, wm_before, wm_after):
@@ -127,7 +138,8 @@ def primary_effect(before, after, wire, trace, wm_before, wm_after):
             "compositor_inputs": sorted([kind, state, count] for (kind, state), count in inputs.items()),
             "compositor_focus": focus,
             "max_cursor_displacement": report["max_primary_displacement_px"],
-            "wm_changed": {key: wm_before[key] != wm_after[key] for key in wm_before}}
+            "cursor_path": [row[3:5] for row in primary if row[2] == "cursor"],
+            "wm_before": wm_before, "wm_after": wm_after}
 
 
 def compare_control(control, actual, identity):

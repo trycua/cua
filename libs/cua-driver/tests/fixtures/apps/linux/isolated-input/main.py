@@ -87,9 +87,10 @@ def event(widget, e):
         if state["held"]:
             trail.append((e.x, e.y))
             del trail[:-1000]
-    elif e.type == Gdk.EventType.KEY_PRESS:
+    elif e.type in (Gdk.EventType.KEY_PRESS, Gdk.EventType.KEY_RELEASE):
         name = Gdk.keyval_name(e.keyval)
-        state["keys"] += (name if len(name) == 1 else "[" + name + "]")
+        if e.type == Gdk.EventType.KEY_PRESS:
+            state["keys"] += (name if len(name) == 1 else "[" + name + "]")
         data.update(key=name, modifiers=int(e.state))
     elif e.type == Gdk.EventType.SCROLL:
         state["scroll"] += 1

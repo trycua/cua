@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import MagicMock, patch
 
-from desktop_state_evidence import agent_cleared, cancellation, compare_control, primary_effect, destroyed_resources_pruned
+from desktop_state_evidence import agent_cleared, cancellation, compare_control, primary_effect, destroyed_resources_pruned, recovery_input
 
 
 def status():
@@ -53,6 +53,24 @@ class CancellationTest(unittest.TestCase):
             result = cancellation(case, self.rows(), **self.arguments())
             self.assertEqual(result["release_latency_ms"], 50)
             self.assertTrue(result["agent_authority_cleared"])
+
+    def test_drag_cannot_hide_other_input(self):
+        for kind in ("key-press", "key-release", "scroll"):
+            with self.subTest(kind=kind), self.assertRaises(AssertionError):
+                cancellation("move", self.rows() + [{"kind": kind, "time": 1_200_000_000}], **self.arguments())
+
+    def test_recovery_requires_exact_pair_before_cleanup(self):
+        pair = [{"kind": "key-press", "key": "Escape", "time": 1},
+                {"kind": "key-release", "key": "Escape", "time": 2}]
+        self.assertTrue(recovery_input(pair, status(), 0)["recovery_key_balanced"])
+        for bad in (pair[:1], pair * 2, pair + [{"kind": "scroll"}],
+                    [{**row, "key": "a"} for row in pair]):
+            with self.subTest(rows=bad), self.assertRaises(AssertionError):
+                recovery_input(bad, status(), 0)
+        held = status()
+        held["experiment"]["lanes"][0]["held_keys"] = 1
+        with self.assertRaises(AssertionError):
+            recovery_input(pair, held, 0)
 
     def test_destroyed_target_does_not_require_impossible_release(self):
         result = cancellation("destroy", self.rows()[:1], **self.arguments(), target_destroyed=True)
@@ -116,6 +134,20 @@ class ControlTest(unittest.TestCase):
         for actual in actuals:
             with self.subTest(actual=actual), self.assertRaises(AssertionError):
                 compare_control(self.control(expected), actual, self.identity)
+
+    def test_same_maximum_cannot_hide_extra_cursor_path(self):
+        control_events = [("cursor", 100, 0, 0, 0), ("cursor", 0, 0, 0, 0)]
+        expected = self.effect(events=control_events)
+        actual = self.effect(events=control_events + [("cursor", 10, 0, 0, 0), ("cursor", 0, 0, 0, 0)])
+        self.assertEqual(expected["max_cursor_displacement"], actual["max_cursor_displacement"])
+        with self.assertRaises(AssertionError):
+            compare_control(self.control(expected), actual, self.identity)
+
+    def test_changed_boolean_cannot_hide_wrong_foreground_identity(self):
+        expected = self.effect(wm_after={**self.wm, "pid": 456, "address": "0x456"})
+        actual = self.effect(wm_after={**self.wm, "pid": 789, "address": "0x789"})
+        with self.assertRaises(AssertionError):
+            compare_control(self.control(expected), actual, self.identity)
 
     def test_extra_focus_round_trip_is_not_hidden_by_control_categories(self):
         events = [("pointer_leave", 0, 0, 0, 0), ("pointer_enter", 0, 0, 0, 0)]

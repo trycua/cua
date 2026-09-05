@@ -26,7 +26,7 @@ import subprocess
 import time
 from types import SimpleNamespace
 
-from desktop_state_evidence import agent_cleared, cancellation, compare_control, primary_effect, destroyed_resources_pruned, CASES
+from desktop_state_evidence import agent_cleared, cancellation, compare_control, primary_effect, destroyed_resources_pruned, recovery_input, CASES
 from driver_input_live import MCP, journal, state, wait_for, wm
 from input_lifecycle_live import validate_plan
 from input_transport_test import connect, exchange, refused
@@ -132,7 +132,10 @@ def run(args):
         assert recording and response.get("structuredContent", {}).get("video_active") is True, "video not active"
         result["video_active"] = True
         if args.mode == "action":
+            unapproved_offset = len(journal(args.background_journal))
             pending = probe_pending(target, "initial")
+            assert not any(row["kind"] in ("button-press", "button-release", "key-press", "key-release", "scroll")
+                           for row in journal(args.background_journal)[unapproved_offset:]), "initial unapproved input delivered"
             grant = receive_grant(pending, "initial")
             lane = pending["lane"]
             assert lane in (0, 1), "unknown experimental lane"
@@ -280,7 +283,10 @@ def run(args):
             snapshot(observer, recovery_target)
             assert not response.get("isError") and response["structuredContent"].get("route") == "synthetic_events", response
             received = wait_for(lambda: next((row for row in journal(recovery_journal)[recovery_offset:]
-                if row["kind"] == "key-press" and row.get("key") == "Escape"), None), 3)
+                if row["kind"] == "key-release" and row.get("key") == "Escape"), None), 3)
+            recovery_status = status()
+            save(args.evidence / "recovery-status-before-cleanup.json", recovery_status)
+            result.update(recovery_input(journal(recovery_journal)[recovery_offset:], recovery_status, lane))
             snapshot(observer, foreground)
             wait_for(lambda: state(args.foreground_journal)["time"] > received["time"], 2)
             for key in ("clicks", "keys", "held", "scroll", "motion"):

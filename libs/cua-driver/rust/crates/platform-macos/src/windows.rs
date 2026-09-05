@@ -70,7 +70,24 @@ pub fn all_windows() -> Vec<WindowInfo> {
 }
 
 pub(crate) fn all_windows_with_space_snapshot() -> WindowEnumeration {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::ZeroOnly)
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        SpaceMetadata::Include,
+    )
+}
+
+/// Enumerate layer-0 windows without constructing a `SpaceQuery` or looking up
+/// per-window Space membership. Intended for hot paths that need only a fresh
+/// pid/window census; callers that expose Space facts must use
+/// [`all_windows_with_space_snapshot`] instead.
+pub(crate) fn all_windows_without_space_metadata() -> Vec<WindowInfo> {
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::ZeroOnly,
+        SpaceMetadata::Omit,
+    )
+    .windows
 }
 
 /// Enumerate only on-screen windows.
@@ -82,6 +99,7 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
     enumerate_windows(
         kCGWindowListOptionOnScreenOnly | kCGWindowListExcludeDesktopElements,
         LayerFilter::ZeroOnly,
+        SpaceMetadata::Include,
     )
 }
 
@@ -95,7 +113,12 @@ pub(crate) fn visible_windows_with_space_snapshot() -> WindowEnumeration {
 /// `get_window_state` tell "no such window" apart from "exists, but is not a
 /// layer-0 window" (issue #2237).
 fn all_windows_any_layer() -> Vec<WindowInfo> {
-    enumerate_windows(kCGWindowListExcludeDesktopElements, LayerFilter::AnyLayer).windows
+    enumerate_windows(
+        kCGWindowListExcludeDesktopElements,
+        LayerFilter::AnyLayer,
+        SpaceMetadata::Omit,
+    )
+    .windows
 }
 
 /// Which CGWindow layers an enumeration admits.
@@ -107,7 +130,17 @@ enum LayerFilter {
     AnyLayer,
 }
 
-fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SpaceMetadata {
+    Include,
+    Omit,
+}
+
+fn enumerate_windows(
+    options: u32,
+    layers: LayerFilter,
+    space_metadata: SpaceMetadata,
+) -> WindowEnumeration {
     use core_foundation::{
         array::CFArray,
         base::{CFGetTypeID, CFTypeRef, TCFType},
@@ -118,7 +151,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
     };
     use std::os::raw::c_void;
 
-    let space_query = (layers == LayerFilter::ZeroOnly)
+    let space_query = (layers == LayerFilter::ZeroOnly && space_metadata == SpaceMetadata::Include)
         .then(crate::input::skylight::SpaceQuery::new)
         .flatten();
     let current_space_id = space_query
@@ -252,7 +285,7 @@ fn enumerate_windows(options: u32, layers: LayerFilter) -> WindowEnumeration {
         });
     }
 
-    if layers == LayerFilter::ZeroOnly {
+    if layers == LayerFilter::ZeroOnly && space_metadata == SpaceMetadata::Include {
         let Some(query) = &space_query else {
             return WindowEnumeration {
                 windows: results,
@@ -338,6 +371,32 @@ pub fn window_info_by_id(window_id: u32) -> Option<WindowInfo> {
 /// (e.g. it was closed or the window_id is stale).
 pub fn window_bounds_by_id(window_id: u32) -> Option<WindowBounds> {
     window_info_by_id(window_id).map(|w| w.bounds)
+}
+
+/// Look up a layer-0 window's record WITH space metadata, from the same
+/// enumeration `list_windows` reports, bound to the requested `(pid,
+/// window_id)` identity (issue #3458).
+///
+/// Unlike [`window_info_by_id`] (any-layer, space fields always `None`),
+/// this variant runs the space query so callers can distinguish "window is
+/// provably off the active Space" (`on_current_space == Some(false)`) from
+/// "AX surface unresolved". Only for diagnostics that act on the degraded
+/// path — the happy path should not pay for the space query. A same-id row
+/// owned by another pid is rejected so a close/re-parent race cannot attach a
+/// foreign window's Space fact to the original target.
+pub(crate) fn window_space_facts_in(
+    windows: &[WindowInfo],
+    pid: i32,
+    window_id: u32,
+) -> Option<&WindowInfo> {
+    windows
+        .iter()
+        .find(|window| window.pid == pid && window.window_id == window_id)
+}
+
+pub fn window_space_facts(pid: i32, window_id: u32) -> Option<WindowInfo> {
+    let snapshot = all_windows_with_space_snapshot();
+    window_space_facts_in(&snapshot.windows, pid, window_id).cloned()
 }
 
 /// Who owns a requested CGWindowID, as seen by a caller that asked about `pid`.
@@ -518,5 +577,18 @@ mod tests {
             WindowOwner::SamePid
         );
         assert_eq!(resolve_window_owner_in(&[], 900, 42), WindowOwner::Unknown);
+    }
+
+    #[test]
+    fn space_facts_require_both_pid_and_window_id() {
+        let mut foreign = window(42, 900, "Other App");
+        foreign.on_current_space = Some(false);
+        let windows = vec![foreign];
+
+        assert!(window_space_facts_in(&windows, 800, 42).is_none());
+        assert_eq!(
+            window_space_facts_in(&windows, 900, 42).and_then(|w| w.on_current_space),
+            Some(false)
+        );
     }
 }

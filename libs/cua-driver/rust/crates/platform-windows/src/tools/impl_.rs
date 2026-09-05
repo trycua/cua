@@ -1356,7 +1356,7 @@ impl Tool for GetWindowStateTool {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
 
-                if let Some(tr) = tree_opt {
+                if let Some(mut tr) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
                     let count = tr
                         .nodes
@@ -1372,18 +1372,14 @@ impl Tool for GetWindowStateTool {
                     // walker, so the entire snapshot must Drop via
                     // IAccessible and click must dispatch through MSAA.
                     if !observation_only {
-                        if is_msaa {
-                            state.element_cache.update_msaa(pid, hwnd, &tr.nodes);
-                        } else {
-                            state.element_cache.update(pid, hwnd, &tr.nodes);
-                        }
+                        state.element_cache.adopt_walk(pid, hwnd, &mut tr);
                     }
                     structured["element_count"] = json!(count);
                     // UIA currently does not expose whether a bounded walk
                     // exhausted every subtree. Keep negative existence
                     // conservative until that proof is available.
                     structured["elements_complete"] = json!(false);
-                    structured["tree_markdown"] = json!(tr.tree_markdown);
+                    structured["tree_markdown"] = json!(&tr.tree_markdown);
 
                     // Surface 6: register a snapshot in the global token
                     // registry. Windows uses u64 HWND but the registry

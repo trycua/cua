@@ -7,6 +7,11 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Use the **lifecycle pattern** that matches whether you want the sandbox _deleted after the job_, _kept for later_, or _attached to while it is already running_.
 
+The examples below use local execution. Fleet uses managed pools and claims, whose
+release behavior differs from deleting a local VM. See [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet)
+for a pool-and-claim workflow and [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
+for image and transport limits.
+
 ## Create and auto-destroy a sandbox
 
 Use `Sandbox.ephemeral` for scripts, CI, and one-off tasks.
@@ -85,7 +90,7 @@ for info in sandboxes:
 
 ## Choose a local runtime
 
-Pass `local=True` to use a runtime on your own machine. Cua selects a compatible local runtime from the image type: Docker for Linux containers, QEMU for Linux VMs, Lume for macOS VMs, and QEMU or Hyper-V for Windows VMs.
+Pass `local=True` to use a runtime on your own machine. Cua selects a local runtime from the image type: Docker for Linux containers, QEMU for Linux VMs, Lume for macOS VMs, and QEMU or Hyper-V for Windows VMs. Selection still requires a compatible host and usable image; it is not a boot check. See the [runtime support reference](/reference/sandbox-sdk/runtime-support#operating-systems-and-image-kinds) before choosing a backend.
 
 ```python
 # local Docker desktop container

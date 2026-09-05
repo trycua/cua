@@ -10,6 +10,12 @@ Use the Cua Sandbox SDK to provision an amd64 Omarchy desktop on
 as a KubeVirt `containerDisk`; the guest starts Hyprland and exposes both the
 `cua-computer-server` API and the Cua Driver MCP service.
 
+For the desktop stack and input boundaries, see
+[Linux desktops and computer use](/concepts/linux-desktops-and-computer-use)
+and [Hyprland support](/reference/cua-driver/platform-support#hyprland-and-omarchy).
+Provisioning a private VM does not establish isolated background input between
+applications inside that VM.
+
 <Callout type="info">
   This guide is for the amd64 Fleet image. The [Omarchy on Apple Silicon
   guide](/how-to-guides/lume/run-omarchy-arm64) builds a separate ARM64 VM for local Lume use and

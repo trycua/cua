@@ -46,7 +46,7 @@ To skip the PATH change, pass the no-update flag:
   </Tab>
   <Tab value="Linux">
 
-**Requirements:** an x86_64 Linux desktop session with X11 or XWayland, plus AT-SPI 2 for accessibility-tree tools. The window-driving tools (`click`, `type_text`, `get_window_state`) need a live display server and a running app, so a headless server has no windows to drive until you start a desktop session (for example `xfce4` under `Xvfb`).
+**Requirements:** an x86_64 Linux desktop session with X11/XWayland or the opt-in native Wayland backend described below, plus AT-SPI 2 for accessibility-tree tools. The window-driving tools (`click`, `type_text`, `get_window_state`) need a live display server and a running app, so a headless server has no windows to drive until you start a desktop session (for example `xfce4` under `Xvfb`).
 
 On a minimal or server image, install the runtime libraries the binary links against first. Unlike the installer itself, this step needs `sudo`; without `libXi` the binary fails to launch with `libXi.so.6: cannot open shared object file`, before `doctor` can even run:
 
@@ -60,15 +60,21 @@ sudo apt install libxi6 at-spi2-core
 
 The installer downloads the binary to `~/.cua-driver/packages/releases/`, points `~/.cua-driver/packages/current` at that release, and creates the `~/.local/bin/cua-driver` symlink. It does not use sudo.
 
-X11 is fully supported. Native Wayland remains opt-in with
+X11 support has toolkit-specific limits. Native Wayland remains opt-in with
 `CUA_DRIVER_RS_ENABLE_WAYLAND=1` and has compositor-specific limits. Sway is
 supported with limits, GNOME requires the maintained WinRects helper, and KDE
-remains experimental. Without the opt-in, Wayland sessions use XWayland routes
+and Hyprland/Omarchy have separate experimental support entries. Without the
+opt-in, Wayland sessions use XWayland routes
 where the target exposes a real X11 window. See
 [Platform support](/reference/cua-driver/platform-support#linux-window-systems)
 for the exact accepted surfaces. After installation, run `cua-driver doctor`
 to check distro-specific requirements such as the AT-SPI bus and display
 server.
+
+If these names are unfamiliar, start with
+[Linux desktops and computer use](/concepts/linux-desktops-and-computer-use).
+The experimental Hyprland plugin is separate from this installer; installing
+the driver does not enable isolated raw background input on Omarchy.
 
   </Tab>
 </Tabs>

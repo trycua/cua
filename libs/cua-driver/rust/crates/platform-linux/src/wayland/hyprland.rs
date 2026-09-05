@@ -58,7 +58,8 @@ pub struct Window {
 }
 
 pub fn is_session() -> bool {
-    std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|s| !s.is_empty())
+    !super::is_inject_mode()
+        && std::env::var_os("HYPRLAND_INSTANCE_SIGNATURE").is_some_and(|s| !s.is_empty())
 }
 
 fn ipc_path() -> Result<PathBuf> {
@@ -230,12 +231,43 @@ pub fn window_for_address(address: u64) -> Option<Window> {
         .find(|w| w.address == address)
 }
 
+/// AT-SPI has no native Hyprland handle. Correlate only when the title is
+/// unique among this PID's mapped compositor clients, as well as AX roots.
+pub fn accessibility_window(address: u64, pid: u32) -> Option<Window> {
+    accessibility_target(&list_windows().ok()?, address, pid)
+}
+
+fn accessibility_target(windows: &[Window], address: u64, pid: u32) -> Option<Window> {
+    let target = windows
+        .iter()
+        .find(|w| w.address == address && w.pid == pid)?;
+    (!target.title.is_empty()
+        && windows
+            .iter()
+            .filter(|w| w.pid == pid && w.title == target.title)
+            .count()
+            == 1)
+        .then(|| target.clone())
+}
+
 /// The legacy PID-only bounds caller has no window identity: allow only a
 /// single mapped client. Explicit IDs never fall back to this function.
 pub fn window_for_pid(pid: u32) -> Option<Window> {
     let mut owned = list_windows().ok()?.into_iter().filter(|w| w.pid == pid);
     let first = owned.next()?;
     owned.next().is_none().then_some(first)
+}
+
+pub fn target_is_active(address: u64, pid: Option<u32>) -> Result<bool> {
+    let target = window_for_address(address).context("Hyprland target no longer exists")?;
+    if pid.is_some_and(|pid| pid != target.pid) {
+        bail!("Hyprland target belongs to a different process");
+    }
+    let active: serde_json::Value = query("j/activewindow")?;
+    Ok(
+        active.get("address").and_then(|v| v.as_str()) == Some(format!("0x{address:x}").as_str())
+            && active.get("pid").and_then(|v| v.as_u64()) == Some(u64::from(target.pid)),
+    )
 }
 
 fn capture_target(windows: &[Window], address: u64, pid: Option<u32>) -> Result<Window> {
@@ -312,6 +344,14 @@ mod tests {
         );
         assert!(capture_target(&windows, 0x30, Some(42)).is_err());
         assert!(capture_target(&windows, 0x10, Some(43)).is_err());
+    }
+
+    #[test]
+    fn accessibility_correlation_rejects_duplicate_compositor_titles() {
+        let a = window(0x10, 42);
+        let b = window(0x20, 42);
+        assert!(accessibility_target(&[a.clone()], a.address, a.pid).is_some());
+        assert!(accessibility_target(&[a.clone(), b], a.address, a.pid).is_none());
     }
 
     #[test]

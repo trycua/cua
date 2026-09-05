@@ -1350,6 +1350,15 @@ pub fn activate_window_for_input_target(
     window_id: u64,
     target_pid: Option<u32>,
 ) -> anyhow::Result<()> {
+    if is_wayland() && hyprland::is_session() {
+        // A full compositor address must never enter the generic protocol-id
+        // or title-matching route. This observation-only adapter can attest an
+        // already-active target, but cannot switch focus to a different one.
+        if hyprland::target_is_active(window_id, target_pid)? {
+            return Ok(());
+        }
+        anyhow::bail!("foreground_unavailable: exact-address Hyprland activation is not implemented; refusing title-based activation");
+    }
     if is_inject_mode() {
         let pid = target_pid.ok_or_else(|| {
             anyhow::anyhow!(
@@ -1616,7 +1625,7 @@ pub fn window_local_to_output(window_id: u64, x: i32, y: i32) -> (i32, i32) {
 /// object ID came from an earlier Wayland connection. Protocol object IDs are
 /// connection-local, so direct equality is only a fast path.
 pub fn window_geometry(window_id: u64) -> Option<(i32, i32, u32, u32)> {
-    if hyprland::is_session() {
+    if is_wayland() && hyprland::is_session() {
         // Do not fall back to title, app-id, X11, or another compositor when
         // an explicit native Hyprland address is missing.
         return hyprland::window_for_address(window_id).map(|w| (w.x, w.y, w.width, w.height));

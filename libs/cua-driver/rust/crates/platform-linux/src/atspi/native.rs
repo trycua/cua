@@ -607,10 +607,7 @@ async fn resolve_window_frame(
     seeds: &[RawObjectRef],
 ) -> Option<usize> {
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
-        let window = crate::wayland::hyprland::window_for_address(xid)?;
-        if window.pid != pid || window.title.is_empty() {
-            return None;
-        }
+        let window = crate::wayland::hyprland::accessibility_window(xid, pid)?;
         let mut matches = Vec::new();
         for (ordinal, oref) in seeds.iter().enumerate() {
             let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {

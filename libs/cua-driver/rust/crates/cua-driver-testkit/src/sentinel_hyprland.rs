@@ -188,6 +188,15 @@ pub(super) fn calibrate(
     impl<D: crate::Driver> CalibrationIo for NativeIo<'_, D> {
         fn snapshot(&mut self) -> Result<DesktopSnapshot, String> {
             use crate::observer::{DesktopObserver, NativeObserver};
+            // Bracket the explicit Driver action with fresh Driver perception,
+            // while retaining compositor queries as the independent oracle.
+            let state = self.driver.call("get_desktop_state", serde_json::json!({}));
+            if state.is_error() {
+                return Err(format!(
+                    "Hyprland calibration perception failed: {}",
+                    state.text()
+                ));
+            }
             let snapshot = DesktopObserver::new(NativeObserver::new(), self.target)
                 .snapshot()
                 .map_err(|error| error.to_string())?;

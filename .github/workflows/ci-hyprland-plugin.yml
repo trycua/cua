@@ -1,0 +1,58 @@
+name: "CI: Hyprland plugin unit and mock"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/hyprland-plugin/**"
+      - ".github/workflows/ci-hyprland-plugin.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/hyprland-plugin/**"
+      - ".github/workflows/ci-hyprland-plugin.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-hyprland-plugin-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: Linux protocol, transport, and mocked plugin API
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: libs/cua-driver/hyprland-plugin
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Install portable test toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-18 ninja-build python3-venv
+          python3 -m venv "$RUNNER_TEMP/hyprland-plugin-tools"
+          "$RUNNER_TEMP/hyprland-plugin-tools/bin/python" -m pip install cmake==3.31.6
+          echo "$RUNNER_TEMP/hyprland-plugin-tools/bin" >> "$GITHUB_PATH"
+      - name: Check helper syntax
+        run: |
+          python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for p in Path("tests").glob("*.py")]'
+          bash -n packaging/arch/PKGBUILD
+      - name: Check lifecycle runner cleanup
+        run: python3 -m unittest discover -s tests -p '*_test.py' -v
+      # No real Hyprland headers, module load, or desktop certification in this job.
+      - name: Configure unit and mock tests
+        run: |
+          cmake -S . -B "$RUNNER_TEMP/hyprland-plugin-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_CXX_COMPILER=clang++-18 \
+            -DCUA_HYPRLAND_BUILD_PLUGIN=OFF \
+            -DBUILD_TESTING=ON
+      - name: Build with compiler warnings as errors
+        run: cmake --build "$RUNNER_TEMP/hyprland-plugin-build" --parallel 2
+      - name: Run protocol, Linux transport, and mock CTest suite
+        run: ctest --test-dir "$RUNNER_TEMP/hyprland-plugin-build" --output-on-failure --no-tests=error --timeout 120

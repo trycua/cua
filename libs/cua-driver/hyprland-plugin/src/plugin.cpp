@@ -50,6 +50,7 @@ std::string g_socket_path;
 std::string g_reconcile_error;
 #ifdef CUA_HYPRLAND_TEST_INPUT
 std::unique_ptr<cua::hyprland::InputExperiment> g_experiment;
+HANDLE g_experiment_handle = nullptr;
 #endif
 
 bool safe_instance_signature(const std::string& signature) {
@@ -184,7 +185,7 @@ void reconcile_server() {
         g_epoch = epoch;
 #ifdef CUA_HYPRLAND_TEST_INPUT
         g_experiment = std::make_unique<cua::hyprland::InputExperiment>(
-            std::filesystem::path{g_socket_path}.parent_path().string());
+            std::filesystem::path{g_socket_path}.parent_path().string(), g_experiment_handle);
 #endif
     }
     g_server = std::move(server);
@@ -272,6 +273,9 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
+#ifdef CUA_HYPRLAND_TEST_INPUT
+    g_experiment_handle = handle;
+#endif
     // Hyprland skips PLUGIN_EXIT when initialization throws. Do not start any
     // worker thread until all potentially throwing registration is complete.
     const auto* runtime_abi_hash = __hyprland_api_get_hash();

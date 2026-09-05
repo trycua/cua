@@ -152,7 +152,7 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
             message(FATAL_ERROR "Test operator public key must be 32 bytes")
         endif()
         find_package(OpenSSL REQUIRED)
-        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
+        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp src/primary_trace.cpp)
         target_compile_definitions(cua_hyprland_plugin PRIVATE
             CUA_HYPRLAND_TEST_INPUT=1
             CUA_HYPRLAND_TEST_OPERATOR_KEY="${CUA_HYPRLAND_TEST_OPERATOR_KEY}")

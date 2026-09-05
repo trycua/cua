@@ -7,6 +7,7 @@ wire-level primary-pointer oracle in addition to this application journal.
 import argparse
 import json
 import time
+from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "3.0")
@@ -15,9 +16,12 @@ from gi.repository import Gtk, Gdk, GLib
 parser = argparse.ArgumentParser()
 parser.add_argument("--actor", choices=["Background", "Foreground"], required=True)
 parser.add_argument("--journal", required=True)
+parser.add_argument("--metrics", type=Path, help="Optional live test counters; no fabricated defaults")
 args = parser.parse_args()
 journal = open(args.journal, "x", buffering=1)
 state = {"clicks": 0, "keys": "", "scroll": 0, "motion": 0, "held": False}
+metrics = None
+trail = []
 
 
 def record(kind, **values):
@@ -44,6 +48,24 @@ def draw(widget, cr):
     for index, text in enumerate(lines):
         cr.move_to(25, 55 + index * 48)
         cr.show_text(text)
+    if args.metrics:
+        cr.set_font_size(22)
+        values = (["Measurement: " + metrics.get("status", "inconclusive"),
+                   "Cursor violations: " + str(metrics.get("cursor_violations", "unknown")),
+                   "Focus events: " + str(metrics.get("focus_events", "unknown")),
+                   "Unexpected releases: " + str(metrics.get("releases", "unknown")),
+                   "Completed actions: " + str(metrics.get("actions", "unknown"))]
+                  if metrics is not None else ["Measurement: waiting for telemetry"])
+        for index, text in enumerate(values):
+            cr.move_to(25, 410 + index * 35)
+            cr.show_text(text)
+    if trail:
+        cr.set_source_rgb(0.9, 0.65, 0.25)
+        cr.set_line_width(4)
+        cr.move_to(*trail[0])
+        for point in trail[1:]:
+            cr.line_to(*point)
+        cr.stroke()
     return False
 
 
@@ -62,6 +84,9 @@ def event(widget, e):
         canvas.grab_focus()  # Widget-local focus, not a compositor activation.
     elif e.type == Gdk.EventType.MOTION_NOTIFY:
         state["motion"] += 1
+        if state["held"]:
+            trail.append((e.x, e.y))
+            del trail[:-1000]
     elif e.type == Gdk.EventType.KEY_PRESS:
         name = Gdk.keyval_name(e.keyval)
         state["keys"] += (name if len(name) == 1 else "[" + name + "]")
@@ -83,6 +108,13 @@ record("ready", name=args.actor)
 
 
 def heartbeat():
+    global metrics
+    if args.metrics:
+        try:
+            metrics = json.loads(args.metrics.read_text())
+        except (OSError, ValueError):
+            metrics = None
+        canvas.queue_draw()
     record("state", **state)
     return True
 

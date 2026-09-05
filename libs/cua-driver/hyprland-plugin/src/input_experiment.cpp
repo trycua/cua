@@ -1,6 +1,7 @@
 // Independent-seat design adapted from Dillon DuPont's Hyprland prototype.
 // All resource dispatch below belongs to this seat, never CSeatManager's focus.
 #include "input_experiment.hpp"
+#include "primary_trace.hpp"
 
 #include <src/Compositor.hpp>
 #include <src/devices/IKeyboard.hpp>
@@ -155,14 +156,17 @@ struct InputExperiment::Impl {
     xkb_keymap* keymap = nullptr;
     xkb_state* keyboard_state = nullptr;
     bool retired = false;
+    unsigned lane;
+    std::array<Impl*, 2> peers{};
+    PrimaryTrace* trace = nullptr;
 
-    explicit Impl(const std::string& directory) {
-        if (retired_experiments >= 8)
+    explicit Impl(const std::string& directory, unsigned index) : lane(index) {
+        if (retired_experiments >= 16)
             throw std::runtime_error("restart compositor after eight experimental seat reloads");
         public_key = unhex(CUA_HYPRLAND_TEST_OPERATOR_KEY);
         if (public_key.size() != 32)
             throw std::runtime_error("invalid test operator public key");
-        path = directory + "/cua-input-test.sock";
+        path = directory + (lane == 0 ? "/cua-input-test.sock" : "/cua-input-test-2.sock");
         if (path.size() >= sizeof(sockaddr_un::sun_path))
             throw std::runtime_error("input socket path too long");
         // No private key or input-enabled default exists in this component.
@@ -251,7 +255,7 @@ struct InputExperiment::Impl {
         seat->wl->setGetPointer([&self](CWlSeat* r, std::uint32_t child) { self.add_pointer(r, child); });
         seat->wl->setGetKeyboard([&self](CWlSeat* r, std::uint32_t child) { self.add_keyboard(r, child); });
         seat->wl->setGetTouch([&self](CWlSeat* r, std::uint32_t child) { self.add_touch(r, child); });
-        if (version >= 2) seat->wl->sendName("Cua-Test-Agent");
+        if (version >= 2) seat->wl->sendName(self.lane == 0 ? "Cua-Test-Agent" : "Cua-Test-Agent-2");
         seat->wl->sendCapabilities(static_cast<wl_seat_capability>(self.retired ? 0 :
             WL_SEAT_CAPABILITY_POINTER | (self.keyboard_state ? WL_SEAT_CAPABILITY_KEYBOARD : 0)));
         self.seats.push_back(std::move(seat));
@@ -312,6 +316,16 @@ struct InputExperiment::Impl {
         return (pointer && pointer->client() == surface->client()) ||
             (keyboard && keyboard->client() == surface->client());
     }
+    bool agent_conflict(Client& c) const {
+        const auto surface = c.surface.lock();
+        if (!surface) return true;
+        for (const auto* peer : peers) {
+            if (!peer || peer == this || !peer->lease) continue;
+            const auto other = peer->lease->surface.lock();
+            if (other && other->client() == surface->client()) return true;
+        }
+        return false;
+    }
     void invalidate(Client& c) {
         if (lease == &c) revoke("stale_target");
         c.token.clear(); c.window.reset(); c.surface.reset();
@@ -341,6 +355,7 @@ struct InputExperiment::Impl {
         keyboard_state = keymap ? xkb_state_new(keymap) : nullptr;
     }
     void revoke(std::string_view reason) {
+        if (lease && trace) trace->mark("agent_cancel", lane + 1);
         if (drag && drag->client && !drag->client->dead) send(*drag->client, refusal(reason));
         drag.reset(); leave(); lease = nullptr; capabilities = 0;
     }
@@ -403,11 +418,17 @@ struct InputExperiment::Impl {
         });
         if (found == clients.end() || !refresh(**found)) { send(c, refusal("stale_target")); return; }
         if (lease) { send(c, refusal("lease_busy")); return; }
+        if (agent_conflict(**found)) { send(c, refusal("agent_target_busy")); return; }
         if (deadline <= (*found)->approved_deadline) { send(c, refusal("invalid_grant")); return; }
         if (!available()) { send(c, refusal("session_unavailable")); return; }
         // Bind steady-clock lifetime once; a clock change cannot extend a lease.
         lease = found->get(); capabilities = caps; expires = Clock::now() + std::chrono::milliseconds(deadline - now);
         lease->approved_deadline = deadline;
+        // Approval begins the bounded active period. Time spent waiting for
+        // the external operator must not consume the input connection's idle
+        // budget while its newly approved lease is still valid.
+        lease->activity = Clock::now();
+        if (trace) trace->mark("agent_approved", lane + 1);
         send(c, R"({"ok":true})");
     }
     bool point(Client& c, double x, double y) const {
@@ -478,7 +499,19 @@ struct InputExperiment::Impl {
             send(c, std::format(R"({{"ok":true,"protocol":0,"epoch":"{}","challenge":"{}"}})", epoch, c.challenge)); return;
         }
         if (!c.hello) { send(c, refusal("invalid_request")); return; }
-        if (command == "STOP" && f.size() == 1) { revoke("stopped"); send(c, R"({"ok":true})"); return; }
+        if (command == "STOP" && f.size() == 1) {
+            for (auto* peer : peers) if (peer) peer->revoke("stopped");
+            send(c, R"({"ok":true})"); return;
+        }
+        if (command == "CANCEL" && f.size() == 1) { revoke("cancelled"); send(c, R"({"ok":true})"); return; }
+        if (trace && ((command == "TRACE_START" || command == "TRACE_STOP") && f.size() == 1)) {
+            send(c, trace->request(command)); return;
+        }
+        if (trace && command == "TRACE_READ" && f.size() == 2) {
+            const auto after = number(f[1]);
+            if (after > 32768) { send(c, refusal("invalid_request")); return; }
+            send(c, trace->request(command, after)); return;
+        }
         if (command == "APPROVE") { approve(c, f); return; }
         if (command == "TARGET") {
             if (f.size() != 3 || drag) { send(c, refusal("invalid_request")); return; }
@@ -514,6 +547,7 @@ struct InputExperiment::Impl {
         }
         if (drag) { send(c, refusal("lease_busy")); return; }
         if (primary_conflict(c)) { send(c, refusal("primary_target_busy")); return; }
+        if (agent_conflict(c)) { send(c, refusal("agent_target_busy")); return; }
         if (command == "KEY") {
             const auto code = number(f[4]); const auto mods = number(f[5]);
             if (code == 0 || code > 247 || mods > 15 || code == 58 || code == 69 || code == 70) { send(c, refusal("unsupported")); return; }
@@ -545,10 +579,14 @@ struct InputExperiment::Impl {
                 if (!point(c, x2, y2) || duration < 50 || duration > 2000) { send(c, refusal("invalid_request")); return; }
                 if (Clock::now() + std::chrono::milliseconds(duration + 50) >= expires) { send(c, refusal("lease_expired")); return; }
                 if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
-                button(272, true); drag = Drag{&c, x, y, x2, y2, Clock::now(), static_cast<unsigned>(duration)}; return;
+                if (trace) trace->mark("agent_drag_start", lane + 1);
+                button(272, true); drag = Drag{&c, x, y, x2, y2, Clock::now(), static_cast<unsigned>(duration)};
+                send(c, R"({"ok":true,"phase":"started"})"); return;
             }
         }
-        ++dispatches; send(c, kDelivered);
+        ++dispatches;
+        if (trace) trace->mark("agent_action_end", lane + 1);
+        send(c, kDelivered);
     }
     static int tick(void* data) {
         auto& self = *static_cast<Impl*>(data);
@@ -558,7 +596,7 @@ struct InputExperiment::Impl {
     void step() {
         if (lease) {
             const auto revision = lease->revision;
-            if (lease->dead || Clock::now() >= expires || !available() || !refresh(*lease) || primary_conflict(*lease) ||
+            if (lease->dead || Clock::now() >= expires || !available() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && lease->revision != revision)) revoke("cancelled");
         }
         if (drag) {
@@ -567,7 +605,9 @@ struct InputExperiment::Impl {
             const auto progress = std::min(elapsed / d.duration, 1.0);
             if (!pointer_enter(*d.client, d.x1 + (d.x2 - d.x1) * progress, d.y1 + (d.y2 - d.y1) * progress)) revoke("client_not_bound");
             else if (progress >= 1) {
-                button(272, false); drag.reset(); ++dispatches; send(*d.client, kDelivered);
+                button(272, false); drag.reset(); ++dispatches;
+                if (trace) trace->mark("agent_drag_end", lane + 1);
+                send(*d.client, kDelivered);
             }
         }
         for (auto& c : clients) if (Clock::now() - c->activity > std::chrono::seconds(c->hello ? 60 : 5)) c->dead = true;
@@ -580,16 +620,37 @@ struct InputExperiment::Impl {
     }
 };
 
-InputExperiment::InputExperiment(const std::string& directory) : impl_(std::make_unique<Impl>(directory)) { impl_->start(); }
+InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
+    for (unsigned i = 0; i < lanes_.size(); ++i) lanes_[i] = std::make_unique<Impl>(directory, i);
+    for (auto& lane : lanes_) { lane->peers = {lanes_[0].get(), lanes_[1].get()}; lane->start(); }
+    trace_ = std::make_unique<PrimaryTrace>(plugin, [this](wl_resource* resource) {
+        for (unsigned i = 0; i < lanes_.size(); ++i) {
+            for (const auto& p : lanes_[i]->pointers) if (p->wl->resource() == resource) return i + 1;
+            for (const auto& k : lanes_[i]->keyboards) if (k->wl->resource() == resource) return i + 1;
+        }
+        return 0u;
+    });
+    for (auto& lane : lanes_) lane->trace = trace_.get();
+}
 InputExperiment::~InputExperiment() {
-    impl_->retire();
+    for (auto& lane : lanes_) { lane->retire(); lane->trace = nullptr; lane->peers = {}; }
+    trace_.reset();
     // Intentional process-lifetime ownership: callbacks, removed global, and
     // remaining client-owned resources cannot outlive their Impl. Bound reload
     // count limits accumulation. A production unload contract is not claimed.
-    (void)impl_.release();
+    for (auto& lane : lanes_) (void)lane.release();
 }
 std::string InputExperiment::status_json() const {
-    return std::format(R"({{"protocol":0,"test_only":true,"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{}}})",
-        impl_->epoch, impl_->lease != nullptr, impl_->seats.size(), impl_->pointers.size(), impl_->keyboards.size(), impl_->dispatches);
+    std::string states;
+    for (const auto& lane : lanes_) {
+        if (!states.empty()) states += ',';
+        states += std::format(R"({{"lane":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{}}})",
+            lane->lane, lane->epoch, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches);
+    }
+    // Aggregate legacy fields remain available to existing test probes.
+    return std::format(R"({{"protocol":0,"test_only":true,"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
+        lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
+        lanes_[0]->seats.size() + lanes_[1]->seats.size(), lanes_[0]->pointers.size() + lanes_[1]->pointers.size(),
+        lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, states);
 }
 } // namespace cua::hyprland

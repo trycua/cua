@@ -2,9 +2,10 @@
 //! No approval or signing operation is available to Driver. A pending request
 //! keeps its connection alive so an external operator can approve its challenge.
 
+use std::collections::HashMap;
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -56,7 +57,7 @@ struct Client {
     sequence: u64,
 }
 
-fn socket_path() -> Result<PathBuf> {
+fn socket_path(lane: usize) -> Result<PathBuf> {
     let runtime =
         PathBuf::from(std::env::var_os("XDG_RUNTIME_DIR").context("missing XDG_RUNTIME_DIR")?);
     let signature =
@@ -69,10 +70,11 @@ fn socket_path() -> Result<PathBuf> {
                 .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
         "invalid Hyprland instance"
     );
-    Ok(runtime
-        .join("hypr")
-        .join(signature)
-        .join("cua-input-test.sock"))
+    Ok(runtime.join("hypr").join(signature).join(if lane == 0 {
+        "cua-input-test.sock"
+    } else {
+        "cua-input-test-2.sock"
+    }))
 }
 
 fn hex_field(value: &Value, name: &str) -> Result<String> {
@@ -203,6 +205,10 @@ impl Client {
             ensure!(count as usize == packet.len(), "partial input packet");
             break;
         }
+        self.receive(deadline)
+    }
+
+    fn receive(&self, deadline: Instant) -> Result<Value> {
         let mut bytes = [0u8; MAX_PACKET];
         loop {
             wait(&self.socket, libc::POLLIN, deadline)?;
@@ -234,7 +240,11 @@ impl Client {
         }
     }
 
-    fn execute(&mut self, action: Action) -> Result<Value> {
+    fn execute(
+        &mut self,
+        action: Action,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<Value> {
         self.attest()?;
         let target = self.request(&format!("TARGET {} {:x}", self.pid, self.address))?;
         if target["ok"] == false {
@@ -251,8 +261,16 @@ impl Client {
             "invalid target geometry"
         );
         self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
+        let is_drag = matches!(&action, Action::Drag { .. });
         let packet = action.packet(self.sequence, &token, revision, width, height)?;
         let mut reply = self.request(&packet)?;
+        if reply["phase"] == "started" {
+            ensure!(is_drag, "unexpected input start acknowledgement");
+            if let Some(started) = started {
+                let _ = started.send(());
+            }
+            reply = self.receive(Instant::now() + TIMEOUT)?;
+        }
         if reply["ok"] == true {
             ensure!(
                 reply["effect"] == "unverifiable" && reply["route"] == "synthetic_events",
@@ -356,20 +374,91 @@ impl Action {
     }
 }
 
-/// Serialize requests on one persistent, exact-target connection. Transport or
-/// protocol errors close it and never retry an action whose effect is unknown.
-pub fn execute(pid: u32, address: u64, action: Action) -> Result<Value> {
+struct SessionClient {
+    lane: usize,
+    client: Mutex<Option<Client>>,
+}
+
+static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<SessionClient>>>> = OnceLock::new();
+
+fn clients() -> &'static Mutex<HashMap<String, Arc<SessionClient>>> {
+    CLIENTS.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// The registry supplies a runtime-private lifecycle identity. Public labels
+/// are already namespaced there; labels never grant input authority here.
+fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
+    ensure!(
+        !owner.is_empty() && owner != "default",
+        "authenticated lifecycle required"
+    );
+    let mut clients = clients()
+        .lock()
+        .map_err(|_| anyhow::anyhow!("input pool poisoned"))?;
+    if let Some(client) = clients.get(owner) {
+        return Ok(client.clone());
+    }
+    let lane = (0..2)
+        .find(|lane| clients.values().all(|client| client.lane != *lane))
+        .context("both experimental input seats are in use; end an owning session first")?;
+    let client = Arc::new(SessionClient {
+        lane,
+        client: Mutex::new(None),
+    });
+    clients.insert(owner.to_owned(), client.clone());
+    Ok(client)
+}
+
+pub fn cleanup_session(owner: &str) {
+    let client = clients().lock().unwrap().get(owner).cloned();
+    if let Some(client) = client {
+        // The normal lifecycle barrier waits for in-flight actions first.
+        // Closing the exact connection revokes this lane, never another one.
+        *client.client.lock().unwrap() = None;
+        clients().lock().unwrap().remove(owner);
+    }
+}
+
+/// Runtime teardown must also reclaim leases that never acquired an overlay.
+/// The prefix comes from the trusted registry, never a public session label.
+pub fn cleanup_runtime(prefix: &str) {
+    let owners: Vec<_> = clients()
+        .lock()
+        .unwrap()
+        .keys()
+        .filter(|owner| owner.starts_with(prefix))
+        .cloned()
+        .collect();
+    for owner in owners {
+        cleanup_session(&owner);
+    }
+}
+
+/// Only same-lifecycle actions serialize. Independent authenticated sessions
+/// use independent sockets/seats and may overlap. Never retry unknown effects.
+pub fn execute(owner: Option<String>, pid: u32, address: u64, action: Action) -> Result<Value> {
+    execute_with_started(owner, pid, address, action, None)
+}
+
+pub fn execute_with_started(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    action: Action,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+) -> Result<Value> {
     ensure!(enabled(), "experimental Hyprland input is disabled");
     ensure!(
         pid > 0 && address > 0,
         "exact pid and window address required"
     );
-    static CLIENT: OnceLock<Mutex<Option<Client>>> = OnceLock::new();
-    let mut slot = CLIENT
-        .get_or_init(|| Mutex::new(None))
+    let owner = owner.context("authenticated lifecycle required")?;
+    let client = session_client(&owner)?;
+    let mut slot = client
+        .client
         .lock()
         .map_err(|_| anyhow::anyhow!("input connection poisoned"))?;
-    let path = socket_path()?;
+    let path = socket_path(client.lane)?;
     if slot
         .as_ref()
         .is_some_and(|client| client.pid != pid || client.address != address || client.path != path)
@@ -379,12 +468,17 @@ pub fn execute(pid: u32, address: u64, action: Action) -> Result<Value> {
     if slot.is_none() {
         *slot = Some(Client::connect(path, pid, address)?);
     }
-    let result = slot
+    let mut result = slot
         .as_mut()
         .context("missing input connection")?
-        .execute(action);
+        .execute(action, started);
     if result.is_err() {
         *slot = None;
+    }
+    if let Ok(value) = &mut result {
+        // A bounded slot number lets the external test operator select the
+        // correct endpoint. It is not a credential or a caller-selected seat.
+        value["lane"] = json!(client.lane);
     }
     result
 }
@@ -394,6 +488,44 @@ mod tests {
     use super::*;
     use std::os::fd::FromRawFd;
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+
+    #[test]
+    fn independent_lifecycles_have_bounded_distinct_seats_and_cleanup() {
+        assert!(session_client("").is_err());
+        assert!(session_client("default").is_err());
+        let a = session_client("input-pool-test-a").unwrap();
+        let b = session_client("input-pool-test-b").unwrap();
+        assert_ne!(a.lane, b.lane);
+        assert!(Arc::ptr_eq(
+            &a,
+            &session_client("input-pool-test-a").unwrap()
+        ));
+        assert!(session_client("input-pool-test-c").is_err());
+        let a_lock = a.client.lock().unwrap();
+        // No global action mutex: another seat remains independently usable.
+        assert!(b.client.try_lock().is_ok());
+        drop(a_lock);
+        cleanup_session("input-pool-test-a");
+        let c = session_client("input-pool-test-c").unwrap();
+        assert_eq!(c.lane, a.lane);
+        assert!(Arc::ptr_eq(
+            &b,
+            &session_client("input-pool-test-b").unwrap()
+        ));
+        cleanup_session("input-pool-test-b");
+        cleanup_session("input-pool-test-c");
+        let runtime = session_client("__cua_runtime_test:pending").unwrap();
+        let other = session_client("__cua_runtime_other:pending").unwrap();
+        cleanup_runtime("__cua_runtime_test:");
+        assert!(Arc::ptr_eq(
+            &other,
+            &session_client("__cua_runtime_other:pending").unwrap()
+        ));
+        let reused = session_client("input-pool-test-reused").unwrap();
+        assert_eq!(reused.lane, runtime.lane);
+        cleanup_session("__cua_runtime_other:pending");
+        cleanup_session("input-pool-test-reused");
+    }
 
     #[test]
     fn click_is_exact_and_maps_right_button() {

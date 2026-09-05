@@ -28,7 +28,11 @@ impl<T: Clone + PartialEq> Seats<T> {
         self.entries
             .iter()
             .rev()
-            .find(|entry| entry.1.as_deref() != Some("Cua-Test-Agent"))
+            .find(|entry| {
+                !entry.1.as_deref().is_some_and(|name| {
+                    name == "Cua-Test-Agent" || name.starts_with("Cua-Test-Agent-")
+                })
+            })
             .map(|entry| entry.0.clone())
     }
 }
@@ -55,6 +59,9 @@ mod tests {
         let mut seats = Seats::default();
         seats.add(2);
         seats.name(&2, "Cua-Test-Agent".into());
+        assert_eq!(seats.selected(), None);
+        seats.add(4);
+        seats.name(&4, "Cua-Test-Agent-2".into());
         assert_eq!(seats.selected(), None);
         seats.add(1);
         seats.add(3);

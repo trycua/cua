@@ -2055,12 +2055,13 @@ fn experimental_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
 }
 
 async fn experimental_hyprland_action(
+    owner: Option<String>,
     pid: u32,
     xid: u64,
     action: crate::wayland::hyprland_input::Action,
 ) -> ToolResult {
     match tokio::task::spawn_blocking(move || {
-        crate::wayland::hyprland_input::execute(pid, xid, action)
+        crate::wayland::hyprland_input::execute(owner, pid, xid, action)
     })
     .await
     {
@@ -2820,9 +2821,11 @@ impl Tool for ClickTool {
                         "an exact window_id or window-bound element token is required",
                     );
                 };
+                let owner = named_session_cursor_key(&args);
                 return match tokio::task::spawn_blocking(move || {
                     let (_, x, y) = resolve_element_local_coords(pid, idx, Some(exact_xid))?;
                     crate::wayland::hyprland_input::execute(
+                        owner,
                         pid,
                         exact_xid,
                         crate::wayland::hyprland_input::Action::Click {
@@ -2983,6 +2986,7 @@ impl Tool for ClickTool {
                 }
             }
             return experimental_hyprland_action(
+                named_session_cursor_key(&args),
                 pid,
                 xid,
                 crate::wayland::hyprland_input::Action::Click {
@@ -3964,6 +3968,7 @@ impl Tool for PressKeyTool {
                 return experimental_hyprland_refusal("experimental keys address the exact top-level; first click the child explicitly");
             }
             return experimental_hyprland_action(
+                named_session_cursor_key(&args),
                 pid,
                 xid,
                 crate::wayland::hyprland_input::Action::Key {
@@ -4350,6 +4355,7 @@ impl Tool for HotkeyTool {
                 }
             }
             return experimental_hyprland_action(
+                named_session_cursor_key(&args),
                 pid,
                 xid,
                 crate::wayland::hyprland_input::Action::Key {
@@ -4835,6 +4841,7 @@ impl Tool for ScrollTool {
                     "an exact window_id or window-bound element token is required",
                 );
             }
+            let owner = named_session_cursor_key(&args);
             return match tokio::task::spawn_blocking(move || {
                 let point = if let Some(idx) = resolved_element_index {
                     let (_, x, y) = resolve_element_local_coords(pid, idx, Some(xid))?;
@@ -4843,6 +4850,7 @@ impl Tool for ScrollTool {
                     pixel_target
                 };
                 crate::wayland::hyprland_input::execute(
+                    owner,
                     pid,
                     xid,
                     crate::wayland::hyprland_input::Action::Scroll {
@@ -5541,6 +5549,13 @@ static DRAG_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
 impl Tool for DragTool {
+    fn has_independent_input_lane(&self, args: &Value) -> bool {
+        // This opt-in branch below either uses its own leased synthetic seat
+        // or refuses. It never falls back to primary-seat input. All ordinary
+        // Linux routes retain the common process-wide input coordinator.
+        experimental_hyprland_background(crate::input::delivery::DeliveryMode::from_args(args))
+    }
+
     fn def(&self) -> &ToolDef {
         DRAG_DEF.get_or_init(|| ToolDef {
             name: "drag".into(),
@@ -5707,16 +5722,48 @@ impl Tool for DragTool {
                     "experimental drag supports only an unmodified left button",
                 );
             }
-            return experimental_hyprland_action(
-                pid,
+            let owner = named_session_cursor_key(&args);
+            let from = crate::wayland::window_local_to_output(
                 xid,
-                crate::wayland::hyprland_input::Action::Drag {
-                    from: (from_x, from_y),
-                    to: (to_x, to_y),
-                    duration_ms,
-                },
-            )
-            .await;
+                from_x.round() as i32,
+                from_y.round() as i32,
+            );
+            let to = crate::wayland::window_local_to_output(
+                xid,
+                to_x.round() as i32,
+                to_y.round() as i32,
+            );
+            let (started, acknowledged) = tokio::sync::oneshot::channel();
+            let mut dispatch = tokio::task::spawn_blocking(move || {
+                crate::wayland::hyprland_input::execute_with_started(
+                    owner,
+                    pid,
+                    xid,
+                    crate::wayland::hyprland_input::Action::Drag {
+                        from: (from_x, from_y),
+                        to: (to_x, to_y),
+                        duration_ms,
+                    },
+                    Some(started),
+                )
+            });
+            // Do not animate a drag that was refused. The compositor starts
+            // the overlay clock only after accepting and pressing the button.
+            if acknowledged.await.is_ok() {
+                overlay_snap_to_for(&cursor_id, from.0 as f64, from.1 as f64, None);
+                tokio::select! {
+                    result = &mut dispatch => {
+                        crate::overlay::send_command_for(cursor_id, cursor_overlay::OverlayCommand::SetPressed(false));
+                        return match result { Ok(result) => experimental_hyprland_result(result), Err(error) => experimental_hyprland_refusal(error.to_string()) };
+                    }
+                    () = track_overlay_drag_for(cursor_id.clone(), (from.0 as f64, from.1 as f64),
+                        (to.0 as f64, to.1 as f64), duration_ms, steps) => {}
+                }
+            }
+            return match dispatch.await {
+                Ok(result) => experimental_hyprland_result(result),
+                Err(error) => experimental_hyprland_refusal(error.to_string()),
+            };
         }
 
         crate::overlay::send_command_for(
@@ -8483,6 +8530,7 @@ pub fn build_registry_with_provider(
                 .unwrap()
                 .remove(session_id);
             crate::input::forget_master_pointer(session_id);
+            crate::wayland::hyprland_input::cleanup_session(session_id);
         })
     };
     let session_revive_hook =
@@ -8497,6 +8545,7 @@ pub fn build_registry_with_provider(
         let prefix = format!("__cua_runtime_{runtime_scope}:");
         let cursor_registry = state.cursor_registry.clone();
         r.retain_runtime_cleanup(move || {
+            crate::wayland::hyprland_input::cleanup_runtime(&prefix);
             for cursor in cursor_registry
                 .all_states()
                 .into_iter()

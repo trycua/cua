@@ -17,13 +17,18 @@ compromised compositor, root, or an unrestricted hostile desktop user.
 
 ## Transport under test
 
-An additional `cua-input-test.sock` in the private compositor instance
-directory uses same-UID `SOCK_SEQPACKET`, bounded packets, nonblocking I/O, and
+Two additional sockets, `cua-input-test.sock` and `cua-input-test-2.sock`, in
+the private compositor instance directory use same-UID `SOCK_SEQPACKET`, bounded packets, nonblocking I/O, and
 event-loop dispatch. It does not change discovery protocol v2. Requests are
 ASCII fields separated by single spaces; responses are bounded JSON packets.
 Integers are decimal except address, nonce, epoch, target, and signature, which
 are hexadecimal. Unknown commands, extra fields, overflow, and nonfinite or
-out-of-bounds coordinates refuse without input. There is one active lease.
+out-of-bounds coordinates refuse without input. Each endpoint owns one seat,
+one active lease, and independent pointer, keyboard, XKB, and drag state.
+Driver allocates the two endpoints to distinct authenticated lifecycle
+identities, not caller-selected lane numbers. A third concurrent lifecycle
+refuses until an owner ends. This bounded research allocation does not define
+a production scheduler or coordinate multiple Driver services.
 
 - `HELLO`: negotiate experimental protocol 0; return `epoch` and connection
   `challenge`. A reconnect gets a new challenge.
@@ -41,8 +46,15 @@ out-of-bounds coordinates refuse without input. There is one active lease.
 - `SCROLL <sequence> <target> <revision> <x> <y> <axis> <value>`: one bounded
   axis event; vertical=0, horizontal=1, logical value in [-1000,1000].
 - `DRAG <sequence> <target> <revision> <x1> <y1> <x2> <y2> <duration_ms>`:
-  one complete left-button drag, 50–2000 ms, scheduled in bounded steps.
-- `STOP`: revoke the active lease and release only synthetic-seat state.
+  one complete left-button drag, 50–2000 ms, scheduled in bounded steps. An
+  accepted drag first sends `{"ok":true,"phase":"started"}`, then its final
+  delivery result or cancellation refusal. Driver starts the visible drag
+  only after this acknowledgement; an animation is not delivery evidence.
+- `CANCEL`: revoke only this endpoint's lease and synthetic input state.
+- `STOP`: revoke both endpoints and release only synthetic-seat state.
+- `TRACE_START`, `TRACE_STOP`, `TRACE_READ <after>`: explicitly start, stop,
+  or page the test-only in-memory primary-input trace. Pages contain at most
+  eight events; collection must retain sequence numbers and completeness flags.
 
 The signed message is exactly the UTF-8 concatenation below, including the
 final newline. Hex fields use lowercase. The signature is Ed25519 over these
@@ -69,8 +81,8 @@ Build with `CUA_HYPRLAND_TEST_INPUT=ON` and
 `CUA_HYPRLAND_TEST_OPERATOR_KEY=<64 lowercase hex characters>`, against
 Hyprland 0.56.2 and its matching compiler/runtime. Driver additionally requires
 `CUA_DRIVER_EXPERIMENTAL_HYPRLAND_INPUT=1`. The ordinary build and installer do
-not enable input. This experiment adds a `Cua-Test-Agent` seat; Driver excludes
-that seat from its existing foreground virtual-pointer/keyboard routes.
+not enable input. This experiment adds `Cua-Test-Agent` and `Cua-Test-Agent-2`;
+Driver excludes both from foreground virtual-pointer/keyboard routes.
 
 Unloading revokes the lease, closes the socket, disables seat capabilities,
 and removes the seat global. It deliberately retains inert protocol objects
@@ -78,7 +90,7 @@ and executable callbacks until the compositor exits. Immediately destroying
 those objects disconnected a real foot client during testing: late client
 cleanup requests addressed objects that had already been destroyed. The
 experimental ELF module therefore uses `NODELETE`, and each module admits at
-most eight retired seat instances before requiring a compositor restart.
+most eight retired two-seat instances before requiring a compositor restart.
 This is a bounded test workaround, not a production hot-unload contract.
 
 The first input slice supports exact native top-level click, physical key and
@@ -86,8 +98,19 @@ hotkey, scroll, and complete bounded drag. It refuses XWayland, child/subsurface
 targets, modified pointer gestures, and raw Unicode/text/IME. The existing
 AT-SPI text route is unchanged. A primary pointer or keyboard in the same
 Wayland client as the target revokes the lease, even for another window of
-that application. Only one lease is active; multi-agent concurrency is not
-implemented.
+that application. Concurrent leases aimed at the same Wayland client also
+refuse. Closing a Driver lifecycle closes only its owned input connection;
+public session labels do not let a new transport inherit an old lease.
+
+The passive trace hooks the exact Hyprland 0.56.2 cursor-update function and
+listens to primary focus signals and outbound pointer/keyboard event categories.
+It records coordinates, monotonic timestamps, actor numbers, and button/key
+state, but no keycodes, text, window names, or arbitrary protocol arguments.
+Capture stops after 60 seconds or 32,768 events. Missing instrumentation,
+overflow, sequence gaps, or timeout make evidence inconclusive. This observer
+is intrusive test instrumentation, not a proposed production API or a
+replacement for the existing cross-platform cursor observer. Calibrate it with
+the deliberate warp-and-return control before relying on preservation results.
 
 ## Evidence required
 

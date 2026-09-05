@@ -435,6 +435,28 @@ func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
 	return evalUserDecision(ctx, user, opaAdminQuery, flagsData())
 }
 
+// AdminSubjectMembership exposes trusted owner membership for analytics only;
+// it does not authorize a request or accept role/client claims as evidence.
+// It shares the authorization cache (at most flagsTTL old). An unavailable or
+// malformed list is unresolved, not proof that an account is non-admin.
+func AdminSubjectMembership(subject string) (member, resolved bool) {
+	if strings.TrimSpace(subject) == "" {
+		return false, false
+	}
+	admins, ok := flagsData()["admin_subs"].([]interface{})
+	if !ok {
+		return false, false
+	}
+	for _, value := range admins {
+		admin, ok := value.(string)
+		if !ok || strings.TrimSpace(admin) == "" {
+			return false, false
+		}
+		member = member || admin == subject
+	}
+	return member, true
+}
+
 // EvalIsAdminFresh bypasses the process-local admin membership cache. If the
 // feature-admin middleware already resolved membership for this request, the
 // handler reuses that result instead of issuing a duplicate provider call.

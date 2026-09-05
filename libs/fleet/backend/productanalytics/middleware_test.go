@@ -121,6 +121,9 @@ func TestLoginObserverIgnoresBrowserAndNonInteractivePrincipals(t *testing.T) {
 }
 
 func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-owner"]`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
 	users := []struct {
 		name string
 		user *auth.User
@@ -131,6 +134,9 @@ func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *test
 		{name: "missing email user key", user: &auth.User{ID: "external-3", AZP: "ukey-proof", PrincipalType: auth.PrincipalTypeUserKey}, want: 3},
 		{name: "unverified internal-looking email", user: &auth.User{ID: "external-4", Email: "person@trycua.com", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 3},
 		{name: "internal", user: &auth.User{ID: "internal-1", Email: "person@trycua.com", EmailVerified: true, AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "admin SPA without email", user: &auth.User{ID: "admin-owner", AZP: "cyclops-cs-spa", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "admin CLI without email", user: &auth.User{ID: "admin-owner", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser}, want: 1},
+		{name: "admin SDK owner without email", user: &auth.User{ID: "admin-owner", AZP: "ukey-proof", PrincipalType: auth.PrincipalTypeUserKey}, want: 1},
 	}
 	for _, test := range users {
 		t.Run(test.name, func(t *testing.T) {
@@ -163,8 +169,40 @@ func TestRouteObserverEmitsActivationForAuthenticatedNonInternalIdentity(t *test
 				if activation == nil || activation.InsertID != "" || activation.SetOnce[firstActivationProperty] == nil {
 					t.Fatalf("activation event = %#v", activation)
 				}
+			} else {
+				if events[0].Name != EventHTTPProxyRequest || events[0].Properties["identity_class"] != IdentityInternal {
+					t.Fatalf("internal traffic must remain diagnostic only: %#v", events)
+				}
+				select {
+				case event := <-sink:
+					t.Fatalf("internal traffic emitted activation/workload: %#v", event)
+				case <-time.After(30 * time.Millisecond):
+				}
 			}
 		})
+	}
+}
+
+func TestUnresolvedAdminMembershipNeverStartsWorkloadQualification(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `invalid`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	sink := make(eventChannel, 3)
+	started := make(chan struct{}, 1)
+	handler := RouteObserver("/api/svc/{namespace}/{service}/{path...}", sink, "cyclops-cs-spa", func(context.Context, *http.Request, int) bool {
+		started <- struct{}{}
+		return true
+	})(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }))
+	user := &auth.User{ID: "owner", AZP: "cua-cli", PrincipalType: auth.PrincipalTypeUser}
+	handler.ServeHTTP(httptest.NewRecorder(), observedRequest(http.MethodPost, "/api/svc/{namespace}/{service}/{path...}", "tools", user))
+	event := <-sink
+	if event.Name != EventHTTPProxyRequest || event.Properties["identity_class"] != IdentityUnknown {
+		t.Fatalf("unresolved identity counted as external: %#v", event)
+	}
+	select {
+	case <-started:
+		t.Fatal("unresolved identity started qualification")
+	case <-time.After(30 * time.Millisecond):
 	}
 }
 

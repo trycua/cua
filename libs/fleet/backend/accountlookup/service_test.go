@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -12,7 +13,18 @@ import (
 	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/keycloak"
 	"cyclops-cs-backend/productanalytics"
+	"github.com/trycua/cloud/pkg/featureflags"
 )
+
+func TestMain(m *testing.M) {
+	if err := os.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`); err != nil {
+		panic(err)
+	}
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
 
 type fakeIndex struct {
 	subject           string
@@ -123,6 +135,13 @@ func TestLookupExactMatchAndCurrentClassification(t *testing.T) {
 	got, err := s.Lookup(context.Background(), "test-admin", Request{"account_id", "test-account"})
 	if err != nil || got.Account.IdentityClass != productanalytics.IdentityExternal {
 		t.Fatal("unverified domain must not imply internal")
+	}
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["test-account"]`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	got, err = s.Lookup(context.Background(), "test-admin", Request{"account_id", "test-account"})
+	if err != nil || got.Account.IdentityClass != productanalytics.IdentityInternal {
+		t.Fatal("trusted admin membership must imply internal independently of email")
 	}
 }
 

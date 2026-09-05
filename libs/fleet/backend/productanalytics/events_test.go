@@ -1,11 +1,65 @@
 package productanalytics
 
 import (
+	"context"
+	"os"
 	"strings"
 	"testing"
 
 	"cyclops-cs-backend/auth"
+	"github.com/trycua/cloud/pkg/featureflags"
 )
+
+func TestMain(m *testing.M) {
+	// External classification requires a successfully resolved empty admin set,
+	// not an unavailable provider. Keep tests local and deterministic.
+	if err := os.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`); err != nil {
+		panic(err)
+	}
+	if err := featureflags.SetupProvider(context.Background(), "development", featureflags.AWSCredentials{}); err != nil {
+		panic(err)
+	}
+	os.Exit(m.Run())
+}
+
+func TestAdminIdentityUsesTrustedMembershipAcrossSources(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `["admin-owner"]`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	for _, source := range []struct{ azp, principal string }{
+		{"cyclops-cs-spa", auth.PrincipalTypeUser},
+		{"cua-cli", auth.PrincipalTypeUser},
+		{"ukey-example", auth.PrincipalTypeUserKey},
+		{"github-oidc", auth.PrincipalTypeGitHubOIDC},
+	} {
+		user := &auth.User{ID: "admin-owner", AZP: source.azp, PrincipalType: source.principal}
+		if got := ClassifyIdentity(user); got != IdentityInternal {
+			t.Fatalf("admin owner via %s = %q", source.azp, got)
+		}
+	}
+	spoofed := &auth.User{ID: "external-owner", Claims: map[string]string{"is_admin": "true", "roles": "admin"}}
+	if got := ClassifyIdentity(spoofed); got != IdentityExternal {
+		t.Fatalf("untrusted role claim = %q", got)
+	}
+	// Membership refresh must work without recreating a token or restarting.
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `[]`)
+	auth.InvalidateFeatureFlags()
+	if got := ClassifyIdentity(&auth.User{ID: "admin-owner"}); got != IdentityExternal {
+		t.Fatalf("removed admin = %q", got)
+	}
+}
+
+func TestIdentityIsUnknownWhenAdminMembershipCannotBeResolved(t *testing.T) {
+	t.Setenv("CYCLOPS_CS_ADMIN_SUBS", `{"invalid":"not a list"}`)
+	auth.InvalidateFeatureFlags()
+	t.Cleanup(auth.InvalidateFeatureFlags)
+	if got := ClassifyIdentity(&auth.User{ID: "owner"}); got != IdentityUnknown {
+		t.Fatalf("unresolved membership = %q", got)
+	}
+	if got := ClassifyIdentity(&auth.User{ID: "staff", Email: "staff@trycua.com", EmailVerified: true}); got != IdentityInternal {
+		t.Fatalf("verified domain remains independent evidence = %q", got)
+	}
+}
 
 func TestSourceForUser(t *testing.T) {
 	tests := []struct {

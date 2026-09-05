@@ -23,8 +23,16 @@ func ClassifyIdentity(user *auth.User) IdentityClass {
 	if user == nil || strings.TrimSpace(user.ID) == "" {
 		return IdentityUnknown
 	}
-	// Only verified company-domain evidence excludes an authenticated user from growth counts.
+	// Verified company-domain evidence or trusted admin-owner membership is
+	// internal regardless of the authentication client (SPA, CLI, or user key).
 	if user.EmailVerified && strings.HasSuffix(strings.ToLower(strings.TrimSpace(user.Email)), "@trycua.com") {
+		return IdentityInternal
+	}
+	admin, resolved := auth.AdminSubjectMembership(user.ID)
+	if !resolved {
+		return IdentityUnknown
+	}
+	if admin {
 		return IdentityInternal
 	}
 	return IdentityExternal

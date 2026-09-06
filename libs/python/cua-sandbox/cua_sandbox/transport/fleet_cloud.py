@@ -441,6 +441,13 @@ class _FleetClient:
                     timeout_secs=_READINESS_PROBE_TIMEOUT_SECS,
                 ),
             )
+            if response.status in (401, 403):
+                # A reachable endpoint is not usable when it rejects this
+                # credential. Do not leak guest/proxy response bodies here.
+                raise PermissionError(
+                    f"Fleet service {service!r} rejected the readiness request "
+                    f"(HTTP {response.status}). Check the credential and service access."
+                )
             if 200 <= response.status < 500:
                 return
             if asyncio.get_running_loop().time() >= deadline:

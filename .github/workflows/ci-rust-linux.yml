@@ -82,9 +82,10 @@ jobs:
       - name: Run X11 MIT-SHM capture correctness and performance regression
         working-directory: libs/cua-driver/rust
         run: |
-          Xvfb :98 -screen 0 1920x1080x24 -ac -nolisten tcp >xvfb-98.log 2>&1 &
+          set -euo pipefail
+          Xvfb :98 -screen 0 1920x1080x24 -ac -noreset -nolisten tcp >xvfb-98.log 2>&1 &
           xvfb_primary=$!
-          Xvfb :99 -screen 0 1920x1080x24 -ac -nolisten tcp >xvfb-99.log 2>&1 &
+          Xvfb :99 -screen 0 1920x1080x24 -ac -noreset -nolisten tcp >xvfb-99.log 2>&1 &
           xvfb_secondary=$!
           trap 'kill "$xvfb_primary" "$xvfb_secondary" 2>/dev/null || true' EXIT
           for display in :98 :99; do

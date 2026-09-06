@@ -44,6 +44,8 @@ from realapp_proof import cleanup_all, released_synthetic_input
 
 
 LOCK_MS = 20000
+# Measured lock/settle/fresh-runtime setup takes about one second.
+REFUSAL_SETUP_RESERVE_NS = 1_250_000_000
 
 
 def validate_plan(plan):
@@ -291,6 +293,31 @@ def prepare_click(client, spec, *, session=True):
             'prepared_ns': prepared_ns}
 
 
+def prepare_refusal_click(observer, spec, save):
+    """Refresh successful grounding at most once, before starting the lock."""
+    first = prepare_click(observer, spec, session=False)
+    save('refusal-grounding-attempt-1.json', first)
+    checked_ns = time.monotonic_ns()
+    age_ns = checked_ns - first['prepared_ns']
+    assert age_ns >= 0, 'future refusal grounding'
+    refresh = age_ns + REFUSAL_SETUP_RESERVE_NS > MAX_GROUNDING_AGE_NS
+    decision = {'checked_ns': checked_ns, 'initial_age_ns': age_ns,
+        'reserve_ns': REFUSAL_SETUP_RESERVE_NS, 'max_age_ns': MAX_GROUNDING_AGE_NS,
+        'refresh_requested': refresh, 'selected_attempt': None if refresh else 1}
+    first.update(attempt=1, prelock_decision=decision)
+    save('refusal-grounding-attempt-1.json', first)
+    selected = first
+    if refresh:
+        # This is a new read-only observation, never an input or failure retry.
+        selected = prepare_click(observer, spec, session=False)
+        decision.update(selected_attempt=2, refresh_finished_ns=time.monotonic_ns())
+        selected.update(attempt=2, prelock_decision=decision)
+        save('refusal-grounding-attempt-2.json', selected)
+        save('refusal-grounding-attempt-1.json', first)
+    save('refusal-grounding.json', selected)
+    return selected
+
+
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
@@ -336,9 +363,8 @@ def run(args):
         trace = connect_trace(args.trace_socket, fixture.config)
         spec = {**plan['agents'][0], 'pointer_stage': plan['recovery']['pointer_stage']}
         assert state(args.foreground_journal)['held'] is False, 'lock setup requires released primary fixture'
-        probe = prepare_click(observer, spec, session=False)
+        probe = prepare_refusal_click(observer, spec, save)
         arguments, prepared_ns = probe['arguments'], probe['prepared_ns']
-        save('refusal-grounding.json', probe)
         fixture.lock()
         settle_locked(fixture)
         locked_primary, locked_foreground = wm(), state(args.foreground_journal)

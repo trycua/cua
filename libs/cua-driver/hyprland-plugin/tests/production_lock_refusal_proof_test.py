@@ -135,6 +135,87 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_prelock_refresh_is_bounded_and_retains_actual_observations(self):
+        spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
+        for age in (1_000_000_000, 3_750_000_000, 3_750_000_001, 6_000_000_000):
+            with self.subTest(age=age):
+                first_ns = 1_000_000_000
+                checked_ns = first_ns + age
+                refreshed = age > 3_750_000_000
+                snapshots = [
+                    {'proof_observation_started_ns': first_ns, 'proof_image': 'first.png',
+                     'tree': 'complete first tree including late toolbar'},
+                    {'proof_observation_started_ns': checked_ns, 'proof_image': 'second.png',
+                     'tree': 'complete second tree including late formula table'}]
+                saved = {}
+                def save(name, value):
+                    saved[name] = deepcopy(value)
+                # A 3.9s replacement is allowed despite lacking the heuristic margin.
+                clocks = [checked_ns, checked_ns, checked_ns + 3_900_000_000,
+                          checked_ns + 3_900_000_000]
+                with patch.object(proof, 'grounded_snapshot', side_effect=snapshots) as observe, \
+                     patch.object(proof.pointer_grounding, 'read_pixels'), \
+                     patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1, 'y': 2}, {})), \
+                     patch.object(proof.time, 'monotonic_ns', side_effect=clocks):
+                    selected = proof.prepare_refusal_click(Mock(), spec, save)
+                attempt = 2 if refreshed else 1
+                self.assertEqual(observe.call_count, attempt)
+                self.assertTrue(all(call.kwargs == {'session': False} for call in observe.call_args_list))
+                self.assertEqual(saved['refusal-grounding.json'], selected)
+                decision = selected['prelock_decision']
+                self.assertEqual(decision['selected_attempt'], attempt)
+                self.assertEqual(decision['checked_ns'], checked_ns)
+                self.assertEqual(decision['initial_age_ns'], age)
+                self.assertEqual(decision['refresh_requested'], refreshed)
+                self.assertEqual(decision['reserve_ns'], 1_250_000_000)
+                self.assertEqual(decision['max_age_ns'], 5_000_000_000)
+                for index in range(attempt):
+                    retained = saved[f'refusal-grounding-attempt-{index + 1}.json']
+                    self.assertEqual(retained['snapshot'], snapshots[index])
+                    self.assertEqual(retained['prepared_ns'], snapshots[index]['proof_observation_started_ns'])
+                    self.assertEqual(retained['prelock_decision']['selected_attempt'], attempt)
+                if not refreshed:
+                    self.assertNotIn('refusal-grounding-attempt-2.json', saved)
+
+    def test_prelock_does_not_retry_observation_or_grounding_failures(self):
+        spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
+        valid = {'proof_observation_started_ns': 1, 'proof_image': 'first.png'}
+        for failing_attempt in (1, 2):
+            for phase in ('observation', 'grounding', 'missing', 'invalid', 'future'):
+                with self.subTest(attempt=failing_attempt, phase=phase):
+                    bad = {'proof_image': 'bad.png'}
+                    if phase in ('invalid', 'future'):
+                        bad['proof_observation_started_ns'] = False if phase == 'invalid' else 9_000_000_000
+                    observations = [valid] * (failing_attempt - 1) + [
+                        RuntimeError('observation failed') if phase == 'observation'
+                        else valid if phase == 'grounding' else bad]
+                    actions = [({}, {})] * (failing_attempt - 1) + [AssertionError('grounding failed')]
+                    saved = {}
+                    with patch.object(proof, 'grounded_snapshot', side_effect=observations) as observe, \
+                         patch.object(proof.pointer_grounding, 'read_pixels'), \
+                         patch.object(proof.pointer_grounding, 'action', side_effect=actions), \
+                         patch.object(proof.time, 'monotonic_ns', return_value=4_000_000_000), \
+                         self.assertRaises((AssertionError, KeyError, RuntimeError)):
+                        proof.prepare_refusal_click(Mock(), spec, lambda name, value: saved.update({name: deepcopy(value)}))
+                    self.assertEqual(observe.call_count, failing_attempt)
+                    self.assertNotIn('refusal-grounding.json', saved)
+                    if failing_attempt == 2:
+                        self.assertEqual(saved['refusal-grounding-attempt-1.json']['snapshot'], valid)
+                        self.assertIsNone(saved['refusal-grounding-attempt-1.json']['prelock_decision']['selected_attempt'])
+
+    def test_expired_replacement_still_fails_actual_click_guard_without_third_observation(self):
+        client = Mock()
+        observations = [{'prepared_ns': 1, 'snapshot': {'proof_image': 'first.png'}, 'arguments': {}},
+                        {'prepared_ns': 4_000_000_000, 'snapshot': {'proof_image': 'second.png'}, 'arguments': {}}]
+        with patch.object(proof, 'prepare_click', side_effect=observations) as prepare, \
+             patch.object(proof.time, 'monotonic_ns', side_effect=[4_000_000_000, 9_000_000_001]):
+            selected = proof.prepare_refusal_click(client, {}, Mock())
+        self.assertEqual(prepare.call_count, 2)
+        with patch.object(proof.time, 'monotonic_ns', return_value=9_000_000_002), \
+             self.assertRaisesRegex(AssertionError, 'grounding expired'):
+            proof.click_once(client, {}, {**selected, 'outcome': 'unknown', 'replayed': False}, Mock(), 'attempt.json')
+        client.tool.assert_not_called()
+
     def test_click_grounding_retains_original_observation_timestamp(self):
         spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
         snapshot = {'proof_observation_started_ns': 10, 'proof_image': 'fresh.png'}
@@ -286,6 +367,11 @@ class FixtureTests(unittest.TestCase):
                 return {'ok': True}
             trace_client.exchange.side_effect = exchange
             trace_client.collect.return_value = proof.stopped_prefix(refusal()['trace_after'])
+            order = []
+            fixture.lock.side_effect = lambda: order.append('lock')
+            def observe(*args, **kwargs):
+                order.append('observe')
+                return {'proof_image': f'fresh-{len(order)}.png', 'proof_observation_started_ns': 1}
             with patch.object(proof, 'LockFixture', return_value=fixture), \
                  patch.object(proof, 'provenance', return_value={'files': {}}), \
                  patch.object(proof, 'DirectMCP', return_value=client), \
@@ -293,13 +379,16 @@ class FixtureTests(unittest.TestCase):
                  patch.object(proof, 'state', return_value={'held': False}), \
                  patch.object(proof, 'wm', return_value={}), \
                  patch.object(proof, 'production_status', return_value=status(2)), \
-                 patch.object(proof, 'grounded_snapshot', return_value={'proof_image': 'fresh.png', 'proof_observation_started_ns': 1}), \
+                 patch.object(proof, 'grounded_snapshot', side_effect=observe), \
                  patch.object(proof.pointer_grounding, 'read_pixels'), \
                  patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1, 'y': 1}, {})), \
+                 patch.object(proof.time, 'monotonic_ns', return_value=4_000_000_000), \
                  patch.object(proof, 'settle_locked'), patch.object(proof, 'close_owned'), \
                  patch('builtins.print'):
                 self.assertEqual(proof.run(args), 1)
             self.assertEqual([call.args[0] for call in trace_client.exchange.call_args_list], ['TRACE_START', 'TRACE_STOP'])
+            self.assertEqual(order, ['observe', 'observe', 'lock'])
+            self.assertEqual(json.loads((args.evidence / 'refusal-grounding.json').read_text())['attempt'], 2)
             self.assertTrue((args.evidence / 'failed-phase-trace.json').is_file())
             fixture.restore.assert_called_once_with(cleanup=True)
 

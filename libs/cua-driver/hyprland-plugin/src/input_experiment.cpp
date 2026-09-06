@@ -473,7 +473,13 @@ struct InputExperiment::Impl {
         for (auto& p : pointers) {
             const auto surface = p->focus.lock();
             if (!p->dead && p->wl->resource() && surface && surface->good()) {
-                if (held_button) p->wl->sendButton(serial(), event_ms(), held_button, WL_POINTER_BUTTON_STATE_RELEASED);
+                if (held_button) {
+                    p->wl->sendButton(serial(), event_ms(), held_button, WL_POINTER_BUTTON_STATE_RELEASED);
+                    // Complete the release frame before the focus transition,
+                    // matching ordinary button delivery. A frame is not an
+                    // acknowledgement that the application processed release.
+                    if (p->wl->version() >= 5) p->wl->sendFrame();
+                }
                 p->wl->sendLeave(serial(), surface->getResource().get());
                 if (p->wl->version() >= 5) p->wl->sendFrame();
             }

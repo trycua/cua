@@ -214,10 +214,14 @@ the only alternate message is
 Replace `press_key` with the actual middle-phase tool in either message. These
 strings come from `authorize_tool_call_with_context` in
 `rust/crates/cua-driver-core/src/authorization.rs`, the `AuthorizationError`
-display in `policy.rs`, and `permission_denied_result` in `tool.rs`.
-The observed response must have the common `status:"refused"` envelope,
-`refusal.code:"permission_denied"`, the exact reviewed `refusal.message`, and
-no delivery. A generic plugin `permission_denied`, resource-scope denial,
+display in `policy.rs`. Direct MCP's early tool-admission check in `server.rs`
+returns `isError:true`, `structuredContent:{"code":"permission_denied"}`, and
+one MCP text content block with the exact reviewed message. Later common
+admission in `tool.rs` uses `status:"refused"`,
+`refusal.code:"permission_denied"`, and the exact reviewed `refusal.message`.
+The verifier recognizes these two source-defined shapes, retains the raw
+structured and text content, and requires no delivery in either case.
+A generic plugin `permission_denied`, resource-scope denial,
 managed/user-policy denial, partial result, or unknown delivery fails this
 narrow manifest tool-ceiling case.
 

@@ -187,6 +187,25 @@ class PolicyCacheTests(unittest.TestCase):
             with self.subTest(actions=bad), self.assertRaises(AssertionError):
                 verify_policy_cache(bad)
 
+    def test_mcp_tool_admission_requires_exact_code_and_retained_text(self):
+        expected = policy_cache_plan()['phases'][1]['expect']
+        response = {'isError': True, 'structuredContent': {'code': 'permission_denied'},
+                    'content': [{'type': 'text', 'text': expected['message']}]}
+        result = check_manifest_refusal(response, expected, 'press_key')
+        self.assertEqual(result['refusal_boundary'], 'mcp-tool-admission')
+        self.assertEqual(result['mcp_content'], response['content'])
+        for mutate in (lambda r: r.update(isError=False), lambda r: r.pop('content'),
+                       lambda r: r['content'].append({'type': 'text', 'text': 'extra'}),
+                       lambda r: r['content'][0].update(text='Permission denied'),
+                       lambda r: r['content'][0].update(text=expected['message'].replace('press_key', 'hotkey')),
+                       lambda r: r['structuredContent'].update(code='lane_busy'),
+                       lambda r: r['structuredContent'].update(delivery={'mode': 'background'}),
+                       lambda r: r['structuredContent'].update(effect='unverifiable')):
+            bad = copy.deepcopy(response)
+            mutate(bad)
+            with self.subTest(response=bad), self.assertRaises(AssertionError):
+                check_manifest_refusal(bad, expected, 'press_key')
+
     def test_missing_trace_fails_before_process_launch(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -262,8 +281,9 @@ class PolicyCacheTests(unittest.TestCase):
                         if failure == 'plugin_refusal':
                             return {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'permission_denied'}}
                         expected = candidate['phases'][1]['expect']
-                        return {'isError': True, 'structuredContent': {'status': 'refused', 'refusal': {
-                            'code': expected['reason'], 'message': 'wrong reason' if failure == 'wrong_refusal' else expected['message']}}}
+                        return {'isError': True, 'structuredContent': {'code': expected['reason']},
+                            'content': [{'type': 'text',
+                                         'text': 'wrong reason' if failure == 'wrong_refusal' else expected['message']}]}
                     lane = 2 if failure == 'changed_lane' and action_count == 3 else 1
                     rows = capacity_events(lane)
                     events.extend([rows[0], rows[-1]] if failure == 'missing_input' else rows)

@@ -227,14 +227,26 @@ def verify_capacity(actions):
 
 
 def check_manifest_refusal(response, expected, tool):
-    result = check_response(response, expected)
-    content = result['observed']
-    assert content.get('status') == 'refused' and isinstance(content.get('refusal'), dict), \
-        'policy_cache needs the common authorization refusal envelope'
+    content = response.get('structuredContent', {})
+    assert expected['kind'] == 'refused' and response.get('isError') is True
     assert expected['reason'] == 'permission_denied'
     assert expected['message'] in manifest_tool_messages(tool)
-    assert content['refusal'].get('message') == expected['message'], 'wrong manifest tool-ceiling refusal'
-    return result
+    assert 'delivery' not in content, 'refusal must not imply acknowledged delivery'
+    if content == {'code': 'permission_denied'}:
+        # server.rs checks tool admission before provider dispatch. Its error
+        # uses a flat code and the exact message in MCP text content, unlike
+        # tool.rs's later common admission refusal envelope. Preserve both.
+        assert response.get('content') == [{'type': 'text', 'text': expected['message']}], \
+            'wrong MCP manifest tool-ceiling refusal'
+        boundary = 'mcp-tool-admission'
+    else:
+        check_response(response, expected)
+        assert content.get('status') == 'refused' and isinstance(content.get('refusal'), dict), \
+            'policy_cache needs a common authorization refusal, not a plugin error'
+        assert content['refusal'].get('message') == expected['message'], 'wrong manifest tool-ceiling refusal'
+        boundary = 'core-admission'
+    return {'expected': 'refused', 'observed': content, 'mcp_content': response.get('content', []),
+            'refusal_boundary': boundary, 'app_effect_verified': False}
 
 
 def verify_policy_cache(actions):
@@ -249,7 +261,8 @@ def verify_policy_cache(actions):
         check_response({'structuredContent': actions[index]['observed']}, {'kind': 'dispatched'})
     denied = actions[1]
     assert denied.get('no_dispatch') == 'verified'
-    check_manifest_refusal({'isError': True, 'structuredContent': denied['observed']},
+    check_manifest_refusal({'isError': True, 'structuredContent': denied['observed'],
+                            'content': denied.get('mcp_content', [])},
                            denied['expect'], denied['tool'])
     return {'result': 'verified', 'runtime_pid': actions[0]['runtime_pid'],
             'session': actions[0]['session'], 'compositor_lane': lanes[0],
@@ -530,7 +543,8 @@ def run(args):
         action_intervals.append((action_start, time.monotonic_ns()))
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
         after = snapshot(mcp, spec['target'], spec['name'], full=full, pixels=pointer_stage is not None)
-        result = check_response(response, expected)
+        result = (check_manifest_refusal(response, expected, step['tool'])
+                  if policy_cache and expected['kind'] == 'refused' else check_response(response, expected))
         if smoke_stage is not None:
             ground(after, spec['app'], 'after')
             result['smoke_stage'] = smoke_stage

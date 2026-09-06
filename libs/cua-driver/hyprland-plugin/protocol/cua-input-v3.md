@@ -103,12 +103,16 @@ no lane reservation. Fresh admission may reuse unchanged focus on the same
 live surface without inheriting old authority.
 
 Because Driver claims a free lane before selecting its target, fresh valid
-`TARGET` admission may retire matching hover on a different unreserved lane.
-This is allowed only when that peer has no lease, drag, held input, keyboard
-focus, capabilities, or remaining grant/expiry state. Reserved or active peers
-still cause `agent_target_busy`; ordinary dispatch and conflict checks never
-evict them. This prevents inert orphan hover from stranding a target on a lane
-the new caller did not claim.
+`TARGET` admission may retire matching hover on a different unreserved lane,
+or a lane whose new claimant has never successfully bound a target. A bare
+`CLAIM` reserves capacity; it does not adopt a previous owner's hover. This is
+allowed only when that peer has no lease, drag, held input, keyboard focus,
+capabilities, or remaining grant/expiry state. After a connection's first
+successful `TARGET`, its reservation protects its hover even after STOP,
+CANCEL, or target invalidation. Existing target owners and active peers still
+cause `agent_target_busy`; ordinary dispatch and conflict checks never evict
+them. This permits opposite-order reuse when both new connections reserve
+their lanes before either selects a target, without retrying any input.
 
 Target replacement, unmap, destruction, geometry change, primary-client
 conflict, and desktop/keymap/configuration transitions clear passive focus.

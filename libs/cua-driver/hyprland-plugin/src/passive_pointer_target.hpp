@@ -7,9 +7,13 @@ struct InputLaneActivity {
     bool reserved = false, leased = false, dragging = false;
     bool button = false, keys = false, keyboard_focus = false;
     bool capabilities = false, grant = false, expiry = false;
+    // A new claimant does not adopt the previous owner's hover merely by
+    // reserving a lane. This exception ends after its first successful TARGET
+    // and must not be restored by STOP, CANCEL, or target invalidation.
+    bool reservation_without_target = false;
 
     [[nodiscard]] bool inert() const {
-        return !reserved && !leased && !dragging && !button && !keys &&
+        return (!reserved || reservation_without_target) && !leased && !dragging && !button && !keys &&
             !keyboard_focus && !capabilities && !grant && !expiry;
     }
 };

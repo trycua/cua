@@ -52,6 +52,48 @@ int main() {
         check(!hover.reclaimable_for(sibling, activity),
             "any remaining ownership, authority, or held input prevents sibling eviction");
     }
+    const InputLaneActivity fresh_claim{.reserved = true, .reservation_without_target = true};
+    check(hover.reclaimable_for(sibling, fresh_claim),
+        "a bare new claim cannot adopt the prior owner's matching hover");
+    check(!hover.reclaimable_for(unrelated, fresh_claim),
+        "a new claim never permits eviction of unrelated hover");
+    for (const auto member : {&InputLaneActivity::leased, &InputLaneActivity::dragging,
+             &InputLaneActivity::button, &InputLaneActivity::keys, &InputLaneActivity::keyboard_focus,
+             &InputLaneActivity::capabilities, &InputLaneActivity::grant, &InputLaneActivity::expiry}) {
+        auto activity = fresh_claim;
+        activity.*member = true;
+        check(!hover.reclaimable_for(sibling, activity),
+            "a fresh claim cannot excuse authority, keyboard focus, or held input");
+    }
+    auto bound_claim = fresh_claim;
+    bound_claim.reservation_without_target = false;
+    check(!hover.reclaimable_for(sibling, bound_claim),
+        "an owner that has bound a target protects hover even with no current grant");
+    for (int first = 0; first < 2; ++first) {
+        Target lanes[2];
+        const std::shared_ptr<Surface> old_targets[] = {surface, unrelated};
+        lanes[0].capture(window, old_targets[0], geometry);
+        lanes[1].capture(window, old_targets[1], geometry);
+        InputLaneActivity claims[] = {fresh_claim, fresh_claim};
+        // Both sockets CLAIM before either TARGET, in reverse app order.
+        // This reproduced a native agent_target_busy refusal in a scroll pair.
+        const int second = 1 - first;
+        lanes[first].reset();
+        check(lanes[second].reclaimable_for(old_targets[second], claims[second]),
+            "the first TARGET can retire matching hover on a freshly reserved peer");
+        lanes[second].reset();
+        claims[first].reservation_without_target = false;
+        lanes[first].capture(window, old_targets[second], geometry);
+        check(!lanes[first].reclaimable_for(old_targets[second], claims[first]),
+            "the first newly bound owner is protected from the second TARGET");
+        check(!lanes[first].same_client(old_targets[first]),
+            "the second TARGET does not conflict with the first replacement");
+        claims[second].reservation_without_target = false;
+        lanes[second].capture(window, old_targets[first], geometry);
+        check(lanes[0].matches(window, old_targets[1], geometry) &&
+              lanes[1].matches(window, old_targets[0], geometry),
+            "both reservation orders permit reversed target reuse without replay");
+    }
     Target lane_a, lane_b;
     lane_a.capture(window, surface, geometry);
     lane_b.capture(window, unrelated, geometry);

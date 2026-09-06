@@ -147,6 +147,9 @@ struct InputExperiment::Impl {
         int fd = -1;
         wl_event_source* source = nullptr;
         bool dead = false, hello = false;
+        // Sticky for this connection: a bare CLAIM does not own inherited
+        // hover. Never reset on STOP/CANCEL, repeated CLAIM, or invalidation.
+        bool has_bound_target = false;
         std::string challenge, token;
         WP<Desktop::View::CWindow> window;
         WP<CWLSurfaceResource> surface;
@@ -486,10 +489,13 @@ struct InputExperiment::Impl {
                 .capabilities = peer->capabilities != 0,
                 .grant = peer->grant.deadline() != Clock::time_point{},
                 .expiry = peer->expires != Clock::time_point{},
+                .reservation_without_target = peer->reservation && !peer->reservation->has_bound_target,
             };
             // Driver claims the first free lane before TARGET. Retire only a
             // matching, completely inert peer hover so opposite-order reuse
-            // cannot strand a target on a different, unreserved lane.
+            // cannot strand a target on another lane. A fresh claimant that
+            // has never bound a target does not adopt inherited hover; an
+            // existing target owner remains protected even after STOP.
             if (peer->pointer_target.reclaimable_for(c.surface.lock(), activity)) peer->leave_pointer();
         }
     }
@@ -832,6 +838,7 @@ struct InputExperiment::Impl {
                 lease = &c; capabilities = requested_cap; expires = grant.deadline();
                 if (trace) trace->mark("agent_admitted", lane + 1);
             }
+            c.has_bound_target = true;
             send(c, std::format(R"({{"ok":true,"target":"{}","revision":{},"width":{},"height":{}}})", c.token, c.revision, c.geometry[2], c.geometry[3])); return;
         }
         const std::uint64_t cap = command == "CLICK" ? 1 : command == "KEY" ? 2 : command == "SCROLL" ? 4 : command == "DRAG" ? 8 : 0;

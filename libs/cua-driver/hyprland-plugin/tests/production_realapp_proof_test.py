@@ -1032,7 +1032,7 @@ class RuntimeTests(unittest.TestCase):
                 mcp.rpc('tools/call', {})
             rpc.assert_called_once()
 
-    def test_unrestricted_launch_explicitly_acknowledges_bypass(self):
+    def test_unrestricted_direct_launch_uses_environment_not_serve_only_flags(self):
         process = Mock()
         process.poll.return_value = 0
         with tempfile.TemporaryDirectory() as directory, \
@@ -1042,9 +1042,9 @@ class RuntimeTests(unittest.TestCase):
                             {'mode': 'unrestricted', 'acknowledge_unrestricted': True})
             mcp.close()
             self.assertEqual(spawn.call_args.args[0], [
-                '/synthetic/driver', 'mcp', '--direct', '--permission-mode',
-                'unrestricted', '--dangerously-bypass-approvals'])
+                '/synthetic/driver', 'mcp', '--direct'])
             self.assertEqual(spawn.call_args.kwargs['env']['CUA_DRIVER_PERMISSION_MODE'], 'unrestricted')
+            self.assertEqual(spawn.call_args.kwargs['env']['CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS'], '1')
 
     def test_preflight_failure_is_retained_as_failure(self):
         with tempfile.TemporaryDirectory() as directory:

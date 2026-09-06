@@ -66,9 +66,10 @@ class DirectMCP(MCP):
         self.counter = 0
         self.failed = False
         self.closed = False
+        # Direct MCP reads the immutable authorization configuration from
+        # profile_environment. Permission CLI flags are serve-only and cause
+        # MCP to exit before initialize, even when their environment agrees.
         command = [str(driver), 'mcp', '--direct']
-        if profile['mode'] == 'unrestricted':
-            command += ['--permission-mode', 'unrestricted', '--dangerously-bypass-approvals']
         try:
             self.process = subprocess.Popen(
                 command, env=env,

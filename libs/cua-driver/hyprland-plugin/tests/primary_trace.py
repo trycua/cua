@@ -16,7 +16,8 @@ class Trace:
         self.socket = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
         self.socket.settimeout(5)
         self.socket.connect(str(path))
-        assert self.exchange('HELLO')['ok']
+        self.hello = self.exchange('HELLO')
+        assert self.hello['ok']
 
     def exchange(self, packet):
         self.socket.sendall(packet.encode('ascii'))
@@ -48,7 +49,7 @@ def analyze(trace, *, expected_motion=None):
         kinds = {'start', 'stop', 'cursor', 'pointer_focus', 'keyboard_focus', 'pointer_motion',
                  'pointer_enter', 'pointer_leave', 'pointer_button', 'pointer_axis',
                  'keyboard_enter', 'keyboard_leave', 'keyboard_key', 'agent_cancel',
-                 'agent_approved', 'agent_action_end', 'agent_drag_start', 'agent_drag_end'}
+                 'agent_approved', 'agent_admitted', 'agent_action_end', 'agent_drag_start', 'agent_drag_end'}
         complete = all(isinstance(r, list) and len(r) == 7
                        and type(r[0]) is int and type(r[1]) is int and r[1] >= 0
                        and isinstance(r[2], str) and r[2] in kinds

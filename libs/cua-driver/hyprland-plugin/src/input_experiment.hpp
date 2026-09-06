@@ -6,7 +6,8 @@
 
 namespace cua::hyprland {
 class PrimaryTrace;
-// Compiled only with the explicit VM-test option. Not the production v3 API.
+// Shared native seat/lifetime implementation. Build options select production
+// v3 admission or the historical signed experiment; never both.
 class InputExperiment {
   public:
     explicit InputExperiment(const std::string& instance_directory, void* plugin);

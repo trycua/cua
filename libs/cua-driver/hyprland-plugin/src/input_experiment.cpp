@@ -2,6 +2,7 @@
 // All resource dispatch below belongs to this seat, never CSeatManager's focus.
 #include "input_experiment.hpp"
 #include "drag_geometry.hpp"
+#include "input_grant.hpp"
 #include "primary_trace.hpp"
 #include "seat_lifetime.hpp"
 #include "owned_socket_path.hpp"
@@ -15,8 +16,10 @@
 #include <src/state/MonitorState.hpp>
 #include <wayland.hpp>
 
+#ifdef CUA_HYPRLAND_TEST_INPUT
 #include <openssl/evp.h>
-#include <openssl/rand.h>
+#endif
+#include <sys/random.h>
 #include <xkbcommon/xkbcommon.h>
 
 #include <algorithm>
@@ -26,6 +29,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
 #include <fcntl.h>
 #include <format>
@@ -38,30 +42,47 @@
 #include <sys/un.h>
 #include <unistd.h>
 
+#if defined(CUA_HYPRLAND_INPUT) == defined(CUA_HYPRLAND_TEST_INPUT)
+#error Select exactly one input admission mode
+#endif
+
 namespace cua::hyprland {
 namespace {
 using Clock = std::chrono::steady_clock;
 constexpr std::size_t kMaxPacket = 2048;
 constexpr std::size_t kMaxClients = 8;
 constexpr std::size_t kMaxResources = 512;
+#ifdef CUA_HYPRLAND_INPUT
+constexpr bool kProduction = true;
+#else
+constexpr bool kProduction = false;
+#endif
 
+#ifdef CUA_HYPRLAND_TEST_INPUT
 std::uint64_t unix_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
                std::chrono::system_clock::now().time_since_epoch()).count();
 }
+#endif
 std::uint32_t event_ms() {
     return static_cast<std::uint32_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
                Clock::now().time_since_epoch()).count());
 }
 std::string nonce() {
     std::array<unsigned char, 16> bytes{};
-    if (RAND_bytes(bytes.data(), bytes.size()) != 1)
-        throw std::runtime_error("input experiment entropy unavailable");
+    std::size_t offset = 0;
+    while (offset < bytes.size()) {
+        const auto n = getrandom(bytes.data() + offset, bytes.size() - offset, 0);
+        if (n < 0 && errno == EINTR) continue;
+        if (n <= 0) throw std::runtime_error("input entropy unavailable");
+        offset += static_cast<std::size_t>(n);
+    }
     std::string result;
     for (auto b : bytes)
         result += std::format("{:02x}", b);
     return result;
 }
+#ifdef CUA_HYPRLAND_TEST_INPUT
 std::vector<unsigned char> unhex(std::string_view value) {
     if (value.size() % 2)
         throw std::runtime_error("invalid hex");
@@ -75,6 +96,7 @@ std::vector<unsigned char> unhex(std::string_view value) {
     }
     return bytes;
 }
+#endif
 std::uint64_t number(std::string_view value, int base = 10) {
     std::uint64_t n = 0;
     const auto [p, error] = std::from_chars(value.data(), value.data() + value.size(), n, base);
@@ -160,6 +182,7 @@ struct InputExperiment::Impl {
     std::uint64_t desktop_generation = 1;
     std::uint64_t capabilities = 0, dispatches = 0;
     Clock::time_point expires{};
+    InputGrant grant;
     std::optional<Drag> drag;
     std::uint32_t held_button = 0;
     std::vector<std::uint32_t> held_keys;
@@ -167,25 +190,63 @@ struct InputExperiment::Impl {
     xkb_keymap* keymap = nullptr;
     xkb_state* keyboard_state = nullptr;
     int keymap_fd = -1;
-    bool retired = false, suspended = true;
+    bool retired = false, suspended = true, us_keymap = false, physical_keymap_present = false;
+    WP<IKeyboard> physical_keyboard;
+    CHyprSignalListener keymap_listener;
     unsigned lane;
     std::array<Impl*, 2> peers{};
     PrimaryTrace* trace = nullptr;
 
     explicit Impl(const std::string& directory, unsigned index) : lane(index) {
+#ifdef CUA_HYPRLAND_TEST_INPUT
         public_key = unhex(CUA_HYPRLAND_TEST_OPERATOR_KEY);
         if (public_key.size() != 32)
             throw std::runtime_error("invalid test operator public key");
-        path = directory + (lane == 0 ? "/cua-input-test.sock" : "/cua-input-test-2.sock");
+#endif
+        path = directory + (kProduction ?
+            (lane == 0 ? "/cua-input-v3.sock" : "/cua-input-v3-2.sock") :
+            (lane == 0 ? "/cua-input-test.sock" : "/cua-input-test-2.sock"));
         if (path.size() >= sizeof(sockaddr_un::sun_path))
             throw std::runtime_error("input socket path too long");
         // No private key or input-enabled default exists in this component.
     }
 
+    static bool canonical_us_keymap(xkb_context* context, xkb_keymap* map) {
+        // Compare canonical compiled content, not a layout display name. This
+        // deliberately excludes variants, options, remaps, and multiple groups.
+        const xkb_rule_names names{"evdev", "pc105", "us", "", ""};
+        auto* reference = xkb_keymap_new_from_names(context, &names, XKB_KEYMAP_COMPILE_NO_FLAGS);
+        if (!reference) return false;
+        char* actual = xkb_keymap_get_as_string(map, XKB_KEYMAP_FORMAT_TEXT_V1);
+        char* expected = xkb_keymap_get_as_string(reference, XKB_KEYMAP_FORMAT_TEXT_V1);
+        const bool matches = actual && expected && std::strcmp(actual, expected) == 0;
+        std::free(actual); std::free(expected); xkb_keymap_unref(reference);
+        return matches;
+    }
+    bool layout_qualified() const {
+        if (!kProduction) return true;
+        const auto keyboard = g_pSeatManager->m_keyboard.lock();
+        return physical_keymap_present && us_keymap && keyboard_state && keyboard &&
+            keyboard->m_xkbKeymapV1FD.get() >= 0 && keyboard->m_xkbKeymapV1String == keymap_text;
+    }
     void sync_keymap() {
         const auto keyboard = g_pSeatManager->m_keyboard.lock();
-        if (!keyboard || keyboard->m_xkbKeymapV1FD.get() < 0 || keyboard->m_xkbKeymapV1String.empty() ||
-            (keyboard_state && keymap_text == keyboard->m_xkbKeymapV1String)) return;
+        if (physical_keyboard != keyboard) {
+            if (physical_keymap_present) desktop_transition();
+            keymap_listener.reset();
+            physical_keyboard = keyboard;
+            if (keyboard && kProduction)
+                keymap_listener = keyboard->m_keyboardEvents.keymap.listen([this](IKeyboard::SKeymapEvent) {
+                    desktop_transition();
+                });
+        }
+        if (!keyboard || keyboard->m_xkbKeymapV1FD.get() < 0 || keyboard->m_xkbKeymapV1String.empty()) {
+            if (physical_keymap_present) desktop_transition();
+            physical_keymap_present = false;
+            return;
+        }
+        physical_keymap_present = true;
+        if (keyboard_state && keymap_text == keyboard->m_xkbKeymapV1String) return;
         // Prepare a complete replacement before retiring the old independent
         // state. Keep our own fd: primary keyboard replacement must not leave
         // later seat bindings referring to a closed compositor fd.
@@ -207,6 +268,7 @@ struct InputExperiment::Impl {
         if (xkb_context_) xkb_context_unref(xkb_context_);
         if (keymap_fd >= 0) close(keymap_fd);
         keyboard_state = state; keymap = map; xkb_context_ = context; keymap_fd = fd;
+        us_keymap = !kProduction || canonical_us_keymap(context, map);
         keymap_text = keyboard->m_xkbKeymapV1String;
         for (auto& k : keyboards)
             if (!k->dead && k->wl->resource())
@@ -274,8 +336,9 @@ struct InputExperiment::Impl {
         // wl_global removal does not revoke existing protocol objects. Destroying
         // those objects immediately disconnects clients that still send release
         // or cursor requests (observed with foot). Retain inert resources and
-        // callbacks until compositor exit; the experimental module is NODELETE.
+        // callbacks until compositor exit; input-enabled modules are NODELETE.
         suspend("plugin_shutdown");
+        keymap_listener.reset();
         retired = true;
         for (auto& seat : seats)
             if (!seat->dead && seat->wl->resource())
@@ -317,7 +380,9 @@ struct InputExperiment::Impl {
         seat->wl->setGetPointer([&self](CWlSeat* r, std::uint32_t child) { self.add_pointer(r, child); });
         seat->wl->setGetKeyboard([&self](CWlSeat* r, std::uint32_t child) { self.add_keyboard(r, child); });
         seat->wl->setGetTouch([&self](CWlSeat* r, std::uint32_t child) { self.add_touch(r, child); });
-        if (version >= 2) seat->wl->sendName(self.lane == 0 ? "Cua-Test-Agent" : "Cua-Test-Agent-2");
+        if (version >= 2) seat->wl->sendName(kProduction ?
+            (self.lane == 0 ? "Cua-Agent" : "Cua-Agent-2") :
+            (self.lane == 0 ? "Cua-Test-Agent" : "Cua-Test-Agent-2"));
         seat->wl->sendCapabilities(static_cast<wl_seat_capability>(self.retired ? 0 :
             WL_SEAT_CAPABILITY_POINTER | (self.keyboard_state ? WL_SEAT_CAPABILITY_KEYBOARD : 0)));
         self.seats.push_back(std::move(seat));
@@ -365,7 +430,11 @@ struct InputExperiment::Impl {
         const auto box = window->surfaceLogicalBox(); const auto surface_box = box;
         if (!box || !surface_box || box->w <= 0 || box->h <= 0 || box->w > 32767 || box->h > 32767) return false;
         std::array<double, 6> geometry{box->x, box->y, box->w, box->h, surface_box->x, surface_box->y};
-        if (geometry != c.geometry) { c.geometry = geometry; ++c.revision; }
+        if (!std::ranges::all_of(geometry, [](double value) { return std::isfinite(value); })) return false;
+        if (geometry != c.geometry) {
+            if (c.revision == UINT64_MAX) return false;
+            c.geometry = geometry; ++c.revision;
+        }
         return true;
     }
     bool primary_conflict(Client& c) const {
@@ -418,17 +487,15 @@ struct InputExperiment::Impl {
         keyboard_state = keymap ? xkb_state_new(keymap) : nullptr;
     }
     void revoke(std::string_view reason) {
-        if (lease && trace) trace->mark("agent_cancel", lane + 1);
+        if (lease && trace && reason != "completed") trace->mark("agent_cancel", lane + 1);
         if (drag && drag->client && !drag->client->dead) send(*drag->client, refusal(reason));
-        drag.reset(); leave(); lease = nullptr; capabilities = 0;
+        drag.reset(); leave(); lease = nullptr; capabilities = 0; grant.reset();
     }
     void cancel_authority(std::string_view reason) {
         revoke(reason);
-        // Stop is also a boundary for grants that have not been redeemed yet,
-        // including a signed renewal with a later deadline. Invalidating every
-        // target makes those signatures unusable without closing operator or
-        // trace channels. Action connections keep their lane reservation, but
-        // must select a fresh target token and obtain new operator approval.
+        // Invalidate pending authority as well as active work. This also makes
+        // unused signed renewals unusable in experimental builds. Keep the lane
+        // reservation; v3 requires fresh TARGET admission for the next action.
         for (auto& c : clients) invalidate(*c);
     }
     void desktop_transition() {
@@ -487,7 +554,10 @@ struct InputExperiment::Impl {
             c.activity = Clock::now();
             if (static_cast<std::size_t>(n) > buffer.size()) { self.send(c, refusal("invalid_request")); continue; }
             try { self.request(c, fields(std::string_view(buffer.data(), n))); }
-            catch (...) { self.send(c, refusal("invalid_request")); }
+            catch (...) {
+                if (kProduction && self.lease == &c) self.revoke("invalid_request");
+                self.send(c, refusal("invalid_request"));
+            }
         }
         if (c.dead) {
             if (self.lease == &c) self.revoke("disconnected");
@@ -495,6 +565,7 @@ struct InputExperiment::Impl {
         }
         return 0;
     }
+#ifdef CUA_HYPRLAND_TEST_INPUT
     bool valid_signature(const std::string& message, const std::string& signature) const {
         if (signature.size() != 128) return false;
         const auto bytes = unhex(signature);
@@ -529,6 +600,7 @@ struct InputExperiment::Impl {
         if (trace) trace->mark("agent_approved", lane + 1);
         send(c, R"({"ok":true})");
     }
+#endif
     bool point(Client& c, double x, double y) const {
         return std::isfinite(x) && std::isfinite(y) && x >= 0 && y >= 0 && x < c.geometry[2] && y < c.geometry[3];
     }
@@ -596,7 +668,11 @@ struct InputExperiment::Impl {
         if (command == "HELLO") {
             if (f.size() != 1 || c.hello) { send(c, refusal("invalid_request")); return; }
             c.hello = true;
-            send(c, std::format(R"({{"ok":true,"protocol":0,"epoch":"{}","challenge":"{}"}})", epoch, c.challenge)); return;
+            if (kProduction)
+                send(c, std::format(R"({{"ok":true,"protocol":3,"epoch":"{}"}})", epoch));
+            else
+                send(c, std::format(R"({{"ok":true,"protocol":0,"epoch":"{}","challenge":"{}"}})", epoch, c.challenge));
+            return;
         }
         if (!c.hello) { send(c, refusal("invalid_request")); return; }
         if (command == "CLAIM" && f.size() == 1) {
@@ -605,10 +681,18 @@ struct InputExperiment::Impl {
             send(c, std::format(R"({{"ok":true,"lane":{}}})", lane)); return;
         }
         if (command == "STOP" && f.size() == 1) {
-            for (auto* peer : peers) if (peer) peer->cancel_authority("stopped");
+            if (kProduction) {
+                if (reservation != &c) { send(c, refusal("lane_not_claimed")); return; }
+                cancel_authority("stopped");
+            } else {
+                for (auto* peer : peers) if (peer) peer->cancel_authority("stopped");
+            }
             send(c, R"({"ok":true})"); return;
         }
-        if (command == "CANCEL" && f.size() == 1) { cancel_authority("cancelled"); send(c, R"({"ok":true})"); return; }
+        if (command == "CANCEL" && f.size() == 1) {
+            if (kProduction && reservation != &c) { send(c, refusal("lane_not_claimed")); return; }
+            cancel_authority("cancelled"); send(c, R"({"ok":true})"); return;
+        }
         if (trace && ((command == "TRACE_START" || command == "TRACE_STOP") && f.size() == 1)) {
             send(c, trace->request(command)); return;
         }
@@ -617,10 +701,18 @@ struct InputExperiment::Impl {
             if (after > 32768) { send(c, refusal("invalid_request")); return; }
             send(c, trace->request(command, after)); return;
         }
+#ifdef CUA_HYPRLAND_TEST_INPUT
         if (command == "APPROVE") { approve(c, f); return; }
+#endif
         if (reservation != &c) { send(c, refusal("lane_not_claimed")); return; }
         if (command == "TARGET") {
-            if (f.size() != 3 || drag) { send(c, refusal("invalid_request")); return; }
+            if (f.size() != (kProduction ? 4u : 3u) || drag) { send(c, refusal("invalid_request")); return; }
+            // A new admission attempt always retires any unused old grant.
+            if (kProduction) invalidate(c);
+            const auto requested_cap = kProduction ? number(f[3]) : 0;
+            if (kProduction && !InputGrant::single_operation(requested_cap)) { send(c, refusal("unsupported")); return; }
+            if (kProduction && !available()) { send(c, refusal("session_unavailable")); return; }
+            if (!layout_qualified()) { send(c, refusal("unsupported_layout")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
             for (const auto& w : Desktop::windowState()->windows())
@@ -635,6 +727,13 @@ struct InputExperiment::Impl {
                 c.destroy = window->m_events.destroy.listen([this, &c] { invalidate(c); });
             }
             if (!refresh(c)) { invalidate(c); send(c, refusal("stale_target")); return; }
+            if (kProduction) {
+                if (primary_conflict(c)) { invalidate(c); send(c, refusal("primary_target_busy")); return; }
+                if (agent_conflict(c)) { invalidate(c); send(c, refusal("agent_target_busy")); return; }
+                grant.arm(requested_cap, Clock::now());
+                lease = &c; capabilities = requested_cap; expires = grant.deadline();
+                if (trace) trace->mark("agent_admitted", lane + 1);
+            }
             send(c, std::format(R"({{"ok":true,"target":"{}","revision":{},"width":{},"height":{}}})", c.token, c.revision, c.geometry[2], c.geometry[3])); return;
         }
         const std::uint64_t cap = command == "CLICK" ? 1 : command == "KEY" ? 2 : command == "SCROLL" ? 4 : command == "DRAG" ? 8 : 0;
@@ -647,16 +746,30 @@ struct InputExperiment::Impl {
         if (c.token.empty() || f[2] != c.token || !refresh(c)) { send(c, refusal("stale_target")); return; }
         if (number(f[3]) != c.revision) { send(c, refusal("stale_geometry")); return; }
         if (!available()) { revoke("session_unavailable"); send(c, refusal("session_unavailable")); return; }
+        if (!layout_qualified()) { revoke("unsupported_layout"); send(c, refusal("unsupported_layout")); return; }
         if (lease && Clock::now() >= expires) revoke("lease_expired");
-        if (lease != &c || !(capabilities & cap)) {
-            send(c, std::format(R"({{"ok":false,"code":"pending_operator_approval","detail":"external test operator approval required","epoch":"{}","challenge":"{}","target":"{}"}})", epoch, c.challenge, c.token)); return;
-        }
         if (drag) { send(c, refusal("lease_busy")); return; }
-        if (primary_conflict(c)) { send(c, refusal("primary_target_busy")); return; }
-        if (agent_conflict(c)) { send(c, refusal("agent_target_busy")); return; }
+        if (lease != &c || !(capabilities & cap) || (kProduction && !grant.permits(cap, Clock::now()))) {
+            if (kProduction) {
+                revoke("action_not_admitted");
+                send(c, refusal("action_not_admitted"));
+            } else {
+                send(c, std::format(R"({{"ok":false,"code":"pending_operator_approval","detail":"external test operator approval required","epoch":"{}","challenge":"{}","target":"{}"}})", epoch, c.challenge, c.token));
+            }
+            return;
+        }
+        if (primary_conflict(c)) {
+            if (kProduction) revoke("primary_target_busy");
+            send(c, refusal("primary_target_busy")); return;
+        }
+        if (agent_conflict(c)) {
+            if (kProduction) revoke("agent_target_busy");
+            send(c, refusal("agent_target_busy")); return;
+        }
         if (command == "KEY") {
             const auto code = number(f[4]); const auto mods = number(f[5]);
             if (code == 0 || code > 247 || mods > 15 || code == 58 || code == 69 || code == 70) { send(c, refusal("unsupported")); return; }
+            if (!consume_grant(c, cap)) return;
             if (!keyboard_enter(c)) { send(c, refusal("client_not_bound")); return; }
             const std::array<std::uint32_t, 4> keys{42, 29, 56, 125};
             for (unsigned i = 0; i < 4; ++i) if ((mods & (1u << i)) && keys[i] != code) key(keys[i], true);
@@ -668,11 +781,13 @@ struct InputExperiment::Impl {
             if (command == "CLICK") {
                 const auto btn = number(f[6]), clicks = number(f[7]);
                 if (btn < 272 || btn > 274 || clicks < 1 || clicks > 2) { send(c, refusal("invalid_request")); return; }
+                if (!consume_grant(c, cap)) return;
                 if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
                 for (unsigned i = 0; i < clicks; ++i) { button(btn, true); button(btn, false); }
             } else if (command == "SCROLL") {
                 const auto axis = number(f[6]); const auto value = real(f[7]);
                 if (axis > 1 || value == 0 || std::abs(value) > 1000) { send(c, refusal("invalid_request")); return; }
+                if (!consume_grant(c, cap)) return;
                 if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
                 for (auto& p : pointers) {
                     if (p->dead || !p->wl->resource() || !p->focus) continue;
@@ -684,6 +799,7 @@ struct InputExperiment::Impl {
                 const auto x2 = real(f[6]), y2 = real(f[7]); const auto duration = number(f[8]);
                 if (!point(c, x2, y2) || duration < 50 || duration > 2000) { send(c, refusal("invalid_request")); return; }
                 if (Clock::now() + std::chrono::milliseconds(duration + 50) >= expires) { send(c, refusal("lease_expired")); return; }
+                if (!consume_grant(c, cap)) return;
                 if (!pointer_enter(c, x, y)) { send(c, refusal("client_not_bound")); return; }
                 if (trace) trace->mark("agent_drag_start", lane + 1);
                 button(272, true);
@@ -693,7 +809,16 @@ struct InputExperiment::Impl {
         }
         ++dispatches;
         if (trace) trace->mark("agent_action_end", lane + 1);
+        if (kProduction) revoke("completed");
         send(c, kDelivered);
+    }
+    bool consume_grant(Client& c, std::uint64_t capability) {
+        if (!kProduction) return true;
+        capabilities = 0;
+        if (grant.consume(capability, Clock::now())) return true;
+        revoke("action_not_admitted");
+        send(c, refusal("action_not_admitted"));
+        return false;
     }
     static int tick(void* data) {
         auto& self = *static_cast<Impl*>(data);
@@ -704,7 +829,7 @@ struct InputExperiment::Impl {
         if (!retired) sync_keymap();
         if (lease) {
             if (Clock::now() >= expires) revoke("lease_expired");
-            else if (lease->dead || !available() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
+            else if (lease->dead || !available() || !layout_qualified() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && !drag->geometry.matches(lease->revision))) revoke("cancelled");
         }
         if (drag) {
@@ -715,6 +840,7 @@ struct InputExperiment::Impl {
             else if (progress >= 1) {
                 button(272, false); drag.reset(); ++dispatches;
                 if (trace) trace->mark("agent_drag_end", lane + 1);
+                if (kProduction) revoke("completed");
                 send(*d.client, kDelivered);
             }
         }
@@ -740,6 +866,7 @@ struct InputExperiment::DesktopListeners {
     InputExperiment& owner;
     std::vector<MonitorListeners> monitors;
     CHyprSignalListener lock, unlock, active, layout, added, removed, destroyed;
+    CHyprSignalListener keyboard_layout, pointer_focus, keyboard_focus;
 
     explicit DesktopListeners(InputExperiment& input) : owner(input) {
         lock = g_pSessionLockManager->m_events.lock.listen([this] { changed(); });
@@ -747,6 +874,12 @@ struct InputExperiment::DesktopListeners {
         if (g_pCompositor->m_aqBackend->hasSession())
             active = g_pCompositor->m_aqBackend->session->events.changeActive.listen([this] { changed(); });
         layout = Event::bus()->m_events.monitor.layoutChanged.listen([this] { changed(); });
+        if (kProduction) {
+            keyboard_layout = Event::bus()->m_events.input.keyboard.layout.listen(
+                [this](SP<IKeyboard>, const std::string&) { changed(); });
+            pointer_focus = g_pSeatManager->m_events.pointerFocusChange.listen([this] { primary_changed(); });
+            keyboard_focus = g_pSeatManager->m_events.keyboardFocusChange.listen([this] { primary_changed(); });
+        }
         added = Event::bus()->m_events.monitor.preAdded.listen([this](PHLMONITOR monitor) {
             changed(); watch(monitor);
         });
@@ -759,6 +892,10 @@ struct InputExperiment::DesktopListeners {
     }
     void changed() {
         for (auto& lane : owner.lanes_) lane->desktop_transition();
+    }
+    void primary_changed() {
+        for (auto& lane : owner.lanes_)
+            if (lane->lease && lane->primary_conflict(*lane->lease)) lane->cancel_authority("primary_target_busy");
     }
     void watch(PHLMONITOR monitor) {
         if (!monitor || std::ranges::any_of(monitors, [&](const auto& entry) { return entry.monitor == monitor; })) return;
@@ -774,6 +911,7 @@ InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
     SeatLifetime lifetime(directory);
     for (unsigned i = 0; i < lanes_.size(); ++i) lanes_[i] = std::make_unique<Impl>(directory, i);
     for (auto& lane : lanes_) { lane->peers = {lanes_[0].get(), lanes_[1].get()}; lane->start(); }
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT_TRACE)
     trace_ = std::make_unique<PrimaryTrace>(plugin, [this](wl_resource* resource) {
         for (unsigned i = 0; i < lanes_.size(); ++i) {
             for (const auto& p : lanes_[i]->pointers) if (p->wl->resource() == resource) return i + 1;
@@ -782,6 +920,9 @@ InputExperiment::InputExperiment(const std::string& directory, void* plugin) {
         return 0u;
     });
     for (auto& lane : lanes_) lane->trace = trace_.get();
+#else
+    (void)plugin;
+#endif
     desktop_listeners_ = std::make_unique<DesktopListeners>(*this);
     lifetime.publish();
 }
@@ -817,8 +958,8 @@ std::string InputExperiment::status_json() const {
             lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
     }
     // Aggregate legacy fields remain available to existing test probes.
-    return std::format(R"({{"protocol":0,"test_only":true,"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
-        !lanes_[0]->suspended && !lanes_[1]->suspended, lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
+    return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",
+        kProduction ? 3 : 0, !kProduction, !lanes_[0]->suspended && !lanes_[1]->suspended, lanes_[0]->epoch, lanes_[0]->lease != nullptr || lanes_[1]->lease != nullptr,
         lanes_[0]->seats.size() + lanes_[1]->seats.size(), lanes_[0]->pointers.size() + lanes_[1]->pointers.size(),
         lanes_[0]->keyboards.size() + lanes_[1]->keyboards.size(), lanes_[0]->dispatches + lanes_[1]->dispatches, states);
 }

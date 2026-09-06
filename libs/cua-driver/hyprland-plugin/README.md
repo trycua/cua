@@ -15,13 +15,19 @@ build checks its ELF dependencies and rejects a static C++ runtime; a compiler
 copied without its runtime libraries can otherwise silently select a static
 archive. Do not load a module from a failed build.
 
-The current foundation is discovery-only. It advertises protocol status and
-liveness, but it rejects every input mutation with the typed
-`background_unavailable` result. Target-addressed mutation remains gated on
-successful second-seat spikes and acceptance of the corresponding RFC.
-Neither stable Cua Driver `0.23.2` nor nightly provides isolated background
-input through this plugin. Here, discovery means negotiation, status, and
-liveness; it does not mean application target discovery or input delivery.
+The default build is discovery-only. It advertises protocol status and
+liveness, but rejects input mutation with the typed `background_unavailable`
+result. Here, discovery means negotiation, status, and liveness, not
+application target discovery or input delivery.
+
+This branch adds an opt-in [input v3 candidate](protocol/cua-input-v3.md) using
+Driver's existing per-action permission checks and two independent compositor
+seats. It does not require a signer or an Omarchy-specific approval panel.
+The candidate is not yet natively certified or released. A source version of
+`0.23.2` does not mean released Driver `0.23.2` contains these changes. See the
+[shared admission boundary](protocol/host-authority-boundary.md) and
+[production proof preparation](tests/production-proof.md) for the remaining
+review, native testing, packaging, and release gates.
 
 This branch also contains a separate, opt-in
 [isolated-input compatibility experiment](protocol/input-experiment.md).
@@ -56,6 +62,12 @@ mode. From this directory:
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
+
+To compile the production-protocol candidate in a disposable test environment,
+add `-DCUA_HYPRLAND_INPUT=ON`. This is separate from
+`CUA_HYPRLAND_TEST_INPUT`; selecting both refuses. Detailed event measurement
+also requires `-DCUA_HYPRLAND_INPUT_TRACE=ON`. Do not ship that instrumentation
+in the production package. Neither build option loads or enables the plugin.
 
 For a pinned acceptance build, also set
 `-DCUA_HYPRLAND_EXPECTED_VERSION=0.56.2` (or the exact intended pkg-config
@@ -136,8 +148,11 @@ does not start or stop it. To disable the transport, remove the setting or set
 it to false in the configuration and reload. Unloading the plugin also closes
 the socket and every connection immediately.
 
-This enables same-user status and liveness packets only. It does not enable
-pointer, keyboard, scroll, drag, target discovery, or another input route.
+For the default discovery build, this enables status and liveness only. For
+the opt-in v3 build, it also opens the two input endpoints. Enabling v3 is a
+trusted-local desktop configuration choice; Driver still checks each call
+under its normal permission policy. The candidate refuses clients, layouts,
+and operations outside its qualification scope.
 
 ## Security boundary
 
@@ -148,10 +163,11 @@ pointer, keyboard, scroll, drag, target discovery, or another input route.
 - The server verifies `SO_PEERCRED` and accepts only peers with the compositor
   user's UID. This authenticates only the local Unix user, not a particular Cua
   process. Filesystem permissions are defense in depth, not authorization.
-- Same-UID discovery is acceptable for this mutation-free foundation. Mutation
-  capabilities stay disabled until the RFC defines an operator authorization,
-  credential or lease lifetime, revocation, and replay-resistant binding to the
-  negotiated compositor epoch.
+- The default foundation remains mutation-free. The separate v3 candidate
+  uses normal Driver policy plus per-action compositor target binding. It does
+  not sandbox arbitrary native code running as the desktop user. An app
+  compatibility list, socket permissions, or cursor indicator is not such a
+  sandbox.
 - The transport is bounded, nonblocking Unix `SOCK_SEQPACKET`; oversized,
   truncated, malformed, or unsupported packets are rejected without mutation.
 - A client must complete `HELLO` within five seconds. A negotiated client must

@@ -10,6 +10,7 @@ namespace cua::hyprland {
 // No input is emitted. Capture is bounded, explicit, and kept in memory.
 class PrimaryTrace {
   public:
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT_TRACE)
     PrimaryTrace(void* plugin, std::function<unsigned(wl_resource*)> actor);
     ~PrimaryTrace();
     std::string request(const std::string& command, unsigned after = 0);
@@ -17,5 +18,11 @@ class PrimaryTrace {
   private:
     struct Impl;
     std::unique_ptr<Impl> impl_;
+#else
+    // Uninstrumented production has no hooks, trace buffer, or trace commands.
+    ~PrimaryTrace() = default;
+    std::string request(const std::string&, unsigned = 0) { return {}; }
+    void mark(const char*, unsigned) {}
+#endif
 };
 }

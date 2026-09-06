@@ -13,6 +13,7 @@ pub mod ext_screencopy;
 pub mod ext_toplevel;
 pub mod hyprland;
 pub mod hyprland_capture;
+mod hyprland_compatibility;
 pub mod hyprland_input;
 pub mod kwin_helper;
 pub mod overlay;

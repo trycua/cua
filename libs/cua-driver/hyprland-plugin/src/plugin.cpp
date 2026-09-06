@@ -1,5 +1,5 @@
 #include "inject_server.hpp"
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
 #include "input_experiment.hpp"
 #endif
 
@@ -48,7 +48,7 @@ std::string g_runtime_abi_hash;
 std::uint64_t g_epoch = 0;
 std::string g_socket_path;
 std::string g_reconcile_error;
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
 std::unique_ptr<cua::hyprland::InputExperiment> g_experiment;
 HANDLE g_experiment_handle = nullptr;
 #endif
@@ -146,7 +146,7 @@ std::uint64_t make_epoch() {
 }
 
 std::string stop_server() {
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
     if (g_experiment)
         g_experiment->suspend();
 #endif
@@ -184,7 +184,7 @@ void reconcile_server() {
         });
     if (server->start()) {
         g_epoch = epoch;
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
         if (!g_experiment)
             g_experiment = std::make_unique<cua::hyprland::InputExperiment>(
                 std::filesystem::path{g_socket_path}.parent_path().string(), g_experiment_handle);
@@ -218,24 +218,38 @@ std::string status_output(bool json) {
 
     if (json) {
         auto result = cua::hyprland::render_status_json(report);
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
         if (g_experiment) {
+#ifdef CUA_HYPRLAND_INPUT
+            constexpr auto input_state = "\"state\":\"input_v3_candidate\"";
+            constexpr auto input_mutation = "trusted_local_per_action";
+            constexpr auto input_field = ",\"input\":";
+#else
+            constexpr auto input_state = "\"state\":\"input_experiment\"";
+            constexpr auto input_mutation = "separate_operator_gated_experiment";
+            constexpr auto input_field = ",\"experiment\":";
+#endif
             const std::string old_state = "\"state\":\"discovery_only\"";
             const auto state_at = result.find(old_state);
             if (state_at != std::string::npos)
-                result.replace(state_at, old_state.size(), "\"state\":\"input_experiment\"");
+                result.replace(state_at, old_state.size(), input_state);
             const std::string old_mutation = "disabled_pending_rfc_and_agent_seat";
             const auto mutation_at = result.find(old_mutation);
             if (mutation_at != std::string::npos)
-                result.replace(mutation_at, old_mutation.size(), "separate_operator_gated_experiment");
+                result.replace(mutation_at, old_mutation.size(), input_mutation);
             result.pop_back();
-            result += ",\"experiment\":" + g_experiment->status_json() + "}";
+            result += input_field + g_experiment->status_json() + "}";
         }
 #endif
         return result;
     }
 
-    return cua::hyprland::render_status_text(report);
+    auto result = cua::hyprland::render_status_text(report);
+#ifdef CUA_HYPRLAND_INPUT
+    if (g_experiment)
+        result += "\nInput v3 candidate: trusted-local per-action admission; " + g_experiment->status_json();
+#endif
+    return result;
 }
 
 #if CUA_HYPRLAND_SOCKET1_API
@@ -276,7 +290,7 @@ APICALL EXPORT std::string PLUGIN_API_VERSION() {
 }
 
 APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
     g_experiment_handle = handle;
 #endif
     // Hyprland skips PLUGIN_EXIT when initialization throws. Do not start any
@@ -293,7 +307,11 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
     g_enabled = makeShared<Config::Values::CBoolValue>(
         "plugin:cua:enabled",
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
+        "Enable Cua's same-user local capability transport and the input mode selected at build time.",
+#else
         "Enable Cua's same-user local capability transport. Background mutation remains disabled in this build.",
+#endif
         false);
     if (!HyprlandAPI::addConfigValueV2(handle, g_enabled))
         throw std::runtime_error("failed to register plugin:cua:enabled");
@@ -321,7 +339,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
 
 APICALL EXPORT void PLUGIN_EXIT() {
     g_config_listener.reset();
-#ifdef CUA_HYPRLAND_TEST_INPUT
+#if defined(CUA_HYPRLAND_TEST_INPUT) || defined(CUA_HYPRLAND_INPUT)
     // Retire input directly so an in-flight action receives plugin_shutdown,
     // not the config-disable reason from stop_server()'s suspend path.
     g_experiment.reset();

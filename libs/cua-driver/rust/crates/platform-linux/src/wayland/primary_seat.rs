@@ -1,4 +1,4 @@
-//! Keep experimental delivery seats out of the existing foreground input path.
+//! Keep synthetic delivery seats out of the existing foreground input path.
 //! Preserve the legacy last-advertised-seat choice among ordinary seats.
 
 pub(super) struct Seats<T> {
@@ -30,7 +30,10 @@ impl<T: Clone + PartialEq> Seats<T> {
             .rev()
             .find(|entry| {
                 !entry.1.as_deref().is_some_and(|name| {
-                    name == "Cua-Test-Agent" || name.starts_with("Cua-Test-Agent-")
+                    name == "Cua-Test-Agent"
+                        || name.starts_with("Cua-Test-Agent-")
+                        || name == "Cua-Agent"
+                        || name == "Cua-Agent-2"
                 })
             })
             .map(|entry| entry.0.clone())
@@ -66,5 +69,15 @@ mod tests {
         seats.add(1);
         seats.add(3);
         assert_eq!(seats.selected(), Some(3));
+    }
+
+    #[test]
+    fn production_seats_never_replace_the_primary_seat() {
+        let mut seats = Seats::default();
+        for (id, name) in [(1, "seat0"), (2, "Cua-Agent"), (3, "Cua-Agent-2")] {
+            seats.add(id);
+            seats.name(&id, name.into());
+        }
+        assert_eq!(seats.selected(), Some(1));
     }
 }

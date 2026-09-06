@@ -1,5 +1,6 @@
 import unittest
-from primary_trace import analyze
+from unittest.mock import Mock, patch
+from primary_trace import Trace, analyze
 
 
 def trace(*events):
@@ -14,6 +15,15 @@ STOP = ('stop', 100, 200, 0, 0)
 
 
 class TraceTest(unittest.TestCase):
+    def test_handshake_is_sent_once_and_retained_for_version_validation(self):
+        peer = Mock()
+        peer.recv.return_value = b'{"ok":true,"protocol":3}'
+        with patch('primary_trace.socket.socket', return_value=peer):
+            connection = Trace('/synthetic/cua-input-v3.sock')
+            self.assertEqual(connection.hello['protocol'], 3)
+            peer.sendall.assert_called_once_with(b'HELLO')
+            connection.close()
+
     def test_warp_and_return_is_not_hidden_by_equal_endpoints(self):
         result = analyze(trace(START, ('cursor', 140, 230, 0, 0), ('cursor', 100, 200, 0, 0), STOP))
         self.assertEqual(result['result'], 'failed')
@@ -24,6 +34,10 @@ class TraceTest(unittest.TestCase):
         result = analyze(trace(START, ('pointer_button', 100, 200, 1, 0),
                                ('keyboard_key', 100, 200, 2, 1), STOP))
         self.assertEqual(result['result'], 'passed')
+
+    def test_v3_admission_marker_is_recognized_but_unknown_events_stay_inconclusive(self):
+        self.assertEqual(analyze(trace(START, ('agent_admitted', 100, 200, 1, 0), STOP))['result'], 'passed')
+        self.assertEqual(analyze(trace(START, ('unknown', 100, 200, 1, 0), STOP))['result'], 'inconclusive')
 
     def test_missing_or_dropped_telemetry_is_inconclusive(self):
         for change in ({'hook': False}, {'overflow': True}, {'timed_out': True},

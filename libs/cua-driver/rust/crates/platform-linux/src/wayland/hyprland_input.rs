@@ -1,9 +1,10 @@
-//! Explicitly opted-in, operator-granted Hyprland input experiment.
-//! No approval or signing operation is available to Driver. A pending request
-//! keeps its connection alive so an external operator can approve its challenge.
+//! Local Hyprland input after the common Driver registry admits the action.
+//! Production v3 uses per-action target binding, not a second approval system.
+//! Protocol 0 remains an explicitly selected, nonshipping test experiment.
 
 use std::collections::HashMap;
 use std::os::fd::AsRawFd;
+use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -17,9 +18,52 @@ const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
 
 pub fn enabled() -> bool {
-    std::env::var("CUA_DRIVER_EXPERIMENTAL_HYPRLAND_INPUT").as_deref() == Ok("1")
-        && super::wayland_input_enabled()
+    super::wayland_input_enabled()
         && super::hyprland::is_session()
+        && (protocol() == InputProtocol::Experiment
+            || (0..MAX_LANES).any(|lane| {
+                socket_path(lane).ok().is_some_and(|path| {
+                    std::fs::symlink_metadata(path)
+                        .ok()
+                        .is_some_and(|metadata| {
+                            metadata.file_type().is_socket()
+                                && metadata.uid() == unsafe { libc::geteuid() }
+                        })
+                })
+            }))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum InputProtocol {
+    Production,
+    Experiment,
+}
+
+fn protocol() -> InputProtocol {
+    if std::env::var("CUA_DRIVER_EXPERIMENTAL_HYPRLAND_INPUT").as_deref() == Ok("1") {
+        InputProtocol::Experiment
+    } else {
+        InputProtocol::Production
+    }
+}
+
+impl InputProtocol {
+    fn version(self) -> u64 {
+        match self {
+            Self::Production => 3,
+            Self::Experiment => 0,
+        }
+    }
+
+    fn socket_name(self, lane: usize) -> Result<&'static str> {
+        Ok(match (self, lane) {
+            (Self::Production, 0) => "cua-input-v3.sock",
+            (Self::Production, 1) => "cua-input-v3-2.sock",
+            (Self::Experiment, 0) => "cua-input-test.sock",
+            (Self::Experiment, 1) => "cua-input-test-2.sock",
+            _ => bail!("invalid isolated input lane"),
+        })
+    }
 }
 
 /// Coordinates are window-local logical units. Hyprland's existing capture()
@@ -51,6 +95,7 @@ pub enum Action {
 
 struct Client {
     socket: socket2::Socket,
+    protocol: InputProtocol,
     // Assigned by the compositor to this connection, never by the local pool.
     lane: Option<usize>,
     owner: String,
@@ -72,14 +117,15 @@ fn socket_path(lane: usize) -> Result<PathBuf> {
         !signature.is_empty()
             && signature
                 .bytes()
-                .all(|b| b.is_ascii_alphanumeric() || b == b'_'),
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+            && signature != "."
+            && signature != "..",
         "invalid Hyprland instance"
     );
-    Ok(runtime.join("hypr").join(signature).join(if lane == 0 {
-        "cua-input-test.sock"
-    } else {
-        "cua-input-test-2.sock"
-    }))
+    Ok(runtime
+        .join("hypr")
+        .join(signature)
+        .join(protocol().socket_name(lane)?))
 }
 
 fn hex_field(value: &Value, name: &str) -> Result<String> {
@@ -177,6 +223,7 @@ impl Client {
         socket.set_nonblocking(true)?;
         let mut client = Self {
             socket,
+            protocol: protocol(),
             lane: None,
             owner,
             path,
@@ -197,24 +244,31 @@ impl Client {
     /// Only an explicit busy reservation permits another endpoint attempt.
     /// Malformed replies and connection errors have unknown outcomes.
     fn handshake(&mut self, expected_lane: usize) -> Result<bool> {
-        ensure!(expected_lane < MAX_LANES, "invalid experimental lane");
+        ensure!(expected_lane < MAX_LANES, "invalid isolated input lane");
         let hello = self.request("HELLO")?;
         ensure!(
-            hello["ok"] == true && hello["protocol"].as_u64() == Some(0),
-            "experimental protocol 0 unavailable"
+            hello["ok"] == true && hello["protocol"].as_u64() == Some(self.protocol.version()),
+            "isolated input protocol mismatch; no downgrade is permitted"
         );
         self.epoch = hex_field(&hello, "epoch")?;
-        self.challenge = hex_field(&hello, "challenge")?;
+        if self.protocol == InputProtocol::Experiment {
+            self.challenge = hex_field(&hello, "challenge")?;
+        } else {
+            ensure!(
+                hello.get("challenge").is_none(),
+                "production input unexpectedly requires a signer"
+            );
+        }
         let claim = self.request("CLAIM")?;
         if claim["ok"] == false {
             if claim["code"] == "lane_busy" && claim["detail"] == "lane_busy" {
                 return Ok(false);
             }
-            bail!("experimental lane claim refused: {claim}");
+            bail!("isolated input lane claim refused: {claim}");
         }
         ensure!(
             claim["lane"].as_u64() == Some(expected_lane as u64),
-            "invalid experimental lane claim"
+            "invalid isolated input lane claim"
         );
         self.lane = Some(expected_lane);
         Ok(true)
@@ -289,9 +343,9 @@ impl Client {
         action: Action,
         started: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Result<Value> {
-        ensure!(self.lane.is_some(), "experimental lane is not claimed");
+        ensure!(self.lane.is_some(), "isolated input lane is not claimed");
         self.attest()?;
-        let target = self.request(&format!("TARGET {} {:x}", self.pid, self.address))?;
+        let target = self.request(&self.target_packet(&action))?;
         if target["ok"] == false {
             return Ok(target);
         }
@@ -321,7 +375,7 @@ impl Client {
                 reply["effect"] == "unverifiable" && reply["route"] == "synthetic_events",
                 "invalid action acknowledgement"
             );
-        } else {
+        } else if self.protocol == InputProtocol::Experiment {
             // Never report a pending operator grant as successful dispatch.
             reply["epoch"] = json!(self.epoch);
             reply["challenge"] = json!(self.challenge);
@@ -330,9 +384,27 @@ impl Client {
         }
         Ok(reply)
     }
+
+    fn target_packet(&self, action: &Action) -> String {
+        let target = format!("TARGET {} {:x}", self.pid, self.address);
+        if self.protocol == InputProtocol::Production {
+            format!("{target} {}", action.capability())
+        } else {
+            target
+        }
+    }
 }
 
 impl Action {
+    fn capability(&self) -> u8 {
+        match self {
+            Self::Click { .. } => 1,
+            Self::Key { .. } => 2,
+            Self::Scroll { .. } => 4,
+            Self::Drag { .. } => 8,
+        }
+    }
+
     fn packet(
         self,
         sequence: u64,
@@ -359,7 +431,7 @@ impl Action {
                 point(x, y)?;
                 ensure!(
                     (1..=2).contains(&count),
-                    "experiment supports only single or double clicks"
+                    "isolated input supports only single or double clicks"
                 );
                 let button = match button {
                     1 => 272,
@@ -411,7 +483,7 @@ impl Action {
                 point(x2, y2)?;
                 ensure!(
                     (50..=2000).contains(&duration_ms),
-                    "experimental drag duration must be 50–2000 ms"
+                    "isolated drag duration must be 50–2000 ms"
                 );
                 format!("DRAG {prefix} {x1} {y1} {x2} {y2} {duration_ms}")
             }
@@ -431,7 +503,7 @@ fn claim_available(mut connect: impl FnMut(usize) -> Result<Option<Client>>) -> 
             return Ok(client);
         }
     }
-    bail!("both experimental input seats are in use; end an owning session first")
+    bail!("both isolated input seats are in use; end an owning session first")
 }
 
 static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<SessionClient>>>> = OnceLock::new();
@@ -455,7 +527,7 @@ fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
     }
     ensure!(
         clients.len() < MAX_LANES,
-        "both experimental input session slots are in use; end an owning session first"
+        "both isolated input session slots are in use; end an owning session first"
     );
     let client = Arc::new(SessionClient {
         client: Mutex::new(None),
@@ -503,12 +575,17 @@ pub fn execute_with_started(
     action: Action,
     started: Option<tokio::sync::oneshot::Sender<()>>,
 ) -> Result<Value> {
-    ensure!(enabled(), "experimental Hyprland input is disabled");
+    ensure!(enabled(), "Hyprland isolated input is unavailable");
     ensure!(
         pid > 0 && address > 0,
         "exact pid and window address required"
     );
     let owner = owner.context("authenticated lifecycle required")?;
+    if protocol() == InputProtocol::Production {
+        if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
+            return Ok(json!({"ok":false,"code":reason,"detail":reason}));
+        }
+    }
     let client = session_client(&owner)?;
     let mut slot = client
         .client
@@ -516,7 +593,11 @@ pub fn execute_with_started(
         .map_err(|_| anyhow::anyhow!("input connection poisoned"))?;
     if let Some(client) = slot.as_ref() {
         let lane = client.lane.context("missing claimed input lane")?;
-        if client.pid != pid || client.address != address || client.path != socket_path(lane)? {
+        if client.pid != pid
+            || client.address != address
+            || client.path != socket_path(lane)?
+            || client.protocol != protocol()
+        {
             *slot = None;
         }
     }
@@ -537,8 +618,8 @@ pub fn execute_with_started(
         *slot = None;
     }
     if let Ok(value) = &mut result {
-        // A bounded slot number lets the external test operator select the
-        // correct endpoint. It is not a credential or a caller-selected seat.
+        // Report the compositor-assigned lane for diagnostics. It is not a
+        // credential or a caller-selected seat.
         value["lane"] = json!(lane);
     }
     result
@@ -724,6 +805,7 @@ mod tests {
         (
             Client {
                 socket,
+                protocol: InputProtocol::Experiment,
                 lane: None,
                 owner: "input-unregistered-test-client".into(),
                 path: PathBuf::new(),
@@ -747,6 +829,106 @@ mod tests {
 
     fn hello_reply() -> Value {
         json!({"ok":true,"protocol":0,"epoch":TOKEN,"challenge":TOKEN})
+    }
+
+    #[test]
+    fn production_handshake_has_no_signer_and_claims_exact_lane() {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        client.challenge.clear();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "HELLO");
+            peer.send(
+                json!({"ok":true,"protocol":3,"epoch":TOKEN})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(read_packet(&peer), "CLAIM");
+            peer.send(br#"{"ok":true,"lane":1}"#).unwrap();
+        });
+        assert!(client.handshake(1).unwrap());
+        server.join().unwrap();
+        assert_eq!(client.lane, Some(1));
+        assert!(client.challenge.is_empty());
+    }
+
+    #[test]
+    fn production_refuses_experiment_and_unexpected_signer_without_claiming() {
+        for hello in [
+            hello_reply(),
+            json!({"ok":true,"protocol":3,"epoch":TOKEN,"challenge":TOKEN}),
+        ] {
+            let (mut client, peer) = test_connection();
+            client.protocol = InputProtocol::Production;
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), "HELLO");
+                peer.send(hello.to_string().as_bytes()).unwrap();
+                let mut bytes = [0u8; MAX_PACKET];
+                // Closing after the refused HELLO must be the next event:
+                // no CLAIM, TARGET, APPROVE, or input packet is sent.
+                let count = unsafe {
+                    libc::recv(peer.as_raw_fd(), bytes.as_mut_ptr().cast(), bytes.len(), 0)
+                };
+                assert_eq!(count, 0);
+            });
+            assert!(client.handshake(0).is_err());
+            assert!(client.lane.is_none());
+            drop(client);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn production_targets_bind_one_exact_operation_and_use_distinct_endpoints() {
+        let (mut client, _peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        for (action, capability) in [
+            (
+                Action::Click {
+                    x: 1.0,
+                    y: 2.0,
+                    button: 1,
+                    count: 1,
+                },
+                1,
+            ),
+            (
+                Action::Key {
+                    key: "a".into(),
+                    modifiers: vec![],
+                },
+                2,
+            ),
+            (
+                Action::Scroll {
+                    point: None,
+                    direction: "up".into(),
+                    amount: 1,
+                },
+                4,
+            ),
+            (
+                Action::Drag {
+                    from: (1.0, 2.0),
+                    to: (3.0, 4.0),
+                    duration_ms: 100,
+                },
+                8,
+            ),
+        ] {
+            assert_eq!(
+                client.target_packet(&action),
+                format!("TARGET 1 1 {capability}")
+            );
+        }
+        for lane in 0..MAX_LANES {
+            assert_ne!(
+                InputProtocol::Production.socket_name(lane).unwrap(),
+                InputProtocol::Experiment.socket_name(lane).unwrap()
+            );
+        }
+        assert!(InputProtocol::Production.socket_name(MAX_LANES).is_err());
     }
 
     // A compositor-side pool, deliberately independent of Driver's CLIENTS.

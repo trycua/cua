@@ -59,6 +59,14 @@ int main() {
     };
     for (unsigned i = 0; i < 20; ++i) {
         toggle(true);
+#ifdef CUA_HYPRLAND_INPUT
+        const auto status = HyprlandAPI::registered_legacy_command->fn(FORMAT_JSON, {});
+        check(status.find("\"state\":\"input_v3_candidate\"") != std::string::npos &&
+                  status.find("trusted_local_per_action") != std::string::npos &&
+                  status.find("\"input\":{}") != std::string::npos &&
+                  status.find("operator") == std::string::npos,
+              "v3 status advertises its actual admission mode");
+#endif
         check(created == 1 && destroyed == 0 && resumed == i + 1,
               "enable reuses the session's seat owner");
         toggle(true);

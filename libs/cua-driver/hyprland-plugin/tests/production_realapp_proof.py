@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
+import os
 from pathlib import Path
 import re
 import select
@@ -30,6 +31,9 @@ RESERVED = {'pid', 'window_id', 'session', 'delivery_mode'}
 
 def validate_plan(plan):
     assert plan['purpose'] in ('apps', 'policy', 'negative_control')
+    assert type(plan.get('moving_primary', False)) is bool
+    assert not (plan.get('moving_primary') and plan['purpose'] == 'negative_control'), \
+        'negative control requires a parked primary'
     assert 1 <= len(plan['agents']) <= 2
     if plan['purpose'] == 'apps':
         assert len(plan['agents']) == 2
@@ -106,6 +110,76 @@ def assert_no_dispatch(before, after):
     assert not any(row[5] in (1, 2) for row in events), 'denied call reached a synthetic lane'
 
 
+def primary_trajectory(bounds, point, desktop):
+    """The independent primary-grab helper follows the historical 160px square."""
+    offsets = ([(x, 0) for x in range(20, 161, 20)] + [(160, y) for y in range(20, 161, 20)]
+               + [(x, 160) for x in range(140, -1, -20)] + [(0, y) for y in range(140, -1, -20)])
+    positions = [[int(bounds['x'] + point[0] + dx), int(bounds['y'] + point[1] + dy)]
+                 for dx, dy in offsets]
+    for x, y in positions:
+        assert bounds['x'] < x < bounds['x'] + bounds['width'], 'primary trajectory leaves foreground'
+        assert bounds['y'] < y < bounds['y'] + bounds['height'], 'primary trajectory leaves foreground'
+        assert 0 <= x < desktop['screen_width'] and 0 <= y < desktop['screen_height'], \
+            'primary trajectory leaves desktop'
+    return positions
+
+
+def primary_acknowledgement(stream):
+    """Bound partial lines too: select followed by readline can block forever."""
+    deadline, data = time.monotonic() + 2, b''
+    while not data.endswith(b'\n'):
+        remaining = deadline - time.monotonic()
+        assert remaining > 0 and select.select([stream], [], [], remaining)[0], \
+            f'primary command acknowledgement missing or incomplete: {data!r}'
+        chunk = os.read(stream.fileno(), 128)
+        assert chunk, f'primary command acknowledgement ended early: {data!r}'
+        data += chunk
+        assert len(data) <= 128, 'oversized primary command acknowledgement'
+    return data.decode('ascii')
+
+
+def move_primary(grab, trajectory, done, ready, commands, mark):
+    """Send independent primary-seat commands, retaining every issued command."""
+    while not done.wait(0.1):
+        x, y = trajectory[len(commands) % len(trajectory)]
+        row = {'sequence': len(commands) + 1, 'x': x, 'y': y,
+               'command_ns': time.monotonic_ns(), 'acknowledgement': None, 'ack_ns': None}
+        commands.append(row)
+        mark('primary_motion_command', **row)
+        grab.stdin.write(f'MOVE {x} {y}\n')
+        grab.stdin.flush()
+        row['acknowledgement'] = primary_acknowledgement(grab.stdout)
+        row['ack_ns'] = time.monotonic_ns()
+        mark('primary_motion_acknowledgement', **row)
+        assert row['acknowledgement'] == f'MOVED {x} {y}\n', 'malformed primary command acknowledgement'
+        ready.set()
+
+
+def expected_primary_motion(commands, trajectory):
+    """Only a complete, ordered command/acknowledgement log can define motion."""
+    assert isinstance(commands, list) and commands, 'missing primary command log'
+    expected, previous_ack = [], 0
+    for index, row in enumerate(commands):
+        assert isinstance(row, dict), 'malformed primary command log'
+        assert type(row.get('sequence')) is int and row['sequence'] == index + 1, \
+            'incomplete or reordered primary command log'
+        assert all(type(row.get(key)) is int for key in ('x', 'y', 'command_ns', 'ack_ns')), \
+            'incomplete primary command acknowledgement'
+        point = [row['x'], row['y']]
+        assert point == trajectory[index % len(trajectory)], 'primary command differs from trajectory'
+        assert previous_ack < row['command_ns'] <= row['ack_ns'], 'unordered primary command timestamps'
+        assert row.get('acknowledgement') == f'MOVED {point[0]} {point[1]}\n', \
+            'malformed primary command acknowledgement'
+        previous_ack = row['ack_ns']
+        expected.append(point)
+    return expected
+
+
+def assert_primary_state(before, after, moving):
+    keys = ('pid', 'address', 'workspace') if moving else before.keys()
+    assert all(after[key] == before[key] for key in keys), 'primary cursor/focus/workspace changed'
+
+
 def document_root(content, oracle):
     if oracle.get('zip_member'):
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
@@ -137,7 +211,7 @@ def provenance(args, plan):
     assert Path(read(['git', '-C', str(source), 'rev-parse', '--show-toplevel'])).resolve() == source
     sha = read(['git', '-C', str(source), 'rev-parse', 'HEAD'])
     assert sha == args.source_sha, 'source SHA differs from declared candidate'
-    files = {'driver': args.driver, 'plugin': args.plugin}
+    files = {'driver': args.driver, 'plugin': args.plugin, 'primary-grab': args.primary_grab}
     for name in ('production_realapp_proof.py', 'production_mcp.py', 'driver_input_live.py',
                  'realapp_proof.py', 'primary_trace.py'):
         files[name] = Path(__file__).with_name(name)
@@ -180,11 +254,17 @@ def run(args):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
     save('plan.json', plan)
     clients, recorder, grab, trace = [], None, None, None
+    moving = plan.get('moving_primary', False)
+    mover = None
+    motion_done, motion_ready = threading.Event(), threading.Event()
+    commands, motion_errors, action_intervals = [], [], []
+    trajectory = None
     recording = False
     baseline_outputs = {}
     report = {'result': 'failed', 'scope': 'native-production-input-proof',
               'full_desktop_matrix': False, 'actions': [], 'outputs': [],
-              'continuous_isolation': 'unproven', 'synthetic_cleanup': 'unproven'}
+              'continuous_isolation': 'unproven', 'synthetic_cleanup': 'unproven',
+              'primary_mode': 'moving' if moving else 'parked'}
     timeline_lock = threading.Lock()
     observer_lock = threading.Lock()
     def mark(event, **fields):
@@ -211,6 +291,7 @@ def run(args):
         if barrier:
             barrier.wait(timeout=20)
         mark('action_start', agent=index, tool=step['tool'], runtime_pid=mcp.process.pid)
+        action_start = time.monotonic_ns()
         try:
             response = mcp.tool(step['tool'], {**step['arguments'], **spec['target'],
                                 'session': spec['name'], 'delivery_mode': 'background'})
@@ -220,6 +301,7 @@ def run(args):
             with observer_lock:
                 snapshot(recorder, spec['target'])
             raise
+        action_intervals.append((action_start, time.monotonic_ns()))
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
         after = snapshot(mcp, spec['target'], spec['name'])
         result = check_response(response, expected)
@@ -229,11 +311,12 @@ def run(args):
                 assert_no_dispatch(trace_before, trace.collect())
                 result['no_dispatch'] = 'verified'
         assert after['window_bounds'] == before['window_bounds']
-        assert wm() == primary_before, 'primary cursor/focus/workspace changed'
+        assert_primary_state(primary_before, wm(), moving)
         current = state(args.foreground_journal)
         assert all(current[key] == baseline[key] for key in ('clicks', 'keys', 'scroll', 'held')), current
         return {'agent': index, 'tool': step['tool'], **result}
     try:
+        assert not moving or args.trace_socket, 'moving primary requires continuous trace'
         save('provenance.json', provenance(args, plan))
         for index, oracle in enumerate(plan.get('outputs', [])):
             baseline_outputs[index] = Path(oracle['path']).read_bytes()
@@ -249,12 +332,15 @@ def run(args):
         desktop = recorder.tool('get_desktop_state', {})['structuredContent']
         point = plan.get('primary_point', [300, 300])
         assert 0 < point[0] < fg['width'] and 0 < point[1] < fg['height']
+        if moving:
+            trajectory = primary_trajectory(fg, point, desktop)
         grab_args = [str(args.primary_grab), str(fg['x'] + point[0]), str(fg['y'] + point[1]),
                      str(desktop['screen_width']), str(desktop['screen_height'])]
         snapshot(recorder, plan['foreground'])
-        grab = subprocess.Popen(grab_args + ['60000'], stdout=subprocess.PIPE, text=True)
-        wait_for(lambda: select.select([grab.stdout], [], [], 0)[0])
-        assert grab.stdout.readline().strip() == 'HELD'
+        grab = subprocess.Popen(grab_args + ['60000'] + (['controlled'] if moving else []),
+                                stdin=subprocess.PIPE if moving else None,
+                                stdout=subprocess.PIPE, text=True)
+        assert primary_acknowledgement(grab.stdout) == 'HELD\n'
         wait_for(lambda: state(args.foreground_journal)['held'])
         snapshot(recorder, plan['foreground'])
         primary_before, baseline = wm(), state(args.foreground_journal)
@@ -268,6 +354,17 @@ def run(args):
             video = recorder.tool('start_recording', {'output_dir': str(args.evidence / 'video'), 'record_video': True})
             assert not video.get('isError') and video['structuredContent']['video_active'], video
             recording = True
+        if moving:
+            def movement():
+                try:
+                    move_primary(grab, trajectory, motion_done, motion_ready, commands, mark)
+                except Exception as error:
+                    motion_errors.append(str(error))
+                    motion_ready.set()
+            mover = threading.Thread(target=movement, daemon=True)
+            mover.start()
+            assert motion_ready.wait(3), 'primary motion did not start'
+            assert not motion_errors, motion_errors
         for phase in plan['phases']:
             if phase.get('negative_control'):
                 assert trace, 'warp-and-return detector requires continuous trace'
@@ -290,6 +387,17 @@ def run(args):
     finally:
         # Preserve app files even after partial/unknown responses or failed assertions.
         operations = []
+        if moving:
+            def stop_motion():
+                motion_done.set()
+                try:
+                    if mover:
+                        mover.join(timeout=3)
+                        assert not mover.is_alive(), 'primary motion worker did not stop'
+                finally:
+                    save('primary-motion-commands.json', commands)
+                assert not motion_errors, motion_errors
+            operations.append(('stop_primary_motion', stop_motion))
         def preserve(index, oracle):
             directory = args.evidence / 'saved-outputs'
             directory.mkdir(exist_ok=True)
@@ -310,7 +418,17 @@ def run(args):
                 trace.exchange('TRACE_STOP')
                 data = trace.collect()
                 save('trace.json', data)
-                isolation = analyze(data)
+                expected_motion = None
+                if moving:
+                    assert not mover or not mover.is_alive(), 'primary motion worker did not stop'
+                    logged = json.loads((args.evidence / 'primary-motion-commands.json').read_text())
+                    expected_motion = expected_primary_motion(logged, trajectory)
+                    save('expected-primary-motion.json', expected_motion)
+                    overlaps = sum(any(start <= row['command_ns'] <= row['ack_ns'] <= end
+                                       for start, end in action_intervals) for row in logged)
+                    report['primary_commands_during_actions'] = overlaps
+                    assert overlaps > 0, 'no primary movement during a Driver action'
+                isolation = analyze(data, expected_motion=expected_motion)
                 save('isolation.json', isolation)
                 report['continuous_isolation'] = isolation['result']
                 if plan['purpose'] == 'negative_control':
@@ -331,6 +449,16 @@ def run(args):
                 stop_process(grab)
                 wait_for(lambda: not state(args.foreground_journal)['held'])
         operations.append(('release_primary', release_primary))
+        if mover:
+            def join_motion():
+                # Reaping the helper also unblocks a pending acknowledgement.
+                # Retain late failure evidence even when the first join failed.
+                try:
+                    mover.join(timeout=3)
+                    assert not mover.is_alive(), 'primary motion worker did not stop after release'
+                finally:
+                    save('primary-motion-commands.json', commands)
+            operations.append(('join_primary_motion', join_motion))
         if recorder:
             operations.append(('close_observer', recorder.close))
         errors = cleanup_all(operations)

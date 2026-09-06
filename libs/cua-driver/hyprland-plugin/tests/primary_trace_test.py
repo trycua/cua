@@ -68,6 +68,19 @@ class TraceTest(unittest.TestCase):
         self.assertEqual(analyze(data, expected_motion=[[120, 200], [100, 200]])['result'], 'passed')
         self.assertEqual(analyze(data, expected_motion=[[100, 200]])['result'], 'failed')
 
+    def test_controlled_motion_reconciles_all_observed_positions(self):
+        moved = ('cursor', 120, 200, 0, 0)
+        stopped = ('stop', 120, 200, 0, 0)
+        for events in ((START, moved, STOP),
+                       (START, moved, ('pointer_motion', 140, 200, 0, 0), stopped),
+                       (START, moved, ('agent_action_end', 140, 200, 1, 0), stopped)):
+            with self.subTest(events=events):
+                result = analyze(trace(*events), expected_motion=[[120, 200]])
+                self.assertEqual(result['result'], 'inconclusive')
+                self.assertEqual(result['reason'], 'position_changed_without_motion_event')
+        self.assertEqual(analyze(trace(START, moved, ('pointer_motion', 120, 200, 0, 0), stopped),
+                                 expected_motion=[[120, 200]])['result'], 'passed')
+
 
 if __name__ == '__main__':
     unittest.main()

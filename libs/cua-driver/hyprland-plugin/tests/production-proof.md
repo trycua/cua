@@ -45,6 +45,14 @@ Review a JSON plan before execution. The plan has:
   one output oracle per app. Save the documents through reviewed Driver actions.
 - `require_overlap:true` requires at least 100 ms of traced drag overlap.
   `primary_point` optionally changes the foreground hold point, default `[300,300]`.
+- `moving_primary:true` optionally moves the independent foreground primary grab
+  during the reviewed Driver actions. The default remains parked. This mode
+  requires `--trace-socket` and cannot be combined with `negative_control`.
+  The helper repeats the historical 160 px square in 20 px steps, issuing a
+  command every 100 ms after the preceding acknowledgement. The entire path
+  must fit inside the foreground window and desktop; adjust `primary_point`
+  using grounded geometry before running. At least one movement command and
+  its acknowledgement must fall inside a Driver action's call interval.
 
 Invoke from the exact source checkout, substituting the already reviewed paths
 and candidate SHA:
@@ -65,10 +73,27 @@ exact reason, refused effect, no delivery, and no synthetic event in its trace
 interval. A policy error alone never proves no dispatch. Trace instrumentation
 is disabled in production builds.
 
+Moving-primary proof uses `primary-grab` in its independent `controlled` mode,
+with `MOVE` commands and exact `MOVED` acknowledgements. Driver actions remain
+background calls with before/after window snapshots. The foreground journal
+must retain its click, key, scroll, and held-button state, and foreground window
+identity and workspace must remain unchanged. Cursor endpoints may move along
+the commanded path. The continuous trace must match every acknowledged position
+in order, with no extra motion, focus changes, or foreground input events.
+Every other traced position, including the final endpoint, must agree with the
+latest cursor event; an unexplained position change leaves isolation unproven.
+Missing, malformed, incomplete, or reordered command logs fail the run, as do
+missing acknowledgements, an unjoined movement worker, or movement confined to
+setup. The worker stops before trace collection and primary-button release.
+Startup and movement acknowledgements both have bounded reads. If the worker
+fails to stop, cleanup retains the command log, reaps the helper, and retries
+the worker join; the run still fails.
+
 Run the production package separately without the trace option. Successful
 saved-output and foreground endpoint checks then produce a
 `production-package-smoke` result with continuous isolation and synthetic
 cleanup explicitly unproven. It cannot satisfy overlap or no-dispatch proof.
+A moving-primary plan fails before process launch when the trace option is absent.
 A `negative_control` plan contains only `{negative_control:true}` phases and
 requires the trace; it passes only when the independent warp-and-return is
 detected despite identical cursor endpoints. It is not an isolation pass.
@@ -80,6 +105,11 @@ cleanup failures, and available trace/video. The loaded-plugin listing and
 file digest must still be reconciled with installation/build provenance by the
 native operator; this helper cannot independently establish a loaded module's
 build origin. Local paths and raw evidence are for internal review.
+Moving runs also retain `primary-motion-commands.json` (ordered commands,
+acknowledgements, and monotonic timestamps) and, once validated,
+`expected-primary-motion.json`. The result identifies the primary mode and the
+number of commands completed during Driver calls. Helper provenance includes
+the independent `primary-grab` binary hash.
 
 The runner closes and reaps every owned Driver child, escalates termination
 only for those children, releases the foreground hold, and retains app files
@@ -87,7 +117,7 @@ after failures or partial/unknown delivery. Transport failures poison the
 connection and are never replayed. Any cleanup failure fails the run.
 
 Remaining native work includes the complete mode/manifest allow/deny matrix,
-moving-primary proof, runtime cancellation during overlapping gestures,
+execution of this moving-primary proof, runtime cancellation during overlapping gestures,
 third-lane refusal, target/keymap/display/session faults, exact loaded-artifact
 provenance, repeat controls, and the canonical desktop matrix. No existing
 failed row is superseded by these helper tests.

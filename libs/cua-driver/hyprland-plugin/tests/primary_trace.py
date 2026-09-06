@@ -75,6 +75,13 @@ def analyze(trace, *, expected_motion=None):
         actual = [r[3:5] for r in motion]
         unexpected_motion = [] if len(actual) == len(expected_motion) and all(
             math.dist(a, b) <= 0.01 for a, b in zip(actual, expected_motion)) else motion or [None]
+        if not unexpected_motion:
+            position = baseline
+            for row in rows:
+                if row[2] == 'cursor':
+                    position = row[3:5]
+                elif math.dist(row[3:5], position) > 0.01:
+                    return {'result': 'inconclusive', 'reason': 'position_changed_without_motion_event'}
     primary = [r for r in rows if r[5] == 0]
     focus = [r for r in primary if r[2] in ('pointer_focus', 'keyboard_focus',
               'pointer_enter', 'pointer_leave', 'keyboard_enter', 'keyboard_leave')]

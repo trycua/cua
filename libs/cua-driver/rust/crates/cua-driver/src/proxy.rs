@@ -835,6 +835,60 @@ mod tests {
     use super::*;
     use crate::serve::DaemonResponse;
 
+    #[test]
+    fn control_disconnect_exits_with_stdin_open() {
+        const CHILD_ENV: &str = "CUA_TEST_MCP_CONTROL_STDIN_CHILD";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let result = crate::cli::run_mcp_runtime(async {
+                let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+                supervise_control_connection(
+                    // Let run_proxy_io park in the real blocking stdin read.
+                    tokio::time::sleep(std::time::Duration::from_millis(100)),
+                    run_proxy_io(
+                        BufReader::new(tokio::io::stdin()),
+                        tokio::io::sink(),
+                        "unused.sock",
+                        &cached_tools,
+                        "disconnect",
+                        false,
+                    ),
+                )
+                .await
+            });
+            assert!(result.is_err());
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "proxy::tests::control_disconnect_exits_with_stdin_open",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "MCP runtime subprocess failed: {:?}",
+                    child.wait_with_output().unwrap()
+                );
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("control disconnect left the MCP process waiting for client stdin EOF");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
     #[tokio::test]
     async fn control_disconnect_ends_idle_proxy() {
         let (control, daemon) = tokio::io::duplex(64);

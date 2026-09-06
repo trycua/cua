@@ -357,7 +357,7 @@ fn agent_instructions() -> String {
     } else if cfg!(target_os = "windows") {
         (
             "UIA (UI Automation)",
-            "WINDOWS.md (UIA tree, UWP / ApplicationFrameHost hosting, Session 0 isolation)",
+            "WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
         )
     } else {
         (

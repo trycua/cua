@@ -111,6 +111,24 @@ class OracleTests(unittest.TestCase):
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_resize_keeps_center_not_top_left_and_inverse_restores_exact_frame(self):
+        before = {'x': 983, 'y': 576, 'width': 480, 'height': 480}
+        smaller = {'x': 987, 'y': 580, 'width': 472, 'height': 472}
+        fault = {'kind': 'resize', 'to': [472, 472]}
+        self.assertEqual(proof.expected_geometry(before, fault), smaller)
+        self.assertEqual(proof.expected_geometry(smaller, {'kind': 'resize', 'to': [480, 480]}), before)
+        self.assertEqual(proof.expected_geometry(BOUNDS, plan('resize')['fault']),
+                         {'x': 0, 'y': 10, 'width': 820, 'height': 620})
+        self.assertEqual(proof.expected_geometry(BOUNDS, plan()['fault']),
+                         {**BOUNDS, 'x': 30, 'y': 40})
+
+    def test_resize_with_fractional_center_shift_is_rejected_before_dispatch(self):
+        for size in ([819, 620], [820, 619]):
+            candidate = plan('resize')
+            candidate['fault']['to'] = size
+            with self.subTest(size=size), self.assertRaisesRegex(AssertionError, 'even'):
+                proof.validate_plan(candidate)
+
     def test_plan_confines_targets_geometry_and_new_action(self):
         for kind in ('move', 'resize'):
             for app in ('calc', 'inkscape'):
@@ -135,7 +153,7 @@ class OwnershipTests(unittest.TestCase):
         fault.instance = 'test_1'
         fault.owner = {'pid': 20, 'uid': 1000, 'starttime': '1', 'exe': '/usr/bin/app'}
         fault.compositor = {'pid': 50, 'uid': 1000, 'starttime': '2', 'exe': '/usr/bin/Hyprland'}
-        fault.expected = {**BOUNDS, **({'x': 30, 'y': 40} if kind == 'move' else {'width': 820, 'height': 620})}
+        fault.expected = proof.expected_geometry(BOUNDS, candidate['fault'])
         fault.mutated, fault.record = False, {'result': 'unproven'}
         return fault
 

@@ -5,6 +5,8 @@ geometry_fault, disposable=true, compositor={pid,instance}, foreground,
 primary_point, package_versions, and exactly one agents entry: app, name,
 target={pid,window_id}, bounds, pointer_stage (select_range or move_rectangle),
 drag={}. fault={kind:move|resize,to:[x,y]} gives absolute position or size;
+floating resize preserves the center, and this integer-frame proof requires
+even size deltas so the expected position does not depend on pixel rounding.
 recovery={pointer_stage:click_a1|click_b2|scroll_down} chooses a NEW action.
 The prepared synthetic document must already be floating. Run separate move
 and resize episodes with freshly observed plans; never replay a failed drag.
@@ -61,6 +63,7 @@ def validate_plan(plan):
     old = [bounds[key] for key in keys]
     assert old != fault['to'] and all(abs(a - b) <= 128 for a, b in zip(old, fault['to'])), 'need bounded changed geometry'
     assert fault['kind'] != 'resize' or min(fault['to']) > 0
+    expected_geometry(bounds, fault)
     assert set(plan['recovery']) == {'pointer_stage'}
     assert plan['recovery']['pointer_stage'] in RECOVERY_STAGES[spec['app']]
     assert len(plan['primary_point']) == 2 and all(type(v) is int for v in plan['primary_point'])
@@ -80,6 +83,21 @@ def window_bounds(window):
     return dict(zip(('x', 'y', 'width', 'height'), [*window['at'], *window['size']]))
 
 
+def expected_geometry(bounds, fault):
+    """Hyprland's floating resize translates the origin by minus half the delta."""
+    expected = dict(bounds)
+    if fault['kind'] == 'move':
+        expected.update(zip(('x', 'y'), fault['to']))
+    else:
+        assert fault['kind'] == 'resize'
+        for position, size, target in zip(('x', 'y'), ('width', 'height'), fault['to']):
+            delta = target - bounds[size]
+            assert delta % 2 == 0, 'integer-frame resize proof requires even size deltas'
+            expected[position] -= delta // 2
+            expected[size] = target
+    return expected
+
+
 class GeometryFault:
     """Only the reviewed native window may be mutated or restored; never kill it."""
     def __init__(self, plan):
@@ -93,9 +111,7 @@ class GeometryFault:
         self.owner = process_identity(self.spec['target']['pid'])
         assert self.owner['uid'] == os.getuid(), 'target is not owned by test user'
         app_process_identity(self.spec['app'], self.owner['pid'])
-        self.expected = dict(self.spec['bounds'])
-        keys = ('x', 'y') if self.fault['kind'] == 'move' else ('width', 'height')
-        self.expected.update(zip(keys, self.fault['to']))
+        self.expected = expected_geometry(self.spec['bounds'], self.fault)
         self.mutated = False
         self.record = {'result': 'unproven', 'kind': self.fault['kind'], 'target': self.spec['target'],
                        'before_bounds': self.spec['bounds'], 'expected_bounds': self.expected}

@@ -283,7 +283,7 @@ fn click_at_xy_inner(
         // right point. Without it the synthetic mouseDown on a backgrounded
         // AppKit control is silently ignored.
         post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
-        std::thread::sleep(std::time::Duration::from_millis(12));
+        std::thread::sleep(super::pacing::mouse_primer_settle());
 
         for pair_index in 0..count {
             let click_state = (pair_index + 1) as i64;
@@ -976,7 +976,7 @@ fn right_click_at_xy_inner(
     // Prime cursor-tracking state at the target so AppKit hit-tests the
     // right-down at the right NSView (same rationale as the left path).
     post_mouse_moved_primer(pid, &source, point, window_local, wid, click_group_id);
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     let down = CGEvent::new_mouse_event(
         source.clone(),
@@ -1171,7 +1171,7 @@ pub fn scroll_wheel_at_xy(
                 .subsec_nanos() as i64,
         ),
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     for _ in 0..ticks.max(1) {
         // Fresh source per event, matching the click primitives.

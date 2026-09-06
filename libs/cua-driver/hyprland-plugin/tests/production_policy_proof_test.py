@@ -9,7 +9,7 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from production_app_smoke import create_documents
+from production_app_smoke import GroundingUnavailable, create_documents
 from production_app_smoke_test import CALC, INKSCAPE, INKSCAPE_SELECTED, changed_ods
 from production_policy_proof import (
     CASES, DENIALS, MANAGED_ENV, SMOKE_STEPS, check_refusal, documents_for_case,
@@ -178,6 +178,30 @@ class PolicyTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_only_inkscape_snapshots_bound_visited_nodes_and_keep_images_and_depth(self):
+        for app in ('calc', 'inkscape'):
+            candidate = plan(app=app)
+            client = Mock()
+            expected = window(candidate, 'select' if app == 'inkscape' else 'insert', 1)
+            client.tool.side_effect = [
+                {'structuredContent': {'windows': [candidate['target']]}}, expected]
+            self.assertEqual(snapshot(client, candidate), expected)
+            arguments = {**candidate['target'], 'session': 'policy-proof'}
+            if app == 'inkscape':
+                arguments['max_elements'] = 2500
+            client.tool.assert_called_with('get_window_state', arguments)
+            self.assertNotIn('max_depth', arguments)
+            self.assertNotIn('include_screenshot', arguments)
+
+    def test_bounded_projection_cannot_omit_selection_grounding(self):
+        candidate = plan('resource_allow', app='inkscape')
+        for stage in ('select', 'move'):
+            value = evidence(candidate)
+            row = next(row for row in value['actions'] if row['stage'] == stage)
+            row['before']['structuredContent']['tree_markdown'] = ''
+            with self.subTest(stage=stage), self.assertRaises(GroundingUnavailable):
+                verify_evidence(candidate, value)
+
     def test_rejects_tampered_result_trace_snapshots_configuration_and_output(self):
         mutations = {
             'dropped_action': lambda e: e['actions'].pop(),

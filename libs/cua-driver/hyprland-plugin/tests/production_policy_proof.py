@@ -54,6 +54,12 @@ DENIALS = frozenset(('resource_wrong_pid', 'resource_wrong_window', 'managed_den
 TOOLS = ['get_window_state', 'press_key', 'hotkey']
 MANAGED_ENV = 'CUA_DRIVER_MANAGED_POLICY_FILE'
 POLICY_ENV = (MANAGED_ENV, 'CUA_DRIVER_POLICY_FILE')
+# Use the same bounded Inkscape projection as native pointer qualification.
+# The default walk spends 5–6 seconds per snapshot on trailing menu nodes;
+# eight such observations can exhaust the unchanged 45-second policy episode.
+# 2,500 visited nodes retain the selection status (2,000 do not). Keep depth
+# uncapped, all before/after images, and the original fail-closed grounding.
+POLICY_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
 
 
 def validate_plan(plan):
@@ -173,7 +179,8 @@ def snapshot(client, plan, observer=None):
                if row.get('pid') == plan['target']['pid']]
     assert len(matches) == 1 and matches[0].get('window_id') == plan['target']['window_id'], \
         'target is stale or ambiguous'
-    result = client.tool('get_window_state', {**plan['target'], 'session': 'policy-proof'})
+    result = client.tool('get_window_state', {**plan['target'], 'session': 'policy-proof',
+                         **POLICY_SNAPSHOT_LIMITS.get(plan['app'], {})})
     check_snapshot(result, plan)
     return result
 

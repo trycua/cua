@@ -509,28 +509,44 @@ fn installed_scan_key(roots: &[String]) -> Vec<Option<std::time::SystemTime>> {
 /// bundle's Info.plist on every call — hundreds of file reads that
 /// dominate `list_apps` latency (seconds under load) for an answer that
 /// changes only when something is installed or removed.
-fn scan_installed_apps_cached() -> Vec<AppInfo> {
-    struct InstalledCache {
-        key: Vec<Option<std::time::SystemTime>>,
-        at: std::time::Instant,
-        apps: Vec<AppInfo>,
-    }
-    static CACHE: std::sync::Mutex<Option<InstalledCache>> = std::sync::Mutex::new(None);
+struct InstalledCache {
+    key: Vec<Option<std::time::SystemTime>>,
+    at: std::time::Instant,
+    apps: Vec<AppInfo>,
+}
 
-    let roots = installed_scan_roots();
-    let key = installed_scan_key(&roots);
-    if let Some(cached) = CACHE.lock().unwrap().as_ref() {
+/// Serve from `cache` or refresh it via `scan`. The lock is held ACROSS
+/// the scan — single-flight: concurrent misses on a cold or expired
+/// cache block behind the one running scan and then serve its result,
+/// instead of each running the expensive walk themselves. The freshness
+/// check re-runs after the lock is acquired, so a waiter that queued
+/// behind a refresh takes the fresh entry without scanning again.
+/// Generic over `scan` so the single-flight contract is testable with a
+/// counting closure.
+fn cached_installed_scan(
+    cache: &std::sync::Mutex<Option<InstalledCache>>,
+    key: Vec<Option<std::time::SystemTime>>,
+    scan: impl FnOnce() -> Vec<AppInfo>,
+) -> Vec<AppInfo> {
+    let mut guard = cache.lock().unwrap();
+    if let Some(cached) = guard.as_ref() {
         if installed_cache_is_fresh(&cached.key, &key, cached.at.elapsed()) {
             return cached.apps.clone();
         }
     }
-    let apps = scan_installed_apps();
-    *CACHE.lock().unwrap() = Some(InstalledCache {
+    let apps = scan();
+    *guard = Some(InstalledCache {
         key,
         at: std::time::Instant::now(),
         apps: apps.clone(),
     });
     apps
+}
+
+fn scan_installed_apps_cached() -> Vec<AppInfo> {
+    static CACHE: std::sync::Mutex<Option<InstalledCache>> = std::sync::Mutex::new(None);
+    let key = installed_scan_key(&installed_scan_roots());
+    cached_installed_scan(&CACHE, key, scan_installed_apps)
 }
 
 fn scan_installed_apps() -> Vec<AppInfo> {
@@ -866,5 +882,43 @@ mod tests {
             &key.clone(),
             INSTALLED_CACHE_TTL
         ));
+    }
+
+    /// Concurrent misses on a cold cache must run exactly one scan
+    /// (single-flight): the lock is held across the refresh, so racers
+    /// queue behind it and serve the fresh entry. The previous shape —
+    /// lock released before scanning — let every racer run the
+    /// expensive walk; under this test that reports 8 scans, not 1
+    /// (verified by mutating the implementation back).
+    #[test]
+    fn concurrent_cold_misses_scan_once() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::{Arc, Mutex};
+        let cache: Arc<Mutex<Option<super::InstalledCache>>> = Arc::new(Mutex::new(None));
+        let scans = Arc::new(AtomicUsize::new(0));
+        let key: Vec<Option<std::time::SystemTime>> = vec![Some(std::time::SystemTime::UNIX_EPOCH)];
+        let mut handles = Vec::new();
+        for _ in 0..8 {
+            let cache = cache.clone();
+            let scans = scans.clone();
+            let key = key.clone();
+            handles.push(std::thread::spawn(move || {
+                super::cached_installed_scan(&cache, key, || {
+                    scans.fetch_add(1, Ordering::SeqCst);
+                    // Widen the race window: a non-single-flight
+                    // implementation lets every racer enter here.
+                    std::thread::sleep(std::time::Duration::from_millis(30));
+                    Vec::new()
+                })
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+        assert_eq!(
+            scans.load(Ordering::SeqCst),
+            1,
+            "cold cache scanned more than once"
+        );
     }
 }

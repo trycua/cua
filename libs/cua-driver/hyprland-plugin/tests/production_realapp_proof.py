@@ -192,7 +192,7 @@ def trace_interval(before, after):
         rows = page.get('events')
         assert isinstance(rows, list) and rows, 'empty dispatch telemetry'
         assert type(page.get('count')) is int and page['count'] == len(rows), 'incomplete dispatch telemetry'
-        assert isinstance(rows[-1], list) and len(rows[-1]) == 7, 'malformed dispatch telemetry'
+        assert isinstance(rows[-1], list) and len(rows[-1]) in (7, 9), 'malformed dispatch telemetry'
         # Reuse the canonical row/order validator with a local end sentinel;
         # the real stopped trace is still required during cleanup.
         last = rows[-1]
@@ -536,6 +536,7 @@ def run(args):
             ground(before, spec['app'], smoke_stage)
         arguments = step['arguments']
         if pointer_stage is not None:
+            before_request = mcp.counter
             arguments, pointer_oracle = pointer_grounding.action(
                 before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], pointer_stage)
             save(f'pointer-agent-{index}-{mcp.counter}.json',
@@ -603,7 +604,8 @@ def run(args):
                             break
                 save(f'pointer-effect-failure-agent-{index}.json', diagnostic)
                 raise
-            result.update(app_effect_verified=True, pointer_stage=pointer_stage, arguments=arguments)
+            result.update(app_effect_verified=True, pointer_stage=pointer_stage, arguments=arguments,
+                          pointer_evidence={'before_request': before_request, 'after_request': mcp.counter})
         if policy_cache:
             trace_after = trace.collect()
             save(f'policy-cache-phase-{len(policy_cache_traces)}-trace.json',

@@ -875,6 +875,8 @@ class PointerStageTests(unittest.TestCase):
                     report = json.loads((args.evidence / 'result.json').read_text())
                     self.assertTrue(report['actions'][0]['app_effect_verified'])
                     self.assertEqual(report['actions'][0]['pointer_stage'], 'click_b2')
+                    self.assertEqual(report['actions'][0]['pointer_evidence'],
+                                     {'before_request': before[3], 'after_request': after[3]})
                 if inputs:
                     self.assertEqual(len(list(args.evidence.glob('pointer-agent-*.json'))), 1)
                 if failure in ('after', 'after_recovers'):

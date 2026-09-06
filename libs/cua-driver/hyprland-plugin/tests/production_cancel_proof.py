@@ -201,7 +201,7 @@ def active_drags(page):
     """Reject incomplete telemetry before using its last observed lane state."""
     trace_interval(page, page)
     active, admitted, pressed = {}, set(), set()
-    for seq, timestamp, kind, _x, _y, lane, value in page['events']:
+    for seq, timestamp, kind, _x, _y, lane, value, *_surface in page['events']:
         if lane not in (1, 2):
             continue
         if kind == 'agent_admitted':
@@ -318,6 +318,7 @@ def run(args):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
     report = {'result': 'failed', 'scope': 'native-runtime-cancellation', 'actions': {},
               'cancellation': 'unproven', 'reacquisition': 'unproven',
+              'sibling_pointer_delivery': 'unproven',
               'saved_app_effects': 'unproven', 'full_desktop_matrix': False}
     clients, observer, grab, trace, pool = [], None, None, None, None
     futures, kill_prefix, lanes = {}, None, None
@@ -477,6 +478,14 @@ def run(args):
                     if recovery_prefix is not None:
                         isolation = verify_recovery_cleanup(recovery_prefix, stopped)
                     report['continuous_isolation'] = isolation
+                if 'sibling_app_effect' in report:
+                    # Bound the completed gesture to the admitted survivor lane.
+                    # The victim may share its start coordinates and was canceled;
+                    # neither it nor a later recovery action proves this delivery.
+                    drag_trace = stopped_prefix(cancellation_boundary) if cancellation_boundary else stopped
+                    report['sibling_pointer_delivery'] = pointer_grounding.verify_drag_trace(
+                        drag_trace, prepared[sibling]['arguments'], report['sibling_app_effect'],
+                        expected_lane=lanes[1])
                 assert wm() == primary_before, 'primary changed during cleanup'
                 current = state(args.foreground_journal)
                 assert all(current[key] == baseline[key] for key in ('clicks', 'keys', 'scroll', 'held')), current

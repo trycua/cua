@@ -177,6 +177,29 @@ class PointerGroundingTests(unittest.TestCase):
         result = pointer.verify_drag_trace(data, args, effect)
         self.assertEqual(result['lane'], 2)
         self.assertEqual(result['compatible_anchor_events'], [5])
+        for expected_lane in (True, False, 0, 3, 1.0, '2', [], {}):
+            with self.subTest(expected_lane=expected_lane), self.assertRaisesRegex(AssertionError, 'invalid expected'):
+                pointer.verify_drag_trace(data, args, effect, expected_lane=expected_lane)
+        with self.assertRaisesRegex(AssertionError, 'missing or ambiguous'):
+            pointer.verify_drag_trace(data, args, effect, expected_lane=1)
+        for canceled in (False, True):
+            other = copy.deepcopy(data['events'][1:-1])
+            for row in other:
+                row[5] = 1
+                if canceled and row[2] == 'agent_drag_end':
+                    row[2] = 'agent_cancel'
+            both = copy.deepcopy(data)
+            both['events'][1:1] = other
+            for sequence, row in enumerate(both['events'], 1):
+                row[0], row[1] = sequence, sequence * 1_000_000
+            both['count'] = len(both['events'])
+            with self.subTest(canceled=canceled):
+                self.assertEqual(pointer.verify_drag_trace(both, args, effect, expected_lane=2)['lane'], 2)
+                with self.assertRaisesRegex(AssertionError, 'drag did not complete' if canceled else 'missing or ambiguous'):
+                    pointer.verify_drag_trace(both, args, effect)
+                if canceled:
+                    with self.assertRaisesRegex(AssertionError, 'drag did not complete'):
+                        pointer.verify_drag_trace(both, args, effect, expected_lane=1)
         for failure in ('missing_endpoint', 'wrong_start', 'missing_coords', 'reversed', 'off_path',
                         'cancelled', 'leave_during_drag', 'unreleased', 'no_anchor', 'incomplete'):
             with self.subTest(failure=failure):

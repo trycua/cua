@@ -230,19 +230,22 @@ def verify(snapshot, image, oracle):
     return result
 
 
-def verify_drag_trace(trace, arguments, effect):
+def verify_drag_trace(trace, arguments, effect, *, expected_lane=None):
     """Prove the wire endpoint independently of a client's drag threshold.
 
     Surface coordinates come from the Wayland protocol logger, not actuator
     intent or primary-cursor coordinates. Historical seven-field traces cannot
     satisfy this oracle. This bounded episode must have one unambiguous stroke.
+    An expected lane binds cancellation proofs to the known surviving agent.
     """
     from primary_trace import analyze
+    assert expected_lane is None or (type(expected_lane) is int and expected_lane in (1, 2)), \
+        'invalid expected drag lane'
     assert analyze(trace).get('telemetry_complete') is True, 'incomplete pointer trace'
     start = [arguments['from_x'], arguments['from_y']]
     end = [arguments['to_x'], arguments['to_y']]
     matched = []
-    for lane in (1, 2):
+    for lane in ((expected_lane,) if expected_lane is not None else (1, 2)):
         events = [row for row in trace['events'] if row[5] == lane]
         for index, row in enumerate(events):
             if row[2] != 'agent_drag_start':

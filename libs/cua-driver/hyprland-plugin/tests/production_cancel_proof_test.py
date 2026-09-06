@@ -43,6 +43,21 @@ RESPONSE = {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_
                                    'delivery': {'mode': 'background'}}}
 
 
+def wire_trace(rows, active=True):
+    """Both lanes start at the same point; only lane two reaches the end."""
+    result = trace(rows, active)
+    events = []
+    for row in result['events']:
+        if row[2] == 'agent_drag_start':
+            events.append([0, row[1], 'pointer_motion', *row[3:6], 0, 100, 100])
+        if row[2] == 'pointer_button' and row[1] == 1900 * 1_000_000:
+            events.append([0, row[1], 'pointer_motion', *row[3:6], 0, 200, 200])
+        events.append(row + ([110, 110] if row[2] == 'pointer_motion' else []))
+    for sequence, row in enumerate(events, 1):
+        row[0] = sequence
+    return {**result, 'events': events, 'count': len(events)}
+
+
 def recovery_rows(tool='click', lane=1):
     inputs = [(2010, 'pointer_button', lane, 1), (2011, 'pointer_button', lane, 0)] if tool == 'click' else [
         (2010, 'pointer_axis', lane, 0)]
@@ -50,6 +65,11 @@ def recovery_rows(tool='click', lane=1):
 
 
 class TelemetryTests(unittest.TestCase):
+    def test_active_drags_accepts_surface_coordinates_without_losing_lane_state(self):
+        self.assertEqual(active_drags(wire_trace(OVERLAP)), active_drags(trace(OVERLAP)))
+        self.assertEqual(verify_cancellation(wire_trace(FINISH, False), wire_trace(OVERLAP), 1, 2)
+                         ['result'], 'verified')
+
     def test_complete_overlap_and_own_lane_release(self):
         result = verify_cancellation(trace(FINISH, False), trace(OVERLAP), 1, 2)
         self.assertEqual(result['result'], 'verified')
@@ -422,7 +442,8 @@ class OwnershipTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def test_success_and_failures_reap_all_owned_children_without_replay(self):
-        for failure in (None, 'sigterm', 'pointer', 'pointer_effect', 'trace', 'unknown_sibling',
+        for failure in (None, 'sigterm', 'pointer', 'pointer_partial', 'pointer_effect', 'pointer_endpoint', 'pointer_anchor',
+                        'pointer_coordinates', 'trace', 'unknown_sibling',
                         'successful_victim', 'close', 'snapshot', 'grab', 'primary_before', 'primary_after',
                         'recovery_calc', 'recovery_inkscape', 'recovery_effect', 'recovery_close', 'recovery_trace'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
@@ -432,7 +453,8 @@ class RunnerTests(unittest.TestCase):
                 if failure == 'sigterm':
                     candidate['termination_signal'] = 'SIGTERM'
                 recovery = failure is not None and failure.startswith('recovery_')
-                if failure in ('pointer', 'pointer_effect') or recovery:
+                pointer = failure is not None and failure.startswith('pointer')
+                if pointer or recovery:
                     for spec, stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
                         spec.update(drag={}, pointer_stage=stage)
                 if recovery:
@@ -458,24 +480,36 @@ class RunnerTests(unittest.TestCase):
                 if failure == 'primary_before':
                     grab.poll.return_value = 0
                 trace_client = Mock(hello={'protocol': 3})
-                stopped = trace(FINISH, False)
+                make_trace = wire_trace if pointer or recovery else trace
+                stopped = make_trace(FINISH, False)
+                if failure in ('pointer_endpoint', 'pointer_coordinates'):
+                    endpoint = next(row for row in stopped['events']
+                                    if row[2] == 'pointer_motion' and row[7:9] == [200, 200])
+                    if failure == 'pointer_endpoint':
+                        endpoint[7:9] = [199, 199]
+                    else:
+                        del endpoint[7:9]
                 if failure == 'trace':
                     stopped['overflow'] = True
-                trace_client.collect.side_effect = [trace(START), trace(FIRST), trace(OVERLAP), stopped]
+                trace_client.collect.side_effect = [make_trace(START), make_trace(FIRST), make_trace(OVERLAP), stopped]
                 if recovery:
                     rows = recovery_rows('scroll' if victim else 'click')
-                    complete = trace(rows + [(2015, 'agent_cancel', 1, 0), (2016, 'pointer_leave', 1, 0),
+                    complete = make_trace(rows + [(2015, 'agent_cancel', 1, 0), (2016, 'pointer_leave', 1, 0),
                         (2017, 'agent_cancel', 2, 0), (2018, 'keyboard_leave', 2, 0), (2020, 'stop', 0, 0)], False)
                     if failure == 'recovery_trace':
                         complete['overflow'] = True
-                    trace_client.collect.side_effect = [trace(START), trace(FIRST), trace(OVERLAP),
-                        trace(FINISH[:-1]), *([] if failure == 'recovery_effect' else [trace(rows)]), complete]
+                    trace_client.collect.side_effect = [make_trace(START), make_trace(FIRST), make_trace(OVERLAP),
+                        make_trace(FINISH[:-1]), *([] if failure == 'recovery_effect' else [make_trace(rows)]), complete]
                 outcomes = [{'outcome': 'unknown', 'replayed': False},
                             {'outcome': 'response', 'response': RESPONSE, 'replayed': False}]
                 if failure == 'unknown_sibling':
                     outcomes[1] = outcomes[0]
                 if failure == 'successful_victim':
                     outcomes[0] = outcomes[1]
+                if failure == 'pointer_partial':
+                    outcomes[0] = {'outcome': 'response', 'response': {'structuredContent': {
+                        **RESPONSE['structuredContent'], 'effect': 'partial',
+                        'delivery': {'mode': 'background', 'delivered_count': 3}}}, 'replayed': False}
                 futures = [Mock(done=Mock(return_value=False), result=Mock(return_value=o)) for o in outcomes]
                 for future in futures:
                     def finish(*args, f=future, **kwargs):
@@ -496,6 +530,8 @@ class RunnerTests(unittest.TestCase):
                     snapshot.side_effect = primary_exits_after_action
                 if failure == 'close':
                     agents[0].close.side_effect = RuntimeError('cleanup failure')
+                sibling_effect = {'verified': True, 'app': candidate['agents'][1 - victim]['app'],
+                                  'observed_delta': [80, 80] if failure == 'pointer_anchor' else [90, 90]}
                 replacements = {
                     'provenance': Mock(return_value={'files': {}}), 'DirectMCP': Mock(side_effect=[*agents, observer, fresh]),
                     'app_process_identity': Mock(return_value={'pid': candidate['agents'][victim]['target']['pid']}),
@@ -510,13 +546,13 @@ class RunnerTests(unittest.TestCase):
                         (plan()['agents'][0]['drag'] if stage in ('select_range', 'move_rectangle') else {'x': 20, 'y': 30},
                          {'app': app, 'stage': stage})),
                     'pointer_grounding.verify': Mock(side_effect=AssertionError('sibling did not move'))
-                        if failure == 'pointer_effect' else Mock(side_effect=[{'verified': True}, AssertionError('recovery no effect')])
-                        if failure == 'recovery_effect' else Mock(return_value={'verified': True}),
+                        if failure == 'pointer_effect' else Mock(side_effect=[sibling_effect, AssertionError('recovery no effect')])
+                        if failure == 'recovery_effect' else Mock(return_value=sibling_effect),
                     'print': Mock(),
                 }
                 for name, value in replacements.items():
                     stack.enter_context(patch('production_cancel_proof.' + name, value))
-                self.assertEqual(run(args), 0 if failure in (None, 'sigterm', 'pointer', 'recovery_calc', 'recovery_inkscape') else 1)
+                self.assertEqual(run(args), 0 if failure in (None, 'sigterm', 'pointer', 'pointer_partial', 'recovery_calc', 'recovery_inkscape') else 1)
                 result = json.loads((args.evidence / 'result.json').read_text())
                 if failure == 'sigterm':
                     self.assertEqual(result['termination']['signal'], 'SIGTERM')
@@ -542,8 +578,21 @@ class RunnerTests(unittest.TestCase):
                     self.assertEqual(replacements['pointer_grounding.action'].call_count, 2)
                     self.assertTrue((args.evidence / 'agent-0-drag-grounding.json').is_file())
                     self.assertTrue((args.evidence / 'agent-1-drag-grounding.json').is_file())
-                if failure == 'pointer':
-                    self.assertEqual(result['sibling_app_effect'], {'verified': True})
+                if failure in ('pointer', 'pointer_partial') or recovery:
+                    self.assertEqual(result['sibling_app_effect'], sibling_effect)
+                    if failure != 'recovery_trace':
+                        self.assertTrue(result['sibling_pointer_delivery']['verified'])
+                        self.assertEqual(result['sibling_pointer_delivery']['lane'], 2)
+                if failure == 'pointer_partial':
+                    self.assertEqual(result['actions'][str(victim)], outcomes[0])
+                    self.assertEqual(result['saved_app_effects'], 'unproven')
+                if pointer and failure not in ('pointer', 'pointer_partial'):
+                    self.assertEqual(result['sibling_pointer_delivery'], 'unproven')
+                    self.assertEqual(result['actions'][str(victim)]['outcome'], 'unknown')
+                    self.assertFalse(result['actions'][str(victim)]['replayed'])
+                    if failure != 'pointer_effect':
+                        self.assertEqual(result['sibling_app_effect'], sibling_effect)
+                        self.assertIn('finish_trace', (args.evidence / 'cleanup.json').read_text())
                 agents[0].close.assert_called_once()
                 if failure != 'snapshot':
                     agents[1].close.assert_called_once()

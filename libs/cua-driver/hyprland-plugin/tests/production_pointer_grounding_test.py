@@ -37,7 +37,8 @@ def calc(selection='A2', scroll=0):
         {'role': 'scroll bar', 'value': str(scroll), 'frame': {'x': 990, 'y': 569, 'w': 14, 'h': 270}}],
         tree_markdown='\n'.join(['- tool bar = "Formula Tool Bar"',
                                  '  - [1] panel "" [actions=[]]',
-                                 f'    - [2] text "{selection}" [actions=[]]']))
+                                 f'    - [2] text "{selection}" [actions=[]]',
+                                 '- tool bar = "Standard"']))
     image = Image()
     for x in (129, 214, 299, 384):
         image.points.update({(x, y): (204, 204, 204) for y in range(169, 439)})
@@ -73,6 +74,33 @@ def ink(selected=True, dx=0, dy=0, scroll_y=0):
 
 
 class PointerGroundingTests(unittest.TestCase):
+    def test_calc_selection_requires_positive_complete_semantic_evidence(self):
+        for failure in ('missing_toolbar', 'truncated_toolbar', 'missing_field', 'wrong_parent',
+                        'duplicate_field', 'duplicate_toolbar', 'disabled', 'wrong_terminator_depth'):
+            with self.subTest(failure=failure):
+                state, image = calc('B2')
+                if failure == 'missing_toolbar':
+                    state['tree_markdown'] = ''
+                elif failure == 'truncated_toolbar':
+                    state['tree_markdown'] = state['tree_markdown'].rsplit('\n', 1)[0]
+                elif failure == 'missing_field':
+                    state['elements'] = [row for row in state['elements'] if row.get('role') != 'text']
+                elif failure == 'wrong_parent':
+                    state['elements'][1]['parent_index'] = 999
+                elif failure == 'duplicate_field':
+                    state['elements'].append(copy.deepcopy(state['elements'][1]))
+                elif failure == 'duplicate_toolbar':
+                    state['tree_markdown'] += '\n- tool bar = "Formula Tool Bar"'
+                elif failure == 'disabled':
+                    state['elements'][1]['enabled'] = False
+                else:
+                    state['tree_markdown'] = state['tree_markdown'].replace(
+                        '- tool bar = "Standard"', '  - tool bar = "Standard"')
+                with self.assertRaises(pointer.GroundingUnavailable):
+                    pointer.action(state, image, 'calc', 'select_range')
+                with self.assertRaises(pointer.GroundingUnavailable):
+                    pointer.verify(state, image, {'app': 'calc', 'stage': 'click_b2', 'selection': 'B2'})
+
     def test_calc_points_are_derived_from_the_current_grid(self):
         state, image = calc()
         self.assertEqual(pointer.calc_cells(state, image), {'A1': (86, 177), 'B2': (171, 195), 'B3': (171, 213)})

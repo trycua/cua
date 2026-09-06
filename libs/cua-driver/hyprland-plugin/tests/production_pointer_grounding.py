@@ -124,6 +124,34 @@ def calc_cells(snapshot, image):
             'B3': ((columns[1] + columns[2]) // 2, (lines[2] + lines[3]) // 2)}
 
 
+def calc_selection(snapshot):
+    """Resolve a positive name-field value from the complete fixture toolbar.
+
+    A bounded tree without the field is unknown, not evidence that a desired
+    range is unselected. The following Standard toolbar proves the Formula
+    Tool Bar section was not cut short by the snapshot's node budget.
+    """
+    elements = rows(snapshot)
+    lines = snapshot.get('tree_markdown', '').splitlines()
+    headers = [index for index, line in enumerate(lines)
+               if line.strip() == '- tool bar = "Formula Tool Bar"']
+    if len(headers) != 1:
+        raise GroundingUnavailable('need one complete Calc formula toolbar')
+    start = headers[0]
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    following = next((line for line in lines[start + 1:]
+                      if line.strip() and len(line) - len(line.lstrip()) <= indent), None)
+    if (following is None or following.strip() != '- tool bar = "Standard"'
+            or len(following) - len(following.lstrip()) != indent):
+        raise GroundingUnavailable('Calc formula toolbar may be truncated')
+    values = [row['label'] for row in elements
+              if row.get('role') == 'text' and isinstance(row.get('label'), str) and row['label']
+              and calc_formula_selection(snapshot, elements, row['label'])]
+    if len(values) != 1:
+        raise GroundingUnavailable('need one positively identified Calc selection')
+    return values[0]
+
+
 def inkscape_geometry(snapshot, *, allow_transform_center=False):
     elements = rows(snapshot)
     lines = [line.strip() for line in snapshot.get('tree_markdown', '').splitlines()]
@@ -196,7 +224,7 @@ def action(snapshot, image, app, stage):
             cells = calc_cells(snapshot, image)
             point = cells['B2' if stage == 'click_b2' else 'A1']
             oracle['selection'] = {'click_b2': 'B2', 'click_a1': 'A1', 'select_range': 'A1:B3'}[stage]
-            if calc_formula_selection(snapshot, rows(snapshot), oracle['selection']):
+            if calc_selection(snapshot) == oracle['selection']:
                 raise GroundingUnavailable('selection already matches; this would not prove a pointer effect')
     else:
         oracle['rectangle'] = blue_rectangle(snapshot, image)
@@ -231,7 +259,7 @@ def verify(snapshot, image, oracle):
     elements = checked_snapshot(snapshot, image, app)
     if app == 'calc':
         if 'selection' in oracle:
-            assert calc_formula_selection(snapshot, elements, oracle['selection']), 'Calc selection did not change as expected'
+            assert calc_selection(snapshot) == oracle['selection'], 'Calc selection did not change as expected'
         else:
             value = calc_scroll(snapshot, image)
             assert value > oracle['scroll'] if stage == 'scroll_down' else value < oracle['scroll'], 'Calc viewport did not scroll'

@@ -70,6 +70,10 @@ The plan fields are:
 
 The runner checks Driver's PID/window listing and a fresh image for each drag,
 then retains both observations and derived arguments before dispatch. It
+positively resolves Calc's current name-field selection and requires the next
+Standard toolbar to establish that the Formula Tool Bar section is complete.
+A missing or truncated selection field is unknown, not an unselected range.
+It
 rejects changed bounds, endpoints outside the image, and grounding older than
 five seconds at dispatch. Before either drag, both observations must retain
 250 ms for dispatch scheduling. If not, the runner can refresh both observations

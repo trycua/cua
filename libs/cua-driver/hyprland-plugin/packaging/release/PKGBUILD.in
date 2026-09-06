@@ -1,0 +1,65 @@
+# Generated from an explicit committed revision. No checkout is needed.
+# shellcheck shell=bash disable=SC2034,SC2154
+pkgname=cua-hyprland-plugin
+pkgver=@DRIVER_VERSION@
+pkgrel=1
+pkgdesc='Cua production input candidate for pinned Hyprland 0.56.2'
+arch=('x86_64')
+url='https://github.com/trycua/cua'
+license=('MIT')
+depends=('hyprland=0.56.2-1' 'gcc-libs')
+makedepends=('cmake>=3.30' 'ninja' 'pkgconf' 'binutils' 'python>=3.11' 'gcc')
+options=('!strip' '!debug' '!lto')
+_revision='@REVISION@'
+_stem='@STEM@'
+_archive_sha256='@ARCHIVE_SHA256@'
+_manifest_sha256='@MANIFEST_SHA256@'
+source=("https://github.com/trycua/cua/releases/download/cua-driver-rs-v${pkgver}/${_stem}.tar.gz")
+sha256sums=('@ARCHIVE_SHA256@')
+_cxx="${CUA_RELEASE_CXX:-/usr/bin/g++}"
+
+_verify() {
+  # Recheck even when makepkg --skipinteg or --noextract was requested.
+  printf '%s  %s\n' "$_archive_sha256" "$SRCDEST/${_stem}.tar.gz" | sha256sum -c - || return 1
+  printf '%s  %s\n' "$_manifest_sha256" "$srcdir/$_stem/SOURCE-PROVENANCE.json" | sha256sum -c - || return 1
+  local verifier_sha
+  verifier_sha="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["files"]["verify.py"])' \
+    "$srcdir/$_stem/SOURCE-PROVENANCE.json")" || return 1
+  printf '%s  %s\n' "$verifier_sha" "$srcdir/$_stem/verify.py" | sha256sum -c - || return 1
+  python3 "$srcdir/$_stem/verify.py" --source "$srcdir/$_stem" \
+    --revision "$_revision" --driver-version "$pkgver" --cxx "$_cxx" "$@"
+}
+
+prepare() {
+  _verify
+}
+
+build() {
+  _verify || return 1
+  cmake -S "$srcdir/$_stem" -B "$srcdir/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$_cxx" \
+    -DBUILD_TESTING=ON -DCUA_HYPRLAND_BUILD_PLUGIN=ON \
+    -DCUA_HYPRLAND_EXPECTED_VERSION=0.56.2 \
+    -DCUA_HYPRLAND_INPUT=ON -DCUA_HYPRLAND_TEST_INPUT=OFF \
+    -DCUA_HYPRLAND_INPUT_TRACE=OFF -DCUA_HYPRLAND_TEST_OPERATOR_KEY= || return 1
+  cmake --build "$srcdir/build"
+}
+
+check() {
+  _verify || return 1
+  ctest --test-dir "$srcdir/build" --output-on-failure --no-tests=error
+}
+
+package() {
+  # Packaging always runs the tests, including makepkg --nocheck / --repackage.
+  check || return 1
+  _verify --build "$srcdir/build" --output "$srcdir/BUILD-PROVENANCE.json" || return 1
+  install -Dm755 "$srcdir/build/cua-hyprland-plugin.so" \
+    "$pkgdir/usr/lib/cua/hyprland/cua-hyprland-plugin.so" || return 1
+  install -Dm644 "$srcdir/$_stem/LICENSE.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE" || return 1
+  install -Dm644 "$srcdir/$_stem/SOURCE-PROVENANCE.json" \
+    "$pkgdir/usr/share/$pkgname/SOURCE-PROVENANCE.json" || return 1
+  install -Dm644 "$srcdir/BUILD-PROVENANCE.json" \
+    "$pkgdir/usr/share/$pkgname/BUILD-PROVENANCE.json"
+}

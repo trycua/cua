@@ -46,6 +46,15 @@ def calc(selection='A2', scroll=0):
     return state, image
 
 
+def highlighted_calc():
+    state, image = calc('A1:B3')
+    # Selection tint replaces both white interiors and gray grid pixels in
+    # A1:B3. C and D retain independent evidence for the first two row lines.
+    image.points.update({(x, y): (205, 226, 247)
+                         for x in range(45, 215) for y in range(169, 222)})
+    return state, image
+
+
 def ink(selected=True, dx=0, dy=0, scroll_y=0):
     state = {**snapshot('inkscape'), **copy.deepcopy(INKSCAPE_SELECTED if selected else INKSCAPE)}
     if selected:
@@ -76,6 +85,39 @@ class PointerGroundingTests(unittest.TestCase):
         self.assertEqual(args, {'from_x': 86, 'from_y': 177, 'to_x': 171, 'to_y': 213,
                                 'duration_ms': 1500, 'steps': 30})
         self.assertTrue(pointer.verify(*calc('A1:B3'), oracle)['verified'])
+
+    def test_calc_highlighted_range_uses_unobscured_column_strips(self):
+        state, image = highlighted_calc()
+        # This is the native failure: neither early line meets full-width 70%.
+        for y in (186, 204):
+            self.assertLess(sum(image.rgb(x, y) == (204, 204, 204)
+                                for x in range(45, 385)), 340 * .70)
+        self.assertEqual(pointer.calc_cells(state, image), pointer.calc_cells(*calc()))
+        args, oracle = pointer.action(state, image, 'calc', 'click_b2')
+        self.assertEqual(args, {'x': 171, 'y': 195})
+        self.assertTrue(pointer.verify(*calc('B2'), oracle)['verified'])
+        with self.assertRaisesRegex(pointer.GroundingUnavailable, 'selection already matches'):
+            pointer.action(state, image, 'calc', 'select_range')
+
+    def test_calc_highlight_does_not_hide_irregular_or_ambiguous_grid_evidence(self):
+        for failure in ('extra_row', 'conflicting_strips', 'missing_row', 'one_strip', 'irregular_column'):
+            with self.subTest(failure=failure):
+                state, image = highlighted_calc()
+                if failure == 'extra_row':
+                    image.points.update({(x, 195): (204, 204, 204) for x in range(215, 384)})
+                elif failure == 'conflicting_strips':
+                    # One clear strip disagrees with the other by one pixel.
+                    image.points.update({(x, 186): (255, 255, 255) for x in range(215, 299)})
+                    image.points.update({(x, 187): (204, 204, 204) for x in range(215, 299)})
+                elif failure == 'missing_row':
+                    image.points.update({(x, 186): (255, 255, 255) for x in range(215, 384)})
+                elif failure == 'one_strip':
+                    image.points.update({(x, y): (205, 226, 247)
+                                         for x in range(215, 300) for y in range(169, 222)})
+                else:
+                    image.points.update({(140, y): (204, 204, 204) for y in range(222, 439)})
+                with self.assertRaises(pointer.GroundingUnavailable):
+                    pointer.action(state, image, 'calc', 'click_b2')
 
     def test_calc_grid_and_scroll_refuse_ambiguous_or_clipped_state(self):
         for failure in ('blank', 'duplicate', 'clipped', 'scrolled', 'irregular', 'already_selected', 'scaled'):

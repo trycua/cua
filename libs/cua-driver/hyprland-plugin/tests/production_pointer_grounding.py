@@ -87,19 +87,38 @@ def calc_cells(snapshot, image):
     x, y, w, h = calc_table(snapshot, image)
     if calc_scroll(snapshot, image) != 0:
         raise GroundingUnavailable('cell proof requires the top of the sheet')
-    # The table frame excludes headers. Corroborate it with the actual uniform
-    # cell grid; a one-cell blue selection may cover less than 30% of a line.
+    # The table frame excludes headers. First establish uniform columns from
+    # their full-height lines. A short range selection can obscure the upper
+    # part of these lines without hiding their positions below the selection.
     columns = [px for px in range(x, x + w)
                if sum(image.rgb(px, py) == (204, 204, 204) for py in range(y, y + h)) >= h * .70]
-    lines = [py for py in range(y, y + h)
-             if sum(image.rgb(px, py) == (204, 204, 204) for px in range(x, x + w)) >= w * .70]
-    if len(columns) < 3 or len(lines) < 4:
+    if len(columns) < 3:
         raise GroundingUnavailable('cannot resolve visible spreadsheet grid')
-    columns, lines = [x - 1, *columns], [y - 1, *lines]
-    for positions, minimum in ((columns, 30), (lines, 8)):
+    columns = [x - 1, *columns]
+
+    def uniform(positions, minimum):
         gaps = [b - a for a, b in zip(positions, positions[1:])]
         if min(gaps) < minimum or max(gaps) - min(gaps) > 2:
             raise GroundingUnavailable('spreadsheet grid is ambiguous or irregular')
+
+    uniform(columns, 30)
+    # Inspect each complete column interior independently at the same 70%
+    # coverage. A highlighted A1:B3 leaves C and D available to corroborate
+    # the early row boundaries even when a full-width scan cannot see them.
+    # Keep every observed boundary: conflicting strips must fail, not be
+    # discarded in favor of a majority or an extrapolated hidden grid.
+    support = {}
+    for left, right in zip(columns, columns[1:]):
+        for py in range(y, y + h):
+            if sum(image.rgb(px, py) == (204, 204, 204)
+                   for px in range(left + 1, right)) >= (right - left - 1) * .70:
+                support[py] = support.get(py, 0) + 1
+    if len(support) < 4:
+        raise GroundingUnavailable('cannot resolve visible spreadsheet grid')
+    lines = [y - 1, *sorted(support)]
+    uniform(lines, 8)
+    if min(support.values()) < 2:
+        raise GroundingUnavailable('spreadsheet rows need two independent column strips')
     return {'A1': ((columns[0] + columns[1]) // 2, (lines[0] + lines[1]) // 2),
             'B2': ((columns[1] + columns[2]) // 2, (lines[1] + lines[2]) // 2),
             'B3': ((columns[1] + columns[2]) // 2, (lines[2] + lines[3]) // 2)}

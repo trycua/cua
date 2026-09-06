@@ -138,6 +138,19 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_passive_recovery_does_not_relax_transition_or_held_state_checks(self):
+        passive = status(1)
+        passive['input']['lanes'][0]['pointer_focus'] = True
+        with self.assertRaises(AssertionError):
+            proof.lanes(passive, cleared=True)
+        proof.lanes(passive, cleared=True, allow_passive=True)
+        for field, value in (('held_button', 272), ('held_keys', 1), ('drag_active', True),
+                             ('lease_active', True), ('keyboard_focus', True), ('pointer_focus', 1)):
+            altered = deepcopy(passive)
+            altered['input']['lanes'][0][field] = value
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                proof.lanes(altered, cleared=True, allow_passive=True)
+
     def test_cancel_requires_real_partial_or_unknown_and_owned_release(self):
         action = {'outcome': 'response', 'response': PARTIAL, 'replayed': False}
         self.assertEqual(proof.verify_cancelled(trace(CANCEL), fault_record(), action)['result'], 'verified')

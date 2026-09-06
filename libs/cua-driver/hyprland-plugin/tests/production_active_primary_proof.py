@@ -52,6 +52,15 @@ HOVER_MS = 20000
 REASON = 'primary_target_busy'
 
 
+def verify_parked_foreground(before, after):
+    """The fixture emits a new timestamp every 250 ms, even without input."""
+    assert before.get('kind') == after.get('kind') == 'state'
+    assert all(type(row.get('time')) is int and row['time'] >= 0 for row in (before, after))
+    assert after['time'] >= before['time'], 'foreground observation moved backwards'
+    assert {key: value for key, value in before.items() if key != 'time'} == \
+        {key: value for key, value in after.items() if key != 'time'}, 'foreground state changed before hover'
+
+
 def transition_evidence(page, *, stopped=False):
     result = _transition_evidence(page, stopped=stopped)
     result['classification'] = 'observed_transition_events_not_attributed_to_hover_fixture_or_driver'
@@ -356,7 +365,7 @@ def run(args):
         initial = start_trace()
         fixture.arm()
         assert desktop.primary(plan['foreground']) == before_primary
-        assert state(args.foreground_journal) == baseline
+        verify_parked_foreground(baseline, state(args.foreground_journal))
         action = report['action'] = {'outcome': 'unknown', 'replayed': False,
             'prepared_ns': prepared['prepared_ns'], 'runtime_pid': actor.process.pid}
         pool = ThreadPoolExecutor(max_workers=1)
@@ -431,11 +440,11 @@ def run(args):
         current = state(args.foreground_journal)
         assert desktop.primary(plan['foreground']) == primary
         assert all(current[k] == baseline[k] for k in ('held', 'clicks', 'keys', 'scroll'))
-        final = desktop.status(unreserved=True)
+        final = desktop.status(unreserved=True, allow_passive=True)
         save('recovery-primary-readback.json', {'before': primary, 'after': desktop.primary(plan['foreground']),
              'foreground_before': baseline, 'foreground_after': current})
         save('final-status.json', final)
-        old, new = lanes(settled, cleared=True), lanes(final, cleared=True)
+        old, new = lanes(settled, cleared=True), lanes(final, cleared=True, allow_passive=True)
         assert sum(new[k]['dispatches'] - old[k]['dispatches'] for k in old) == 1
         for key in old:
             assert new[key]['dispatches'] >= old[key]['dispatches']

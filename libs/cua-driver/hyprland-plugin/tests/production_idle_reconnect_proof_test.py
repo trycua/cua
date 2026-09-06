@@ -29,7 +29,7 @@ def status(reserved=True, dispatches=1):
         'protocol': 3, 'test_only': False, 'transport_ready': True,
         'lanes': [{'lane': lane, 'epoch': f'epoch-{lane}', 'desktop_generation': 2,
                    'reserved': reserved if lane == 0 else False,
-                   'pointer_focus': reserved if lane == 0 else False,
+                   'pointer_focus': dispatches > 0 if lane == 0 else False,
                    'lease_active': False, 'drag_active': False, 'held_button': 0,
                    'held_keys': 0, 'keyboard_focus': False, 'dispatches': dispatches if lane == 0 else 0}
                   for lane in (0, 1)]}}
@@ -88,7 +88,7 @@ class ExpiryTests(unittest.TestCase):
         cases = []
         early = status(False)
         cases.append((early, 59))
-        for field, changed in [('pointer_focus', True), ('epoch', 'replacement'),
+        for field, changed in [('pointer_focus', False), ('epoch', 'replacement'),
                                ('desktop_generation', 3), ('dispatches', 2), ('held_button', 272),
                                ('lease_active', True), ('reserved', 'false')]:
             malformed = status(False)

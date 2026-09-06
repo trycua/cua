@@ -124,7 +124,17 @@ class OracleTests(unittest.TestCase):
                 proof.clear_status(row, unreserved=True)
         passive = status()
         passive['input']['lanes'][0].update(pointer_focus=True, reserved=True)
-        proof.clear_status(passive)  # Completed input may retain passive focus until runtime close.
+        proof.clear_status(passive)  # A live owner can retain passive focus.
+        with self.assertRaises(AssertionError):
+            proof.clear_status(passive, unreserved=True, allow_passive=True)
+        passive['input']['lanes'][0]['reserved'] = False
+        proof.clear_status(passive, unreserved=True, allow_passive=True)
+        for field, value in (('held_button', 272), ('held_keys', 1), ('drag_active', True),
+                             ('lease_active', True), ('keyboard_focus', True), ('pointer_focus', 1)):
+            altered = deepcopy(passive)
+            altered['input']['lanes'][0][field] = value
+            with self.subTest(passive_field=field), self.assertRaises(AssertionError):
+                proof.clear_status(altered, unreserved=True, allow_passive=True)
 
 
 class OwnershipTests(unittest.TestCase):
@@ -368,10 +378,10 @@ class RunTests(unittest.TestCase):
                     desktop.raw_status.return_value = current
                     save(phase + '-action.json', record)
                     if failure == 'reserved_after_close':
-                        def reserved_status(*, unreserved=False):
+                        def reserved_status(*, unreserved=False, allow_passive=False):
                             value = status()
                             value['input']['lanes'][0]['reserved'] = True
-                            return proof.clear_status(value, unreserved=unreserved)
+                            return proof.clear_status(value, unreserved=unreserved, allow_passive=allow_passive)
                         desktop.status.side_effect = reserved_status
                     if failure == phase:
                         raise AssertionError(phase + ' failed')

@@ -119,7 +119,7 @@ def wait_for_idle_expiry(client, runtime, occupied_status, lane, dispatch_ns, sa
         assert client.counter == counter, 'idle runtime received another MCP request'
         if not current[lane]['reserved']:
             assert observed_ns - dispatch_ns >= IDLE_SECONDS * 1_000_000_000, 'lane disappeared before real idle timeout'
-            assert current[lane]['pointer_focus'] is False, 'expired peer retained pointer focus'
+            assert current[lane]['pointer_focus'] is True, 'idle expiry unnecessarily cleared inert hover'
             return {'verified': True, 'elapsed_ns': observed_ns - dispatch_ns, 'status': status,
                     'runtime_pid': runtime['pid'], 'mcp_counter': counter, 'lane': lane}
         assert current[lane]['pointer_focus'] is True, 'passive focus disappeared before peer expiry'
@@ -238,7 +238,9 @@ def episode(args, plan, client, observer, runtime, identity, stage, save, result
                 if final:
                     status = read_input_status()
                     save('closed-input-status.json', status)
-                    assert all(not row['reserved'] and not row['pointer_focus'] for row in lane_states(status).values())
+                    closed = lane_states(status)
+                    assert all(not row['reserved'] for row in closed.values())
+                    assert closed[lane]['pointer_focus'] and not closed[3 - lane]['pointer_focus']
                     result['synthetic_cleanup'] = 'verified'
                 guard()
             operations += [('finish_trace', finish_trace), ('close_trace', trace.close)]

@@ -31,6 +31,7 @@ src/input_experiment.cpp
 src/input_experiment.hpp
 src/input_grant.hpp
 src/owned_socket_path.hpp
+src/passive_pointer_target.hpp
 src/plugin.cpp
 src/primary_trace.cpp
 src/primary_trace.hpp
@@ -47,6 +48,7 @@ tests/mock-hyprland/mock.hpp
 tests/mock-hyprland/src/config/values/types/BoolValue.hpp
 tests/mock-hyprland/src/plugins/PluginAPI.hpp
 tests/owned_socket_path_test.cpp
+tests/passive_pointer_target_test.cpp
 tests/plugin_api_test.cpp
 tests/plugin_input_lifetime_test.cpp
 tests/protocol_test.cpp

@@ -371,7 +371,7 @@ def run(args):
         fixture.check_targets()
         final = production_status(fixture.config)
         save('final-status.json', final)
-        old, new = lanes(restoration['after'], cleared=True), lanes(final, cleared=True)
+        old, new = lanes(restoration['after'], cleared=True), lanes(final, cleared=True, allow_passive=True)
         assert set(old) == set(new) == {0, 1}
         assert sum(new[k]['dispatches'] - old[k]['dispatches'] for k in old) == 1
         for key in old:

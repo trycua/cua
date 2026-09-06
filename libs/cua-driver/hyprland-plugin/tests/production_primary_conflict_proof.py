@@ -84,14 +84,17 @@ def validate_plan(plan):
     assert len({plan['compositor']['pid'], *(p['pid'] for p in plan['processes'].values())}) == 3
 
 
-def clear_status(status, *, unreserved=False):
+def clear_status(status, *, unreserved=False, allow_passive=False):
     """Trace balance alone cannot exclude state held before tracing started."""
     verify_status(status, True)
     for row in status['input']['lanes']:
         assert all(type(row.get(key)) is int and row[key] == 0 for key in ('held_button', 'held_keys'))
         assert all(row.get(key) is False for key in ('drag_active', 'lease_active', 'keyboard_focus'))
         if unreserved:
-            assert row.get('reserved') is False and row.get('pointer_focus') is False
+            assert row.get('reserved') is False
+            assert type(row.get('pointer_focus')) is bool
+            if not allow_passive:
+                assert row['pointer_focus'] is False
     return status
 
 
@@ -144,8 +147,8 @@ class ExactDesktop:
                 'cursor': json.loads(_hypr(self.instance, '-j', 'cursorpos')),
                 'workspace': json.loads(_hypr(self.instance, '-j', 'activeworkspace'))['id']}
 
-    def status(self, *, unreserved=False):
-        return clear_status(self.raw_status(), unreserved=unreserved)
+    def status(self, *, unreserved=False, allow_passive=False):
+        return clear_status(self.raw_status(), unreserved=unreserved, allow_passive=allow_passive)
 
     def raw_status(self):
         self.guard()
@@ -267,7 +270,7 @@ def run(args):
         else:
             checked = verify_recovery_cleanup(report['phases'][phase]['trace_after'], stopped)
         guard()
-        report['phases'][phase]['final_status'] = desktop.status(unreserved=True)
+        report['phases'][phase]['final_status'] = desktop.status(unreserved=True, allow_passive=phase == 'recovery')
         report['phases'][phase]['isolation'] = checked
     def launch(name):
         directory = args.evidence / name
@@ -357,7 +360,7 @@ def run(args):
             else:
                 clear_status(row['post_action_status'])
             close_owned(actor)
-            wait_for(lambda: desktop.status(unreserved=True), timeout=2)
+            wait_for(lambda: desktop.status(unreserved=True, allow_passive=phase == 'recovery'), timeout=2)
             finish_trace()
             row['result'] = 'verified'
             save(phase + '-action.json', row)

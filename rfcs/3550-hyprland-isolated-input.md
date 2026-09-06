@@ -366,6 +366,19 @@ approval requirement. Measure cleanup with a
 responsive compositor and report stalls separately: Stop is neither undo nor
 instantaneous cleanup under every fault.
 
+The [maintainer's passive-focus clarification](https://github.com/trycua/cua/issues/3550#issuecomment-5560882875)
+permits inert internal pointer focus to survive owner cancellation, disconnect,
+or idle expiry. This is separate from Driver's visible cursor overlay: existing
+idle fade and session-end removal remain unchanged. Release every held button
+and key, clear keyboard focus, and revoke action authority immediately. Retained
+focus must have an independent, lifetime-safe target reference, not a pointer to
+a destroyed owner or a reservation for a disconnected runtime. Continue to
+handle target destruction/replacement, geometry changes, primary and other-lane
+conflicts, and desktop/keymap/configuration transitions safely. A retained hover
+is neither admission for another action nor acknowledgement that the client has
+processed a release. Native application-state and isolation evidence remain
+required.
+
 Do not equate the private transport's cancellation messages with cancellation
 on every public transport. Direct stdio MCP executes calls serially and ignores
 cancellation notifications. An `end_session` call or input EOF waits behind the
@@ -659,6 +672,13 @@ target bindings, passive pointer focus without held input or authority,
 owner-scoped cancellation, and restart-required package replacement. Discovery
 v2 remains unchanged. There is no automatic replay, foreground fallback, wake,
 or unlock.
+
+The [2026-09-06 cleanup clarification](https://github.com/trycua/cua/issues/3550#issuecomment-5560882875)
+allows owner-independent inert pointer focus after cancellation or disconnection,
+without changing visible cursor behavior, held-state cleanup, or fresh-action
+admission. It selects an implementation direction for native verification; it
+does not certify cancellation recovery or authorize a release before the gates
+below pass.
 
 The decision preserves the contributor feedback and alternatives above. It
 rejects borrowing primary-seat focus and the earlier separate consent/signer

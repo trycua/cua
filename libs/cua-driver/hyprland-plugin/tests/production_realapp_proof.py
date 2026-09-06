@@ -235,15 +235,13 @@ def passive_focus_evidence(before, after, complete_trace):
         states.append(values)
     for lane in lanes:
         assert states[0][lane]['pointer_focus'] is True and states[0][lane]['reserved'] is True
-        assert states[1][lane]['pointer_focus'] is False and states[1][lane]['reserved'] is False
+        assert states[1][lane]['pointer_focus'] is True and states[1][lane]['reserved'] is False
         assert states[0][lane]['epoch'] == states[1][lane]['epoch']
         assert states[0][lane]['desktop_generation'] == states[1][lane]['desktop_generation']
         own = [row for row in page['events'] if row[5] == lane]
         assert not any(row[2] == 'pointer_leave' for row in own), 'same-target action churned pointer focus'
         tail = [row for row in complete_trace['events'][page['count']:] if row[5] == lane]
-        assert sum(row[2] == 'pointer_leave' for row in tail) == sum(row[2] == 'pointer_enter' for row in own)
-        assert not any(row[2] in ('pointer_enter', 'pointer_motion', 'pointer_button', 'pointer_axis',
-                                 'keyboard_key', 'agent_admitted') for row in tail), 'input after completed pointer proof'
+        assert not tail, 'runtime close changed inert pointer presence or sent new input'
     return {'verified': True, 'scope': 'passive-focus-without-authority-and-runtime-close', 'lanes': sorted(lanes)}
 
 
@@ -805,7 +803,7 @@ def run(args):
                     def released_focus():
                         status = read_input_status()
                         samples.append({'monotonic_ns': time.monotonic_ns(), 'status': status})
-                        return all(not row['pointer_focus'] and not row['keyboard_focus'] and not row['reserved']
+                        return all(not row['keyboard_focus'] and not row['reserved']
                                    and not row['lease_active'] and not row['drag_active']
                                    and row['held_button'] == 0 and row['held_keys'] == 0
                                    for row in status['input']['lanes'])

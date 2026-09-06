@@ -127,7 +127,7 @@ def production_status(config):
     return verify_status(json.loads(_hypr(config['instance'], '-j', 'cua:status')), True)
 
 
-def lanes(status, cleared=False):
+def lanes(status, cleared=False, *, allow_passive=False):
     verify_status(status, True)
     result = {row['lane']: row for row in status['input']['lanes']}
     for row in result.values():
@@ -135,7 +135,10 @@ def lanes(status, cleared=False):
         assert all(type(row.get(key)) is int and row[key] >= 0 for key in ('desktop_generation', 'dispatches'))
         if cleared:
             assert all(type(row.get(key)) is int and row[key] == 0 for key in ('held_button', 'held_keys'))
-            assert all(row.get(key) is False for key in ('drag_active', 'lease_active', 'pointer_focus', 'keyboard_focus'))
+            assert all(row.get(key) is False for key in ('drag_active', 'lease_active', 'keyboard_focus'))
+            assert type(row.get('pointer_focus')) is bool
+            if not allow_passive:
+                assert row['pointer_focus'] is False
     return result
 
 

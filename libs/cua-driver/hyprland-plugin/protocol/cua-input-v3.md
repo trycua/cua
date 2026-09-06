@@ -84,7 +84,9 @@ fresh authority returns `action_not_admitted`. Malformed or refused requests
 never imply application rollback.
 
 Pointer focus has a separate lifetime. After a successful pointer operation,
-the lane keeps passive pointer focus on that exact live surface. Fresh
+the lane keeps passive pointer focus on that exact live surface. This internal
+state is separate from the visible Driver overlay, whose idle fade and
+session-end removal remain unchanged. Fresh
 `TARGET` admission on the same surface and unchanged geometry preserves this
 focus while issuing a new token and one-operation grant. A key action releases
 its keyboard focus without removing a previously retained pointer focus.
@@ -93,12 +95,27 @@ after drag release; some clients coalesce motion and requeue the release.
 There is no fixed completion delay or trace-only timing behavior.
 
 Passive focus has no held input or authority, but still participates in
-primary-client and inter-lane conflicts. Target replacement, unmap, destruction,
-geometry change, cancellation, EOF, the connection's idle timeout, and
-desktop/keymap/configuration transitions clear it. The five-second action
-grant does not extend to passive focus. These boundaries may still end focus
-before a stalled client processes its events; dispatch acknowledgement is not
-an application-processing fence. Verify the application's effect independently.
+primary-client and inter-lane conflicts. Owner cancellation, EOF, and the
+connection's idle timeout release held buttons and all keyboard state and
+revoke authority without requiring pointer leave. Passive target references
+are weak and independent of the transport owner; a disconnected owner retains
+no lane reservation. Fresh admission may reuse unchanged focus on the same
+live surface without inheriting old authority.
+
+Because Driver claims a free lane before selecting its target, fresh valid
+`TARGET` admission may retire matching hover on a different unreserved lane.
+This is allowed only when that peer has no lease, drag, held input, keyboard
+focus, capabilities, or remaining grant/expiry state. Reserved or active peers
+still cause `agent_target_busy`; ordinary dispatch and conflict checks never
+evict them. This prevents inert orphan hover from stranding a target on a lane
+the new caller did not claim.
+
+Target replacement, unmap, destruction, geometry change, primary-client
+conflict, and desktop/keymap/configuration transitions clear passive focus.
+The five-second action grant does not extend to passive focus. These boundaries
+may still end focus before a stalled client processes its events; dispatch
+acknowledgement is not an application-processing fence. Verify the application's
+effect independently.
 
 Successful dispatch returns
 `{"ok":true,"effect":"unverifiable","route":"synthetic_events"}`. This

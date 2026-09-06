@@ -49,6 +49,20 @@ def action():
 
 
 class OracleTests(unittest.TestCase):
+    def test_parked_foreground_accepts_new_observation_time_only(self):
+        before = {'kind': 'state', 'time': 10, 'clicks': 2, 'keys': '',
+                  'scroll': 0, 'motion': 4, 'held': False}
+        for timestamp in (10, 20):
+            proof.verify_parked_foreground(before, {**before, 'time': timestamp})
+        for key, value in (('kind', 'event'), ('time', 9), ('time', True),
+                           ('clicks', 3), ('keys', 'a'), ('scroll', 1),
+                           ('motion', 5), ('held', True), ('unknown', 0)):
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                proof.verify_parked_foreground(before, {**before, key: value})
+        for key in before:
+            with self.subTest(missing=key), self.assertRaises(AssertionError):
+                proof.verify_parked_foreground(before, {k: v for k, v in before.items() if k != key})
+
     def verify(self, page=None, fault=None, attempt=None):
         return proof.verify_cancelled(boundary() if page is None else page,
             record() if fault is None else fault, action() if attempt is None else attempt,

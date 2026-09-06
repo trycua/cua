@@ -27,7 +27,7 @@ from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
 
 
 class PassiveFocusTests(unittest.TestCase):
-    def test_passive_focus_retains_presence_without_authority_and_clears_on_close(self):
+    def test_passive_focus_retains_presence_without_authority_after_close(self):
         rows = [[1, 0, 'start', 100, 100, 0, 0],
                 [2, 1, 'pointer_enter', 100, 100, 1, 0, 10, 20],
                 [3, 2, 'pointer_motion', 100, 100, 1, 0, 10, 20],
@@ -42,19 +42,24 @@ class PassiveFocusTests(unittest.TestCase):
                    'transport_ready': True, 'lanes': values}}
         before = {'status': status, 'trace': page}
         after = {'status': copy.deepcopy(status)}
-        after['status']['input']['lanes'][0].update(reserved=False, pointer_focus=False)
-        stopped = {**page, 'active': False, 'count': len(rows) + 2,
-                   'events': rows + [[5, 4, 'pointer_leave', 100, 100, 1, 0],
-                                     [6, 5, 'stop', 100, 100, 0, 0]]}
+        after['status']['input']['lanes'][0].update(reserved=False)
+        stopped = {**page, 'active': False, 'count': len(rows) + 1,
+                   'events': rows + [[5, 4, 'stop', 100, 100, 0, 0]]}
+        def append_synthetic(t, kind):
+            t['events'].insert(-1, [5, 4, kind, 100, 100, 1, 0])
+            t['events'][-1][0] = 6
+            t['count'] += 1
         mutations = {
             'grant': lambda b, a, t: b['status']['input']['lanes'][0].update(lease_active=True),
             'held': lambda b, a, t: b['status']['input']['lanes'][0].update(held_button=272),
             'keyboard': lambda b, a, t: b['status']['input']['lanes'][0].update(keyboard_focus=True),
             'not_retained': lambda b, a, t: b['status']['input']['lanes'][0].update(pointer_focus=False),
-            'not_released': lambda b, a, t: a['status']['input']['lanes'][0].update(pointer_focus=True),
+            'reservation': lambda b, a, t: a['status']['input']['lanes'][0].update(reserved=True),
+            'hover_lost': lambda b, a, t: a['status']['input']['lanes'][0].update(pointer_focus=False),
+            'held_after_close': lambda b, a, t: a['status']['input']['lanes'][0].update(held_keys=1),
             'epoch': lambda b, a, t: a['status']['input']['lanes'][0].update(epoch='replaced'),
-            'missing_leave': lambda b, a, t: t['events'][4].__setitem__(2, 'keyboard_leave'),
-            'new_input': lambda b, a, t: t['events'][4].__setitem__(2, 'agent_admitted'),
+            'unexpected_leave': lambda b, a, t: append_synthetic(t, 'pointer_leave'),
+            'new_input': lambda b, a, t: append_synthetic(t, 'agent_admitted'),
             'incomplete': lambda b, a, t: t.update(overflow=True),
         }
         for mutation in (None, *mutations):

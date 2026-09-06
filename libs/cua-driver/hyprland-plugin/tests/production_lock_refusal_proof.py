@@ -435,7 +435,7 @@ def run(args):
         fixture.check_targets()
         final_status = production_status(fixture.config)
         # Exactly the one completed recovery click may advance dispatch counts.
-        old, new = lanes(restoration['after'], cleared=True), lanes(final_status, cleared=True)
+        old, new = lanes(restoration['after'], cleared=True), lanes(final_status, cleared=True, allow_passive=True)
         assert sum(new[k]['dispatches'] - old[k]['dispatches'] for k in old) == 1
         for key in old:
             assert new[key]['dispatches'] >= old[key]['dispatches'] and new[key].get('reserved') is False

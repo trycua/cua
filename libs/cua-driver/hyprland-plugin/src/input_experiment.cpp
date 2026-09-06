@@ -4,6 +4,7 @@
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
 #include "input_client_deadline.hpp"
+#include "passive_pointer_target.hpp"
 #include "primary_trace.hpp"
 #include "seat_lifetime.hpp"
 #include "owned_socket_path.hpp"
@@ -181,8 +182,8 @@ struct InputExperiment::Impl {
     Client* lease = nullptr;
     // Pointer presence is not input authority. Keep the same live surface
     // entered between actions, as a real pointer is, without retaining a grant.
-    Client* pointer_owner = nullptr;
-    std::uint64_t pointer_revision = 0;
+    PassivePointerTarget<WP<Desktop::View::CWindow>, WP<CWLSurfaceResource>> pointer_target;
+    CHyprSignalListener pointer_unmap, pointer_destroy;
     Client* reservation = nullptr;
     std::uint64_t desktop_generation = 1;
     std::uint64_t capabilities = 0, dispatches = 0;
@@ -426,24 +427,32 @@ struct InputExperiment::Impl {
         t->wl->setOnDestroy([entry](CWlTouch*) { entry->dead = true; });
         touches.push_back(std::move(t));
     }
-    bool refresh(Client& c) {
-        const auto window = c.window.lock(); const auto surface = c.surface.lock();
+    static std::optional<std::array<double, 6>> target_geometry(
+        const PHLWINDOW& window, const SP<CWLSurfaceResource>& surface) {
         if (!window || !surface || !window->m_isMapped || window->isHidden() ||
-            window->m_isX11 || window->resource() != surface || !surface->m_mapped || !surface->good()) return false;
+            window->m_isX11 || window->resource() != surface || !surface->m_mapped || !surface->good()) return std::nullopt;
         // Match Driver's captured client surface, not the decorated window box
         // (which includes compositor borders and shifts clicks by their width).
         const auto box = window->surfaceLogicalBox(); const auto surface_box = box;
-        if (!box || !surface_box || box->w <= 0 || box->h <= 0 || box->w > 32767 || box->h > 32767) return false;
+        if (!box || !surface_box || box->w <= 0 || box->h <= 0 || box->w > 32767 || box->h > 32767) return std::nullopt;
         std::array<double, 6> geometry{box->x, box->y, box->w, box->h, surface_box->x, surface_box->y};
-        if (!std::ranges::all_of(geometry, [](double value) { return std::isfinite(value); })) return false;
-        if (geometry != c.geometry) {
+        if (!std::ranges::all_of(geometry, [](double value) { return std::isfinite(value); })) return std::nullopt;
+        return geometry;
+    }
+    bool refresh(Client& c) {
+        const auto geometry = target_geometry(c.window.lock(), c.surface.lock());
+        if (!geometry) return false;
+        if (*geometry != c.geometry) {
             if (c.revision == UINT64_MAX) return false;
-            c.geometry = geometry; ++c.revision;
+            c.geometry = *geometry; ++c.revision;
         }
         return true;
     }
     bool primary_conflict(const Client& c) const {
-        const auto surface = c.surface.lock(); if (!surface) return true;
+        return primary_conflict(c.surface.lock());
+    }
+    bool primary_conflict(const SP<CWLSurfaceResource>& surface) const {
+        if (!surface) return true;
         const auto pointer = g_pSeatManager->m_state.pointerFocus.lock();
         const auto keyboard = g_pSeatManager->m_state.keyboardFocus.lock();
         // Conservative per-client refusal avoids toolkit-global cross-window state.
@@ -451,43 +460,71 @@ struct InputExperiment::Impl {
             (keyboard && keyboard->client() == surface->client());
     }
     bool agent_conflict(const Client& c) const {
-        const auto surface = c.surface.lock();
+        return agent_conflict(c.surface.lock());
+    }
+    bool agent_conflict(const SP<CWLSurfaceResource>& surface) const {
         if (!surface) return true;
         for (const auto* peer : peers) {
             if (!peer || peer == this) continue;
-            const auto* owner = peer->lease ? peer->lease : peer->pointer_owner;
-            if (!owner) continue;
-            const auto other = owner->surface.lock();
+            // Passive hover still participates after its transport owner dies.
+            if (peer->pointer_target.same_client(surface)) return true;
+            const auto other = peer->lease ? peer->lease->surface.lock() : nullptr;
             if (other && other->client() == surface->client()) return true;
         }
         return false;
     }
-    void invalidate(Client& c) {
-        if (lease == &c || pointer_owner == &c) revoke("stale_target");
+    void retire_orphan_hover(const Client& c) {
+        for (auto* peer : peers) {
+            if (!peer || peer == this) continue;
+            const InputLaneActivity activity{
+                .reserved = peer->reservation != nullptr,
+                .leased = peer->lease != nullptr,
+                .dragging = peer->drag.has_value(),
+                .button = peer->held_button != 0,
+                .keys = !peer->held_keys.empty(),
+                .keyboard_focus = std::ranges::any_of(peer->keyboards, [](const auto& k) { return bool(k->focus); }),
+                .capabilities = peer->capabilities != 0,
+                .grant = peer->grant.deadline() != Clock::time_point{},
+                .expiry = peer->expires != Clock::time_point{},
+            };
+            // Driver claims the first free lane before TARGET. Retire only a
+            // matching, completely inert peer hover so opposite-order reuse
+            // cannot strand a target on a different, unreserved lane.
+            if (peer->pointer_target.reclaimable_for(c.surface.lock(), activity)) peer->leave_pointer();
+        }
+    }
+    void invalidate(Client& c, bool clear_pointer = true) {
+        if (lease == &c || (clear_pointer && c.surface.lock() && pointer_target.surface() == c.surface.lock()))
+            revoke("stale_target", !clear_pointer);
         c.token.clear(); c.window.reset(); c.surface.reset();
         // Replay high-water belongs to the old target binding. A genuinely
         // new token may receive a shorter grant after Stop or target change.
         c.approved_deadline = 0;
     }
-    void leave_pointer() {
+    void release_pointer_button() {
+        if (!held_button) return;
         for (auto& p : pointers) {
             const auto surface = p->focus.lock();
             if (!p->dead && p->wl->resource() && surface && surface->good()) {
-                if (held_button) {
-                    p->wl->sendButton(serial(), event_ms(), held_button, WL_POINTER_BUTTON_STATE_RELEASED);
-                    // Complete the release frame before the focus transition,
-                    // matching ordinary button delivery. A frame is not an
-                    // acknowledgement that the application processed release.
-                    if (p->wl->version() >= 5) p->wl->sendFrame();
-                }
+                p->wl->sendButton(serial(), event_ms(), held_button, WL_POINTER_BUTTON_STATE_RELEASED);
+                // A complete release frame is delivery, not client processing proof.
+                if (p->wl->version() >= 5) p->wl->sendFrame();
+            }
+        }
+        held_button = 0;
+    }
+    void leave_pointer() {
+        release_pointer_button();
+        for (auto& p : pointers) {
+            const auto surface = p->focus.lock();
+            if (!p->dead && p->wl->resource() && surface && surface->good()) {
                 p->wl->sendLeave(serial(), surface->getResource().get());
                 if (p->wl->version() >= 5) p->wl->sendFrame();
             }
             p->focus.reset();
         }
-        held_button = 0;
-        pointer_owner = nullptr;
-        pointer_revision = 0;
+        pointer_target.reset();
+        pointer_unmap.reset(); pointer_destroy.reset();
     }
     void leave_keyboard() {
         for (auto& k : keyboards) {
@@ -508,24 +545,26 @@ struct InputExperiment::Impl {
     }
     void complete_action() {
         // All buttons/keys were released by the operation. Keyboard focus is
-        // action-scoped; passive pointer focus is connection/target-scoped.
+        // action-scoped; passive pointer focus belongs only to its live target.
         // Never send a gratuitous leave immediately after a drag's release:
         // clients may requeue their release behind that leave while coalescing
         // motion. This is not a client-processing acknowledgement.
         leave_keyboard();
         retire_grant();
     }
-    void revoke(std::string_view reason) {
+    void revoke(std::string_view reason, bool retain_pointer = false) {
         if (lease && trace && reason != "completed") trace->mark("agent_cancel", lane + 1);
         if (drag && drag->client && !drag->client->dead) send(*drag->client, refusal(reason));
-        drag.reset(); leave_pointer(); leave_keyboard(); retire_grant();
+        drag.reset();
+        if (retain_pointer) release_pointer_button(); else leave_pointer();
+        leave_keyboard(); retire_grant();
     }
-    void cancel_authority(std::string_view reason) {
-        revoke(reason);
+    void cancel_authority(std::string_view reason, bool retain_pointer = true) {
+        revoke(reason, retain_pointer);
         // Invalidate pending authority as well as active work. This also makes
         // unused signed renewals unusable in experimental builds. Keep the lane
         // reservation; v3 requires fresh TARGET admission for the next action.
-        for (auto& c : clients) invalidate(*c);
+        for (auto& c : clients) invalidate(*c, false);
     }
     void desktop_transition() {
         // Signals can fire before Hyprland updates its aggregate state. Revoke
@@ -589,12 +628,12 @@ struct InputExperiment::Impl {
             if (static_cast<std::size_t>(n) > buffer.size()) { self.send(c, refusal("invalid_request")); continue; }
             try { self.request(c, fields(std::string_view(buffer.data(), n))); }
             catch (...) {
-                if (kProduction && (self.lease == &c || self.pointer_owner == &c)) self.revoke("invalid_request");
+                if (kProduction && (self.lease == &c || self.reservation == &c)) self.revoke("invalid_request");
                 self.send(c, refusal("invalid_request"));
             }
         }
         if (c.dead) {
-            if (self.lease == &c || self.pointer_owner == &c) self.revoke("disconnected");
+            if (self.lease == &c) self.revoke("disconnected", true);
             if (self.reservation == &c) self.reservation = nullptr;
         }
         return 0;
@@ -656,7 +695,14 @@ struct InputExperiment::Impl {
             if (p->wl->version() >= 5) p->wl->sendFrame();
             ++count;
         }
-        if (count) { pointer_owner = &c; pointer_revision = c.revision; }
+        if (count && !pointer_target.matches(c.window.lock(), root, c.geometry)) {
+            pointer_unmap.reset(); pointer_destroy.reset();
+            pointer_target.capture(c.window.lock(), root, c.geometry);
+            // These listeners belong to the lane, never the socket Client.
+            const auto window = c.window.lock();
+            pointer_unmap = window->m_events.unmap.listen([this] { revoke("stale_target"); });
+            pointer_destroy = window->m_events.destroy.listen([this] { revoke("stale_target"); });
+        }
         return count > 0;
     }
     void button(std::uint32_t value, bool pressed) {
@@ -760,15 +806,25 @@ struct InputExperiment::Impl {
             if (!window || window->m_isX11 || !window->m_isMapped || window->isHidden() || !window->resource()) {
                 invalidate(c); send(c, refusal("stale_target")); return;
             }
+            // Retire the old target before rebinding: even if the new target's
+            // geometry validation fails, a reserved lane must not strand it.
+            if (pointer_target.entered() && !pointer_target.same_target(window, window->resource()))
+                revoke("stale_target");
             if (c.window != window || c.surface != window->resource() || c.token.empty()) {
-                invalidate(c); c.unmap.reset(); c.destroy.reset();
+                // Rebinding authority (including a new socket owner) may reuse
+                // unchanged passive hover. Compare the actual target below.
+                invalidate(c, false); c.unmap.reset(); c.destroy.reset();
                 c.window = window; c.surface = window->resource(); c.token = nonce(); c.revision = 1;
                 c.unmap = window->m_events.unmap.listen([this, &c] { invalidate(c); });
                 c.destroy = window->m_events.destroy.listen([this, &c] { invalidate(c); });
             }
             if (!refresh(c)) { invalidate(c); send(c, refusal("stale_target")); return; }
+            if (pointer_target.entered() && !pointer_target.matches(window, c.surface.lock(), c.geometry))
+                revoke("stale_target");
+            // Only a valid fresh TARGET can retire an orphan on another lane.
+            // Dispatch/conflict checks never evict peer state or replay input.
+            if (available() && !primary_conflict(c)) retire_orphan_hover(c);
             if (kProduction) {
-                if (pointer_owner == &c && pointer_revision != c.revision) revoke("stale_geometry");
                 if (primary_conflict(c)) { invalidate(c); send(c, refusal("primary_target_busy")); return; }
                 if (agent_conflict(c)) { invalidate(c); send(c, refusal("agent_target_busy")); return; }
                 c.token = nonce();
@@ -869,15 +925,21 @@ struct InputExperiment::Impl {
     }
     void step() {
         if (!retired) sync_keymap();
+        for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
         if (lease) {
-            if (Clock::now() >= expires) revoke("lease_expired");
-            else if (lease->dead || !available() || !layout_qualified() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
+            if (lease->dead) revoke("disconnected", true);
+            else if (Clock::now() >= expires) revoke("lease_expired");
+            else if (!available() || !layout_qualified() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && !drag->geometry.matches(lease->revision))) revoke("cancelled");
         }
-        if (pointer_owner && (pointer_owner->dead || !available() || !layout_qualified() ||
-            !refresh(*pointer_owner) || pointer_revision != pointer_owner->revision ||
-            primary_conflict(*pointer_owner) || agent_conflict(*pointer_owner))) {
-            revoke("cancelled");
+        if (pointer_target.entered()) {
+            const auto surface = pointer_target.surface();
+            const auto geometry = target_geometry(pointer_target.window(), surface);
+            const bool bound = std::ranges::any_of(pointers, [&](const auto& p) {
+                return !p->dead && p->wl->resource() && surface && p->focus == surface;
+            });
+            if (!available() || !layout_qualified() || !geometry || *geometry != pointer_target.geometry() ||
+                !bound || primary_conflict(surface) || agent_conflict(surface)) revoke("cancelled");
         }
         if (drag) {
             const auto d = *drag;
@@ -891,9 +953,7 @@ struct InputExperiment::Impl {
                 send(*d.client, kDelivered);
             }
         }
-        for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
-        if (lease && lease->dead) revoke("disconnected");
-        if (pointer_owner && pointer_owner->dead) revoke("disconnected");
+        if (lease && lease->dead) revoke("disconnected", true);
         if (reservation && reservation->dead) reservation = nullptr;
         std::erase_if(clients, [](auto& c) { return c->dead; });
         std::erase_if(pointers, [](auto& p) { return p->dead; });
@@ -943,8 +1003,9 @@ struct InputExperiment::DesktopListeners {
     }
     void primary_changed() {
         for (auto& lane : owner.lanes_) {
-            const auto* client = lane->lease ? lane->lease : lane->pointer_owner;
-            if (client && lane->primary_conflict(*client)) lane->cancel_authority("primary_target_busy");
+            if ((lane->lease && lane->primary_conflict(*lane->lease)) ||
+                (lane->pointer_target.entered() && lane->primary_conflict(lane->pointer_target.surface())))
+                lane->cancel_authority("primary_target_busy", false);
         }
     }
     void watch(PHLMONITOR monitor) {

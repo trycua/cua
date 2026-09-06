@@ -347,7 +347,7 @@ fn click_at_xy_inner(
             click_group_id,
             post_mode,
         );
-        std::thread::sleep(std::time::Duration::from_millis(12));
+        std::thread::sleep(super::pacing::mouse_primer_settle());
 
         for pair_index in 0..count {
             let click_state = (pair_index + 1) as i64;
@@ -1354,7 +1354,7 @@ fn right_click_at_xy_inner(
         click_group_id,
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     let down = CGEvent::new_mouse_event(
         source.clone(),
@@ -1578,7 +1578,7 @@ pub fn scroll_wheel_at_xy(
         ),
         MousePostMode::Both,
     );
-    std::thread::sleep(std::time::Duration::from_millis(12));
+    std::thread::sleep(super::pacing::mouse_primer_settle());
 
     for _ in 0..ticks.max(1) {
         // Fresh source per event, matching the click primitives.

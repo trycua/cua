@@ -29,11 +29,12 @@ POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
 RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
 # max_elements counts all visited AT-SPI nodes, not only emitted controls.
-# The native 1,000-node run ended before the object row and selection status;
-# retain a 2,000-node budget to cover them without the trailing menu tree.
+# The native 2,000-node run retained the object row but stopped 14 rendered
+# tree lines before the selection status. Allow 500 more visited nodes while
+# keeping the trailing menu tree bounded; native coverage must verify this.
 # Keep depth uncapped (the object row is deeply nested). Missing oracle
 # evidence still fails closed, as does the unchanged five-second age limit.
-POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2000}}
+POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
 
 
 def validate_plan(plan):

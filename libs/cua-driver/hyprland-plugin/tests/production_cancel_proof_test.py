@@ -434,7 +434,7 @@ class OwnershipTests(unittest.TestCase):
                 result = grounded_snapshot(mcp, spec['target'], spec)
             self.assertEqual(result['proof_observation_started_ns'], 200)
             self.assertEqual(mcp.tool.call_args.args, ('get_window_state', {
-                **spec['target'], 'session': spec['name'], 'max_elements': 2000}))
+                **spec['target'], 'session': spec['name'], 'max_elements': 2500}))
             # A bounded walk is not permission to omit the existing oracle.
             with patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'):
                 with self.assertRaisesRegex(RuntimeError, 'snapshot has no semantic elements'):

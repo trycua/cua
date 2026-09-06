@@ -205,6 +205,27 @@ class OracleTests(unittest.TestCase):
             self.assertEqual(result['result'], 'failed')
             self.assertEqual(result['cancellation']['result'], 'unproven')
 
+    def test_initial_idle_hover_is_admitted_before_primary_setup_without_input(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'plan.json'
+            path.write_text(json.dumps(plan()))
+            args = SimpleNamespace(plan=path, evidence=root / 'evidence')
+            before = status()
+            before['input']['lanes'][0]['pointer_focus'] = True
+            desktop = Mock()
+            desktop.status.side_effect = lambda **kwargs: proof.clear_status(before, **kwargs)
+            desktop.primary.side_effect = RuntimeError('reached primary setup')
+            with patch.object(proof, 'ExactDesktop', return_value=desktop), \
+                 patch.object(proof, 'app_process_identity'), \
+                 patch.object(proof, 'provenance', return_value={'files': {}}), \
+                 patch.object(proof, 'DirectMCP') as driver, patch('builtins.print'):
+                self.assertEqual(proof.run(args), 1)
+            driver.assert_not_called()
+            desktop.status.assert_called_once_with(unreserved=True, allow_passive=True)
+            self.assertEqual(json.loads((args.evidence / 'initial-status.json').read_text()), before)
+            self.assertIn('reached primary setup', str(json.loads((args.evidence / 'result.json').read_text())['error']))
+
     def test_recovery_grounding_scopes_counter_and_preserves_original_age(self):
         spec = plan()['agents'][0]
         runtime = {'pid': 102, 'directory': str(Path.cwd())}

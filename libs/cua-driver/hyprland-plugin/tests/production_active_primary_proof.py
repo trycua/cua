@@ -350,7 +350,7 @@ def run(args):
         origin['hover_fixture'] = plan['hover_fixture']
         origin['ownership'] = {key: plan[key] for key in ('vm', 'compositor', 'processes')}
         save('provenance.json', origin)
-        save('initial-status.json', desktop.status(unreserved=True))
+        save('initial-status.json', desktop.status(unreserved=True, allow_passive=True))
         before_primary = desktop.primary(plan['foreground'])
         baseline = state(args.foreground_journal)
         assert baseline['held'] is False, 'a primary grab prevents the required cross-client hover'

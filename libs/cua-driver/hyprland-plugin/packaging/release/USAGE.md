@@ -26,7 +26,7 @@ the same exact component release. The filenames contain the release version
 and full source commit SHA. Verify both archives against that release's
 published checksums before extracting the build kit into a dedicated empty
 directory. Place the source archive alongside its extracted `PKGBUILD`,
-`SOURCE-PROVENANCE.json`, `README.md`, and `SHA256SUMS`.
+`SOURCE-PROVENANCE.json`, `README.md`, `lifecycle.py`, and `SHA256SUMS`.
 
 From that directory, review the recipe and verify its files and source archive:
 
@@ -55,6 +55,55 @@ Installation writes the module to
 `/usr/share/licenses/cua-hyprland-plugin/`, and source/build provenance under
 `/usr/share/cua-hyprland-plugin/`. It has no install hooks, automatic loading, or
 configuration changes. Keep the package file and its provenance for rollback.
+
+## Qualify package lifecycle in a disposable environment
+
+Before installing in a desktop session, run the standalone lifecycle gate in a
+disposable Linux x86_64 Arch environment with the pinned native dependencies,
+`makepkg`, `bsdtar`, `pacman`, Python 3.11 or later, and `sudo` available. Use an
+ordinary build user who can run `pacman` through `sudo -n` with existing
+authorization; the gate fails if sudo needs an interactive password. It does not
+install missing dependencies. It builds and tests using the recipe's native
+compiler, compositor, and shared-runtime checks.
+
+From a fresh, verified kit, replace `COMMIT_SHA` and `DRIVER_VERSION` with its
+manifest values and `NEW_EVIDENCE_DIRECTORY` with a path that does not exist:
+
+```sh
+python3 lifecycle.py --kit . --revision COMMIT_SHA \
+  --driver-version DRIVER_VERSION --output NEW_EVIDENCE_DIRECTORY
+```
+
+For a compiler staged outside `/usr/bin/g++`, add `--cxx` with its absolute path.
+A development kit generated from an explicit committed SHA also works before
+release publication; passing this gate does not claim that assets are published.
+
+The gate copies the kit into its evidence directory and runs `makepkg`. It
+checks the package's exact module, license, and provenance payload, rejects
+configuration files and install hooks, and checks module hashes against the
+build provenance. It uses `sudo pacman` only with new isolated filesystem and
+database roots, explicit configuration, disabled scriptlets, and empty hook
+directories. It installs, removes, and reinstalls the package, checking the
+installed bytes and an isolated operator-configuration sentinel after each
+transaction. A second root must refuse the package with a specific Hyprland
+dependency error. A successful install with matching dependency metadata is
+the positive control for that refusal.
+
+These roots contain metadata-only Hyprland and GCC runtime dependency fixtures.
+They test ALPM dependency resolution, not execution of those dependencies.
+The runner does not load a plugin, edit host desktop configuration, install a
+host package, or restart the compositor. It can run while a separate desktop
+proof is in progress. A pass writes `RESULT.json`; build and transaction logs,
+the package, and isolated roots remain for inspection in the evidence directory.
+Review logs before sharing them, and retain or discard the disposable environment
+through its normal lifecycle.
+
+This gate does not prove live activation, restart, upgrade, or rollback. To
+complete those gates, schedule the fresh-session procedures below after any
+ongoing desktop proof finishes. Preserve the prior package and matching native
+environment, verify activation and input after replacement and restart, then
+repeat with the saved package and another fresh compositor. Published release
+download and checksum verification also require separate evidence.
 
 ## Activate in a fresh desktop session
 

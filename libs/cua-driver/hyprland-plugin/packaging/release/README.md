@@ -32,7 +32,8 @@ and build options. The recipe pins the archive and manifest checksums. Generatio
 refuses an existing output directory and mismatched versions.
 
 The output contains the source tarball, `PKGBUILD`, `SOURCE-PROVENANCE.json`,
-the standalone operator `README.md` from `USAGE.md`, and `SHA256SUMS`.
+the standalone operator `README.md` from `USAGE.md`, `lifecycle.py`, and
+`SHA256SUMS`.
 The package version follows the Driver release version; the plugin's
 CMake version is recorded separately.
 
@@ -42,7 +43,7 @@ only two uniquely named archives:
 
 - `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA.tar.gz`: pinned source.
 - `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA-build-kit.tar.gz`: `PKGBUILD`,
-  `SOURCE-PROVENANCE.json`, operator `README.md`, and `SHA256SUMS`.
+  `SOURCE-PROVENANCE.json`, operator `README.md`, `lifecycle.py`, and `SHA256SUMS`.
 
 The Driver release workflow generates these assets for stable component tag
 builds and publishing dispatches, with the same source override as the native
@@ -90,6 +91,23 @@ configuration edits, or hot replacement. Module activation and compositor
 restart belong to the separately validated operator workflow.
 
 ## Verify this preparation
+
+To qualify a candidate before publishing, generate the default development kit
+from the exact committed candidate SHA. Copy that directory to a disposable
+pinned Arch environment and run its `lifecycle.py` as documented in `USAGE.md`.
+The runner builds without a checkout, uses the recipe's compiler and ABI checks,
+and qualifies package transactions in fresh isolated ALPM roots. It leaves any
+running desktop untouched. Its dependency packages contain synthetic metadata;
+they prove package-manager constraints, while the native build proves the build
+environment checks. They do not prove runtime activation or restart safety.
+
+Retain the package, build provenance, transaction logs, and `RESULT.json`.
+Only a successful run writes `RESULT.json`; failed runs retain diagnostics.
+Keep raw logs local until reviewed for machine paths and environment details.
+The runner leaves its isolated roots and build output for inspection; dispose
+of them with the disposable test environment. Native input certification,
+fresh-session activation, upgrade/rollback across compositor restarts, and
+published component-download verification remain separate release gates.
 
 Run the focused packaging tests with Python 3.12 or later:
 

@@ -144,6 +144,7 @@ def generate(repo, revision, driver_version, output, *, release_assets=False):
         "PKGBUILD": template.encode(),
         "SOURCE-PROVENANCE.json": payload["SOURCE-PROVENANCE.json"],
         "README.md": usage,
+        "lifecycle.py": committed_file(repo, revision, RELEASE + "lifecycle.py"),
     }
     files["SHA256SUMS"] = "".join(
         f"{sha256(data)}  {name}\n" for name, data in sorted(files.items())

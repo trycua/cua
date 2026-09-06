@@ -43,7 +43,7 @@ class ReleaseTest(unittest.TestCase):
         self.write(bundle.PLUGIN + "CMakeLists.txt", "project(cua_hyprland_plugin VERSION 0.1.0 LANGUAGES CXX)\n")
         self.write("libs/cua-driver/rust/Cargo.toml", '[workspace.package]\nversion = "1.2.3"\n')
         self.write("LICENSE.md", "Synthetic fixture license\n")
-        for name in ("verify.py", "PKGBUILD.in", "USAGE.md"):
+        for name in ("verify.py", "PKGBUILD.in", "USAGE.md", "lifecycle.py"):
             self.write(bundle.RELEASE + name, (HERE / name).read_text())
         self.write("private/secret.txt", "excluded sentinel\n")
         self.write(bundle.PLUGIN + "tests/evidence/trace.json", "excluded sentinel\n")
@@ -118,7 +118,7 @@ class ReleaseTest(unittest.TestCase):
                          (local / f"{stem}.tar.gz").read_bytes())
         with tarfile.open(outputs[0] / f"{stem}-build-kit.tar.gz") as archive:
             self.assertEqual(archive.getnames(), sorted([
-                "PKGBUILD", "README.md", "SHA256SUMS", "SOURCE-PROVENANCE.json",
+                "PKGBUILD", "README.md", "SHA256SUMS", "SOURCE-PROVENANCE.json", "lifecycle.py",
             ]))
             kit = {member.name: archive.extractfile(member).read() for member in archive.getmembers()}
             for member in archive.getmembers():

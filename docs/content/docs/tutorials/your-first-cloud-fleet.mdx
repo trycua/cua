@@ -207,9 +207,12 @@ uv run first_cloud_fleet.py cleanup
 
 This command reads `cloud-fleet-run.json`, checks that the recorded pool still
 has the same creation timestamp, and deletes it. It does not call `Pool.apply()`,
-claim a sandbox, or repeat the workload. A pool that is already absent is a
-successful cleanup result. Save any remote files you need before cleanup;
-deletion destroys the sandboxes and their state.
+claim a sandbox, or repeat the workload. A pool that is already absent needs
+no further pool deletion, but its absence alone does not prove that the
+namespace and guest resources have finished terminating. Check this run's
+namespace inventory in Fleet before declaring cleanup complete. Save any
+remote files you need before cleanup; deletion destroys the sandboxes and
+their state.
 
 If the record has no creation timestamp, creation was not confirmed. This can
 happen after a name collision, denied request, or interrupted response. The

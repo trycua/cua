@@ -3,138 +3,24 @@ title: OS and image catalog
 description: Sandbox operating systems, Linux distributions, desktop environments, window managers, and image registries.
 ---
 
-This catalog covers Sandbox SDK image mappings, desktop container build targets,
-and the linked guest-image recipes in this repository. It is not a list of every
-OS accepted by a hypervisor or every image in a registry. A configured reference
-does not prove that its tag is currently available or that its guest boots on
-every host or Fleet deployment.
-
-Registry here means a **VM or container image registry**, not a distribution's
-package repository. Desktop environments, window managers, and display protocols
-are separate properties: for example, Xfce is a desktop environment, Xfwm4 is its
-window manager, and X11 is its window system.
-
-## Fleet guest images
-
-Fleet uses bootable KubeVirt `containerDisk` artifacts, not ordinary desktop
-containers. The built-in mappings below match the versioned
-[Sandbox runtime support reference](/reference/sandbox-sdk/runtime-support).
-
-| OS | Distribution or version | Desktop / window manager | Registry repository | Image selection |
-| --- | --- | --- | --- | --- |
-| Linux | Ubuntu 24.04 | Not specified by the SDK mapping; inspect the selected artifact | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04` | `Image.linux()` selects `main-38352d34` |
-| Windows | Windows Server 2022 | Windows desktop; no Linux window manager | `public.ecr.aws/k5j5w0x5/cua-windows-2022` | `Image.windows()` selects `main-bac7daa3` |
-| Linux | Omarchy (Arch Linux-based), amd64 | Hyprland / Wayland | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace` | Explicit registry reference; not a built-in constructor mapping |
-
-The [Omarchy Fleet recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet)
-records this exact artifact:
-
-```text
-public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab
-```
-
-Its boot observations apply to that recipe, not to all Arch Linux or Hyprland
-configurations. See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
-for custom distributions and desktops.
-
-## NixOS candidate images
-
-Both published NixOS candidates include **computer-server** and **Cua Driver**.
-Both passed guest tests and CI's anonymous-pull verification, as reported with
-the candidate publication. That evidence applies to these exact candidates,
-not every NixOS configuration or every Driver action.
-
-| OS | Distribution | Desktop / window manager | Registry repository | Publication status |
-| --- | --- | --- | --- | --- |
-| Linux | NixOS | StumpWM | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm` | Immutable candidate tag; not promoted to `latest` |
-| Linux | NixOS | Xfce / Xfwm4 | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce` | Immutable candidate tag; not promoted to `latest` |
-
-### StumpWM
-
-```text
-public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9
-```
-
-### XFCE
-
-```text
-public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9
-```
-
-Use the full candidate references above rather than substituting `latest`.
-These are explicit registry images, not built-in `Image.linux()` mappings.
-
-## Local SDK image selections
-
-These references come from the repository's runtime mappings. Mutable tags such
-as `latest` and `docker-latest` are selectors, not immutable version guarantees.
-
-| OS | Distribution or version | Desktop / window manager | Image or source | Runtime boundary |
-| --- | --- | --- | --- | --- |
-| Linux | Ubuntu 24.04 VM | Artifact-dependent | Same pinned Ubuntu containerDisk as Fleet | Default local Linux VM path uses bare-metal QEMU |
-| Linux | Ubuntu 24.04 container | XFCE runtime mapping | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` | Docker; this tag is not the Fleet VM disk |
-| macOS | Sequoia 15 | Native macOS desktop | `ghcr.io/trycua/macos-sequoia-cua:latest` | Lume on a compatible Apple silicon host |
-| macOS | Tahoe 26 | Native macOS desktop | `ghcr.io/trycua/macos-tahoe-cua:latest` | Lume; default `Image.macos()` version |
-| Windows | Server 2022; Windows 11 local installation input | Native Windows desktop | Built-in Server 2022 disk above; local installation media for Windows 11 | Hyper-V or QEMU, depending on host and runtime selection |
-| Android | Android 14 constructor default | Android system UI | Android emulator system image; no built-in Fleet registry mapping | Android emulator; constructor acceptance is not boot certification |
-| Linux | Ubuntu 22.04 constructor input; custom distro/version strings | Not selected by the constructor | No built-in Fleet registry mapping | Supply a compatible image; a distro string does not provision a desktop |
-
-For local ARM64 Omarchy, the [Lume recipe](/how-to-guides/lume/run-omarchy-arm64)
-builds a separate Hyprland VM. It does not use the amd64 Fleet artifact above.
-
-## Additional container build targets
-
-These are repository publication targets on **Docker Hub**, not interchangeable
-Fleet guest disks. Publication workflows alone do not establish current tag
-availability. Use an existing version tag or digest from the registry.
-
-| Image repository | Guest distribution / OS | Desktop or role | Source |
-| --- | --- | --- | --- |
-| `docker.io/trycua/xfce-cua` | Debian Bookworm | Application-neutral Xfce / Xfwm4 / X11 desktop with Cua Driver | `libs/xfce-cua/Dockerfile` |
-| `docker.io/trycua/cua-xfce` | Debian Bookworm, KiCad 9 base | Xfce / Xfwm4 / X11; KiCad-specific, amd64 build target | `libs/xfce/Dockerfile` |
-| `docker.io/trycua/cua-ubuntu` | Ubuntu 22.04 Jammy Kasm base | Desktop inherited from the Kasm base; KasmVNC | `libs/kasm/Dockerfile` |
-| `docker.io/trycua/cua-qemu-linux` | Ubuntu guest supplied by the QEMU base | Docker-wrapped QEMU launcher, not a desktop container | `libs/qemu-docker/linux/Dockerfile` |
-| `docker.io/trycua/cua-qemu-windows` | Windows; version depends on runtime configuration | Docker-wrapped QEMU launcher | `libs/qemu-docker/windows/Dockerfile` |
-| `docker.io/trycua/cua-qemu-android` | Android 11 (`budtmo/docker-android:emulator_11.0` base) | Android emulator container; amd64 build target | `libs/qemu-docker/android/Dockerfile` |
-
-The SDK's QEMU container selectors use `:latest` for the three `cua-qemu-*`
-repositories. Their container base OS is not necessarily the guest OS. The Android
-container's Android 11 base is distinct from the SDK constructor's Android 14
-value; do not infer an emulator version from that constructor alone.
-
-## Desktop coverage is not image availability
-
-GNOME/Mutter, KDE Plasma/KWin, and Sway/wlroots appear in Cua Driver's platform
-documentation. That does **not** establish corresponding Sandbox image registry
-entries. No Sandbox mapping for those desktops is listed in the sources below.
-Likewise, a Hyprland image is not proof that every Driver action works on Hyprland.
-
-Consult [Cua Driver platform support](/reference/cua-driver/platform-support)
-for compositor-specific capabilities and limitations. To use a different desktop
-or distribution, prepare a compatible guest image rather than guessing an image
-name from the window manager's name.
-
-## Registry lookup and source of truth
-
-| Registry | Catalog entries | Browse |
-| --- | --- | --- |
-| Amazon ECR Public | Ubuntu and Windows Fleet disks, Ubuntu Docker selector, Omarchy recipe, NixOS StumpWM and XFCE candidates | [Public gallery](https://gallery.ecr.aws/k5j5w0x5) |
-| GitHub Container Registry | macOS Sequoia and Tahoe Lume images | [Cua packages](https://github.com/orgs/trycua/packages) |
-| Docker Hub | Desktop container and QEMU launcher publication targets | [Cua repositories](https://hub.docker.com/u/trycua) |
-
-Use fully qualified references to avoid registry ambiguity. In particular, the
-SDK's registry parser defaults short references to GHCR, while Docker resolves
-ordinary short container names through Docker Hub. Set `os_type` and `kind`
-explicitly for a registry VM; a Windows disk needs `os_type='windows', kind='vm'`.
-
-Inventory sources:
-
-- [Built-in image mappings](https://github.com/trycua/cua/blob/main/libs/python/cua-sandbox/cua_sandbox/image.py).
-- [Local runtime image selectors](https://github.com/trycua/cua/blob/main/libs/python/cua-sandbox/cua_sandbox/runtime/images.py).
-- [Registry reference parser](https://github.com/trycua/cua/blob/main/libs/python/cua-sandbox/cua_sandbox/registry/ref.py).
-- [Container publication workflows](https://github.com/trycua/cua/tree/main/.github/workflows), named `cd-container-*`, and their shared `docker-reusable-publish.yml`.
-
-This page records source configuration, not a live registry audit. Registry
-credentials, architecture, guest readiness, and runtime compatibility must be
-checked separately. For versioned SDK acceptance rules, see
-[Sandbox runtime support](/reference/sandbox-sdk/runtime-support).
+| OS | Distribution / version | Desktop / window manager | Image kind / runtime | Registry image or source | Status / limits |
+| --- | --- | --- | --- | --- | --- |
+| Linux | Ubuntu 24.04 | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34` | Built-in `Image.linux()` mapping; [versioned runtime support](/reference/sandbox-sdk/runtime-support), not universal boot certification |
+| Linux | Ubuntu 24.04 | XFCE runtime mapping | Local Docker container | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` | Local container selector; mutable tag, not the Fleet VM disk |
+| Linux | Ubuntu 22.04; custom distro/version inputs | Not selected by constructor | Compatible local image/runtime required | No built-in Fleet registry mapping | A constructor accepting a distro string does not provision a boot image or desktop |
+| Linux | Omarchy (Arch Linux-based), amd64 | Hyprland / Wayland | Fleet containerDisk | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab` | Explicit registry image; boot evidence applies to the [Fleet recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet), not all Hyprland configurations |
+| Linux | Omarchy (Arch Linux-based), ARM64 | Hyprland / Wayland | Local Lume VM | Build from the [ARM64 Lume recipe](/how-to-guides/lume/run-omarchy-arm64) | Separate local build; not the amd64 Fleet artifact |
+| Linux | NixOS | StumpWM | Published candidate image | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9` | Includes computer-server and Cua Driver; publication reports guest tests and CI anonymous-pull verification passed; immutable candidate, not promoted to `latest`; not a built-in SDK mapping |
+| Linux | NixOS | Xfce / Xfwm4 | Published candidate image | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9` | Includes computer-server and Cua Driver; publication reports guest tests and CI anonymous-pull verification passed; immutable candidate, not promoted to `latest`; not a built-in SDK mapping |
+| Linux | Debian Bookworm | Xfce / Xfwm4 / X11 | Desktop container | `docker.io/trycua/xfce-cua` | Application-neutral Cua Driver image; [build definition](https://github.com/trycua/cua/blob/main/libs/xfce-cua/Dockerfile); publication target, not a live tag audit |
+| Linux | Debian Bookworm, KiCad 9 base | Xfce / Xfwm4 / X11 | Desktop container | `docker.io/trycua/cua-xfce` | KiCad-specific, amd64 build target; [build definition](https://github.com/trycua/cua/blob/main/libs/xfce/Dockerfile); select an existing tag or digest |
+| Linux | Ubuntu 22.04 Jammy Kasm base | Inherited Kasm desktop / KasmVNC | Desktop container | `docker.io/trycua/cua-ubuntu` | [Build definition](https://github.com/trycua/cua/blob/main/libs/kasm/Dockerfile); publication target, not a Fleet guest disk; select an existing tag or digest |
+| Linux | Ubuntu guest supplied by QEMU base | Guest-dependent | Docker-wrapped QEMU launcher | `docker.io/trycua/cua-qemu-linux:latest` | Mutable SDK selector; [build definition](https://github.com/trycua/cua/blob/main/libs/qemu-docker/linux/Dockerfile); not the default bare-metal Linux VM path |
+| Windows | Server 2022 | Native Windows desktop | Fleet containerDisk; local Hyper-V or QEMU | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3` | Built-in `Image.windows()` mapping; Fleet selects EFI; [runtime and host limits](/reference/sandbox-sdk/runtime-support) apply |
+| Windows | Windows 11 | Native Windows desktop | Local VM installation | Local installation media | No built-in Fleet mapping; requires suitable host, media, and guest setup |
+| Windows | Runtime-configured version | Native Windows desktop | Docker-wrapped QEMU launcher | `docker.io/trycua/cua-qemu-windows:latest` | Mutable SDK selector; [build definition](https://github.com/trycua/cua/blob/main/libs/qemu-docker/windows/Dockerfile); not a Fleet containerDisk |
+| macOS | Sequoia 15 | Native macOS desktop | Local Lume VM | `ghcr.io/trycua/macos-sequoia-cua:latest` | Compatible Apple silicon host required; mutable tag; no built-in Fleet mapping |
+| macOS | Tahoe 26 | Native macOS desktop | Local Lume VM | `ghcr.io/trycua/macos-tahoe-cua:latest` | Default `Image.macos()` version; compatible Apple silicon host required; mutable tag; no built-in Fleet mapping |
+| Android | Android 14 constructor default | Android system UI | Local Android emulator | Emulator system image | Constructor value is not boot certification or proof of emulator version; no built-in Fleet mapping |
+| Android | Android 11 container base | Android system UI | Emulator container | `docker.io/trycua/cua-qemu-android:latest` | [Build definition](https://github.com/trycua/cua/blob/main/libs/qemu-docker/android/Dockerfile) uses `budtmo/docker-android:emulator_11.0`; amd64 target; distinct from Android 14 constructor value |
+| Linux | No cataloged Sandbox image | GNOME/Mutter; KDE Plasma/KWin; Sway/wlroots | Driver platform coverage only | No corresponding Sandbox registry mapping in the catalog sources | [Driver support](/reference/cua-driver/platform-support) does not imply image availability; [prepare a compatible image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) |

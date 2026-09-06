@@ -212,7 +212,7 @@ class OwnershipTests(unittest.TestCase):
 class RecoveryTests(unittest.TestCase):
     def test_fresh_runtime_fresh_grounding_single_new_action_and_unknown_never_replayed(self):
         for app in ('calc', 'inkscape'):
-            for failure in (None, 'alive', 'reused', 'stale', 'unknown', 'guard', 'effect'):
+            for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'unknown', 'guard', 'effect'):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     spec = plan(app=app)['agents'][0]
                     stage = plan(app=app)['recovery']['pointer_stage']
@@ -222,21 +222,30 @@ class RecoveryTests(unittest.TestCase):
                         fresh.process.pid = 100
                     fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else DELIVERED]
                     before, after = {'proof_image': 'before.png'}, {'proof_image': 'after.png'}
+                    dispatch_ns = 101
+                    if failure == 'slow_discovery':
+                        before['proof_observation_started_ns'] = proof.MAX_GROUNDING_AGE_NS + 200
+                        dispatch_ns = proof.MAX_GROUNDING_AGE_NS + 301
                     stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=[before, after]))
                     stack.enter_context(patch.object(proof, 'app_process_identity'))
-                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[100, proof.MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else 101]))
+                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[100, proof.MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 20, 'y': 30}, {'stage': stage})))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'verify', side_effect=AssertionError('effect') if failure == 'effect' else None))
                     stack.enter_context(patch.object(proof, 'verify_recovery_trace', return_value={'result': 'verified'}))
                     result, save = {}, Mock()
                     guard = Mock(side_effect=AssertionError('primary expired') if failure == 'guard' else None)
-                    if failure:
+                    if failure not in (None, 'slow_discovery'):
                         with self.assertRaises(AssertionError):
                             proof.recover(fresh, observer, victim, spec, stage, Mock(), trace(CANCEL), 1, guard, save, result)
                     else:
                         proof.recover(fresh, observer, victim, spec, stage, Mock(), trace(CANCEL), 1, guard, save, result)
                         self.assertEqual(result['result'], 'verified')
+                        self.assertEqual(result['action']['dispatch_ns'], dispatch_ns)
+                        grounding = next(call.args[1] for call in save.call_args_list
+                                         if call.args[0] == 'recovery-grounding.json')
+                        self.assertEqual(grounding['prepared_ns'],
+                                         before.get('proof_observation_started_ns', 100))
                     inputs = [call for call in fresh.tool.call_args_list if call.args[0] != 'start_session']
                     self.assertEqual(len(inputs), int(failure not in ('alive', 'reused', 'stale', 'guard')))
                     if inputs:

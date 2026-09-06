@@ -227,6 +227,7 @@ def recover(client, observer, victim, spec, stage, trace, boundary, lane, guard,
     app_process_identity(spec['app'], spec['target']['pid'])
     prepared_ns = time.monotonic_ns()
     before = grounded_snapshot(client, spec['target'], fresh)
+    prepared_ns = before.get('proof_observation_started_ns', prepared_ns)
     arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
     tool = pointer_grounding.STAGES[spec['app']][stage]
     assert tool in ('click', 'scroll')

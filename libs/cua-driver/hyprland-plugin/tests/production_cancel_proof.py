@@ -125,6 +125,9 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     identity = app_process_identity(spec['app'], spec['target']['pid'])
     started_ns = time.monotonic_ns()
     before = grounded_snapshot(client, fresh['target'], fresh)
+    # Match prepare_drag: discovery precedes the observation; the complete
+    # snapshot and pixel grounding remain inside the five-second limit.
+    started_ns = before.get('proof_observation_started_ns', started_ns)
     arguments, oracle = pointer_grounding.action(
         before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
     tool = pointer_grounding.STAGES[spec['app']][stage]

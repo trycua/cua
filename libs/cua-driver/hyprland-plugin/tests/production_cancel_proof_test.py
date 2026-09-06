@@ -214,7 +214,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_fresh_runtime_snapshot_single_action_and_observer_effect(self):
         for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll')):
-            for failure in (None, 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after'):
+            for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after'):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     victim, sibling, observer, fresh = [client(pid) for pid in (100, 101, 102, 103)]
                     victim.failed = True
@@ -226,13 +226,17 @@ class RecoveryTests(unittest.TestCase):
                     fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else response]
                     spec = next(spec for spec in plan()['agents'] if spec['app'] == app)
                     before, after = {'proof_image': 'before.png'}, {'proof_image': 'after.png'}
+                    dispatch_ns = 101
+                    if failure == 'slow_discovery':
+                        before['proof_observation_started_ns'] = MAX_GROUNDING_AGE_NS + 200
+                        dispatch_ns = MAX_GROUNDING_AGE_NS + 301
                     snapshot = stack.enter_context(patch('production_cancel_proof.grounded_snapshot',
                         side_effect=AssertionError('geometry changed') if failure == 'snapshot' else [before, after]))
                     identity = stack.enter_context(patch('production_cancel_proof.app_process_identity',
                         side_effect=AssertionError('app changed') if failure == 'identity' else None,
                         return_value={'pid': spec['target']['pid']}))
                     stack.enter_context(patch('production_cancel_proof.time.monotonic_ns',
-                        side_effect=[100, MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else 101]))
+                        side_effect=[100, MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
                     stack.enter_context(patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'))
                     arguments, oracle = {'x': 20, 'y': 30}, {'app': app, 'stage': stage}
                     action = stack.enter_context(patch('production_cancel_proof.pointer_grounding.action',
@@ -249,7 +253,7 @@ class RecoveryTests(unittest.TestCase):
                     def attempt():
                         return recover_once(fresh, observer, victim, sibling, spec, stage, trace_client,
                                             trace(FINISH[:-1]), 1, save, result, guard)
-                    if failure:
+                    if failure not in (None, 'slow_discovery'):
                         with self.assertRaises((AssertionError, TimeoutError)):
                             attempt()
                     else:
@@ -258,7 +262,9 @@ class RecoveryTests(unittest.TestCase):
                         self.assertEqual(result['policy']['startup_profile'], PROFILE)
                         self.assertNotEqual(result['runtime_pid'], result['victim_pid'])
                         self.assertFalse(result['replayed'])
-                        self.assertEqual(result['action']['dispatch_ns'], 101)
+                        self.assertEqual(result['action']['dispatch_ns'], dispatch_ns)
+                        self.assertEqual(result['grounding']['prepared_ns'],
+                                         before.get('proof_observation_started_ns', 100))
                         identity.assert_called_once_with(app, spec['target']['pid'])
                         action.assert_called_once_with(before, 'pixels', app, stage)
                         verify.assert_called_once_with(after, 'pixels', oracle)

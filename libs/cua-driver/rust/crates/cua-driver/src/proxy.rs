@@ -207,17 +207,15 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // calls. Besides lifecycle cleanup, that registered control channel is the
     // trust boundary used by destructive `browser_prepare` calls.
     let (control_ready_tx, control_ready_rx) = tokio::sync::oneshot::channel();
-    {
-        let socket = socket_path.clone();
-        let sid = session_id.clone();
-        tokio::spawn(async move {
-            run_control_connection(socket, sid, control_ready_tx).await;
-        });
-    }
-    tokio::time::timeout(std::time::Duration::from_secs(4), control_ready_rx)
-        .await
-        .map_err(|_| anyhow::anyhow!("daemon did not acknowledge the MCP control session"))?
-        .map_err(|_| anyhow::anyhow!("daemon control session closed before acknowledgement"))?;
+    let control = run_control_connection(socket_path.clone(), session_id.clone(), control_ready_tx);
+    tokio::pin!(control);
+    supervise_control_connection(&mut control, async {
+        tokio::time::timeout(std::time::Duration::from_secs(4), control_ready_rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("daemon did not acknowledge the MCP control session"))?
+            .map_err(|_| anyhow::anyhow!("daemon control session closed before acknowledgement"))
+    })
+    .await?;
 
     // Cache the tool list once at startup. The daemon's registry is
     // static for the lifetime of the daemon, so polling on every
@@ -229,15 +227,32 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    run_proxy_io(
-        BufReader::new(stdin),
-        tokio::io::BufWriter::new(stdout),
-        &socket_path,
-        &cached_tools_list,
-        &session_id,
-        daemon_observes_tool_calls,
+    supervise_control_connection(
+        &mut control,
+        run_proxy_io(
+            BufReader::new(stdin),
+            tokio::io::BufWriter::new(stdout),
+            &socket_path,
+            &cached_tools_list,
+            &session_id,
+            daemon_observes_tool_calls,
+        ),
     )
     .await
+}
+
+/// Keep the MCP transport alive only while its daemon-owned identity is live.
+/// Dropping the scoped control future also closes its socket on stdin EOF,
+/// startup failure, or cancellation; no detached task can retain the session.
+async fn supervise_control_connection<T>(
+    control: impl std::future::Future<Output = ()>,
+    work: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::select! {
+        biased;
+        _ = control => anyhow::bail!("daemon control session closed; reconnect the MCP client"),
+        result = work => result,
+    }
 }
 
 /// Run the service-owned stdio loop over caller-provided I/O.
@@ -378,10 +393,9 @@ fn proxy_knows_tool(cached_tools_list: &serde_json::Value, name: &str) -> bool {
 /// `session_begin` and fires `session_end` when this connection EOFs — which
 /// the kernel triggers on proxy exit AND on kill -9.
 ///
-/// On any read result/error (daemon-side close, broken pipe), the loop exits
-/// and the task ends; the proxy keeps running on its per-call connections. A
-/// connect failure (racing daemon startup) is logged and swallowed — it must
-/// not bail the proxy.
+/// On EOF/error (daemon-side close, broken pipe), this future completes and
+/// its supervisor closes the MCP proxy. Per-call connections must never keep
+/// serving the ended identity. Startup connection failures follow the same path.
 async fn run_control_connection(
     socket_path: String,
     session_id: String,
@@ -820,6 +834,80 @@ async fn forward_tool_call(
 mod tests {
     use super::*;
     use crate::serve::DaemonResponse;
+
+    #[tokio::test]
+    async fn control_disconnect_ends_idle_proxy() {
+        let (control, daemon) = tokio::io::duplex(64);
+        let control = async move {
+            let mut reader = BufReader::new(control);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+        };
+        let proxy =
+            supervise_control_connection(control, std::future::pending::<anyhow::Result<()>>());
+        tokio::pin!(proxy);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut proxy)
+                .await
+                .is_err(),
+            "an idle live control connection must remain usable"
+        );
+        drop(daemon);
+        let error = tokio::time::timeout(std::time::Duration::from_millis(250), proxy)
+            .await
+            .expect("control EOF must end the proxy promptly")
+            .unwrap_err();
+        assert!(error.to_string().contains("reconnect the MCP client"));
+    }
+
+    #[tokio::test]
+    async fn proxy_eof_drops_its_control_connection() {
+        let (control, daemon) = tokio::io::duplex(64);
+        let control = async move {
+            let mut reader = BufReader::new(control);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+        };
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+        let mut writer = Vec::new();
+        supervise_control_connection(
+            control,
+            run_proxy_io(
+                BufReader::new(&b""[..]),
+                &mut writer,
+                "unused.sock",
+                &cached_tools,
+                "eof",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        let mut daemon = BufReader::new(daemon);
+        let mut line = String::new();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                daemon.read_line(&mut line)
+            )
+            .await
+            .expect("proxy EOF must release daemon session ownership")
+            .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_control_prevents_ready_request_dispatch() {
+        let dispatched = std::sync::atomic::AtomicBool::new(false);
+        let result = supervise_control_connection(async {}, async {
+            dispatched.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(!dispatched.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[tokio::test]
     async fn proxy_loop_returns_promptly_on_clean_eof() {

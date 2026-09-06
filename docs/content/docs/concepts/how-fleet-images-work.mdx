@@ -1,0 +1,64 @@
+---
+title: 'How Fleet images work'
+description: 'How Fleet boot artifacts define the operating system, compatibility boundary, and service contract for managed sandbox capacity.'
+---
+
+A Fleet image is the boot artifact from which a Fleet pool starts its reusable sandbox replicas. It is an infrastructure-level input such as a VM disk or container-backed boot artifact. It is **not** the public `Image` abstraction from the Sandbox SDK.
+
+The public Sandbox SDK `Image` describes the starting environment for a sandbox created through the SDK. A Fleet image is the deployed guest artifact that a pool repeatedly boots as shared capacity for later claims.
+
+## Fleet images and Sandbox SDK Images are separate layers
+
+The public `Image` type is the sandbox API's immutable environment specification. It lets you describe a sandbox's operating system, packages, copied files, setup commands, and ports before you start that sandbox.
+
+A Fleet image is the guest boot artifact referenced by a pool definition. A pool can keep multiple replicas running from the same artifact, and later workloads claim those replicas. The Fleet image is therefore an input to capacity management and replica compatibility rather than a step in one sandbox's SDK setup sequence.
+
+The public SDK model is documented in [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts), [Choose and build a sandbox image](/how-to-guides/sandbox/images), and the [Image reference](/reference/sandbox-sdk/image).
+
+## Fleet uses a constrained subset of the SDK image surface
+
+Fleet uses a prebuilt registry artifact as its starting point. The Sandbox SDK can reference that artifact directly with `Image.from_registry(...)` or resolve a supported built-in image to one. In `cua-sandbox` 0.4.3, the built-in Ubuntu 24.04 and Windows Server 2022 VM images have registry mappings.
+
+Fleet does **not** build an environment from SDK layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`, `from_file`, or snapshot-derived images. The Fleet registry input must reference a guest artifact published before sandbox creation.
+
+The versioned acceptance rules and their verification limits are in [Sandbox runtime support](/reference/sandbox-sdk/runtime-support). The publication and reference workflow is in [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image).
+
+## Fleet references an OCI artifact that carries the boot image
+
+At the pool layer, Fleet stores the registry reference as the deployed boot artifact for the pool template. The referenced OCI artifact must carry the bootable guest image expected by Fleet. The SDK contract is the registry reference itself; the build pipeline determines how the bootable guest is packaged inside that artifact.
+
+`Image.from_registry(...)` does not assemble the artifact. It points Fleet at a prebuilt OCI image that already carries the bootable environment. Artifact publication occurs before the claim path.
+
+## Image identity defines compatibility
+
+A pool's image reference is part of what makes one replica compatible with another. Two pools with different boot artifacts can differ in operating system, installed software, startup behavior, readiness checks, and service endpoints even if they request the same CPU and memory.
+
+A pinned image reference identifies the artifact used by a pool. With a mutable tag, registry content can change while the pool specification remains unchanged, so replicas created at different times can boot different artifact contents.
+
+## Boot configuration must match the image
+
+The image and the pool's boot configuration must agree. Firmware expectations, disk layout, guest drivers, and startup services are properties of the boot artifact and its runtime configuration.
+
+Linux-oriented and Windows-oriented artifacts can require different firmware, devices, and service startup contracts before their configured services become ready.
+
+## Service behavior starts at the image boundary
+
+A Fleet image does not only determine what operating system boots. It also determines what software is already present when a replica starts and which services can become ready inside that guest.
+
+Readiness depends on the services started by the image. A running replica whose configured readiness checks have not passed remains unready for claims.
+
+Ports you mark with `.expose(...)` become named Fleet services. A service URL identifies an endpoint in Fleet's proxy; it does not create a localhost listener or grant access by itself. Access requires Fleet authentication. In 0.4.3, pool-backed sandboxes use `sb.services.request()` for authenticated HTTP requests; their transport does not implement `sb.tunnel.forward()`. See [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
+
+With the Sandbox SDK's default service configuration, the published image must start the computer-server endpoint on port `8000`. The SDK creates the `server` service and a TCP readiness probe on that port, then waits for `/status` before returning a connected sandbox.
+
+## Image contents are present before claims
+
+Dependencies and startup behavior included in the image are present when a replica boots. The claim path does not apply SDK image-builder layers.
+
+Changing the referenced image version requires publishing the corresponding artifact and updating the pool reference. Replicas created from the same immutable artifact receive the same image contents.
+
+## Related pages
+
+- [How sandboxes work](/concepts/how-sandboxes-work)
+- [Choose and build a sandbox image](/how-to-guides/sandbox/images)
+- [Image reference](/reference/sandbox-sdk/image)

@@ -521,8 +521,8 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(files) != 11 {
-		t.Fatalf("expected exactly eleven migrations, got %d", len(files))
+	if len(files) != 12 {
+		t.Fatalf("expected exactly twelve migrations, got %d", len(files))
 	}
 	manifest := make([]struct {
 		Version int64
@@ -549,6 +549,7 @@ func TestEmbeddedMigrationsAreOrderedAndImmutable(t *testing.T) {
 		{9, "000009_extend_metabase_revenue_tenant_exclusions.sql"},
 		{10, "000010_grant_metabase_billing_meter_access.sql"},
 		{11, "000011_signed_service_urls.sql"},
+		{12, "000012_private_account_lookup.sql"},
 	}) {
 		t.Fatalf("migration manifest = %#v", manifest)
 	}

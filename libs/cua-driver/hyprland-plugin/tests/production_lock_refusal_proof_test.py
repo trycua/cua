@@ -111,6 +111,37 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_click_grounding_retains_original_observation_timestamp(self):
+        spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
+        snapshot = {'proof_observation_started_ns': 10, 'proof_image': 'fresh.png'}
+        client = Mock()
+        with patch.object(proof, 'grounded_snapshot', return_value=snapshot) as observed, \
+             patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'), \
+             patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1, 'y': 2}, {'verified': False})), \
+             patch.object(proof.time, 'monotonic_ns', return_value=500):
+            record = proof.prepare_click(client, spec, session=False)
+        observed.assert_called_once_with(client, spec['target'], spec, session=False)
+        self.assertIs(record['snapshot'], snapshot)
+        self.assertEqual(record['prepared_ns'], 10)
+        # A slow observation cannot acquire a new five-second budget.
+        with patch.object(proof.time, 'monotonic_ns', return_value=proof.MAX_GROUNDING_AGE_NS + 11), \
+             self.assertRaisesRegex(AssertionError, 'grounding expired'):
+            proof.click_once(client, record['arguments'],
+                {**record, 'outcome': 'unknown', 'replayed': False}, Mock(), 'attempt.json')
+        client.tool.assert_not_called()
+
+    def test_click_grounding_rejects_missing_invalid_or_future_observation_time(self):
+        spec = {**plan()['agents'][0], 'pointer_stage': 'click_b2'}
+        for timestamp in (None, False, 0, -1, 501):
+            snapshot = {'proof_image': 'fresh.png'}
+            if timestamp is not None:
+                snapshot['proof_observation_started_ns'] = timestamp
+            with self.subTest(timestamp=timestamp), \
+                 patch.object(proof, 'grounded_snapshot', return_value=snapshot), \
+                 patch.object(proof.time, 'monotonic_ns', return_value=500), \
+                 self.assertRaises((AssertionError, KeyError)):
+                proof.prepare_click(Mock(), spec)
+
     def test_click_attempt_is_saved_on_transport_failure_without_replay(self):
         for fails in (False, True):
             client = Mock()
@@ -226,7 +257,7 @@ class FixtureTests(unittest.TestCase):
                  patch.object(proof, 'state', return_value={'held': False}), \
                  patch.object(proof, 'wm', return_value={}), \
                  patch.object(proof, 'production_status', return_value=status(2)), \
-                 patch.object(proof, 'grounded_snapshot', return_value={'proof_image': 'fresh.png'}), \
+                 patch.object(proof, 'grounded_snapshot', return_value={'proof_image': 'fresh.png', 'proof_observation_started_ns': 1}), \
                  patch.object(proof.pointer_grounding, 'read_pixels'), \
                  patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1, 'y': 1}, {})), \
                  patch.object(proof, 'settle_locked'), patch.object(proof, 'close_owned'), \

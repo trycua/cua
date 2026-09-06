@@ -276,6 +276,17 @@ def click_once(client, arguments, record, save, name):
         save(name, record)
 
 
+def prepare_click(client, spec, *, session=True):
+    """Keep the full observation's original age, excluding earlier discovery."""
+    snapshot = grounded_snapshot(client, spec['target'], spec, session=session)
+    prepared_ns = snapshot['proof_observation_started_ns']
+    assert type(prepared_ns) is int and 0 < prepared_ns <= time.monotonic_ns()
+    arguments, oracle = pointer_grounding.action(snapshot,
+        pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', spec['pointer_stage'])
+    return {'snapshot': snapshot, 'arguments': arguments, 'oracle': oracle,
+            'prepared_ns': prepared_ns}
+
+
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
@@ -321,10 +332,8 @@ def run(args):
         trace = connect_trace(args.trace_socket, fixture.config)
         spec = {**plan['agents'][0], 'pointer_stage': plan['recovery']['pointer_stage']}
         assert state(args.foreground_journal)['held'] is False, 'lock setup requires released primary fixture'
-        prepared_ns = time.monotonic_ns()
-        snapshot = grounded_snapshot(observer, spec['target'], spec, session=False)
-        arguments, oracle = pointer_grounding.action(snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', spec['pointer_stage'])
-        probe = {'snapshot': snapshot, 'arguments': arguments, 'oracle': oracle, 'prepared_ns': prepared_ns}
+        probe = prepare_click(observer, spec, session=False)
+        arguments, prepared_ns = probe['arguments'], probe['prepared_ns']
         save('refusal-grounding.json', probe)
         fixture.lock()
         settle_locked(fixture)
@@ -394,10 +403,9 @@ def run(args):
         recovery.update(runtime_pid=fresh.process.pid, previous_runtime_pid=actor.process.pid, replayed=False)
         name = spec['name'] + '-recovery'
         assert not fresh.tool('start_session', {'session': name}).get('isError')
-        prepared_ns = time.monotonic_ns()
-        before = grounded_snapshot(fresh, spec['target'], {**spec, 'name': name})
-        arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), 'calc', spec['pointer_stage'])
-        save('recovery-grounding.json', {'snapshot': before, 'arguments': arguments, 'oracle': oracle, 'prepared_ns': prepared_ns})
+        grounding = prepare_click(fresh, {**spec, 'name': name})
+        arguments, oracle, prepared_ns = (grounding[key] for key in ('arguments', 'oracle', 'prepared_ns'))
+        save('recovery-grounding.json', grounding)
         require_primary_active(grab, deadline)
         dispatched_ns = time.monotonic_ns()
         assert dispatched_ns - prepared_ns <= MAX_GROUNDING_AGE_NS

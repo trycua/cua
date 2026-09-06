@@ -124,11 +124,20 @@ def calc_cells(snapshot, image):
             'B3': ((columns[1] + columns[2]) // 2, (lines[2] + lines[3]) // 2)}
 
 
-def inkscape_geometry(snapshot):
+def inkscape_geometry(snapshot, *, allow_transform_center=False):
     elements = rows(snapshot)
     lines = [line.strip() for line in snapshot.get('tree_markdown', '').splitlines()]
     objects = [row for row in elements if row.get('role') == 'table cell' and row.get('label') == 'smoke-rectangle']
-    if len(objects) != 1 or lines.count('- label = "Rectangle  in root. Click selection again to toggle scale/rotation handles."') != 1:
+    selected = '- label = "Rectangle  in root. Click selection again to toggle scale/rotation handles."'
+    center = ('- label = "Center of transformation: drag to reposition; scaling, rotation '
+              'and skew with Shift also uses this center"')
+    # Inkscape replaces its idle selection message while the synthetic pointer
+    # hovers over the rotation center. This does not deselect the rectangle.
+    # Admit this exact idle hint for fresh grounding/scroll only; a drag's
+    # committed-effect check still requires the ordinary selection message.
+    hints = lines.count(selected) + lines.count(center)
+    if (len(objects) != 1 or hints != 1 or
+            (lines.count(center) and not allow_transform_center)):
         raise GroundingUnavailable('the synthetic rectangle is not uniquely selected')
     values = {}
     for axis in ('X', 'Y', 'W', 'H'):
@@ -196,8 +205,14 @@ def action(snapshot, image, app, stage):
                 raise GroundingUnavailable('click proof needs the unselected synthetic rectangle')
             oracle['geometry'] = None
         else:
-            oracle['geometry'] = inkscape_geometry(snapshot)
+            oracle['geometry'] = inkscape_geometry(snapshot, allow_transform_center=True)
         point = oracle['rectangle']['center']
+        if stage == 'move_rectangle':
+            # The center is an interactive pivot in rotation mode. Ground the
+            # drag inside the same observed rectangle, away from every handle.
+            rectangle = oracle['rectangle']
+            point = [rectangle['x'] + rectangle['w'] // 4,
+                     rectangle['y'] + rectangle['h'] // 4]
     if stage.startswith('scroll_'):
         args = {'x': point[0], 'y': point[1], 'direction': stage.split('_')[1], 'amount': 1, 'by': 'line'}
     elif STAGES[app][stage] == 'drag':
@@ -221,7 +236,8 @@ def verify(snapshot, image, oracle):
             value = calc_scroll(snapshot, image)
             assert value > oracle['scroll'] if stage == 'scroll_down' else value < oracle['scroll'], 'Calc viewport did not scroll'
     else:
-        rectangle, geometry = blue_rectangle(snapshot, image), inkscape_geometry(snapshot)
+        rectangle = blue_rectangle(snapshot, image)
+        geometry = inkscape_geometry(snapshot, allow_transform_center=stage.startswith('scroll_'))
         previous = oracle['rectangle']
         assert abs(rectangle['w'] - previous['w']) <= 1 and abs(rectangle['h'] - previous['h']) <= 1, 'rectangle resized'
         delta = [a - b for a, b in zip(rectangle['center'], previous['center'])]

@@ -158,6 +158,7 @@ class PointerGroundingTests(unittest.TestCase):
 
     def test_inkscape_drag_and_scroll_need_pixels_and_semantics_to_agree(self):
         args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
+        self.assertEqual([args['from_x'], args['from_y']], [145, 165])
         self.assertEqual([args['to_x'] - args['from_x'], args['to_y'] - args['from_y']], [40, 30])
         self.assertTrue(pointer.verify(*ink(dx=40, dy=30), oracle)['verified'])
         # A client may anchor at a processed motion after button press.
@@ -178,6 +179,56 @@ class PointerGroundingTests(unittest.TestCase):
         for state in (ink(), ink(scroll_y=20), ink(dx=10, dy=10)):
             with self.assertRaises(AssertionError):
                 pointer.verify(*state, oracle)
+
+    def test_inkscape_idle_pivot_hover_can_ground_a_new_action_without_replaying_drag(self):
+        selected = 'Rectangle  in root. Click selection again to toggle scale/rotation handles.'
+        center = ('Center of transformation: drag to reposition; scaling, rotation '
+                  'and skew with Shift also uses this center')
+        state, image = ink()
+        state['tree_markdown'] = state['tree_markdown'].replace(selected, center)
+        args, _ = pointer.action(state, image, 'inkscape', 'move_rectangle')
+        self.assertEqual([args['from_x'], args['from_y']], [145, 165])
+        with self.assertRaises(pointer.GroundingUnavailable):
+            pointer.inkscape_geometry(state)
+        _, oracle = pointer.action(state, image, 'inkscape', 'scroll_down')
+        after, after_image = ink(scroll_y=-20)
+        after['tree_markdown'] = after['tree_markdown'].replace(selected, center)
+        self.assertTrue(pointer.verify(after, after_image, oracle)['verified'])
+        with self.assertRaises(AssertionError):
+            pointer.verify(state, image, oracle)
+        # An interrupted drag is never reclassified as a committed move merely
+        # because the later snapshot exposes an idle hover hint.
+        _, drag = pointer.action(*ink(), 'inkscape', 'move_rectangle')
+        after, after_image = ink(dx=35, dy=27)
+        after['tree_markdown'] = after['tree_markdown'].replace(selected, center)
+        with self.assertRaises(pointer.GroundingUnavailable):
+            pointer.verify(after, after_image, drag)
+
+    def test_inkscape_hover_does_not_admit_ambiguous_unselected_or_in_progress_state(self):
+        selected = 'Rectangle  in root. Click selection again to toggle scale/rotation handles.'
+        center = ('Center of transformation: drag to reposition; scaling, rotation '
+                  'and skew with Shift also uses this center')
+        for failure in ('duplicate_hint', 'duplicate_object', 'no_object', 'in_progress',
+                        'unselected', 'wrong_geometry', 'disabled_geometry'):
+            with self.subTest(failure=failure):
+                state, image = ink()
+                state['tree_markdown'] = state['tree_markdown'].replace(selected, center)
+                if failure == 'duplicate_hint':
+                    state['tree_markdown'] += f'\n- label = "{selected}"'
+                elif failure == 'duplicate_object':
+                    state['elements'].append(copy.deepcopy(state['elements'][0]))
+                elif failure == 'no_object':
+                    state['elements'].pop(0)
+                elif failure == 'in_progress':
+                    state['tree_markdown'] = state['tree_markdown'].replace(center, 'Move by 1 px, 1 px')
+                elif failure == 'unselected':
+                    state, image = ink(False)
+                elif failure == 'wrong_geometry':
+                    state['elements'][3]['value'] = '120.0'
+                else:
+                    state['elements'][3]['enabled'] = False
+                with self.assertRaises(pointer.GroundingUnavailable):
+                    pointer.action(state, image, 'inkscape', 'scroll_down')
 
     def test_wrong_or_ambiguous_blue_pixels_do_not_ground(self):
         for failure in ('wrong_title', 'dialog', 'blank', 'two_rectangles', 'clipped', 'semantic_mismatch'):
@@ -214,7 +265,7 @@ class PointerGroundingTests(unittest.TestCase):
                      ('pointer_motion', 100, 200, 2, 0), ('pointer_motion', 100, 200, 2, 0),
                      ('pointer_motion', 100, 200, 2, 0), ('pointer_button', 100, 200, 2, 0),
                      ('agent_drag_end', 100, 200, 2, 0), ('pointer_leave', 100, 200, 2, 0), STOP)
-        for index, xy in ((1, [169, 179]), (4, [173, 182]), (5, [189, 194]), (6, [209, 209])):
+        for index, xy in ((1, [145, 165]), (4, [149, 168]), (5, [165, 180]), (6, [185, 195])):
             data['events'][index].extend(xy)
         result = pointer.verify_drag_trace(data, args, effect)
         self.assertEqual(result['lane'], 2)
@@ -247,13 +298,13 @@ class PointerGroundingTests(unittest.TestCase):
             with self.subTest(failure=failure):
                 bad, changed_effect = copy.deepcopy(data), copy.deepcopy(effect)
                 if failure == 'missing_endpoint':
-                    bad['events'][6][7:9] = [208, 208.25]
+                    bad['events'][6][7:9] = [184, 194.25]
                 elif failure == 'wrong_start':
                     bad['events'][1][7] = 999
                 elif failure == 'missing_coords':
                     bad['events'][4] = bad['events'][4][:7]
                 elif failure == 'reversed':
-                    bad['events'][5][7:9] = [171, 180.5]
+                    bad['events'][5][7:9] = [147, 166.5]
                 elif failure == 'off_path':
                     bad['events'][5][8] += 2
                 elif failure == 'cancelled':

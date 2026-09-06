@@ -3,9 +3,7 @@ title: 'How Fleet images work'
 description: 'How Fleet boot artifacts define the operating system, compatibility boundary, and service contract for managed sandbox capacity.'
 ---
 
-A Fleet image is the boot artifact from which a Fleet pool starts its reusable sandbox replicas. It is an infrastructure-level input such as a VM disk or container-backed boot artifact. It is **not** the public `Image` abstraction from the Sandbox SDK.
-
-The public Sandbox SDK `Image` describes the starting environment for a sandbox created through the SDK. A Fleet image is the deployed guest artifact that a pool repeatedly boots as shared capacity for later claims.
+A Fleet image is a prebuilt guest boot artifact that a pool uses to start its sandbox replicas. The Sandbox SDK's `Image` specification selects that artifact; the pool boots it before a workload claims a replica.
 
 ## Fleet images and Sandbox SDK Images are separate layers
 
@@ -17,7 +15,7 @@ The public SDK model is documented in [How sandboxes work](/concepts/how-sandbox
 
 ## Fleet uses a constrained subset of the SDK image surface
 
-Fleet uses a prebuilt registry artifact as its starting point. The Sandbox SDK can reference that artifact directly with `Image.from_registry(...)` or resolve a supported built-in image to one. In `cua-sandbox` 0.4.3, the built-in Ubuntu 24.04 and Windows Server 2022 VM images have registry mappings.
+Fleet uses a prebuilt registry artifact as its starting point. The Sandbox SDK can reference that artifact directly with `Image.from_registry(...)` or resolve a built-in image with a registry mapping. In `cua-sandbox` 0.4.3, the built-in Ubuntu 24.04 and Windows Server 2022 VM images have registry mappings.
 
 Fleet does **not** build an environment from SDK layers such as `apt_install`, `pip_install`, `uv_install`, `run`, `copy`, `env`, `from_file`, or snapshot-derived images. The Fleet registry input must reference a guest artifact published before sandbox creation.
 
@@ -34,6 +32,8 @@ At the pool layer, Fleet stores the registry reference as the deployed boot arti
 A pool's image reference is part of what makes one replica compatible with another. Two pools with different boot artifacts can differ in operating system, installed software, startup behavior, readiness checks, and service endpoints even if they request the same CPU and memory.
 
 A pinned image reference identifies the artifact used by a pool. With a mutable tag, registry content can change while the pool specification remains unchanged, so replicas created at different times can boot different artifact contents.
+
+A digest identifies specific registry content. It does not establish that Fleet can pull the artifact, that its guest architecture matches the runtime, or that its services work. Those require separate evidence. The [OS and image catalog](/reference/sandbox-sdk/os-image-catalog) records image identities and their evidence boundaries.
 
 ## Boot configuration must match the image
 

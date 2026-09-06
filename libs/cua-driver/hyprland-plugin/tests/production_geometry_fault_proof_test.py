@@ -228,6 +228,57 @@ class OwnershipTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
+    def test_expired_observation_refresh_is_bounded_and_never_sends_input(self):
+        budget = proof.MAX_GROUNDING_AGE_NS - proof.GROUNDING_DISPATCH_RESERVE_NS
+        for second_age in (1, budget, budget + 1, proof.MAX_GROUNDING_AGE_NS + 1):
+            with self.subTest(second_age=second_age), ExitStack() as stack:
+                snapshots = [{'proof_image': str(i) + '.png', 'proof_observation_started_ns': i * 10_000_000_000}
+                             for i in (1, 2)]
+                observe = stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=snapshots))
+                stack.enter_context(patch.object(proof, 'app_process_identity'))
+                stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'))
+                stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1}, {'stage': 'click_b2'})))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[
+                    10_000_000_000 + proof.MAX_GROUNDING_AGE_NS + 1, 20_000_000_000 + second_age]))
+                fresh, save = Mock(), Mock()
+                if second_age > budget:
+                    with self.assertRaisesRegex(AssertionError, 'recovery grounding expired'):
+                        proof.prepare_recovery(fresh, plan()['agents'][0], 'click_b2', Mock(), save)
+                else:
+                    prepared = proof.prepare_recovery(fresh, plan()['agents'][0], 'click_b2', Mock(), save)
+                    self.assertEqual(prepared['prepared_ns'], 20_000_000_000)
+                    self.assertIs(prepared['snapshot'], snapshots[1])
+                self.assertEqual(observe.call_count, 2)
+                fresh.tool.assert_not_called()
+                attempts = [c.args[1] for c in save.call_args_list if '-attempt-' in c.args[0]]
+                self.assertEqual([p['attempt'] for p in attempts], [1, 2])
+                self.assertEqual([p['ready'] for p in attempts], [False, second_age <= budget])
+                self.assertTrue(all(p['input_attempted'] is False for p in attempts))
+
+    def test_observation_failure_is_not_retried(self):
+        with patch.object(proof, 'app_process_identity'), \
+             patch.object(proof, 'grounded_snapshot', side_effect=TimeoutError('observation failed')) as observe:
+            fresh = Mock()
+            with self.assertRaises(TimeoutError):
+                proof.prepare_recovery(fresh, plan()['agents'][0], 'click_b2', Mock(), Mock())
+            observe.assert_called_once()
+            fresh.tool.assert_not_called()
+
+    def test_invalid_timestamp_never_gets_a_new_freshness_budget(self):
+        for timestamp in (None, 0, True, -1, 101):
+            with self.subTest(timestamp=timestamp), ExitStack() as stack:
+                snapshot = {'proof_image': 'before.png', 'proof_observation_started_ns': timestamp}
+                observe = stack.enter_context(patch.object(proof, 'grounded_snapshot', return_value=snapshot))
+                stack.enter_context(patch.object(proof, 'app_process_identity'))
+                stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'))
+                stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({}, {})))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', return_value=100))
+                fresh = Mock()
+                with self.assertRaises(AssertionError):
+                    proof.prepare_recovery(fresh, plan()['agents'][0], 'click_b2', Mock(), Mock())
+                observe.assert_called_once()
+                fresh.tool.assert_not_called()
+
     def test_fresh_runtime_fresh_grounding_single_new_action_and_unknown_never_replayed(self):
         for app in ('calc', 'inkscape'):
             for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'unknown', 'guard', 'effect'):
@@ -239,14 +290,14 @@ class RecoveryTests(unittest.TestCase):
                     if failure == 'reused':
                         fresh.process.pid = 100
                     fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else DELIVERED]
-                    before, after = {'proof_image': 'before.png'}, {'proof_image': 'after.png'}
+                    before, after = {'proof_image': 'before.png', 'proof_observation_started_ns': 100}, {'proof_image': 'after.png'}
                     dispatch_ns = 101
                     if failure == 'slow_discovery':
                         before['proof_observation_started_ns'] = proof.MAX_GROUNDING_AGE_NS + 200
                         dispatch_ns = proof.MAX_GROUNDING_AGE_NS + 301
                     stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=[before, after]))
                     stack.enter_context(patch.object(proof, 'app_process_identity'))
-                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[100, proof.MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
+                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[dispatch_ns - 1, proof.MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 20, 'y': 30}, {'stage': stage})))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'verify', side_effect=AssertionError('effect') if failure == 'effect' else None))

@@ -30,7 +30,8 @@ import time
 
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
-from production_cancel_proof import (MAX_GROUNDING_AGE_NS, POINTER_STAGES, PROFILE,
+from production_cancel_proof import (GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_ATTEMPTS,
+    MAX_GROUNDING_AGE_NS, POINTER_STAGES, PROFILE,
     RECOVERY_STAGES, active_drags, call_drag, close_owned, grounded_snapshot,
     poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup, verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
@@ -233,6 +234,33 @@ def verify_fault(boundary, record, action):
             'synthetic_cleanup': 'verified', 'saved_document_effect': 'unproven'}
 
 
+def prepare_recovery(client, spec, stage, guard, save):
+    """Refresh an expired successful observation once, before any input.
+
+    Preserve both snapshots and the real observation start. Failed observations
+    and unknown actions are never retried; actual dispatch still checks 5 s.
+    """
+    for attempt in range(1, MAX_GROUNDING_ATTEMPTS + 1):
+        guard()
+        app_process_identity(spec['app'], spec['target']['pid'])
+        before = grounded_snapshot(client, spec['target'], spec)
+        prepared_ns = before['proof_observation_started_ns']
+        assert type(prepared_ns) is int and prepared_ns > 0, 'invalid recovery observation timestamp'
+        arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
+        checked_ns = time.monotonic_ns()
+        age = checked_ns - prepared_ns
+        assert age >= 0, 'recovery observation is in the future'
+        ready = age <= MAX_GROUNDING_AGE_NS - GROUNDING_DISPATCH_RESERVE_NS
+        prepared = {'snapshot': before, 'arguments': arguments, 'oracle': oracle, 'prepared_ns': prepared_ns,
+                    'attempt': attempt, 'checked_ns': checked_ns, 'grounding_age_ns': age,
+                    'dispatch_reserve_ns': GROUNDING_DISPATCH_RESERVE_NS, 'ready': ready, 'input_attempted': False}
+        save(f'recovery-grounding-attempt-{attempt}.json', prepared)
+        save('recovery-grounding.json', prepared)
+        if ready:
+            return prepared
+    raise AssertionError('recovery grounding expired; no input sent')
+
+
 def recover(client, observer, victim, spec, stage, trace, boundary, lane, guard, save, result):
     assert victim.process.poll() is not None, 'old runtime must be reaped before recovery'
     assert victim.process.pid not in assert_distinct_runtimes([client, observer]), 'reused old runtime'
@@ -240,14 +268,10 @@ def recover(client, observer, victim, spec, stage, trace, boundary, lane, guard,
     fresh = {**spec, 'name': spec['name'] + '-recovery', 'pointer_stage': stage}
     result.update(runtime_pid=client.process.pid, previous_runtime_pid=victim.process.pid, replayed=False)
     assert not client.tool('start_session', {'session': fresh['name']}).get('isError')
-    app_process_identity(spec['app'], spec['target']['pid'])
-    prepared_ns = time.monotonic_ns()
-    before = grounded_snapshot(client, spec['target'], fresh)
-    prepared_ns = before.get('proof_observation_started_ns', prepared_ns)
-    arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
+    prepared = prepare_recovery(client, fresh, stage, guard, save)
+    prepared_ns, arguments, oracle = prepared['prepared_ns'], prepared['arguments'], prepared['oracle']
     tool = pointer_grounding.STAGES[spec['app']][stage]
     assert tool in ('click', 'scroll')
-    save('recovery-grounding.json', {'snapshot': before, 'arguments': arguments, 'oracle': oracle, 'prepared_ns': prepared_ns})
     guard()
     dispatch_ns = time.monotonic_ns()
     assert 0 <= dispatch_ns - prepared_ns <= MAX_GROUNDING_AGE_NS, 'recovery grounding expired'

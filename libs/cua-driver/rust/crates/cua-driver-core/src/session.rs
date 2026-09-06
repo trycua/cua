@@ -1121,6 +1121,57 @@ pub fn session_end_hook_count() -> usize {
     hooks().lock().unwrap().len()
 }
 
+/// Release process-global session storage after the standalone daemon has
+/// stopped all connection tasks and destroyed its only SDK runtime.
+#[doc(hidden)]
+pub fn release_process_state_for_shutdown() {
+    if let Some(readers) = CURSOR_OUTCOME_READERS.get() {
+        let mut readers = readers.lock().unwrap();
+        readers.clear();
+        readers.shrink_to_fit();
+    }
+    if let Some(readers) = RECORDING_STATE_READERS.get() {
+        let mut readers = readers.lock().unwrap();
+        readers.clear();
+        readers.shrink_to_fit();
+    }
+    if let Some(registered) = SESSION_END_HOOKS.get() {
+        let mut registered = registered.lock().unwrap();
+        registered.clear();
+        registered.shrink_to_fit();
+    }
+    if let Some(registered) = SESSION_REVIVE_HOOKS.get() {
+        let mut registered = registered.lock().unwrap();
+        registered.clear();
+        registered.shrink_to_fit();
+    }
+    if let Some(progress) = SESSION_CLEANUP_PROGRESS.get() {
+        let mut progress = progress.lock().unwrap();
+        progress.clear();
+        progress.shrink_to_fit();
+    }
+    if let Some(activity) = SESSION_ACTIVITY.get() {
+        let mut activity = activity.lock().unwrap();
+        activity.clear();
+        activity.shrink_to_fit();
+    }
+    if let Some(records) = LIFECYCLE_RECORDS.get() {
+        let mut records = records.lock().unwrap();
+        records.clear();
+        records.shrink_to_fit();
+    }
+    if let Some(ended) = ENDED_SESSIONS.get() {
+        let mut ended = ended.lock().unwrap();
+        ended.clear();
+        ended.shrink_to_fit();
+    }
+    if let Some(scopes) = SUSPENDED_RUNTIME_SCOPES.get() {
+        let mut scopes = scopes.lock().unwrap();
+        scopes.clear();
+        scopes.shrink_to_fit();
+    }
+}
+
 /// Fan a session-end out to every registered cleanup hook. Called by the daemon
 /// on control-connection EOF (the reaper) and by the legacy `session_end` method
 /// arm. Idempotent: the FIRST fire for a given `session_id` runs every hook; any

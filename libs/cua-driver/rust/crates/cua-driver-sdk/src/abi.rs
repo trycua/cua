@@ -1448,48 +1448,22 @@ impl NativeAbiDriver {
     }
 
     pub(crate) async fn shutdown(&self) -> Result<(), DriverError> {
-        let (receiver, guard) = {
-            let (sender, receiver) = oneshot::channel();
-            let context = Box::into_raw(Box::new(CallbackContext { sender })).cast::<c_void>();
-            let mut operation = ptr::null_mut();
-            let mut error = CuaDriverBuffer::empty();
-            let status = unsafe {
-                ffi::shutdown(
-                    self.raw_handle(),
-                    Some(rust_completion),
-                    context,
-                    &mut operation,
-                    &mut error,
-                )
-            };
-            if status != CuaDriverStatus::Ok {
-                unsafe { drop(Box::from_raw(context.cast::<CallbackContext>())) };
-                status_result(status, &mut error, "shutdown embedded runtime")?;
-                return Err(DriverError::Protocol {
-                    reason: "shutdown ABI invocation failed without an error".into(),
-                });
+        let runtime = {
+            let handle = *self.handle.lock().unwrap();
+            if handle.is_null() {
+                return Err(DriverError::Shutdown);
             }
-            (
-                receiver,
-                OperationGuard {
-                    operation,
-                    completed: false,
-                },
-            )
+            unsafe {
+                handle
+                    .cast::<CuaDriverHandle>()
+                    .as_ref()
+                    .expect("live ABI handle is non-null")
+                    .runtime
+                    .clone()
+            }
         };
-        let completed = receiver.await.map_err(|_| DriverError::Protocol {
-            reason: "shutdown ABI completion callback was dropped".into(),
-        })?;
-        guard.complete();
-        if completed.status == CuaDriverStatus::Ok {
-            Ok(())
-        } else {
-            Err(map_status(
-                completed.status,
-                completed.error,
-                "shutdown embedded runtime",
-            ))
-        }
+        runtime.shutdown().await;
+        Ok(())
     }
 }
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,6 +15,7 @@ import (
 	"strings"
 	"sync"
 
+	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/middlewares"
 )
 
@@ -245,7 +247,7 @@ func newRequestPolicyInput(request *http.Request, bodyBudget int64) *requestPoli
 			"route":  route,
 			"params": params,
 			"user":   buildUserInput(user),
-			"flags":  flagsData(),
+			"flags":  authorizationFlags(request.Context()),
 		},
 	}
 }
@@ -326,7 +328,7 @@ type FactUnavailableError struct {
 }
 
 func (err *FactUnavailableError) Error() string {
-	return fmt.Sprintf("fact %q unavailable: %v", err.Namespace, err.Err)
+	return fmt.Sprintf("fact %q unavailable", err.Namespace)
 }
 
 func (err *FactUnavailableError) Unwrap() error { return err.Err }
@@ -374,8 +376,9 @@ func (input *requestPolicyInput) loadBody(maxBytes int64) ([]byte, error) {
 			input.request.Body = spliceBody(input.body, original)
 		}
 	}
-	if input.bodyErr != nil {
-		return input.body, input.bodyErr
+	bodyErr := input.bodyErr
+	if bodyErr != nil {
+		return input.body, bodyErr
 	}
 	if int64(len(input.body)) > maxBytes {
 		return input.body, policyBodyError{message: "request body exceeds policy limit"}
@@ -386,7 +389,10 @@ func (input *requestPolicyInput) loadBody(maxBytes int64) ([]byte, error) {
 type MiddlewareOption func(*middlewareConfig)
 
 type middlewareConfig struct {
-	deniedMessage string
+	deniedMessage  string
+	deniedAudit    *deniedAuditConfig
+	adminAPIErrors bool
+	freshAdminAuth bool
 	// pipeline names the optimizer passes to run before compiling. pipelineSet
 	// distinguishes "run the default pipeline" from "run nothing": the two are
 	// both an empty slice, and only the flag tells them apart.
@@ -394,9 +400,35 @@ type middlewareConfig struct {
 	pipelineSet bool
 }
 
+func WithFreshAdminAuthorization() MiddlewareOption {
+	return func(config *middlewareConfig) {
+		config.freshAdminAuth = true
+	}
+}
+
+func WithAdminAPIErrorResponses() MiddlewareOption {
+	return func(config *middlewareConfig) {
+		config.adminAPIErrors = true
+	}
+}
+
 func WithDeniedMessage(message string) MiddlewareOption {
 	return func(config *middlewareConfig) {
 		config.deniedMessage = message
+	}
+}
+
+type deniedAuditConfig struct {
+	event    string
+	maxBytes int64
+}
+
+// WithDeniedAudit records a bounded, typed summary of rejected mutation
+// attempts. It is intentionally generic so every privileged surface can use
+// the same safe behavior without retaining raw request bodies.
+func WithDeniedAudit(event string, maxBytes int64) MiddlewareOption {
+	return func(config *middlewareConfig) {
+		config.deniedAudit = &deniedAuditConfig{event: event, maxBytes: maxBytes}
 	}
 }
 
@@ -434,16 +466,22 @@ func PolicyMiddleware(expression Node, options ...MiddlewareOption) Middleware {
 	}
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+			if config.freshAdminAuth {
+				request = withFreshAdminFlags(request)
+			}
 			verdict := compiled.eval(request.Context(), newRequestPolicyInput(request, compiled.bodyBudget))
 			switch verdict.truth {
 			case truthTrue:
 				next.ServeHTTP(w, request)
 			case truthFalse:
+				if config.deniedAudit != nil && request.Method != http.MethodGet {
+					logRejectedMutation(request, *config.deniedAudit, "not_admin")
+				}
 				message := verdict.reason
 				if message == "" {
 					message = config.deniedMessage
 				}
-				writeJSONErr(w, http.StatusForbidden, message)
+				writePolicyError(w, config, http.StatusForbidden, "not_admin", message)
 			default:
 				// truthError, and deliberately also any truth value a future
 				// change adds: an undecidable policy must fail closed rather
@@ -457,23 +495,111 @@ func PolicyMiddleware(expression Node, options ...MiddlewareOption) Middleware {
 				var factErr *FactUnavailableError
 				switch {
 				case errors.As(verdict.err, &bodyErr):
-					writeJSONErr(w, http.StatusBadRequest, "could not inspect request")
+					if config.deniedAudit != nil && request.Method != http.MethodGet {
+						logRejectedMutation(request, *config.deniedAudit, "invalid_request")
+					}
+					writePolicyError(w, config, http.StatusBadRequest, "invalid_request", "could not inspect request")
 				case errors.As(verdict.err, &factErr):
+					if config.deniedAudit != nil && request.Method != http.MethodGet {
+						logRejectedMutation(request, *config.deniedAudit, "authorization_unavailable")
+					}
 					// A dependency the policy consults is down. Warn rather than
 					// Error: nothing here is broken, and the alert this should
 					// raise is the dependency's, not ours.
-					slog.Warn("opa: authorization fact unavailable", "err", verdict.err,
+					slog.Warn("opa: authorization fact unavailable",
+						"class", "dependency_unavailable",
+						"retryable", true,
 						"facts", factErr.Namespace,
 						"route", request.Context().Value(routeKey),
 						"traceId", request.Context().Value(middlewares.ContextKey("traceId")))
-					writeJSONErr(w, http.StatusBadGateway, "authorization check unavailable")
+					writePolicyError(w, config, http.StatusBadGateway, "authorization_unavailable", "authorization check unavailable")
 				default:
-					slog.Error("opa: policy evaluation failed", "err", verdict.err,
+					if config.deniedAudit != nil && request.Method != http.MethodGet {
+						logRejectedMutation(request, *config.deniedAudit, "policy_error")
+					}
+					slog.Error("opa: policy evaluation failed",
+						"class", "policy_evaluation_failed",
+						"retryable", false,
 						"route", request.Context().Value(routeKey),
 						"traceId", request.Context().Value(middlewares.ContextKey("traceId")))
-					writeJSONErr(w, http.StatusInternalServerError, "policy evaluation failed")
+					writePolicyError(w, config, http.StatusInternalServerError, "policy_error", "policy evaluation failed")
 				}
 			}
 		})
 	}
+}
+
+func writePolicyError(w http.ResponseWriter, config middlewareConfig, status int, code, message string) {
+	if !config.adminAPIErrors {
+		writeJSONErr(w, status, message)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]any{"code": code, "message": message})
+}
+
+func logDeniedMutation(request *http.Request, config deniedAuditConfig) {
+	logRejectedMutation(request, config, "not_admin")
+}
+
+func logRejectedMutation(request *http.Request, config deniedAuditConfig, reason string) {
+	details := map[string]any{}
+	parseFailure := ""
+	if request.Body != nil && config.maxBytes > 0 {
+		body, err := io.ReadAll(io.LimitReader(request.Body, config.maxBytes))
+		var extra [1]byte
+		extraCount, extraErr := request.Body.Read(extra[:])
+		request.Body = splicedBody{Reader: io.MultiReader(bytes.NewReader(body), bytes.NewReader(extra[:extraCount]), request.Body), Closer: request.Body}
+		switch {
+		case err != nil:
+			parseFailure = "read_failed"
+		case extraErr != io.EOF || extraCount != 0:
+			parseFailure = "body_too_large"
+		case len(body) > 0:
+			if err := json.Unmarshal(body, &details); err != nil {
+				parseFailure = "invalid_json"
+			}
+		}
+	}
+	user, _ := request.Context().Value(UserKey).(*User)
+	key := request.PathValue("key")
+	if key == "" && request.Method == http.MethodPost && parseFailure == "" {
+		if bodyKey, ok := details["key"].(string); ok && bodyKey != "" && featureflagadmin.BoundedAuditKey(bodyKey) == bodyKey {
+			key = bodyKey
+		}
+	}
+	attrs := []any{
+		"event", config.event,
+		"actor", "",
+		"actor_email", "",
+		"principal_type", "",
+		"operation", strings.ToLower(request.Method),
+		"path", featureflagadmin.BoundedAuditPath(request.URL.Path, request.PathValue("key")),
+		"traceId", request.Context().Value(middlewares.ContextKey("traceId")),
+		"result", "rejected",
+		"reason", reason,
+	}
+	if key != "" {
+		attrs = append(attrs, "key", featureflagadmin.BoundedAuditKey(key))
+	}
+	if user != nil {
+		attrs[3] = user.ID
+		attrs[5] = user.Email
+		attrs[7] = user.PrincipalType
+	}
+	if parseFailure != "" {
+		attrs = append(attrs, "parse_failure", parseFailure)
+	} else {
+		if value, ok := details["value"]; ok {
+			attrs = append(attrs, "attempted_value", value)
+		}
+		if valueType, ok := details["value_type"]; ok {
+			attrs = append(attrs, "value_type", valueType)
+		}
+		if expectedVersion, ok := details["expected_version"]; ok {
+			attrs = append(attrs, "expected_version", expectedVersion)
+		}
+	}
+	slog.Warn("authorization mutation rejected", attrs...)
 }

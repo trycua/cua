@@ -10,6 +10,10 @@ use std::time::{Duration, Instant};
 use cua_driver_testkit::RawDriver;
 
 const OVERLAY_THREAD: &str = "cua-overlay-wl";
+// Hosted Sway can account one extra scheduler tick while the overlay is
+// quiescent; keep the bound strict enough to catch a busy render loop without
+// treating that normal accounting jitter as a regression.
+const IDLE_TICK_BOUND: u64 = 2;
 
 fn call(driver: &mut RawDriver, id: u64, name: &str, arguments: serde_json::Value) {
     driver.send(&serde_json::json!({
@@ -141,7 +145,7 @@ fn wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity() {
     );
     let tid = wait_for_overlay_tid(pid);
     thread::sleep(Duration::from_secs(2));
-    assert_idle_tick_bound(pid, tid, Duration::from_secs(2), 1);
+    assert_idle_tick_bound(pid, tid, Duration::from_secs(2), IDLE_TICK_BOUND);
 
     call(
         &mut driver,
@@ -150,7 +154,7 @@ fn wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity() {
         serde_json::json!({"enabled": false}),
     );
     thread::sleep(Duration::from_millis(250));
-    assert_idle_tick_bound(pid, tid, Duration::from_secs(1), 1);
+    assert_idle_tick_bound(pid, tid, Duration::from_secs(1), IDLE_TICK_BOUND);
 
     call(
         &mut driver,
@@ -174,5 +178,5 @@ fn wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity() {
     );
 
     thread::sleep(Duration::from_secs(2));
-    assert_idle_tick_bound(pid, tid, Duration::from_secs(2), 1);
+    assert_idle_tick_bound(pid, tid, Duration::from_secs(2), IDLE_TICK_BOUND);
 }

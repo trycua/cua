@@ -36,6 +36,8 @@ pub enum SdkError {
         status: u16,
         body: String,
     },
+    #[error("signed service URLs are not configured in this environment")]
+    SignedServiceUrlsUnavailable,
     #[error("unknown sandbox service {requested}; available services: {available:?}")]
     UnknownService {
         requested: String,

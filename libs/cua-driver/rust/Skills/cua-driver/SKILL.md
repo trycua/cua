@@ -1,7 +1,7 @@
 ---
 name: cua-driver
 description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
-version: 0.22.0 # x-release-please-version
+version: 0.23.2 # x-release-please-version
 metadata:
   openclaw:
     requires:
@@ -177,6 +177,13 @@ If you reach for a command that says "activate", "foreground",
 "raise", or "make key", stop and translate to the cua-driver tool
 that does the same intent without focus-stealing.
 
+`delivery_mode:"foreground"` is a user-visible takeover boundary, not an
+automatic retry. Use it only when the user already authorized foreground
+control for this workflow or after asking for approval. It may change focus,
+workspace, and the compositor cursor while the action runs; restoration is
+best-effort. If background delivery is unavailable and foreground control is
+not authorized, stop with the driver's refusal instead of silently escalating.
+
 A desktop target is an explicit per-call choice to operate the visible desktop
 and therefore uses foreground/system input. Use it only after the narrower
 window ladder has been attempted and verified. Permission policy must still
@@ -185,17 +192,23 @@ or a public session label.
 
 ## GUI transport defaults — prefer cua-driver over GUI shell shims
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name> '<JSON-args>'`. MCP tools (prefix
-`mcp__cua-driver__*`) only when the user explicitly asks for them.
-CLI wins because it picks up rebuilds instantly, failures are
-easier to diagnose, and there's no per-tool schema-load overhead.
+**Default transport is the `cua-driver` CLI for one-off calls** — `Bash`
+shelling out to `cua-driver <tool-name> '<JSON-args>'`. Each CLI invocation
+owns a disposable transport session that is cleaned up after its response.
+Use one persistent `cua-driver mcp` connection for a multi-call GUI workflow
+that needs shared cursor, recording, browser, or named-session state. A public
+session label is not a credential and a later one-shot process cannot adopt
+the previous process's lifecycle merely by repeating that label.
+
+CLI wins for isolated inspection and management because it picks up rebuilds
+instantly, failures are easier to diagnose, and there's no per-tool
+schema-load overhead. Persistent MCP wins for an ordered action loop.
 
 Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
 when MCP is requested.
 
-### Claude Code computer-use compatibility mode
+### Claude Code computer-use compatibility flag
 
 For normal Claude Code use, keep the default CLI or `cua-driver` MCP
 server path above. If the user explicitly wants Claude Code's
@@ -205,20 +218,10 @@ vision/computer-use-style flow, they can register:
 cua-driver mcp-config --client claude   # then paste + run the printed line
 ```
 
-Observation: Claude Code vision flows appear to treat a screenshot
-MCP tool as the image-grounding anchor. This compatibility mode keeps
-the normal CuaDriver tools and changes only `screenshot`. The
-compatibility `screenshot` requires `pid` and `window_id`, captures
-only that target window, and returns the window-local pixel
-coordinate frame. Start with `launch_app` or `list_windows`, then
-call `screenshot({pid, window_id})`; do not assume desktop
-coordinates or a full-screen capture.
-
-Use MCP for this Claude Code vision/computer-use-style path. Do not
-shell out to `cua-driver screenshot` as a substitute: CLI screenshots
-still work as CuaDriver calls, but they do not expose the
-`mcp__cua-computer-use__screenshot` tool name that Claude Code
-appears to use as the image-grounding cue.
+The compatibility flag is retained for old setup snippets, but the standalone
+`screenshot` tool was removed. It does not add or replace tools. Use
+`get_window_state({pid, window_id})` for a window-local accessibility snapshot
+and PNG, or `get_desktop_state()` for an explicitly authorized desktop capture.
 
 ## Using cua-driver from the shell
 
@@ -237,18 +240,19 @@ Tool names are `snake_case`, management subcommands are
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
 - `cua-driver check-update [--json] [--no-cache]` — read-only "is a newer release available?" probe. Same payload as the `check_for_update` MCP tool; pair with `cua-driver update --apply` to install.
 
-Canonical multi-step workflow (example shape — platform-specific
-launch idioms in the per-OS companion file):
+Canonical multi-step workflow within one persistent MCP connection (example
+shape — platform-specific launch idioms in the per-OS companion file):
 
 ```bash
-cua-driver serve
-cua-driver launch_app '{"bundle_id":"..."}'
+# Start the service once, then connect one MCP client with `cua-driver mcp`.
+# The calls below are tool calls on that same connection, not separate shell
+# invocations of `cua-driver <tool>`.
+launch_app({"bundle_id":"..."})
 # → {pid: 844, windows: [{window_id: 10725, ...}]}
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
+get_window_state({"pid":844,"window_id":10725})
 # Use the returned structuredContent.elements[].element_token:
-cua-driver click '{"pid":844,"element_token":"s0000002a:14"}'
-cua-driver verify_state '{"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]}'
-cua-driver stop
+click({"pid":844,"element_token":"s0000002a:14"})
+verify_state({"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]})
 ```
 
 For Chromium page content, keep the same native window selection but switch to
@@ -274,6 +278,15 @@ recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
 `end_handle`, `arc_size`, `arc_flow`, `spring` — tuneable at runtime,
 persisted to config.
+
+**Agent-control safety.** Keep this overlay enabled whenever the agent is
+controlling pointer or keyboard input. Cursor-bearing and keyboard actions
+automatically re-show their session cursor, even if it was hidden while idle.
+On Linux, ordinary `move_cursor({x,y})` moves only this synthetic cursor.
+`move_cursor({x,y,scope:"desktop"})` is the explicit escape hatch that moves
+the user's compositor cursor and must not be used unless the user asked for
+desktop-pointer control. Raw Wayland input that requires
+`delivery_mode:"foreground"` crosses the same user-visible takeover boundary.
 
 Delivery and target context is shown as host-owned chips inside the session
 badge. Themes own the twelve action animations only. The session name and
@@ -625,6 +638,8 @@ if resp.effect == "suspected_noop"
 # Route 4 — background delivery was dropped (insert/click never arrived)
 if resp.escalation.target == "foreground"
    or the px action still did nothing:
+    require existing user authorization for visible foreground control
+    otherwise stop and ask; do not retry automatically
     re-call the same action with delivery_mode:"foreground"
     # on Wayland this is the ONLY escalation — px-bg can't target an
     # unfocused window there; see LINUX.md
@@ -675,6 +690,12 @@ launch_app(target, session)
   → verify_state(pid, window_id, expect)  # structured check; optional image
 end_session(session?)             # optional explicit cleanup
 ```
+
+An existing-profile `end_session` restores the Chromium browser's
+remote-debugging toggle when Cua enabled it and no other Cua session still uses
+that browser process and dismisses the exact native consent prompt. If exact
+cleanup cannot be proven, session cleanup fails closed and a later
+`end_session` retries it.
 
 For screen-absolute work, replace the window portion with
 `get_desktop_state() → action(target={kind:"desktop",display_id:"primary"}, ...)
@@ -761,10 +782,10 @@ The response carries:
 
 ```bash
 # write to file — stdout stays readable (AX/UIA tree / summary only, no base64)
-cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
+cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.png"}'
 
 # CLI --screenshot-out-file flag is equivalent
-cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.jpg
+cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.png
 ```
 
 Pass `screenshot_out_file` when using `get_window_state` via CLI or
@@ -885,12 +906,14 @@ Two consequences for callers:
   `scroll`, `type_text`, `press_key`, `hotkey` — uniformly. The
   `foreground` rung briefly fronts the target, acts, then restores the
   prior frontmost: the explicit last resort when a background attempt
-  didn't land. **`foreground` is a reaction, never a prediction.** Always
+  didn't land. **`foreground` is a reaction and a user-authorization gate,
+  never a prediction.** Always
   fire the `background` default first and let the driver tell you it
   can't (a `background_unavailable` error with
   `escalation.recommended == "foreground"`, or a successful action result
   with `escalation.target == "foreground"`) — or observe a confirmed no-op —
-  _before_ you escalate.
+  _before_ you consider escalation. Then use it only when the user already
+  authorized visible foreground control or after asking for approval.
   Do **not** reason "it's a GTK/Chromium/Electron app, so background will
   drop, so I'll front up-front": the toolkit lists in the tool schemas
   are the _driver's_ internal detectors, not a checklist for you to front

@@ -163,8 +163,11 @@ import json
 with open('/tmp/cua-driver-permissions-live.json') as source:
     status = json.load(source)
 
-assert status['screen_recording_capturable'] is True
-assert status['direct_capture_status'] == 'ready'
+assert status['screen_recording_capturable'] is None
+assert status['direct_capture_status'] == 'not_checked'
+assert status['direct_capture_verification']['source'] == 'permissions_grant'
+assert status['direct_capture_verification']['verified_at'].endswith('Z')
+assert status['direct_capture_verification']['bundle_id'] == 'com.trycua.driver'
 PY
 /Users/lume/.local/bin/cua-driver call get_accessibility_tree '{}'
 /Users/lume/.local/bin/cua-driver call get_desktop_state '{}' \

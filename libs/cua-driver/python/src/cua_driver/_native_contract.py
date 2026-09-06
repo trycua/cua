@@ -4334,10 +4334,11 @@ class SessionStateOutput:
     """
     Successful structured result shared by session state and escalation tools.
 """
-    def __init__(self, *, session:str, capture_scope:CaptureScope, effective_scope:EffectiveScope, desktop_unlocked:bool, escalation_reason:typing.Optional[EscalationReason], escalation_detail:typing.Optional[str]):
+    def __init__(self, *, session:str, capture_scope:CaptureScope, effective_scope:EffectiveScope, desktop_capture_authorized:bool, desktop_unlocked:bool, escalation_reason:typing.Optional[EscalationReason], escalation_detail:typing.Optional[str]):
         self.session = session
         self.capture_scope = capture_scope
         self.effective_scope = effective_scope
+        self.desktop_capture_authorized = desktop_capture_authorized
         self.desktop_unlocked = desktop_unlocked
         self.escalation_reason = escalation_reason
         self.escalation_detail = escalation_detail
@@ -4346,13 +4347,15 @@ class SessionStateOutput:
 
 
     def __str__(self):
-        return "SessionStateOutput(session={}, capture_scope={}, effective_scope={}, desktop_unlocked={}, escalation_reason={}, escalation_detail={})".format(self.session, self.capture_scope, self.effective_scope, self.desktop_unlocked, self.escalation_reason, self.escalation_detail)
+        return "SessionStateOutput(session={}, capture_scope={}, effective_scope={}, desktop_capture_authorized={}, desktop_unlocked={}, escalation_reason={}, escalation_detail={})".format(self.session, self.capture_scope, self.effective_scope, self.desktop_capture_authorized, self.desktop_unlocked, self.escalation_reason, self.escalation_detail)
     def __eq__(self, other):
         if self.session != other.session:
             return False
         if self.capture_scope != other.capture_scope:
             return False
         if self.effective_scope != other.effective_scope:
+            return False
+        if self.desktop_capture_authorized != other.desktop_capture_authorized:
             return False
         if self.desktop_unlocked != other.desktop_unlocked:
             return False
@@ -4369,6 +4372,7 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
             session=_UniffiFfiConverterString.read(buf),
             capture_scope=_UniffiFfiConverterTypeCaptureScope.read(buf),
             effective_scope=_UniffiFfiConverterTypeEffectiveScope.read(buf),
+            desktop_capture_authorized=_UniffiFfiConverterBoolean.read(buf),
             desktop_unlocked=_UniffiFfiConverterBoolean.read(buf),
             escalation_reason=_UniffiFfiConverterOptionalTypeEscalationReason.read(buf),
             escalation_detail=_UniffiFfiConverterOptionalString.read(buf),
@@ -4379,6 +4383,7 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.check_lower(value.session)
         _UniffiFfiConverterTypeCaptureScope.check_lower(value.capture_scope)
         _UniffiFfiConverterTypeEffectiveScope.check_lower(value.effective_scope)
+        _UniffiFfiConverterBoolean.check_lower(value.desktop_capture_authorized)
         _UniffiFfiConverterBoolean.check_lower(value.desktop_unlocked)
         _UniffiFfiConverterOptionalTypeEscalationReason.check_lower(value.escalation_reason)
         _UniffiFfiConverterOptionalString.check_lower(value.escalation_detail)
@@ -4388,6 +4393,7 @@ class _UniffiFfiConverterTypeSessionStateOutput(_UniffiConverterRustBuffer):
         _UniffiFfiConverterString.write(value.session, buf)
         _UniffiFfiConverterTypeCaptureScope.write(value.capture_scope, buf)
         _UniffiFfiConverterTypeEffectiveScope.write(value.effective_scope, buf)
+        _UniffiFfiConverterBoolean.write(value.desktop_capture_authorized, buf)
         _UniffiFfiConverterBoolean.write(value.desktop_unlocked, buf)
         _UniffiFfiConverterOptionalTypeEscalationReason.write(value.escalation_reason, buf)
         _UniffiFfiConverterOptionalString.write(value.escalation_detail, buf)

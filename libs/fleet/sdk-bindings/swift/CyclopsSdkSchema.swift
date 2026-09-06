@@ -660,6 +660,8 @@ public protocol OsGymSandboxWarmPoolSpecBuilderProtocol: AnyObject, Sendable {
 
     func sandboxTemplateRef(value: SandboxTemplateRef)  -> OsGymSandboxWarmPoolSpecBuilder
 
+    func ttlSecondsAfterCreated(value: UInt32)  -> OsGymSandboxWarmPoolSpecBuilder
+
 }
 open class OsGymSandboxWarmPoolSpecBuilder: OsGymSandboxWarmPoolSpecBuilderProtocol, @unchecked Sendable {
     fileprivate let handle: UInt64
@@ -752,6 +754,15 @@ open func sandboxTemplateRef(value: SandboxTemplateRef) -> OsGymSandboxWarmPoolS
     uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
             self.uniffiCloneHandle(),
         FfiConverterTypeSandboxTemplateRef_lower(value),$0
+    )
+})
+}
+
+open func ttlSecondsAfterCreated(value: UInt32) -> OsGymSandboxWarmPoolSpecBuilder  {
+    return try!  FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder_lift(try! rustCall() {
+    uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
+            self.uniffiCloneHandle(),
+        FfiConverterUInt32.lower(value),$0
     )
 })
 }
@@ -1725,14 +1736,16 @@ public struct ClaimSpec: Equatable, Hashable {
     public var warmpool: String?
     public var bindDeadline: UInt32?
     public var lifecycle: ClaimLifecycle?
+    public var ttlSecondsAfterCreated: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(sandboxTemplateRef: SandboxTemplateRef, warmpool: String?, bindDeadline: UInt32?, lifecycle: ClaimLifecycle?) {
+    public init(sandboxTemplateRef: SandboxTemplateRef, warmpool: String?, bindDeadline: UInt32?, lifecycle: ClaimLifecycle?, ttlSecondsAfterCreated: UInt32? = nil) {
         self.sandboxTemplateRef = sandboxTemplateRef
         self.warmpool = warmpool
         self.bindDeadline = bindDeadline
         self.lifecycle = lifecycle
+        self.ttlSecondsAfterCreated = ttlSecondsAfterCreated
     }
 
 
@@ -1754,7 +1767,8 @@ public struct FfiConverterTypeClaimSpec: FfiConverterRustBuffer {
                 sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from: &buf),
                 warmpool: FfiConverterOptionString.read(from: &buf),
                 bindDeadline: FfiConverterOptionUInt32.read(from: &buf),
-                lifecycle: FfiConverterOptionTypeClaimLifecycle.read(from: &buf)
+                lifecycle: FfiConverterOptionTypeClaimLifecycle.read(from: &buf),
+                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -1763,6 +1777,7 @@ public struct FfiConverterTypeClaimSpec: FfiConverterRustBuffer {
         FfiConverterOptionString.write(value.warmpool, into: &buf)
         FfiConverterOptionUInt32.write(value.bindDeadline, into: &buf)
         FfiConverterOptionTypeClaimLifecycle.write(value.lifecycle, into: &buf)
+        FfiConverterOptionUInt32.write(value.ttlSecondsAfterCreated, into: &buf)
     }
 }
 
@@ -2142,13 +2157,15 @@ public struct OsGymSandboxWarmPoolSpec: Equatable, Hashable {
     public var replicas: UInt32
     public var sandboxTemplateRef: SandboxTemplateRef
     public var autoscaling: WarmPoolAutoscaling?
+    public var ttlSecondsAfterCreated: UInt32?
 
     // Default memberwise initializers are never public by default, so we
     // declare one manually.
-    public init(replicas: UInt32, sandboxTemplateRef: SandboxTemplateRef, autoscaling: WarmPoolAutoscaling?) {
+    public init(replicas: UInt32, sandboxTemplateRef: SandboxTemplateRef, autoscaling: WarmPoolAutoscaling?, ttlSecondsAfterCreated: UInt32? = nil) {
         self.replicas = replicas
         self.sandboxTemplateRef = sandboxTemplateRef
         self.autoscaling = autoscaling
+        self.ttlSecondsAfterCreated = ttlSecondsAfterCreated
     }
 
 
@@ -2169,7 +2186,8 @@ public struct FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer {
             try OsGymSandboxWarmPoolSpec(
                 replicas: FfiConverterUInt32.read(from: &buf),
                 sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from: &buf),
-                autoscaling: FfiConverterOptionTypeWarmPoolAutoscaling.read(from: &buf)
+                autoscaling: FfiConverterOptionTypeWarmPoolAutoscaling.read(from: &buf),
+                ttlSecondsAfterCreated: FfiConverterOptionUInt32.read(from: &buf)
         )
     }
 
@@ -2177,6 +2195,7 @@ public struct FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer {
         FfiConverterUInt32.write(value.replicas, into: &buf)
         FfiConverterTypeSandboxTemplateRef.write(value.sandboxTemplateRef, into: &buf)
         FfiConverterOptionTypeWarmPoolAutoscaling.write(value.autoscaling, into: &buf)
+        FfiConverterOptionUInt32.write(value.ttlSecondsAfterCreated, into: &buf)
     }
 }
 
@@ -3657,6 +3676,9 @@ private let initializationResult: InitializationResult = {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198) {
+        return InitializationResult.apiChecksumMismatch
+    }
+    if (uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516) {
         return InitializationResult.apiChecksumMismatch
     }
     if (uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() != 17132) {

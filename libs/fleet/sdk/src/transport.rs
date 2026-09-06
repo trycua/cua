@@ -6,12 +6,13 @@ use base64::{Engine, engine::general_purpose::STANDARD};
 use serde::Deserialize;
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
-use std::{
-    sync::Arc,
-    time::{Duration, Instant},
-};
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Instant;
+use std::{sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use url::Url;
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 const TOKEN_EXPIRY_SKEW: Duration = Duration::from_secs(30);
 const AUTHENTICATED_REQUEST_OPERATION: &str = "authenticated request";

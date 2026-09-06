@@ -15,6 +15,7 @@ import Modal from "@cloudscape-design/components/modal"
 import Multiselect, {
   type MultiselectProps,
 } from "@cloudscape-design/components/multiselect"
+import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
 import Toggle from "@cloudscape-design/components/toggle"
@@ -29,11 +30,14 @@ import {
   type GitHubTrustPolicy,
   githubTrustPoliciesApi,
   namespacesApi,
-} from "../sdk/githubTrustPolicies"
+} from "../api/githubTrustPolicies"
 import { BillingSettings } from "./Billing"
+import { useI18n } from "../i18n/I18nProvider"
+import { localeLabels, supportedLocales, type Locale } from "../i18n/translations"
 
 export function Settings() {
   const flash = useFlash()
+  const { formatDateTime, locale, setLocale, t } = useI18n()
   const { sub, name } = userInfo()
   const { billing } = useFeatureFlags()
   const [policies, setPolicies] = useState<GitHubTrustPolicy[]>([])
@@ -240,52 +244,66 @@ steps:
       cua sb exec "$sandbox" sh -lc 'uname -a; id; pwd'`
   return (
     <PageShell
-      eyebrow="Account"
-      title="Settings"
-      description="Manage your identity, payment method, and automation access."
+      eyebrow={t("account.heading")}
+      title={t("page.settings")}
     >
       <SpaceBetween size="l">
         <Container
           header={
-            <Header
-              variant="h2"
-              description="Identity details from your current Cua session."
-            >
-              Account
+            <Header variant="h2" description={t("i18n.description")}>
+              {t("i18n.heading")}
             </Header>
           }
         >
-          <SpaceBetween size="m">
-          <FormField label="Username">
-            {name ? (
-              <CopyToClipboard
-                variant="inline"
-                textToCopy={name}
-                textToDisplay={<code>{name}</code>}
-                copyButtonAriaLabel="Copy username"
-                copySuccessText="Username copied"
-                copyErrorText="Failed to copy username"
-              />
-            ) : (
-              <Box color="text-status-inactive">Unknown</Box>
-            )}
+          <FormField label={t("i18n.displayLanguage")}>
+            <Select
+              selectedOption={{ label: localeLabels[locale], value: locale }}
+              onChange={({ detail }) => setLocale(detail.selectedOption.value as Locale)}
+              options={supportedLocales.map(value => ({
+                label: localeLabels[value],
+                value,
+              }))}
+              placeholder={t("i18n.selectPlaceholder")}
+            />
           </FormField>
-          <FormField label="Subject (sub)">
-            {sub ? (
-              <CopyToClipboard
-                variant="inline"
-                textToCopy={sub}
-                textToDisplay={<code>{sub}</code>}
-                copyButtonAriaLabel="Copy subject"
-                copySuccessText="Subject copied"
-                copyErrorText="Failed to copy subject"
-              />
-            ) : (
-              <Box color="text-status-inactive">Unknown</Box>
-            )}
-          </FormField>
-          </SpaceBetween>
         </Container>
+        <ExpandableSection
+          variant="container"
+          defaultExpanded={false}
+          headerText={t("account.heading")}
+          headerDescription={t("account.description")}
+        >
+          <SpaceBetween size="m">
+            <FormField label={t("account.username")}>
+              {name ? (
+                <CopyToClipboard
+                  variant="inline"
+                  textToCopy={name}
+                  textToDisplay={<code>{name}</code>}
+                  copyButtonAriaLabel={t("account.copyUsername")}
+                  copySuccessText={t("account.usernameCopied")}
+                  copyErrorText={t("account.usernameCopyFailed")}
+                />
+              ) : (
+                <Box color="text-status-inactive">{t("account.unknown")}</Box>
+              )}
+            </FormField>
+            <FormField label={t("account.subject")}>
+              {sub ? (
+                <CopyToClipboard
+                  variant="inline"
+                  textToCopy={sub}
+                  textToDisplay={<code>{sub}</code>}
+                  copyButtonAriaLabel={t("account.copySubject")}
+                  copySuccessText={t("account.subjectCopied")}
+                  copyErrorText={t("account.subjectCopyFailed")}
+                />
+              ) : (
+                <Box color="text-status-inactive">{t("account.unknown")}</Box>
+              )}
+            </FormField>
+          </SpaceBetween>
+        </ExpandableSection>
 
       {billing && <BillingSettings />}
 
@@ -397,7 +415,7 @@ steps:
               {
                 id: "updated",
                 header: "Updated",
-                cell: policy => new Date(policy.updated_at).toLocaleString(),
+                cell: policy => formatDateTime(policy.updated_at),
               },
               {
                 id: "actions",

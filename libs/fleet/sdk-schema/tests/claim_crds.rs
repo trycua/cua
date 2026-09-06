@@ -66,6 +66,39 @@ fn normalize_known_kube_derive_artifacts(mut value: Value) -> Value {
     value
 }
 
+fn ttl_schema(crd: Value) -> Value {
+    let mut schema = crd
+        .pointer(
+            "/spec/versions/0/schema/openAPIV3Schema/properties/spec/properties/ttlSecondsAfterCreated",
+        )
+        .cloned()
+        .unwrap();
+    schema.as_object_mut().unwrap().remove("description");
+    normalize_numbers(&mut schema);
+    schema
+}
+
+#[test]
+fn pool_and_claim_ttl_are_optional_bounded_u32_integers() {
+    for crd in [
+        serde_json::to_value(OSGymSandboxWarmPool::crd()).unwrap(),
+        serde_json::to_value(OSGymSandboxClaim::crd()).unwrap(),
+    ] {
+        let required = crd
+            .pointer("/spec/versions/0/schema/openAPIV3Schema/properties/spec/required")
+            .and_then(Value::as_array)
+            .unwrap();
+        assert!(
+            !required.contains(&json!("ttlSecondsAfterCreated")),
+            "ttlSecondsAfterCreated must be optional",
+        );
+        assert_eq!(
+            ttl_schema(crd),
+            json!({"type": "integer", "minimum": 0, "maximum": 4_294_967_295u64}),
+        );
+    }
+}
+
 #[test]
 fn raw_kube_derive_output_has_intentional_warm_pool_and_claim_shape_differences() {
     let warm_pool = serde_json::to_value(OSGymSandboxWarmPool::crd()).unwrap();

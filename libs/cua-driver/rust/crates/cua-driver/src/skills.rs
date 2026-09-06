@@ -1204,6 +1204,38 @@ mod tests {
     }
 
     #[test]
+    fn bundled_skill_keeps_agent_control_non_interfering_by_default() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let linux = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/LINUX.md"))
+            .expect("canonical Linux skill must be readable");
+
+        for required in [
+            "`delivery_mode:\"foreground\"` is a user-visible takeover boundary",
+            "ordinary `move_cursor({x,y})` moves only this synthetic cursor",
+            "must not be used unless the user asked for",
+            "do not retry automatically",
+            "stop with the driver's refusal instead of silently escalating",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required agent-control safety guidance: {required}"
+            );
+        }
+        for required in [
+            "keyboard actions re-show it automatically",
+            "Never select it automatically",
+            "explicitly authorized `delivery_mode:\"foreground\"`",
+        ] {
+            assert!(
+                linux.contains(required),
+                "Linux skill lost required non-interference guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
     fn extract_flat_tarball_v_0_2_20_plus() {
         // Post-fix shape: one wrapper dir, files directly under it.
         //   cua-driver-rs-v0.2.20-skills/SKILL.md

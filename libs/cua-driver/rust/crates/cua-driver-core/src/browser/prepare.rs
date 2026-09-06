@@ -1055,6 +1055,10 @@ impl BrowserEngine {
             }
         };
         let previous_generation = previous_grant.as_ref().map_or(0, |grant| grant.generation);
+        let cleanup_remote_debugging = setup.enabled_remote_debugging
+            || previous_grant
+                .as_ref()
+                .is_some_and(|grant| grant.cleanup_remote_debugging);
         let grant = self.existing_profile_grants.mint(
             &request.session,
             request.transport_session.as_deref(),
@@ -1062,7 +1066,9 @@ impl BrowserEngine {
             window_id,
             fingerprint,
             "chromium".to_owned(),
+            classification.product_kind,
             endpoint.ws_url.clone(),
+            cleanup_remote_debugging,
             protected_consent,
         );
         if let Some(previous) = previous_grant {

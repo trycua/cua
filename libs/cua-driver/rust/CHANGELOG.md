@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.23.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.23.1...cua-driver-rs-v0.23.2) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cua-driver:** clean up unresolved Chrome consent UI ([#3468](https://github.com/trycua/cua/issues/3468)) ([e729547](https://github.com/trycua/cua/commit/e7295472e196b22e1d02a69441b315a3776d50fb))
+
+## [0.23.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.23.0...cua-driver-rs-v0.23.1) (2026-08-31)
+
+
+### Bug Fixes
+
+* **cua-driver:** harden cross-platform e2e evidence ([99f27ee](https://github.com/trycua/cua/commit/99f27eeb96481a155fe10f6dee6a131cc0de8b9e))
+
+## [0.23.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.2...cua-driver-rs-v0.23.0) (2026-08-30)
+
+
+### Features
+
+* **cua-driver:** add session-based Agent View across desktops ([#3431](https://github.com/trycua/cua/issues/3431)) ([57981a1](https://github.com/trycua/cua/commit/57981a16f8c16a72955ac06d3a98dbcc0f9ca4b6))
+* **cua-driver:** add trusted KDE KWin Wayland target identity adapter ([#3336](https://github.com/trycua/cua/issues/3336)) ([9596fb3](https://github.com/trycua/cua/commit/9596fb334f3eeec541979ccf5f0ef9ef360da0c6))
+* **cua-driver:** advertise native Wayland build features ([#2669](https://github.com/trycua/cua/issues/2669)) ([31c61dd](https://github.com/trycua/cua/commit/31c61dd161ea4a27a5e719e71a2eb469b89d924d))
+
+
+### Bug Fixes
+
+* **cua-driver:** bind uninstall signals to process generation ([#3446](https://github.com/trycua/cua/issues/3446)) ([63c700d](https://github.com/trycua/cua/commit/63c700d78aec868e7151c8d982263a4f7f146ade))
+* **cua-driver:** keep macOS daemon stable during permission setup ([#3314](https://github.com/trycua/cua/issues/3314)) ([dbf0d3a](https://github.com/trycua/cua/commit/dbf0d3a450d9c4fc3a0a768faf0ce9b3283f908e))
+* **cua-driver:** make Agent View opt-in by default ([8d94261](https://github.com/trycua/cua/commit/8d942610dc6c43b97d0ca54761a998ae21ee1fed))
+* **cua-driver:** stop the serve daemon in the Unix release uninstaller ([#3340](https://github.com/trycua/cua/issues/3340)) ([45c256b](https://github.com/trycua/cua/commit/45c256bc826c13e6c0667b9891c4ce4ab0e635af))
+
+
+### Reverts
+
+* **cua-driver:** remove native Agent View presentation ([#3452](https://github.com/trycua/cua/issues/3452)) ([47452be](https://github.com/trycua/cua/commit/47452be2da82cbfe71d6a13bb0d5afd83502eef5))
+
+## [0.22.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.1...cua-driver-rs-v0.22.2) (2026-08-27)
+
+
+### Bug Fixes
+
+* **cua-driver:** align Wayland capture, focus, and overlays ([#3152](https://github.com/trycua/cua/issues/3152)) ([2fc59ea](https://github.com/trycua/cua/commit/2fc59ea943a03e7ab74f948b478afac6765493b5))
+* **cua-driver:** report macOS Retina backing scale ([#3328](https://github.com/trycua/cua/issues/3328)) ([9029514](https://github.com/trycua/cua/commit/90295148d34dac8e5a1307bac917e08171af5839))
+
+## [0.22.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.22.0...cua-driver-rs-v0.22.1) (2026-08-25)
+
+
+### Bug Fixes
+
+* **cua-driver:** clean up Chromium remote debugging after browser sessions ([#3372](https://github.com/trycua/cua/issues/3372)) ([85d7779](https://github.com/trycua/cua/commit/85d77792e2f400a88f4b77c1218e388945c4b01c))
+
 ## [0.22.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.21.0...cua-driver-rs-v0.22.0) (2026-08-24)
 
 

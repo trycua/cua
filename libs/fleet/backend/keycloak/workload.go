@@ -2,6 +2,7 @@ package keycloak
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -133,12 +134,14 @@ func (a *Admin) EnsureTenantWorkloadClient(
 		// Likely a create race (another replica created it concurrently) or
 		// a pre-existing client our initial lookup missed — recover by
 		// re-looking-up and returning the existing secret.
-		if cid, secret, found, lookErr := a.lookupClientSecret(ctx, tok, clientID); lookErr == nil && found {
+		cid, secret, found, lookErr := a.lookupClientSecret(ctx, tok, clientID)
+		if lookErr == nil && found {
 			return cid, secret, nil
 		}
 		span.RecordError(err)
 		span.SetStatus(codes.Error, "create client failed")
-		return "", "", fmt.Errorf("create client: %w", err)
+		return "", "", errors.Join(fmt.Errorf("create client: %w", err), lookErr)
+
 	}
 
 	cs, err := a.client.GetClientSecret(ctx, tok, a.realm, kcUUID)

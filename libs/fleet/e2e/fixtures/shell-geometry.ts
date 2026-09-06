@@ -6,12 +6,15 @@ export async function expectSharedPageShell(page: Page): Promise<void> {
   await expect(header).toBeVisible()
   await expect(body).toBeVisible()
 
-  const [headerBox, bodyBox] = await Promise.all([
-    header.boundingBox(),
-    body.boundingBox(),
-  ])
-  expect(headerBox).not.toBeNull()
-  expect(bodyBox).not.toBeNull()
+  let headerBox = null
+  let bodyBox = null
+  await expect.poll(async () => {
+    [headerBox, bodyBox] = await Promise.all([
+      header.boundingBox(),
+      body.boundingBox(),
+    ])
+    return headerBox !== null && bodyBox !== null
+  }).toBe(true)
   expect(Math.abs(headerBox!.x - bodyBox!.x)).toBeLessThanOrEqual(1)
   expect(
     Math.abs(

@@ -66,6 +66,10 @@ portable desktop capture, pointer, scroll, and keyboard actions through the
 generated `cua-driver` Python SDK. The default `embedded` mode loads the Rust
 runtime into computer-server and does not require a daemon. `daemon` mode is a
 compatibility option for deployments that already own a long-lived driver.
+The driver backend never falls back to OS-native input injection. Separate
+`mouse_down`, `mouse_up`, `key_down`, and `key_up` calls return an explicit
+unsupported-operation error; use `drag`, `click`, `press_key`, or `hotkey`
+instead.
 
 Each computer-server process opens a distinct driver session. Its capture scope
 defaults to `desktop`, which enables the `get_desktop_state` command and

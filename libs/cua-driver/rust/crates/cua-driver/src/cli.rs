@@ -78,6 +78,7 @@ pub enum Command {
     },
     Stop {
         socket: Option<String>,
+        expected_pid: Option<u32>,
     },
     Revoke {
         socket: Option<String>,
@@ -222,6 +223,7 @@ const VALUE_FLAGS: &[&str] = &[
     "--session-policy",
     "--capability-manifest",
     "--pid-file",
+    "--expected-pid",
     "--type",
     "--host-bundle-id",
     "--pid",
@@ -695,6 +697,8 @@ pub fn parse_command() -> Command {
         }
     }
 
+    let expected_stop_pid = parse_expected_stop_pid(&args, positionals.first().copied());
+
     if matches!(positionals.first().copied(), None | Some("mcp")) {
         if let Some(flag) = serve_only_authorization_flag(&args) {
             eprintln!("cua-driver mcp does not accept {flag}; authorization flags belong to `cua-driver serve`.");
@@ -767,7 +771,10 @@ pub fn parse_command() -> Command {
             grants,
             experimental_history: args.iter().any(|a| a == "--experimental-history"),
         },
-        Some("stop") => Command::Stop { socket },
+        Some("stop") => Command::Stop {
+            socket,
+            expected_pid: expected_stop_pid,
+        },
         Some("revoke") => {
             let all = args.iter().any(|a| a == "--all");
             if all == approval_session.is_some() {
@@ -1009,6 +1016,21 @@ pub fn parse_command() -> Command {
                 screenshot_out_file,
                 socket: socket.clone(),
             }
+        }
+    }
+}
+
+fn parse_expected_stop_pid(args: &[String], command: Option<&str>) -> Option<u32> {
+    let raw = flag_value(args, "--expected-pid")?;
+    if command != Some("stop") {
+        eprintln!("--expected-pid is valid only with `cua-driver stop`");
+        process::exit(64);
+    }
+    match raw.parse::<u32>() {
+        Ok(pid) if pid != 0 => Some(pid),
+        _ => {
+            eprintln!("--expected-pid requires a positive integer PID");
+            process::exit(64);
         }
     }
 }
@@ -1731,6 +1753,18 @@ pub fn run_manifest(pretty: bool) {
     println!("{out}");
 }
 
+fn manifest_feature_flags(
+    target_is_linux: bool,
+    portal_input_enabled: bool,
+    portal_capture_enabled: bool,
+) -> (bool, bool, bool) {
+    (
+        target_is_linux,
+        target_is_linux && portal_input_enabled,
+        target_is_linux && portal_capture_enabled,
+    )
+}
+
 /// Build the JSON manifest document. Pure function — surfaced separately
 /// from `run_manifest` so tests can introspect the shape without going
 /// through stdout.
@@ -1743,6 +1777,12 @@ pub fn build_manifest() -> serde_json::Value {
         .and_then(|p| p.to_str().map(str::to_owned))
         .unwrap_or_else(|| "cua-driver".to_owned());
 
+    let (wayland_native, portal_input, portal_capture) = manifest_feature_flags(
+        cfg!(target_os = "linux"),
+        cfg!(feature = "portal-input"),
+        cfg!(feature = "portal-capture"),
+    );
+
     serde_json::json!({
         // `schema_version` is bumped only on a breaking change to the
         // manifest shape itself. Additive field changes don't bump it.
@@ -1750,6 +1790,15 @@ pub fn build_manifest() -> serde_json::Value {
         "schema_version": "1",
         "binary_version": env!("CARGO_PKG_VERSION"),
         "binary_path": binary,
+        // A release version cannot prove which optional Linux features were
+        // compiled into this artifact. Downstream hosts use this additive,
+        // machine-readable map to decide whether native Wayland may be
+        // auto-enabled safely.
+        "features": {
+            "wayland_native": wayland_native,
+            "portal_input": portal_input,
+            "portal_capture": portal_capture,
+        },
         "mcp_invocation": {
             "command": binary,
             "args": ["mcp"]
@@ -3147,7 +3196,7 @@ fn run_permissions_status(json: bool) {
     let bundle_id = crate::bundle::bundle_id();
 
     // Only a listening daemon can answer for com.trycua.driver. A failed/!ok
-    // response (e.g. daemon mid-re-exec during the gate's recheck window) is
+    // response (e.g. daemon still inside its first-launch permission gate) is
     // treated the same as "no daemon" → unknown.
     let daemon_status: Option<serde_json::Value> = if crate::serve::is_daemon_listening(&socket) {
         let req = crate::serve::DaemonRequest {
@@ -3225,6 +3274,7 @@ fn run_permissions_status(json: bool) {
     let cap = structured
         .get("screen_recording_capturable")
         .and_then(|v| v.as_bool());
+    let direct_capture_verification = structured.get("direct_capture_verification");
     let attribution = structured
         .get("source")
         .and_then(|s| s.get("attribution"))
@@ -3249,9 +3299,27 @@ fn run_permissions_status(json: bool) {
                 );
             }
         }
-        None => println!(
-            "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
-        ),
+        None => {
+            if let Some(verification) = direct_capture_verification {
+                let source = verification["source"].as_str().unwrap_or("unknown source");
+                let verified_at = verification["verified_at"]
+                    .as_str()
+                    .unwrap_or("unknown time");
+                let bundle_id = verification["bundle_id"]
+                    .as_str()
+                    .unwrap_or("unknown identity");
+                println!(
+                    "Direct Capture:     ✅ previously verified ({source}, {verified_at}, {bundle_id})"
+                );
+                println!(
+                    "  ℹ️  historical observation; this read-only status did not run a live probe."
+                );
+            } else {
+                println!(
+                    "Direct Capture:     ❓ not checked (status is read-only; run `{cli_name} permissions grant`)"
+                );
+            }
+        }
     }
     println!("Source: {attribution}");
     if !(ax && sr) {
@@ -3270,6 +3338,12 @@ fn permission_grant_is_ready(structured: &serde_json::Value) -> bool {
     permission_flag(structured, "accessibility")
         && permission_flag(structured, "screen_recording")
         && permission_flag(structured, "screen_recording_capturable")
+        && structured
+            .get("direct_capture_verification_error")
+            .is_none()
+        && structured
+            .get("direct_capture_verification")
+            .is_some_and(serde_json::Value::is_object)
 }
 
 fn permission_grant_needs_direct_capture(structured: &serde_json::Value) -> bool {
@@ -3483,7 +3557,7 @@ fn run_permissions_grant() {
                  and Screen Recording in System Settings, then this command continues."
             );
             // Preserve explicit Computer History admission across the
-            // permission host's daemon launch/re-exec cycle.
+            // permission host's daemon launch cycle.
             if let Err(e) = launch_daemon_and_wait(
                 &socket,
                 180,
@@ -3506,11 +3580,10 @@ fn run_permissions_grant() {
         // ScreenCaptureKit access has its own Tahoe consent and is requested
         // explicitly below, after we explain the system dialog.
         //
-        // The gate re-execs the daemon (~every 25s) to pick up an
-        // Accessibility grant — `AXIsProcessTrusted` is cached per process
-        // and only a fresh process image sees a later grant. During each
-        // restart the socket briefly disappears, so tolerate transient
-        // connection failures rather than bailing on the first one.
+        // The gate uses short-lived probes because `AXIsProcessTrusted` is
+        // cached per process. While those probes are pending, the stable daemon
+        // rejects tool calls with a retryable response; tolerate that state
+        // rather than bailing on the first non-success response.
         let req = permission_status_request();
         // A dedicated LaunchServices child requests the grants under the
         // CuaDriver app identity. No prompt-capable method exists on the
@@ -3536,8 +3609,8 @@ fn run_permissions_grant() {
                     break;
                 }
             }
-            // `send_request` failing (None / !ok) means the daemon is
-            // mid-restart (re-exec) or briefly down — keep polling.
+            // `send_request` returning None / !ok means the daemon is still
+            // gated or briefly unavailable — keep polling.
             if std::time::Instant::now() >= poll_deadline {
                 break;
             }
@@ -3575,12 +3648,34 @@ fn run_permissions_grant() {
         println!("Choose Allow to request and verify direct capture now…");
 
         let direct_status = request_permissions_via_launchservices(true).ok();
+        if let Some((status, error)) = direct_status.as_ref().and_then(|status| {
+            status
+                .get("direct_capture_verification_error")
+                .and_then(|error| error.get("message"))
+                .and_then(serde_json::Value::as_str)
+                .map(|error| (status, error))
+        }) {
+            if permission_flag(status, "screen_recording_capturable") {
+                eprintln!(
+                    "\n❌ Direct capture worked, but its verification could not be recorded: {error}"
+                );
+            } else {
+                eprintln!(
+                    "\n❌ Direct capture failed, and the previous verification could not be cleared: {error}"
+                );
+            }
+            process::exit(1);
+        }
+
         if direct_status
             .as_ref()
             .is_some_and(permission_grant_is_ready)
         {
             println!(
                 "\n✅ {app_name} has Accessibility, Screen Recording, and direct capture access. You're set."
+            );
+            println!(
+                "macOS verified the explicit request but does not report whether consent was newly granted or already present."
             );
             return;
         }
@@ -4704,6 +4799,32 @@ mod tests {
     }
 
     #[test]
+    fn expected_pid_keeps_stop_as_the_subcommand() {
+        let argv = args(&["--expected-pid", "42", "stop"]);
+        assert_eq!(positional_args(&argv), vec!["stop"]);
+        assert_eq!(parse_expected_stop_pid(&argv, Some("stop")), Some(42));
+
+        let with_socket = args(&["--socket", "/tmp/cua.sock", "--expected-pid", "42", "stop"]);
+        assert_eq!(positional_args(&with_socket), vec!["stop"]);
+        assert_eq!(
+            parse_expected_stop_pid(&with_socket, Some("stop")),
+            Some(42)
+        );
+    }
+
+    #[test]
+    fn expected_pid_is_absent_for_an_ordinary_stop() {
+        let argv = args(&["stop"]);
+        assert_eq!(parse_expected_stop_pid(&argv, Some("stop")), None);
+    }
+
+    #[test]
+    fn expected_pid_does_not_shadow_other_subcommands() {
+        let argv = args(&["--expected-pid", "42", "status"]);
+        assert_eq!(positional_args(&argv), vec!["status"]);
+    }
+
+    #[test]
     fn finite_call_tool_extraction_supports_subcommand_and_legacy_forms() {
         assert_eq!(
             finite_tool_name_from_args(&args(&["call", "click", r#"{\"x\":1}"#])),
@@ -4836,11 +4957,28 @@ mod tests {
         let ready = serde_json::json!({
             "accessibility": true,
             "screen_recording": true,
-            "screen_recording_capturable": true
+            "screen_recording_capturable": true,
+            "direct_capture_verification": {}
         });
 
         assert!(permission_grant_is_ready(&ready));
         assert!(!permission_grant_needs_direct_capture(&ready));
+    }
+
+    #[test]
+    fn permission_grant_rejects_verification_errors_with_stale_evidence() {
+        let failed = serde_json::json!({
+            "accessibility": true,
+            "screen_recording": true,
+            "screen_recording_capturable": true,
+            "direct_capture_verification": {},
+            "direct_capture_verification_error": {
+                "code": "direct_capture_verification_store_failed",
+                "message": "read-only evidence store"
+            }
+        });
+
+        assert!(!permission_grant_is_ready(&failed));
     }
 
     #[test]
@@ -4929,6 +5067,31 @@ mod tests {
             .expect("binary_version present and a string");
         assert_eq!(bv, env!("CARGO_PKG_VERSION"));
 
+        // Explicit build-time capability claims let integrations decide whether
+        // a Linux artifact can safely auto-enable native Wayland.
+        let features = obj
+            .get("features")
+            .and_then(|v| v.as_object())
+            .expect("features is an object");
+        for key in ["wayland_native", "portal_input", "portal_capture"] {
+            assert!(
+                features.get(key).and_then(|v| v.as_bool()).is_some(),
+                "features.{key} must be a boolean"
+            );
+        }
+        assert_eq!(
+            features.get("wayland_native").and_then(|v| v.as_bool()),
+            Some(cfg!(target_os = "linux"))
+        );
+        assert_eq!(
+            features.get("portal_input").and_then(|v| v.as_bool()),
+            Some(cfg!(all(target_os = "linux", feature = "portal-input")))
+        );
+        assert_eq!(
+            features.get("portal_capture").and_then(|v| v.as_bool()),
+            Some(cfg!(all(target_os = "linux", feature = "portal-capture")))
+        );
+
         // mcp_invocation — { command: <bin path>, args: ["mcp"] }
         let inv = obj
             .get("mcp_invocation")
@@ -4969,6 +5132,17 @@ mod tests {
         ] {
             assert!(names.contains(&need), "missing subcommand '{need}'");
         }
+    }
+
+    #[test]
+    fn manifest_never_advertises_linux_portal_features_on_non_linux_targets() {
+        // Simulate a non-Linux build with both Cargo features enabled. This
+        // runs on every CI host, so the exact cross-target regression is
+        // covered even when Windows only compiles the broader test suite.
+        assert_eq!(
+            manifest_feature_flags(false, true, true),
+            (false, false, false)
+        );
     }
 
     /// Every subcommand entry has the same JSON shape — name + description

@@ -185,9 +185,9 @@ fn edge_gap(first: (i32, i32, i32, i32), second: (i32, i32, i32, i32)) -> Option
     }
 }
 
-fn select_language_independent_allow(
+fn select_language_independent_actions(
     candidates: &[ConsentButtonCandidate],
-) -> Result<usize, BrowserRefusal> {
+) -> Result<(usize, usize), BrowserRefusal> {
     // Chromium builds this modal from one separated extra action plus the
     // standard OK/Cancel pair. Accessible names are localized, and the whole
     // footer mirrors for RTL locales, but adjacency and separation are stable.
@@ -278,13 +278,16 @@ fn select_language_independent_allow(
             "the native Chromium consent prompt focus contradicted the structural cancel button",
         ));
     }
-    Ok(candidates[allow_index].element_ptr)
+    Ok((
+        candidates[allow_index].element_ptr,
+        candidates[cancel_index].element_ptr,
+    ))
 }
 
-fn exact_allow_button_with<F>(
+fn exact_consent_actions_with<F>(
     nodes: &[UiaNode],
     mut properties: F,
-) -> Result<Option<usize>, BrowserRefusal>
+) -> Result<Option<(usize, usize)>, BrowserRefusal>
 where
     F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
 {
@@ -322,7 +325,7 @@ where
                 has_keyboard_focus,
             });
         }
-        matches.push(select_language_independent_allow(&candidates)?);
+        matches.push(select_language_independent_actions(&candidates)?);
     }
     match matches.as_slice() {
         [element] => Ok(Some(*element)),
@@ -333,8 +336,22 @@ where
     }
 }
 
+fn exact_allow_button_with<F>(
+    nodes: &[UiaNode],
+    properties: F,
+) -> Result<Option<usize>, BrowserRefusal>
+where
+    F: FnMut(usize) -> Result<(String, bool), BrowserRefusal>,
+{
+    Ok(exact_consent_actions_with(nodes, properties)?.map(|actions| actions.0))
+}
+
 fn exact_allow_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
-    exact_allow_button_with(nodes, native_button_properties)
+    Ok(exact_consent_actions_with(nodes, native_button_properties)?.map(|actions| actions.0))
+}
+
+fn exact_cancel_button(nodes: &[UiaNode]) -> Result<Option<usize>, BrowserRefusal> {
+    Ok(exact_consent_actions_with(nodes, native_button_properties)?.map(|actions| actions.1))
 }
 
 unsafe fn invoke(element_ptr: usize) -> Result<(), BrowserRefusal> {
@@ -362,6 +379,40 @@ fn prove_window_owner(hwnd: u64, pid: u32) -> Result<(), BrowserRefusal> {
         ));
     }
     Ok(())
+}
+
+pub fn dismiss(pid: u32, hwnd: u64) -> Result<bool, BrowserRefusal> {
+    prove_window_owner(hwnd, pid)?;
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let mut dismissed = false;
+    loop {
+        prove_window_owner(hwnd, pid)?;
+        let tree = crate::uia::walk_tree(hwnd, None);
+        let prompt_present = native_prompt_surface_present(&tree.nodes);
+        if !prompt_present {
+            release_nodes(&tree.nodes);
+            return Ok(dismissed);
+        }
+        let cancel = exact_cancel_button(&tree.nodes);
+        let invoked = match cancel {
+            Ok(Some(element)) => unsafe { invoke(element) },
+            Ok(None) => Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the exact remote-debugging consent prompt exposed no structural cancel action",
+            )),
+            Err(error) => Err(error),
+        };
+        release_nodes(&tree.nodes);
+        invoked?;
+        dismissed = true;
+        if Instant::now() >= deadline {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the remote-debugging consent prompt remained after its exact cancel action",
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(100));
+    }
 }
 
 pub async fn handle(
@@ -514,6 +565,18 @@ mod tests {
                 Some(12)
             );
         }
+    }
+
+    #[test]
+    fn cancel_matcher_selects_the_structural_default_action() {
+        let nodes = prompt(
+            "Allow remote debugging?",
+            ["Turn off in settings", "Allow", "Cancel"],
+        );
+        assert_eq!(
+            exact_consent_actions_with(&nodes, properties).unwrap(),
+            Some((12, 13))
+        );
     }
 
     #[test]

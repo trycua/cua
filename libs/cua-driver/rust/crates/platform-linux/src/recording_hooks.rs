@@ -52,11 +52,10 @@ fn app_state_json_for_blocking(window_id: Option<u64>, pid: Option<i64>) -> Opti
 
 #[cfg(target_os = "linux")]
 pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
-    if crate::wayland::is_inject_mode() {
-        // A full-output frame is the strongest evidence for the nested
-        // compositor's background/focus guarantees and needs no slow AT-SPI
-        // geometry re-resolution. Per-window screenshots elsewhere retain the
-        // normal crop behavior.
+    if crate::wayland::is_wayland() {
+        // Wayland surface ids are connection-scoped, so a later recording hook
+        // cannot safely re-attest the action call's per-window crop. Preserve
+        // ownership by recording the compositor's complete rendered output.
         return crate::wayland::screenshot_display_dispatch().ok();
     }
     if let Some(window_id) = window_id {
@@ -92,7 +91,7 @@ fn element_window_local_xy_blocking(
 ) -> Option<(f64, f64)> {
     let pid = u32::try_from(pid).ok()?;
     let (screen_x, screen_y, width, height) =
-        crate::atspi::get_element_bounds(pid, element_index as usize).ok()?;
+        crate::atspi::get_element_bounds_for_window(pid, window_id, element_index as usize).ok()?;
     let window = resolve_window_for_recording(pid, Some(window_id))?;
     Some((
         f64::from(screen_x - window.x) + f64::from(width) / 2.0,
@@ -106,6 +105,13 @@ fn resolve_window_for_recording(
     window_id: Option<u64>,
 ) -> Option<crate::x11::WindowInfo> {
     let windows = crate::wayland::list_windows_dispatch(Some(pid));
+    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+        return match window_id {
+            Some(id) => windows.into_iter().find(|window| window.xid == id),
+            None if windows.len() == 1 => windows.into_iter().next(),
+            _ => None,
+        };
+    }
     if crate::wayland::is_wayland() {
         // Foreign-toplevel protocol object ids are scoped to one Wayland
         // connection. Recording hooks open a fresh connection, so re-resolve

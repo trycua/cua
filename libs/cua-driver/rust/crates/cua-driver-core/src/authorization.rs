@@ -1110,7 +1110,7 @@ pub fn authorize_tool_call(
     args: &Value,
 ) -> Result<RiskAssessment, crate::policy::AuthorizationError> {
     let context = crate::session_authorization::configured_registry()
-        .and_then(crate::session_authorization::SessionAuthorizationRegistry::legacy_context)
+        .and_then(|registry| registry.legacy_context())
         .map_err(crate::policy::AuthorizationError::Loading)?;
     authorize_tool_call_with_context(tool, args, context.as_ref())
 }

@@ -407,4 +407,22 @@ mod pointer_tracking_tests {
         assert!((x - (120.0 + heading.cos() * 16.0)).abs() < f64::EPSILON);
         assert!((y - (80.0 + heading.sin() * 16.0)).abs() < f64::EPSILON);
     }
+
+    #[test]
+    fn session_cleanup_removes_named_cursor_but_preserves_anonymous_default() {
+        let registry = CursorRegistry::new();
+        registry.update_position("session-a", 12.0, 34.0);
+        registry.update_position("default", 56.0, 78.0);
+
+        registry.remove("session-a");
+        registry.remove("default");
+
+        assert!(registry.get("session-a").is_none());
+        assert_eq!(
+            registry
+                .get("default")
+                .and_then(|cursor| cursor.x.zip(cursor.y)),
+            Some((56.0, 78.0))
+        );
+    }
 }

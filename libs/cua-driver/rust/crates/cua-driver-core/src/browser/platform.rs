@@ -390,6 +390,16 @@ pub trait BrowserPlatform: Send + Sync {
         Ok(false)
     }
 
+    /// Restore a browser-owned remote-debugging setting that Cua enabled for
+    /// an existing-profile grant. Core calls this only when the last grant for
+    /// the process ends and only when setup recorded that Cua changed it.
+    fn cleanup_existing_profile_setup(
+        &self,
+        _request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        Ok(false)
+    }
+
     /// Roll back a setup transition that core could not safely claim. The
     /// adapter must preserve `error`, adding exact cleanup evidence where
     /// useful, and must never act on an unproven current tab or control.

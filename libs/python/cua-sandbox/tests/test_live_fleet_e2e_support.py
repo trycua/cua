@@ -216,10 +216,16 @@ async def test_wait_claims_absent_propagates_non_404_sdk_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_collect_resource_inventory_returns_empty_for_public_sdk_404() -> None:
+async def test_collect_resource_inventory_returns_empty_for_missing_namespace() -> None:
     class FakeClient:
         async def list_templates(self, name: str):
-            raise SdkError.Status("list templates", 404, b"not found")
+            raise SdkError.Status("list templates", 404, b"missing")
+
+        async def list_pools(self, name: str):
+            raise SdkError.Status("list pools", 404, b"missing")
+
+        async def list_claims(self, name: str):
+            raise SdkError.Status("list claims", 404, b"missing")
 
     assert await collect_resource_inventory(FakeClient(), "demo") == {
         "templates": [],
@@ -229,10 +235,67 @@ async def test_collect_resource_inventory_returns_empty_for_public_sdk_404() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("denied_stage", ["templates", "pools", "claims"])
+@pytest.mark.parametrize("collector", [collect_resource_inventory, wait_resource_inventory_empty])
+async def test_inventory_access_denied_cannot_prove_cleanup(denied_stage, collector) -> None:
+    denied = SdkError.Status(f"list {denied_stage}", 403, b"forbidden")
+
+    class FakeClient:
+        async def list_templates(self, name: str):
+            if denied_stage == "templates":
+                raise denied
+            return []
+
+        async def list_pools(self, name: str):
+            if denied_stage == "pools":
+                raise denied
+            return []
+
+        async def list_claims(self, name: str):
+            if denied_stage == "claims":
+                raise denied
+            return []
+
+    with pytest.raises(SdkError.Status) as caught:
+        await collector(FakeClient(), "demo")
+    assert caught.value is denied
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("missing_stage", ["templates", "pools", "claims"])
+async def test_inventory_404_does_not_discard_other_resource_listings(missing_stage) -> None:
+    class FakeClient:
+        async def list_templates(self, name: str):
+            if missing_stage == "templates":
+                raise SdkError.Status("list templates", 404, b"not found")
+            return [SimpleNamespace(metadata=SimpleNamespace(name="template-a"))]
+
+        async def list_pools(self, name: str):
+            if missing_stage == "pools":
+                raise SdkError.Status("list pools", 404, b"not found")
+            return [SimpleNamespace(metadata=SimpleNamespace(name="pool-a"))]
+
+        async def list_claims(self, name: str):
+            if missing_stage == "claims":
+                raise SdkError.Status("list claims", 404, b"not found")
+            return [SimpleNamespace(metadata=SimpleNamespace(name="claim-a"))]
+
+    expected = {"templates": ["template-a"], "pools": ["pool-a"], "claims": ["claim-a"]}
+    expected[missing_stage] = []
+    assert await wait_resource_inventory_empty(FakeClient(), "demo", timeout=0) == expected
+
+
+@pytest.mark.asyncio
 async def test_collect_resource_inventory_propagates_non_404_sdk_errors() -> None:
     class FakeClient:
         async def list_templates(self, name: str):
             raise SdkError.Status("list templates", 500, b"failure")
+
+        async def list_pools(self, name: str):
+            pytest.fail("inventory must stop on a failed listing")
+
+        async def list_claims(self, name: str):
+            pytest.fail("inventory must stop on a failed listing")
 
     with pytest.raises(SdkError.Status):
         await collect_resource_inventory(FakeClient(), "demo")
@@ -289,6 +352,12 @@ async def test_wait_resource_inventory_empty_treats_public_sdk_404_as_empty() ->
         async def list_templates(self, name: str):
             raise SdkError.Status("list templates", 404, b"not found")
 
+        async def list_pools(self, name: str):
+            raise SdkError.Status("list pools", 404, b"not found")
+
+        async def list_claims(self, name: str):
+            raise SdkError.Status("list claims", 404, b"not found")
+
     assert await wait_resource_inventory_empty(FakeClient(), "demo", timeout=1, interval=0) == {
         "templates": [],
         "pools": [],
@@ -301,6 +370,12 @@ async def test_wait_resource_inventory_empty_propagates_non_404_sdk_errors() -> 
     class FakeClient:
         async def list_templates(self, name: str):
             raise SdkError.Status("list templates", 500, b"failure")
+
+        async def list_pools(self, name: str):
+            pytest.fail("inventory must stop on a failed listing")
+
+        async def list_claims(self, name: str):
+            pytest.fail("inventory must stop on a failed listing")
 
     with pytest.raises(SdkError.Status):
         await wait_resource_inventory_empty(FakeClient(), "demo", timeout=1, interval=0)
@@ -423,7 +498,8 @@ async def test_owned_ephemeral_namespace_is_empty_after_cleanup(monkeypatch, tmp
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return True
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
+        assert timeout == 180.0
         return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-existing")
@@ -483,7 +559,8 @@ async def test_cleanup_failure_does_not_mask_primary_failure(
             raise CleanupFailure("poll failed")
         return False
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
+        assert timeout == 0
         raise CleanupFailure("inventory failed")
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-primary-failure")
@@ -622,7 +699,8 @@ async def test_claim_leak_records_persistent_inventory_without_deletion(
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
+        assert timeout == 0
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-raced")
@@ -668,7 +746,7 @@ async def test_provisioning_failure_before_yield_never_deletes_namespace(monkeyp
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
         return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-provisioning-failure")
@@ -709,7 +787,7 @@ async def test_pre_yield_failure_records_no_inventory_without_pool_identity(
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-pre-yield-claim")
@@ -753,7 +831,7 @@ async def test_pre_yield_missing_namespace_skips_inventory_without_pool_identity
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return True
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
         return {"templates": [], "pools": [], "claims": []}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-pre-yield-missing")
@@ -855,7 +933,7 @@ async def test_invalid_sandbox_identity_preserves_primary_error_and_runs_cleanup
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     monkeypatch.setenv("CUA_LIVE_E2E_NAMESPACE", "cua-live-identity")
@@ -931,7 +1009,7 @@ async def test_cleanup_error_precedes_close_and_summary_failures(
     async def wait_claims_absent(fleet, namespace: str) -> bool:
         return False
 
-    async def wait_resource_inventory_empty(fleet, namespace: str):
+    async def wait_resource_inventory_empty(fleet, namespace: str, *, timeout=180.0):
         return {"templates": [namespace], "pools": [namespace], "claims": ["claim-a"]}
 
     def write_summary(path, summary) -> None:

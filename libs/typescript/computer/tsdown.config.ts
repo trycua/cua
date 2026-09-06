@@ -8,7 +8,7 @@ export default defineConfig([
     entry: ['./src/index.ts'],
     platform: 'node',
     dts: true,
-    external: ['child_process', 'util'],
+    external: ['child_process', 'util', '@trycua/fleet/node'],
     define: {
       __CUA_VERSION__: JSON.stringify(pkg.version),
     },

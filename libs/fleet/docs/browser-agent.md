@@ -3,7 +3,9 @@
 Cyclops includes an authenticated chat UI whose agent loop runs inside the
 browser. The model may request a single `bash` function tool implemented with
 `just-bash/browser`; the browser executes it in a temporary virtual filesystem
-and returns the result to the backend for the next model turn.
+and returns the result to the backend for the next model turn. Registered Bash
+commands bridge that isolated shell to the authenticated Cyclops SDK and the
+read-only CUA documentation and versioned code MCP service.
 
 The Go backend owns conversation history, authentication, authorization, and
 LiteLLM access. The current conversation store is in memory, so history is lost
@@ -27,8 +29,27 @@ The bash runtime is browser-local and isolated:
   output at 128 KiB. The in-memory backend also caps each owner at 100
   conversations and the process-wide transcript store at 64 MiB.
 
-There is no MCP integration, Playwright tool, browser automation, Chromium
-process, or Node sidecar. The frontend does not receive LiteLLM credentials.
+There is no Playwright tool, browser automation, Chromium process, Node
+sidecar, or arbitrary Bash networking. Four explicit read-only MCP commands are
+registered for CUA documentation and code lookup. The frontend does not receive
+LiteLLM credentials.
+
+## Command help skills
+
+Every registered SDK and MCP command supports `-h` and `--help`. Help is the
+command's progressively disclosed skill: it describes purpose, usage,
+arguments, output shape, user-facing presentation, safety, and examples without
+calling the backing SDK or MCP service.
+
+The system prompt contains only the compact command catalog. Before first use
+of a command in a conversation, the agent runs `<command> -h` in a separate
+Bash call and follows the returned guidance. It does not repeat help for that
+command in the same conversation unless it needs a refresher.
+
+Presentation rules live with command execution metadata. For example,
+`listPools -h` requires a Markdown table with `Pool`, `Replicas`, `Available`,
+and `Phase`; omits the redundant Namespace column; and links each pool name to
+`/pools/<namespace>/<name>` using URL-encoded path segments.
 
 ## Local development
 
@@ -44,6 +65,7 @@ Run the Go backend with chat enabled in a separate terminal:
 
 ```bash
 cd cyclops-cs/backend
+ENVIRONMENT=development \
 CYCLOPS_CS_CHAT_ACCESS=all \
 LITELLM_BASE_URL=http://localhost:4000/v1 \
 LITELLM_MODEL=large \
@@ -57,15 +79,18 @@ storage.
 
 ## Backend configuration
 
-- `CYCLOPS_CS_CHAT_ACCESS` selects `disabled`, `restricted`, or `all`.
-- `CYCLOPS_CS_CHAT_SUBS` is a JSON array of non-admin Keycloak `sub` values used in `restricted` mode; admins are enabled automatically.
+- `/feature-flags/cyclops-cs/chat-access` selects `disabled`, `restricted`, or `all`. Missing or invalid values default to `restricted`.
+- `/feature-flags/cyclops-cs/chat-subs` is a JSON array of non-admin Keycloak `sub` values used in `restricted` mode; admins are enabled automatically.
 - `LITELLM_BASE_URL` is the OpenAI-compatible API base URL, including `/v1`.
 - `LITELLM_MODEL` selects the model alias and defaults to `large`.
 - `LITELLM_API_KEY` is the backend-only LiteLLM virtual key.
 
-In `restricted` and `all` modes, both `LITELLM_BASE_URL` and
-`LITELLM_API_KEY` are required. `CYCLOPS_CS_CHAT_ENABLED=true` remains a
-legacy fallback for `all` only when `CYCLOPS_CS_CHAT_ACCESS` is unset.
+Production resolves both chat flags from AWS SSM through OpenFeature and uses
+the in-cluster LiteLLM service with a backend-only virtual key synced from AWS
+Secrets Manager. The `SimpleEnvProvider` maps the flags to
+`CYCLOPS_CS_CHAT_ACCESS` and `CYCLOPS_CS_CHAT_SUBS` for development and
+previews. Set both `LITELLM_BASE_URL` and `LITELLM_API_KEY`, or leave both unset
+to run without a configured chat model.
 
 ## API routes
 
@@ -78,16 +103,17 @@ middleware:
 - `POST /api/chat/conversations/{id}/turns` appends user or tool messages and
   streams the assistant response as server-sent events.
 
-The backend stores user, assistant, tool-call, and tool-result messages. The
-React UI keeps only transient rendering and run state; it reloads canonical
-conversation history from the backend. If a browser run is stopped or rejects a
+In production, the backend stores user, assistant, tool-call, and tool-result
+messages in the shared Cyclops Postgres database, so conversations survive
+replica changes and pod restarts. The React UI keeps only transient rendering
+and run state; it reloads canonical conversation history from the backend. If a browser run is stopped or rejects a
 tool call after the assistant request is stored, the next retry or user prompt
 records synthetic failed tool results before continuing, so the conversation is
 not stranded.
 
 ## Preview environments
 
-Chat is enabled only in the preview base at
+Chat is also enabled in the preview base at
 `clusters/kopf-k3s/cyclops-cs-previews-base`. Each preview has a Flux
 `GitRepository` pinned to the PR head SHA, so manifest and secret-wiring changes
 are rendered from the same commit as the frontend/backend images. The backend
@@ -103,8 +129,8 @@ and revoke the credential if any enabled preview becomes untrusted.
 
 An `ExternalSecret` named `cyclops-cs-litellm` reads property `api_key` from
 AWS Secrets Manager path `kopf-k3s/cyclops-cs-browser-agent-litellm` and creates
-a namespace-local Secret with the same name. Production manifests are not
-changed by this preview configuration.
+a namespace-local Secret with the same name. Production syncs the same
+restricted browser-agent credential into its own namespace.
 
 The stored value must be a dedicated LiteLLM virtual key restricted to model
 alias `large`. Configure a strict spend budget and an expiry, or use a documented

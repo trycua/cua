@@ -31,6 +31,7 @@ mod responsibility;
 mod sdk_adapter;
 mod serve;
 mod skills;
+mod stop;
 mod telemetry;
 mod updater;
 mod version_check;
@@ -457,6 +458,9 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
+        std::process::exit(code);
+    }
     // The packaged uninstaller needs a truly offline, pre-telemetry purge
     // path while this exact signed executable still exists on disk.
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
@@ -582,12 +586,14 @@ fn main() {
                     );
                 }
             }
-            if !platform_macos::permissions::gate::is_gate_reexec() {
-                telemetry::capture_start(
-                    telemetry::event::SERVE_START_LEGACY,
-                    telemetry::Transport::Daemon,
-                );
-            }
+            // Fail closed until a fresh helper-process probe completes. This
+            // also covers a probe launch failure without letting the serving
+            // process perform and cache its own negative TCC preflight.
+            serve::set_permission_gate_pending(!gate_opts.opt_out);
+            telemetry::capture_start(
+                telemetry::event::SERVE_START_LEGACY,
+                telemetry::Transport::Daemon,
+            );
             // Long-running daemon — kick off the background update check
             // before any blocking work so the banner can land on stderr
             // early in the serve lifecycle.
@@ -628,7 +634,7 @@ fn main() {
             // running the (blocking) permissions gate (#1761).
             //
             // The gate's `wait_for_grants` blocks while `com.trycua.driver`
-            // is ungranted — it prompts and re-exec-loops until the user
+            // is ungranted. Fresh helper processes poll TCC until the user
             // grants or the deadline elapses. If serve ran after the gate,
             // the daemon's socket wouldn't appear for minutes on first
             // launch, so `permissions grant` / MCP clients launched via
@@ -639,12 +645,10 @@ fn main() {
             //
             // A Unix socket + tokio accept loop has no main-thread
             // requirement, so serve runs on a background thread. The gate
-            // stays on the MAIN thread: its prompt APIs
-            // (`request_accessibility` / `request_screen_recording`) and
-            // the NSPanel must run on main. On grant, the gate's
-            // `reexec_self()` execvp's the whole daemon — the socket
-            // re-binds fast on restart (run_serve unlinks the stale socket
-            // file first) and stabilizes once the grant sticks.
+            // stays on the MAIN thread for its NSPanel; short-lived helper
+            // processes own prompt and status APIs. The serving process never performs
+            // a negative TCC preflight, so its socket and accepted connections
+            // remain stable while helper processes refresh permission state.
             let serve_handle = std::thread::Builder::new()
                 .name("cua-serve".into())
                 .spawn(move || {
@@ -660,10 +664,6 @@ fn main() {
             // already active.  Honors --no-permissions-gate and
             // CUA_DRIVER_RS_PERMISSIONS_GATE=0 for CI / headless.
             //
-            // Failures (e.g. deadline elapsed without grants) are logged
-            // and the daemon continues to serve — individual tool calls
-            // will then fail with the underlying TCC error, mirroring
-            // Swift's "user closed the panel" fallback.
             let gate_result = platform_macos::permissions::run_if_needed_with_observer(
                 gate_opts,
                 |progress, context| match progress {
@@ -682,6 +682,9 @@ fn main() {
                     }
                 },
             );
+            if gate_result.is_ok() {
+                serve::set_permission_gate_pending(false);
+            }
             let gate_context = platform_macos::permissions::gate::telemetry_context();
             if gate_context.engaged {
                 telemetry::capture_permissions_gate_completed(
@@ -699,9 +702,8 @@ fn main() {
             if let Err(e) = gate_result {
                 eprintln!("[cua-driver] permissions gate: {e}");
                 eprintln!(
-                    "[cua-driver] continuing — tool calls touching AX or \
-                           Screen Recording fail until you grant the missing TCC \
-                           permissions."
+                    "[cua-driver] desktop tool calls remain gated; grant Accessibility and \
+                     Screen Recording permissions, then restart the daemon."
                 );
             }
 
@@ -727,9 +729,15 @@ fn main() {
                 let _ = serve_handle.join();
             }
         }
-        cli::Command::Stop { socket } => {
+        cli::Command::Stop {
+            socket,
+            expected_pid,
+        } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            serve::run_stop_cmd(&sp);
+            match expected_pid {
+                Some(pid) => stop::run_pid_bound_stop_cmd(&sp, pid),
+                None => serve::run_stop_cmd(&sp),
+            }
         }
         cli::Command::Revoke {
             socket,
@@ -996,9 +1004,15 @@ fn main() -> anyhow::Result<()> {
             .ok();
             return Ok(());
         }
-        cli::Command::Stop { socket } => {
+        cli::Command::Stop {
+            socket,
+            expected_pid,
+        } => {
             let sp = socket.unwrap_or_else(serve::default_socket_path);
-            serve::run_stop_cmd(&sp);
+            match expected_pid {
+                Some(pid) => stop::run_pid_bound_stop_cmd(&sp, pid),
+                None => serve::run_stop_cmd(&sp),
+            }
             return Ok(());
         }
         cli::Command::Revoke {

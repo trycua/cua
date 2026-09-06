@@ -14,6 +14,7 @@ base64 = { workspace = true }
 image = { workspace = true }
 async-trait = "0.1"
 uuid = { workspace = true }
+time = { workspace = true }
 # Insertion-ordered map for the keyed per-session cursor render collection.
 # IndexMap gives deterministic iteration order = stable cursor z-order frame
 # to frame (a plain HashMap would flicker overlapping cursors).
@@ -70,3 +71,6 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 # WebSocket CDP client (used by browser/cdp_client.rs for the page tool)
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

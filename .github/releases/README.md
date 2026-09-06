@@ -23,6 +23,13 @@ The first nightly is bounded by the component's current stable tag; later
 nightlies are bounded by the previous published nightly. A component therefore
 needs a reachable stable tag before its nightly channel is enabled.
 
+Before starting platform builds, the nightly planner scans that exact range for
+unresolved human coauthors. It returns `reason=held-attribution` and creates or
+refreshes one component-specific maintainer issue instead of spending build and
+signing capacity on a candidate that cannot be published. Resolve the identity
+through a linked GitHub email or a verified `identityOverrides` entry; never use
+wildcard or human-email ignores to clear a hold.
+
 ## Persistent consumer selection
 
 Components that let users follow a channel should reuse the same consumer

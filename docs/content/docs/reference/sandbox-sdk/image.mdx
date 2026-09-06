@@ -3,11 +3,33 @@ title: Image reference
 description: "API reference for the Image class: the immutable, chainable image specification used to configure sandbox environments."
 ---
 
-`Image` is an *immutable, chainable image specification*. Each method returns a new `Image` instance; the original is unchanged. Import from `cua`:
+`Image` is an immutable, chainable image specification in `cua-sandbox` 0.4.3.
+Each builder method returns a new `Image` instance; the original is unchanged.
+Import it from `cua_sandbox`:
 
 ```python
-from cua import Image
+from cua_sandbox import Image
 ```
+
+## Fleet image constraints
+
+`Pool.apply()` accepts an explicit registry reference or a built-in descriptor
+that resolves to a registry image. Fleet rejects images with setup layers,
+environment variables, copied files, snapshot sources, or local disk paths.
+Exposed service ports are accepted. An OCI reference for Fleet must identify a
+compatible container disk; an arbitrary application container is not a VM disk.
+
+In 0.4.3, the built-in registry mappings are `Image.linux()` with Ubuntu 24.04
+and `kind='vm'`, and `Image.windows()` with version `'2022'` and `kind='vm'`.
+Other descriptors require an explicit compatible registry image for Fleet.
+These mappings describe client image selection, not deployment certification.
+
+The builder methods below describe image specifications. They do not establish
+that every runtime, operating system, or cloud deployment executes those
+specifications. Local runtime selection and legacy cloud provisioning are
+separate from Fleet. See [Pool reference](/reference/sandbox-sdk/pool) for Fleet
+configuration and [Sandbox creation](/reference/sandbox-sdk#sandbox-creation)
+for backend selection.
 
 ## Constructors
 
@@ -18,7 +40,8 @@ from cua import Image
 def linux(cls, distro: str = 'ubuntu', version: str = '24.04', kind: str = 'vm') -> Image
 ```
 
-Linux image. Defaults to `kind='vm'` (QEMU). `kind='container'` uses Docker/XFCE.
+Linux image specification. Defaults to `kind='vm'`; `kind='container'` describes
+a container. Local runtime selection depends on the host and installed runtime.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -33,26 +56,27 @@ Linux image. Defaults to `kind='vm'` (QEMU). `kind='container'` uses Docker/XFCE
 def macos(cls, version: str = '26', kind: str = 'vm') -> Image
 ```
 
-macOS image. Always a VM (Apple Virtualization / Lume). Supported versions: `'15'` / `'sequoia'`, `'26'` / `'tahoe'`.
+macOS image specification. Version aliases include `'15'` / `'sequoia'` and
+`'26'` / `'tahoe'`. The constructor does not establish Fleet availability.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `version` | `str` | `'26'` | macOS version string or name |
-| `kind` | `str` | `'vm'` | Always `'vm'` |
+| `kind` | `str` | `'vm'` | VM specification; constructor does not validate runtime availability |
 
 ### Image.windows
 
 ```python
 @classmethod
-def windows(cls, version: str = '11', kind: str = 'vm') -> Image
+def windows(cls, version: str = '2022', kind: str = 'vm') -> Image
 ```
 
-Windows image. Always a VM (QEMU or Hyper-V).
+Windows image specification. The released default is Windows Server `2022`.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `version` | `str` | `'11'` | Windows version |
-| `kind` | `str` | `'vm'` | Always `'vm'` |
+| `version` | `str` | `'2022'` | Windows version |
+| `kind` | `str` | `'vm'` | VM specification; constructor does not validate runtime availability |
 
 ### Image.android
 
@@ -61,34 +85,40 @@ Windows image. Always a VM (QEMU or Hyper-V).
 def android(cls, version: str = '14', kind: str = 'vm') -> Image
 ```
 
-Android image. Always a VM (QEMU emulator).
+Android image specification. This constructor does not establish Fleet support.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `version` | `str` | `'14'` | Android version |
-| `kind` | `str` | `'vm'` | Always `'vm'` |
+| `kind` | `str` | `'vm'` | VM specification; constructor does not validate runtime availability |
 
 ### Image.from_registry
 
 ```python
 @classmethod
-def from_registry(cls, ref: str) -> Image
+def from_registry(cls, ref: str, *, os_type: str = 'linux', kind: Optional[str] = None) -> Image
 ```
 
-Image from an OCI registry reference. `kind` is resolved after pull.
+Image from an OCI registry reference. `os_type` identifies the guest operating
+system; it is not inferred from a tag. When omitted, `kind` remains unresolved
+until image resolution.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `ref` | `str` | required | Registry reference, e.g. `'ghcr.io/trycua/macos-tahoe-cua:latest'` or `'ubuntu:22.04'` |
+| `ref` | `str` | required | OCI reference for an image appropriate to the selected backend |
+| `os_type` | `str` | `'linux'` | Guest OS; use `'windows'` for a Windows disk |
+| `kind` | `str or None` | `None` | Explicit `'vm'` or `'container'` kind |
 
 ### Image.from_file
 
 ```python
 @classmethod
-def from_file(cls, path: str, os_type: str = 'windows', kind: str = 'vm', agent_type: Optional[str] = None) -> Image
+def from_file(cls, path: str, *, os_type: str = 'windows', kind: str = 'vm', agent_type: Optional[str] = None) -> Image
 ```
 
-Image from a local disk file, ISO, or URL. Supported formats: `qcow2`, `vhdx`, `raw`, `img`, `iso`. HTTP/HTTPS URLs are downloaded and cached automatically. Zip files are extracted. For ISOs, the runtime creates a `qcow2` disk and attaches the ISO as a CD-ROM. Downloaded images are cached in `~/.cua/cua-sandbox/image-cache/`.
+Local-runtime image from a disk file, ISO, or URL. Disk handling depends on the
+runtime. HTTP/HTTPS images are downloaded and cached under
+`~/.cua/cua-sandbox/image-cache/`. Fleet rejects `from_file()` specifications.
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
@@ -110,7 +140,9 @@ Reconstruct an `Image` from a serialized spec dict (e.g. the output of `to_dict(
 
 ## Builder methods
 
-Each method returns a new `Image`. Builder calls are composable and can be chained in any order.
+Each method returns a new `Image`. These methods add setup instructions for a
+runtime that implements them. Fleet rejects setup layers; use an image with the
+required software already installed.
 
 ### Image.apt_install
 
@@ -195,7 +227,7 @@ Install Python packages via `pip`.
 def uv_install(self, *packages: str) -> Image
 ```
 
-Install Python packages via `uv add` into the cua-server project. Faster than `pip_install`.
+Adds a `uv add` package-installation layer for the cua-server project.
 
 ### Image.run
 
@@ -227,7 +259,18 @@ Copy a local file into the image at the specified destination path.
 def expose(self, port: int) -> Image
 ```
 
-Mark a port the sandbox will serve on. Used with `sb.tunnel.forward()`.
+Marks a port the sandbox will serve on. Fleet's default service mapping names
+it `port-N`, where `N` is the port, except for the server port. Local forwarding
+is reported by `sb.exposed_ports` where the runtime provides it.
+
+### Image.app_install
+
+```python
+def app_install(self, app_id: str) -> Image
+```
+
+Adds an application-installation layer by app catalog ID. Requires the runtime
+and application installer to support the selected app; Fleet rejects this layer.
 
 ---
 

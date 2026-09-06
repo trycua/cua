@@ -27,6 +27,27 @@ fn refusal(code: BrowserRefusalCode, message: impl Into<String>) -> BrowserRefus
     BrowserRefusal::new(code, message)
 }
 
+fn run_existing_profile_cleanup<T: Send + 'static>(
+    cleanup: impl FnOnce() -> T + Send + 'static,
+) -> Result<T, BrowserRefusal> {
+    std::thread::Builder::new()
+        .name("cua-browser-cleanup".into())
+        .spawn(cleanup)
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not start exact browser cleanup: {error}"),
+            )
+        })?
+        .join()
+        .map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "exact browser cleanup worker panicked",
+            )
+        })
+}
+
 fn is_chromium(name: &str) -> bool {
     let name = name.to_ascii_lowercase();
     let products = [
@@ -1079,6 +1100,34 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         })?
     }
 
+    fn cleanup_existing_profile_setup(
+        &self,
+        request: ExistingProfileSetupRequest,
+    ) -> Result<bool, BrowserRefusal> {
+        let descriptor = existing_profile_setup_descriptor(request.browser).ok_or_else(|| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!(
+                    "existing-profile cleanup is not implemented for {:?}",
+                    request.browser
+                ),
+            )
+        })?;
+        let pid = u32::try_from(request.pid).map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the approved browser pid is outside the Linux process-id range",
+            )
+        })?;
+        let window_id = request.window_id;
+        run_existing_profile_cleanup(move || {
+            let dismissed_before = crate::browser_consent_ui::dismiss(pid, window_id)?;
+            let closed_setup_page = crate::browser_setup_ui::disable(pid, window_id, descriptor)?;
+            let dismissed_after = crate::browser_consent_ui::dismiss(pid, window_id)?;
+            Ok(dismissed_before || closed_setup_page || dismissed_after)
+        })?
+    }
+
     async fn abort_existing_profile_setup(
         &self,
         request: ExistingProfileSetupRequest,
@@ -1152,6 +1201,20 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn existing_profile_cleanup_can_drive_atspi_runtime_from_async_session_teardown() {
+        let cleaned = run_existing_profile_cleanup(|| {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("AT-SPI-style cleanup runtime")
+                .block_on(async { true })
+        })
+        .expect("cleanup worker");
+
+        assert!(cleaned);
+    }
 
     #[test]
     fn isolated_browser_candidates_use_only_root_managed_payloads() {

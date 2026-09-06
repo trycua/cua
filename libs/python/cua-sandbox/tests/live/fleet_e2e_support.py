@@ -131,19 +131,23 @@ async def wait_claims_absent(
 
 
 async def collect_resource_inventory(client: CyclopsClient, name: str) -> dict[str, list[str]]:
-    try:
-        templates = await client.list_templates(name)
-        pools = await client.list_pools(name)
-        claims = await client.list_claims(name)
-    except Exception as error:
-        if is_not_found_error(error):
-            return {"templates": [], "pools": [], "claims": []}
-        raise
-    return {
-        "templates": [item.metadata.name for item in templates],
-        "pools": [item.metadata.name for item in pools],
-        "claims": [item.metadata.name for item in claims],
-    }
+    inventory: dict[str, list[str]] = {}
+    for resource_type, list_resources in (
+        ("templates", client.list_templates),
+        ("pools", client.list_pools),
+        ("claims", client.list_claims),
+    ):
+        try:
+            resources = await list_resources(name)
+        except Exception as error:
+            # Reconcile's 403-as-missing rule cannot prove cleanup. A 404
+            # establishes absence only for this listing, not the other kinds.
+            if not is_not_found_error(error):
+                raise
+            inventory[resource_type] = []
+        else:
+            inventory[resource_type] = [item.metadata.name for item in resources]
+    return inventory
 
 
 async def wait_resource_inventory_empty(

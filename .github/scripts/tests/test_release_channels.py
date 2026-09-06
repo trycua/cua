@@ -183,10 +183,13 @@ def test_first_nightly_plan_is_reproducible_and_uses_stable_attribution_base(
     monkeypatch: pytest.MonkeyPatch,
 ):
     source_sha = "a" * 40
+    stable_version = (ROOT / "libs/lume/VERSION").read_text(encoding="utf-8").strip()
+    stable_tag = f"lume-v{stable_version}"
+    nightly_version = derive_nightly_version(stable_version, "20260812", "42")
 
     def fake_git(_root, command, *args):
         if command == "rev-list":
-            assert args == ("-n", "1", "lume-v0.5.3")
+            assert args == ("-n", "1", stable_tag)
             return "d" * 40
         assert command == "merge-base"
         assert args == ("--is-ancestor", "d" * 40, source_sha)
@@ -204,10 +207,10 @@ def test_first_nightly_plan_is_reproducible_and_uses_stable_attribution_base(
     )
     assert plan["shouldBuild"] is True
     assert plan["reason"] == "first-nightly"
-    assert plan["tag"] == "nightly-lume-v0.5.4-nightly.20260812.42"
-    assert plan["bundleVersion"] == "0.5.4"
+    assert plan["tag"] == f"nightly-lume-v{nightly_version}"
+    assert plan["bundleVersion"] == nightly_version.split("-", 1)[0]
     assert plan["previousNightlyTag"] is None
-    assert plan["attributionBaseTag"] == "lume-v0.5.3"
+    assert plan["attributionBaseTag"] == stable_tag
 
 
 def test_plan_skips_an_identical_published_source(monkeypatch: pytest.MonkeyPatch):
@@ -266,6 +269,67 @@ def test_plan_builds_only_for_declared_relevant_changes(monkeypatch: pytest.Monk
     assert plan["reason"] == "relevant-changes"
     assert plan["previousNightlyTag"] == ("nightly-cua-driver-rs-v0.19.4-nightly.20260811.41")
     assert plan["attributionBaseTag"] == plan["previousNightlyTag"]
+
+
+def test_plan_holds_before_build_for_unresolved_attribution(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    previous_sha = "b" * 40
+    source_sha = "c" * 40
+    config_path = tmp_path / "release-attribution-config.json"
+    config_path.write_text(
+        json.dumps(
+            {
+                "ignoredCoauthorEmails": [],
+                "identityOverrides": {},
+                "coauthorOverrides": {},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    def fake_git(_root, command, *args):
+        if command == "rev-list":
+            return previous_sha
+        if command == "merge-base":
+            return ""
+        if command == "diff":
+            return "libs/cua-driver/rust/src/main.rs"
+        raise AssertionError((command, args))
+
+    monkeypatch.setattr(release_channels, "_git", fake_git)
+    monkeypatch.setattr(
+        release_channels.release_attribution,
+        "commits_in_range",
+        lambda *_args: [
+            release_channels.release_attribution.CommitRecord(
+                "deadbeef",
+                "fix: preserve attribution",
+                "Co-authored-by: Local Machine <machine@example.invalid>",
+            )
+        ],
+    )
+    plan = plan_nightly(
+        "cua-driver-rs",
+        source_sha,
+        "20260812",
+        "45",
+        [
+            {
+                "tag_name": "nightly-cua-driver-rs-v0.19.4-nightly.20260811.41",
+                "draft": False,
+                "published_at": "2026-08-11T04:17:00Z",
+            }
+        ],
+        registry_path=REGISTRY,
+        root=ROOT,
+        attribution_config_path=config_path,
+    )
+    assert plan["shouldBuild"] is False
+    assert plan["reason"] == "held-attribution"
+    assert plan["attributionIssues"] == [
+        {"sha": "deadbeef", "name": "Local Machine", "email": "machine@example.invalid"}
+    ]
 
 
 def test_manifest_uses_stable_authority_with_a_separately_versioned_asset_tree(

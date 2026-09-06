@@ -8,11 +8,11 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Use an **Image** to define the OS and software environment for a sandbox before you start it.
 
 <Callout type="warn">
-  **Customization is local-only today.** `apt_install()`, `pip_install()`, `env()`,
+  **SDK builder customization is local-only in `cua-sandbox` 0.4.3.** `apt_install()`, `pip_install()`, `env()`,
   `run()`, `copy()` and the other builder methods are applied when you boot the image
-  locally (`local=True`). Cua cloud runs the pinned base image as published, and rejects
+  locally (`local=True`). Fleet runs a prebuilt registry artifact and rejects
   a customized one with `NotImplementedError: Fleet cloud supports registry images with
-  optional exposed services only`. `expose()` is the one builder method the cloud honors.
+  optional exposed services only`. For Fleet customization, [prepare and publish the guest image first](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image). See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support) for versioned acceptance and verification limits.
 </Callout>
 
 ## Choose a base image
@@ -27,48 +27,32 @@ from cua import Image
 Image.linux()                        # Ubuntu 24.04 VM (default, QEMU)
 Image.linux(kind='container')        # Ubuntu 24.04 container (lighter, Docker/XFCE)
 Image.linux('ubuntu', '22.04')       # Older Ubuntu
-Image.macos()                        # macOS Tahoe (version '26', latest)
+Image.macos()                        # macOS Tahoe (version '26')
 Image.macos('15')                    # macOS Sequoia
 Image.windows()                      # Windows Server 2022
 Image.windows('11')                  # Windows 11 (local ISO install only)
 Image.android()                      # Android 14
 ```
 
-| Image | Kind | Runs in cloud | Notes |
-|-------|------|---------------|-------|
-| Image.linux() | VM | yes | Ubuntu 24.04; boots the pinned containerDisk under QEMU, needs qemu-system-x86_64 |
-| Image.linux(kind='container') | container | no | Lighter, Docker/XFCE, no QEMU needed |
-| Image.linux('ubuntu', '22.04') | VM | no | Built locally, no pinned disk |
-| Image.macos() | VM | no | Apple Virtualization / Lume |
-| Image.windows() | VM | yes | QEMU or Hyper-V |
-| Image.windows('11') | VM | no | Local ISO install only |
-| Image.android() | VM | no | QEMU Android emulator |
+Choose a constructor using the [OS and runtime table](/reference/sandbox-sdk/runtime-support#operating-systems-and-image-kinds).
+The built-in Ubuntu 24.04 and Windows Server 2022 VMs map to registry artifacts for
+Fleet; the other built-in inputs do not. A constructor returning an `Image` does
+not verify that its guest can boot on your host or Fleet deployment.
 
-<Callout type="warn">
-  Only `Image.linux()` and `Image.windows()` have a pinned disk in the registry, so
-  only those two run on Cua cloud. Every other constructor is local-only — in the
-  cloud they raise `NotImplementedError: Fleet cloud sandboxes require a supported
-  built-in image or Image.from_registry(...)`.
+For Windows, released 0.4.3 selects EFI in the Fleet template. See
+[Windows firmware](/reference/sandbox-sdk/runtime-support#windows-firmware) before
+diagnosing an unready Windows guest as a BIOS mismatch.
 
-  `Image.windows()` in the cloud is additionally blocked today: its containerDisk is
-  UEFI/GPT, while cloud templates default to BIOS firmware, so the guest never boots
-  and the claim ends in `BindDeadlineExceeded`. A firmware fix is in flight.
-</Callout>
-
-<Callout type="error">
-  **`kind='container'` cannot start right now.** The published
-  `trycua/cua-xfce:latest` runs computer-server bound to `127.0.0.1:8000` inside the
-  container (`computer_server/cli.py:34` defaults `--host` to `127.0.0.1`, and the
-  image's start script does not override it), so Docker's published port mapping
-  forwards to nothing and every launch ends in `TimeoutError: Container <name> not
-  ready after 120s`. This needs a rebuild of the image; until then use
-  `Image.linux()`, which runs as a VM and does not go through that image.
-</Callout>
+If a local Docker image times out on readiness, check the guest server's listening
+address. An earlier `trycua/cua-xfce:latest` recipe reported the server bound to
+`127.0.0.1:8000` inside the container, which Docker's published port could not reach.
+That observation does not establish the state of every later mutable image tag.
 
 ### How a Linux image runs locally
 
 `Image.linux()` is a VM. Locally it boots the same pinned containerDisk that Cua
-cloud boots, under QEMU on the host — so a sandbox behaves the same in both places:
+Fleet references, under QEMU on the host. Sharing an artifact does not make host
+networking, firmware, resources, or available SDK operations identical:
 
 ```python
 from cua import Image, Sandbox
@@ -158,9 +142,10 @@ Image.linux().expose(8080).expose(5432)
 ```
 
 <Callout type="warn">
-  `expose()` currently affects the cloud path only, where each port becomes a Fleet
-  service. The bare-metal QEMU runtime never reads the exposed ports, so on a local
-  VM they are not forwarded and no error is raised.
+  In 0.4.3, bare-metal QEMU forwards exposed ports at startup and reports their
+  host ports in `sb.exposed_ports`. Other local backends can differ. Fleet creates
+  named services instead. `expose()` does not make `tunnel.forward()` available
+  on every transport; see [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
 </Callout>
 
 ## Chain builder calls
@@ -196,14 +181,18 @@ is not one, and fails with
 `FileNotFoundError: OCI image 'ubuntu:22.04' does not contain /disk/disk.img`.
 
 ```python
-Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest')
-Image.from_registry('public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34')
-# chain builder on top
-img = Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest').run('echo hi')
+img = Image.from_registry(
+    'registry.example/workspace@sha256:...',
+    os_type='linux',
+    kind='vm',
+)
+# Local setup only; Fleet rejects builder layers.
+img = img.run('echo hi')
 ```
 
-A registry image has no resolved `kind`, so the SDK cannot pick a runtime for it.
-Pass one explicitly when you boot it locally:
+A registry image defaults to `kind=None`, so the SDK cannot automatically select
+a runtime unless you set the kind. For local use, select a runtime compatible
+with the actual guest disk. The Linux VM example uses bare-metal QEMU:
 
 ```python
 from cua import QEMURuntime, Sandbox
@@ -213,11 +202,10 @@ async with Sandbox.ephemeral(img, local=True, runtime=QEMURuntime(mode='bare-met
 ```
 
 <Callout type="warn">
-  Two more limits worth knowing. `Image.from_registry()` records the reference but
-  does not set `os_type` — every registry image reports `os_type='linux'`, including
-  the macOS one above, so pass a runtime matching the real guest. And the puller
-  authenticates anonymously, which works for `public.ecr.aws` and `ghcr.io` but not
-  for Docker Hub.
+  Replace the example reference with an artifact you published. `Image.from_registry()`
+  defaults to `os_type='linux'`; set `os_type='windows', kind='vm'` for a Windows VM
+  disk. The registry reference does not prove that the artifact is accessible or
+  bootable. Local pull authentication and Fleet registry access are separate requirements.
 </Callout>
 
 ## Use a local disk image

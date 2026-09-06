@@ -17,13 +17,15 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
-from production_realapp_proof import check_response, primary_acknowledgement, provenance, trace_interval
+from production_realapp_proof import (app_process_identity, capacity_lane, check_response,
+                                     primary_acknowledgement, provenance, trace_interval)
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
 PROFILE = {'mode': 'unrestricted', 'acknowledge_unrestricted': True}
 DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
 POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
+RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
 
 
@@ -54,6 +56,97 @@ def validate_plan(plan):
         assert (drag['from_x'], drag['from_y']) != (drag['to_x'], drag['to_y'])
     point = plan['primary_point']
     assert len(point) == 2 and all(type(v) is int for v in point)
+    if 'recovery' in plan:
+        recovery = plan['recovery']
+        assert isinstance(recovery, dict) and set(recovery) == {'pointer_stage'}
+        assert all('pointer_stage' in spec for spec in plan['agents']), 'recovery needs both app-effect oracles'
+        victim = plan['agents'][plan['kill_agent']]
+        assert recovery['pointer_stage'] in RECOVERY_STAGES[victim['app']], 'recovery must be a new non-drag action'
+
+
+def stopped_prefix(page):
+    """Analyze a phase boundary without stopping or resetting the real trace."""
+    trace_interval(page, page)
+    last = page['events'][-1]
+    return {**page, 'active': False, 'count': page['count'] + 1,
+            'events': page['events'] + [[last[0] + 1, last[1], 'stop', *last[3:5], 0, 0]]}
+
+
+def verify_recovery_trace(before, after, lane, tool):
+    assert tool in ('click', 'scroll'), 'recovery must use a new non-drag action'
+    events = trace_interval(before, after)
+    assert capacity_lane(before, after, tool) == lane, 'recovery did not reacquire the victim lane'
+    assert sum(row[2] == 'agent_admitted' for row in events) == 1, 'recovery admission is not unique'
+    assert sum(row[2] == 'agent_action_end' for row in events) == 1, 'recovery completion is not unique'
+    assert not any(row[2] in ('agent_cancel', 'agent_drag_start', 'agent_drag_end', 'keyboard_key')
+                   for row in events), 'recovery replayed or sent unexpected input'
+    buttons = [row[6] for row in events if row[2] == 'pointer_button']
+    axes = [row for row in events if row[2] == 'pointer_axis']
+    assert (buttons == [1, 0] and not axes) if tool == 'click' else (not buttons and axes), \
+        'unexpected recovery input sequence'
+    stopped = stopped_prefix(after)
+    isolation = analyze(stopped)
+    assert isolation['result'] == 'passed' and released_synthetic_input(stopped), isolation
+    return {'result': 'verified', 'lane': lane, 'tool': tool, 'continuous_isolation': isolation}
+
+
+def verify_recovery_cleanup(prefix, stopped):
+    """Allow seat teardown after completion, never another synthetic action."""
+    trace_interval(prefix, prefix)
+    isolation = analyze(stopped)
+    assert isolation['result'] == 'passed' and released_synthetic_input(stopped), isolation
+    assert stopped['events'][:prefix['count']] == prefix['events'], 'trace history changed during recovery'
+    cleanup_events = {'agent_cancel', 'pointer_leave', 'keyboard_leave'}
+    assert all(row[2] in cleanup_events for row in stopped['events'][prefix['count']:]
+               if row[5] in (1, 2)), 'unexpected synthetic activity after recovery'
+    return isolation
+
+
+def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary, lane, save, result):
+    """One new action, never a continuation of the killed transport or gesture."""
+    assert victim.failed and victim.process.poll() is not None, 'victim must be torn down before recovery'
+    pids = assert_distinct_runtimes([client, sibling, observer])
+    assert victim.process.pid not in pids, 'recovery reused the victim runtime'
+    assert stage in RECOVERY_STAGES[spec['app']]
+    fresh = {**spec, 'name': spec['name'] + '-recovery', 'pointer_stage': stage}
+    result.update(runtime_pid=client.process.pid, victim_pid=victim.process.pid,
+                  policy={'startup_profile': dict(PROFILE), 'managed_user_policy': 'inherited by new runtime'},
+                  session=fresh['name'], replayed=False)
+    response = client.tool('start_session', {'session': fresh['name']})
+    assert not response.get('isError'), response
+    identity = app_process_identity(spec['app'], spec['target']['pid'])
+    started_ns = time.monotonic_ns()
+    before = grounded_snapshot(client, fresh['target'], fresh)
+    arguments, oracle = pointer_grounding.action(
+        before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
+    tool = pointer_grounding.STAGES[spec['app']][stage]
+    assert tool in ('click', 'scroll'), 'recovery cannot replay the interrupted drag'
+    result['grounding'] = {'snapshot': before, 'app_identity': identity, 'arguments': arguments,
+                           'oracle': oracle, 'prepared_ns': started_ns, 'target': fresh['target']}
+    save('recovery-grounding.json', result)
+    assert 0 <= time.monotonic_ns() - started_ns <= MAX_GROUNDING_AGE_NS, 'recovery grounding expired; no input sent'
+    result['action'] = {'outcome': 'unknown', 'replayed': False}
+    try:
+        response = client.tool(tool, {**arguments, **fresh['target'], 'session': fresh['name'],
+                                     'delivery_mode': 'background'})
+    except Exception as error:
+        result['action']['error'] = str(error)
+    else:
+        result['action'] = {'outcome': 'response', 'response': response, 'replayed': False}
+    save('recovery-action.json', result['action'])
+    # Preserve the observed result even if delivery classification or the app oracle fails.
+    after = grounded_snapshot(observer, fresh['target'], fresh, session=False)
+    save('recovery-after.json', after)
+    assert result['action']['outcome'] == 'response', 'recovery delivery remains unknown; no replay'
+    check_response(response, {'kind': 'dispatched'})
+    result['app_effect'] = pointer_grounding.verify(
+        after, pointer_grounding.read_pixels(after['proof_image']), oracle)
+    page = trace.collect()
+    save('recovery-prefix.json', page)
+    result['trace'] = verify_recovery_trace(boundary, page, lane, tool)
+    assert client.process.poll() is None and sibling.process.poll() is None, 'runtime exited during recovery'
+    result['result'] = 'verified'
+    return page
 
 
 def grounded_snapshot(client, target, spec=None, *, session=True):
@@ -213,6 +306,7 @@ def run(args):
               'saved_app_effects': 'unproven', 'full_desktop_matrix': False}
     clients, observer, grab, trace, pool = [], None, None, None, None
     futures, kill_prefix, lanes = {}, None, None
+    cancellation_boundary = recovery_prefix = None
     prepared = []
     primary_before = baseline = None
     try:
@@ -290,9 +384,34 @@ def run(args):
             # The observer uses its own fresh read after the killed connection is lost.
             after = grounded_snapshot(observer, spec['target'], spec, session=False)
             save(f'agent-{index}-after.json', after)
+            if index == victim and 'recovery' in plan:
+                image = Path(after['proof_image'])
+                report['interrupted_state'] = {
+                    'snapshot': f'agent-{index}-after.json', 'image': str(image),
+                    'snapshot_sha256': hashlib.sha256(
+                        (args.evidence / f'agent-{index}-after.json').read_bytes()).hexdigest(),
+                    'image_sha256': hashlib.sha256(image.read_bytes()).hexdigest(),
+                    'action': killed, 'saved_document_effect': 'unproven', 'replayed': False}
+                save('interrupted-state.json', report['interrupted_state'])
             if index == sibling and prepared[index]['oracle'] is not None:
                 report['sibling_app_effect'] = pointer_grounding.verify(
                     after, pointer_grounding.read_pixels(after['proof_image']), prepared[index]['oracle'])
+        if 'recovery' in plan:
+            cancellation_boundary = trace.collect()
+            save('cancellation-prefix.json', cancellation_boundary)
+            report['cancellation'] = verify_cancellation(stopped_prefix(cancellation_boundary), kill_prefix, *lanes)
+            assert clients[victim].failed and clients[victim].process.poll() is not None
+            # Register the fresh runtime for unconditional cleanup before any RPC.
+            clients.append(launch('recovery'))
+            report['reacquisition'] = {'result': 'unproven', 'replayed': False}
+            recovery_prefix = recover_once(
+                clients[-1], observer, clients[victim], clients[sibling], plan['agents'][victim],
+                plan['recovery']['pointer_stage'], trace, cancellation_boundary, victim_lane,
+                save, report['reacquisition'])
+            interrupted = report['interrupted_state']
+            for path, digest in ((args.evidence / interrupted['snapshot'], interrupted['snapshot_sha256']),
+                                 (Path(interrupted['image']), interrupted['image_sha256'])):
+                assert hashlib.sha256(path.read_bytes()).hexdigest() == digest, 'interrupted evidence changed'
         grounded_snapshot(observer, plan['foreground'])
         assert wm() == primary_before, 'primary cursor/focus/workspace changed'
         current = state(args.foreground_journal)
@@ -321,7 +440,17 @@ def run(args):
                 stopped = trace.collect()
                 save('trace.json', stopped)
                 assert kill_prefix is not None and lanes, 'no termination evidence'
-                report['cancellation'] = verify_cancellation(stopped, kill_prefix, *lanes)
+                if cancellation_boundary is None:
+                    report['cancellation'] = verify_cancellation(stopped, kill_prefix, *lanes)
+                else:
+                    report['cancellation'] = verify_cancellation(stopped_prefix(cancellation_boundary), kill_prefix, *lanes)
+                    prefix = recovery_prefix or cancellation_boundary
+                    assert stopped['events'][:prefix['count']] == prefix['events'], 'trace history changed during recovery'
+                    isolation = analyze(stopped)
+                    assert isolation['result'] == 'passed' and released_synthetic_input(stopped), isolation
+                    if recovery_prefix is not None:
+                        isolation = verify_recovery_cleanup(recovery_prefix, stopped)
+                    report['continuous_isolation'] = isolation
                 assert wm() == primary_before, 'primary changed during cleanup'
                 current = state(args.foreground_journal)
                 assert all(current[key] == baseline[key] for key in ('clicks', 'keys', 'scroll', 'held')), current

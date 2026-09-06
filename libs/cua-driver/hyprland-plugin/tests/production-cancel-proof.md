@@ -2,7 +2,8 @@
 
 `production_cancel_proof.py` prepares a bounded cancellation test through two
 independent `cua-driver mcp --direct` processes. Its local tests use synthetic
-telemetry and mocked processes. **Native cancellation remains unproven.**
+telemetry and mocked processes. An optional recovery phase starts a new direct
+runtime after cancellation. **Native cancellation and recovery remain unproven.**
 
 The test grounds both gestures before starting either drag. It starts one
 drag, identifies its compositor lane from admission and
@@ -87,6 +88,56 @@ python3 libs/cua-driver/hyprland-plugin/tests/production_cancel_proof.py \
 Build the production v3 plugin with `CUA_HYPRLAND_INPUT_TRACE=ON` for this gate.
 An uninstrumented package smoke cannot substitute for cancellation evidence.
 
+## Optional fresh-runtime recovery
+
+Add `recovery:{"pointer_stage":"click_b2"}` when Calc is the victim, or
+`recovery:{"pointer_stage":"scroll_down"}` when Inkscape is the victim.
+Calc also supports `click_a1`. Both agents must use the derived pointer stages
+above so the sibling's app effect is verified. Choose a Calc cell that will
+not already be selected after the interruption; already-satisfied or ambiguous
+state fails without another action. Inkscape recovery requires the interrupted
+rectangle to remain visible and uniquely selected.
+
+The runner first verifies the cancellation phase, including victim release and
+normal sibling completion. It saves the victim's fresh observer snapshot and
+image hashes in `interrupted-state.json` before launching recovery. These are
+evidence of observed interrupted state, not saved-document or rollback proof.
+The runner does not issue a document save or infer which on-disk file holds
+unsaved changes.
+
+Recovery creates a third action runtime through `mcp --direct`, records its
+distinct process ID, and uses a new session name. The killed runtime remains
+poisoned and reaped. The new process loads the unrestricted startup profile
+and inherited managed/user policy through the existing normal runtime path;
+the evidence records that startup configuration, not an independent inspection
+of every effective policy rule. The new call still requires common dispatch
+admission and fresh compositor admission.
+
+The new runtime checks the app's canonical executable/GTK identity, exact
+PID/window listing, reviewed bounds, and a full fresh image. It derives one
+new click or scroll from that observation. Grounding older than five seconds
+refuses before dispatch. This action has a different tool and meaning from
+the canceled drag; no canceled arguments, snapshot tokens, or transport are
+reused. Target replacement, moved geometry, denied policy, unreadable state,
+or failed effect verification fails the recovery phase without replay.
+
+The independent observer then captures the result, and the existing app
+oracle must prove the new selection or viewport change. Lost replies remain
+unknown, with their observer snapshot retained when observation succeeds.
+Continuous telemetry must show exactly one fresh admission and one completed
+click or scroll on the released victim lane, with no sibling input, replayed
+drag, cancellation, held synthetic input, or primary-seat disturbance. Both
+victim indexes and both compositor lane mappings are supported.
+
+`cancellation-prefix.json` and `recovery-prefix.json` retain complete active
+trace prefixes. Phase analysis adds an in-memory stop sentinel only; it never
+resets or stops the real trace between phases. Final cleanup still requires
+the real stopped trace, unchanged prefix history, balanced synthetic input,
+and uninterrupted primary isolation. After recovery completion, synthetic
+events may only cancel an idle lease or leave its pointer/keyboard resources;
+any new admission, input, or gesture marker fails cleanup. A recovery or cleanup
+failure fails the overall run even when the cancellation phase was verified.
+
 ## Interpret evidence
 
 An overall `result:"passed"` requires one cancellation on the victim lane,
@@ -102,7 +153,8 @@ input was delivered or that the document was rolled back. If a response arrives,
 the helper retains it and accepts only the existing partial/unknown delivery
 contract. A successful victim response fails this cancellation test. The killed
 connection is poisoned before termination and is never reused. Neither action
-is replayed, including on failure.
+is replayed, including on failure. Optional recovery is a separately grounded
+new action, not a retry.
 
 Evidence includes the reviewed plan, provenance, MCP images/results,
 `agent-N-drag-grounding.json` with each exact image and derived arguments,
@@ -114,8 +166,16 @@ when another cleanup fails; surviving owned children are killed and reaped.
 Pre-existing app and foreground fixture processes are not terminated. Raw
 evidence and local paths are for internal review.
 
-Fresh-process lane reacquisition is omitted and always reported as
-`reacquisition:"unproven"`. Saved-document effects, moving-primary cancellation,
+Recovery runs additionally retain `recovery-grounding.json` (startup profile,
+runtime identity, app identity, snapshot, arguments, and oracle),
+`recovery-action.json`, and `recovery-after.json`. The interrupted snapshot and
+image hashes are checked again after successful recovery. The new runtime is
+included in unconditional cleanup, including failed setup and lost replies.
+
+Without `recovery`, the cancellation-only contract is unchanged and reports
+`reacquisition:"unproven"`. With it, `reacquisition.result:"verified"` requires
+the new app effect and complete recovery trace. Saved-document effects remain
+explicitly unproven in either mode. Moving-primary cancellation,
 target/keymap/display/session faults, repetition controls, and the complete
 desktop matrix remain separate gates. A native run must establish both the
 claimed cancellation behavior and exact loaded-artifact provenance before this
@@ -124,5 +184,5 @@ preparation can be described as certification.
 Focused deterministic verification from the tests directory:
 
 ```text
-python3 -m unittest production_cancel_proof_test production_realapp_proof_test realapp_proof_test primary_trace_test
+python3 -m unittest production_cancel_proof_test production_pointer_grounding_test production_realapp_proof_test realapp_proof_test primary_trace_test
 ```

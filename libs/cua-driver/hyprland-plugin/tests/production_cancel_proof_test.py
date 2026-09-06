@@ -9,8 +9,8 @@ from unittest.mock import Mock, patch
 
 from production_cancel_proof import (
     MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned, grounded_snapshot,
-    poll_active, prepare_drag, run,
-    terminate_owned, validate_plan, verify_cancellation,
+    poll_active, prepare_drag, recover_once, run, stopped_prefix,
+    terminate_owned, validate_plan, verify_cancellation, verify_recovery_cleanup, verify_recovery_trace,
 )
 
 
@@ -40,6 +40,12 @@ FINISH = OVERLAP + [(151, 'agent_cancel', 1, 0), (151, 'pointer_button', 1, 0),
                     (1900, 'pointer_button', 2, 0), (1901, 'agent_drag_end', 2, 0), (2000, 'stop', 0, 0)]
 RESPONSE = {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
                                    'delivery': {'mode': 'background'}}}
+
+
+def recovery_rows(tool='click', lane=1):
+    inputs = [(2010, 'pointer_button', lane, 1), (2011, 'pointer_button', lane, 0)] if tool == 'click' else [
+        (2010, 'pointer_axis', lane, 0)]
+    return FINISH[:-1] + [(2001, 'agent_admitted', lane, 0), *inputs, (2012, 'agent_action_end', lane, 0)]
 
 
 class TelemetryTests(unittest.TestCase):
@@ -112,6 +118,139 @@ def client(pid):
     process = Mock(pid=pid, poll=Mock(return_value=None))
     process.kill.side_effect = lambda: setattr(process.poll, 'return_value', -9)
     return Mock(process=process, failed=False)
+
+
+class RecoveryTests(unittest.TestCase):
+    def test_completed_recovery_allows_only_seat_cleanup(self):
+        rows = recovery_rows()
+        cleanup = [(2020 + i, kind, lane, 0) for i, (kind, lane) in enumerate(
+            [('agent_cancel', 1), ('pointer_leave', 1), ('keyboard_leave', 1),
+             ('agent_cancel', 2), ('pointer_leave', 2), ('keyboard_leave', 2)])]
+        prefix = trace(rows)
+        for tail in ([], cleanup):
+            stopped = trace(rows + tail + [(2030, 'stop', 0, 0)], False)
+            self.assertEqual(verify_recovery_cleanup(prefix, stopped)['result'], 'passed')
+        for kind in ('agent_admitted', 'agent_action_end', 'agent_drag_start', 'agent_drag_end',
+                     'pointer_motion', 'pointer_button', 'pointer_axis', 'keyboard_key'):
+            for lane in (1, 2):
+                with self.subTest(kind=kind, lane=lane), self.assertRaises(AssertionError):
+                    verify_recovery_cleanup(prefix,
+                        trace(rows + cleanup + [(2028, kind, lane, 0), (2030, 'stop', 0, 0)], False))
+        for field, value in (('active', True), ('hook', False), ('overflow', True),
+                             ('timed_out', True), ('count', 0)):
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                verify_recovery_cleanup(prefix, {**trace(rows + [(2030, 'stop', 0, 0)], False), field: value})
+        changed = trace(rows + cleanup + [(2030, 'stop', 0, 0)], False)
+        changed['events'][1][1] += 1
+        with self.assertRaisesRegex(AssertionError, 'history'):
+            verify_recovery_cleanup(prefix, changed)
+
+    def test_recovery_plan_requires_new_supported_action_and_both_oracles(self):
+        for victim, stage in ((0, 'click_b2'), (1, 'scroll_down')):
+            candidate = plan()
+            candidate.update(kill_agent=victim, recovery={'pointer_stage': stage})
+            with self.assertRaisesRegex(AssertionError, 'both app-effect'):
+                validate_plan(candidate)
+            for spec, drag_stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
+                spec.update(drag={}, pointer_stage=drag_stage)
+            validate_plan(candidate)
+            for bad in ({'pointer_stage': 'move_rectangle'}, {'pointer_stage': 'select_range'},
+                        {'pointer_stage': stage, 'arguments': {'x': 10}}, None):
+                with self.subTest(victim=victim, bad=bad), self.assertRaises(AssertionError):
+                    validate_plan({**candidate, 'recovery': bad})
+
+    def test_phase_traces_require_one_fresh_action_on_released_lane(self):
+        for lane in (1, 2):
+            for tool in ('click', 'scroll'):
+                rows = recovery_rows(tool, lane)
+                if lane == 2:
+                    rows[:len(FINISH) - 1] = [
+                        (ms, kind, 3 - old if old else old, value) for ms, kind, old, value in FINISH[:-1]]
+                boundary, after = trace(rows[:len(FINISH) - 1]), trace(rows)
+                self.assertEqual(verify_recovery_trace(boundary, after, lane, tool)['result'], 'verified')
+                self.assertEqual(verify_cancellation(stopped_prefix(boundary),
+                    trace(rows[:len(OVERLAP)]), lane, 3 - lane)['result'], 'verified')
+                for extra in ((2013, 'agent_admitted', lane, 0), (2013, 'agent_cancel', lane, 0),
+                              (2013, 'agent_action_end', lane, 0), (2013, 'agent_drag_start', lane, 0),
+                              (2013, 'keyboard_key', lane, 1), (2013, 'pointer_button', lane, 1),
+                              (2013, 'pointer_motion', 3 - lane, 0), (2013, 'pointer_axis', 0, 0)):
+                    with self.subTest(extra=extra), self.assertRaises(AssertionError):
+                        verify_recovery_trace(boundary, trace(rows + [extra]), lane, tool)
+                for missing in (-1, len(FINISH) - 1, len(FINISH)):
+                    damaged = list(rows)
+                    damaged.pop(missing)
+                    with self.assertRaises(AssertionError):
+                        verify_recovery_trace(boundary, trace(damaged), lane, tool)
+                for key in ('hook', 'active'):
+                    with self.assertRaises(AssertionError):
+                        verify_recovery_trace(boundary, {**after, key: False}, lane, tool)
+                changed = trace(rows)
+                changed['events'][1][1] += 1
+                with self.assertRaisesRegex(AssertionError, 'history'):
+                    verify_recovery_trace(boundary, changed, lane, tool)
+
+    def test_fresh_runtime_snapshot_single_action_and_observer_effect(self):
+        for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll')):
+            for failure in (None, 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace'):
+                with self.subTest(app=app, failure=failure), ExitStack() as stack:
+                    victim, sibling, observer, fresh = [client(pid) for pid in (100, 101, 102, 103)]
+                    victim.failed = True
+                    victim.process.poll.return_value = None if failure == 'alive' else -9
+                    if failure == 'reused':
+                        fresh.process.pid = victim.process.pid
+                    response = RESPONSE if failure != 'denied' else {'isError': True, 'structuredContent': {
+                        'status': 'refused', 'refusal': {'code': 'permission_denied'}}}
+                    fresh.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else response]
+                    spec = next(spec for spec in plan()['agents'] if spec['app'] == app)
+                    before, after = {'proof_image': 'before.png'}, {'proof_image': 'after.png'}
+                    snapshot = stack.enter_context(patch('production_cancel_proof.grounded_snapshot',
+                        side_effect=AssertionError('geometry changed') if failure == 'snapshot' else [before, after]))
+                    identity = stack.enter_context(patch('production_cancel_proof.app_process_identity',
+                        side_effect=AssertionError('app changed') if failure == 'identity' else None,
+                        return_value={'pid': spec['target']['pid']}))
+                    stack.enter_context(patch('production_cancel_proof.time.monotonic_ns',
+                        side_effect=[100, MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else 101]))
+                    stack.enter_context(patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'))
+                    arguments, oracle = {'x': 20, 'y': 30}, {'app': app, 'stage': stage}
+                    action = stack.enter_context(patch('production_cancel_proof.pointer_grounding.action',
+                        return_value=(arguments, oracle)))
+                    verify = stack.enter_context(patch('production_cancel_proof.pointer_grounding.verify',
+                        side_effect=AssertionError('no app effect') if failure == 'effect' else None,
+                        return_value={'verified': True}))
+                    page = trace(recovery_rows(tool))
+                    if failure == 'trace':
+                        page['overflow'] = True
+                    trace_client, save, result = Mock(collect=Mock(return_value=page)), Mock(), {}
+                    def attempt():
+                        return recover_once(fresh, observer, victim, sibling, spec, stage, trace_client,
+                                            trace(FINISH[:-1]), 1, save, result)
+                    if failure:
+                        with self.assertRaises((AssertionError, TimeoutError)):
+                            attempt()
+                    else:
+                        self.assertEqual(attempt(), page)
+                        self.assertEqual(result['result'], 'verified')
+                        self.assertEqual(result['policy']['startup_profile'], PROFILE)
+                        self.assertNotEqual(result['runtime_pid'], result['victim_pid'])
+                        self.assertFalse(result['replayed'])
+                        identity.assert_called_once_with(app, spec['target']['pid'])
+                        action.assert_called_once_with(before, 'pixels', app, stage)
+                        verify.assert_called_once_with(after, 'pixels', oracle)
+                        self.assertIs(snapshot.call_args_list[0].args[0], fresh)
+                        self.assertIs(snapshot.call_args_list[1].args[0], observer)
+                    inputs = [call for call in fresh.tool.call_args_list if call.args[0] != 'start_session']
+                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot') else 1)
+                    if inputs:
+                        self.assertEqual(inputs[0].args, (tool, {**arguments, **spec['target'],
+                            'session': spec['name'] + '-recovery', 'delivery_mode': 'background'}))
+                    if failure == 'unknown':
+                        self.assertEqual(result['action']['outcome'], 'unknown')
+                        self.assertFalse(result['action']['replayed'])
+                        self.assertEqual([call.args[0] for call in save.call_args_list],
+                            ['recovery-grounding.json', 'recovery-action.json', 'recovery-after.json'])
+                        self.assertIs(snapshot.call_args_list[-1].args[0], observer)
+                    victim.tool.assert_not_called()
+                    sibling.tool.assert_not_called()
 
 
 class OwnershipTests(unittest.TestCase):
@@ -246,21 +385,31 @@ class OwnershipTests(unittest.TestCase):
 class RunnerTests(unittest.TestCase):
     def test_success_and_failures_reap_all_owned_children_without_replay(self):
         for failure in (None, 'pointer', 'pointer_effect', 'trace', 'unknown_sibling',
-                        'successful_victim', 'close', 'snapshot', 'grab'):
+                        'successful_victim', 'close', 'snapshot', 'grab',
+                        'recovery_calc', 'recovery_inkscape', 'recovery_effect', 'recovery_close', 'recovery_trace'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 source_plan = root / 'plan.json'
                 candidate = plan()
-                if failure in ('pointer', 'pointer_effect'):
+                recovery = failure is not None and failure.startswith('recovery_')
+                if failure in ('pointer', 'pointer_effect') or recovery:
                     for spec, stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
                         spec.update(drag={}, pointer_stage=stage)
+                if recovery:
+                    candidate['kill_agent'] = 1 if failure == 'recovery_inkscape' else 0
+                    candidate['recovery'] = {'pointer_stage': 'scroll_down' if candidate['kill_agent'] else 'click_b2'}
+                victim = candidate['kill_agent']
                 source_plan.write_text(json.dumps(candidate))
                 args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence', driver=root / 'driver',
                                        trace_socket=root / 'cua-input-v3.sock', primary_grab=root / 'primary-grab',
                                        foreground_journal=root / 'journal')
                 agents, observer = [client(100), client(101)], client(102)
-                for owned in [*agents, observer]:
+                fresh = client(103)
+                fresh.tool.side_effect = [{}, RESPONSE]
+                for owned in [*agents, observer, fresh]:
                     owned.close.side_effect = lambda c=owned: setattr(c.process.poll, 'return_value', 0)
+                if failure == 'recovery_close':
+                    fresh.close.side_effect = RuntimeError('recovery close failed')
                 observer.tool.return_value = {'structuredContent': {'screen_width': 1000, 'screen_height': 800}}
                 for agent in agents:
                     agent.tool.return_value = {'structuredContent': {}}
@@ -271,6 +420,14 @@ class RunnerTests(unittest.TestCase):
                 if failure == 'trace':
                     stopped['overflow'] = True
                 trace_client.collect.side_effect = [trace(START), trace(FIRST), trace(OVERLAP), stopped]
+                if recovery:
+                    rows = recovery_rows('scroll' if victim else 'click')
+                    complete = trace(rows + [(2015, 'agent_cancel', 1, 0), (2016, 'pointer_leave', 1, 0),
+                        (2017, 'agent_cancel', 2, 0), (2018, 'keyboard_leave', 2, 0), (2020, 'stop', 0, 0)], False)
+                    if failure == 'recovery_trace':
+                        complete['overflow'] = True
+                    trace_client.collect.side_effect = [trace(START), trace(FIRST), trace(OVERLAP),
+                        trace(FINISH[:-1]), *([] if failure == 'recovery_effect' else [trace(rows)]), complete]
                 outcomes = [{'outcome': 'unknown', 'replayed': False},
                             {'outcome': 'response', 'response': RESPONSE, 'replayed': False}]
                 if failure == 'unknown_sibling':
@@ -284,13 +441,16 @@ class RunnerTests(unittest.TestCase):
                         return f.result.return_value
                     future.result.side_effect = finish
                 pool = Mock(submit=Mock(side_effect=futures))
-                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': 'fresh.png'})
+                proof_image = root / 'fresh.png'
+                proof_image.write_bytes(b'synthetic-test-image')
+                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image)})
                 if failure == 'snapshot':
                     snapshot.side_effect = AssertionError('stale geometry')
                 if failure == 'close':
                     agents[0].close.side_effect = RuntimeError('cleanup failure')
                 replacements = {
-                    'provenance': Mock(return_value={'files': {}}), 'DirectMCP': Mock(side_effect=[*agents, observer]),
+                    'provenance': Mock(return_value={'files': {}}), 'DirectMCP': Mock(side_effect=[*agents, observer, fresh]),
+                    'app_process_identity': Mock(return_value={'pid': candidate['agents'][victim]['target']['pid']}),
                     'grounded_snapshot': snapshot, 'subprocess.Popen': Mock(return_value=grab),
                     'primary_acknowledgement': Mock(side_effect=AssertionError('missing HELD')) if failure == 'grab' else Mock(return_value='HELD\n'),
                     'wait_for': lambda fn: self.assertTrue(fn()),
@@ -298,15 +458,33 @@ class RunnerTests(unittest.TestCase):
                     'wm': lambda: {'pid': 10, 'cursor': {'x': 100, 'y': 100}}, 'Trace': Mock(return_value=trace_client),
                     'ThreadPoolExecutor': Mock(return_value=pool), 'stop_process': lambda proc: held.__setitem__(0, False),
                     'pointer_grounding.read_pixels': Mock(return_value='pixels'),
-                    'pointer_grounding.action': Mock(return_value=(plan()['agents'][0]['drag'], {'stage': 'drag'})),
+                    'pointer_grounding.action': Mock(side_effect=lambda before, pixels, app, stage:
+                        (plan()['agents'][0]['drag'] if stage in ('select_range', 'move_rectangle') else {'x': 20, 'y': 30},
+                         {'app': app, 'stage': stage})),
                     'pointer_grounding.verify': Mock(side_effect=AssertionError('sibling did not move'))
-                        if failure == 'pointer_effect' else Mock(return_value={'verified': True}),
+                        if failure == 'pointer_effect' else Mock(side_effect=[{'verified': True}, AssertionError('recovery no effect')])
+                        if failure == 'recovery_effect' else Mock(return_value={'verified': True}),
+                    'print': Mock(),
                 }
                 for name, value in replacements.items():
                     stack.enter_context(patch('production_cancel_proof.' + name, value))
-                self.assertEqual(run(args), 0 if failure in (None, 'pointer') else 1)
+                self.assertEqual(run(args), 0 if failure in (None, 'pointer', 'recovery_calc', 'recovery_inkscape') else 1)
                 result = json.loads((args.evidence / 'result.json').read_text())
-                self.assertEqual(result['reacquisition'], 'unproven')
+                if not recovery:
+                    self.assertEqual(result['reacquisition'], 'unproven')
+                else:
+                    self.assertEqual(result['reacquisition']['result'], 'unproven' if failure == 'recovery_effect' else 'verified')
+                    self.assertEqual(result['cancellation']['victim_lane'], 1)
+                    self.assertEqual(result['termination']['pid'], agents[victim].process.pid)
+                    self.assertEqual(result['saved_app_effects'], 'unproven')
+                    self.assertEqual(result['interrupted_state']['saved_document_effect'], 'unproven')
+                    self.assertEqual(proof_image.read_bytes(), b'synthetic-test-image')
+                    self.assertTrue((args.evidence / 'interrupted-state.json').is_file())
+                    self.assertTrue((args.evidence / 'recovery-grounding.json').is_file())
+                    self.assertTrue((args.evidence / 'recovery-after.json').is_file())
+                    self.assertEqual(fresh.tool.call_count, 2)
+                    fresh.close.assert_called_once()
+                    self.assertIsNotNone(fresh.process.poll())
                 if failure in ('pointer', 'pointer_effect'):
                     replacements['pointer_grounding.verify'].assert_called_once()
                     self.assertEqual(replacements['pointer_grounding.action'].call_count, 2)
@@ -321,8 +499,8 @@ class RunnerTests(unittest.TestCase):
                     self.assertFalse(held[0])
                 if failure not in ('snapshot', 'grab'):
                     self.assertEqual(pool.submit.call_count, 2)
-                    agents[0].process.kill.assert_called_once()
-                    agents[1].process.kill.assert_not_called()
+                    agents[victim].process.kill.assert_called_once()
+                    agents[1 - victim].process.kill.assert_not_called()
                     trace_client.close.assert_called_once()
                     self.assertEqual(trace_client.exchange.call_args_list[0].args, ('TRACE_START',))
                     self.assertEqual(trace_client.exchange.call_args_list[-1].args, ('TRACE_STOP',))

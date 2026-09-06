@@ -90,6 +90,10 @@ module, license, and source/build provenance. It has no install hooks, autoload,
 configuration edits, or hot replacement. Module activation and compositor
 restart belong to the separately validated operator workflow.
 
+CTest runs without fakeroot's identity shim, including when called by
+`package()`. Socket peer-credential tests need the real build-user identity;
+fakeroot remains active in the parent process for package file ownership.
+
 ## Verify this preparation
 
 To qualify a candidate before publishing, generate the default development kit

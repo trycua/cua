@@ -283,6 +283,40 @@ package || exit 1
                 self.assertNotIn("SyntaxError", result.stderr)
                 path.write_bytes(original)
 
+    def test_mandatory_tests_drop_fakeroot_only_in_test_child(self):
+        output = self.generate()
+        binaries = self.root / 'test-bin'
+        binaries.mkdir()
+        ctest = binaries / 'ctest'
+        ctest.write_text('''#!/bin/sh
+test -z "${LD_PRELOAD+x}" && test -z "${FAKEROOTKEY+x}" && test -z "${FAKED_MODE+x}" || exit 91
+test "$1" = --test-dir && test "$3" = --output-on-failure && test "$4" = --no-tests=error || exit 92
+printf 'ctest-real-identity\\n'
+exit "${TEST_CTEST_EXIT:-0}"
+''')
+        ctest.chmod(0o755)
+        script = '''source "$1"
+srcdir="$2"; PATH="$3:$PATH"
+export LD_PRELOAD=synthetic-fakeroot.so FAKEROOTKEY=123 FAKED_MODE=unknown-is-real
+_verify() { [[ "$LD_PRELOAD" == synthetic-fakeroot.so && "$FAKEROOTKEY" == 123 ]]; }
+if [[ "$4" == check ]]; then
+  check; result=$?
+  [[ $result == 0 ]] || exit 93
+else
+  export TEST_CTEST_EXIT=17
+  package; result=$?
+  [[ $result != 0 ]] || exit 94
+fi
+[[ "$LD_PRELOAD" == synthetic-fakeroot.so && "$FAKEROOTKEY" == 123 && "$FAKED_MODE" == unknown-is-real ]]
+'''
+        for operation in ('check', 'package'):
+            with self.subTest(operation=operation):
+                result = subprocess.run(['bash', '-c', script, 'test', str(output / 'PKGBUILD'),
+                                         str(self.root / 'src'), str(binaries), operation],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(result.stdout, 'ctest-real-identity\n')
+
 
 class NativeContractTest(unittest.TestCase):
     def setUp(self):

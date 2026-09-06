@@ -47,7 +47,13 @@ build() {
 
 check() {
   _verify || return 1
-  ctest --test-dir "$srcdir/build" --output-on-failure --no-tests=error
+  # package() runs under fakeroot, whose getuid() shim disagrees with kernel
+  # SO_PEERCRED. Test the real same-user boundary without changing the parent
+  # packaging environment or skipping the mandatory packaging-time test run.
+  (
+    unset LD_PRELOAD FAKEROOTKEY FAKED_MODE
+    ctest --test-dir "$srcdir/build" --output-on-failure --no-tests=error
+  )
 }
 
 package() {

@@ -1,8 +1,12 @@
 All
   Leaf query=data.authz_base.allow source=registered:authz-base
+  Because reason="creating or modifying Kubernetes Services directly is not supported. Declare the port under spec.vmTemplate.services on the pool template, or PATCH spec.vmTemplate.services on your bound OSGymSandbox to expose it on a running sandbox; the matching Service is created for you."
+    Leaf query=data.authz_k8s.not_direct_service_write source=multi["registered:authz","registered:authz-k8s"]
   Leaf query=data.authz_k8s.allow source=multi["registered:authz","registered:authz-k8s"]
   Because reason="A payment method is required to create this resource. Add one in Billing and try again."
     Any
       Leaf query=data.custom_resource_creation_admission.exempt source=multi["registered:authz","registered:custom-resource-creation-admission"]
       Leaf query=data.custom_resource_creation_admission.billing_eligible source=multi["registered:authz","registered:custom-resource-creation-admission"] facts=stripe_cards@registered-facts:stripe-cards facts=time@registered-facts:current-year facts=time@registered-facts:current-month
   Leaf query=data.pool_admission.allow source=multi["registered:authz","registered:pool-admission"] body=1048576
+  Because reason="a sandbox PATCH may only modify spec.vmTemplate.services (an optional metadata.resourceVersion precondition is also accepted)"
+    Leaf query=data.sandbox_services_admission.allow source=registered:sandbox-services-admission body=1048576

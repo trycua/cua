@@ -186,16 +186,18 @@ func AccountLookupRoutePolicy() Node {
 }
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with two admission conjuncts: card-or-admin admission
-// for custom-resource creation, and pool admission over the request body.
+// as every other route, with three admission conjuncts: card-or-admin admission
+// for custom-resource creation, pool admission over the request body, and
+// sandbox-services admission over the body of the one Sandbox write the
+// allowlist admits.
 //
-// Every conjunct must pass. The pool-admission leaf reads the raw body (bounded at 1 MiB)
-// to inspect the object being created or patched, which is why it names
-// pool_admission.rego alongside authz.rego — pool_admission imports
-// data.authz.is_admin. It stays a separate leaf rather than rules inside
-// authz_k8s.rego because it is the only thing on this surface that needs the
-// body, and folding it in would put every k8s request's verdict behind a body
-// read.
+// Every conjunct must pass. The two body-reading leaves read the raw body
+// (bounded at 1 MiB) to inspect the object being created or patched, which is
+// why pool admission names pool_admission.rego alongside authz.rego —
+// pool_admission imports data.authz.is_admin. They stay separate leaves rather
+// than rules inside authz_k8s.rego because they are the only things on this
+// surface that need the body, and folding them in would put every k8s
+// request's verdict behind a body read.
 func CustomResourceCreationAdmissionPolicy() Node {
 	leaf := func(query string, options ...PolicyOption) Node {
 		return Policy(
@@ -217,9 +219,28 @@ func CustomResourceCreationAdmissionPolicy() Node {
 	)
 }
 
+// ServiceWriteNotSupportedMessage is the 403 body for a direct write to core
+// Services through /api/k8s — the obvious but unsupported way to expose a new
+// port on a sandbox. The allowlist denies these writes either way; this
+// message exists so the denial names the supported alternative instead of
+// reading as an unexplained policy defect.
+const ServiceWriteNotSupportedMessage = "creating or modifying Kubernetes Services directly is not supported. Declare the port under spec.vmTemplate.services on the pool template, or PATCH spec.vmTemplate.services on your bound OSGymSandbox to expose it on a running sandbox; the matching Service is created for you."
+
+// SandboxPatchRestrictedMessage is the 403 body when a Sandbox PATCH body
+// strays outside the one field clients may write.
+const SandboxPatchRestrictedMessage = "a sandbox PATCH may only modify spec.vmTemplate.services (an optional metadata.resourceVersion precondition is also accepted)"
+
 func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
+		// Before the allow leaf on purpose: All's fold short-circuits on the
+		// first denying child and keeps ITS reason, so this Because only
+		// reaches the response when it is the first conjunct to deny — which,
+		// placed here, is every direct core-Services write and nothing else.
+		Because(
+			surfaceLeaf("authz-k8s", "data.authz_k8s.not_direct_service_write"),
+			ServiceWriteNotSupportedMessage,
+		),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
 		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
 		Policy(
@@ -229,6 +250,14 @@ func K8sRoutePolicy() Node {
 			),
 			Query("data.pool_admission.allow"),
 			WithRawBody(1<<20),
+		),
+		Because(
+			Policy(
+				Registered("sandbox-services-admission"),
+				Query("data.sandbox_services_admission.allow"),
+				WithRawBody(1<<20),
+			),
+			SandboxPatchRestrictedMessage,
 		),
 	)
 }

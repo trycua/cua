@@ -193,7 +193,7 @@ class RecoveryTests(unittest.TestCase):
 
     def test_fresh_runtime_snapshot_single_action_and_observer_effect(self):
         for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll')):
-            for failure in (None, 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace'):
+            for failure in (None, 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after'):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     victim, sibling, observer, fresh = [client(pid) for pid in (100, 101, 102, 103)]
                     victim.failed = True
@@ -223,9 +223,11 @@ class RecoveryTests(unittest.TestCase):
                     if failure == 'trace':
                         page['overflow'] = True
                     trace_client, save, result = Mock(collect=Mock(return_value=page)), Mock(), {}
+                    guard = Mock(side_effect=AssertionError('primary lifetime ended') if failure == 'primary_before'
+                                 else [None, AssertionError('primary lifetime ended')] if failure == 'primary_after' else None)
                     def attempt():
                         return recover_once(fresh, observer, victim, sibling, spec, stage, trace_client,
-                                            trace(FINISH[:-1]), 1, save, result)
+                                            trace(FINISH[:-1]), 1, save, result, guard)
                     if failure:
                         with self.assertRaises((AssertionError, TimeoutError)):
                             attempt()
@@ -242,7 +244,7 @@ class RecoveryTests(unittest.TestCase):
                         self.assertIs(snapshot.call_args_list[0].args[0], fresh)
                         self.assertIs(snapshot.call_args_list[1].args[0], observer)
                     inputs = [call for call in fresh.tool.call_args_list if call.args[0] != 'start_session']
-                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before') else 1)
                     if inputs:
                         self.assertEqual(inputs[0].args, (tool, {**arguments, **spec['target'],
                             'session': spec['name'] + '-recovery', 'delivery_mode': 'background'}))
@@ -421,7 +423,7 @@ class OwnershipTests(unittest.TestCase):
 class RunnerTests(unittest.TestCase):
     def test_success_and_failures_reap_all_owned_children_without_replay(self):
         for failure in (None, 'sigterm', 'pointer', 'pointer_effect', 'trace', 'unknown_sibling',
-                        'successful_victim', 'close', 'snapshot', 'grab',
+                        'successful_victim', 'close', 'snapshot', 'grab', 'primary_before', 'primary_after',
                         'recovery_calc', 'recovery_inkscape', 'recovery_effect', 'recovery_close', 'recovery_trace'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
@@ -452,7 +454,9 @@ class RunnerTests(unittest.TestCase):
                 for agent in agents:
                     agent.tool.return_value = {'structuredContent': {}}
                 held = [True]
-                grab = Mock(stdout=Mock(), poll=Mock(return_value=0))
+                grab = Mock(stdout=Mock(), poll=Mock(return_value=None))
+                if failure == 'primary_before':
+                    grab.poll.return_value = 0
                 trace_client = Mock(hello={'protocol': 3})
                 stopped = trace(FINISH, False)
                 if failure == 'trace':
@@ -484,6 +488,12 @@ class RunnerTests(unittest.TestCase):
                 snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image)})
                 if failure == 'snapshot':
                     snapshot.side_effect = AssertionError('stale geometry')
+                if failure == 'primary_after':
+                    def primary_exits_after_action(*args, **kwargs):
+                        if kwargs.get('session') is False:
+                            grab.poll.return_value = 0
+                        return snapshot.return_value
+                    snapshot.side_effect = primary_exits_after_action
                 if failure == 'close':
                     agents[0].close.side_effect = RuntimeError('cleanup failure')
                 replacements = {
@@ -539,7 +549,13 @@ class RunnerTests(unittest.TestCase):
                     agents[1].close.assert_called_once()
                     observer.close.assert_called_once()
                     self.assertFalse(held[0])
-                if failure not in ('snapshot', 'grab'):
+                if failure == 'primary_before':
+                    pool.submit.assert_not_called()
+                    agents[victim].process.kill.assert_not_called()
+                    self.assertIn('primary', result['error'])
+                if failure == 'primary_after':
+                    self.assertIn('primary', result['error'])
+                if failure not in ('snapshot', 'grab', 'primary_before'):
                     self.assertEqual(pool.submit.call_count, 2)
                     if failure == 'sigterm':
                         agents[victim].process.terminate.assert_called_once()

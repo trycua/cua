@@ -312,7 +312,7 @@ def run(args):
         save('drag-grounding.json', prepared)
         guard()
         pool = ThreadPoolExecutor(max_workers=1)
-        future = pool.submit(call_drag, clients[0], spec, prepared)
+        future = pool.submit(call_drag, clients[0], spec, prepared, guard)
         _, lane = fault.inject(trace, initial, future, guard)
         save('fault.json', fault.record)
         report['action'] = future.result(timeout=5)

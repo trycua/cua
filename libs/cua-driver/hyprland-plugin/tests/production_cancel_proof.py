@@ -18,7 +18,8 @@ from primary_trace import Trace, analyze
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from production_realapp_proof import (app_process_identity, capacity_lane, check_response,
-                                     primary_acknowledgement, provenance, trace_interval)
+                                     primary_acknowledgement, provenance, trace_interval,
+                                     PRIMARY_LIFETIME_MS, require_primary_active)
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
@@ -103,7 +104,7 @@ def verify_recovery_cleanup(prefix, stopped):
     return isolation
 
 
-def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary, lane, save, result):
+def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary, lane, save, result, guard=None):
     """One new action, never a continuation of the killed transport or gesture."""
     assert victim.failed and victim.process.poll() is not None, 'victim must be torn down before recovery'
     pids = assert_distinct_runtimes([client, sibling, observer])
@@ -125,6 +126,8 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     result['grounding'] = {'snapshot': before, 'app_identity': identity, 'arguments': arguments,
                            'oracle': oracle, 'prepared_ns': started_ns, 'target': fresh['target']}
     save('recovery-grounding.json', result)
+    if guard:
+        guard()
     dispatch_ns = time.monotonic_ns()
     assert 0 <= dispatch_ns - started_ns <= MAX_GROUNDING_AGE_NS, 'recovery grounding expired; no input sent'
     result['action'] = {'outcome': 'unknown', 'replayed': False, 'dispatch_ns': dispatch_ns}
@@ -147,6 +150,8 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     save('recovery-prefix.json', page)
     result['trace'] = verify_recovery_trace(boundary, page, lane, tool)
     assert client.process.poll() is None and sibling.process.poll() is None, 'runtime exited during recovery'
+    if guard:
+        guard()
     result['result'] = 'verified'
     return page
 
@@ -290,11 +295,13 @@ def verify_cancellation(stopped, kill_prefix, victim_lane, sibling_lane):
             'continuous_isolation': isolation, 'synthetic_cleanup': 'verified'}
 
 
-def call_drag(client, spec, prepared=None):
+def call_drag(client, spec, prepared=None, guard=None):
     prepared = prepare_drag(client, spec) if prepared is None else prepared
     assert prepared['target'] == spec['target'] and prepared['session'] == spec['name']
     age = time.monotonic_ns() - prepared['prepared_ns']
     assert 0 <= age <= MAX_GROUNDING_AGE_NS, 'prepared drag snapshot expired; no input sent'
+    if guard:
+        guard()
     try:
         response = client.tool('drag', {**prepared['arguments'], **spec['target'],
                                'session': spec['name'], 'delivery_mode': 'background'})
@@ -317,6 +324,9 @@ def run(args):
     cancellation_boundary = recovery_prefix = None
     prepared = []
     primary_before = baseline = None
+    deadline = None
+    def guard():
+        require_primary_active(grab, deadline)
     try:
         plan = json.loads(args.plan.read_text())
         save('plan.json', plan)
@@ -347,8 +357,9 @@ def run(args):
         assert 0 < x < fg['width'] and 0 < y < fg['height']
         x, y = fg['x'] + x, fg['y'] + y
         assert 0 <= x < desktop['screen_width'] and 0 <= y < desktop['screen_height']
+        deadline = time.monotonic_ns() + PRIMARY_LIFETIME_MS * 1_000_000
         grab = subprocess.Popen([str(args.primary_grab), str(x), str(y), str(desktop['screen_width']),
-                                 str(desktop['screen_height']), '60000'], stdout=subprocess.PIPE, text=True)
+                                 str(desktop['screen_height']), str(PRIMARY_LIFETIME_MS)], stdout=subprocess.PIPE, text=True)
         assert primary_acknowledgement(grab.stdout) == 'HELD\n'
         wait_for(lambda: state(args.foreground_journal)['held'])
         grounded_snapshot(observer, plan['foreground'])
@@ -367,12 +378,15 @@ def run(args):
         for index, spec in enumerate(plan['agents']):
             prepared.append(prepare_drag(clients[index], spec))
             save(f'agent-{index}-drag-grounding.json', prepared[-1])
-        futures[victim] = pool.submit(call_drag, clients[victim], plan['agents'][victim], prepared[victim])
+        guard()
+        futures[victim] = pool.submit(call_drag, clients[victim], plan['agents'][victim], prepared[victim], guard)
         first, active = poll_active(trace, initial, None, list(futures.values()))
         victim_lane = next(iter(active))
-        futures[sibling] = pool.submit(call_drag, clients[sibling], plan['agents'][sibling], prepared[sibling])
+        guard()
+        futures[sibling] = pool.submit(call_drag, clients[sibling], plan['agents'][sibling], prepared[sibling], guard)
         kill_prefix, _ = poll_active(trace, first, {1, 2}, list(futures.values()))
         # No disk I/O or observation between the fresh trace gate and exact-child kill.
+        guard()
         report['termination'] = terminate_owned(clients[victim], clients[sibling], list(futures.values()),
                                                 plan.get('termination_signal', 'SIGKILL'))
         lanes = victim_lane, 3 - victim_lane
@@ -393,6 +407,7 @@ def run(args):
             # The observer uses its own fresh read after the killed connection is lost.
             after = grounded_snapshot(observer, spec['target'], spec, session=False)
             save(f'agent-{index}-after.json', after)
+            guard()
             if index == victim and 'recovery' in plan:
                 image = Path(after['proof_image'])
                 report['interrupted_state'] = {
@@ -416,7 +431,7 @@ def run(args):
             recovery_prefix = recover_once(
                 clients[-1], observer, clients[victim], clients[sibling], plan['agents'][victim],
                 plan['recovery']['pointer_stage'], trace, cancellation_boundary, victim_lane,
-                save, report['reacquisition'])
+                save, report['reacquisition'], guard)
             interrupted = report['interrupted_state']
             for path, digest in ((args.evidence / interrupted['snapshot'], interrupted['snapshot_sha256']),
                                  (Path(interrupted['image']), interrupted['image_sha256'])):
@@ -425,6 +440,7 @@ def run(args):
         assert wm() == primary_before, 'primary cursor/focus/workspace changed'
         current = state(args.foreground_journal)
         assert all(current[key] == baseline[key] for key in ('clicks', 'keys', 'scroll', 'held')), current
+        guard()
         report['result'] = 'passed'
     except Exception as error:
         report['error'] = str(error)
@@ -448,6 +464,7 @@ def run(args):
                 trace.exchange('TRACE_STOP')
                 stopped = trace.collect()
                 save('trace.json', stopped)
+                guard()
                 assert kill_prefix is not None and lanes, 'no termination evidence'
                 if cancellation_boundary is None:
                     report['cancellation'] = verify_cancellation(stopped, kill_prefix, *lanes)
@@ -463,6 +480,7 @@ def run(args):
                 assert wm() == primary_before, 'primary changed during cleanup'
                 current = state(args.foreground_journal)
                 assert all(current[key] == baseline[key] for key in ('clicks', 'keys', 'scroll', 'held')), current
+                guard()
             operations += [('finish_trace', finish_trace), ('close_trace', trace.close)]
         def release_primary():
             if grab:

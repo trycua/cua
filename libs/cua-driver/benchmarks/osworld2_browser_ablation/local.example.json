@@ -1,0 +1,14 @@
+{
+  "fleet_secret_name": "replace-with-an-existing-scoped-secret-name",
+  "container_disk_image": "replace-with-the-private-immutable-image-digest",
+  "driver_artifact_strategy": "build_and_upload_ephemeral",
+  "model_provider": "litellm",
+  "model": "replace-with-a-single-pinned-model-route",
+  "model_base_url": "https://replace-with-openai-compatible-gateway/v1",
+  "model_api_key_secret_name": "replace-with-an-existing-scoped-secret-name",
+  "model_api_key_secret_json_field": "api_key",
+  "model_wire_api": "responses",
+  "model_stream": true,
+  "model_route_verified": false,
+  "model_resolved_at_smoke": null
+}

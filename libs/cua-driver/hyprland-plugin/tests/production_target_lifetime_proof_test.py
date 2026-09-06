@@ -238,7 +238,8 @@ class InjectionTests(unittest.TestCase):
 
 class RecoveryTests(unittest.TestCase):
     def test_one_fresh_distinct_action_unknown_never_replayed(self):
-        for failure in (None, 'alive', 'reused_runtime', 'stale', 'unknown', 'bad_effect', 'same_snapshot'):
+        for failure in (None, 'alive', 'reused_runtime', 'stale', 'unknown', 'bad_effect', 'same_snapshot',
+                        'same_artifact', 'cached', 'before_return', 'same_runtime', 'dead_after'):
             with self.subTest(failure=failure), ExitStack() as stack:
                 candidate = plan()
                 recovered_status = status()
@@ -246,17 +247,29 @@ class RecoveryTests(unittest.TestCase):
                 fault = SimpleNamespace(destroyed=True, spec=candidate['agents'][0], fresh=candidate['recovery']['agent'],
                     guard=Mock(), status=Mock(return_value=recovered_status))
                 client = Mock(process=Mock(pid=100 if failure == 'reused_runtime' else 101, poll=Mock(return_value=None)))
-                observer = Mock(process=Mock(pid=102, poll=Mock(return_value=None)))
+                observer = Mock(directory=Path.cwd(), process=Mock(pid=101 if failure == 'same_runtime' else 102,
+                    poll=Mock(side_effect=[None, 0] if failure == 'dead_after' else None, return_value=None)))
                 victim = Mock(process=Mock(pid=100, poll=Mock(return_value=None if failure == 'alive' else 0)))
                 client.tool.side_effect = [{}, TimeoutError('lost reply') if failure == 'unknown' else DELIVERED]
-                before = {'snapshot_id': 1, 'proof_image': 'before.png'}
-                after = {'snapshot_id': 1 if failure == 'same_snapshot' else 2, 'proof_image': 'after.png'}
+                before = {'snapshot_id': 's00000001', 'proof_image': 'before.png',
+                    'proof_runtime': {'pid': 101, 'directory': str(Path.cwd())},
+                    'proof_observation_started_ns': 100, 'proof_observation_finished_ns': 101}
+                after = {**before, 'proof_runtime': {'pid': 102, 'directory': str(Path.cwd())},
+                    'proof_image': 'after.png', 'proof_observation_started_ns': 104, 'proof_observation_finished_ns': 105}
+                if failure == 'same_snapshot':
+                    after = dict(before)
+                elif failure == 'same_artifact':
+                    after['proof_image'] = before['proof_image']
+                elif failure == 'cached':
+                    after.update(proof_observation_started_ns=100, proof_observation_finished_ns=101)
+                elif failure == 'before_return':
+                    after['proof_observation_started_ns'] = 102
                 prepared = {'target': fault.fresh['target'], 'snapshot': before, 'prepared_ns': 100,
                             'arguments': {'x': 20, 'y': 30}, 'oracle': {'stage': 'click_b2'}}
                 stack.enter_context(patch.object(proof, 'prepare_drag', return_value=prepared))
                 stack.enter_context(patch.object(proof, 'grounded_snapshot', return_value=after))
-                stack.enter_context(patch.object(proof.time, 'monotonic_ns', return_value=
-                    proof.MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else 101))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=
+                    [proof.MAX_GROUNDING_AGE_NS + 101] if failure == 'stale' else [102, 103, 106]))
                 stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value=[]))
                 stack.enter_context(patch.object(proof.pointer_grounding, 'verify',
                     side_effect=AssertionError('bad effect') if failure == 'bad_effect' else None))
@@ -270,7 +283,7 @@ class RecoveryTests(unittest.TestCase):
                     proof.recover(client, observer, victim, fault, collector, trace(DESTROYED), 1, Mock(), Mock(), result)
                     self.assertEqual(result['result'], 'verified')
                 clicks = [call for call in client.tool.call_args_list if call.args[0] == 'click']
-                self.assertEqual(len(clicks), 0 if failure in ('alive', 'reused_runtime', 'stale') else 1)
+                self.assertEqual(len(clicks), 0 if failure in ('alive', 'reused_runtime', 'stale', 'same_runtime') else 1)
                 if clicks:
                     self.assertEqual(clicks[0].args[1]['pid'], 30)
 

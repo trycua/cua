@@ -36,7 +36,7 @@ from production_active_lock_proof import (drag_once, held_status, recovery_stage
     verify_transition_end as _verify_transition_end)
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, active_drags,
     close_owned, grounded_snapshot, poll_active, prepare_drag, stopped_prefix,
-    verify_recovery_cleanup, verify_recovery_trace)
+    verify_fresh_observation, verify_recovery_cleanup, verify_recovery_trace)
 from production_lock_refusal_proof import click_once, verify_runtimes
 from production_mcp import DirectMCP, stop_process
 import production_pointer_grounding as pointer_grounding
@@ -284,6 +284,17 @@ class HoverFixture:
                 self.record['finished'] = self.event('finished')
 
 
+def prepare_recovery(client, spec, previous, allowed_stages):
+    started_ns = time.monotonic_ns()
+    before = grounded_snapshot(client, spec['target'], spec)
+    verify_fresh_observation(previous, before, client, after_ns=started_ns)
+    stage = recovery_stage(before)
+    assert stage in allowed_stages
+    arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), 'calc', stage)
+    return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
+            'stage': stage, 'prepared_ns': before['proof_observation_started_ns']}
+
+
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
@@ -389,14 +400,10 @@ def run(args):
         recovery = report['recovery']
         spec = {**spec, 'name': spec['name'] + '-recovery'}
         assert not fresh.tool('start_session', {'session': spec['name']}).get('isError')
-        prepared_ns = time.monotonic_ns()
-        before = grounded_snapshot(fresh, spec['target'], spec)
-        assert before['snapshot_id'] != prepared['snapshot']['snapshot_id']
-        spec['pointer_stage'] = recovery_stage(before)
-        assert spec['pointer_stage'] in plan['recovery']['pointer_stages']
-        arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), 'calc', spec['pointer_stage'])
-        save('recovery-grounding.json', {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
-            'stage': spec['pointer_stage'], 'prepared_ns': prepared_ns})
+        grounding = prepare_recovery(fresh, spec, prepared['snapshot'], plan['recovery']['pointer_stages'])
+        before, arguments, oracle = grounding['snapshot'], grounding['arguments'], grounding['oracle']
+        prepared_ns, spec['pointer_stage'] = grounding['prepared_ns'], grounding['stage']
+        save('recovery-grounding.json', grounding)
         restored.guard()
         assert desktop.primary(plan['foreground']) == primary
         recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns,
@@ -406,7 +413,9 @@ def run(args):
         check_response(response, {'kind': 'dispatched'})
         after = grounded_snapshot(observer, spec['target'], spec, session=False)
         save('recovery-after.json', after)
-        assert after['snapshot_id'] != before['snapshot_id']
+        verify_runtimes(clients)
+        assert recovery['action']['dispatch_ns'] <= recovery['action']['observed_ns']
+        verify_fresh_observation(before, after, observer, after_ns=recovery['action']['observed_ns'])
         recovery['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
         prefix = trace.collect()
         save('recovery-prefix.json', prefix)

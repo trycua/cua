@@ -42,7 +42,7 @@ from desktop_faults import _identity, _same_compositor, _hypr
 from driver_input_live import state, wait_for
 from primary_trace import Trace, analyze
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, close_owned,
-    grounded_snapshot, prepare_drag, verify_recovery_cleanup, verify_recovery_trace)
+    grounded_snapshot, prepare_drag, verify_fresh_observation, verify_recovery_cleanup, verify_recovery_trace)
 from production_desktop_fault_proof import guest_identity, verify_status
 from production_geometry_fault_proof import validate_plan as geometry_plan, window_bounds
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
@@ -188,6 +188,7 @@ def action(actor, observer, spec, phase, trace, guard, save, record):
     except Exception as error:
         record['error'] = str(error)
     finally:
+        record['observed_ns'] = time.monotonic_ns()
         save(phase + '-action.json', record)
         try:
             record['after'] = grounded_snapshot(observer, spec['target'], spec, session=False)
@@ -202,7 +203,8 @@ def action(actor, observer, spec, phase, trace, guard, save, record):
                 save(phase + '-action.json', record)
     guard()
     assert_distinct_runtimes([actor, observer])
-    assert record['after']['snapshot_id'] != prepared['snapshot']['snapshot_id'], 'reused snapshot'
+    assert record['dispatch_ns'] <= record['observed_ns'], 'action returned before dispatch'
+    verify_fresh_observation(prepared['snapshot'], record['after'], observer, after_ns=record['observed_ns'])
     assert record['outcome'] == 'response', 'delivery unknown; never replay'
     if phase == 'refusal':
         verify_refusal(record['trace_before'], record['trace_after'], record['response'])

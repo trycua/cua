@@ -191,6 +191,38 @@ class OracleTests(unittest.TestCase):
             self.assertEqual(result['result'], 'failed')
             self.assertEqual(result['cancellation']['result'], 'unproven')
 
+    def test_recovery_grounding_scopes_counter_and_preserves_original_age(self):
+        spec = plan()['agents'][0]
+        runtime = {'pid': 102, 'directory': str(Path.cwd())}
+        previous = {'snapshot_id': 's00000001', 'proof_runtime': {**runtime, 'pid': 101},
+            'proof_image': 'previous.png', 'proof_observation_started_ns': 10, 'proof_observation_finished_ns': 20}
+        for failure in (None, 'cached', 'same_snapshot', 'same_artifact', 'dead'):
+            observed = {**previous, 'proof_runtime': runtime, 'proof_image': 'fresh.png',
+                'proof_observation_started_ns': 40, 'proof_observation_finished_ns': 50}
+            if failure == 'cached':
+                observed.update(proof_observation_started_ns=10, proof_observation_finished_ns=20)
+            elif failure == 'same_snapshot':
+                observed = dict(previous)
+            elif failure == 'same_artifact':
+                observed['proof_image'] = previous['proof_image']
+            client = Mock(directory=Path.cwd(), process=Mock(pid=102, poll=Mock(return_value=0 if failure == 'dead' else None)))
+            with self.subTest(failure=failure), \
+                 patch.object(proof, 'grounded_snapshot', return_value=observed), \
+                 patch.object(proof.time, 'monotonic_ns', side_effect=[30, 60]), \
+                 patch.object(proof, 'recovery_stage', return_value='click_b2'), \
+                 patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'), \
+                 patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1}, {'stage': 'click_b2'})) as action:
+                if failure:
+                    with self.assertRaises(AssertionError):
+                        proof.prepare_recovery(client, spec, previous, ['click_a1', 'click_b2'])
+                    action.assert_not_called()
+                else:
+                    prepared = proof.prepare_recovery(client, spec, previous, ['click_a1', 'click_b2'])
+                    self.assertEqual(prepared['prepared_ns'], 40)
+                    self.assertIs(prepared['snapshot'], observed)
+                    action.assert_called_once_with(observed, 'pixels', 'calc', 'click_b2')
+                client.tool.assert_not_called()
+
 
 class FixtureTests(unittest.TestCase):
     def fixture(self):

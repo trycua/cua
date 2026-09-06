@@ -41,7 +41,7 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import analyze
 from production_active_lock_proof import drag_once, held_status
 from production_cancel_proof import (PROFILE, MAX_GROUNDING_AGE_NS, active_drags,
-    close_owned, grounded_snapshot, poll_active, prepare_drag, stopped_prefix)
+    close_owned, grounded_snapshot, poll_active, prepare_drag, stopped_prefix, verify_fresh_observation)
 from production_desktop_fault_proof import guest_identity
 from production_geometry_fault_proof import window_bounds
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
@@ -323,12 +323,15 @@ def recover(client, observer, victim, fault, trace, boundary, lane, guard, save,
     except Exception as error:
         result['action']['error'] = str(error)
     finally:
+        result['action']['observed_ns'] = time.monotonic_ns()
         save('recovery-action.json', result['action'])
     after = grounded_snapshot(observer, spec['target'], spec, session=False)
     save('recovery-after.json', after)
     assert result['action']['outcome'] == 'response', 'recovery unknown; never replay'
     check_response(response, {'kind': 'dispatched'})
-    assert after['snapshot_id'] != prepared['snapshot']['snapshot_id'], 'reused screenshot'
+    assert_distinct_runtimes([client, observer])
+    assert dispatch <= result['action']['observed_ns'], 'action returned before dispatch'
+    verify_fresh_observation(prepared['snapshot'], after, observer, after_ns=result['action']['observed_ns'])
     result['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), prepared['oracle'])
     page = trace.collect()
     save('recovery-prefix.json', page)

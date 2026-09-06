@@ -166,19 +166,44 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     return page
 
 
+def observation_runtime(client):
+    """Snapshot counters belong to one direct process and its evidence directory."""
+    assert_distinct_runtimes([client])
+    return {'pid': client.process.pid, 'directory': str(client.directory.resolve(strict=True))}
+
+
+def verify_fresh_observation(before, after, observer, *, after_ns):
+    """Verify original observation chronology, without comparing unscoped counters."""
+    assert after['proof_runtime'] == observation_runtime(observer), 'wrong observation runtime'
+    assert before['snapshot_id'] and after['snapshot_id'], 'missing snapshot identity'
+    assert (before['proof_runtime'], before['snapshot_id']) != (after['proof_runtime'], after['snapshot_id']), \
+        'reused snapshot'
+    assert Path(before['proof_image']).resolve() != Path(after['proof_image']).resolve(), 'reused image artifact'
+    times = [before['proof_observation_started_ns'], before['proof_observation_finished_ns'],
+             after_ns, after['proof_observation_started_ns'], after['proof_observation_finished_ns'],
+             time.monotonic_ns()]
+    assert all(type(value) is int and value >= 0 for value in times), 'invalid observation timestamp'
+    assert times == sorted(times) and times[0] < times[3], 'stale or out-of-order observation'
+
+
 def grounded_snapshot(client, target, spec=None, *, session=True):
     windows = client.tool('list_windows', {})
     assert not windows.get('isError'), windows
     matches = [w for w in windows['structuredContent']['windows'] if w.get('pid') == target['pid']]
     assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], 'stale target identity'
     pixels = spec is not None and 'pointer_stage' in spec
+    runtime = observation_runtime(client)
     observation_started_ns = time.monotonic_ns()
     result = client.tool('get_window_state', {**target,
                          **(POINTER_SNAPSHOT_LIMITS.get(spec['app'], {}) if pixels
                             else {'max_elements': 100, 'max_depth': 6}),
                          **({'session': spec['name']} if spec and session else {})})
     assert not result.get('isError'), result
-    content = {**result['structuredContent'], 'proof_observation_started_ns': observation_started_ns}
+    observation_finished_ns = time.monotonic_ns()
+    assert observation_runtime(client) == runtime, 'observation runtime changed'
+    content = {**result['structuredContent'], 'proof_runtime': runtime,
+               'proof_observation_started_ns': observation_started_ns,
+               'proof_observation_finished_ns': observation_finished_ns}
     width, height = content.get('screenshot_width', 0), content.get('screenshot_height', 0)
     assert width > 0 and height > 0, 'missing grounding image'
     if spec:
@@ -187,11 +212,20 @@ def grounded_snapshot(client, target, spec=None, *, session=True):
             for end in ('from', 'to'):
                 assert 0 < spec['drag'][end + '_x'] < width and 0 < spec['drag'][end + '_y'] < height, \
                     'drag leaves the fresh snapshot'
+    # A cached response must not gain a new age from this wrapper's clock.
+    snapshot_id = content.get('snapshot_id')
+    assert isinstance(snapshot_id, str) and snapshot_id, 'missing snapshot identity'
+    seen = vars(client).setdefault('_proof_snapshot_ids', set())
+    assert snapshot_id not in seen, 'reused snapshot in Driver runtime'
+    seen.add(snapshot_id)
     if pixels:
         images = [row for row in result.get('content', []) if row.get('type') == 'image']
         assert len(images) == 1 and images[0].get('image_file'), 'missing exact snapshot image'
         path = client.directory / images[0]['image_file']
         assert path.resolve(strict=True).parent == client.directory.resolve(strict=True), 'image escapes evidence'
+        images_seen = vars(client).setdefault('_proof_image_paths', set())
+        assert path.resolve() not in images_seen, 'reused image artifact in Driver runtime'
+        images_seen.add(path.resolve())
         content = {**content, 'proof_image': str(path)}
     return content
 

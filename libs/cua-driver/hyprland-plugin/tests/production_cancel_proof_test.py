@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 from production_cancel_proof import (
     MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned, grounded_snapshot,
     poll_active, prepare_drag, prepare_drags, recover_once, run, stopped_prefix,
-    terminate_owned, validate_plan, verify_cancellation, verify_recovery_cleanup, verify_recovery_trace,
+    terminate_owned, validate_plan, verify_cancellation, verify_fresh_observation,
+    verify_recovery_cleanup, verify_recovery_trace,
 )
 
 
@@ -402,9 +403,9 @@ class OwnershipTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / 'image.png').touch()
-            content = {'window_bounds': BOUNDS, 'screenshot_width': 800, 'screenshot_height': 600}
+            content = {'snapshot_id': 's00000001', 'window_bounds': BOUNDS, 'screenshot_width': 800, 'screenshot_height': 600}
             for image_file, valid in [('image.png', True), ('missing.png', False), ('../escape.png', False)]:
-                mcp = Mock(directory=root, tool=Mock(side_effect=[
+                mcp = Mock(directory=root, process=Mock(pid=101, poll=Mock(return_value=None)), tool=Mock(side_effect=[
                     {'structuredContent': {'windows': [spec['target']]}},
                     {'structuredContent': content, 'content': [{'type': 'image', 'image_file': image_file}]}]))
                 if valid:
@@ -419,20 +420,25 @@ class OwnershipTests(unittest.TestCase):
         spec = {**plan()['agents'][1], 'drag': {}, 'pointer_stage': 'move_rectangle'}
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / 'image.png').touch()
             now = [100]
+            snapshots = [0]
             def tool(name, arguments):
                 if name == 'list_windows':
                     now[0] = 200
                     return {'structuredContent': {'windows': [spec['target']]}}
                 now[0] = 300
-                return {'structuredContent': {'window_bounds': BOUNDS, 'screenshot_width': 800,
+                snapshots[0] += 1
+                image_file = f'image-{snapshots[0]}.png'
+                (root / image_file).touch()
+                return {'structuredContent': {'snapshot_id': f's{snapshots[0]:08x}', 'window_bounds': BOUNDS, 'screenshot_width': 800,
                                               'screenshot_height': 600},
-                        'content': [{'type': 'image', 'image_file': 'image.png'}]}
-            mcp = Mock(directory=root, tool=Mock(side_effect=tool))
+                        'content': [{'type': 'image', 'image_file': image_file}]}
+            mcp = Mock(directory=root, process=Mock(pid=101, poll=Mock(return_value=None)), tool=Mock(side_effect=tool))
             with patch('production_cancel_proof.time.monotonic_ns', side_effect=lambda: now[0]):
                 result = grounded_snapshot(mcp, spec['target'], spec)
             self.assertEqual(result['proof_observation_started_ns'], 200)
+            self.assertEqual(result['proof_observation_finished_ns'], 300)
+            self.assertEqual(result['proof_runtime'], {'pid': 101, 'directory': str(root.resolve())})
             self.assertEqual(mcp.tool.call_args.args, ('get_window_state', {
                 **spec['target'], 'session': spec['name'], 'max_elements': 2500}))
             # A bounded walk is not permission to omit the existing oracle.
@@ -525,13 +531,88 @@ class OwnershipTests(unittest.TestCase):
 
     def test_snapshot_rejects_stale_identity_geometry_and_off_image_coordinates(self):
         spec = plan()['agents'][0]
-        good = {'structuredContent': {'window_bounds': BOUNDS, 'screenshot_width': 800, 'screenshot_height': 600}}
+        good = {'structuredContent': {'snapshot_id': 's00000001', 'window_bounds': BOUNDS, 'screenshot_width': 800, 'screenshot_height': 600}}
         for windows, content in [([], good), ([{'pid': 20, 'window_id': 999}], good),
                                  ([spec['target']], {'structuredContent': {**good['structuredContent'], 'window_bounds': {}}}),
                                  ([spec['target']], {'structuredContent': {**good['structuredContent'], 'screenshot_width': 50}})]:
-            mcp = Mock(tool=Mock(side_effect=[{'structuredContent': {'windows': windows}}, content]))
+            mcp = Mock(directory=Path.cwd(), process=Mock(pid=101, poll=Mock(return_value=None)),
+                       tool=Mock(side_effect=[{'structuredContent': {'windows': windows}}, content]))
             with self.assertRaises(AssertionError):
                 grounded_snapshot(mcp, spec['target'], spec)
+
+
+class ObservationTests(unittest.TestCase):
+    def test_counter_identity_and_original_chronology(self):
+        with tempfile.TemporaryDirectory() as directory:
+            observer = Mock(directory=Path(directory), process=Mock(pid=102, poll=Mock(return_value=None)))
+            runtime = {'pid': 102, 'directory': str(Path(directory).resolve())}
+            before = {'snapshot_id': 's00000001', 'proof_runtime': {**runtime, 'pid': 101},
+                'proof_image': str(Path(directory) / 'before.png'),
+                'proof_observation_started_ns': 10, 'proof_observation_finished_ns': 20}
+            after = {**before, 'proof_runtime': runtime, 'proof_image': str(Path(directory) / 'after.png'),
+                'proof_observation_started_ns': 40, 'proof_observation_finished_ns': 50}
+            for failure in (None, 'cached', 'same_artifact', 'artifact_alias', 'same_runtime_counter',
+                            'wrong_runtime', 'dead', 'before_return', 'future', 'invalid_time'):
+                with self.subTest(failure=failure), patch('production_cancel_proof.time.monotonic_ns', return_value=60):
+                    old, new = dict(before), dict(after)
+                    observer.process.poll.return_value = 0 if failure == 'dead' else None
+                    if failure == 'cached':
+                        new.update(proof_observation_started_ns=10, proof_observation_finished_ns=20)
+                    elif failure in ('same_artifact', 'artifact_alias'):
+                        new['proof_image'] = old['proof_image'] if failure == 'same_artifact' else str(Path(directory) / 'unused' / '..' / 'before.png')
+                    elif failure == 'same_runtime_counter':
+                        old['proof_runtime'] = runtime
+                    elif failure == 'wrong_runtime':
+                        new['proof_runtime'] = old['proof_runtime']
+                    elif failure == 'before_return':
+                        new['proof_observation_started_ns'] = 29
+                    elif failure == 'future':
+                        new['proof_observation_finished_ns'] = 61
+                    elif failure == 'invalid_time':
+                        new['proof_observation_started_ns'] = True
+                    if failure:
+                        with self.assertRaises(AssertionError):
+                            verify_fresh_observation(old, new, observer, after_ns=30)
+                    else:
+                        verify_fresh_observation(old, new, observer, after_ns=30)
+                        self.assertEqual(new['proof_observation_started_ns'], 40)
+
+    def test_observation_rejects_runtime_exit_during_snapshot(self):
+        spec = plan()['agents'][0]
+        for polls in ([0], [None, 0]):
+            mcp = Mock(directory=Path.cwd(), process=Mock(pid=101, poll=Mock(side_effect=polls)),
+                tool=Mock(side_effect=[{'structuredContent': {'windows': [spec['target']]}},
+                    {'structuredContent': {'window_bounds': BOUNDS, 'screenshot_width': 800, 'screenshot_height': 600}}]))
+            with self.subTest(polls=polls), self.assertRaisesRegex(AssertionError, 'process exited'):
+                grounded_snapshot(mcp, spec['target'], spec)
+            self.assertEqual(mcp.tool.call_count, len(polls))
+
+    def test_runtime_cache_cannot_restamp_reused_counter_or_image(self):
+        spec = {**plan()['agents'][0], 'drag': {}, 'pointer_stage': 'select_range'}
+        for failure in (None, 'counter', 'image'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / 'first.png').touch()
+                (root / 'second.png').touch()
+                def response(snapshot_id, image_file):
+                    return {'structuredContent': {'snapshot_id': snapshot_id, 'window_bounds': BOUNDS,
+                        'screenshot_width': 800, 'screenshot_height': 600},
+                        'content': [{'type': 'image', 'image_file': image_file}]}
+                windows = {'structuredContent': {'windows': [spec['target']]}}
+                first = response('s00000001', 'first.png')
+                second = response('s00000001' if failure == 'counter' else 's00000002',
+                                  'first.png' if failure == 'image' else 'second.png')
+                mcp = Mock(directory=root, process=Mock(pid=101, poll=Mock(return_value=None)),
+                    tool=Mock(side_effect=[windows, first, windows, second]))
+                with patch('production_cancel_proof.time.monotonic_ns', side_effect=[10, 20, 40, 50]):
+                    old = grounded_snapshot(mcp, spec['target'], spec)
+                    if failure:
+                        with self.assertRaisesRegex(AssertionError, 'reused'):
+                            grounded_snapshot(mcp, spec['target'], spec)
+                    else:
+                        new = grounded_snapshot(mcp, spec['target'], spec)
+                        self.assertEqual(new['proof_observation_started_ns'], 40)
+                self.assertEqual(old['proof_observation_started_ns'], 10)
 
 
 class RunnerTests(unittest.TestCase):

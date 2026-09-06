@@ -55,7 +55,7 @@ def status():
 
 
 def client(pid):
-    return Mock(process=Mock(pid=pid, poll=Mock(return_value=None)))
+    return Mock(directory=Path.cwd(), process=Mock(pid=pid, poll=Mock(return_value=None)))
 
 
 class OracleTests(unittest.TestCase):
@@ -186,7 +186,8 @@ class OwnershipTests(unittest.TestCase):
 class ActionTests(unittest.TestCase):
     def test_single_normal_call_fresh_snapshot_unknown_never_replayed(self):
         for phase in ('refusal', 'recovery'):
-            for failure in (None, 'guard', 'stale', 'unknown', 'same_snapshot', 'effect', 'pre_activity',
+            for failure in (None, 'guard', 'stale', 'unknown', 'same_snapshot', 'same_artifact', 'cached',
+                            'before_return', 'same_runtime', 'effect', 'pre_activity',
                             'dead_before', 'dead_after', 'observation'):
                 if phase == 'refusal' and failure == 'effect':
                     continue
@@ -195,20 +196,34 @@ class ActionTests(unittest.TestCase):
                     if phase == 'recovery':
                         spec['pointer_stage'] = 'click_b2'
                     actor, observer = client(101), client(102)
+                    if failure == 'same_runtime':
+                        observer = actor
                     if failure == 'dead_before':
                         actor.process.poll.return_value = 1
                     elif failure == 'dead_after':
                         actor.process.poll.side_effect = [None, 1]
                     actor.tool.side_effect = TimeoutError('lost reply') if failure == 'unknown' else None
                     actor.tool.return_value = REFUSED if phase == 'refusal' else DELIVERED
-                    before = {'snapshot_id': 'before', 'proof_image': 'before.png'}
-                    after = {'snapshot_id': 'before' if failure == 'same_snapshot' else 'after', 'proof_image': 'after.png'}
+                    before = {'snapshot_id': 's00000001', 'proof_image': 'before.png',
+                        'proof_runtime': {'pid': 101, 'directory': str(Path.cwd())},
+                        'proof_observation_started_ns': 10, 'proof_observation_finished_ns': 20}
+                    after = {**before, 'proof_runtime': {'pid': 102, 'directory': str(Path.cwd())},
+                        'proof_image': 'after.png', 'proof_observation_started_ns': 50, 'proof_observation_finished_ns': 60}
+                    if failure == 'same_snapshot':
+                        after = dict(before)
+                    elif failure == 'same_artifact':
+                        after['proof_image'] = before['proof_image']
+                    elif failure == 'cached':
+                        after.update(proof_observation_started_ns=10, proof_observation_finished_ns=20)
+                    elif failure == 'before_return':
+                        after['proof_observation_started_ns'] = 39
                     prepared = {'snapshot': before, 'arguments': {'x': 20, 'y': 30}, 'oracle': {'stage': 'click_b2'},
-                                'prepared_ns': 0}
+                                'prepared_ns': 10}
                     stack.enter_context(patch.object(proof, 'prepare_drag', return_value=prepared))
                     snapshots = stack.enter_context(patch.object(proof, 'grounded_snapshot', return_value=after,
                         side_effect=AssertionError('snapshot unavailable') if failure == 'observation' else None))
-                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', return_value=proof.MAX_GROUNDING_AGE_NS + 1 if failure == 'stale' else 1))
+                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=
+                        [proof.MAX_GROUNDING_AGE_NS + 11] if failure == 'stale' else [30, 40, 70]))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels'))
                     stack.enter_context(patch.object(proof.pointer_grounding, 'verify', side_effect=AssertionError('effect missing') if failure == 'effect' else None))
                     tracer = Mock(collect=Mock(side_effect=[trace(RECOVERY) if failure == 'pre_activity' else trace(),
@@ -220,7 +235,7 @@ class ActionTests(unittest.TestCase):
                             proof.action(actor, observer, spec, phase, tracer, guard, save, record)
                     else:
                         proof.action(actor, observer, spec, phase, tracer, guard, save, record)
-                    attempted = failure not in ('stale', 'guard', 'pre_activity', 'dead_before')
+                    attempted = failure not in ('stale', 'guard', 'pre_activity', 'dead_before', 'same_runtime')
                     self.assertEqual(actor.tool.call_count, int(attempted))
                     self.assertFalse(record['replayed'])
                     if attempted:
@@ -231,6 +246,7 @@ class ActionTests(unittest.TestCase):
                     if failure == 'unknown':
                         self.assertEqual(record['outcome'], 'unknown')
                         self.assertIn('after', record)
+                        self.assertEqual(record['observed_ns'], 40)
                         self.assertTrue(save.call_count >= 3)
                     if failure == 'observation':
                         self.assertEqual(record['observation_error'], 'snapshot unavailable')

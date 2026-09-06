@@ -8,6 +8,7 @@ import asyncio
 import importlib.metadata
 import inspect
 import json
+import os
 from pathlib import Path
 import re
 import tempfile
@@ -66,6 +67,14 @@ class TutorialTests(unittest.TestCase):
             apply=AsyncMock(return_value=self.pool),
         )
         self.namespace["Pool"] = self.api
+        self.make_client = self.namespace["fleet_client"]
+        self.reservation = SimpleNamespace(name=POOL_NAME, created_at=CREATED_AT)
+        self.client = SimpleNamespace(
+            create_namespace=AsyncMock(return_value=self.reservation),
+            list_namespaces=AsyncMock(side_effect=[[self.reservation], []]),
+            delete_namespace=AsyncMock(),
+        )
+        self.namespace["fleet_client"] = lambda: self.client
 
     def record(self, created_at=CREATED_AT):
         self.namespace["RECORD"].write_text(
@@ -104,7 +113,9 @@ class TutorialTests(unittest.TestCase):
         self.assertEqual((self.root / "cloud-fleet.png").read_bytes(), b"synthetic screenshot")
         self.sandbox.shell.run.assert_awaited_once_with("uname -a")
         self.claim.__aexit__.assert_awaited_once()
-        self.pool.delete.assert_awaited_once()
+        self.client.create_namespace.assert_awaited_once_with(POOL_NAME)
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
+        self.api.get.assert_not_awaited()
         record = json.loads(self.namespace["RECORD"].read_text())
         self.assertEqual(record, {"name": POOL_NAME, "created_at": CREATED_AT})
         self.assertEqual(self.api.apply.call_args.kwargs["ttl_seconds_after_created"], 3600)
@@ -117,41 +128,49 @@ class TutorialTests(unittest.TestCase):
         self.assertEqual(self.namespace["RECORD"].read_bytes(), before)
         self.api.get.assert_not_awaited()
         self.api.apply.assert_not_awaited()
+        self.client.create_namespace.assert_not_awaited()
 
     def test_name_collision_does_not_apply_claim_or_delete(self):
-        self.api.get.side_effect = None
-        self.api.get.return_value = self.pool
-        with self.assertRaisesRegex(RuntimeError, "already exists"):
+        self.client.create_namespace.side_effect = SdkError.Status(
+            operation="create namespace", status=409, body="synthetic collision"
+        )
+        with self.assertRaises(SdkError.Status):
             asyncio.run(self.namespace["run"]())
         self.api.apply.assert_not_awaited()
         self.pool.claim.assert_not_called()
-        self.pool.delete.assert_not_awaited()
+        self.client.delete_namespace.assert_not_awaited()
 
-    def test_preflight_access_denial_is_not_absence(self):
-        self.api.get.side_effect = SdkError.Status(
-            operation="get pool",
+    def test_reservation_access_denial_is_not_absence(self):
+        self.client.create_namespace.side_effect = SdkError.Status(
+            operation="create namespace",
             status=403,
             body="synthetic denial",
         )
         with self.assertRaises(SdkError.Status):
             asyncio.run(self.namespace["run"]())
         self.api.apply.assert_not_awaited()
-        self.pool.delete.assert_not_awaited()
+        self.client.delete_namespace.assert_not_awaited()
 
-    def test_admission_failure_never_deletes_unconfirmed_pool(self):
+    def test_admission_failure_deletes_only_confirmed_reservation(self):
         self.api.apply.side_effect = RuntimeError("synthetic admission denial")
         with self.assertRaisesRegex(RuntimeError, "admission denial"):
             asyncio.run(self.namespace["run"]())
-        with self.assertRaisesRegex(RuntimeError, "not confirmed"):
-            asyncio.run(self.namespace["cleanup"]())
         self.pool.claim.assert_not_called()
         self.pool.delete.assert_not_awaited()
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
+
+    def test_unconfirmed_reservation_refuses_cleanup(self):
+        self.record(created_at=None)
+        with self.assertRaisesRegex(RuntimeError, "not confirmed"):
+            asyncio.run(self.namespace["cleanup"]())
+        self.client.list_namespaces.assert_not_awaited()
+        self.client.delete_namespace.assert_not_awaited()
 
     def test_claim_failure_deletes_created_pool(self):
         self.claim.__aenter__.side_effect = TimeoutError("synthetic readiness timeout")
         with self.assertRaises(TimeoutError):
             asyncio.run(self.namespace["run"]())
-        self.pool.delete.assert_awaited_once()
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
 
     def test_workload_failure_releases_claim_and_deletes(self):
         self.sandbox.shell.run.return_value = SimpleNamespace(
@@ -162,7 +181,7 @@ class TutorialTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "command failure"):
             asyncio.run(self.namespace["run"]())
         self.claim.__aexit__.assert_awaited_once()
-        self.pool.delete.assert_awaited_once()
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
         self.sandbox.screenshot.assert_not_awaited()
 
     def test_screenshot_failure_still_deletes(self):
@@ -170,50 +189,113 @@ class TutorialTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "screenshot failure"):
             asyncio.run(self.namespace["run"]())
         self.claim.__aexit__.assert_awaited_once()
-        self.pool.delete.assert_awaited_once()
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
 
-    def test_cleanup_deletes_only_recorded_pool_without_running_workload(self):
+    def test_cleanup_deletes_only_recorded_namespace_without_running_workload(self):
         self.record()
-        self.api.get.side_effect = [self.pool, missing()]
         asyncio.run(self.namespace["cleanup"]())
-        self.pool.delete.assert_awaited_once()
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
         self.api.apply.assert_not_awaited()
         self.pool.claim.assert_not_called()
-        self.assertTrue(all(call.args == (POOL_NAME,) for call in self.api.get.call_args_list))
+        self.api.get.assert_not_awaited()
 
-    def test_repeated_cleanup_of_absent_pool_is_safe(self):
+    def test_repeated_cleanup_of_absent_namespace_is_safe(self):
         self.record()
+        self.client.list_namespaces.side_effect = None
+        self.client.list_namespaces.return_value = []
         asyncio.run(self.namespace["cleanup"]())
         asyncio.run(self.namespace["cleanup"]())
-        self.pool.delete.assert_not_awaited()
+        self.client.delete_namespace.assert_not_awaited()
         self.api.apply.assert_not_awaited()
 
-    def test_cleanup_refuses_a_replacement_pool(self):
+    def test_cleanup_refuses_a_replacement_namespace(self):
         self.record(created_at="2025-01-01T00:00:00Z")
-        self.api.get.side_effect = None
-        self.api.get.return_value = self.pool
         with self.assertRaisesRegex(RuntimeError, "identity changed"):
             asyncio.run(self.namespace["cleanup"]())
-        self.pool.delete.assert_not_awaited()
+        self.client.delete_namespace.assert_not_awaited()
 
     def test_cleanup_error_retains_record_for_retry(self):
         self.record()
-        self.api.get.side_effect = None
-        self.api.get.return_value = self.pool
-        self.pool.delete.side_effect = RuntimeError("synthetic connection loss")
+        self.client.delete_namespace.side_effect = RuntimeError("synthetic connection loss")
         with self.assertRaisesRegex(RuntimeError, "connection loss"):
             asyncio.run(self.namespace["cleanup"]())
         self.assertTrue(self.namespace["RECORD"].exists())
 
     def test_deletion_poll_is_bounded_and_reports_timeout(self):
         self.record()
-        self.api.get.side_effect = None
-        self.api.get.return_value = self.pool
+        self.client.list_namespaces.side_effect = None
+        self.client.list_namespaces.return_value = [self.reservation]
         with patch.object(asyncio, "sleep", new_callable=AsyncMock) as sleep:
             with self.assertRaises(TimeoutError):
                 asyncio.run(self.namespace["cleanup"]())
         self.assertEqual(sleep.await_count, 60)
         self.assertTrue(self.namespace["RECORD"].exists())
+
+    def test_inventory_denial_is_not_successful_cleanup(self):
+        self.record()
+        self.client.list_namespaces.side_effect = SdkError.Status(
+            operation="list namespaces", status=403, body="synthetic denial"
+        )
+        with self.assertRaises(SdkError.Status):
+            asyncio.run(self.namespace["cleanup"]())
+        self.client.delete_namespace.assert_not_awaited()
+
+    def test_inventory_failure_after_delete_is_not_absence(self):
+        self.record()
+        self.client.list_namespaces.side_effect = [
+            [self.reservation],
+            SdkError.Status(operation="list namespaces", status=403, body="synthetic denial"),
+        ]
+        with self.assertRaises(SdkError.Status):
+            asyncio.run(self.namespace["cleanup"]())
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
+
+    def test_unrelated_namespaces_are_not_deleted(self):
+        self.record()
+        other = SimpleNamespace(name="another-project", created_at=CREATED_AT)
+        self.client.list_namespaces.side_effect = [[other, self.reservation], [other]]
+        asyncio.run(self.namespace["cleanup"]())
+        self.client.delete_namespace.assert_awaited_once_with(POOL_NAME)
+
+    def test_client_credentials_use_the_documented_endpoint(self):
+        sdk = self.namespace["CyclopsClient"]
+        credentials = Mock(wraps=self.namespace["CyclopsCredentials"])
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "CUA_CLIENT_ID": "synthetic-client",
+                    "CUA_CLIENT_SECRET": "synthetic-secret",
+                    "CUA_TOKEN_URL": "https://auth.example/token",
+                },
+                clear=True,
+            ),
+            patch.object(sdk, "connect_with_native_http_client") as connect,
+            patch.dict(self.namespace, {"CyclopsCredentials": credentials}),
+        ):
+            self.assertIs(self.make_client(), connect.return_value)
+            configuration = connect.call_args.args[0]
+            self.assertEqual(configuration.base_url, "https://run.cua.ai")
+            self.assertEqual(configuration.token_url, "https://auth.example/token")
+            credentials.assert_called_once_with("synthetic-client", "synthetic-secret")
+
+    def test_static_token_takes_precedence_for_namespace_operations(self):
+        sdk = self.namespace["CyclopsClient"]
+        with (
+            patch.dict(
+                os.environ,
+                {
+                    "FLEETS_TOKEN": "synthetic-token",
+                    "CUA_FLEET_BASE_URL": "https://fleet.example",
+                },
+                clear=True,
+            ),
+            patch.object(sdk, "connect_with_access_token_and_native_http_client") as connect,
+        ):
+            self.assertIs(self.make_client(), connect.return_value)
+            configuration, token = connect.call_args.args
+            self.assertEqual(configuration.base_url, "https://fleet.example")
+            self.assertEqual(token, "synthetic-token")
 
 
 if __name__ == "__main__":

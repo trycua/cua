@@ -19,7 +19,18 @@ import live_discovery as live
 
 
 def command(*args, env=None):
-    return subprocess.check_output(args, env=env, text=True, timeout=10).strip()
+    try:
+        return subprocess.check_output(args, env=env, text=True, timeout=10).strip()
+    except subprocess.CalledProcessError as error:
+        # hyprctl writes its IPC failure reason to stdout. check_output keeps
+        # that out of the traceback, so retain fixed labels, never raw output
+        # or instance/path arguments. Do not retry a failed lifecycle check.
+        output = error.stdout if isinstance(error.stdout, str) else ""
+        details = {"exit_code": error.returncode,
+                   "hyprctl": Path(args[0]).name == "hyprctl",
+                   "ipc_read_timeout": "Hyprland IPC didn't respond in time" in output,
+                   "ipc_read_failure": "Couldn't read (6)" in output}
+        raise RuntimeError("lifecycle command failed: " + json.dumps(details, sort_keys=True)) from None
 
 
 def wait_for(check, description):
@@ -137,6 +148,11 @@ def run(module, directory, binary):
     if not parent or not os.environ.get("WAYLAND_DISPLAY"):
         raise RuntimeError("run inside a disposable Hyprland Wayland parent session")
     parent_version = json.loads(command("hyprctl", "-i", parent, "-j", "version"))
+    parents = [item for item in json.loads(command("hyprctl", "-j", "instances"))
+               if item.get("instance") == parent]
+    assert (len(parents) == 1 and type(parents[0].get("pid")) is int
+            and parents[0]["pid"] > 0), "ambiguous parent process"
+    parent_pid = parents[0]["pid"]
     first = NestedCompositor(directory / "first", binary, module)
     second = NestedCompositor(directory / "second", binary, module)
     try:
@@ -164,7 +180,23 @@ def run(module, directory, binary):
             second.stop()
         finally:
             first.stop()
-    assert json.loads(command("hyprctl", "-i", parent, "-j", "version")) == parent_version
+    try:
+        assert json.loads(command("hyprctl", "-i", parent, "-j", "version")) == parent_version
+    except Exception:
+        # This is a post-failure observation, not a second liveness attempt.
+        # No parent IPC is retried and the original exception still fails.
+        parent_alive = True
+        try:
+            os.kill(parent_pid, 0)
+        except ProcessLookupError:
+            parent_alive = False
+        except OSError:
+            parent_alive = None
+        print(json.dumps({"phase": "parent_after_owned_cleanup",
+                          "parent_process_exists": parent_alive,
+                          "owned_processes_reaped": first.process is None and second.process is None}),
+              file=sys.stderr)
+        raise
     return {
         "result": "passed",
         "module_sha256": hashlib.sha256(module.read_bytes()).hexdigest(),

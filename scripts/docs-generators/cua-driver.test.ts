@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getLatestReleasedVersion, selectLatestReleasedVersion } from './cua-driver';
+import {
+  generateMCPToolDoc,
+  getLatestReleasedVersion,
+  selectLatestReleasedVersion,
+} from './cua-driver';
 
 test('lists matching tags through git argv without invoking a shell', () => {
   const calls: Array<{ command: string; args: readonly string[] }> = [];
@@ -55,4 +59,40 @@ test('reports when git returns no valid stable release tags', () => {
     () => getLatestReleasedVersion(() => 'nightly-cua-driver-rs-v0.21.0-nightly.20260816.1\n'),
     /No stable Cua Driver release tag matching cua-driver-rs-v<major>\.<minor>\.<patch> was found/
   );
+});
+
+test('generates a valid tagged-object example for required union inputs', () => {
+  const lines = generateMCPToolDoc({
+    name: 'get_menu_extra_state',
+    description: 'Observe a menu extra.',
+    input_schema: {
+      type: 'object',
+      required: ['application'],
+      properties: {
+        application: {
+          oneOf: [
+            {
+              type: 'object',
+              required: ['kind', 'pid'],
+              properties: {
+                kind: { type: 'string', const: 'pid' },
+                pid: { type: 'integer', minimum: 1 },
+              },
+            },
+            {
+              type: 'object',
+              required: ['kind', 'bundle_id'],
+              properties: {
+                kind: { type: 'string', const: 'bundle_id' },
+                bundle_id: { type: 'string' },
+              },
+            },
+          ],
+        },
+      },
+    },
+  });
+
+  assert.ok(lines.includes('{"application":{"kind":"pid","pid":844}}'));
+  assert.ok(!lines.includes('{"application":"value"}'));
 });

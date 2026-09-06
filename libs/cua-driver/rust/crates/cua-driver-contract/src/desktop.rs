@@ -10,10 +10,10 @@
 use crate::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardReadOutput, ClipboardWriteInput,
     ClipboardWriteOutput, CursorAction, CursorPositionOutput, CursorSemantics, DesktopStateOutput,
-    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput, HotkeyInput,
-    InvokeMenuInput, MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput,
-    ScrollInput, SetWindowFrameInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput,
-    TypeTextInput,
+    DragInput, GetCursorPositionInput, GetDesktopStateInput, GetMenuExtraStateInput,
+    GetScreenSizeInput, HotkeyInput, InvokeMenuExtraInput, InvokeMenuInput, MenuExtraStateOutput,
+    MoveCursorInput, Platform, PressKeyInput, SchemaMode, ScreenSizeOutput, ScrollInput,
+    SetWindowFrameInput, ToolAnnotations, ToolContract, ToolInput, ToolOutput, TypeTextInput,
 };
 
 const ALL_PLATFORMS: [Platform; 3] = [Platform::Macos, Platform::Windows, Platform::Linux];
@@ -26,6 +26,8 @@ pub fn contracts() -> Vec<ToolContract> {
         move_cursor(),
         set_window_frame(),
         invoke_menu(),
+        get_menu_extra_state(),
+        invoke_menu_extra(),
         click(),
         drag(),
         scroll(),
@@ -142,6 +144,20 @@ fn contract<I: ToolInput, O: ToolOutput>(
     }
 }
 
+fn macos_contract<I: ToolInput, O: ToolOutput>(
+    name: &str,
+    description: &str,
+    capabilities: &[&str],
+    annotations: ToolAnnotations,
+    cursor_action: CursorAction,
+) -> ToolContract {
+    let mut contract =
+        contract::<I, O>(name, description, capabilities, annotations, cursor_action);
+    contract.platforms = vec![Platform::Macos];
+    contract.schema_mode = SchemaMode::CanonicalRuntime;
+    contract
+}
+
 fn get_desktop_state() -> ToolContract {
     contract::<GetDesktopStateInput, DesktopStateOutput>(
         "get_desktop_state",
@@ -229,6 +245,36 @@ fn invoke_menu() -> ToolContract {
             open_world: true,
         },
         CursorAction::App,
+    )
+}
+
+fn get_menu_extra_state() -> ToolContract {
+    macos_contract::<GetMenuExtraStateInput, MenuExtraStateOutput>(
+        "get_menu_extra_state",
+        "Read one exact running application's bounded macOS accessibility extras-menu hierarchy without screenshots, action-cache writes, or pixel fallback.",
+        &["accessibility.menu_extra.observe"],
+        ToolAnnotations {
+            read_only: true,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        },
+        CursorAction::Observe,
+    )
+}
+
+fn invoke_menu_extra() -> ToolContract {
+    macos_contract::<InvokeMenuExtraInput, ActionResult>(
+        "invoke_menu_extra",
+        "Resolve an exact macOS accessibility extras-menu path, including a same-process popup surface opened by the menu extra, and invoke it without activating an application window or falling back to pixels.",
+        &["accessibility.menu_extra.invoke"],
+        ToolAnnotations {
+            read_only: false,
+            destructive: true,
+            idempotent: false,
+            open_world: true,
+        },
+        CursorAction::System,
     )
 }
 

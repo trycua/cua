@@ -55,6 +55,18 @@ extern "C" {
         attribute: CFStringRef,
         value: *mut CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementGetAttributeValueCount(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        count: *mut isize,
+    ) -> AXError;
+    pub fn AXUIElementCopyAttributeValues(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        index: isize,
+        max_values: isize,
+        values: *mut CFArrayRef,
+    ) -> AXError;
     pub fn AXUIElementCopyAttributeNames(
         element: AXUIElementRef,
         names: *mut CFArrayRef,
@@ -82,6 +94,7 @@ extern "C" {
         timeout_in_seconds: f32,
     ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
+    pub fn AXUIElementGetPid(element: AXUIElementRef, pid: *mut i32) -> AXError;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with
     /// `{kAXTrustedCheckOptionPrompt: true}` raises the system Accessibility
@@ -111,6 +124,21 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
     let error = AXUIElementCopyElementAtPosition(application, x as f32, y as f32, &mut element);
     CFRelease(application as CFTypeRef);
     (error == kAXErrorSuccess && !element.is_null()).then_some(element)
+}
+
+/// Return the owning process reported by the accessibility object.
+///
+/// # Safety
+///
+/// `element` must be a valid Accessibility object reference.
+pub unsafe fn pid_of_element(element: AXUIElementRef) -> Result<i32, AXError> {
+    let mut pid = 0_i32;
+    let error = AXUIElementGetPid(element, &mut pid);
+    if error == kAXErrorSuccess {
+        Ok(pid)
+    } else {
+        Err(error)
+    }
 }
 
 // ── AXValue functions ────────────────────────────────────────────────────────
@@ -519,6 +547,64 @@ pub unsafe fn copy_children(element: AXUIElementRef) -> Vec<AXUIElementRef> {
         .collect()
 }
 
+/// Copy at most `max_values` children while also returning the total native
+/// child count. Unlike `copy_children`, this bounds the AX request itself.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release every returned element.
+pub unsafe fn copy_children_bounded(
+    element: AXUIElementRef,
+    max_values: usize,
+) -> Result<(Vec<AXUIElementRef>, usize), AXError> {
+    let attr = CFStr::new("AXChildren");
+    let mut native_count = 0_isize;
+    let count_error =
+        AXUIElementGetAttributeValueCount(element, attr.as_concrete_TypeRef(), &mut native_count);
+    if matches!(count_error, kAXErrorAttributeUnsupported | kAXErrorNoValue) {
+        return Ok((Vec::new(), 0));
+    }
+    if count_error != kAXErrorSuccess {
+        return Err(count_error);
+    }
+
+    let total_count = usize::try_from(native_count.max(0)).unwrap_or(usize::MAX);
+    let requested_count = total_count.min(max_values);
+    if requested_count == 0 {
+        return Ok((Vec::new(), total_count));
+    }
+
+    let mut values: CFArrayRef = std::ptr::null();
+    let copy_error = AXUIElementCopyAttributeValues(
+        element,
+        attr.as_concrete_TypeRef(),
+        0,
+        isize::try_from(requested_count).unwrap_or(isize::MAX),
+        &mut values,
+    );
+    if copy_error != kAXErrorSuccess {
+        return Err(copy_error);
+    }
+    if values.is_null() {
+        return Ok((Vec::new(), total_count));
+    }
+
+    let array = CFArray::<CFTypeRef>::wrap_under_create_rule(values);
+    let ax_type_id = AXUIElementGetTypeID();
+    let children = (0..array.len())
+        .filter_map(|index| {
+            let item = *array.get(index)?;
+            if core_foundation::base::CFGetTypeID(item) == ax_type_id {
+                CFRetain(item);
+                Some(item as AXUIElementRef)
+            } else {
+                None
+            }
+        })
+        .collect();
+    Ok((children, total_count))
+}
+
 /// Copy an AX element-valued attribute. The returned element is retained and
 /// must be released by the caller.
 ///
@@ -540,6 +626,35 @@ pub unsafe fn copy_element_attr(
         return None;
     }
     Some(value as AXUIElementRef)
+}
+
+/// Copy an AX element-valued attribute without collapsing native AX failures
+/// into an absent value.
+///
+/// # Safety
+///
+/// `element` must be valid, and the caller must release any returned element.
+pub unsafe fn copy_element_attr_result(
+    element: AXUIElementRef,
+    attr_name: &str,
+) -> Result<Option<AXUIElementRef>, AXError> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let error = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if matches!(error, kAXErrorAttributeUnsupported | kAXErrorNoValue) {
+        return Ok(None);
+    }
+    if error != kAXErrorSuccess {
+        return Err(error);
+    }
+    if value.is_null() {
+        return Ok(None);
+    }
+    if core_foundation::base::CFGetTypeID(value) != AXUIElementGetTypeID() {
+        CFRelease(value);
+        return Err(kAXErrorFailure);
+    }
+    Ok(Some(value as AXUIElementRef))
 }
 
 /// Perform an AX action using a string attribute name.

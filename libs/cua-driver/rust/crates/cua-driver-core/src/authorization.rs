@@ -911,6 +911,8 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "debug_window_info"
         | "check_permissions"
         | "get_accessibility_tree"
+        | "get_menu_extra_state"
+        | "invoke_menu_extra"
         | "verify_state"
         | "set_config"
         | "escalate_session"
@@ -1557,6 +1559,24 @@ mod tests {
         assert_eq!(risk.class, RiskClass::R1);
         assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
         assert!(!risk.operation_sensitive);
+    }
+
+    #[test]
+    fn menu_extra_access_is_explicit_sensitive_system_ui_risk() {
+        for tool in ["get_menu_extra_state", "invoke_menu_extra"] {
+            let risk = advertised_risk_for(tool);
+            assert_eq!(risk.class, RiskClass::R2);
+            assert_eq!(risk.enforcement, RiskEnforcement::MetadataOnly);
+            assert!(risk.operation_sensitive);
+        }
+        assert_eq!(
+            crate::tool::default_capabilities_for("get_menu_extra_state"),
+            ["accessibility.menu_extra.observe"]
+        );
+        assert_eq!(
+            crate::tool::default_capabilities_for("invoke_menu_extra"),
+            ["accessibility.menu_extra.invoke"]
+        );
     }
 
     #[test]

@@ -44,6 +44,31 @@ pub fn list_running_apps() -> Vec<AppInfo> {
     list_running_apps_native()
 }
 
+/// Return every live process with exactly this bundle identifier, including
+/// accessory and background-only applications omitted from `list_running_apps`.
+pub fn running_pids_for_bundle(bundle_id: &str) -> Vec<i32> {
+    use objc2::rc::Retained;
+    use objc2_app_kit::NSRunningApplication;
+    use objc2_foundation::NSString;
+
+    let bundle_id = NSString::from_str(bundle_id);
+    let running: Retained<objc2_foundation::NSArray<NSRunningApplication>> =
+        unsafe { NSRunningApplication::runningApplicationsWithBundleIdentifier(&bundle_id) };
+    let mut pids = Vec::new();
+    unsafe {
+        for index in 0..running.count() {
+            let app = running.objectAtIndex(index);
+            let pid = app.processIdentifier();
+            if pid > 0 && !app.isTerminated() {
+                pids.push(pid);
+            }
+        }
+    }
+    pids.sort_unstable();
+    pids.dedup();
+    pids
+}
+
 fn list_running_apps_native() -> Vec<AppInfo> {
     use objc2_app_kit::{NSApplicationActivationPolicy, NSWorkspace};
 

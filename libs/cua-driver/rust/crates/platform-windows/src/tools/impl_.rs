@@ -228,6 +228,44 @@ fn screen_to_bitmap(hwnd: u64, sx: i32, sy: i32) -> (i32, i32) {
     (sx - origin_x, sy - origin_y)
 }
 
+/// Read physical screen bounds only after revalidating the exact native
+/// `(pid, HWND)` identity. This closes the small race between the public
+/// ownership check and the blocking UIA/capture work, and ensures coordinate
+/// metadata never describes an HWND that was destroyed and reused.
+fn exact_target_window_bounds(
+    pid: u32,
+    hwnd: u64,
+) -> anyhow::Result<crate::window_state_coordinates::ScreenRect> {
+    use windows::Win32::Foundation::{HWND, RECT};
+    use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
+
+    let owner = crate::win32::window_owner_pid(hwnd)
+        .ok_or_else(|| anyhow::anyhow!("target window 0x{hwnd:x} no longer exists"))?;
+    if owner != pid {
+        anyhow::bail!(
+            "target window 0x{hwnd:x} now belongs to pid {owner}, not requested pid {pid}"
+        );
+    }
+    let mut rect = RECT::default();
+    unsafe { GetWindowRect(HWND(hwnd as *mut _), &mut rect) }
+        .map_err(|error| anyhow::anyhow!("could not read target window bounds: {error}"))?;
+    crate::window_state_coordinates::ScreenRect::from_edges(
+        rect.left,
+        rect.top,
+        rect.right,
+        rect.bottom,
+    )
+    .ok_or_else(|| {
+        anyhow::anyhow!(
+            "target window 0x{hwnd:x} has invalid bounds ({},{})-({},{})",
+            rect.left,
+            rect.top,
+            rect.right,
+            rect.bottom
+        )
+    })
+}
+
 /// Animate the agent cursor to (sx, sy) in screen coordinates and wait for the
 /// glide to finish before returning.  No-op when the overlay is not enabled.
 ///
@@ -1104,7 +1142,13 @@ impl Tool for GetWindowStateTool {
                 `selected`, `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
                 `tree_markdown` stays available \
                 and unchanged in shape for existing text-parsing callers — but new \
-                fields will only be added to the structured side.\n\n\
+                fields will only be added to the structured side. On Windows, valid \
+                element `frame` values are screen-absolute physical pixels; a provider \
+                frame wholly outside the exact target window is omitted and marked with \
+                `frame_reliability:\"outside_target_window\"`. \
+                `element_frame_coordinate_space`, `pixel_action_coordinate_space`, \
+                `window_bounds`, and `pixel_action_to_screen` make the distinct spaces \
+                and conversion explicit without duplicating the element tree.\n\n\
                 The UIA tree walked is the window's tree (HWND-scoped); the screenshot and \
                 window bounds reported come from the same `window_id`. This is the source of \
                 truth for which window the caller intends to reason about — the driver never \
@@ -1281,6 +1325,7 @@ impl Tool for GetWindowStateTool {
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
         let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
+            let window_bounds = exact_target_window_bounds(pid, hwnd)?;
             let tree_result = if do_tree {
                 Some(crate::uia::walk_tree_bounded(
                     hwnd,
@@ -1301,21 +1346,41 @@ impl Tool for GetWindowStateTool {
             let (screenshot, screenshot_err) = if do_shot {
                 match crate::capture::screenshot_window_bytes(hwnd) {
                     Ok(raw) => {
-                        let orig_w = crate::capture::png_dimensions_pub(&raw)
-                            .map(|(w, _)| w)
-                            .unwrap_or(0);
+                        let (orig_w, orig_h) = crate::capture::png_dimensions_pub(&raw)?;
                         let png = crate::capture::resize_png_if_needed(&raw, max_dim)?;
                         let (w, h) = crate::capture::png_dimensions_pub(&png)?;
-                        let original_w = if w < orig_w { Some(orig_w) } else { None };
+                        let original_dimensions =
+                            (w < orig_w || h < orig_h).then_some((orig_w, orig_h));
+                        let screenshot_origin = bitmap_to_screen(hwnd, 0, 0);
                         // `screenshot_out_file` set (any mode) → write to disk and
                         // surface the path, never embed bytes. Otherwise (vision,
                         // no out_file) → embed base64.
                         if let Some(ref path) = out_file {
                             std::fs::write(path, &png)?;
-                            (Some((None, Some(path.clone()), w, h, original_w)), None)
+                            (
+                                Some((
+                                    None,
+                                    Some(path.clone()),
+                                    w,
+                                    h,
+                                    original_dimensions,
+                                    screenshot_origin,
+                                )),
+                                None,
+                            )
                         } else {
                             use base64::{engine::general_purpose::STANDARD as B64, Engine as _};
-                            (Some((Some(B64.encode(&png)), None, w, h, original_w)), None)
+                            (
+                                Some((
+                                    Some(B64.encode(&png)),
+                                    None,
+                                    w,
+                                    h,
+                                    original_dimensions,
+                                    screenshot_origin,
+                                )),
+                                None,
+                            )
                         }
                     }
                     Err(e) => (None, Some(format!("{e}"))),
@@ -1323,7 +1388,7 @@ impl Tool for GetWindowStateTool {
             } else {
                 (None, None)
             };
-            Ok((tree_result, screenshot, screenshot_err))
+            Ok((tree_result, screenshot, screenshot_err, window_bounds))
         });
         // Timeout: Chrome's UIA provider can block indefinitely on property reads.
         let result: Result<anyhow::Result<_>, _> =
@@ -1352,9 +1417,13 @@ impl Tool for GetWindowStateTool {
         let result = result.and_then(|r| r);
 
         match result {
-            Ok((tree_opt, screenshot_opt, screenshot_err)) => {
+            Ok((tree_opt, screenshot_opt, screenshot_err, window_bounds)) => {
                 let mut content = Vec::new();
                 let mut structured = json!({ "window_id": hwnd, "pid": pid });
+                crate::window_state_coordinates::annotate_coordinate_spaces(
+                    &mut structured,
+                    window_bounds,
+                );
 
                 if let Some(tr) = tree_opt {
                     let is_msaa = tr.nodes.iter().any(|n| n.msaa_role.is_some());
@@ -1449,13 +1518,12 @@ impl Tool for GetWindowStateTool {
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
                             }
-                            if let Some((l, t, r, b)) = n.rect {
-                                entry["frame"] = json!({
-                                    "x": l,
-                                    "y": t,
-                                    "w": (r - l).max(0),
-                                    "h": (b - t).max(0),
-                                });
+                            if let Some(frame) = n.rect {
+                                crate::window_state_coordinates::annotate_element_frame(
+                                    &mut entry,
+                                    frame,
+                                    window_bounds,
+                                );
                             }
                             Some(entry)
                         })
@@ -1515,9 +1583,11 @@ impl Tool for GetWindowStateTool {
                     }
                 }
 
-                if let Some((b64_opt, file_path, w, h, orig_w)) = screenshot_opt {
+                if let Some((b64_opt, file_path, w, h, original_dimensions, screenshot_origin)) =
+                    screenshot_opt
+                {
                     if !observation_only {
-                        if let Some(ow) = orig_w {
+                        if let Some((ow, _)) = original_dimensions {
                             if w > 0 {
                                 state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
                             }
@@ -1543,6 +1613,18 @@ impl Tool for GetWindowStateTool {
                     // the structured payload so consumers don't have to sniff
                     // magic bytes off the base64 to know the format.
                     structured["screenshot_mime_type"] = json!("image/png");
+                    // Pixel actions use ResizeRegistry's width-derived uniform
+                    // ratio for both axes. Report that exact actuator mapping
+                    // (including any one-pixel height rounding in the PNG), not
+                    // an independently inferred visual Y ratio.
+                    let action_scale = original_dimensions
+                        .map(|(ow, _)| ow as f64 / w as f64)
+                        .unwrap_or(1.0);
+                    crate::window_state_coordinates::annotate_pixel_action_transform(
+                        &mut structured,
+                        screenshot_origin,
+                        (action_scale, action_scale),
+                    );
                     if let Some(fp) = file_path {
                         structured["screenshot_file_path"] = json!(fp);
                     }

@@ -268,8 +268,11 @@ When a pixel action is unavoidable, match the scope to the space:
 </Callout>
 
 On macOS, `get_window_state` also reports `window_bounds`, which may be used in
-place of `list_windows` there. Windows and Linux report `screenshot_width` and
-`screenshot_height` only.
+place of `list_windows` there. Windows reports exact physical-pixel
+`window_bounds` as well as `element_frame_coordinate_space`,
+`pixel_action_coordinate_space`, and `pixel_action_to_screen`; use those fields
+instead of inferring a screenshot origin from a separate `list_windows` call.
+Linux reports `screenshot_width` and `screenshot_height` only.
 
 ---
 

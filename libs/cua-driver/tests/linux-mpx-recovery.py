@@ -72,14 +72,14 @@ def main():
     def save(name, value):
         (root / name).write_text(json.dumps(value, indent=2) + "\n")
 
-    def raw(endpoint, tool, params, image=None, allow_empty=False):
+    def raw(endpoint, tool, params, image=None, text_result=False):
         argv = [driver, "--socket", endpoint, "call", tool, json.dumps(params)]
         if image:
             argv += ["--screenshot-out-file", str(image)]
         result = subprocess.run(argv, capture_output=True, text=True, timeout=25)
         assert result.returncode == 0, (tool, result.stdout, result.stderr)
-        if allow_empty and not result.stdout.strip():
-            return None
+        if text_result:
+            return result.stdout
         return json.loads(result.stdout)
 
     def snapshot(endpoint, label):
@@ -241,8 +241,9 @@ def main():
         if target is not None and observer is not None and observer.poll() is None:
             try:
                 snapshot(observer_endpoint, "fixture-before-cleanup")
-                # Successful void tools can emit no JSON; verify the independent inventory.
-                raw(observer_endpoint, "kill_app", {"pid": target["pid"]}, allow_empty=True)
+                # kill_app emits human-readable text; verify the independent inventory.
+                cleanup = raw(observer_endpoint, "kill_app", {"pid": target["pid"]}, text_result=True)
+                save("fixture-cleanup.json", {"response": cleanup})
                 remaining = raw(observer_endpoint, "list_windows", {})
                 assert not any(w["pid"] == target["pid"] for w in remaining["windows"])
             except Exception as error:

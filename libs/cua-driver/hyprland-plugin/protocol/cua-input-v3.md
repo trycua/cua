@@ -5,6 +5,15 @@ independent compositor seats. It is not native certification or a release
 announcement. The default plugin build remains discovery-only, and discovery
 protocol v2 is unchanged.
 
+The current trace build contains a temporary drag-completion diagnostic: it
+delays pointer-leave and the final reply by at least 100 ms after releasing the
+button. The consumed grant admits no further input; conflict and lifecycle
+checks remain active until cleanup. This compares Inkscape event-queue behavior
+with immediate teardown. It is not a client-processing guarantee and is absent
+from the uninstrumented production build. Trace results with this diagnostic
+cannot certify production drag behavior. Resolve/remove the diagnostic before
+the final release candidate is certified.
+
 Driver completes common permission, resource, lifecycle, and application
 compatibility checks before each action. The plugin trusts the desktop account
 under a local trust model. Same-UID transport checks prevent accidental

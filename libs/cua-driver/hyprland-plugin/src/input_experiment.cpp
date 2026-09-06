@@ -185,6 +185,9 @@ struct InputExperiment::Impl {
     Clock::time_point expires{};
     InputGrant grant;
     std::optional<Drag> drag;
+    // Diagnostic only: trace builds separate the final drag release and leave
+    // to test client event-queue reordering. Production packages are unchanged.
+    std::optional<Clock::time_point> diagnostic_drag_completion;
     std::uint32_t held_button = 0;
     std::vector<std::uint32_t> held_keys;
     xkb_context* xkb_context_ = nullptr;
@@ -490,6 +493,8 @@ struct InputExperiment::Impl {
     void revoke(std::string_view reason) {
         if (lease && trace && reason != "completed") trace->mark("agent_cancel", lane + 1);
         if (drag && drag->client && !drag->client->dead) send(*drag->client, refusal(reason));
+        if (diagnostic_drag_completion && lease && !lease->dead && reason != "completed") send(*lease, refusal(reason));
+        diagnostic_drag_completion.reset();
         drag.reset(); leave(); lease = nullptr; capabilities = 0; grant.reset();
     }
     void cancel_authority(std::string_view reason) {
@@ -712,7 +717,7 @@ struct InputExperiment::Impl {
 #endif
         if (reservation != &c) { send(c, refusal("lane_not_claimed")); return; }
         if (command == "TARGET") {
-            if (f.size() != (kProduction ? 4u : 3u) || drag) { send(c, refusal("invalid_request")); return; }
+            if (f.size() != (kProduction ? 4u : 3u) || drag || diagnostic_drag_completion) { send(c, refusal("invalid_request")); return; }
             // A new admission attempt always retires any unused old grant.
             if (kProduction) invalidate(c);
             const auto requested_cap = kProduction ? number(f[3]) : 0;
@@ -754,7 +759,7 @@ struct InputExperiment::Impl {
         if (!available()) { revoke("session_unavailable"); send(c, refusal("session_unavailable")); return; }
         if (!layout_qualified()) { revoke("unsupported_layout"); send(c, refusal("unsupported_layout")); return; }
         if (lease && Clock::now() >= expires) revoke("lease_expired");
-        if (drag) { send(c, refusal("lease_busy")); return; }
+        if (drag || diagnostic_drag_completion) { send(c, refusal("lease_busy")); return; }
         if (lease != &c || !(capabilities & cap) || (kProduction && !grant.permits(cap, Clock::now()))) {
             if (kProduction) {
                 revoke("action_not_admitted");
@@ -838,6 +843,12 @@ struct InputExperiment::Impl {
             else if (lease->dead || !available() || !layout_qualified() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && !drag->geometry.matches(lease->revision))) revoke("cancelled");
         }
+        if (diagnostic_drag_completion && Clock::now() >= *diagnostic_drag_completion) {
+            auto* client = lease;
+            diagnostic_drag_completion.reset();
+            revoke("completed");
+            if (client) send(*client, kDelivered);
+        }
         if (drag) {
             const auto d = *drag;
             const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - d.start).count();
@@ -846,8 +857,16 @@ struct InputExperiment::Impl {
             else if (progress >= 1) {
                 button(272, false); drag.reset(); ++dispatches;
                 if (trace) trace->mark("agent_drag_end", lane + 1);
+#ifdef CUA_HYPRLAND_INPUT_TRACE
+                // Single-variable native diagnostic, not an ordering guarantee:
+                // a stalled client can still read distinct flushes together.
+                // The consumed grant admits no further input. Retaining the
+                // lease until cleanup preserves all conflict/lifecycle guards.
+                diagnostic_drag_completion = Clock::now() + std::chrono::milliseconds(100);
+#else
                 if (kProduction) revoke("completed");
                 send(*d.client, kDelivered);
+#endif
             }
         }
         for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
@@ -959,9 +978,9 @@ std::string InputExperiment::status_json() const {
         if (!states.empty()) states += ',';
         const bool pointer_focus = std::ranges::any_of(lane->pointers, [](const auto& p) { return !p->dead && bool(p->focus); });
         const bool keyboard_focus = std::ranges::any_of(lane->keyboards, [](const auto& k) { return !k->dead && bool(k->focus); });
-        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{}}})",
+        states += std::format(R"({{"lane":{},"epoch":"{}","desktop_generation":{},"reserved":{},"socket_cleanup":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"held_button":{},"held_keys":{},"drag_active":{},"pointer_focus":{},"keyboard_focus":{},"diagnostic_drag_completion_pending":{}}})",
             lane->lane, lane->epoch, lane->desktop_generation, lane->reservation != nullptr, lane->socket_cleanup, lane->lease != nullptr, lane->seats.size(), lane->pointers.size(), lane->keyboards.size(), lane->dispatches,
-            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus);
+            lane->held_button, lane->held_keys.size(), lane->drag.has_value(), pointer_focus, keyboard_focus, lane->diagnostic_drag_completion.has_value());
     }
     // Aggregate legacy fields remain available to existing test probes.
     return std::format(R"({{"protocol":{},"test_only":{},"seat_lifetime":"compositor","upgrade":"desktop_restart","transport_ready":{},"epoch":"{}","lease_active":{},"seat_resources":{},"pointer_resources":{},"keyboard_resources":{},"dispatches":{},"lanes":[{}]}})",

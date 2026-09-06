@@ -66,9 +66,9 @@ focus, workspace, or compositor cursor.
 
 ### Persistent focus-proxy exception
 
-`bring_to_front` is not part of the normal input ladder. For an ordinary
-`background_unavailable` response, retry only the refused action with
-`delivery_mode:"foreground"`; cua-driver activates the target, performs the
+`bring_to_front` is not part of the normal input ladder. After an ordinary
+`background_unavailable` response, and only with foreground authorization,
+retry the refused action with `delivery_mode:"foreground"`; cua-driver activates the target, performs the
 action, and restores the prior active window. Use `bring_to_front` only when a
 focus-proxy surface must remain foreground across multiple calls, such as a
 remote desktop session, or when repeated action-scoped activation prevents the
@@ -241,7 +241,7 @@ exact `background_unavailable` result. They do not report success after a
 silent drop.
 
 Outside an explicitly enabled, qualified compositor-owned background route,
-raw Wayland input requires authorized `delivery_mode:"foreground"`.
+raw Wayland input requires explicitly authorized `delivery_mode:"foreground"`.
 The driver activates the selected target through a verified compositor adapter
 before dispatch. If
 the compositor has no target-addressable activation or input backend, the call

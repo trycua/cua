@@ -1,4 +1,5 @@
 """No native applications or input: fixtures and fail-closed orchestration only."""
+import copy
 import io
 import os
 from pathlib import Path
@@ -9,7 +10,8 @@ import zipfile
 
 from production_app_smoke import (
     LIMITS, GroundingUnavailable, check_delivery, create_documents, ground, input_step,
-    kernel_file_identity, mapped_plugin, package_owner, require_enabled_plugin, verify_calc, verify_inkscape,
+    kernel_file_identity, launch_arguments, mapped_plugin, package_owner,
+    require_enabled_plugin, verify_calc, verify_inkscape,
 )
 
 
@@ -170,6 +172,42 @@ class FixtureTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_inkscape_launch_uses_supported_positional_document(self):
+        self.assertEqual(launch_arguments('inkscape', Path('/docs/smoke.svg'), Path('/evidence')),
+                         {'launch_path': '/usr/bin/inkscape',
+                          'additional_arguments': ['/docs/smoke.svg']})
+
+    def test_calc_formula_name_field_requires_matching_toolbar_and_rows(self):
+        state = {'elements': [
+            {'element_index': 10, 'role': 'panel', 'enabled': True},
+            {'element_index': 11, 'parent_index': 10, 'role': 'text', 'label': 'A1', 'enabled': True},
+            {'element_index': 12, 'parent_index': 10, 'role': 'combo box', 'enabled': True},
+            {'element_index': 13, 'role': 'table', 'label': 'Sheet Smoke'}],
+            'tree_markdown': '\n'.join([
+                '  - tool bar = "Formula Tool Bar"',
+                '    - [10] panel "" value="0.0" [actions=[press]]',
+                '      - [11] text "A1" [actions=[activate]]',
+                '      - [12] combo box "" [actions=[press]]',
+                '  - table = "Sheet Smoke"'])}
+        ground(state, 'calc', 'insert')
+        for old, new in [('Formula Tool Bar', 'Other toolbar'), ('[11]', '[99]'),
+                         ('[10]', '[99]'), ('text "A1"', 'text "B1"')]:
+            with self.subTest(old=old), self.assertRaises(GroundingUnavailable):
+                ground({**state, 'tree_markdown': state['tree_markdown'].replace(old, new)}, 'calc', 'insert')
+        for index, replacement in [(0, {'role': 'menu'}), (1, {'parent_index': 9}),
+                                   (1, {'enabled': False}), (1, {'label': 'B1'}),
+                                   (2, {'parent_index': 9}), (3, {'label': 'Sheet Other'})]:
+            bad = copy.deepcopy(state)
+            bad['elements'][index].update(replacement)
+            with self.subTest(index=index, replacement=replacement), self.assertRaises(GroundingUnavailable):
+                ground(bad, 'calc', 'insert')
+        for markdown in ['', state['tree_markdown'] + '\n' + state['tree_markdown'],
+                         state['tree_markdown'].replace('    - [10]', '  - panel = "Other"\n    - [10]')]:
+            with self.subTest(markdown=markdown), self.assertRaises(GroundingUnavailable):
+                ground({**state, 'tree_markdown': markdown}, 'calc', 'insert')
+        with self.assertRaises(GroundingUnavailable):
+            ground({**state, 'elements': state['elements'] + [state['elements'][1]]}, 'calc', 'insert')
+
     def test_route_family_does_not_claim_plugin_transport_attribution(self):
         self.assertIs(LIMITS['plugin_transport_attribution'], False)
 

@@ -265,13 +265,52 @@ def rows(snapshot):
     return elements
 
 
+def calc_formula_selection(snapshot, elements):
+    """Recognize the pinned GTK3 Calc name field, not an arbitrary A1 label.
+
+    Calc's non-actionable Formula Tool Bar appears only in tree_markdown.
+    Cross-check that section's indexed name-field panel against structured
+    rows; the panel's parent_index cannot identify an omitted toolbar.
+    """
+    lines = snapshot.get('tree_markdown', '').splitlines()
+    headers = [index for index, line in enumerate(lines)
+               if line.strip() == '- tool bar = "Formula Tool Bar"']
+    if len(headers) != 1:
+        return False
+    start = headers[0]
+    indent = len(lines[start]) - len(lines[start].lstrip())
+    section = []
+    for line in lines[start + 1:]:
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        section.append(line.strip())
+    candidates = [row for row in elements if row.get('role') == 'text'
+                  and row.get('label') == 'A1' and row.get('enabled') is True]
+    if len(candidates) != 1:
+        return False
+    field = candidates[0]
+    panels = [row for row in elements if row.get('element_index') == field.get('parent_index')
+              and row.get('role') == 'panel' and row.get('enabled') is True]
+    if len(panels) != 1:
+        return False
+    panel = panels[0]
+    field_line = f'- [{field.get("element_index")}] text "A1" '
+    panel_line = f'- [{panel.get("element_index")}] panel "" '
+    return (sum(line.startswith(field_line) for line in section) == 1
+            and sum(line.startswith(panel_line) for line in section) == 1
+            and any(row.get('role') == 'combo box' and row.get('enabled') is True
+                    and row.get('parent_index') == panel.get('element_index') for row in elements)
+            and any(row.get('role') == 'table' and row.get('label') == 'Sheet Smoke'
+                    for row in elements))
+
+
 def ground(snapshot, app, stage):
     elements = rows(snapshot)
     if app == 'calc' and stage == 'insert':
         selected = any(row.get('selected') is True and row.get('label') == 'A1'
                        and row.get('role') == 'table cell' for row in elements)
         named = any(row.get('label') == 'Name Box' and row.get('value') == 'A1' for row in elements)
-        if not (selected or named):
+        if not (selected or named or calc_formula_selection(snapshot, elements)):
             raise GroundingUnavailable('cannot prove initial Calc selection A1 from the snapshot')
     if app == 'inkscape':
         if stage == 'select':
@@ -356,18 +395,24 @@ def discover(mcp, app, document, old_pids):
     raise GroundingUnavailable('launched document window not discovered; inspect launch and window evidence')
 
 
-def run_app(mcp, app, document, directory):
-    old_pids = {int(path.name) for path in Path('/proc').iterdir() if path.name.isdigit()}
-    before = document.read_bytes()
-    (directory / ('before' + document.suffix)).write_bytes(before)
+def launch_arguments(app, document, directory):
     launch = {'launch_path': str(EXECUTABLES[app])}
     if app == 'calc':
         launch['launch_path'] = '/usr/bin/libreoffice'
         launch['additional_arguments'] = [f'-env:UserInstallation={(directory / "calc-profile").as_uri()}',
                                            '--norestore', '--nologo', '--calc', str(document)]
     else:
-        launch['additional_arguments'] = ['--new-instance', str(document)]
-    content(mcp.tool('launch_app', launch))
+        # Inkscape 1.4.4 accepts positional documents, not --new-instance.
+        # discover() still requires a new PID, exact executable and document.
+        launch['additional_arguments'] = [str(document)]
+    return launch
+
+
+def run_app(mcp, app, document, directory):
+    old_pids = {int(path.name) for path in Path('/proc').iterdir() if path.name.isdigit()}
+    before = document.read_bytes()
+    (directory / ('before' + document.suffix)).write_bytes(before)
+    content(mcp.tool('launch_app', launch_arguments(app, document, directory)))
     target, identity = discover(mcp, app, document, old_pids)
     save_json(directory, 'target.json', identity)
     try:

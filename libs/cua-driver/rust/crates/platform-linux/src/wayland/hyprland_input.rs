@@ -588,6 +588,13 @@ fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
     if let Some(client) = clients.get(owner) {
         return Ok(client.clone());
     }
+    // Failed claims and dropped connections leave empty serialization slots.
+    // Reclaim only idle entries: queued callers must keep the same mutex.
+    // Never wait for a per-session mutex while holding the pool lock.
+    clients.retain(|_, client| {
+        Arc::strong_count(client) > 1
+            || client.client.try_lock().map_or(true, |slot| slot.is_some())
+    });
     if clients.len() >= MAX_LANES {
         return Err(LaneBusy.into());
     }
@@ -702,6 +709,7 @@ mod tests {
     use super::*;
     use std::os::fd::FromRawFd;
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
+    static POOL_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
     fn revoked_connections_are_dropped_without_replaying_the_action() {
@@ -726,6 +734,7 @@ mod tests {
 
     #[test]
     fn independent_lifecycles_have_bounded_serialization_slots_and_cleanup() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
         assert!(session_client("").is_err());
         assert!(session_client("default").is_err());
         let a = session_client("input-pool-test-a").unwrap();
@@ -769,6 +778,117 @@ mod tests {
         assert!(!Arc::ptr_eq(&reused, &runtime));
         cleanup_session("__cua_runtime_other:pending");
         cleanup_session("input-pool-test-reused");
+    }
+
+    #[test]
+    fn failed_owners_do_not_exhaust_local_lanes() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
+        for failure in ["connect", "HELLO", "CLAIM"] {
+            for owner in ["input-failed-a", "input-failed-b"] {
+                let client = session_client(owner).unwrap();
+                let mut slot = client.client.lock().unwrap();
+                let mut attempts = Vec::new();
+                let result = claim_available(|lane| {
+                    attempts.push(lane);
+                    if failure == "connect" {
+                        bail!("connection unavailable");
+                    }
+                    let (mut client, peer) = test_connection();
+                    let server = std::thread::spawn(move || {
+                        assert_eq!(read_packet(&peer), "HELLO");
+                        if failure == "CLAIM" {
+                            peer.send(hello_reply().to_string().as_bytes()).unwrap();
+                            assert_eq!(read_packet(&peer), "CLAIM");
+                        }
+                        peer.send(b"not-json").unwrap();
+                    });
+                    let result = client.handshake(lane);
+                    server.join().unwrap();
+                    result.map(|claimed| claimed.then_some(client))
+                });
+                assert!(result.is_err());
+                assert_eq!(attempts, [0]);
+                *slot = result.ok();
+            }
+            let pool = Arc::new(Mutex::new([None, None]));
+            let third = session_client("input-failed-third").unwrap();
+            *third.client.lock().unwrap() =
+                Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+            assert_eq!(third.client.lock().unwrap().as_ref().unwrap().lane, Some(0));
+            cleanup_session("input-failed-third");
+            cleanup_session("input-failed-a");
+            cleanup_session("input-failed-b");
+        }
+    }
+
+    #[test]
+    fn failed_reconnect_reclaims_only_the_empty_owner() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
+        let pool = Arc::new(Mutex::new([None, None]));
+        for owner in ["input-reconnect-a", "input-reconnect-b"] {
+            let client = session_client(owner).unwrap();
+            *client.client.lock().unwrap() =
+                Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        }
+        assert!(session_client("input-reconnect-c")
+            .err()
+            .unwrap()
+            .is::<LaneBusy>());
+        {
+            let client = session_client("input-reconnect-a").unwrap();
+            let mut slot = client.client.lock().unwrap();
+            *slot = None;
+            assert!(claim_available(|_| bail!("reconnect unavailable")).is_err());
+        }
+        let c = session_client("input-reconnect-c").unwrap();
+        *c.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        assert_eq!(c.client.lock().unwrap().as_ref().unwrap().lane, Some(0));
+        let b = session_client("input-reconnect-b").unwrap();
+        assert_eq!(b.client.lock().unwrap().as_ref().unwrap().lane, Some(1));
+        for owner in [
+            "input-reconnect-a",
+            "input-reconnect-b",
+            "input-reconnect-c",
+        ] {
+            cleanup_session(owner);
+        }
+    }
+
+    #[test]
+    fn pending_same_owner_callers_keep_their_serialization_slot() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
+        let owner = "input-pending-a";
+        let active = session_client(owner).unwrap();
+        let slot = active.client.lock().unwrap();
+        let queued = session_client(owner).unwrap();
+        let (ready, waiting) = std::sync::mpsc::channel();
+        let (release, released) = std::sync::mpsc::channel();
+        let waiter = std::thread::spawn(move || {
+            ready.send(()).unwrap();
+            let _slot = queued.client.lock().unwrap();
+            released.recv().unwrap();
+        });
+        waiting.recv().unwrap();
+        let b = session_client("input-pending-b").unwrap();
+        assert!(session_client("input-pending-c")
+            .err()
+            .unwrap()
+            .is::<LaneBusy>());
+        assert!(Arc::ptr_eq(&active, &session_client(owner).unwrap()));
+        drop(slot);
+        drop(active);
+        assert!(session_client("input-pending-c")
+            .err()
+            .unwrap()
+            .is::<LaneBusy>());
+        release.send(()).unwrap();
+        waiter.join().unwrap();
+        let c = session_client("input-pending-c").unwrap();
+        assert!(Arc::ptr_eq(&b, &session_client("input-pending-b").unwrap()));
+        drop(c);
+        for owner in [owner, "input-pending-b", "input-pending-c"] {
+            cleanup_session(owner);
+        }
     }
 
     #[test]

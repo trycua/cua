@@ -115,6 +115,13 @@ receives its cancellation result before the command acknowledgement. A new
 unclaimed control connection cannot cancel a runtime's lane. V3 has no global
 socket stop command; plugin disable or unload explicitly stops both lanes.
 
+These commands belong to the private plugin wire, not the public MCP tool
+surface. Likewise, EOF below means the owned plugin connection closes. Closing
+MCP stdin is not necessarily immediate plugin EOF: direct stdio finishes its
+current request before reading the next request or EOF. See the
+[Driver lifecycle boundary](host-authority-boundary.md#cancellation-and-recovery)
+for the separate cancellation paths and transport limits.
+
 EOF cancels only the departing connection's work and frees its reservation.
 Lock/unlock, DPMS, session activity, and monitor transitions revoke authority.
 Keymap/layout changes revoke authority, including synchronous layout and

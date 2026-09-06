@@ -59,6 +59,14 @@ transitions, stale targets, keymap changes, and primary-target conflicts revoke
 affected work. Cleanup releases synthetic state only; it does not undo app
 effects. A stalled compositor cannot promise bounded cleanup latency.
 
+These are adapter lifecycle semantics, not an additional MCP cancellation
+feature. Direct stdio MCP processes one request at a time and ignores
+notifications, including `notifications/cancelled`. An `end_session` request or
+stdin EOF is handled after the current request returns; neither interrupts that
+request immediately. SDK invocation cancellation, runtime process termination,
+and plugin-socket EOF are distinct paths and need separate evidence. The
+process-termination proof does not certify MCP cancellation or session end.
+
 Do not replay canceled, partial, or unknown actions. A later new call may
 acquire a fresh target after common permission, lifecycle, identity, geometry,
 compatibility, and conflict checks. Config disable/re-enable preserves

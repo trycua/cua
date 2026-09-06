@@ -15,10 +15,10 @@ app and the independent foreground journal fixture. Ground the exact window
 identities, bounds, and gesture coordinates using fresh Driver snapshots.
 Review a JSON plan before execution. The plan has:
 
-- `purpose`: `apps`, `policy`, `negative_control`, or `capacity`.
+- `purpose`: `apps`, `policy`, `policy_cache`, `negative_control`, or `capacity`.
 - `foreground`: its exact `pid` and `window_id`.
 - `package_versions`: `{"libreoffice-fresh":"26.2.5-3","inkscape":"1.4.4-6"}`.
-- `agents`: one or two objects (exactly three for capacity) with `app`, `target`, `bounds`, `name`, and
+- `agents`: one or two objects (exactly three for capacity, one for policy_cache) with `app`, `target`, `bounds`, `name`, and
   `profile`. App proof requires distinct Calc and Inkscape processes. Public
   names may be identical; they are not runtime ownership credentials.
 - `profile`: `mode` is `standard`, `bounded`, or `unrestricted`. Unrestricted
@@ -26,6 +26,8 @@ Review a JSON plan before execution. The plan has:
   `approve_manifest:true` in every mode; bounded requires a manifest. These map
   to the normal direct-runtime environment contract. Managed/user policy remains
   inherited. Do not put secrets in the plan or evidence.
+  The independent observer uses `unrestricted` with explicit bypass acknowledgement;
+  the agent under test retains its reviewed profile and manifest ceiling.
 - `phases`: sequential `{agent,tool,arguments}` objects, or `parallel` arrays
   with at most one call per runtime. Tools are click, press_key, hotkey, scroll,
   and drag. Reserved ownership/delivery arguments cannot override the plan.
@@ -114,6 +116,71 @@ not saved app effects, overlapping gestures, or the desktop matrix. Run the
 capacity plan separately from the package smoke: it cannot pass without
 instrumentation.
 
+For a cached-connection tool-ceiling run, prepare a separate
+`purpose:"policy_cache"` plan. Use exactly one qualified Calc or Inkscape process,
+one fixed positive integer PID/window pair, and one nonempty session name.
+The runner checks that pair against `list_windows` before each fresh snapshot.
+Use an approved capability manifest with any of the three shared profiles;
+`unrestricted` also needs `acknowledge_unrestricted:true`. The manifest must
+allow session startup, window listing, window snapshots, and the permitted
+input tool. Include the grounded resource scope required by those tools.
+For `bounded`, include the required `expires_after` and `idle_timeout` fields.
+Keep the profile, manifest, process, target, and session fixed for the entire
+run; no policy reload, target override, extra signer, or per-window consent
+mechanism is part of this proof.
+
+Use exactly three serial phases, all with `agent:0`: a permitted input action,
+an action using a different denied tool, then a fresh permitted action using
+the first tool. For example, allow `click` and deny `press_key`, then review two
+safe clicks and an Escape key call against fresh native state. The third call
+is a new reviewed action, not a retry of either preceding call. Its arguments
+can differ from the first call. Both permitted phases must omit `expect` or
+use `{"kind":"dispatched"}`. Set the middle expectation to:
+
+```json
+{
+  "kind": "refused",
+  "reason": "permission_denied",
+  "message": "Permission denied: capability manifest denies tool 'press_key'"
+}
+```
+
+If the denied tool is omitted from the manifest instead of explicitly denied,
+the only alternate message is
+`Permission denied: tool 'press_key' is outside the capability manifest`.
+Replace `press_key` with the actual middle-phase tool in either message. These
+strings come from `authorize_tool_call_with_context` in
+`rust/crates/cua-driver-core/src/authorization.rs`, the `AuthorizationError`
+display in `policy.rs`, and `permission_denied_result` in `tool.rs`.
+The observed response must have the common `status:"refused"` envelope,
+`refusal.code:"permission_denied"`, the exact reviewed `refusal.message`, and
+no delivery. A generic plugin `permission_denied`, resource-scope denial,
+managed/user-policy denial, partial result, or unknown delivery fails this
+narrow manifest tool-ceiling case.
+
+Run with `--trace-socket`; its absence fails before process launch.
+`policy_cache` rejects parallel phases, moving-primary mode, and overlap claims.
+The same direct MCP runtime must remain alive through all three responses.
+Both permitted intervals must show ordered admission, tool input, and completion
+on the same compositor lane. Runtime PID or session equality alone is
+insufficient. The middle interval must contain zero synthetic-lane events,
+including `agent_admitted`, the successful v3 `TARGET` admission marker emitted
+by `input_experiment.cpp`. This trace measures that marker and input; it is not
+a raw socket packet capture. The quiet interval includes the denied call's
+before/after snapshots, and the runner also checks every gap between phases.
+No action is replayed after a refusal, partial result, unknown delivery, or
+transport failure.
+
+Evidence includes `policy-cache-phase-0-trace.json` through
+`policy-cache-phase-2-trace.json`, with continuous active prefixes, the stopped
+trace, action runtime/session identities, exact refusal, foreground journal
+checks, and cleanup results. `result.json.policy_cache` records the shared lane
+and tool-ceiling verdict. Accept only an overall `result:"passed"`, which also
+requires continuous foreground isolation and synthetic cleanup. This is
+preparation for one cached-connection manifest tool-ceiling proof, not native
+certification, the complete resource/managed-policy matrix, saved app effects,
+or the desktop matrix. The focused tests use mocked runtimes and telemetry.
+
 Moving-primary proof uses `primary-grab` in its independent `controlled` mode,
 with `MOVE` commands and exact `MOVED` acknowledgements. Driver actions remain
 background calls with before/after window snapshots. The foreground journal
@@ -157,7 +224,11 @@ only for those children, releases the foreground hold, and retains app files
 after failures or partial/unknown delivery. Transport failures poison the
 connection and are never replayed. Any cleanup failure fails the run.
 
-Remaining native work includes the complete mode/manifest allow/deny matrix,
+Remaining native work includes executing the cached-connection plan at the exact
+candidate SHA with verified loaded artifacts, successful plugin input on both
+sides of the exact manifest denial, the quiet trace interval, continuous
+foreground isolation, and cleanup. The complete mode/manifest/resource and
+managed-policy allow/deny matrix remains separate. Other native gates include
 execution of the moving-primary and capacity plans, runtime cancellation during overlapping gestures,
 target/keymap/display/session faults, exact loaded-artifact
 provenance, repeat controls, and the canonical desktop matrix. No existing

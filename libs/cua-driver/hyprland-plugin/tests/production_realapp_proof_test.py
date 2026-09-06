@@ -13,7 +13,8 @@ import zipfile
 
 from production_mcp import DirectMCP, assert_distinct_runtimes, profile_environment, stop_process
 from production_realapp_proof import (assert_no_dispatch, assert_primary_state, check_response,
-                                    capacity_lane, verify_capacity,
+                                    capacity_lane, verify_capacity, check_manifest_refusal,
+                                    manifest_tool_messages, verify_policy_cache,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
                                     primary_trajectory, run, validate_plan, verify_output)
 from primary_trace import analyze
@@ -47,6 +48,228 @@ def capacity_events(lane):
             ('pointer_button', 100, 200, lane, 1),
             ('pointer_button', 100, 200, lane, 0),
             ('agent_action_end', 100, 200, lane, 0)]
+
+
+def policy_cache_plan():
+    result = capacity_plan()
+    result.update(purpose='policy_cache', agents=result['agents'][:1])
+    result['agents'][0]['profile'].update(manifest='reviewed.yaml', approve_manifest=True)
+    result['phases'] = [
+        {'agent': 0, 'tool': 'click', 'arguments': {'x': 20, 'y': 30}},
+        {'agent': 0, 'tool': 'press_key', 'arguments': {'key': 'ESC'},
+         'expect': {'kind': 'refused', 'reason': 'permission_denied',
+                    'message': "Permission denied: capability manifest denies tool 'press_key'"}},
+        {'agent': 0, 'tool': 'click', 'arguments': {'x': 30, 'y': 40}},
+    ]
+    return result
+
+
+class PolicyCacheTests(unittest.TestCase):
+    def test_plan_requires_one_fixed_target_session_and_exact_allow_deny_allow(self):
+        validate_plan(policy_cache_plan())
+        for mode in ('standard', 'bounded', 'unrestricted'):
+            for message in manifest_tool_messages('press_key'):
+                candidate = policy_cache_plan()
+                candidate['agents'][0]['profile'].update(mode=mode, acknowledge_unrestricted=True)
+                candidate['phases'][1]['expect']['message'] = message
+                validate_plan(candidate)
+        for mutate in (lambda p: p['agents'].append(copy.deepcopy(p['agents'][0])),
+                       lambda p: p['agents'][0].update(app='fixture'),
+                       lambda p: p['agents'][0].update(name=''),
+                       lambda p: p['agents'][0]['target'].update(window_id=None),
+                       lambda p: p['agents'][0]['profile'].pop('manifest'),
+                       lambda p: p['agents'][0]['profile'].update(approve_manifest=False),
+                       lambda p: p['agents'][0]['profile'].update(mode='unrestricted'),
+                       lambda p: p['phases'].pop(),
+                       lambda p: p['phases'][1].update(agent=1),
+                       lambda p: p['phases'][1].update(parallel=[]),
+                       lambda p: p['phases'][1].update(tool='click'),
+                       lambda p: p['phases'][2].update(tool='scroll'),
+                       lambda p: p['phases'][2].update(expect={'kind': 'unknown'}),
+                       lambda p: p['phases'][1]['expect'].update(reason='lane_busy'),
+                       lambda p: p['phases'][1]['expect'].update(reason='bounded_resource_outside_manifest'),
+                       lambda p: p['phases'][1]['expect'].pop('message'),
+                       lambda p: p['phases'][1]['expect'].update(message='Permission denied'),
+                       lambda p: p['phases'][1]['arguments'].update(pid=99),
+                       lambda p: p['phases'][1]['arguments'].update(session='new'),
+                       lambda p: p.update(moving_primary=True),
+                       lambda p: p.update(require_overlap=True)):
+            bad = policy_cache_plan()
+            mutate(bad)
+            with self.subTest(plan=bad), self.assertRaises(AssertionError):
+                validate_plan(bad)
+
+    def test_exact_common_envelope_excludes_plugin_and_other_policy_refusals(self):
+        expected = policy_cache_plan()['phases'][1]['expect']
+        content = {'status': 'refused', 'refusal': {'code': expected['reason'], 'message': expected['message']}}
+        check_manifest_refusal({'isError': True, 'structuredContent': content}, expected, 'press_key')
+        for change in ({'effect': 'refused', 'reason': 'permission_denied'},
+                       {**content, 'delivery': {'mode': 'background'}},
+                       {**content, 'refusal': {**content['refusal'], 'message': "Permission denied: user policy: tool 'press_key' is explicitly denied"}},
+                       {**content, 'refusal': {**content['refusal'], 'code': 'bounded_resource_outside_manifest'}},
+                       {**content, 'refusal': {**content['refusal'], 'message': "Permission denied: capability manifest denies tool 'click'"}}):
+            with self.subTest(content=change), self.assertRaises(AssertionError):
+                check_manifest_refusal({'isError': True, 'structuredContent': change}, expected, 'press_key')
+
+    def test_summary_requires_same_runtime_session_lane_and_fresh_success(self):
+        expected = policy_cache_plan()['phases'][1]['expect']
+        success = {'route': 'synthetic_events', 'effect': 'unverifiable', 'delivery': {'mode': 'background'}}
+        actions = [dict(agent=0, tool=step['tool'], expected='dispatched', observed=success,
+                        runtime_pid=101, session='fixed', compositor_lane=1)
+                   for step in policy_cache_plan()['phases']]
+        actions[1].update(expected='refused', expect=expected, no_dispatch='verified',
+                          observed={'status': 'refused', 'refusal': {'code': expected['reason'], 'message': expected['message']}})
+        self.assertEqual(verify_policy_cache(actions)['result'], 'verified')
+        for mutate in (lambda a: a.pop(), lambda a: a[2].update(agent=1),
+                       lambda a: a[2].update(compositor_lane=2),
+                       lambda a: a[2].update(runtime_pid=102),
+                       lambda a: a[2].update(session='replacement'),
+                       lambda a: a[2].update(expected='unknown'),
+                       lambda a: a[1].update(no_dispatch='unproven')):
+            bad = copy.deepcopy(actions)
+            mutate(bad)
+            with self.subTest(actions=bad), self.assertRaises(AssertionError):
+                verify_policy_cache(bad)
+
+    def test_missing_trace_fails_before_process_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            path = root / 'plan.json'
+            path.write_text(json.dumps(policy_cache_plan()))
+            args = SimpleNamespace(plan=path, evidence=root / 'evidence', trace_socket=None)
+            with patch('production_realapp_proof.provenance') as provenance, \
+                    patch('production_realapp_proof.DirectMCP') as spawn:
+                self.assertEqual(run(args), 1)
+                provenance.assert_not_called()
+                spawn.assert_not_called()
+            result = json.loads((args.evidence / 'result.json').read_text())
+            self.assertEqual(result['error'], 'policy_cache requires continuous trace')
+            self.assertEqual(result['policy_cache']['result'], 'unproven')
+
+    def test_runner_persistent_runtime_quiet_denial_and_failures_without_replay(self):
+        for failure in (None, 'changed_lane', 'missing_input', 'wrong_refusal', 'plugin_refusal',
+                        'admitted_on_denial', 'input_on_denial', 'denial_before_snapshot',
+                        'denial_after_snapshot', 'next_snapshot_input', 'gap_input', 'dead_runtime', 'changed_runtime',
+                        'transport', 'partial', 'unknown', 'missing_hook', 'reset_trace',
+                        'cleanup_reset', 'foreground_input', 'cleanup_failure', 'stale_window'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                root = Path(directory)
+                candidate = policy_cache_plan()
+                path = root / 'plan.json'
+                path.write_text(json.dumps(candidate))
+                args = SimpleNamespace(plan=path, evidence=root / 'evidence',
+                                       trace_socket=root / 'cua-input-v3.sock', driver=root / 'driver',
+                                       primary_grab=root / 'primary-grab', foreground_journal=root / 'journal',
+                                       record_video=False)
+                calls, events, held = [], [START], [True]
+                agent = Mock(process=Mock(pid=101, poll=Mock(return_value=None)))
+                observer = Mock()
+                targets = [candidate['foreground'], candidate['agents'][0]['target']]
+                action_count = 0
+                snapshot_count = 0
+
+                def tool(name, arguments):
+                    nonlocal action_count, snapshot_count
+                    if name == 'list_windows':
+                        windows = copy.deepcopy(targets)
+                        if failure == 'stale_window' and action_count == 1:
+                            windows[1]['window_id'] += 1
+                        return {'structuredContent': {'windows': windows}}
+                    if name == 'get_window_state':
+                        calls.append(('snapshot', arguments))
+                        snapshot_count += 1
+                        if ((failure == 'denial_before_snapshot' and snapshot_count == 7)
+                                or (failure == 'next_snapshot_input' and snapshot_count == 9)
+                                or (failure == 'denial_after_snapshot' and action_count == 2)):
+                            events.append(('agent_admitted', 100, 200, 1, 0))
+                        return {'structuredContent': {'screenshot_width': 600,
+                                'window_bounds': candidate['agents'][0]['bounds']}}
+                    if name == 'get_desktop_state':
+                        return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}
+                    if name not in ('click', 'press_key'):
+                        return {'structuredContent': {}}
+                    action_count += 1
+                    calls.append((name, arguments))
+                    self.assertEqual(arguments, {**candidate['phases'][action_count - 1]['arguments'],
+                        **candidate['agents'][0]['target'], 'session': candidate['agents'][0]['name'],
+                        'delivery_mode': 'background'})
+                    if failure == 'transport' and action_count == 2:
+                        raise TimeoutError('unknown effect')
+                    if name == 'press_key':
+                        if failure == 'dead_runtime':
+                            agent.process.poll.return_value = 1
+                        if failure == 'changed_runtime':
+                            agent.process.pid = 102
+                        if failure in ('admitted_on_denial', 'input_on_denial'):
+                            kind = 'agent_admitted' if failure == 'admitted_on_denial' else 'keyboard_key'
+                            events.append((kind, 100, 200, 1, 0))
+                        if failure == 'plugin_refusal':
+                            return {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'permission_denied'}}
+                        expected = candidate['phases'][1]['expect']
+                        return {'isError': True, 'structuredContent': {'status': 'refused', 'refusal': {
+                            'code': expected['reason'], 'message': 'wrong reason' if failure == 'wrong_refusal' else expected['message']}}}
+                    lane = 2 if failure == 'changed_lane' and action_count == 3 else 1
+                    rows = capacity_events(lane)
+                    events.extend([rows[0], rows[-1]] if failure == 'missing_input' else rows)
+                    if failure == 'foreground_input':
+                        events.append(('keyboard_key', 100, 200, 0, 0))
+                    return {'structuredContent': {'route': 'synthetic_events',
+                        'effect': 'partial' if failure == 'partial' else 'unverifiable',
+                        'delivery': {'mode': 'unknown' if failure == 'unknown' else 'background'}}}
+
+                agent.tool.side_effect = observer.tool.side_effect = tool
+                trace_client = Mock(hello={'protocol': 3})
+                def exchange(command):
+                    if command == 'TRACE_STOP':
+                        if failure == 'cleanup_reset':
+                            events[:] = [START]
+                        events.append(STOP)
+                trace_client.exchange.side_effect = exchange
+                def collect():
+                    if failure == 'reset_trace' and trace_client.collect.call_count == 4:
+                        events[:] = [START]
+                    if failure == 'gap_input' and trace_client.collect.call_count == 7:
+                        events.append(('agent_admitted', 100, 200, 1, 0))
+                    return {**trace(*events), 'active': events[-1] != STOP, 'hook': failure != 'missing_hook'}
+                trace_client.collect.side_effect = collect
+                if failure == 'cleanup_failure':
+                    agent.close.side_effect = RuntimeError('cleanup failed')
+                grab = Mock(poll=Mock(return_value=0))
+                replacements = {'provenance': Mock(return_value={}),
+                    'DirectMCP': Mock(side_effect=[agent, observer]), 'Trace': Mock(return_value=trace_client),
+                    'subprocess.Popen': Mock(return_value=grab),
+                    'primary_acknowledgement': Mock(return_value='HELD\n'),
+                    'wait_for': lambda predicate: self.assertTrue(predicate()),
+                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
+                    'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
+                    'stop_process': lambda process: held.__setitem__(0, False)}
+                for name, replacement in replacements.items():
+                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                self.assertEqual(run(args), 0 if failure is None else 1)
+                mutations = [name for name, _ in calls if name in ('click', 'press_key')]
+                self.assertEqual(mutations, ['click', 'press_key', 'click'][:len(mutations)])
+                for index, (name, arguments) in enumerate(calls):
+                    if name in ('click', 'press_key'):
+                        self.assertEqual(calls[index - 1][0], 'snapshot')
+                        if failure != 'stale_window':
+                            self.assertEqual(calls[index + 1][0], 'snapshot')
+                agent.close.assert_called_once()
+                observer.close.assert_called_once()
+                trace_client.close.assert_called_once()
+                self.assertFalse(held[0])
+                self.assertEqual(replacements['DirectMCP'].call_count, 2)
+                self.assertEqual(replacements['DirectMCP'].call_args.args[2],
+                                 {'mode': 'unrestricted', 'acknowledge_unrestricted': True})
+                result = json.loads((args.evidence / 'result.json').read_text())
+                if failure is None:
+                    self.assertEqual(mutations, ['click', 'press_key', 'click'])
+                    self.assertEqual(result['policy_cache']['compositor_lane'], 1)
+                    self.assertEqual(result['continuous_isolation'], 'passed')
+                    self.assertEqual(result['synthetic_cleanup'], 'verified')
+                    for index in range(3):
+                        self.assertTrue((args.evidence / f'policy-cache-phase-{index}-trace.json').is_file())
+                if failure in ('transport', 'dead_runtime', 'changed_runtime', 'gap_input', 'next_snapshot_input'):
+                    self.assertEqual(mutations, ['click', 'press_key'])
 
 
 class CapacityTests(unittest.TestCase):
@@ -316,7 +539,7 @@ class ResponseTests(unittest.TestCase):
     def test_no_dispatch_rejects_press_without_completion(self):
         before = {**trace(START), 'active': True}
         assert_no_dispatch(before, copy.deepcopy(before))
-        for kind in ('pointer_button', 'agent_approved', 'agent_drag_start'):
+        for kind in ('pointer_button', 'agent_admitted', 'agent_approved', 'agent_drag_start'):
             after = {**trace(START, (kind, 100, 200, 1, 1)), 'active': True}
             with self.assertRaises(AssertionError):
                 assert_no_dispatch(before, after)
@@ -641,6 +864,20 @@ class RuntimeTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, 'do not replay'):
                 mcp.rpc('tools/call', {})
             rpc.assert_called_once()
+
+    def test_unrestricted_launch_explicitly_acknowledges_bypass(self):
+        process = Mock()
+        process.poll.return_value = 0
+        with tempfile.TemporaryDirectory() as directory, \
+                patch('production_mcp.subprocess.Popen', return_value=process) as spawn, \
+                patch('driver_input_live.MCP.rpc', return_value={}):
+            mcp = DirectMCP(Path('/synthetic/driver'), Path(directory),
+                            {'mode': 'unrestricted', 'acknowledge_unrestricted': True})
+            mcp.close()
+            self.assertEqual(spawn.call_args.args[0], [
+                '/synthetic/driver', 'mcp', '--direct', '--permission-mode',
+                'unrestricted', '--dangerously-bypass-approvals'])
+            self.assertEqual(spawn.call_args.kwargs['env']['CUA_DRIVER_PERMISSION_MODE'], 'unrestricted')
 
     def test_preflight_failure_is_retained_as_failure(self):
         with tempfile.TemporaryDirectory() as directory:

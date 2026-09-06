@@ -66,9 +66,12 @@ class DirectMCP(MCP):
         self.counter = 0
         self.failed = False
         self.closed = False
+        command = [str(driver), 'mcp', '--direct']
+        if profile['mode'] == 'unrestricted':
+            command += ['--permission-mode', 'unrestricted', '--dangerously-bypass-approvals']
         try:
             self.process = subprocess.Popen(
-                [str(driver), 'mcp', '--direct'], env=env,
+                command, env=env,
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=self.log,
                 text=True, bufsize=1)
             self.rpc('initialize', {'protocolVersion': '2025-06-18', 'capabilities': {},

@@ -29,13 +29,43 @@ TOOLS = {'click', 'press_key', 'hotkey', 'scroll', 'drag'}
 RESERVED = {'pid', 'window_id', 'session', 'delivery_mode'}
 
 
+def manifest_tool_messages(tool):
+    # authorization.rs -> AuthorizationError::Denied -> permission_denied_result.
+    return {f"Permission denied: capability manifest denies tool '{tool}'",
+            f"Permission denied: tool '{tool}' is outside the capability manifest"}
+
+
 def validate_plan(plan):
-    assert plan['purpose'] in ('apps', 'policy', 'negative_control', 'capacity')
+    assert plan['purpose'] in ('apps', 'policy', 'policy_cache', 'negative_control', 'capacity')
     assert type(plan.get('moving_primary', False)) is bool
     assert not (plan.get('moving_primary') and plan['purpose'] == 'negative_control'), \
         'negative control requires a parked primary'
     capacity = plan['purpose'] == 'capacity'
+    policy_cache = plan['purpose'] == 'policy_cache'
     assert (len(plan['agents']) == 3 if capacity else 1 <= len(plan['agents']) <= 2)
+    if policy_cache:
+        assert len(plan['agents']) == 1, 'policy_cache needs one persistent runtime'
+        assert not plan.get('moving_primary') and not plan.get('require_overlap'), \
+            'policy_cache requires serial actions and a parked primary'
+        spec = plan['agents'][0]
+        assert spec['app'] in ('calc', 'inkscape')
+        assert isinstance(spec['name'], str) and spec['name'], 'policy_cache needs a fixed session'
+        profile = spec['profile']
+        assert profile['mode'] in ('standard', 'bounded', 'unrestricted')
+        assert profile.get('manifest') and profile.get('approve_manifest') is True
+        assert profile['mode'] != 'unrestricted' or profile.get('acknowledge_unrestricted') is True
+        assert len(plan['phases']) == 3, 'policy_cache needs allow, deny, fresh allow'
+        for index, step in enumerate(plan['phases']):
+            assert 'parallel' not in step and step.get('agent') == 0, 'policy_cache must reuse agent 0 serially'
+            expected = step.get('expect', {'kind': 'dispatched'})
+            if index == 1:
+                assert expected.get('kind') == 'refused' and expected.get('reason') == 'permission_denied'
+                assert expected.get('message') in manifest_tool_messages(step['tool']), \
+                    'policy_cache needs an exact manifest tool-ceiling refusal'
+            else:
+                assert expected == {'kind': 'dispatched'}, 'policy_cache permitted calls must dispatch'
+        tools = [step['tool'] for step in plan['phases']]
+        assert tools[0] == tools[2] and tools[0] != tools[1], 'policy_cache needs a distinct denied tool'
     if capacity:
         assert not plan.get('moving_primary'), 'capacity requires a parked primary'
         assert not plan.get('require_overlap'), 'capacity establishes persistent lanes serially'
@@ -56,7 +86,7 @@ def validate_plan(plan):
     for target in targets:
         assert set(target) == {'pid', 'window_id'}
         assert type(target['pid']) is int and target['pid'] > 0
-        if capacity:
+        if capacity or policy_cache:
             assert type(target['window_id']) is int and target['window_id'] > 0
     assert plan['phases'], 'empty plan cannot pass'
     for phase in plan['phases']:
@@ -137,7 +167,8 @@ def trace_interval(before, after):
 def assert_no_dispatch(before, after):
     """Zero completions alone is insufficient: reject every synthetic event."""
     events = trace_interval(before, after)
-    assert not any(row[5] in (1, 2) for row in events), 'denied call reached a synthetic lane'
+    assert not any(row[5] in (1, 2) or row[2] == 'agent_admitted' for row in events), \
+        'denied call reached a synthetic lane'
 
 
 def capacity_lane(before, after, tool):
@@ -169,6 +200,37 @@ def verify_capacity(actions):
                    {'kind': 'refused', 'reason': 'lane_busy'})
     return {'result': 'verified', 'lanes': [row['compositor_lane'] for row in actions[:2]],
             'refused_agent': 2, 'reason': 'lane_busy'}
+
+
+def check_manifest_refusal(response, expected, tool):
+    result = check_response(response, expected)
+    content = result['observed']
+    assert content.get('status') == 'refused' and isinstance(content.get('refusal'), dict), \
+        'policy_cache needs the common authorization refusal envelope'
+    assert expected['reason'] == 'permission_denied'
+    assert expected['message'] in manifest_tool_messages(tool)
+    assert content['refusal'].get('message') == expected['message'], 'wrong manifest tool-ceiling refusal'
+    return result
+
+
+def verify_policy_cache(actions):
+    assert len(actions) == 3 and [row['agent'] for row in actions] == [0, 0, 0]
+    assert [row['expected'] for row in actions] == ['dispatched', 'refused', 'dispatched']
+    assert actions[0]['tool'] == actions[2]['tool'] != actions[1]['tool']
+    assert len({row['runtime_pid'] for row in actions}) == 1, 'policy_cache runtime changed'
+    assert len({row['session'] for row in actions}) == 1, 'policy_cache session changed'
+    lanes = [actions[index].get('compositor_lane') for index in (0, 2)]
+    assert lanes[0] in (1, 2) and lanes[0] == lanes[1], 'policy_cache compositor lane changed'
+    for index in (0, 2):
+        check_response({'structuredContent': actions[index]['observed']}, {'kind': 'dispatched'})
+    denied = actions[1]
+    assert denied.get('no_dispatch') == 'verified'
+    check_manifest_refusal({'isError': True, 'structuredContent': denied['observed']},
+                           denied['expect'], denied['tool'])
+    return {'result': 'verified', 'runtime_pid': actions[0]['runtime_pid'],
+            'session': actions[0]['session'], 'compositor_lane': lanes[0],
+            'reason': denied['expect']['reason'], 'message': denied['expect']['message'],
+            'scope': 'cached-connection-manifest-tool-ceiling'}
 
 
 def primary_trajectory(bounds, point, desktop):
@@ -311,6 +373,7 @@ def run(args):
     plan = json.loads(args.plan.read_text())
     validate_plan(plan)
     capacity = plan['purpose'] == 'capacity'
+    policy_cache = plan['purpose'] == 'policy_cache'
     args.evidence.mkdir(parents=True, exist_ok=False)
     def save(name, value):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
@@ -321,6 +384,7 @@ def run(args):
     motion_done, motion_ready = threading.Event(), threading.Event()
     commands, motion_errors, action_intervals = [], [], []
     capacity_traces = []
+    policy_cache_traces = []
     trajectory = None
     recording = False
     baseline_outputs = {}
@@ -330,6 +394,8 @@ def run(args):
               'primary_mode': 'moving' if moving else 'parked'}
     if capacity:
         report['capacity'] = {'result': 'unproven'}
+    if policy_cache:
+        report['policy_cache'] = {'result': 'unproven'}
     timeline_lock = threading.Lock()
     observer_lock = threading.Lock()
     def mark(event, **fields):
@@ -340,7 +406,7 @@ def run(args):
         directory.mkdir()
         return DirectMCP(args.driver, directory, profile)
     def snapshot(mcp, target, session=None):
-        if capacity:
+        if capacity or policy_cache:
             windows = mcp.tool('list_windows', {})
             assert not windows.get('isError'), windows
             matches = [window for window in windows['structuredContent']['windows']
@@ -356,12 +422,22 @@ def run(args):
     def action(step, barrier=None):
         index = step['agent']
         spec, mcp = plan['agents'][index], clients[index]
+        if policy_cache:
+            assert assert_distinct_runtimes(clients) == report['driver_processes'], 'policy_cache runtime changed'
+            current_trace = trace.collect()
+            trace_before = policy_cache_traces[-1] if policy_cache_traces else current_trace
+            assert_no_dispatch(trace_before, current_trace)
         before = snapshot(mcp, spec['target'], spec['name'])
         assert before['window_bounds'] == spec['bounds'], 'reviewed geometry is stale'
+        if policy_cache:
+            # Keep the full interval quiet through fresh grounding, including
+            # delayed events after the preceding denied response.
+            assert_no_dispatch(trace_before, trace.collect())
         expected = step.get('expect', {'kind': 'dispatched'})
         if capacity:
             assert_distinct_runtimes(clients)
-        trace_before = trace.collect() if trace and (capacity or expected['kind'] == 'refused') else None
+        if not policy_cache:
+            trace_before = trace.collect() if trace and (capacity or expected['kind'] == 'refused') else None
         if capacity:
             assert_no_dispatch(capacity_traces[-1] if capacity_traces else trace_before, trace_before)
         if barrier:
@@ -381,6 +457,19 @@ def run(args):
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
         after = snapshot(mcp, spec['target'], spec['name'])
         result = check_response(response, expected)
+        if policy_cache:
+            trace_after = trace.collect()
+            save(f'policy-cache-phase-{len(policy_cache_traces)}-trace.json',
+                 {'before': trace_before, 'after': trace_after})
+            policy_cache_traces.append(trace_after)
+            if expected['kind'] == 'dispatched':
+                result['compositor_lane'] = capacity_lane(trace_before, trace_after, step['tool'])
+            else:
+                result = check_manifest_refusal(response, expected, step['tool'])
+                assert_no_dispatch(trace_before, trace_after)
+                result.update(no_dispatch='verified', expect=expected)
+            result.update(runtime_pid=mcp.process.pid, session=spec['name'])
+            assert assert_distinct_runtimes(clients) == report['driver_processes'], 'policy_cache runtime changed'
         if capacity and expected['kind'] == 'dispatched':
             trace_after = trace.collect()
             save(f'capacity-agent-{index}-trace.json', {'before': trace_before, 'after': trace_after})
@@ -388,7 +477,7 @@ def run(args):
             result['compositor_lane'] = capacity_lane(trace_before, trace_after, step['tool'])
             assert result['compositor_lane'] not in {row.get('compositor_lane') for row in report['actions']}, \
                 'capacity needs distinct compositor lanes'
-        if expected['kind'] == 'refused':
+        if expected['kind'] == 'refused' and not policy_cache:
             result['no_dispatch'] = 'unproven'
             if trace:
                 trace_after = trace.collect()
@@ -407,6 +496,7 @@ def run(args):
     try:
         assert not moving or args.trace_socket, 'moving primary requires continuous trace'
         assert not capacity or args.trace_socket, 'capacity requires continuous trace'
+        assert not policy_cache or args.trace_socket, 'policy_cache requires continuous trace'
         save('provenance.json', provenance(args, plan))
         for index, oracle in enumerate(plan.get('outputs', [])):
             baseline_outputs[index] = Path(oracle['path']).read_bytes()
@@ -417,7 +507,7 @@ def run(args):
             assert not started.get('isError'), started
             assert snapshot(mcp, spec['target'], spec['name'])['window_bounds'] == spec['bounds']
         report['driver_processes'] = assert_distinct_runtimes(clients)
-        recorder = client('observer', {'mode': 'standard'})
+        recorder = client('observer', {'mode': 'unrestricted', 'acknowledge_unrestricted': True})
         fg = snapshot(recorder, plan['foreground'])['window_bounds']
         desktop = recorder.tool('get_desktop_state', {})['structuredContent']
         point = plan.get('primary_point', [300, 300])
@@ -471,6 +561,8 @@ def run(args):
                 report['actions'].append(action(phase))
         if capacity:
             report['capacity'] = verify_capacity(report['actions'])
+        if policy_cache:
+            report['policy_cache'] = verify_policy_cache(report['actions'])
         for index, oracle in enumerate(plan.get('outputs', [])):
             report['outputs'].append(verify_output(baseline_outputs[index], Path(oracle['path']).read_bytes(), oracle))
         report['result'] = 'passed'
@@ -513,6 +605,9 @@ def run(args):
                 if capacity_traces:
                     last = capacity_traces[-1]
                     assert data['events'][:last['count']] == last['events'], 'capacity trace history changed at cleanup'
+                if policy_cache_traces:
+                    last = policy_cache_traces[-1]
+                    assert data['events'][:last['count']] == last['events'], 'policy_cache trace history changed at cleanup'
                 expected_motion = None
                 if moving:
                     assert not mover or not mover.is_alive(), 'primary motion worker did not stop'

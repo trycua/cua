@@ -10,6 +10,29 @@ The pinned qualification targets are native LibreOffice Calc package
 `26.2.5-3` and Inkscape package `1.4.4-6`; package versions alone are not proof
 that either app received isolated input.
 
+## Bounded real-app smoke
+
+`production_app_smoke.py` is an earlier, narrower gate. Run it in a disposable
+desktop with the exact source-built production plugin already loaded and
+enabled. Pass `--source`, `--source-sha`, `--driver`, `--plugin`, and a new
+`--evidence` directory. The runner verifies a clean source checkout, canonical
+ALPM-owned app executables, and the plugin's current mapped path, device, and
+inode in the active compositor.
+
+It opens two new synthetic documents through direct Driver MCP, grounds each
+keyboard action in fresh snapshots, and independently checks the saved files:
+Calc A1 contains `a`; Inkscape's single rectangle moves two SVG pixels right.
+The runtime uses unrestricted mode with explicit bypass acknowledgement.
+Missing semantic grounding returns `inspection_only` and a nonzero exit code;
+partial or unknown delivery fails without replay. App windows and evidence are
+retained for inspection until the disposable environment is deleted.
+
+This smoke does not prove foreground isolation, concurrency, pointer operations,
+the policy matrix, or package installation. Use the traced plans below for
+those separate gates. Mocked tests are not native results.
+
+## Reviewed native plans
+
 Run only inside the prepared disposable desktop, after mapping one window per
 app and the independent foreground journal fixture. Ground the exact window
 identities, bounds, and gesture coordinates using fresh Driver snapshots.

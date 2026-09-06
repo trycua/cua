@@ -280,6 +280,20 @@ fn wait(
 }
 
 impl Client {
+    fn peer_closed(&self) -> bool {
+        let mut fd = libc::pollfd {
+            fd: self.socket.as_raw_fd(),
+            events: libc::POLLRDHUP,
+            revents: 0,
+        };
+        // A zero-length SEQPACKET is valid, so recv/peek returning zero is
+        // not proof of EOF. Poll only for hangup, without reading any queued
+        // replies or waiting while the pool mutex is held. Uncertain results
+        // (including an interrupted poll) keep the existing reservation.
+        let result = unsafe { libc::poll(&mut fd, 1, 0) };
+        result > 0 && fd.revents & (libc::POLLHUP | libc::POLLRDHUP) != 0
+    }
+
     fn attest(&self) -> Result<()> {
         let wayland = super::hyprland::wayland_connection()?;
         super::hyprland::verify_capture_peer(&wayland)?;
@@ -669,12 +683,15 @@ fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
     if let Some(client) = clients.get(owner) {
         return Ok(client.clone());
     }
-    // Failed claims and dropped connections leave empty serialization slots.
+    // Failed claims leave empty slots; the compositor may also close idle
+    // connections without their owning sessions making another call.
     // Reclaim only idle entries: queued callers must keep the same mutex.
     // Never wait for a per-session mutex while holding the pool lock.
     clients.retain(|_, client| {
         Arc::strong_count(client) > 1
-            || client.client.try_lock().map_or(true, |slot| slot.is_some())
+            || client.client.try_lock().map_or(true, |slot| {
+                slot.as_ref().is_some_and(|client| !client.peer_closed())
+            })
     });
     if clients.len() >= MAX_LANES {
         return Err(LaneBusy.into());
@@ -955,10 +972,73 @@ mod tests {
     }
 
     #[test]
+    fn closed_idle_peers_do_not_exhaust_local_lanes() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
+        let pool = Arc::new(Mutex::new([None, None]));
+        for owner in ["input-idle-a", "input-idle-b"] {
+            let client = session_client(owner).unwrap();
+            *client.client.lock().unwrap() =
+                Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        }
+        assert!(session_client("input-idle-c")
+            .err()
+            .unwrap()
+            .is::<LaneBusy>());
+        // The compositor revokes both idle connections; neither owner calls
+        // again to discover EOF or explicitly clean up its cached client.
+        *pool.lock().unwrap() = [None, None];
+        let c = session_client("input-idle-c").unwrap();
+        *c.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        assert_eq!(c.client.lock().unwrap().as_ref().unwrap().lane, Some(0));
+        let clients = clients().lock().unwrap();
+        assert!(!clients.contains_key("input-idle-a"));
+        assert!(!clients.contains_key("input-idle-b"));
+        drop(clients);
+        cleanup_session("input-idle-c");
+    }
+
+    #[test]
+    fn live_idle_peers_with_pending_packets_keep_their_lanes() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
+        let pool = Arc::new(Mutex::new([None, None]));
+        for owner in ["input-live-a", "input-live-b"] {
+            let client = session_client(owner).unwrap();
+            *client.client.lock().unwrap() =
+                Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        }
+        {
+            let pool = pool.lock().unwrap();
+            pool[0].as_ref().unwrap().send(b"").unwrap();
+            pool[1].as_ref().unwrap().send(b"pending reply").unwrap();
+        }
+        assert!(session_client("input-live-c")
+            .err()
+            .unwrap()
+            .is::<LaneBusy>());
+        // Reclaim only the closed peer, preserving the other idle client.
+        pool.lock().unwrap()[0] = None;
+        let c = session_client("input-live-c").unwrap();
+        *c.client.lock().unwrap() = Some(claim_available(|lane| fake_claim(lane, &pool)).unwrap());
+        assert_eq!(c.client.lock().unwrap().as_ref().unwrap().lane, Some(0));
+        let b = session_client("input-live-b").unwrap();
+        let slot = b.client.lock().unwrap();
+        assert_eq!(slot.as_ref().unwrap().lane, Some(1));
+        assert_eq!(read_packet(&slot.as_ref().unwrap().socket), "pending reply");
+        drop(slot);
+        cleanup_session("input-live-b");
+        cleanup_session("input-live-c");
+    }
+
+    #[test]
     fn pending_same_owner_callers_keep_their_serialization_slot() {
         let _pool_test = POOL_TEST_LOCK.lock().unwrap();
         let owner = "input-pending-a";
         let active = session_client(owner).unwrap();
+        let (client, peer) = test_connection();
+        *active.client.lock().unwrap() = Some(client);
+        // Even a conclusively closed socket must not replace the mutex while
+        // active or queued callers still hold this owner's serialization slot.
+        drop(peer);
         let slot = active.client.lock().unwrap();
         let queued = session_client(owner).unwrap();
         let (ready, waiting) = std::sync::mpsc::channel();
@@ -1111,6 +1191,47 @@ mod tests {
             unsafe { libc::recv(peer.as_raw_fd(), bytes.as_mut_ptr().cast(), bytes.len(), 0) };
         assert!(count > 0);
         String::from_utf8(bytes[..count as usize].to_vec()).unwrap()
+    }
+
+    #[test]
+    fn peer_closure_probe_is_nonblocking_and_does_not_consume_packets() {
+        let (client, peer) = test_connection();
+        let started = Instant::now();
+        assert!(!client.peer_closed());
+        assert!(started.elapsed() < TIMEOUT);
+
+        peer.send(b"").unwrap();
+        peer.send(b"pending reply").unwrap();
+        assert!(!client.peer_closed());
+        assert!(!client.peer_closed());
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe {
+                libc::recv(
+                    client.socket.as_raw_fd(),
+                    byte.as_mut_ptr().cast(),
+                    byte.len(),
+                    libc::MSG_DONTWAIT,
+                )
+            },
+            0
+        );
+        assert_eq!(read_packet(&client.socket), "pending reply");
+        assert!(!client.peer_closed());
+
+        peer.send(b"last reply").unwrap();
+        drop(peer);
+        assert!(client.peer_closed());
+        assert_eq!(read_packet(&client.socket), "last reply");
+        assert!(client.peer_closed());
+    }
+
+    #[test]
+    fn peer_write_shutdown_is_conclusive_even_with_a_pending_empty_packet() {
+        let (client, peer) = test_connection();
+        peer.send(b"").unwrap();
+        peer.shutdown(std::net::Shutdown::Write).unwrap();
+        assert!(client.peer_closed());
     }
 
     #[tokio::test]

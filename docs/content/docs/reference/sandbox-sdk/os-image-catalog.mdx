@@ -1,0 +1,15 @@
+---
+title: OS and image catalog
+description: Sandbox operating systems, Linux distributions, desktop environments, window managers, and image registries.
+---
+
+| OS | Distribution / version | Desktop / window manager | Image kind / runtime | Registry image or source | Status / limits |
+| --- | --- | --- | --- | --- | --- |
+| Linux | Ubuntu 24.04 | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34` | Built-in `Image.linux()` mapping; [versioned runtime support](/reference/sandbox-sdk/runtime-support), not universal boot certification |
+| Linux | Ubuntu 24.04 | XFCE runtime mapping | Local Docker container | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest` | Local container selector; mutable tag, not the Fleet VM disk |
+| Linux | Omarchy (Arch Linux-based), amd64 | Hyprland / Wayland | Fleet containerDisk | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab` | Explicit registry image; boot evidence applies to the [Fleet recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet), not all Hyprland configurations |
+| Linux | NixOS | StumpWM | Published candidate image | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9` | Includes computer-server and Cua Driver; publication reports guest tests and CI anonymous-pull verification passed; immutable candidate, not promoted to `latest`; not a built-in SDK mapping |
+| Linux | NixOS | Xfce / Xfwm4 | Published candidate image | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9` | Includes computer-server and Cua Driver; publication reports guest tests and CI anonymous-pull verification passed; immutable candidate, not promoted to `latest`; not a built-in SDK mapping |
+| Windows | Server 2022 | Native Windows desktop | Fleet containerDisk; local Hyper-V or QEMU | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3` | Built-in `Image.windows()` mapping; Fleet selects EFI; [runtime and host limits](/reference/sandbox-sdk/runtime-support) apply |
+| macOS | Sequoia 15 | Native macOS desktop | Local Lume VM | `ghcr.io/trycua/macos-sequoia-cua:latest` | Compatible Apple silicon host required; mutable tag; no built-in Fleet mapping |
+| macOS | Tahoe 26 | Native macOS desktop | Local Lume VM | `ghcr.io/trycua/macos-tahoe-cua:latest` | Default `Image.macos()` version; compatible Apple silicon host required; mutable tag; no built-in Fleet mapping |

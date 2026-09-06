@@ -51,6 +51,14 @@ var poolAdmissionPolicy string
 //go:embed custom_resource_creation_admission.rego
 var customResourceCreationAdmissionPolicy string
 
+// sandboxServicesAdmissionPolicy restricts the one Sandbox write /api/k8s
+// admits (PATCH on an osgymsandboxes item) to a body that touches nothing but
+// spec.vmTemplate.services. Like pool_admission.rego it is a conjunct on the
+// k8s surface rather than a surface, so it is registered by name below.
+//
+//go:embed sandbox_services_admission.rego
+var sandboxServicesAdmissionPolicy string
+
 // authzOwnershipPolicy is the namespace-ownership boundary. Like
 // pool_admission.rego it is not a surface — it is a conjunct several surfaces
 // carry — so it is registered by name below rather than through
@@ -381,6 +389,7 @@ func LoadOpa() {
 	RegisterPolicyModule("authz", "authz.rego", authzPolicy)
 	RegisterPolicyModule("pool-admission", "pool_admission.rego", poolAdmissionPolicy)
 	RegisterPolicyModule("custom-resource-creation-admission", "custom_resource_creation_admission.rego", customResourceCreationAdmissionPolicy)
+	RegisterPolicyModule("sandbox-services-admission", "sandbox_services_admission.rego", sandboxServicesAdmissionPolicy)
 	RegisterPolicyModule("authz-ownership", "authz_ownership.rego", authzOwnershipPolicy)
 	for name, module := range surfacePolicySources {
 		RegisterPolicyModule(name, module.filename, module.source)
@@ -433,6 +442,28 @@ func LoadOpa() {
 // no route/method/path is needed.
 func EvalIsAdmin(ctx context.Context, user *User) (bool, error) {
 	return evalUserDecision(ctx, user, opaAdminQuery, flagsData())
+}
+
+// AdminSubjectMembership exposes trusted owner membership for analytics only;
+// it does not authorize a request or accept role/client claims as evidence.
+// It shares the authorization cache (at most flagsTTL old). An unavailable or
+// malformed list is unresolved, not proof that an account is non-admin.
+func AdminSubjectMembership(subject string) (member, resolved bool) {
+	if strings.TrimSpace(subject) == "" {
+		return false, false
+	}
+	admins, ok := flagsData()["admin_subs"].([]interface{})
+	if !ok {
+		return false, false
+	}
+	for _, value := range admins {
+		admin, ok := value.(string)
+		if !ok || strings.TrimSpace(admin) == "" {
+			return false, false
+		}
+		member = member || admin == subject
+	}
+	return member, true
 }
 
 // EvalIsAdminFresh bypasses the process-local admin membership cache. If the

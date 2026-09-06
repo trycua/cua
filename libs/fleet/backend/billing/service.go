@@ -408,8 +408,8 @@ func (s *Service) CreateSetupSession(ctx context.Context, subject string, option
 	return url, nil
 }
 
-func (s *Service) CompleteSetupSession(ctx context.Context, subject, source, identityClass, sessionID string) (SetupCompletion, error) {
-	if subject == "" || source == "" || identityClass == "" || sessionID == "" {
+func (s *Service) CompleteSetupSession(ctx context.Context, subject, source, sessionID string) (SetupCompletion, error) {
+	if subject == "" || source == "" || sessionID == "" {
 		return SetupCompletion{}, ErrSetupSessionInvalid
 	}
 	customer, err := s.findCustomerReadOnly(ctx, subject)
@@ -428,10 +428,12 @@ func (s *Service) CompleteSetupSession(ctx context.Context, subject, source, ide
 		session.Metadata[MetadataSubject] != subject {
 		return SetupCompletion{}, ErrSetupSessionNotOwned
 	}
+	// Analytics classification can change after setup starts (for example, when
+	// admin membership becomes unavailable). It is not an ownership credential
+	// and must not prevent an otherwise valid payment-method setup.
 	if session.ID != sessionID || session.Mode != "setup" ||
 		session.Metadata["purpose"] != SetupPurpose ||
 		session.Metadata[MetadataSetupSource] != source ||
-		session.Metadata[MetadataIdentityClass] != identityClass ||
 		session.SetupIntentID == "" ||
 		session.Metadata[MetadataSetupGeneration] == "" {
 		return SetupCompletion{}, ErrSetupSessionInvalid

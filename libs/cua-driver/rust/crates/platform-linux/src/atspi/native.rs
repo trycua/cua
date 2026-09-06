@@ -15,7 +15,7 @@
 use std::sync::OnceLock;
 use std::time::Duration;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use atspi::connection::{AccessibilityConnection, P2P};
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
@@ -606,6 +606,30 @@ async fn resolve_window_frame(
     xid: u64,
     seeds: &[RawObjectRef],
 ) -> Option<usize> {
+    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+        let window = crate::wayland::hyprland::accessibility_window(xid, pid)?;
+        let mut matches = Vec::new();
+        for (ordinal, oref) in seeds.iter().enumerate() {
+            let Some(Ok(acc)) = call(accessible_for(conn, oref)).await else {
+                continue;
+            };
+            let Some(Ok(role)) = call(acc.get_role_name()).await else {
+                continue;
+            };
+            if !matches!(
+                role.as_str(),
+                "frame" | "window" | "dialog" | "alert" | "file chooser"
+            ) {
+                continue;
+            }
+            if matches!(call(acc.name()).await, Some(Ok(name)) if name == window.title) {
+                matches.push(ordinal);
+            }
+        }
+        // Title is only an AX-to-client correlation within the already
+        // attested PID. Duplicate frame names must never select a sibling.
+        return (matches.len() == 1).then(|| matches[0]);
+    }
     if seeds.len() == 1 {
         // One top-level: the caller's window is the only thing this
         // application could be showing, and no geometry round-trip can make
@@ -1178,7 +1202,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
         let (markdown, nodes) = render(&visited, scoped_frame);
         let bounds = match before_snapshot_deadline(
             deadline,
-            element_bounds_for_visited(&visited, pid, xid),
+            element_bounds_for_visited(&visited, pid, xid, scoped_frame),
         )
         .await
         {
@@ -2108,7 +2132,7 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
                 .await
                 .unwrap_or((0, 0));
 
@@ -2209,7 +2233,7 @@ pub fn perform_action_at_screen_point(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
                 .await
                 .unwrap_or((0, 0));
 
@@ -2394,13 +2418,18 @@ pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
 }
 
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
+    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+        let window = crate::wayland::hyprland::window_for_pid(pid)
+            .context("Hyprland bounds require an exact window for multi-window apps")?;
+        return get_element_bounds_for_window(pid, window.address, idx);
+    }
     bounded(
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let web_document_origin = web_document_origin_for_visited(&visited, pid)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
                 .await
                 .unwrap_or((0, 0));
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -2453,6 +2482,41 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
                 "get_element_bounds timed out for pid {pid} (app unresponsive to AT-SPI)"
             ))
         },
+    )
+}
+
+pub fn get_element_bounds_for_window(
+    pid: u32,
+    xid: u64,
+    idx: usize,
+) -> Result<(i32, i32, u32, u32)> {
+    if !crate::wayland::is_wayland() || !crate::wayland::hyprland::is_session() {
+        return get_element_bounds(pid, idx);
+    }
+    bounded(
+        async {
+            let conn = shared_connection().await?;
+            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+                .await?
+                .context("no AT-SPI application")?;
+            let scope =
+                scoped_frame.context("Hyprland accessibility window identity is unproven")?;
+            let target = visited
+                .iter()
+                .filter(|v| is_indexable(v))
+                .nth(idx)
+                .context("element no longer exists")?;
+            if target.frame_ordinal != scope {
+                return Err(anyhow!("element does not belong to the requested window"));
+            }
+            element_bounds_for_visited(&visited, pid, xid, Some(scope))
+                .await
+                .into_iter()
+                .find(|(index, ..)| *index == idx)
+                .map(|(_, x, y, w, h)| (x, y, w, h))
+                .context("element has no compositor-attested screen bounds")
+        },
+        || Err(anyhow!("Hyprland element bounds timed out")),
     )
 }
 
@@ -2541,6 +2605,16 @@ fn parse_gtk_frame_extents(vals: &[u32]) -> Option<(i32, i32)> {
 /// query screen origins, by design) or when no X11 window resolves.
 fn window_to_screen_offset(pid: u32, xid: u64, title: Option<&str>) -> Option<(i32, i32)> {
     if crate::wayland::is_wayland() {
+        if crate::wayland::hyprland::is_session() {
+            // Never promote toolkit-local coordinates or a stale PID origin
+            // to screen coordinates when native target geometry is missing.
+            let window = if xid != 0 {
+                crate::wayland::hyprland::window_for_address(xid)
+            } else {
+                crate::wayland::hyprland::window_for_pid(pid)
+            }?;
+            return (window.pid == pid).then_some((window.x, window.y));
+        }
         // Native Wayland: clients can't query a window's screen origin, and
         // AT-SPI CoordType::Screen collapses to (0,0) on Mutter. The bundled
         // `org.cua.WinRects` GNOME Shell extension supplies the window's screen
@@ -2634,7 +2708,11 @@ fn combine_wayland_content_offsets(
 /// Compositor decorations and toolkit document offsets are independent and
 /// therefore additive: choosing one or the other leaves WebKit controls one
 /// title bar away from the pixels shown to the caller.
-async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> Option<(i32, i32)> {
+async fn web_document_origin_for_visited(
+    visited: &[Visited<'_>],
+    pid: u32,
+    scoped_frame: Option<usize>,
+) -> Option<(i32, i32)> {
     if !crate::wayland::is_wayland() {
         return None;
     }
@@ -2644,6 +2722,7 @@ async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> O
         .map(|window| (window.content_x, window.content_y));
     let document = visited
         .iter()
+        .filter(|node| scoped_frame.is_none_or(|scope| node.frame_ordinal == scope))
         .filter(|node| node.has_component)
         .filter(|node| is_document_role(&node.role) || node.in_web_doc)
         .min_by_key(|node| node.depth);
@@ -2675,7 +2754,9 @@ async fn web_document_origin_for_visited(visited: &[Visited<'_>], pid: u32) -> O
     } else {
         None
     };
-    let document_is_separate = visited.iter().any(|node| node.on_web_process_bus);
+    let document_is_separate = visited.iter().any(|node| {
+        scoped_frame.is_none_or(|scope| node.frame_ordinal == scope) && node.on_web_process_bus
+    });
     let combined = combine_wayland_content_offsets(compositor, document, document_is_separate);
     dlog!(
         "Wayland web content offset: compositor={compositor:?} document={document:?} separate_process={document_is_separate} combined={combined:?}"
@@ -2738,6 +2819,7 @@ async fn element_bounds_for_visited(
     visited: &[Visited<'_>],
     pid: u32,
     xid: u64,
+    scoped_frame: Option<usize>,
 ) -> Vec<(usize, i32, i32, u32, u32)> {
     // Query WINDOW-relative extents and add a deterministic screen offset
     // (X11 window origin + GTK4 CSD inset). This fixes GTK4 — whose
@@ -2746,13 +2828,20 @@ async fn element_bounds_for_visited(
     // window resolves, `offset` is None and we keep the legacy Screen path
     // so non-X11 behaviour is unchanged.
     let window_title = visited.iter().find_map(|node| {
-        matches!(
-            node.role.to_ascii_lowercase().as_str(),
-            "frame" | "window" | "dialog" | "alert" | "file chooser"
-        )
+        (scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
+            && matches!(
+                node.role.to_ascii_lowercase().as_str(),
+                "frame" | "window" | "dialog" | "alert" | "file chooser"
+            ))
         .then_some(node.name.as_str())
     });
     let offset = window_to_screen_offset(pid, xid, window_title);
+    if crate::wayland::is_wayland()
+        && crate::wayland::hyprland::is_session()
+        && (offset.is_none() || scoped_frame.is_none())
+    {
+        return Vec::new();
+    }
     let coord = if offset.is_some() {
         CoordType::Window
     } else {
@@ -2768,7 +2857,8 @@ async fn element_bounds_for_visited(
     let screen_rebase = if offset.is_none() && !crate::wayland::is_wayland() && xid != 0 {
         let x11_origin = x11_window_origin(xid);
         let frame = visited.iter().find(|node| {
-            node.has_component
+            scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
+                && node.has_component
                 && matches!(
                     node.role.to_ascii_lowercase().as_str(),
                     "frame" | "window" | "dialog" | "alert" | "file chooser"
@@ -2801,7 +2891,8 @@ async fn element_bounds_for_visited(
     // no-op there.
     let window_frame_origin = if offset.is_some() {
         let frame = visited.iter().find(|node| {
-            node.has_component
+            scoped_frame.is_none_or(|scope| node.frame_ordinal == scope)
+                && node.has_component
                 && matches!(
                     node.role.to_ascii_lowercase().as_str(),
                     "frame" | "window" | "dialog" | "alert" | "file chooser"
@@ -2830,7 +2921,7 @@ async fn element_bounds_for_visited(
     // descendants only. Electron commonly contributes zero for both; WebKitGTK
     // under Sway needs the sum.
     let web_document_origin = if offset.is_some() {
-        web_document_origin_for_visited(visited, pid).await
+        web_document_origin_for_visited(visited, pid, scoped_frame).await
     } else {
         None
     };
@@ -2854,6 +2945,9 @@ async fn element_bounds_for_visited(
     let deadline = std::time::Instant::now() + Duration::from_secs(20);
     let mut out = Vec::with_capacity(action_nodes.len());
     for (idx, node) in action_nodes.iter().enumerate() {
+        if scoped_frame.is_some_and(|scope| node.frame_ordinal != scope) {
+            continue;
+        }
         if std::time::Instant::now() >= deadline {
             dlog!(
                 "snapshot bounds: 20s budget exhausted at node {idx}; returning {} bound(s)",

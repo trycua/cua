@@ -6,13 +6,16 @@ grounding produces inspection_only, never a pass. This is not isolation,
 concurrency, pointer-operation, or full desktop-matrix certification.
 """
 import argparse
+import ctypes
 import hashlib
 import io
 import json
 import math
+import mmap
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import time
 import xml.etree.ElementTree as ET
@@ -58,9 +61,49 @@ def package_owner(path, package):
     return digest(path)
 
 
+def kernel_file_identity(plugin):
+    """Read the kernel mapping identity of the exact open candidate file.
+
+    Btrfs can report a subvolume device in stat() but the filesystem device in
+    proc maps. Compare two proc-map identities, not different device namespaces.
+    This private, non-executable reference mapping never loads code or writes
+    the file. Keep the descriptor and mapping alive until the checks finish.
+    """
+    def fingerprint(info):
+        return (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+    descriptor = os.open(plugin, os.O_RDONLY | os.O_NOFOLLOW)
+    with os.fdopen(descriptor, 'rb') as stream:
+        opened = os.fstat(stream.fileno())
+        assert stat.S_ISREG(opened.st_mode) and opened.st_size > 0, 'candidate must be a nonempty regular file'
+        # ACCESS_COPY is writable only to let ctypes expose the mapping address;
+        # no byte is written, and the file descriptor itself is read-only.
+        with mmap.mmap(stream.fileno(), 1, access=mmap.ACCESS_COPY) as reference:
+            address = ctypes.addressof(ctypes.c_char.from_buffer(reference))
+            matches = []
+            for line in Path('/proc/self/maps').read_text().splitlines():
+                fields = line.split(maxsplit=5)
+                if len(fields) != 6:
+                    continue
+                start, end = (int(value, 16) for value in fields[0].split('-'))
+                if not start <= address < end:
+                    continue
+                assert fields[5] == str(plugin), 'candidate reference mapping path differs or was deleted'
+                assert int(fields[2], 16) == 0, 'candidate reference mapping has wrong offset'
+                major, minor = (int(value, 16) for value in fields[3].split(':'))
+                identity = (major, minor, int(fields[4]))
+                assert identity[2] == opened.st_ino, 'candidate reference mapping inode differs'
+                matches.append(identity)
+            assert len(matches) == 1, 'cannot identify exact candidate reference mapping'
+            assert fingerprint(os.fstat(stream.fileno())) == fingerprint(opened), 'open candidate changed'
+            assert fingerprint(plugin.stat(follow_symlinks=False)) == fingerprint(opened), \
+                'candidate path was replaced or changed'
+            return matches[0]
+
+
 def mapped_plugin(maps, plugin):
-    """Require current path AND device/inode; reject stale replaced/deleted DSOs."""
-    stat = plugin.stat()
+    """Require current path AND kernel device/inode; reject replaced/deleted DSOs."""
+    expected = kernel_file_identity(plugin)
     matches = []
     for line in maps.splitlines():
         fields = line.split(maxsplit=5)
@@ -71,8 +114,7 @@ def mapped_plugin(maps, plugin):
             continue
         assert path == str(plugin), 'different or deleted plugin mapped in compositor'
         major, minor = (int(part, 16) for part in fields[3].split(':'))
-        assert (major, minor, int(fields[4])) == (
-            os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino), 'mapped plugin identity differs'
+        assert (major, minor, int(fields[4])) == expected, 'mapped plugin identity differs'
         matches.append(line)
     assert matches, 'declared plugin is not mapped in the active Hyprland process'
     return matches

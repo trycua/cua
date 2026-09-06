@@ -9,7 +9,7 @@ import zipfile
 
 from production_app_smoke import (
     LIMITS, GroundingUnavailable, check_delivery, create_documents, ground, input_step,
-    mapped_plugin, package_owner, verify_calc, verify_inkscape,
+    kernel_file_identity, mapped_plugin, package_owner, verify_calc, verify_inkscape,
 )
 
 
@@ -78,11 +78,67 @@ class FixtureTests(unittest.TestCase):
         stat = plugin.stat()
         device = f'{os.major(stat.st_dev):x}:{os.minor(stat.st_dev):x}'
         row = f'1000-2000 r-xp 00000000 {device} {stat.st_ino} {plugin}'
-        self.assertEqual(mapped_plugin(row, plugin), [row])
-        for invalid in ('', row + ' (deleted)', row.replace(str(stat.st_ino), '0'),
-                        row.replace(str(plugin), '/elsewhere/plugin.so')):
-            with self.assertRaises(AssertionError):
-                mapped_plugin(invalid, plugin)
+        expected = (os.major(stat.st_dev), os.minor(stat.st_dev), stat.st_ino)
+        with patch('production_app_smoke.kernel_file_identity', return_value=expected):
+            self.assertEqual(mapped_plugin(row, plugin), [row])
+            for invalid in ('', row + ' (deleted)', row.replace(str(stat.st_ino), '0'),
+                            row.replace(str(plugin), '/elsewhere/plugin.so'),
+                            row.replace(device, f'{expected[0]:x}:{expected[1] + 1:x}')):
+                with self.assertRaises(AssertionError):
+                    mapped_plugin(invalid, plugin)
+
+    def test_kernel_identity_handles_btrfs_device_presentation_without_ignoring_device(self):
+        plugin = self.directory / 'plugin.so'
+        plugin.write_bytes(b'synthetic test fixture')
+        inode = plugin.stat().st_ino
+        # The kernel reports a device different from stat(), as on Btrfs.
+        device = os.minor(plugin.stat().st_dev) + 1
+        row = f'1000-2000 rw-p 00000000 0:{device:x} {inode} {plugin}'
+        fake_mapping = Mock()
+        fake_mapping.__enter__ = Mock(return_value=bytearray(b'x'))
+        fake_mapping.__exit__ = Mock(return_value=False)
+        with patch('production_app_smoke.mmap.mmap', return_value=fake_mapping), \
+                patch('production_app_smoke.ctypes.addressof', return_value=0x1000), \
+                patch('production_app_smoke.Path.read_text', return_value=row):
+            self.assertEqual(kernel_file_identity(plugin), (0, device, inode))
+            self.assertEqual(mapped_plugin(row, plugin), [row])
+            with self.assertRaisesRegex(AssertionError, 'mapped plugin identity differs'):
+                mapped_plugin(row.replace(f'0:{device:x}', f'0:{device + 1:x}'), plugin)
+
+    def test_reference_mapping_rejects_wrong_range_path_offset_inode_and_replacement(self):
+        plugin = self.directory / 'plugin.so'
+        plugin.write_bytes(b'synthetic test fixture')
+        inode = plugin.stat().st_ino
+        row = f'1000-2000 rw-p 00000000 0:20 {inode} {plugin}'
+        fake_mapping = Mock()
+        fake_mapping.__enter__ = Mock(return_value=bytearray(b'x'))
+        fake_mapping.__exit__ = Mock(return_value=False)
+        with patch('production_app_smoke.mmap.mmap', return_value=fake_mapping), \
+                patch('production_app_smoke.ctypes.addressof', return_value=0x1000):
+            for invalid in ('', row + '\n' + row, row + ' (deleted)',
+                            row.replace('1000-2000', '2000-3000'),
+                            row.replace('00000000', '00001000'),
+                            row.replace(str(inode), '0'),
+                            row.replace(str(plugin), '/elsewhere/plugin.so')):
+                with self.subTest(maps=invalid), patch('production_app_smoke.Path.read_text', return_value=invalid):
+                    with self.assertRaises(AssertionError):
+                        kernel_file_identity(plugin)
+            replacement = self.directory / 'replacement.so'
+            replacement.write_bytes(b'different current file')
+            def replace_path():
+                replacement.replace(plugin)
+                return row
+            with patch('production_app_smoke.Path.read_text', side_effect=replace_path):
+                with self.assertRaisesRegex(AssertionError, 'candidate.*changed'):
+                    kernel_file_identity(plugin)
+
+    @unittest.skipUnless(Path('/proc/self/maps').is_file(), 'requires native Linux proc maps')
+    def test_reference_identity_from_real_kernel_mapping(self):
+        plugin = self.directory / 'plugin.so'
+        plugin.write_bytes(b'synthetic test fixture')
+        identity = kernel_file_identity(plugin)
+        self.assertEqual(identity[2], plugin.stat().st_ino)
+        self.assertTrue(all(type(value) is int and value >= 0 for value in identity))
 
     def test_alpm_owner_required_even_when_version_matches(self):
         executable = self.directory / 'app'

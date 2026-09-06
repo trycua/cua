@@ -288,6 +288,9 @@ class SessionFault:
             return {'result': 'not_needed'}
         result = restore_power(self.config)
         self.mutated = False
+        # Explicit restoration has ended the fault. Reap the watchdog before
+        # slow app observation/recovery can reach its former wake deadline.
+        self.close()
         return result
 
     def close(self):
@@ -304,6 +307,7 @@ class SessionFault:
             self.child.wait(timeout=10)
             assert self.child.returncode == 0, 'watchdog failed'
             self.child.stdout.close()
+            self.child = None
 
 
 def verify_cancelled(boundary, record, action):
@@ -347,29 +351,32 @@ def verify_refusal(record):
     return {'result': 'verified', 'reason': 'session_unavailable', 'no_dispatch': 'verified'}
 
 
-def prepare_refusal(client, spec, stage):
-    """Observe the exact target while powered, before the fault blocks capture."""
-    fresh = {**spec, 'name': spec['name'] + '-unavailable', 'pointer_stage': stage}
-    started_ns = time.monotonic_ns()
-    snapshot = grounded_snapshot(client, spec['target'], fresh)
+def prepare_refusal(prepared, spec, stage):
+    """Derive the refused pixel probe from the same pre-fault target image.
+
+    Both actions address this exact window, and neither uses a session-bound
+    element token. A second simultaneous AT-SPI walk of the same app adds
+    contention, not newer evidence. The refusal remains bounded by the first
+    observation's original timestamp; powered-off capture is unavailable.
+    """
+    assert spec['app'] == 'calc' and stage in ('click_a1', 'click_b2')
+    snapshot = prepared['snapshot']
+    assert prepared['target'] == spec['target']
+    assert {key: snapshot[key] for key in ('pid', 'window_id')} == spec['target']
+    assert snapshot['window_bounds'] == spec['bounds']
+    assert prepared['prepared_ns'] == snapshot['proof_observation_started_ns']
     arguments, _ = pointer_grounding.action(
         snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', stage)
-    return {'snapshot': snapshot, 'arguments': arguments, 'session': fresh['name'],
-            'prepared_ns': snapshot.get('proof_observation_started_ns', started_ns)}
+    return {'snapshot': snapshot, 'arguments': arguments, 'session': spec['name'] + '-unavailable',
+            'prepared_ns': prepared['prepared_ns']}
 
 
 def prepare_actions(clients, spec, stage, save):
-    """Read through distinct runtimes in parallel; neither call supplies input.
-
-    Sequential snapshots aged the first image past the five-second limit.
-    Keep both original observation timestamps and the unchanged dispatch gates.
-    """
+    """Ground two distinct runtimes' same-window pixel actions without input."""
     assert len(clients) == 2
     assert_distinct_runtimes(clients)
-    with ThreadPoolExecutor(max_workers=2) as observations:
-        drag = observations.submit(prepare_drag, clients[0], spec)
-        refusal = observations.submit(prepare_refusal, clients[1], spec, stage)
-        prepared, probe = drag.result(), refusal.result()
+    prepared = prepare_drag(clients[0], spec)
+    probe = prepare_refusal(prepared, spec, stage)
     save('drag-grounding.json', prepared)
     save('refusal-grounding.json', probe)
     return prepared, probe

@@ -5,7 +5,6 @@ import json
 import os
 from pathlib import Path
 import tempfile
-import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -206,21 +205,18 @@ class OracleTests(unittest.TestCase):
 
 
 class GroundingTests(unittest.TestCase):
-    def test_distinct_runtime_observations_overlap_without_input(self):
+    def test_one_observation_grounds_both_same_window_pixel_actions_without_input(self):
         clients = [Mock(process=Mock(pid=pid, poll=Mock(return_value=None))) for pid in (100, 101)]
-        barrier = threading.Barrier(2, timeout=2)
         spec = plan()['agents'][0]
         prepared, probe = {'prepared_ns': 100}, {'prepared_ns': 200}
         def drag(client, received):
             self.assertIs(client, clients[0])
             self.assertIs(received, spec)
-            barrier.wait()
             return prepared
-        def refusal(client, received, stage):
-            self.assertIs(client, clients[1])
+        def refusal(grounding, received, stage):
+            self.assertIs(grounding, prepared)
             self.assertIs(received, spec)
             self.assertEqual(stage, 'click_b2')
-            barrier.wait()
             return probe
         save = Mock()
         with patch.object(proof, 'prepare_drag', side_effect=drag), \
@@ -251,20 +247,35 @@ class GroundingTests(unittest.TestCase):
         refusal.assert_not_called()
 
     def test_refusal_keeps_original_observation_time(self):
-        for observed_ns in (None, 120):
-            snapshot = {'proof_image': '/synthetic/refusal.png'}
-            if observed_ns is not None:
-                snapshot['proof_observation_started_ns'] = observed_ns
-            client, spec = Mock(), plan()['agents'][0]
-            with patch.object(proof.time, 'monotonic_ns', return_value=100), \
-                 patch.object(proof, 'grounded_snapshot', return_value=snapshot), \
+        for observed_ns in (100, 120):
+            spec = plan()['agents'][0]
+            snapshot = {**spec['target'], 'window_bounds': spec['bounds'],
+                        'proof_image': '/synthetic/agent.png',
+                        'proof_observation_started_ns': observed_ns}
+            prepared = {'snapshot': snapshot, 'target': spec['target'], 'prepared_ns': observed_ns}
+            with patch.object(proof.time, 'monotonic_ns', side_effect=AssertionError('must not reset timestamp')), \
                  patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'), \
                  patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1, 'y': 2}, {})):
-                result = proof.prepare_refusal(client, spec, 'click_b2')
+                result = proof.prepare_refusal(prepared, spec, 'click_b2')
             self.assertEqual(result, {'snapshot': snapshot, 'arguments': {'x': 1, 'y': 2},
                                      'session': 'session-unavailable',
-                                     'prepared_ns': 100 if observed_ns is None else observed_ns})
-            client.tool.assert_not_called()
+                                     'prepared_ns': observed_ns})
+
+    def test_shared_observation_requires_exact_identity_geometry_and_time(self):
+        spec = plan()['agents'][0]
+        original = {'snapshot': {**spec['target'], 'window_bounds': spec['bounds'],
+                     'proof_observation_started_ns': 100}, 'target': spec['target'], 'prepared_ns': 100}
+        for change in ('target', 'pid', 'window_id', 'bounds', 'timestamp', 'missing_timestamp'):
+            prepared = deepcopy(original)
+            if change == 'target': prepared['target']['pid'] += 1
+            elif change in ('pid', 'window_id'): prepared['snapshot'][change] += 1
+            elif change == 'bounds': prepared['snapshot']['window_bounds']['x'] += 1
+            elif change == 'timestamp': prepared['prepared_ns'] += 1
+            else: del prepared['snapshot']['proof_observation_started_ns']
+            with self.subTest(change=change), patch.object(proof.pointer_grounding, 'read_pixels') as pixels:
+                with self.assertRaises((AssertionError, KeyError)):
+                    proof.prepare_refusal(prepared, spec, 'click_b2')
+                pixels.assert_not_called()
 
     def test_stale_or_future_probe_is_retained_without_dispatch(self):
         for prepared_ns in (-proof.MAX_GROUNDING_AGE_NS, 101):
@@ -392,6 +403,30 @@ class WatchdogTests(unittest.TestCase):
         try:
             fault.close()
             self.assertEqual(os.read(reader, 1), b'')
+        finally:
+            os.close(reader)
+
+    def test_successful_restore_disarms_and_reaps_before_app_recovery(self):
+        fault = object.__new__(proof.SessionFault)
+        fault.mutated, fault.config = True, {}
+        reader, fault.cancel_fd = os.pipe()
+        child = fault.child = Mock(returncode=0)
+        try:
+            def restored(config):
+                self.assertTrue(fault.mutated)
+                child.wait.assert_not_called()
+                return {'result': 'restored', 'emergency': False}
+            with patch.object(proof, 'restore_power', side_effect=restored):
+                self.assertEqual(fault.restore()['result'], 'restored')
+            self.assertFalse(fault.mutated)
+            self.assertEqual(os.read(reader, 2), b'C')
+            self.assertIsNone(fault.cancel_fd)
+            self.assertIsNone(fault.child)
+            child.wait.assert_called_once_with(timeout=10)
+            child.stdout.close.assert_called_once()
+            fault.close()
+            self.assertEqual(fault.restore(), {'result': 'not_needed'})
+            child.wait.assert_called_once()
         finally:
             os.close(reader)
 

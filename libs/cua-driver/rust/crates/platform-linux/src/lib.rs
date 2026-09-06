@@ -157,6 +157,13 @@ pub fn register_tools_with_cursor_and_provider(
     tools::build_registry_with_provider(compat, provider)
 }
 
+/// Standalone daemon startup recovery. Keep this out of registry construction:
+/// read-only commands such as describe/list-tools must not mutate X11 devices.
+#[cfg(target_os = "linux")]
+pub fn recover_orphaned_mpx_devices() {
+    input::reap_orphaned_master_pointers();
+}
+
 #[cfg(test)]
 mod display_detection_tests {
     use super::detect_wsl;

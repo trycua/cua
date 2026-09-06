@@ -14,6 +14,7 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+mod mpx_owner;
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -149,6 +150,11 @@ fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
 
 fn master_pointer_name(cursor_id: &str) -> String {
     let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if let Ok(owner) = mpx_owner::Owner::current() {
+        return owner.master_name(nonce);
+    }
+    // Unknown procfs identity cannot safely participate in automatic recovery.
+    // Preserve ordinary operation, with the legacy name and cleanup behavior.
     let prefix = "CUA ";
     let suffix = format!(" mp-{}-{nonce}", std::process::id());
     let max_cursor_bytes = EVDEV_UINPUT_NAME_MAX_BYTES
@@ -610,11 +616,12 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let Ok(display) = open_display() else {
         return;
     };
+    let _ = remove_master_pointer(display, ids.pointer_id);
+    unsafe { x11::xlib::XCloseDisplay(display) };
+}
 
-    let Ok(devices) = xi2_query_devices(display) else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
-    };
+fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> Result<()> {
+    let devices = xi2_query_devices(display)?;
 
     let mut virtual_core_pointer = None;
     let mut virtual_core_keyboard = None;
@@ -629,21 +636,66 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let (Some(return_pointer), Some(return_keyboard)) =
         (virtual_core_pointer, virtual_core_keyboard)
     else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
+        bail!("cannot remove MPX master without its virtual core return devices");
     };
 
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     unsafe {
         let remove = change.remove();
         (*remove)._type = x11::xinput2::XIRemoveMaster;
-        (*remove).deviceid = ids.pointer_id;
+        (*remove).deviceid = pointer_id;
         (*remove).return_mode = x11::xinput2::XIAttachToMaster;
         (*remove).return_pointer = return_pointer;
         (*remove).return_keyboard = return_keyboard;
-        let _ = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        let rc = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        x11::xlib::XSync(display, 0);
+        if rc != 0 {
+            bail!("XIChangeHierarchy(XIRemoveMaster) failed with status {rc}");
+        }
+    }
+    Ok(())
+}
+
+/// Recover only versioned masters whose local owner is provably gone. A PID
+/// alone cannot identify an owner on a shared/remote X server or across restarts.
+pub(crate) fn reap_orphaned_master_pointers() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        return;
+    }
+    let Ok(owner) = mpx_owner::Owner::current() else {
+        return;
+    };
+    let Ok(display) = open_display() else {
+        return;
+    };
+    // Prevent an ID from being removed/reused by another X client between our
+    // enumeration and removal. No network or arbitrary filesystem reads occur
+    // under this grab: owner checks inspect local procfs and kill(pid, 0).
+    unsafe {
+        x11::xlib::XGrabServer(display);
+    }
+    let result = (|| -> Result<()> {
+        for (id, use_, name) in xi2_query_devices(display)? {
+            if use_ != x11::xinput2::XIMasterPointer {
+                continue;
+            }
+            let Some(candidate) = mpx_owner::Owner::from_pointer_name(&name) else {
+                continue;
+            };
+            if candidate.stale_in(&owner) {
+                remove_master_pointer(display, id)?;
+                tracing::info!(device_id = id, "removed orphaned Cua MPX master pair");
+            }
+        }
+        Ok(())
+    })();
+    unsafe {
+        x11::xlib::XUngrabServer(display);
         x11::xlib::XSync(display, 0);
         x11::xlib::XCloseDisplay(display);
+    }
+    if let Err(error) = result {
+        tracing::warn!("MPX orphan recovery incomplete: {error}");
     }
 }
 

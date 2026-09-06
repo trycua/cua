@@ -13,6 +13,7 @@ import zipfile
 
 from production_mcp import DirectMCP, assert_distinct_runtimes, profile_environment, stop_process
 from production_realapp_proof import (assert_no_dispatch, assert_primary_state, check_response,
+                                    capacity_lane, verify_capacity,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
                                     primary_trajectory, run, validate_plan, verify_output)
 from primary_trace import analyze
@@ -27,6 +28,202 @@ def plan():
                                      {'agent': 1, 'tool': 'drag', 'arguments': {}}]}],
             'outputs': [{'agent': 0, 'attributes': {'value': '96'}},
                         {'agent': 1, 'rect_translation': [[10, 20], [30, 40]]}]}
+
+
+def capacity_plan():
+    result = {**plan(), 'purpose': 'capacity', 'outputs': []}
+    result['agents'].append({'app': 'inkscape', 'target': {'pid': 40, 'window_id': 400}})
+    for index, spec in enumerate(result['agents']):
+        spec.update(name='same-public-name', profile={'mode': 'standard'},
+                    bounds={'x': 0, 'y': 0, 'width': 600, 'height': 600})
+    result['phases'] = [{'agent': index, 'tool': 'click', 'arguments': {'x': 20, 'y': 30}}
+                        for index in range(3)]
+    result['phases'][2]['expect'] = {'kind': 'refused', 'reason': 'lane_busy'}
+    return result
+
+
+def capacity_events(lane):
+    return [('agent_admitted', 100, 200, lane, 0),
+            ('pointer_button', 100, 200, lane, 1),
+            ('pointer_button', 100, 200, lane, 0),
+            ('agent_action_end', 100, 200, lane, 0)]
+
+
+class CapacityTests(unittest.TestCase):
+    def test_plan_requires_three_serial_independent_qualified_targets(self):
+        validate_plan(capacity_plan())
+        for mutate in (lambda p: p.update(phases=[]),
+                       lambda p: p.update(phases=p['phases'][:2]),
+                       lambda p: p.update(agents=p['agents'][:2]),
+                       lambda p: p['phases'][1].update(agent=0),
+                       lambda p: p['phases'][0].update(parallel=[]),
+                       lambda p: p['phases'][0].update(expect={'kind': 'unknown'}),
+                       lambda p: p['phases'][2].pop('expect'),
+                       lambda p: p['phases'][2].update(expect={'kind': 'refused', 'reason': 'permission_denied'}),
+                       lambda p: p['agents'][2].update(target=p['agents'][1]['target']),
+                       lambda p: p['agents'][2]['target'].update(window_id=None),
+                       lambda p: p['agents'][2].update(app='fixture'),
+                       lambda p: p.update(moving_primary=True),
+                       lambda p: p.update(require_overlap=True)):
+            bad = capacity_plan()
+            mutate(bad)
+            with self.subTest(plan=bad), self.assertRaises(AssertionError):
+                validate_plan(bad)
+        # Capacity does not redefine the normal reviewed permission contract.
+        for mode in ('standard', 'bounded', 'unrestricted'):
+            candidate = capacity_plan()
+            candidate['agents'][0]['profile']['mode'] = mode
+            validate_plan(candidate)
+        for purpose in ('apps', 'policy', 'negative_control'):
+            with self.assertRaises(AssertionError):
+                validate_plan({**capacity_plan(), 'purpose': purpose})
+
+    def test_lane_needs_actual_ordered_input_and_completion(self):
+        before = {**trace(START), 'active': True}
+        events = capacity_events(1)
+        after = {**trace(START, *events), 'active': True}
+        self.assertEqual(capacity_lane(before, after, 'click'), 1)
+        for rows in ([], events[:1], events[1:], events[:-1],
+                     [events[0], events[-1]], list(reversed(events)),
+                     [events[0], *capacity_events(2)],
+                     [(kind, x, y, 0, state) for kind, x, y, lane, state in events]):
+            with self.subTest(rows=rows), self.assertRaises(AssertionError):
+                capacity_lane(before, {**trace(START, *rows), 'active': True}, 'click')
+        for malformed in (None, {}, {**after, 'events': []}, {**after, 'hook': False},
+                          {**after, 'overflow': True}, {**after, 'count': 0},
+                          {**after, 'timed_out': True}, {**after, 'events': [[1]]}):
+            with self.subTest(trace=malformed), self.assertRaises(AssertionError):
+                capacity_lane(before, malformed, 'click')
+        with self.assertRaises(AssertionError):
+            capacity_lane(before, after, 'press_key')
+
+    def test_summary_rejects_incomplete_wrong_lane_and_wrong_refusal(self):
+        observed = {'route': 'synthetic_events', 'effect': 'unverifiable', 'delivery': {'mode': 'background'}}
+        actions = [{'agent': i, 'expected': 'dispatched', 'observed': observed, 'compositor_lane': i + 1}
+                   for i in range(2)] + [{'agent': 2, 'expected': 'refused', 'no_dispatch': 'verified',
+                                         'observed': {'effect': 'refused', 'reason': 'lane_busy'}}]
+        self.assertEqual(verify_capacity(actions)['result'], 'verified')
+        for mutate in (lambda a: a.clear(), lambda a: a.pop(),
+                       lambda a: a[1].update(compositor_lane=1),
+                       lambda a: a[1].pop('compositor_lane'),
+                       lambda a: a[0].update(observed={}),
+                       lambda a: a[2].update(no_dispatch='unproven'),
+                       lambda a: a[2]['observed'].update(reason='permission_denied'),
+                       lambda a: a[2]['observed'].update(delivery={'mode': 'background'})):
+            bad = copy.deepcopy(actions)
+            mutate(bad)
+            with self.subTest(actions=bad), self.assertRaises(AssertionError):
+                verify_capacity(bad)
+
+    def test_missing_trace_fails_before_process_launch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_plan = root / 'plan.json'
+            source_plan.write_text(json.dumps(capacity_plan()))
+            args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence', trace_socket=None)
+            with patch('production_realapp_proof.provenance') as provenance, \
+                    patch('production_realapp_proof.DirectMCP') as spawn:
+                self.assertEqual(run(args), 1)
+                provenance.assert_not_called()
+                spawn.assert_not_called()
+            result = json.loads((args.evidence / 'result.json').read_text())
+            self.assertEqual(result['error'], 'capacity requires continuous trace')
+            self.assertEqual(result['capacity']['result'], 'unproven')
+
+    def test_runner_serial_capacity_and_failures_without_replay(self):
+        for failure in (None, 'same_lane', 'missing_input', 'wrong_refusal', 'dispatch_on_refusal',
+                        'dead_runtime', 'stale_window', 'transport', 'missing_hook', 'reset_trace'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                root = Path(directory)
+                candidate = capacity_plan()
+                path = root / 'plan.json'
+                path.write_text(json.dumps(candidate))
+                args = SimpleNamespace(plan=path, evidence=root / 'evidence',
+                                       trace_socket=root / 'cua-input-v3.sock', driver=root / 'driver',
+                                       primary_grab=root / 'primary-grab', foreground_journal=root / 'journal',
+                                       record_video=False)
+                calls, events, held = [], [START], [True]
+                agents = [Mock(process=Mock(pid=101 + i, poll=Mock(return_value=None))) for i in range(3)]
+                observer = Mock()
+                targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
+
+                def tool(index, name, arguments):
+                    if name == 'list_windows':
+                        windows = copy.deepcopy(targets)
+                        if failure == 'stale_window':
+                            windows[-1]['window_id'] += 1
+                        return {'structuredContent': {'windows': windows}}
+                    if name == 'get_window_state':
+                        calls.append(('snapshot', index))
+                        return {'structuredContent': {'screenshot_width': 600,
+                                'window_bounds': candidate['agents'][0]['bounds']}}
+                    if name == 'get_desktop_state':
+                        return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}
+                    if name != 'click':
+                        return {'structuredContent': {}}
+                    calls.append(('click', index))
+                    self.assertEqual(arguments['delivery_mode'], 'background')
+                    self.assertEqual({key: arguments[key] for key in ('pid', 'window_id')},
+                                     candidate['agents'][index]['target'])
+                    if failure == 'transport':
+                        raise TimeoutError('unknown effect')
+                    if index < 2:
+                        lane = 1 if failure == 'same_lane' else index + 1
+                        rows = capacity_events(lane)
+                        events.extend([rows[0], rows[-1]] if failure == 'missing_input' else rows)
+                        if failure == 'dead_runtime':
+                            agents[0].process.poll.return_value = 1
+                        return {'structuredContent': {'route': 'synthetic_events', 'effect': 'unverifiable',
+                                                      'delivery': {'mode': 'background'}}}
+                    if failure == 'dispatch_on_refusal':
+                        events.extend(capacity_events(1))
+                    return {'isError': True, 'structuredContent': {'effect': 'refused',
+                            'reason': 'permission_denied' if failure == 'wrong_refusal' else 'lane_busy'}}
+
+                for i, mcp in enumerate(agents + [observer]):
+                    mcp.tool.side_effect = lambda name, arguments, i=i: tool(i, name, arguments)
+                trace_client = Mock(hello={'protocol': 3})
+                trace_client.exchange.side_effect = lambda command: events.append(STOP) if command == 'TRACE_STOP' else None
+                def collect():
+                    if failure == 'reset_trace' and trace_client.collect.call_count == 3:
+                        events[:] = [START]
+                    return {**trace(*events), 'active': events[-1] != STOP, 'hook': failure != 'missing_hook'}
+                trace_client.collect.side_effect = collect
+                grab = Mock(poll=Mock(return_value=0))
+                replacements = {'provenance': Mock(return_value={}),
+                    'DirectMCP': Mock(side_effect=agents + [observer]), 'Trace': Mock(return_value=trace_client),
+                    'subprocess.Popen': Mock(return_value=grab),
+                    'primary_acknowledgement': Mock(return_value='HELD\n'),
+                    'wait_for': lambda predicate: self.assertTrue(predicate()),
+                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
+                    'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
+                    'stop_process': lambda process: held.__setitem__(0, False)}
+                for name, replacement in replacements.items():
+                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                self.assertEqual(run(args), 0 if failure is None else 1)
+                action_indexes = [index for name, index in calls if name == 'click']
+                self.assertEqual(action_indexes, list(range(len(action_indexes))))
+                if failure == 'missing_hook':
+                    self.assertEqual(action_indexes, [])
+                if failure == 'reset_trace':
+                    self.assertEqual(action_indexes, [0])
+                for i, call in enumerate(calls):
+                    if call[0] == 'click':
+                        self.assertEqual(calls[i - 1], ('snapshot', call[1]))
+                        self.assertEqual(calls[i + 1][0], 'snapshot')
+                for mcp in agents:
+                    mcp.close.assert_called_once()
+                if failure != 'stale_window':
+                    observer.close.assert_called_once()
+                    self.assertFalse(held[0])
+                result = json.loads((args.evidence / 'result.json').read_text())
+                if failure is None:
+                    self.assertEqual(action_indexes, [0, 1, 2])
+                    self.assertEqual(result['capacity']['lanes'], [1, 2])
+                    self.assertEqual(result['continuous_isolation'], 'passed')
+                    self.assertEqual(result['synthetic_cleanup'], 'verified')
+                    for i in range(3):
+                        self.assertTrue((args.evidence / f'capacity-agent-{i}-trace.json').is_file())
 
 
 class PlanTests(unittest.TestCase):

@@ -30,11 +30,22 @@ RESERVED = {'pid', 'window_id', 'session', 'delivery_mode'}
 
 
 def validate_plan(plan):
-    assert plan['purpose'] in ('apps', 'policy', 'negative_control')
+    assert plan['purpose'] in ('apps', 'policy', 'negative_control', 'capacity')
     assert type(plan.get('moving_primary', False)) is bool
     assert not (plan.get('moving_primary') and plan['purpose'] == 'negative_control'), \
         'negative control requires a parked primary'
-    assert 1 <= len(plan['agents']) <= 2
+    capacity = plan['purpose'] == 'capacity'
+    assert (len(plan['agents']) == 3 if capacity else 1 <= len(plan['agents']) <= 2)
+    if capacity:
+        assert not plan.get('moving_primary'), 'capacity requires a parked primary'
+        assert not plan.get('require_overlap'), 'capacity establishes persistent lanes serially'
+        assert {spec['app'] for spec in plan['agents'][:2]} == {'calc', 'inkscape'}
+        assert all(spec['app'] in ('calc', 'inkscape') for spec in plan['agents'])
+        assert len(plan['phases']) == 3, 'capacity needs two admissions and one refusal'
+        for index, step in enumerate(plan['phases']):
+            assert 'parallel' not in step and step.get('agent') == index, 'capacity must run agents 0, 1, 2 serially'
+            expected = {'kind': 'dispatched'} if index < 2 else {'kind': 'refused', 'reason': 'lane_busy'}
+            assert step.get('expect', {'kind': 'dispatched'}) == expected, 'incorrect capacity expectation'
     if plan['purpose'] == 'apps':
         assert len(plan['agents']) == 2
         assert {spec['app'] for spec in plan['agents']} == {'calc', 'inkscape'}
@@ -45,6 +56,8 @@ def validate_plan(plan):
     for target in targets:
         assert set(target) == {'pid', 'window_id'}
         assert type(target['pid']) is int and target['pid'] > 0
+        if capacity:
+            assert type(target['window_id']) is int and target['window_id'] > 0
     assert plan['phases'], 'empty plan cannot pass'
     for phase in plan['phases']:
         if phase.get('negative_control'):
@@ -99,15 +112,63 @@ def check_response(result, expected):
     return {'expected': kind, 'observed': content, 'app_effect_verified': False}
 
 
-def assert_no_dispatch(before, after):
-    """Zero completions alone is insufficient: reject every synthetic event."""
+def trace_interval(before, after):
+    """Validate complete active prefixes before interpreting their difference."""
     for page in (before, after):
+        assert isinstance(page, dict), 'missing dispatch telemetry'
         assert page.get('hook') is True and page.get('active') is True
         assert page.get('overflow') is False and page.get('timed_out') is False
-        assert page['count'] == len(page['events']), 'incomplete dispatch telemetry'
+        rows = page.get('events')
+        assert isinstance(rows, list) and rows, 'empty dispatch telemetry'
+        assert type(page.get('count')) is int and page['count'] == len(rows), 'incomplete dispatch telemetry'
+        assert isinstance(rows[-1], list) and len(rows[-1]) == 7, 'malformed dispatch telemetry'
+        # Reuse the canonical row/order validator with a local end sentinel;
+        # the real stopped trace is still required during cleanup.
+        last = rows[-1]
+        assert type(last[0]) is int, 'malformed trace sequence'
+        stopped = {**page, 'active': False, 'count': len(rows) + 1,
+                   'events': rows + [[last[0] + 1, last[1], 'stop', *last[3:5], 0, 0]]}
+        assert analyze(stopped).get('telemetry_complete') is True, 'incomplete dispatch telemetry'
+        assert not any(row[2] == 'stop' for row in rows), 'trace already stopped'
     assert after['events'][:before['count']] == before['events'], 'trace history changed'
-    events = after['events'][before['count']:]
+    return after['events'][before['count']:]
+
+
+def assert_no_dispatch(before, after):
+    """Zero completions alone is insufficient: reject every synthetic event."""
+    events = trace_interval(before, after)
     assert not any(row[5] in (1, 2) for row in events), 'denied call reached a synthetic lane'
+
+
+def capacity_lane(before, after, tool):
+    """Identify one admitted, exercised, completed compositor lane, not a PID."""
+    events = trace_interval(before, after)
+    synthetic = [row for row in events if row[5] in (1, 2)]
+    lanes = {row[5] for row in synthetic}
+    assert len(lanes) == 1, 'capacity action must exercise exactly one compositor lane'
+    input_kind = {'click': 'pointer_button', 'drag': 'pointer_button',
+                  'scroll': 'pointer_axis', 'press_key': 'keyboard_key', 'hotkey': 'keyboard_key'}[tool]
+    completion = 'agent_drag_end' if tool == 'drag' else 'agent_action_end'
+    admissions = [row[0] for row in synthetic if row[2] == 'agent_admitted']
+    inputs = [row[0] for row in synthetic if row[2] == input_kind]
+    completions = [row[0] for row in synthetic if row[2] == completion]
+    assert admissions and inputs and completions, 'capacity needs admission, input, and completion evidence'
+    assert min(admissions) < min(inputs) <= max(inputs) < max(completions), 'unordered capacity dispatch'
+    return lanes.pop()
+
+
+def verify_capacity(actions):
+    assert len(actions) == 3 and [row['agent'] for row in actions] == [0, 1, 2], 'incomplete capacity actions'
+    assert all(row['expected'] == 'dispatched' for row in actions[:2])
+    for row in actions[:2]:
+        check_response({'structuredContent': row['observed']}, {'kind': 'dispatched'})
+    assert {row.get('compositor_lane') for row in actions[:2]} == {1, 2}, 'capacity needs distinct compositor lanes'
+    refusal = actions[2]
+    assert refusal['expected'] == 'refused' and refusal.get('no_dispatch') == 'verified'
+    check_response({'isError': True, 'structuredContent': refusal['observed']},
+                   {'kind': 'refused', 'reason': 'lane_busy'})
+    return {'result': 'verified', 'lanes': [row['compositor_lane'] for row in actions[:2]],
+            'refused_agent': 2, 'reason': 'lane_busy'}
 
 
 def primary_trajectory(bounds, point, desktop):
@@ -249,6 +310,7 @@ def run(args):
         raise RuntimeError('assertions must be enabled')
     plan = json.loads(args.plan.read_text())
     validate_plan(plan)
+    capacity = plan['purpose'] == 'capacity'
     args.evidence.mkdir(parents=True, exist_ok=False)
     def save(name, value):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
@@ -258,6 +320,7 @@ def run(args):
     mover = None
     motion_done, motion_ready = threading.Event(), threading.Event()
     commands, motion_errors, action_intervals = [], [], []
+    capacity_traces = []
     trajectory = None
     recording = False
     baseline_outputs = {}
@@ -265,6 +328,8 @@ def run(args):
               'full_desktop_matrix': False, 'actions': [], 'outputs': [],
               'continuous_isolation': 'unproven', 'synthetic_cleanup': 'unproven',
               'primary_mode': 'moving' if moving else 'parked'}
+    if capacity:
+        report['capacity'] = {'result': 'unproven'}
     timeline_lock = threading.Lock()
     observer_lock = threading.Lock()
     def mark(event, **fields):
@@ -275,6 +340,13 @@ def run(args):
         directory.mkdir()
         return DirectMCP(args.driver, directory, profile)
     def snapshot(mcp, target, session=None):
+        if capacity:
+            windows = mcp.tool('list_windows', {})
+            assert not windows.get('isError'), windows
+            matches = [window for window in windows['structuredContent']['windows']
+                       if window.get('pid') == target['pid']]
+            assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
+                'reviewed PID/window identity is stale or ambiguous'
         result = mcp.tool('get_window_state', {**target, 'max_elements': 100, 'max_depth': 6,
                           **({'session': session} if session else {})})
         assert not result.get('isError'), result
@@ -287,7 +359,11 @@ def run(args):
         before = snapshot(mcp, spec['target'], spec['name'])
         assert before['window_bounds'] == spec['bounds'], 'reviewed geometry is stale'
         expected = step.get('expect', {'kind': 'dispatched'})
-        trace_before = trace.collect() if trace and expected['kind'] == 'refused' else None
+        if capacity:
+            assert_distinct_runtimes(clients)
+        trace_before = trace.collect() if trace and (capacity or expected['kind'] == 'refused') else None
+        if capacity:
+            assert_no_dispatch(capacity_traces[-1] if capacity_traces else trace_before, trace_before)
         if barrier:
             barrier.wait(timeout=20)
         mark('action_start', agent=index, tool=step['tool'], runtime_pid=mcp.process.pid)
@@ -305,11 +381,24 @@ def run(args):
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
         after = snapshot(mcp, spec['target'], spec['name'])
         result = check_response(response, expected)
+        if capacity and expected['kind'] == 'dispatched':
+            trace_after = trace.collect()
+            save(f'capacity-agent-{index}-trace.json', {'before': trace_before, 'after': trace_after})
+            capacity_traces.append(trace_after)
+            result['compositor_lane'] = capacity_lane(trace_before, trace_after, step['tool'])
+            assert result['compositor_lane'] not in {row.get('compositor_lane') for row in report['actions']}, \
+                'capacity needs distinct compositor lanes'
         if expected['kind'] == 'refused':
             result['no_dispatch'] = 'unproven'
             if trace:
-                assert_no_dispatch(trace_before, trace.collect())
+                trace_after = trace.collect()
+                if capacity:
+                    save(f'capacity-agent-{index}-trace.json', {'before': trace_before, 'after': trace_after})
+                    capacity_traces.append(trace_after)
+                assert_no_dispatch(trace_before, trace_after)
                 result['no_dispatch'] = 'verified'
+        if capacity:
+            assert_distinct_runtimes(clients)
         assert after['window_bounds'] == before['window_bounds']
         assert_primary_state(primary_before, wm(), moving)
         current = state(args.foreground_journal)
@@ -317,6 +406,7 @@ def run(args):
         return {'agent': index, 'tool': step['tool'], **result}
     try:
         assert not moving or args.trace_socket, 'moving primary requires continuous trace'
+        assert not capacity or args.trace_socket, 'capacity requires continuous trace'
         save('provenance.json', provenance(args, plan))
         for index, oracle in enumerate(plan.get('outputs', [])):
             baseline_outputs[index] = Path(oracle['path']).read_bytes()
@@ -379,6 +469,8 @@ def run(args):
                     report['actions'].extend(future.result() for future in futures)
             else:
                 report['actions'].append(action(phase))
+        if capacity:
+            report['capacity'] = verify_capacity(report['actions'])
         for index, oracle in enumerate(plan.get('outputs', [])):
             report['outputs'].append(verify_output(baseline_outputs[index], Path(oracle['path']).read_bytes(), oracle))
         report['result'] = 'passed'
@@ -418,6 +510,9 @@ def run(args):
                 trace.exchange('TRACE_STOP')
                 data = trace.collect()
                 save('trace.json', data)
+                if capacity_traces:
+                    last = capacity_traces[-1]
+                    assert data['events'][:last['count']] == last['events'], 'capacity trace history changed at cleanup'
                 expected_motion = None
                 if moving:
                     assert not mover or not mover.is_alive(), 'primary motion worker did not stop'

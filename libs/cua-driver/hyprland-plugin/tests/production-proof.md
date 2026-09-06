@@ -15,10 +15,10 @@ app and the independent foreground journal fixture. Ground the exact window
 identities, bounds, and gesture coordinates using fresh Driver snapshots.
 Review a JSON plan before execution. The plan has:
 
-- `purpose`: `apps`, `policy`, or `negative_control`.
+- `purpose`: `apps`, `policy`, `negative_control`, or `capacity`.
 - `foreground`: its exact `pid` and `window_id`.
 - `package_versions`: `{"libreoffice-fresh":"26.2.5-3","inkscape":"1.4.4-6"}`.
-- `agents`: one or two objects with `app`, `target`, `bounds`, `name`, and
+- `agents`: one or two objects (exactly three for capacity) with `app`, `target`, `bounds`, `name`, and
   `profile`. App proof requires distinct Calc and Inkscape processes. Public
   names may be identical; they are not runtime ownership credentials.
 - `profile`: `mode` is `standard`, `bounded`, or `unrestricted`. Unrestricted
@@ -73,6 +73,47 @@ exact reason, refused effect, no delivery, and no synthetic event in its trace
 interval. A policy error alone never proves no dispatch. Trace instrumentation
 is disabled in production builds.
 
+For a capacity run, prepare a separate `purpose:"capacity"` plan with three
+independent native app processes. Agents 0 and 1 must be Calc and Inkscape;
+agent 2 can be another instance of either qualified app. Each process must own
+exactly one mapped native window. A second window in the same app process does
+not qualify. Ground each exact positive integer `pid` and `window_id`, bounds,
+and safe action coordinates from fresh snapshots. The runner cross-checks the
+PID/window pair against Driver's window listing before every snapshot. Use the
+normal reviewed permission profiles described above; capacity adds no grant or
+permission bypass.
+
+Use exactly three serial phases: one successful action by agent 0, one by agent
+1, then one action by agent 2 with
+`expect:{"kind":"refused","reason":"lane_busy"}`. Omit `expect` for the first
+two actions or set it to `{"kind":"dispatched"}`. Choose each action from a
+fresh snapshot and retain its after-snapshot. Do not copy coordinates from an
+unrelated app or evidence run. Capacity rejects parallel phases, extra phases,
+moving-primary mode, and `require_overlap:true`. Persistent lane reservations
+make simultaneous gestures unnecessary for this capacity check; use the
+separate app plan to prove overlap and saved document changes.
+
+Run the capacity plan with the command above and `--trace-socket`. A missing
+trace option fails before any Driver process starts. The runner keeps all three
+independent direct MCP processes alive through the third response. Each of the
+first two intervals must contain v3 admission, actual input for the requested
+tool, and completion in order on one compositor lane; together they must
+exercise lanes 1 and 2. Runtime PIDs and session names alone cannot satisfy this
+check. The third response must be an exact `lane_busy` refusal with no delivery
+and no synthetic event in its serial trace interval. Another policy denial,
+partial delivery, unknown effect, empty trace, missing instrumentation, or
+reused lane fails the run without replaying the action.
+
+Capacity evidence includes `capacity-agent-0-trace.json` through
+`capacity-agent-2-trace.json`, containing the active trace prefixes around each
+checked action, plus the normal stopped trace, continuous isolation, and
+cleanup results. `result.json` records the observed lane for each admission and
+the capacity verdict. Only an overall `result:"passed"` includes successful
+isolation and cleanup checks. This proves bounded lane capacity and refusal,
+not saved app effects, overlapping gestures, or the desktop matrix. Run the
+capacity plan separately from the package smoke: it cannot pass without
+instrumentation.
+
 Moving-primary proof uses `primary-grab` in its independent `controlled` mode,
 with `MOVE` commands and exact `MOVED` acknowledgements. Driver actions remain
 background calls with before/after window snapshots. The foreground journal
@@ -117,8 +158,8 @@ after failures or partial/unknown delivery. Transport failures poison the
 connection and are never replayed. Any cleanup failure fails the run.
 
 Remaining native work includes the complete mode/manifest allow/deny matrix,
-execution of this moving-primary proof, runtime cancellation during overlapping gestures,
-third-lane refusal, target/keymap/display/session faults, exact loaded-artifact
+execution of the moving-primary and capacity plans, runtime cancellation during overlapping gestures,
+target/keymap/display/session faults, exact loaded-artifact
 provenance, repeat controls, and the canonical desktop matrix. No existing
 failed row is superseded by these helper tests.
 

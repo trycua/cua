@@ -27,13 +27,53 @@ class Trace:
         return result
 
     def collect(self):
-        status = self.exchange('TRACE_READ 0')
-        rows = status.pop('events')
-        while len(rows) < status['count']:
+        # TRACE_READ exposes eight rows from an append-only, bounded array.
+        # Primary motion can append while pages are read. Capture the first
+        # response's prefix, not a moving count that may never stop growing.
+        # No event inside that prefix may be omitted. A final start-page check
+        # binds every page to the same trace epoch; resets are never accepted.
+        def validate(page, offset):
+            if (not isinstance(page, dict) or page.get('ok') is not True
+                    or type(page.get('count')) is not int or not 0 <= page['count'] <= 32768
+                    or any(type(page.get(key)) is not bool for key in ('hook', 'active', 'overflow', 'timed_out'))
+                    or not isinstance(page.get('events'), list)
+                    or len(page['events']) != min(8, max(0, page['count'] - offset))
+                    or any(not isinstance(row, list) or len(row) not in (7, 9)
+                           or type(row[0]) is not int or row[0] != offset + index + 1
+                           for index, row in enumerate(page['events']))):
+                raise RuntimeError('malformed or incomplete trace page')
+
+        first = self.exchange('TRACE_READ 0')
+        validate(first, 0)
+        status = {key: value for key, value in first.items() if key != 'events'}
+        rows = list(first['events'])
+        if rows and (rows[0][0] != 1 or rows[0][2] != 'start'):
+            raise RuntimeError('trace lacks its start identity')
+        latest_count = first['count']
+
+        def continuation(page):
+            nonlocal latest_count
+            if page['count'] < latest_count:
+                raise RuntimeError('trace count regressed while collecting')
+            if not first['active'] and any(page[key] != first[key] for key in
+                    ('count', 'active', 'overflow', 'timed_out', 'hook')):
+                raise RuntimeError('stopped trace changed while collecting')
+            latest_count = page['count']
+            status['hook'] = status['hook'] and page['hook']
+            status['overflow'] = status['overflow'] or page['overflow']
+            status['timed_out'] = status['timed_out'] or page['timed_out']
+
+        while len(rows) < first['count']:
             page = self.exchange('TRACE_READ ' + str(len(rows)))
-            if page['count'] != status['count'] or not page['events']:
-                raise RuntimeError('trace changed while collecting')
-            rows.extend(page['events'])
+            validate(page, len(rows))
+            continuation(page)
+            rows.extend(page['events'][:first['count'] - len(rows)])
+        if first['count'] > 8:
+            anchor = self.exchange('TRACE_READ 0')
+            validate(anchor, 0)
+            continuation(anchor)
+            if anchor['events'] != first['events']:
+                raise RuntimeError('trace epoch changed while collecting')
         return {**status, 'events': rows}
 
     def close(self):

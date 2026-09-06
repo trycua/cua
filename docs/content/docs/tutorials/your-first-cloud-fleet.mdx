@@ -62,7 +62,8 @@ Save the following script as `first_cloud_fleet.py`:
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox",
+#   "cua-sandbox==0.4.3",
+#   "cua-fleet==0.1.16",
 # ]
 # ///
 
@@ -119,7 +120,7 @@ asyncio.run(main())
 ## 4. Run it
 
 Run the script from the same directory. `uv` reads the inline metadata and
-installs `cua-sandbox` in an isolated environment:
+installs `cua-sandbox==0.4.3` and `cua-fleet==0.1.16` in an isolated environment:
 
 ```bash
 uv run first_cloud_fleet.py

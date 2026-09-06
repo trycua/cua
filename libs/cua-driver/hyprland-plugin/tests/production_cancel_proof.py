@@ -28,6 +28,10 @@ DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
 POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
 RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
+# Leave margin over the observed 25–30 ms lane-admission interval. This is not
+# a worst-case scheduling bound: call_drag still checks the actual age.
+GROUNDING_DISPATCH_RESERVE_NS = 250_000_000
+MAX_GROUNDING_ATTEMPTS = 2
 # max_elements counts all visited AT-SPI nodes, not only emitted controls.
 # The native 2,000-node run retained the object row but stopped 14 rendered
 # tree lines before the selection status. Allow 500 more visited nodes while
@@ -248,22 +252,53 @@ def prepare_drag(client, spec):
                        'grounding_finished_ns': time.monotonic_ns()}}
 
 
+def pair_has_dispatch_budget(prepared):
+    """Check the whole pair without extending either action's freshness bound."""
+    assert len(prepared) == 2
+    assert 0 < GROUNDING_DISPATCH_RESERVE_NS < MAX_GROUNDING_AGE_NS
+    checked_ns = time.monotonic_ns()
+    ages = [checked_ns - item['prepared_ns'] for item in prepared]
+    for item, age in zip(prepared, ages):
+        item.setdefault('timing', {}).update(pair_gate_ns=checked_ns, pair_grounding_age_ns=age)
+    assert all(age >= 0 for age in ages), 'grounding timestamp is in the future'
+    return all(age <= MAX_GROUNDING_AGE_NS - GROUNDING_DISPATCH_RESERVE_NS for age in ages)
+
+
 def prepare_drags(clients, specs, save):
     """Observe independent apps concurrently before either timed action starts.
 
-    Sequential multi-second accessibility snapshots can age the first image
-    past the unchanged five-second grounding limit. Each connection still has
-    one reader, and neither observation dispatches app input.
+    Reserve time for the first drag's admission before dispatching its sibling.
+    At most one paired observation refresh is allowed here, before ANY input
+    attempt. It never retries a failed observation or an input action. The
+    unchanged five-second gate in call_drag still checks each actual dispatch.
     """
     assert len(clients) == len(specs) == 2
-    assert_distinct_runtimes(clients)
-    with ThreadPoolExecutor(max_workers=2) as observations:
-        pending = [observations.submit(prepare_drag, client, spec)
-                   for client, spec in zip(clients, specs)]
-        prepared = [future.result() for future in pending]
-    for index, item in enumerate(prepared):
-        save(f'agent-{index}-drag-grounding.json', item)
-    return prepared
+    for attempt in range(1, MAX_GROUNDING_ATTEMPTS + 1):
+        assert_distinct_runtimes(clients)
+        with ThreadPoolExecutor(max_workers=2) as observations:
+            pending = [observations.submit(prepare_drag, client, spec)
+                       for client, spec in zip(clients, specs)]
+            prepared = [future.result() for future in pending]
+        for index, item in enumerate(prepared):
+            # Preserve superseded observations as well as the final canonical
+            # names consumed by the independent evidence verifier.
+            save(f'agent-{index}-drag-grounding-attempt-{attempt}.json', item)
+            save(f'agent-{index}-drag-grounding.json', item)
+        ready = pair_has_dispatch_budget(prepared)
+        if not ready:
+            # If preparation raises, the runner never receives this pair to
+            # re-save it during cleanup. Retain the failed gate's timing here.
+            for index, item in enumerate(prepared):
+                save(f'agent-{index}-drag-grounding-attempt-{attempt}.json', item)
+                save(f'agent-{index}-drag-grounding.json', item)
+        save(f'drag-grounding-attempt-{attempt}.json', {
+            'attempt': attempt, 'checked_ns': prepared[0]['timing']['pair_gate_ns'],
+            'grounding_ages_ns': [item['timing']['pair_grounding_age_ns'] for item in prepared],
+            'dispatch_reserve_ns': GROUNDING_DISPATCH_RESERVE_NS, 'ready': ready,
+            'input_attempted': False})
+        if ready:
+            return prepared
+    raise AssertionError('paired drag grounding has insufficient dispatch time; no input sent')
 
 
 def active_drags(page):
@@ -449,6 +484,9 @@ def run(args):
         # any dispatch. Expired grounding fails without replaying an action.
         prepared = prepare_drags(clients, plan['agents'], save)
         guard()
+        # Include evidence-write and primary-guard latency in the final paired
+        # gate. Never re-observe after this point or after any input attempt.
+        assert pair_has_dispatch_budget(prepared), 'paired drag grounding has insufficient dispatch time; no input sent'
         futures[victim] = pool.submit(call_drag, clients[victim], plan['agents'][victim], prepared[victim], guard)
         first, active = poll_active(trace, initial, None, list(futures.values()))
         victim_lane = next(iter(active))

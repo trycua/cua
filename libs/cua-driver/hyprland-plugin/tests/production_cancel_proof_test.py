@@ -1,5 +1,6 @@
 """Synthetic orchestration/telemetry tests only; no native desktop is exercised."""
 from contextlib import ExitStack
+from concurrent.futures import ThreadPoolExecutor
 import json
 from pathlib import Path
 import subprocess
@@ -10,8 +11,9 @@ import unittest
 from unittest.mock import Mock, patch
 
 from production_cancel_proof import (
-    MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned, grounded_snapshot,
-    poll_active, prepare_drag, prepare_drags, recover_once, run, stopped_prefix,
+    GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_AGE_NS, PROFILE,
+    active_drags, call_drag, close_owned, grounded_snapshot,
+    pair_has_dispatch_budget, poll_active, prepare_drag, prepare_drags, recover_once, run, stopped_prefix,
     terminate_owned, validate_plan, verify_cancellation, verify_fresh_observation,
     verify_recovery_cleanup, verify_recovery_trace,
 )
@@ -294,21 +296,88 @@ class OwnershipTests(unittest.TestCase):
         save = Mock()
         def observe(owned, spec):
             rendezvous.wait()
-            return {'target': spec['target'], 'session': spec['name']}
-        with patch('production_cancel_proof.prepare_drag', side_effect=observe):
+            return {'target': spec['target'], 'session': spec['name'], 'prepared_ns': 100}
+        with patch('production_cancel_proof.prepare_drag', side_effect=observe), \
+             patch('production_cancel_proof.time.monotonic_ns', return_value=200):
             result = prepare_drags(clients, specs, save)
         self.assertEqual([item['target'] for item in result], [spec['target'] for spec in specs])
         self.assertEqual([call.args[0] for call in save.call_args_list],
-                         ['agent-0-drag-grounding.json', 'agent-1-drag-grounding.json'])
+                         ['agent-0-drag-grounding-attempt-1.json', 'agent-0-drag-grounding.json',
+                          'agent-1-drag-grounding-attempt-1.json', 'agent-1-drag-grounding.json',
+                          'drag-grounding-attempt-1.json'])
         for owned in clients:
             owned.tool.assert_not_called()
+
+    def test_aging_pair_refreshes_both_observations_before_any_input(self):
+        clients, specs, retained = [client(100), client(101)], plan()['agents'], {}
+        counts = [0, 0]
+        now = 10_000_000_000
+        def observe(owned, spec):
+            index = specs.index(spec)
+            counts[index] += 1
+            age = (4_995_561_185, 4_995_070_539)[index] if counts[index] == 1 else 2_000_000_000
+            return {'target': spec['target'], 'session': spec['name'], 'prepared_ns': now - age,
+                    'snapshot': {'fresh_attempt': counts[index]}}
+        with patch('production_cancel_proof.prepare_drag', side_effect=observe), \
+             patch('production_cancel_proof.time.monotonic_ns', return_value=now):
+            result = prepare_drags(clients, specs, lambda name, value: retained.update({name: value}))
+        self.assertEqual(counts, [2, 2])
+        for index, item in enumerate(result):
+            self.assertEqual(item['snapshot']['fresh_attempt'], 2)
+            self.assertIs(retained[f'agent-{index}-drag-grounding.json'], item)
+            self.assertEqual(retained[f'agent-{index}-drag-grounding-attempt-1.json']['snapshot']['fresh_attempt'], 1)
+        self.assertFalse(retained['drag-grounding-attempt-1.json']['ready'])
+        self.assertTrue(retained['drag-grounding-attempt-2.json']['ready'])
+        for owned in clients:
+            owned.tool.assert_not_called()
+
+    def test_pair_freshness_boundary_and_attempt_cap(self):
+        limit = MAX_GROUNDING_AGE_NS - GROUNDING_DISPATCH_RESERVE_NS
+        for age, attempts, error in ((limit, 1, None), (limit + 1, 2, 'insufficient dispatch time'),
+                                     (MAX_GROUNDING_AGE_NS + 1, 2, 'insufficient dispatch time'),
+                                     (-1, 1, 'in the future')):
+            with self.subTest(age=age):
+                clients, save = [client(100), client(101)], Mock()
+                with patch('production_cancel_proof.prepare_drag', return_value={'prepared_ns': 100}) as observe, \
+                     patch('production_cancel_proof.time.monotonic_ns', return_value=100 + age):
+                    if error:
+                        with self.assertRaisesRegex(AssertionError, error):
+                            prepare_drags(clients, plan()['agents'], save)
+                    else:
+                        prepare_drags(clients, plan()['agents'], save)
+                self.assertEqual(observe.call_count, 2 * attempts)
+                for owned in clients:
+                    owned.tool.assert_not_called()
+
+    def test_grounding_retention_time_counts_toward_pair_freshness(self):
+        clients, now = [client(100), client(101)], [100]
+        def save(name, item):
+            if name == 'agent-1-drag-grounding.json':
+                now[0] += MAX_GROUNDING_AGE_NS
+        with patch('production_cancel_proof.prepare_drag', side_effect=lambda *args: {'prepared_ns': now[0]}) as observe, \
+             patch('production_cancel_proof.time.monotonic_ns', side_effect=lambda: now[0]):
+            with self.assertRaisesRegex(AssertionError, 'insufficient dispatch time; no input sent'):
+                prepare_drags(clients, plan()['agents'], save)
+        self.assertEqual(observe.call_count, 4)
+        for owned in clients:
+            owned.tool.assert_not_called()
+
+    def test_pair_requires_each_item_to_have_budget(self):
+        now = 10_000_000_000
+        for stale in (0, 1):
+            prepared = [{'prepared_ns': now}, {'prepared_ns': now}]
+            prepared[stale]['prepared_ns'] = now - MAX_GROUNDING_AGE_NS + GROUNDING_DISPATCH_RESERVE_NS - 1
+            with patch('production_cancel_proof.time.monotonic_ns', return_value=now):
+                self.assertFalse(pair_has_dispatch_budget(prepared))
+            self.assertEqual(prepared[stale]['timing']['pair_gate_ns'], now)
 
     def test_failed_parallel_grounding_never_dispatches(self):
         clients = [client(100), client(101)]
         save = Mock()
-        with patch('production_cancel_proof.prepare_drag', side_effect=AssertionError('bad image')):
+        with patch('production_cancel_proof.prepare_drag', side_effect=AssertionError('bad image')) as observe:
             with self.assertRaisesRegex(AssertionError, 'bad image'):
                 prepare_drags(clients, plan()['agents'], save)
+        self.assertEqual(observe.call_count, 2)
         save.assert_not_called()
         for owned in clients:
             owned.tool.assert_not_called()
@@ -619,7 +688,8 @@ class RunnerTests(unittest.TestCase):
     def test_success_and_failures_reap_all_owned_children_without_replay(self):
         for failure in (None, 'sigterm', 'pointer', 'pointer_partial', 'pointer_effect', 'pointer_endpoint', 'pointer_anchor',
                         'pointer_coordinates', 'trace', 'unknown_sibling',
-                        'successful_victim', 'close', 'snapshot', 'grab', 'primary_before', 'primary_after',
+                        'successful_victim', 'close', 'snapshot', 'grab', 'primary_before', 'primary_after', 'dispatch_budget',
+                        'prepare_budget',
                         'recovery_calc', 'recovery_inkscape', 'recovery_effect', 'recovery_close', 'recovery_trace'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
@@ -695,6 +765,8 @@ class RunnerTests(unittest.TestCase):
                 proof_image = root / 'fresh.png'
                 proof_image.write_bytes(b'synthetic-test-image')
                 snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image)})
+                if failure == 'prepare_budget':
+                    snapshot.return_value['proof_observation_started_ns'] = 1
                 if failure == 'snapshot':
                     snapshot.side_effect = AssertionError('stale geometry')
                 if failure == 'primary_after':
@@ -730,9 +802,21 @@ class RunnerTests(unittest.TestCase):
                 def observations(owned, specs, save):
                     prepared = [prepare_drag(c, s) for c, s in zip(owned, specs)]
                     for i, item in enumerate(prepared):
+                        if failure == 'dispatch_budget':
+                            item['prepared_ns'] -= MAX_GROUNDING_AGE_NS
                         save(f'agent-{i}-drag-grounding.json', item)
                     return prepared
-                replacements['prepare_drags'] = observations
+                if failure == 'prepare_budget':
+                    # Exercise the real bounded preparation loop, including
+                    # its two read-only executors and failure cleanup.
+                    executor_count = [0]
+                    def executor(*args, **kwargs):
+                        executor_count[0] += 1
+                        return pool if executor_count[0] == 1 else ThreadPoolExecutor(*args, **kwargs)
+                    replacements['ThreadPoolExecutor'] = executor
+                    replacements['prepare_drag'] = Mock(wraps=prepare_drag)
+                else:
+                    replacements['prepare_drags'] = observations
                 for name, value in replacements.items():
                     stack.enter_context(patch('production_cancel_proof.' + name, value))
                 self.assertEqual(run(args), 0 if failure in (None, 'sigterm', 'pointer', 'pointer_partial', 'recovery_calc', 'recovery_inkscape') else 1)
@@ -787,7 +871,25 @@ class RunnerTests(unittest.TestCase):
                     self.assertIn('primary', result['error'])
                 if failure == 'primary_after':
                     self.assertIn('primary', result['error'])
-                if failure not in ('snapshot', 'grab', 'primary_before'):
+                if failure in ('dispatch_budget', 'prepare_budget'):
+                    pool.submit.assert_not_called()
+                    self.assertNotIn('termination', result)
+                    self.assertIn('no input sent', result['error'])
+                    for i, owned in enumerate(agents):
+                        owned.process.kill.assert_not_called()
+                        owned.process.terminate.assert_not_called()
+                        saved = json.loads((args.evidence / f'agent-{i}-drag-grounding.json').read_text())
+                        self.assertGreaterEqual(saved['timing']['pair_grounding_age_ns'], MAX_GROUNDING_AGE_NS)
+                    trace_client.close.assert_called_once()
+                    if failure == 'prepare_budget':
+                        self.assertEqual(replacements['prepare_drag'].call_count, 4)
+                        self.assertEqual(executor_count[0], 3)
+                        for attempt in (1, 2):
+                            saved_attempt = json.loads((args.evidence / f'drag-grounding-attempt-{attempt}.json').read_text())
+                            self.assertFalse(saved_attempt['ready'])
+                            self.assertFalse(saved_attempt['input_attempted'])
+                        self.assertFalse((args.evidence / 'drag-grounding-attempt-3.json').exists())
+                if failure not in ('snapshot', 'grab', 'primary_before', 'dispatch_budget', 'prepare_budget'):
                     self.assertEqual(pool.submit.call_count, 2)
                     if failure == 'sigterm':
                         agents[victim].process.terminate.assert_called_once()

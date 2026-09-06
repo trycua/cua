@@ -71,7 +71,13 @@ The plan fields are:
 The runner checks Driver's PID/window listing and a fresh image for each drag,
 then retains both observations and derived arguments before dispatch. It
 rejects changed bounds, endpoints outside the image, and grounding older than
-five seconds at dispatch. No second-app snapshot runs during the first drag.
+five seconds at dispatch. Before either drag, both observations must retain
+250 ms for dispatch scheduling. If not, the runner can refresh both observations
+once, retaining each attempt separately. A second stale pair fails without
+input. A final paired check includes evidence-write and primary-guard time.
+This reserve is not a worst-case scheduling guarantee: each actual dispatch
+still checks its own five-second limit. No snapshot refresh or input retry
+runs after either input attempt begins.
 The independent observer records fresh after-snapshots for both apps. When
 using pointer stages, the sibling must also show the expected selection or
 rectangle movement. The victim's interrupted effect remains uncertain and is

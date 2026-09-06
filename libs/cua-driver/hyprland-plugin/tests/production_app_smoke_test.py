@@ -35,6 +35,19 @@ INKSCAPE = {
         '  - label = "No objects selected. Click, Shift+click, Alt+scroll mouse on top of '
         'objects, or drag around objects to select."']),
 }
+INKSCAPE_SELECTED = {
+    'elements': [{'element_index': 1, 'role': 'table cell',
+                  'label': 'smoke-rectangle', 'enabled': True}] + [
+        {'element_index': index, 'role': 'spin button', 'label': f'{value:.3f}',
+         'value': f'{value:.1f}', 'enabled': True}
+        for index, value in enumerate((40, 60, 80, 50), 2)],
+    'tree_markdown': '\n'.join([
+        '  - [1] table cell "smoke-rectangle" [actions=[activate]]',
+        '  - label = "Rectangle  in root. Click selection again to toggle scale/rotation handles."',
+        *[f'  - label = "{axis}:"\n  - [{index}] spin button "{value:.3f}" '
+          f'value="{value:.1f}" [actions=[activate]]'
+          for index, (axis, value) in enumerate((('X', 40), ('Y', 60), ('W', 80), ('H', 50)), 2)]]),
+}
 
 
 def changed_ods(original, text='a', empty_first=False):
@@ -284,6 +297,36 @@ class InputTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             check_delivery({**GOOD_DELIVERY, 'isError': True})
 
+    def test_selected_rectangle_requires_exact_status_object_and_geometry(self):
+        ground(INKSCAPE_SELECTED, 'inkscape', 'move')
+        for index, replacement in [(0, {'label': 'other-rectangle'}), (0, {'enabled': False}),
+                                   (1, {'value': '42.0'}), (2, {'role': 'text'}),
+                                   (3, {'enabled': False}), (4, {'element_index': 99})]:
+            bad = copy.deepcopy(INKSCAPE_SELECTED)
+            bad['elements'][index].update(replacement)
+            with self.subTest(index=index, replacement=replacement), self.assertRaises(GroundingUnavailable):
+                ground(bad, 'inkscape', 'move')
+        for old, new in [('Rectangle  in root.', '2 objects selected.'),
+                         ('Rectangle  in root.', 'Rectangle in layer.'),
+                         ('- label = "Rectangle', '- text = "Rectangle'),
+                         ('[1]', '[99]'), ('"X:"', '"Y:"'), ('value="80.0"', 'value="81.0"')]:
+            bad = {**INKSCAPE_SELECTED,
+                   'tree_markdown': INKSCAPE_SELECTED['tree_markdown'].replace(old, new)}
+            with self.subTest(old=old, new=new), self.assertRaises(GroundingUnavailable):
+                ground(bad, 'inkscape', 'move')
+        for extra in ('\n' + INKSCAPE_SELECTED['tree_markdown'], '\n- label = "No objects selected."'):
+            with self.assertRaises(GroundingUnavailable):
+                ground({**INKSCAPE_SELECTED, 'tree_markdown': INKSCAPE_SELECTED['tree_markdown'] + extra},
+                       'inkscape', 'move')
+        for row in INKSCAPE_SELECTED['elements']:
+            with self.assertRaises(GroundingUnavailable):
+                ground({**INKSCAPE_SELECTED, 'elements': INKSCAPE_SELECTED['elements'] + [row]},
+                       'inkscape', 'move')
+        for state in ({**INKSCAPE_SELECTED, 'tree_markdown': ''},
+                      {'elements': [{'role': 'status bar', 'value': '1 object selected'}]}, INKSCAPE):
+            with self.assertRaises(GroundingUnavailable):
+                ground(state, 'inkscape', 'move')
+
     def test_grounding_rejects_dialog_missing_selection_and_missing_canvas(self):
         ground(CALC, 'calc', 'insert')
         for state in ({'elements': []},
@@ -296,7 +339,7 @@ class InputTests(unittest.TestCase):
         ground(INKSCAPE, 'inkscape', 'select')
         with self.assertRaises(GroundingUnavailable):
             ground({'elements': [{'role': 'status bar', 'value': 'No objects selected'}]}, 'inkscape', 'move')
-        ground({'elements': [{'role': 'status bar', 'value': '1 object selected'}]}, 'inkscape', 'move')
+        ground(INKSCAPE_SELECTED, 'inkscape', 'move')
 
     def test_snapshot_action_snapshot_and_no_replay(self):
         mcp = Mock()

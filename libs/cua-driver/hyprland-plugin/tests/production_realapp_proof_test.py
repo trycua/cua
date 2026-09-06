@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -17,10 +18,10 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
-                                    primary_trajectory, run, validate_plan, verify_output)
+                                    parallel_actions, primary_trajectory, run, validate_plan, verify_output)
 from primary_trace import analyze
 from primary_trace_test import START, STOP, trace
-from production_app_smoke_test import INKSCAPE
+from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
 
 
 def plan():
@@ -574,11 +575,46 @@ class PlanTests(unittest.TestCase):
 
 
 class SmokeStageTests(unittest.TestCase):
+    def test_parallel_prebarrier_failure_preserves_root_cause_and_aborts_sibling(self):
+        steps = [{'agent': i, 'tool': 'press_key'} for i in range(2)]
+        entered = threading.Event()
+        calls = []
+        def action(step, barrier):
+            calls.append(step['agent'])
+            if step['agent'] == 1:
+                self.assertTrue(entered.wait(1))
+                raise RuntimeError('selection grounding unavailable')
+            entered.set()
+            barrier.wait(timeout=2)
+            self.fail('sibling must not dispatch')
+        results, errors = parallel_actions(steps, action)
+        self.assertEqual(results, [])
+        self.assertCountEqual(calls, [0, 1])
+        self.assertEqual(errors, [
+            {'agent': 0, 'tool': 'press_key', 'error_type': 'BrokenBarrierError', 'message': ''},
+            {'agent': 1, 'tool': 'press_key', 'error_type': 'RuntimeError',
+             'message': 'selection grounding unavailable'}])
+
+    def test_parallel_postbarrier_failure_retains_successful_sibling_without_replay(self):
+        steps = [{'agent': i, 'tool': 'press_key'} for i in range(2)]
+        calls = []
+        def action(step, barrier):
+            barrier.wait(timeout=2)
+            calls.append(step['agent'])
+            if step['agent'] == 0:
+                raise RuntimeError('unconfirmed effect')
+            return {'agent': 1, 'expected': 'dispatched'}
+        results, errors = parallel_actions(steps, action)
+        self.assertEqual(results, [{'agent': 1, 'expected': 'dispatched'}])
+        self.assertCountEqual(calls, [0, 1])
+        self.assertEqual(errors, [{'agent': 0, 'tool': 'press_key', 'error_type': 'RuntimeError',
+                                   'message': 'unconfirmed effect'}])
+
     def test_runner_grounds_full_snapshots_and_never_recovers_or_replays(self):
         for app, stage, elements in (
                 ('calc', 'insert', [{'role': 'table cell', 'label': 'A1', 'selected': True}]),
                 ('inkscape', 'select', INKSCAPE['elements']),
-                ('inkscape', 'move', [{'role': 'status bar', 'label': '1 object selected'}])):
+                ('inkscape', 'move', INKSCAPE_SELECTED['elements'])):
             for failure in (None, 'no_elements', 'dialog', 'extra_window', 'after_dialog', 'transport', 'unmarked'):
                 with self.subTest(app=app, stage=stage, failure=failure), \
                         tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
@@ -621,7 +657,8 @@ class SmokeStageTests(unittest.TestCase):
                             if failure == 'dialog' or (failure == 'after_dialog' and sent):
                                 rows = [{'role': 'dialog'}]
                             return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
-                                                          'tree_markdown': INKSCAPE['tree_markdown'],
+                                                          'tree_markdown': (INKSCAPE_SELECTED if stage == 'move'
+                                                                            else INKSCAPE)['tree_markdown'],
                                                           'elements': rows}}
                         if name == 'get_desktop_state':
                             return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}

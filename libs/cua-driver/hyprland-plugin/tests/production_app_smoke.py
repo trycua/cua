@@ -331,6 +331,40 @@ def inkscape_selection_command(snapshot, elements):
         for row in (menus[0], objects[0], commands[0]))
 
 
+def inkscape_selected_rectangle(snapshot, elements):
+    """Cross-check the pinned root rectangle's status and selection geometry.
+
+    Inkscape omits its non-actionable status from structured elements. The
+    actual status says "Rectangle  in root", not "1 object selected". Require
+    that exact status plus the named object and the four indexed geometry
+    controls in both projections; an arbitrary selection label cannot pass.
+    """
+    lines = [line.strip() for line in snapshot.get('tree_markdown', '').splitlines()]
+    status = ('- label = "Rectangle  in root. Click selection again to toggle '
+              'scale/rotation handles."')
+    if lines.count(status) != 1 or any('No objects selected.' in line for line in lines):
+        return False
+    objects = [row for row in elements if row.get('role') == 'table cell'
+               and row.get('label') == 'smoke-rectangle' and row.get('enabled') is True]
+    if len(objects) != 1 or sum(line.startswith(
+            f'- [{objects[0].get("element_index")}] table cell "smoke-rectangle" ')
+            for line in lines) != 1:
+        return False
+    for axis, value in (('X', 40), ('Y', 60), ('W', 80), ('H', 50)):
+        controls = [row for row in elements if row.get('role') == 'spin button'
+                    and row.get('label') == f'{value:.3f}'
+                    and row.get('value') == f'{value:.1f}' and row.get('enabled') is True]
+        matches = []
+        for row in controls:
+            prefix = (f'- [{row.get("element_index")}] spin button "{value:.3f}" '
+                      f'value="{value:.1f}" ')
+            matches.extend(index for index, line in enumerate(lines) if index > 0
+                           and line.startswith(prefix) and lines[index - 1] == f'- label = "{axis}:"')
+        if len(matches) != 1:
+            return False
+    return True
+
+
 def ground(snapshot, app, stage):
     elements = rows(snapshot)
     if app == 'calc' and stage == 'insert':
@@ -344,9 +378,7 @@ def ground(snapshot, app, stage):
             if not inkscape_selection_command(snapshot, elements):
                 raise GroundingUnavailable('cannot ground Inkscape document selection shortcut')
         elif stage == 'move':
-            labels = ' '.join(str(row.get('label', '')) + ' ' + str(row.get('value', ''))
-                              for row in elements if row.get('role') in ('status bar', 'label', 'text'))
-            if not re.search(r'\b1 object selected\b|\bRectangle in layer\b', labels, re.IGNORECASE):
+            if not inkscape_selected_rectangle(snapshot, elements):
                 raise GroundingUnavailable('cannot prove the single rectangle is selected before Right')
 
 

@@ -360,6 +360,32 @@ def app_process_identity(app, pid, proc_root=Path('/proc')):
             'gtk3_maps': gtk_maps}
 
 
+def parallel_actions(steps, action):
+    """Retain every outcome and wake siblings if one fails before the barrier.
+
+    A grounding failure on the second agent must not become the first agent's
+    empty BrokenBarrierError. No action is replayed, and successful siblings
+    remain evidence even when the phase fails.
+    """
+    barrier = threading.Barrier(len(steps))
+    def guarded(step):
+        try:
+            return action(step, barrier)
+        except BaseException:
+            barrier.abort()
+            raise
+    results, errors = [], []
+    with ThreadPoolExecutor(max_workers=len(steps)) as pool:
+        futures = [pool.submit(guarded, step) for step in steps]
+        for step, future in zip(steps, futures):
+            try:
+                results.append(future.result())
+            except Exception as error:
+                errors.append({'agent': step['agent'], 'tool': step['tool'],
+                               'error_type': type(error).__name__, 'message': str(error)})
+    return results, errors
+
+
 def provenance(args, plan):
     # Reuse exact-source, canonical ALPM and active mapped-plugin checks.
     # Hashing a file alone does not prove which module the compositor loaded.
@@ -578,10 +604,13 @@ def run(args):
                 snapshot(recorder, plan['foreground'])
                 assert wm() == primary_before, 'control failed to return to identical endpoints'
             elif 'parallel' in phase:
-                barrier = threading.Barrier(len(phase['parallel']))
-                with ThreadPoolExecutor(max_workers=len(clients)) as pool:
-                    futures = [pool.submit(action, step, barrier) for step in phase['parallel']]
-                    report['actions'].extend(future.result() for future in futures)
+                results, errors = parallel_actions(phase['parallel'], action)
+                report['actions'].extend(results)
+                if errors:
+                    report['phase_errors'] = errors
+                    cause = next((row for row in errors if row['error_type'] != 'BrokenBarrierError'), errors[0])
+                    raise RuntimeError(f'agent {cause["agent"]} {cause["tool"]}: '
+                                       f'{cause["error_type"]}: {cause["message"]}')
             else:
                 report['actions'].append(action(phase))
         if capacity:

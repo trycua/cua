@@ -120,6 +120,13 @@ def mapped_plugin(maps, plugin):
     return matches
 
 
+def require_enabled_plugin(option):
+    # The pinned Hyprland 0.56.2 getoption reply for a V2 CBoolValue uses
+    # "bool": true, not the legacy integer config representation.
+    assert isinstance(option, dict) and option.get('option') == 'plugin:cua:enabled' \
+        and option.get('bool') is True and 'int' not in option, 'setup has not enabled the plugin'
+
+
 def provenance(args):
     source = args.source.resolve(strict=True)
     assert Path(read(['git', '-C', str(source), 'rev-parse', '--show-toplevel'])).resolve() == source
@@ -146,7 +153,8 @@ def provenance(args):
     plugins = read(['hyprctl', 'plugin', 'list'])
     assert 'cua-hyprland-plugin' in plugins, 'plugin is mapped but not registered'
     enabled = json.loads(read(['hyprctl', '-j', 'getoption', 'plugin:cua:enabled']))
-    assert enabled.get('int') == 1, 'setup has not enabled the plugin'
+    save_json(args.evidence, 'plugin-enabled-option.json', enabled)
+    require_enabled_plugin(enabled)
     files = {'driver': args.driver, 'plugin': plugin,
              **{name: Path(__file__).with_name(name) for name in
                 ('production_app_smoke.py', 'production_mcp.py', 'driver_input_live.py')}}

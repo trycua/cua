@@ -9,7 +9,7 @@ import zipfile
 
 from production_app_smoke import (
     LIMITS, GroundingUnavailable, check_delivery, create_documents, ground, input_step,
-    kernel_file_identity, mapped_plugin, package_owner, verify_calc, verify_inkscape,
+    kernel_file_identity, mapped_plugin, package_owner, require_enabled_plugin, verify_calc, verify_inkscape,
 )
 
 
@@ -38,6 +38,15 @@ def changed_ods(original, text='a', empty_first=False):
 
 
 class FixtureTests(unittest.TestCase):
+    def test_enabled_option_uses_exact_pinned_v2_boolean_contract(self):
+        enabled = {'option': 'plugin:cua:enabled', 'bool': True, 'set': True}
+        require_enabled_plugin(enabled)
+        for value in ({}, [], {'option': 'plugin:cua:enabled', 'int': 1},
+                      {**enabled, 'option': 'some:other:option'}, {**enabled, 'int': 1},
+                      *({**enabled, 'bool': value} for value in (False, 1, 'true', None))):
+            with self.subTest(value=value), self.assertRaisesRegex(AssertionError, 'not enabled'):
+                require_enabled_plugin(value)
+
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)

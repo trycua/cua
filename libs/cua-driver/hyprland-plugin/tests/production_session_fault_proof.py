@@ -347,6 +347,34 @@ def verify_refusal(record):
     return {'result': 'verified', 'reason': 'session_unavailable', 'no_dispatch': 'verified'}
 
 
+def prepare_refusal(client, spec, stage):
+    """Observe the exact target while powered, before the fault blocks capture."""
+    fresh = {**spec, 'name': spec['name'] + '-unavailable', 'pointer_stage': stage}
+    started_ns = time.monotonic_ns()
+    snapshot = grounded_snapshot(client, spec['target'], fresh)
+    arguments, _ = pointer_grounding.action(
+        snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', stage)
+    return {'snapshot': snapshot, 'arguments': arguments, 'session': fresh['name'],
+            'prepared_ns': snapshot.get('proof_observation_started_ns', started_ns)}
+
+
+def prepare_actions(clients, spec, stage, save):
+    """Read through distinct runtimes in parallel; neither call supplies input.
+
+    Sequential snapshots aged the first image past the five-second limit.
+    Keep both original observation timestamps and the unchanged dispatch gates.
+    """
+    assert len(clients) == 2
+    assert_distinct_runtimes(clients)
+    with ThreadPoolExecutor(max_workers=2) as observations:
+        drag = observations.submit(prepare_drag, clients[0], spec)
+        refusal = observations.submit(prepare_refusal, clients[1], spec, stage)
+        prepared, probe = drag.result(), refusal.result()
+    save('drag-grounding.json', prepared)
+    save('refusal-grounding.json', probe)
+    return prepared, probe
+
+
 def refuse(client, spec, prepared, fault, trace, guard, save):
     record = {**prepared, 'outcome': 'unknown', 'replayed': False, 'runtime_pid': client.process.pid,
               'deadline_ns': fault.config['deadline_ns'], 'before': production_status(fault.config),
@@ -355,7 +383,7 @@ def refuse(client, spec, prepared, fault, trace, guard, save):
         guard()
         fault.live_deadline()
         record['dispatch_ns'] = time.monotonic_ns()
-        assert record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS, 'refusal grounding expired'
+        assert 0 <= record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS, 'refusal grounding expired'
         record['response'] = client.tool('click', {**prepared['arguments'], **spec['target'],
             'session': prepared['session'], 'delivery_mode': 'background'})
         record['outcome'] = 'response'
@@ -440,14 +468,7 @@ def run(args):
         initial = trace.collect()
         assert start_ns <= initial['events'][0][1] <= time.monotonic_ns()
         assert not any(row[5] in (1, 2) for row in initial['events'])
-        fresh = {**spec, 'name': spec['name'] + '-unavailable', 'pointer_stage': plan['recovery']['pointer_stage']}
-        prepared_ns = time.monotonic_ns()
-        snapshot = grounded_snapshot(clients[1], spec['target'], fresh)
-        arguments, _ = pointer_grounding.action(snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', fresh['pointer_stage'])
-        probe = {'snapshot': snapshot, 'arguments': arguments, 'session': fresh['name'], 'prepared_ns': prepared_ns}
-        save('refusal-grounding.json', probe)
-        prepared = prepare_drag(clients[0], spec)
-        save('drag-grounding.json', prepared)
+        prepared, probe = prepare_actions(clients, spec, plan['recovery']['pointer_stage'], save)
         fault.arm()
         guard()
         pool = ThreadPoolExecutor(max_workers=1)

@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 from types import SimpleNamespace
 import unittest
@@ -202,6 +203,83 @@ class OracleTests(unittest.TestCase):
             changed['trace_after'] = trace(CANCEL + [(11, kind, 1, 0)])
             with self.subTest(kind=kind), self.assertRaises(AssertionError):
                 proof.verify_refusal(changed)
+
+
+class GroundingTests(unittest.TestCase):
+    def test_distinct_runtime_observations_overlap_without_input(self):
+        clients = [Mock(process=Mock(pid=pid, poll=Mock(return_value=None))) for pid in (100, 101)]
+        barrier = threading.Barrier(2, timeout=2)
+        spec = plan()['agents'][0]
+        prepared, probe = {'prepared_ns': 100}, {'prepared_ns': 200}
+        def drag(client, received):
+            self.assertIs(client, clients[0])
+            self.assertIs(received, spec)
+            barrier.wait()
+            return prepared
+        def refusal(client, received, stage):
+            self.assertIs(client, clients[1])
+            self.assertIs(received, spec)
+            self.assertEqual(stage, 'click_b2')
+            barrier.wait()
+            return probe
+        save = Mock()
+        with patch.object(proof, 'prepare_drag', side_effect=drag), \
+             patch.object(proof, 'prepare_refusal', side_effect=refusal):
+            self.assertEqual(proof.prepare_actions(clients, spec, 'click_b2', save), (prepared, probe))
+        self.assertEqual([call.args for call in save.call_args_list],
+                         [('drag-grounding.json', prepared), ('refusal-grounding.json', probe)])
+        for client in clients:
+            client.tool.assert_not_called()
+
+    def test_failed_observation_never_dispatches_or_saves_a_complete_pair(self):
+        clients = [Mock(process=Mock(pid=pid, poll=Mock(return_value=None))) for pid in (100, 101)]
+        save = Mock()
+        with patch.object(proof, 'prepare_drag', side_effect=AssertionError('bad snapshot')), \
+             patch.object(proof, 'prepare_refusal', return_value={}):
+            with self.assertRaisesRegex(AssertionError, 'bad snapshot'):
+                proof.prepare_actions(clients, plan()['agents'][0], 'click_b2', save)
+        save.assert_not_called()
+        for client in clients:
+            client.tool.assert_not_called()
+
+    def test_shared_runtime_is_rejected_before_observation(self):
+        client = Mock(process=Mock(pid=100, poll=Mock(return_value=None)))
+        with patch.object(proof, 'prepare_drag') as drag, patch.object(proof, 'prepare_refusal') as refusal:
+            with self.assertRaises(AssertionError):
+                proof.prepare_actions([client, client], plan()['agents'][0], 'click_b2', Mock())
+        drag.assert_not_called()
+        refusal.assert_not_called()
+
+    def test_refusal_keeps_original_observation_time(self):
+        for observed_ns in (None, 120):
+            snapshot = {'proof_image': '/synthetic/refusal.png'}
+            if observed_ns is not None:
+                snapshot['proof_observation_started_ns'] = observed_ns
+            client, spec = Mock(), plan()['agents'][0]
+            with patch.object(proof.time, 'monotonic_ns', return_value=100), \
+                 patch.object(proof, 'grounded_snapshot', return_value=snapshot), \
+                 patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'), \
+                 patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1, 'y': 2}, {})):
+                result = proof.prepare_refusal(client, spec, 'click_b2')
+            self.assertEqual(result, {'snapshot': snapshot, 'arguments': {'x': 1, 'y': 2},
+                                     'session': 'session-unavailable',
+                                     'prepared_ns': 100 if observed_ns is None else observed_ns})
+            client.tool.assert_not_called()
+
+    def test_stale_or_future_probe_is_retained_without_dispatch(self):
+        for prepared_ns in (-proof.MAX_GROUNDING_AGE_NS, 101):
+            client, save = Mock(process=Mock(pid=100)), Mock()
+            fault = Mock(config={'deadline_ns': 1_000_000_000},
+                         unavailable=Mock(return_value=[{**MONITOR, 'dpmsStatus': False}]))
+            with patch.object(proof.time, 'monotonic_ns', return_value=100), \
+                 patch.object(proof, 'production_status', return_value=status(2)):
+                with self.assertRaisesRegex(AssertionError, 'refusal grounding expired'):
+                    proof.refuse(client, plan()['agents'][0], {'prepared_ns': prepared_ns},
+                                 fault, Mock(collect=Mock(return_value=trace(CANCEL))), Mock(), save)
+            client.tool.assert_not_called()
+            self.assertEqual(save.call_args.args[0], 'unavailable-action.json')
+            self.assertEqual(save.call_args.args[1]['outcome'], 'unknown')
+            self.assertFalse(save.call_args.args[1]['replayed'])
 
 
 class WatchdogTests(unittest.TestCase):

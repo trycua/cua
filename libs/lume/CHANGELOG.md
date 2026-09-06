@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.6.0](https://github.com/trycua/cua/compare/lume-v0.5.3...lume-v0.6.0) (2026-09-06)
+
+
+### Features
+
+* add immutable Driver and Lume nightly releases ([8cef90b](https://github.com/trycua/cua/commit/8cef90b7ce6f85793a0ca3a3ddc050eac01b6b83))
+* add persistent Driver and Lume release channels ([0813659](https://github.com/trycua/cua/commit/0813659ac237cd46da21c2a51f9a95f27a3e7845))
+* **lume:** add macOS GPU passthrough ([#3070](https://github.com/trycua/cua/issues/3070)) ([3c1acf2](https://github.com/trycua/cua/commit/3c1acf27748c3e0f8ff71cd0c9ab072b1e160997))
+* **lume:** support running without a VNC listener ([#3209](https://github.com/trycua/cua/issues/3209)) ([ab957bd](https://github.com/trycua/cua/commit/ab957bdb7566f7e137b00654cc01167d9e42af38))
+
 ## [0.5.3](https://github.com/trycua/cua/compare/lume-v0.5.2...lume-v0.5.3) (2026-08-11)
 
 

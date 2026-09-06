@@ -3,7 +3,7 @@ title: Isolated background input on Hyprland
 authors:
   - f-trycua
 created: 2026-09-04
-last_updated: 2026-09-05
+last_updated: 2026-09-06
 status: review
 discussion: https://github.com/trycua/cua/issues/3550
 rfc_pr: https://github.com/trycua/cua/pull/3551
@@ -365,6 +365,14 @@ approval requirement. Measure cleanup with a
 responsive compositor and report stalls separately: Stop is neither undo nor
 instantaneous cleanup under every fault.
 
+Do not equate the private transport's cancellation messages with cancellation
+on every public transport. Direct stdio MCP executes calls serially and ignores
+cancellation notifications. An `end_session` call or input EOF waits behind the
+active call; neither is an immediate-stop mechanism. SDK invocation cancellation
+and termination of the owning Driver process are separate paths with separate
+qualification. A SIGTERM timeout must not be reported as successful SIGTERM
+cleanup merely because a subsequent SIGKILL worked.
+
 ### Results and public parity
 
 Keep three facts separate: receipt by the transport, dispatch by the
@@ -405,6 +413,13 @@ second permission grant. The candidate includes framing, quotas, expiry, and
 typed errors for review; source implementation and portable tests do not
 establish native certification. No new public route enum or capability field
 is required just for the plugin.
+
+Uninitialized connections expire five seconds after acceptance; malformed or
+out-of-order traffic cannot renew that deadline. Initialized connections use a
+separate 60-second idle deadline. Test sustained pre-HELLO traffic at the full
+connection limit and verify that all slots recover without restarting the
+compositor. Connection quota/handshake recovery does not prove lane capacity
+or application-input behavior.
 
 ## Alternatives considered
 
@@ -574,6 +589,13 @@ Include a deliberate warp-and-return negative control to prove the oracle can
 detect transient cursor theft despite unchanged endpoints. Split-view video
 and saved app output support the independent continuous input oracles; video
 alone does not replace the canonical harness.
+
+Bound each foreground-grab episode to the helper's 60-second maximum. Do not
+dispatch a new action or accept a proof after helper exit or deadline. Longer
+plans may use separately recorded episodes only if they preserve the complete
+action order, per-action effects, final saved-output checks, and required
+two-lane overlap. Report each episode's primary mode and trace boundaries;
+separate traces do not establish continuous isolation across their gaps.
 
 The existing [plugin acceptance baseline](https://github.com/trycua/cua/blob/1c000fb07f88f73f1c3111d09ac326c5e3aa7647/libs/cua-driver/hyprland-plugin/tests/README.md)
 names Omarchy `4.0.2-1`, Hyprland `0.56.2`, portal `1.4.1`, and driver

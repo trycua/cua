@@ -172,7 +172,7 @@ class RecoveryTests(unittest.TestCase):
             verify_recovery_cleanup(prefix, changed)
 
     def test_recovery_plan_requires_new_supported_action_and_both_oracles(self):
-        for victim, stage in ((0, 'click_b2'), (1, 'scroll_down')):
+        for victim, stage in ((0, 'click_b2'), (1, 'scroll_down'), (1, 'scroll_visible')):
             candidate = plan()
             candidate.update(kill_agent=victim, recovery={'pointer_stage': stage})
             with self.assertRaisesRegex(AssertionError, 'both app-effect'):
@@ -216,8 +216,10 @@ class RecoveryTests(unittest.TestCase):
                     verify_recovery_trace(boundary, changed, lane, tool)
 
     def test_fresh_runtime_snapshot_single_action_and_observer_effect(self):
-        for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll')):
-            for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after'):
+        for app, stage, tool in (('calc', 'click_b2', 'click'), ('inkscape', 'scroll_down', 'scroll'),
+                                 ('inkscape', 'scroll_visible', 'scroll')):
+            for failure in (None, 'slow_discovery', 'alive', 'reused', 'stale', 'identity', 'snapshot', 'unknown', 'denied', 'effect', 'trace', 'primary_before', 'primary_after',
+                            *(['margin'] if stage == 'scroll_visible' else [])):
                 with self.subTest(app=app, failure=failure), ExitStack() as stack:
                     victim, sibling, observer, fresh = [client(pid) for pid in (100, 101, 102, 103)]
                     victim.failed = True
@@ -241,7 +243,11 @@ class RecoveryTests(unittest.TestCase):
                     stack.enter_context(patch('production_cancel_proof.time.monotonic_ns',
                         side_effect=[100, MAX_GROUNDING_AGE_NS + 101 if failure == 'stale' else dispatch_ns]))
                     stack.enter_context(patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'))
-                    arguments, oracle = {'x': 20, 'y': 30}, {'app': app, 'stage': stage}
+                    resolved_stage = 'scroll_up' if stage == 'scroll_visible' else stage
+                    choose_stage = stack.enter_context(patch('production_cancel_proof.pointer_grounding.visible_inkscape_scroll_stage',
+                        side_effect=AssertionError('insufficient margin') if failure == 'margin' else None,
+                        return_value=resolved_stage))
+                    arguments, oracle = {'x': 20, 'y': 30}, {'app': app, 'stage': resolved_stage}
                     action = stack.enter_context(patch('production_cancel_proof.pointer_grounding.action',
                         return_value=(arguments, oracle)))
                     verify = stack.enter_context(patch('production_cancel_proof.pointer_grounding.verify',
@@ -269,12 +275,17 @@ class RecoveryTests(unittest.TestCase):
                         self.assertEqual(result['grounding']['prepared_ns'],
                                          before.get('proof_observation_started_ns', 100))
                         identity.assert_called_once_with(app, spec['target']['pid'])
-                        action.assert_called_once_with(before, 'pixels', app, stage)
+                        action.assert_called_once_with(before, 'pixels', app, resolved_stage)
+                        self.assertEqual(result['grounding']['requested_stage'], stage)
+                        if stage == 'scroll_visible':
+                            choose_stage.assert_called_once_with(before, 'pixels')
+                        else:
+                            choose_stage.assert_not_called()
                         verify.assert_called_once_with(after, 'pixels', oracle)
                         self.assertIs(snapshot.call_args_list[0].args[0], fresh)
                         self.assertIs(snapshot.call_args_list[1].args[0], observer)
                     inputs = [call for call in fresh.tool.call_args_list if call.args[0] != 'start_session']
-                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before') else 1)
+                    self.assertEqual(len(inputs), 0 if failure in ('alive', 'reused', 'stale', 'identity', 'snapshot', 'primary_before', 'margin') else 1)
                     if inputs:
                         self.assertEqual(inputs[0].args, (tool, {**arguments, **spec['target'],
                             'session': spec['name'] + '-recovery', 'delivery_mode': 'background'}))

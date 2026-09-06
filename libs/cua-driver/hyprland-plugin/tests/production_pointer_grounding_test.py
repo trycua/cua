@@ -74,6 +74,35 @@ def ink(selected=True, dx=0, dy=0, scroll_y=0):
 
 
 class PointerGroundingTests(unittest.TestCase):
+    def test_recovery_scroll_chooses_visible_space_before_input(self):
+        for offset, expected, movement in ((21, 'scroll_up', 80), (160, 'scroll_down', -80)):
+            with self.subTest(offset=offset):
+                before, image = ink(scroll_y=offset)
+                stage = pointer.visible_inkscape_scroll_stage(before, image)
+                self.assertEqual(stage, expected)
+                args, oracle = pointer.action(before, image, 'inkscape', stage)
+                self.assertEqual(args['amount'], 1)
+                self.assertTrue(pointer.verify(*ink(scroll_y=offset + movement), oracle)['verified'])
+        # Reproduce a top-toolbar clip while document W/H remain unchanged.
+        _, oracle = pointer.action(*ink(scroll_y=21), 'inkscape', 'scroll_down')
+        after, clipped = ink(scroll_y=-59)
+        clipped.points = {point: color for point, color in clipped.points.items() if point[1] >= 94}
+        with self.assertRaisesRegex(AssertionError, 'rectangle resized'):
+            pointer.verify(after, clipped, oracle)
+
+    def test_recovery_scroll_refuses_insufficient_margin_or_ambiguous_state(self):
+        state, image = ink()
+        image.height = 350
+        state['screenshot_height'] = state['window_bounds']['height'] = 350
+        with self.assertRaisesRegex(pointer.GroundingUnavailable, '100 pixels'):
+            pointer.visible_inkscape_scroll_stage(state, image)
+        with self.assertRaises(pointer.GroundingUnavailable):
+            pointer.visible_inkscape_scroll_stage(*ink(False))
+        state, image = ink()
+        image.points.clear()
+        with self.assertRaises(pointer.GroundingUnavailable):
+            pointer.visible_inkscape_scroll_stage(state, image)
+
     def test_calc_selection_requires_positive_complete_semantic_evidence(self):
         for failure in ('missing_toolbar', 'truncated_toolbar', 'missing_field', 'wrong_parent',
                         'duplicate_field', 'duplicate_toolbar', 'disabled', 'wrong_terminator_depth'):

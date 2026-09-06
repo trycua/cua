@@ -26,7 +26,7 @@ from realapp_proof import cleanup_all, released_synthetic_input
 PROFILE = {'mode': 'unrestricted', 'acknowledge_unrestricted': True}
 DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
 POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
-RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down'}}
+RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down', 'scroll_visible'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
 # Leave margin over the observed 25–30 ms lane-admission interval. This is not
 # a worst-case scheduling bound: call_drag still checks the actual age.
@@ -133,12 +133,16 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     # Match prepare_drag: discovery precedes the observation; the complete
     # snapshot and pixel grounding remain inside the five-second limit.
     started_ns = before.get('proof_observation_started_ns', started_ns)
-    arguments, oracle = pointer_grounding.action(
-        before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
+    image = pointer_grounding.read_pixels(before['proof_image'])
+    requested_stage = stage
+    if stage == 'scroll_visible':
+        stage = pointer_grounding.visible_inkscape_scroll_stage(before, image)
+    arguments, oracle = pointer_grounding.action(before, image, spec['app'], stage)
     tool = pointer_grounding.STAGES[spec['app']][stage]
     assert tool in ('click', 'scroll'), 'recovery cannot replay the interrupted drag'
     result['grounding'] = {'snapshot': before, 'app_identity': identity, 'arguments': arguments,
-                           'oracle': oracle, 'prepared_ns': started_ns, 'target': fresh['target']}
+                           'oracle': oracle, 'prepared_ns': started_ns, 'target': fresh['target'],
+                           'requested_stage': requested_stage}
     save('recovery-grounding.json', result)
     if guard:
         guard()

@@ -254,6 +254,23 @@ def action(snapshot, image, app, stage):
     return args, oracle
 
 
+def visible_inkscape_scroll_stage(snapshot, image):
+    """Choose one recovery scroll before input, with room for its pixel oracle.
+
+    The pinned fixture scrolls about 80 pixels per line. Reserve 100 pixels
+    inside the existing inspection region, not a guarantee for arbitrary apps.
+    After-action pixel and document-size checks remain unchanged.
+    """
+    rectangle = blue_rectangle(snapshot, image)
+    inkscape_geometry(snapshot, allow_transform_center=True)
+    margins = {'scroll_down': rectangle['y'] - 90,
+               'scroll_up': image.height - 90 - (rectangle['y'] + rectangle['h'])}
+    stage = max(margins, key=margins.get)
+    if margins[stage] < 100:
+        raise GroundingUnavailable('recovery scroll needs 100 pixels of visible canvas margin')
+    return stage
+
+
 def verify(snapshot, image, oracle):
     app, stage = oracle['app'], oracle['stage']
     elements = checked_snapshot(snapshot, image, app)

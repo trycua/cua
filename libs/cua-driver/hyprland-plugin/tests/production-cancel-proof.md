@@ -107,12 +107,18 @@ An uninstrumented package smoke cannot substitute for cancellation evidence.
 ## Optional fresh-runtime recovery
 
 Add `recovery:{"pointer_stage":"click_b2"}` when Calc is the victim, or
-`recovery:{"pointer_stage":"scroll_down"}` when Inkscape is the victim.
+`recovery:{"pointer_stage":"scroll_visible"}` when Inkscape is the victim.
 Calc also supports `click_a1`. Both agents must use the derived pointer stages
 above so the sibling's app effect is verified. Choose a Calc cell that will
 not already be selected after the interruption; already-satisfied or ambiguous
 state fails without another action. Inkscape recovery requires the interrupted
-rectangle to remain visible and uniquely selected.
+rectangle to remain visible and uniquely selected. Before any recovery input,
+`scroll_visible` chooses up or down from the same fresh image, toward the larger
+visible canvas margin. It requires 100 pixels of margin for the pinned fixture's
+approximately 80-pixel scroll. The evidence records the requested and resolved
+stages. Pixel-size, document-geometry, and scroll-effect checks remain strict;
+clipping after dispatch fails without replay. The explicit `scroll_down` stage
+remains available for separately reviewed plans.
 
 The runner first verifies the cancellation phase, including victim release and
 normal sibling completion. It saves the victim's fresh observer snapshot and

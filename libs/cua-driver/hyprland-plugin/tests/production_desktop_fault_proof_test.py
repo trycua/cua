@@ -172,7 +172,8 @@ class KeymapTests(unittest.TestCase):
                 proof.verify_fault(trace(CANCEL), candidate, keymap_restoration(), action())
 
     def test_new_driver_action_is_fresh_guarded_and_preserves_failed_evidence(self):
-        for failure in (None, 'runtime', 'stale', 'watchdog', 'file', 'held', 'unknown', 'generic', 'dispatch'):
+        for failure in (None, 'runtime', 'stale', 'watchdog', 'file', 'held', 'unknown', 'generic', 'dispatch',
+                        'expired_during_snapshot', 'restored_during_snapshot'):
             with self.subTest(failure=failure), ExitStack() as stack:
                 candidate = plan('keymap')
                 spec = candidate['agents'][0]
@@ -194,11 +195,13 @@ class KeymapTests(unittest.TestCase):
                     'proof_image': '/synthetic/image', 'window_bounds': dict(BOUNDS)}))
                 stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value=[]))
                 stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 20, 'y': 20}, {})))
-                stack.enter_context(patch.object(proof, 'keymap_options', return_value=options(False)))
+                stack.enter_context(patch.object(proof, 'keymap_options', side_effect=[options(False),
+                    AssertionError('watchdog restored keymap') if failure == 'restored_during_snapshot' else options(False)]))
                 stack.enter_context(patch.object(proof, '_guard'))
                 stack.enter_context(patch.object(proof, 'file_identity', return_value={} if failure == 'file' else {'inode': 20}))
                 stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[10_100_000,
-                    99_000_000_000 if failure == 'stale' else 10_500_000, 11_000_000]))
+                    99_000_000_000 if failure == 'stale' else 10_500_000,
+                    13_000_000_000 if failure == 'expired_during_snapshot' else 11_000_000]))
                 config = {'instance': 'exact', 'path': '/unused', 'deadline_ns': 11_000_000 if failure == 'watchdog' else 12_000_000_000,
                           'files': {'disabled': {'identity': {'inode': 20}}}}
                 saved = {}
@@ -218,7 +221,7 @@ class KeymapTests(unittest.TestCase):
                     self.assertEqual(result['snapshot']['window_bounds'], result['after_snapshot']['window_bounds'])
                 if failure in ('runtime', 'stale', 'watchdog', 'file', 'held'):
                     self.assertFalse(any(call.args[0] == 'click' for call in fresh.tool.call_args_list))
-                if failure in ('unknown', 'generic', 'dispatch'):
+                if failure in ('unknown', 'generic', 'dispatch', 'expired_during_snapshot', 'restored_during_snapshot'):
                     self.assertIn('wrong-layout-action.json', saved)
                     self.assertNotIn('verification', saved['wrong-layout-action.json'])
 
@@ -490,6 +493,27 @@ class SafetyTests(unittest.TestCase):
         fault.restoration = None
         fault.mutated = False
         return fault
+
+    def test_watchdog_has_fixed_bounded_budget_for_each_fault(self):
+        for kind, seconds in (('config_disable', 12), ('keymap', 30)):
+            with self.subTest(kind=kind), ExitStack() as stack:
+                fault = self.controller()
+                fault.config['kind'] = kind
+                fault.child = None
+                child = Mock()
+                child.stdout.readline.return_value = 'ARMED\n'
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', return_value=100))
+                stack.enter_context(patch.object(proof.os, 'pipe', return_value=(7, 8)))
+                close = stack.enter_context(patch.object(proof.os, 'close'))
+                launch = stack.enter_context(patch.object(proof.subprocess, 'Popen', return_value=child))
+                stack.enter_context(patch.object(proof.select, 'select', return_value=([child.stdout], [], [])))
+                fault.arm()
+                self.assertEqual(fault.config['deadline_ns'], 100 + seconds * 1_000_000_000)
+                self.assertLess(seconds * 1000, proof.PRIMARY_LIFETIME_MS)
+                self.assertEqual(json.loads(launch.call_args.args[0][3])['deadline_ns'], fault.config['deadline_ns'])
+                close.assert_called_once_with(7)
+                with self.assertRaises(AssertionError):
+                    fault.arm()
 
     def test_injection_requires_pending_press_fresh_gate_live_watchdog(self):
         for failure in (None, 'done', 'stale', 'watchdog', 'deadline', 'lost_reply'):

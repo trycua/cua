@@ -15,6 +15,10 @@ Keymap uses the separate exact KEYMAP_US include, changes only to KEYMAP_DE,
 and restores the same original US map. Exact option readback, compositor lane
 generation changes and the compiled-map-gated unsupported_layout refusal from
 a fresh normal Driver action prove invalidation; no keymap hash is exposed.
+The keymap fixture has a fixed 30-second restoration watchdog to cover the
+fresh-runtime refusal and both app snapshots; config-disable keeps 12 seconds.
+Watchdog restoration, stale grounding, or readback crossing either deadline
+still fails the episode. Neither duration is a product cancellation limit.
 DPMS and lock are deliberately unsupported here. Portable tests prepare
 this proof; only execution on the exact native candidate can certify a row.
 """
@@ -52,6 +56,7 @@ import production_pointer_grounding as pointer_grounding
 
 KEYMAP_US = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "", kb_file = ""}})\n'
 KEYMAP_DE = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "de", kb_variant = "", kb_options = "", kb_file = ""}})\n'
+WATCHDOG_SECONDS = {'config_disable': 12, 'keymap': 30}
 
 
 def fixed_bytes(kind):
@@ -332,7 +337,7 @@ class ConfigFault:
 
     def arm(self):
         assert self.child is None, 'one watchdog per episode'
-        self.config['deadline_ns'] = time.monotonic_ns() + 12_000_000_000
+        self.config['deadline_ns'] = time.monotonic_ns() + WATCHDOG_SECONDS[self.config['kind']] * 1_000_000_000
         reader, self.cancel_fd = os.pipe()
         try:
             self.child = subprocess.Popen([sys.executable, str(Path(__file__).resolve()),

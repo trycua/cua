@@ -1,0 +1,39 @@
+name: "CI: cua-driver TypeScript MCP"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/mcp-typescript/**"
+      - ".github/workflows/ci-cua-driver-mcp-typescript.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/mcp-typescript/**"
+      - ".github/workflows/ci-cua-driver-mcp-typescript.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-driver-mcp-typescript-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: TypeScript MCP server
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/cua-driver/mcp-typescript/package-lock.json
+      - name: Install dependencies
+        working-directory: libs/cua-driver/mcp-typescript
+        run: npm ci
+      - name: Test server
+        working-directory: libs/cua-driver/mcp-typescript
+        run: npm run format:check && npm run typecheck && npm test && npm audit --omit=dev --audit-level=high

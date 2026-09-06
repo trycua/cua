@@ -6,6 +6,7 @@
     "create-pool-with-typescript",
     "run-cursor-cloud-agent-on-fleet",
     "expire-pools-and-claims",
+    "troubleshoot-fleet-pools",
     "run-openclaw-on-cloud-fleet",
     "run-omarchy-on-cloud-fleet",
     "connect-to-omarchy-with-novnc",

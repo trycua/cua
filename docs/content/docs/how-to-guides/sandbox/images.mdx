@@ -7,6 +7,9 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Use an **Image** to define the OS and software environment for a sandbox before you start it.
 
+For Fleet, [choose a published image](#choose-a-published-fleet-image). For local
+execution, [choose a base image](#choose-a-base-image) and add the setup steps below.
+
 <Callout type="warn">
   **SDK builder customization is local-only in `cua-sandbox` 0.4.3.** `apt_install()`, `pip_install()`, `env()`,
   `run()`, `copy()` and the other builder methods are applied when you boot the image
@@ -14,6 +17,49 @@ Use an **Image** to define the OS and software environment for a sandbox before 
   a customized one with `NotImplementedError: Fleet cloud supports registry images with
   optional exposed services only`. For Fleet customization, [prepare and publish the guest image first](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image). See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support) for versioned acceptance and verification limits.
 </Callout>
+
+## Choose a published Fleet image
+
+1. Open the [OS and image catalog](/reference/sandbox-sdk/os-image-catalog) and
+   choose a Fleet VM artifact that matches your guest OS and workload. Check its
+   architecture and evidence limits. Local Docker and Lume entries are separate
+   runtime choices, not built-in Fleet mappings.
+2. Check the artifact's guest services against your client. The Sandbox SDK's
+   default connection expects computer-server on port `8000`; an MCP client needs
+   an image that starts an MCP service. Declaring a port does not install either
+   service. See the [Fleet guest-service contract](/reference/sandbox-sdk/runtime-support#fleet-guest-service-contract).
+3. Use the built-in constructor for a mapped artifact, or copy the exact registry
+   reference into `Image.from_registry()`. Set the guest OS and `kind='vm'`
+   explicitly. Use a digest when you need an identity independent of tag changes.
+4. Follow [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python) to apply
+   the image and claim a replica. Confirm registry access, guest readiness, and
+   the operation your workload needs before reusing that pool.
+
+For an explicit registry reference, set `FLEET_IMAGE_REF` to the artifact you
+selected, then construct the image specification:
+
+```python
+import os
+from cua_sandbox import Image
+
+image = Image.from_registry(
+    os.environ['FLEET_IMAGE_REF'],
+    os_type='linux',
+    kind='vm',
+)
+```
+
+For a Windows artifact, change `os_type` to `'windows'`; this selects EFI in the
+generated Fleet template. This snippet defines an image without provisioning it.
+For image-specific service configuration, use the catalogue's linked recipe.
+
+Windows images do not include a Windows license. Before provisioning one,
+confirm that your own licenses cover your intended use, including applicable
+hosting and virtualization rights. A successful boot is not a licensing check.
+
+If the artifact lacks required software, [prepare and publish a guest image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
+before creating the pool. The local builder examples below do not publish a
+Fleet artifact or run during a Fleet claim.
 
 ## Choose a base image
 

@@ -17,8 +17,8 @@ active desktop as a claim on that pool.
 
 <Callout type="warn">
   A pool with `replicas=1` keeps one cloud sandbox warm until you delete the pool. Cloud resources
-  can incur usage charges. The script deletes the pool in a `finally` block; the cleanup section
-  also shows how to delete it after an interrupted run.
+  can incur usage charges. The script requests deletion in a `finally` block and sets a one-hour
+  pool TTL as a fallback. Keep the local run record until cleanup is confirmed.
 </Callout>
 
 ## 1. Authenticate with Fleet
@@ -42,17 +42,20 @@ unset FLEETS_TOKEN
 have a valid Fleet access token, you can set `FLEETS_TOKEN` instead; it takes
 precedence over the client credentials and must remain valid through cleanup.
 
-## 2. Choose a unique Fleet name
+## 2. Prepare a directory for this run
 
-Pool names are lowercase DNS labels and are globally unique across Cua
-accounts. Choose a name that identifies you or your team:
+Use a separate directory for the script and its output:
 
 ```bash
-export CUA_POOL_NAME="<unique-lowercase-name>"
+mkdir first-cloud-fleet
+cd first-cloud-fleet
 ```
 
-If the name belongs to another account, `Pool.apply()` returns
-`PoolAccessDeniedError`. Choose another name and run the script again.
+The script reserves a new, randomly named namespace before creating its pool.
+Reservation refuses an existing name instead of modifying an existing pool.
+It saves the namespace name and creation timestamp in `cloud-fleet-run.json`.
+Do not edit that record or reuse the namespace for other work: cleanup deletes
+the namespace and its resources.
 
 ## 3. Create the Fleet script
 
@@ -62,37 +65,114 @@ Save the following script as `first_cloud_fleet.py`:
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox",
+#   "cua-sandbox==0.4.3",
+#   "cua-fleet==0.1.14",
 # ]
 # ///
 
 import asyncio
+import json
 import os
+import sys
 from pathlib import Path
+from uuid import uuid4
 
 from cua_sandbox import Image, Pool
+from fleet_sdk import (
+    CyclopsClient,
+    CyclopsConfiguration,
+    CyclopsCredentials,
+    CyclopsTokenProviderConfiguration,
+)
 
 
 IMAGE = (
     "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
     "@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57"
 )
+RECORD = Path("cloud-fleet-run.json")
 
 
-async def main() -> None:
-    pool_name = os.environ["CUA_POOL_NAME"]
-    print(f"Provisioning Cloud Fleet: {pool_name}")
-
-    pool = await Pool.apply(
-        Image.from_registry(IMAGE),
-        name=pool_name,
-        replicas=1,
-        cpu=4,
-        memory_mb=4096,
-        services={"server": 8000},
+def fleet_client():
+    configuration = dict(
+        base_url=os.environ.get("CUA_FLEET_BASE_URL", "https://run.cua.ai"),
+        pool_poll_interval_ms=2000,
+        pool_poll_limit=300,
+        claim_poll_interval_ms=2000,
+        claim_poll_limit=300,
     )
+    token = os.environ.get("FLEETS_TOKEN")
+    if token:
+        return CyclopsClient.connect_with_access_token_and_native_http_client(
+            CyclopsTokenProviderConfiguration(**configuration), token
+        )
+    return CyclopsClient.connect_with_native_http_client(CyclopsConfiguration(
+        **configuration,
+        token_url=os.environ["CUA_TOKEN_URL"],
+        credentials=CyclopsCredentials(
+            os.environ["CUA_CLIENT_ID"], os.environ["CUA_CLIENT_SECRET"]
+        ),
+    ))
 
+
+async def find_namespace(client, name):
+    # A direct lookup outside an owned namespace can return 403, even when
+    # the resource does not exist. Use a successful account inventory instead.
+    namespaces = await client.list_namespaces()
+    return next((item for item in namespaces if item.name == name), None)
+
+
+async def delete_namespace(client, name, created_at):
+    current = await find_namespace(client, name)
+    if current is None:
+        print(f"Namespace no longer in account inventory: {name}")
+        return
+    if not created_at or current.created_at != created_at:
+        raise RuntimeError("Namespace identity changed; refusing cleanup.")
+    await client.delete_namespace(name)
+    for _ in range(60):
+        if await find_namespace(client, name) is None:
+            print(f"Namespace no longer in account inventory: {name}")
+            return
+        await asyncio.sleep(2)
+    raise TimeoutError("Namespace is still visible. Retry cleanup after it terminates.")
+
+
+async def cleanup():
+    record = json.loads(RECORD.read_text())
+    if not record.get("created_at"):
+        raise RuntimeError(
+            "Creation was not confirmed. Check this run's name in Fleet before deleting anything."
+        )
+    await delete_namespace(fleet_client(), record["name"], record["created_at"])
+
+
+async def run():
+    pool_name = f"first-fleet-{uuid4().hex}"
+    # Exclusive creation prevents overwriting an earlier run's cleanup record.
+    with RECORD.open("x") as output:
+        json.dump({"name": pool_name, "created_at": None}, output)
+    client = fleet_client()
+    # Only HTTP 201 confirms reservation. A collision (409) or denied request
+    # stops here, without reconciling or deleting another namespace's resources.
+    namespace = await client.create_namespace(pool_name)
     try:
+        RECORD.write_text(json.dumps({
+            "name": pool_name,
+            "created_at": namespace.created_at,
+        }))
+        if not namespace.created_at:
+            raise RuntimeError("Namespace creation timestamp missing; inspect Fleet before cleanup.")
+        print(f"Provisioning Cloud Fleet: {pool_name}")
+        pool = await Pool.apply(
+            Image.from_registry(IMAGE),
+            name=pool_name,
+            replicas=1,
+            cpu=4,
+            memory_mb=4096,
+            services={"server": 8000},
+            ttl_seconds_after_created=3600,
+        )
         async with pool.claim(
             name="first-claim",
             service="server",
@@ -110,19 +190,26 @@ async def main() -> None:
             print(f"Screenshot saved to {screenshot.resolve()}")
     finally:
         print(f"Deleting Cloud Fleet: {pool_name}")
-        await pool.delete()
+        await delete_namespace(client, pool_name, namespace.created_at)
 
 
-asyncio.run(main())
+if __name__ == "__main__":
+    if sys.argv[1:] == ["run"]:
+        asyncio.run(run())
+    elif sys.argv[1:] == ["cleanup"]:
+        asyncio.run(cleanup())
+    else:
+        raise SystemExit("Usage: first_cloud_fleet.py run|cleanup")
 ```
 
 ## 4. Run it
 
 Run the script from the same directory. `uv` reads the inline metadata and
-installs `cua-sandbox` in an isolated environment:
+installs `cua-sandbox==0.4.3` and its required Fleet SDK,
+`cua-fleet==0.1.14`, in an isolated environment:
 
 ```bash
-uv run first_cloud_fleet.py
+uv run first_cloud_fleet.py run
 ```
 
 The first run can take several minutes while Fleet provisions the Linux
@@ -130,31 +217,53 @@ sandbox. The script prints the sandbox name and Linux kernel information, then
 writes `cloud-fleet.png` in the current directory.
 
 When the claim block exits, the SDK releases the claimed sandbox. The `finally`
-block then deletes the pool and its template, so the warm cloud capacity does
-not remain running.
+block requests deletion of the reserved namespace, which includes the pool,
+template, and sandbox resources. It polls successful account-inventory responses
+until that namespace is absent. It does not interpret a `403` as absence.
+If cleanup fails or times out, follow the next section and check the Fleet UI
+for this run's resources. A deletion request alone does not prove that all
+resources have finished terminating.
 
 ## Clean up an interrupted run
 
 If the process is killed or loses connectivity after provisioning, the
-`finally` block might not reach Fleet. Keep `CUA_POOL_NAME` set and rerun the
-same script when connectivity returns:
+`finally` block might not reach Fleet. Restore connectivity and valid Fleet
+credentials for the same account, then run the deletion-only command from the
+same directory:
 
 ```bash
-uv run first_cloud_fleet.py
+uv run first_cloud_fleet.py cleanup
 ```
 
-`Pool.apply()` reconciles the existing named pool instead of creating a second
-one. The script then uses the Fleet and reaches the same deletion path. Deleting
-the pool destroys its sandboxes and their state, so save any files you need
-before cleanup.
+This command reads `cloud-fleet-run.json`, checks that the recorded namespace
+still has the same creation timestamp, and deletes it. It does not call
+`Pool.apply()`, claim a sandbox, or repeat the workload. It also handles a run
+that reserved a namespace but failed before creating a pool. Keep using the
+same account: absence from another account's inventory is not cleanup proof.
+The script confirms account-inventory absence, not an independent inspection
+of the underlying guest's termination. Save any
+remote files you need before cleanup; deletion destroys the sandboxes and
+their state.
+
+If the record has no creation timestamp, namespace reservation was not confirmed.
+This can happen after a name collision, denied request, or interrupted response. The
+command refuses deletion. Find the exact recorded name in the Fleet UI and
+verify whether this run created any resources before removing them. Do not
+delete an existing pool to resolve an access or billing error.
+
+Keep `cloud-fleet.png` as the local result. For another run, use a new directory
+so the earlier cleanup record remains available.
 
 ## What you built
 
-`Pool.apply()` created or reconciled a named Fleet pool and its Linux sandbox
-template. `pool.claim()` reserved one sandbox and connected the SDK to its
-`server` service. The shell and screenshot calls operated on that cloud desktop,
-not on your local machine. Exiting the claim released the sandbox, and
-`pool.delete()` removed the Fleet resources.
+The Fleet SDK reserved a namespace exclusively for this run. `Pool.apply()`
+created a named Fleet pool and its Linux sandbox template inside it.
+`pool.claim()` reserved one sandbox and connected the SDK to its
+`server` service on port `8000`. This service is the sandbox computer server;
+it is not a Cua Driver MCP endpoint. The shell and screenshot calls target the
+claimed cloud desktop. This script checks the connection and saves an image;
+it does not run an AI agent or connect a local Cua Driver session. Exiting the
+claim releases the sandbox, and namespace deletion requests resource removal.
 
 ## Next steps
 

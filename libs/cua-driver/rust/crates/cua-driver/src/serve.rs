@@ -970,6 +970,9 @@ pub async fn run_serve(
 
     cua_driver_core::authorization::validate_startup_authorization()?;
 
+    #[cfg(target_os = "linux")]
+    platform_linux::recover_orphaned_mpx_devices();
+
     // Create parent directory.
     if let Some(dir) = std::path::Path::new(socket_path).parent() {
         std::fs::create_dir_all(dir)?;

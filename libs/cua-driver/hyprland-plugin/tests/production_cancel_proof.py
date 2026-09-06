@@ -28,10 +28,12 @@ DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
 POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
 RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
-# The pinned Inkscape fixture exposes the selected object, geometry toolbar,
-# and selection status before its large trailing menu tree. Keep depth uncapped
-# (the object row is deeply nested). Missing oracle evidence still fails closed.
-POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 1000}}
+# max_elements counts all visited AT-SPI nodes, not only emitted controls.
+# The native 1,000-node run ended before the object row and selection status;
+# retain a 2,000-node budget to cover them without the trailing menu tree.
+# Keep depth uncapped (the object row is deeply nested). Missing oracle
+# evidence still fails closed, as does the unchanged five-second age limit.
+POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2000}}
 
 
 def validate_plan(plan):

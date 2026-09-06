@@ -3,6 +3,11 @@ title: OS and image catalog
 description: Sandbox operating systems, Linux distributions, desktop environments, window managers, and image registries.
 ---
 
+Windows images do not include a Windows license. Bring your own valid licenses
+covering your intended use, including the applicable hosting and virtualization
+rights. An image being available or booting successfully does not establish
+licensing eligibility. Bundled applications have their own license terms.
+
 | OS      | Distribution / version / architecture                                   | Desktop / window manager                         | Image kind / runtime                       | Registry image or source                                                                                                | Evidence / limits                                                                                                                                                                                                                                                                                                                     |
 | ------- | ----------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Linux   | Ubuntu 24.04; artifact architecture not established by SDK mapping      | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34`                                                                | `Image.linux()` mapping in `cua-sandbox` 0.4.3; versioned tag, not a digest pin. [SDK checks](/reference/sandbox-sdk/runtime-support#evidence-and-limits) establish selection, not a live pull, boot, or guest-service check.                                                                                                         |

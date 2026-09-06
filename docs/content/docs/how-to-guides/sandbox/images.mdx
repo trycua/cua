@@ -53,6 +53,10 @@ For a Windows artifact, change `os_type` to `'windows'`; this selects EFI in the
 generated Fleet template. This snippet defines an image without provisioning it.
 For image-specific service configuration, use the catalogue's linked recipe.
 
+Windows images do not include a Windows license. Before provisioning one,
+confirm that your own licenses cover your intended use, including applicable
+hosting and virtualization rights. A successful boot is not a licensing check.
+
 If the artifact lacks required software, [prepare and publish a guest image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
 before creating the pool. The local builder examples below do not publish a
 Fleet artifact or run during a Fleet claim.

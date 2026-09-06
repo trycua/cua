@@ -233,6 +233,7 @@ class RecoveryTests(unittest.TestCase):
                         self.assertEqual(result['policy']['startup_profile'], PROFILE)
                         self.assertNotEqual(result['runtime_pid'], result['victim_pid'])
                         self.assertFalse(result['replayed'])
+                        self.assertEqual(result['action']['dispatch_ns'], 101)
                         identity.assert_called_once_with(app, spec['target']['pid'])
                         action.assert_called_once_with(before, 'pixels', app, stage)
                         verify.assert_called_once_with(after, 'pixels', oracle)

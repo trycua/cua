@@ -124,15 +124,16 @@ def recover_once(client, observer, victim, sibling, spec, stage, trace, boundary
     result['grounding'] = {'snapshot': before, 'app_identity': identity, 'arguments': arguments,
                            'oracle': oracle, 'prepared_ns': started_ns, 'target': fresh['target']}
     save('recovery-grounding.json', result)
-    assert 0 <= time.monotonic_ns() - started_ns <= MAX_GROUNDING_AGE_NS, 'recovery grounding expired; no input sent'
-    result['action'] = {'outcome': 'unknown', 'replayed': False}
+    dispatch_ns = time.monotonic_ns()
+    assert 0 <= dispatch_ns - started_ns <= MAX_GROUNDING_AGE_NS, 'recovery grounding expired; no input sent'
+    result['action'] = {'outcome': 'unknown', 'replayed': False, 'dispatch_ns': dispatch_ns}
     try:
         response = client.tool(tool, {**arguments, **fresh['target'], 'session': fresh['name'],
                                      'delivery_mode': 'background'})
     except Exception as error:
         result['action']['error'] = str(error)
     else:
-        result['action'] = {'outcome': 'response', 'response': response, 'replayed': False}
+        result['action'].update(outcome='response', response=response)
     save('recovery-action.json', result['action'])
     # Preserve the observed result even if delivery classification or the app oracle fails.
     after = grounded_snapshot(observer, fresh['target'], fresh, session=False)

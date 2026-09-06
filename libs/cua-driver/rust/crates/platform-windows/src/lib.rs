@@ -5,7 +5,7 @@
 //! - PostMessage(WM_LBUTTONDOWN/WM_LBUTTONUP) for background mouse injection
 //! - PostMessage(WM_CHAR / WM_KEYDOWN/UP) for keyboard events
 //! - Win32 EnumWindows / CreateToolhelp32Snapshot for enumeration
-//! - PrintWindow / GDI BitBlt for screenshots
+//! - Windows.Graphics.Capture with PrintWindow / GDI compatibility fallbacks
 //!
 //! ## Provenance
 //!

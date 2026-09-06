@@ -57,8 +57,8 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 	if err != nil {
 		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("sandbox", err, "request_failed"))
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		defer closeAttributionResponse(response.Body)
 		return BoundClaim{}, attributionLookupStatusError("sandbox", response.StatusCode)
 	}
 	var sandboxPayload struct {
@@ -72,7 +72,7 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 			} `json:"ownerReferences"`
 		} `json:"metadata"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&sandboxPayload); err != nil {
+	if err := decodeAttributionResponse(response.Body, &sandboxPayload); err != nil {
 		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("sandbox", err, "invalid_response"))
 	}
 	var ownerName, ownerUID string
@@ -94,8 +94,8 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 	if err != nil {
 		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("claim", err, "request_failed"))
 	}
-	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		defer closeAttributionResponse(response.Body)
 		return BoundClaim{}, attributionLookupStatusError("claim", response.StatusCode)
 	}
 	var payload struct {
@@ -110,7 +110,7 @@ func (reader fleetAttributionFactsReader) ReadBoundClaimForSandbox(ctx context.C
 			} `json:"sandbox"`
 		} `json:"status"`
 	}
-	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&payload); err != nil {
+	if err := decodeAttributionResponse(response.Body, &payload); err != nil {
 		return BoundClaim{}, errors.Join(err, classifyAttributionLookupError("claim", err, "invalid_response"))
 	}
 	return BoundClaim{
@@ -136,7 +136,7 @@ func (reader fleetAttributionFactsReader) PoolExists(ctx context.Context, namesp
 	if err != nil {
 		return false, errors.Join(err, classifyAttributionLookupError("pool", err, "request_failed"))
 	}
-	defer response.Body.Close()
+	defer closeAttributionResponse(response.Body)
 	if response.StatusCode == http.StatusNotFound {
 		return false, nil
 	}
@@ -144,6 +144,23 @@ func (reader fleetAttributionFactsReader) PoolExists(ctx context.Context, namesp
 		return false, attributionLookupStatusError("pool", response.StatusCode)
 	}
 	return true, nil
+}
+
+// decodeAttributionResponse releases each response before the next fact read.
+// Keeping a partially read sandbox response open through the claim lookup, or
+// closing an unread pool response, prevents HTTP/1 connection reuse.
+func decodeAttributionResponse(body io.ReadCloser, payload any) error {
+	defer closeAttributionResponse(body)
+	return json.NewDecoder(io.LimitReader(body, 1<<20)).Decode(payload)
+}
+
+func closeAttributionResponse(body io.ReadCloser) {
+	// Consume only a bounded remainder so small Kubernetes responses reach EOF
+	// and their connections can be reused. The existing request context also
+	// bounds a slow body by the shared qualification deadline. Cleanup errors
+	// do not replace a decoded result or an authoritative HTTP status.
+	_, _ = io.Copy(io.Discard, io.LimitReader(body, k8sResponseBodyLimit))
+	_ = body.Close()
 }
 
 func QualifySvcRequest(ctx context.Context, r *http.Request, status int, reader AttributionFactsReader) bool {

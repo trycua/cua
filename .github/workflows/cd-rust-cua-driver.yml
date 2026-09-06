@@ -176,21 +176,6 @@ jobs:
       # is bare. Install git + the build toolchain before anything else.
       - name: Install base tooling (container is bare)
         run: |
-          # Security endpoints can temporarily miss different ARM64 packages.
-          # Keep both signed indexes so apt can retry the same package version
-          # from the alternate endpoint without changing the bullseye baseline.
-          echo 'deb http://security.debian.org/debian-security bullseye-security main' > /etc/apt/sources.list.d/cua-security-fallback.list
-          apt-get update
-          # Bootstrap CA roots through signed apt metadata before using HTTPS;
-          # the bare image has no trust store. HTTP cache misses persisted for
-          # packages that are available from the HTTPS security endpoints.
-          apt-get install -y --no-install-recommends ca-certificates
-          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-            if [ -f "$source" ]; then
-              sed -i -e 's|http://deb.debian.org/debian-security|https://deb.debian.org/debian-security|g' \
-                -e 's|http://security.debian.org/debian-security|https://security.debian.org/debian-security|g' "$source"
-            fi
-          done
           apt-get update
           # PipeWire ScreenCast capture remains Nix/modern-build only because
           # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal

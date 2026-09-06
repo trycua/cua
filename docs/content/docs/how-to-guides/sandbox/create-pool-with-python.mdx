@@ -39,7 +39,7 @@ Save the following script as `create_pool.py`:
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox",
+#   "cua-sandbox==0.4.3",
 # ]
 # ///
 
@@ -55,7 +55,7 @@ IMAGE = (
     "@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57"
 )
 
-POOL_NAME = os.environ.get("CUA_POOL_NAME", "cua-live-main-source-manual")
+POOL_NAME = os.environ["CUA_POOL_NAME"]
 CLAIM_NAME = os.environ.get("CUA_CLAIM_NAME", POOL_NAME)
 
 

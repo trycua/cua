@@ -29,6 +29,7 @@ NS = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
       'text': 'urn:oasis:names:tc:opendocument:xmlns:text:1.0',
       'svg': 'http://www.w3.org/2000/svg'}
 LIMITS = {'cursor_isolation': False, 'concurrency': False,
+          'plugin_transport_attribution': False,
           'all_operations': False, 'full_desktop_matrix': False}
 
 
@@ -198,7 +199,7 @@ def content(result):
 
 def check_delivery(result):
     value = content(result)
-    assert value.get('route') == 'synthetic_events', 'input did not use the production plugin'
+    assert value.get('route') == 'synthetic_events', 'input did not use the synthetic-events route'
     assert value.get('effect') in ('confirmed', 'unverifiable'), 'partial/refused input cannot pass'
     delivery = value.get('delivery')
     assert delivery is None or delivery.get('mode') == 'background', 'unknown/foreground delivery cannot pass'

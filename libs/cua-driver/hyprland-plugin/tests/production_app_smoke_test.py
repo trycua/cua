@@ -8,7 +8,7 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from production_app_smoke import (
-    GroundingUnavailable, check_delivery, create_documents, ground, input_step,
+    LIMITS, GroundingUnavailable, check_delivery, create_documents, ground, input_step,
     mapped_plugin, package_owner, verify_calc, verify_inkscape,
 )
 
@@ -105,6 +105,9 @@ class FixtureTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_route_family_does_not_claim_plugin_transport_attribution(self):
+        self.assertIs(LIMITS['plugin_transport_attribution'], False)
+
     def test_only_acknowledged_synthetic_background_delivery_accepted(self):
         check_delivery(GOOD_DELIVERY)
         for replacement in ({'route': 'atspi'}, {'effect': 'partial'},

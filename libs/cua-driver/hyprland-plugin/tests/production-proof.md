@@ -28,8 +28,11 @@ partial or unknown delivery fails without replay. App windows and evidence are
 retained for inspection until the disposable environment is deleted.
 
 This smoke does not prove foreground isolation, concurrency, pointer operations,
-the policy matrix, or package installation. Use the traced plans below for
-those separate gates. Mocked tests are not native results.
+the policy matrix, or package installation. Its `synthetic_events` response is
+a shared route family, not independent attribution to the loaded plugin.
+`plugin_transport_attribution:false` keeps that limitation explicit. Use the
+traced plans below for transport attribution and isolation. Mocked tests are
+not native results.
 
 ## Reviewed native plans
 

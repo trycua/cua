@@ -39,6 +39,11 @@ not native results.
 Run only inside the prepared disposable desktop, after mapping one window per
 app and the independent foreground journal fixture. Ground the exact window
 identities, bounds, and gesture coordinates using fresh Driver snapshots.
+The runner requires a clean exact-SHA checkout and verifies the active
+compositor's mapped plugin by path, device, and inode. Qualified app processes
+must resolve to canonical ALPM-owned executables with the GTK3 backend loaded;
+an executable basename or recorded hash alone is insufficient. The cancellation
+runner shares these checks. Store evidence outside the source checkout.
 Review a JSON plan before execution. The plan has:
 
 - `purpose`: `apps`, `policy`, `policy_cache`, `negative_control`, or `capacity`.

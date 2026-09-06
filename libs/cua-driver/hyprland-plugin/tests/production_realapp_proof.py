@@ -11,7 +11,6 @@ import io
 import json
 import os
 from pathlib import Path
-import re
 import select
 import subprocess
 import threading
@@ -21,6 +20,7 @@ import zipfile
 
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
+from production_app_smoke import EXECUTABLES, package_owner, provenance as runtime_provenance
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
 
@@ -327,44 +327,47 @@ def verify_output(before, after, oracle):
     return {'agent': oracle['agent'], 'file': Path(oracle['path']).name, 'verified': True}
 
 
+def app_process_identity(app, pid, proc_root=Path('/proc')):
+    process = proc_root / str(pid)
+    executable = (process / 'exe').resolve(strict=True)
+    gtk_maps = []
+    if app in EXECUTABLES:
+        assert executable == EXECUTABLES[app], 'noncanonical running executable'
+        package_owner(executable, 'libreoffice-fresh' if app == 'calc' else 'inkscape')
+        maps = (process / 'maps').read_text()
+        assert '/libgtk-3.so' in maps, 'running app did not load GTK3'
+        if app == 'calc':
+            assert '/libvclplug_gtk3lo.so' in maps, 'Calc did not load its GTK3 backend'
+        gtk_maps = [line for line in maps.splitlines()
+                    if '/libgtk-3.so' in line or '/libvclplug_gtk3lo.so' in line]
+    return {'pid': pid, 'executable': str(executable),
+            'sha256': hashlib.sha256(executable.read_bytes()).hexdigest(),
+            'gtk3_maps': gtk_maps}
+
+
 def provenance(args, plan):
-    def read(command):
-        return subprocess.check_output(command, text=True, timeout=10).strip()
-    source = args.source.resolve()
-    assert Path(read(['git', '-C', str(source), 'rev-parse', '--show-toplevel'])).resolve() == source
-    sha = read(['git', '-C', str(source), 'rev-parse', 'HEAD'])
-    assert sha == args.source_sha, 'source SHA differs from declared candidate'
-    files = {'driver': args.driver, 'plugin': args.plugin, 'primary-grab': args.primary_grab}
+    # Reuse exact-source, canonical ALPM and active mapped-plugin checks.
+    # Hashing a file alone does not prove which module the compositor loaded.
+    origin = runtime_provenance(args)
+    assert plan['package_versions'] == origin['packages'], 'package qualification mismatch'
+    files = {'primary-grab': args.primary_grab}
     for name in ('production_realapp_proof.py', 'production_mcp.py', 'driver_input_live.py',
                  'realapp_proof.py', 'primary_trace.py'):
         files[name] = Path(__file__).with_name(name)
-    windows = json.loads(read(['hyprctl', '-j', 'clients']))
+    windows = json.loads(subprocess.check_output(
+        ['hyprctl', '-j', 'clients'], text=True, timeout=10))
     identities = {}
     for index, spec in enumerate(plan['agents']):
-        matches = [window for window in windows if window.get('pid') == spec['target']['pid']]
+        pid = spec['target']['pid']
+        matches = [window for window in windows if window.get('pid') == pid]
         assert len(matches) == 1 and matches[0].get('xwayland') is False, 'need one exact native window per app'
-        executable = Path(f'/proc/{spec["target"]["pid"]}/exe').resolve(strict=True)
-        if spec.get('app') in ('calc', 'inkscape'):
-            assert executable.name == {'calc': 'soffice.bin', 'inkscape': 'inkscape'}[spec['app']]
-        identities[str(index)] = {'pid': spec['target']['pid'], 'executable': str(executable),
-                                  'hyprland_window': matches[0],
-                                  'sha256': hashlib.sha256(executable.read_bytes()).hexdigest()}
-    packages = read(['pacman', '-Q', 'libreoffice-fresh', 'inkscape'])
-    expected = plan['package_versions']
-    assert expected == {'libreoffice-fresh': '26.2.5-3', 'inkscape': '1.4.4-6'}, 'unqualified package selection'
-    assert dict(line.split() for line in packages.splitlines()) == expected, 'package qualification mismatch'
-    driver_source = (source / 'libs/cua-driver/rust/Cargo.toml').read_text()
-    plugin_source = (source / 'libs/cua-driver/hyprland-plugin/CMakeLists.txt').read_text()
-    return {'source': str(source), 'source_sha': sha,
-            'branch': read(['git', '-C', str(source), 'branch', '--show-current']),
-            'dirty': read(['git', '-C', str(source), 'status', '--porcelain']),
-            'source_versions': {'driver': re.search(r'(?m)^version = "([^"]+)"', driver_source)[1],
-                                'plugin': re.search(r'project\(cua_hyprland_plugin VERSION ([\d.]+)', plugin_source)[1]},
-            'driver_version': read([str(args.driver), '--version']),
-            'hyprland': read(['hyprctl', 'version']), 'packages': packages,
-            'loaded_plugins': read(['hyprctl', 'plugin', 'list']),
-            'files': {name: {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
-                      for name, path in files.items()}, 'app_processes': identities}
+        identities[str(index)] = {**app_process_identity(spec.get('app'), pid),
+                                  'hyprland_window': matches[0]}
+    origin['files'].update({name: {'path': str(path.resolve()),
+                                  'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
+                            for name, path in files.items()})
+    origin['app_processes'] = identities
+    return origin
 
 
 def run(args):

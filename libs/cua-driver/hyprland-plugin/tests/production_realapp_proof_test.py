@@ -12,7 +12,8 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from production_mcp import DirectMCP, assert_distinct_runtimes, profile_environment, stop_process
-from production_realapp_proof import (assert_no_dispatch, assert_primary_state, check_response,
+from production_realapp_proof import (app_process_identity, provenance,
+                                    assert_no_dispatch, assert_primary_state, check_response,
                                     capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
@@ -62,6 +63,59 @@ def policy_cache_plan():
         {'agent': 0, 'tool': 'click', 'arguments': {'x': 30, 'y': 40}},
     ]
     return result
+
+
+class ProvenanceTests(unittest.TestCase):
+    def test_runtime_provenance_refusal_precedes_app_inspection(self):
+        with patch('production_realapp_proof.runtime_provenance',
+                   side_effect=AssertionError('loaded artifact mismatch')) as runtime, \
+                patch('production_realapp_proof.subprocess.check_output') as command:
+            args = SimpleNamespace()
+            with self.assertRaisesRegex(AssertionError, 'loaded artifact mismatch'):
+                provenance(args, {})
+            runtime.assert_called_once_with(args)
+            command.assert_not_called()
+
+    def test_reviewed_packages_must_match_runtime_provenance(self):
+        with patch('production_realapp_proof.runtime_provenance', return_value={'packages': {'a': '1'}}), \
+                patch('production_realapp_proof.subprocess.check_output') as command:
+            with self.assertRaisesRegex(AssertionError, 'package qualification mismatch'):
+                provenance(SimpleNamespace(), {'package_versions': {'a': '2'}})
+            command.assert_not_called()
+
+    def test_canonical_app_identity_requires_owner_and_native_backend(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            executable = root / 'soffice.bin'
+            executable.write_bytes(b'synthetic executable')
+            process = root / '20'
+            process.mkdir()
+            (process / 'exe').symlink_to(executable)
+            (process / 'maps').write_text('/usr/lib/libgtk-3.so\n/usr/lib/libvclplug_gtk3lo.so\n')
+            with patch('production_realapp_proof.EXECUTABLES', {'calc': executable}), \
+                    patch('production_realapp_proof.package_owner') as owner:
+                identity = app_process_identity('calc', 20, root)
+                owner.assert_called_once_with(executable, 'libreoffice-fresh')
+                self.assertEqual(identity['executable'], str(executable))
+                self.assertEqual(len(identity['gtk3_maps']), 2)
+                self.assertEqual(len(identity['sha256']), 64)
+                owner.side_effect = AssertionError('unowned executable')
+                with self.assertRaisesRegex(AssertionError, 'unowned executable'):
+                    app_process_identity('calc', 20, root)
+
+            with patch('production_realapp_proof.EXECUTABLES', {'calc': root / 'canonical/soffice.bin'}), \
+                    patch('production_realapp_proof.package_owner') as owner:
+                with self.assertRaisesRegex(AssertionError, 'noncanonical running executable'):
+                    app_process_identity('calc', 20, root)
+                owner.assert_not_called()
+
+            with patch('production_realapp_proof.EXECUTABLES', {'calc': executable}), \
+                    patch('production_realapp_proof.package_owner'):
+                for maps, reason in [('', 'did not load GTK3'),
+                                     ('/usr/lib/libgtk-3.so', 'did not load its GTK3 backend')]:
+                    (process / 'maps').write_text(maps)
+                    with self.assertRaisesRegex(AssertionError, reason):
+                        app_process_identity('calc', 20, root)
 
 
 class PolicyCacheTests(unittest.TestCase):

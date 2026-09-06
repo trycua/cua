@@ -100,10 +100,13 @@ def dependency_fixture(destination, name, version):
 
 def pacman_command(root, *arguments):
     require(root.is_absolute() and (root / "lifecycle-root").is_file(), "uninitialized isolated ALPM root")
+    require(arguments and arguments[0] in ("-U", "-R", "-Q"), "unexpected ALPM operation")
+    # --noscriptlet is a transaction option, rejected by pacman's query mode.
+    transaction_options = ["--noscriptlet"] if arguments[0] in ("-U", "-R") else []
     return ["sudo", "-n", "--", "pacman", "--root", str(root), "--dbpath", str(root / "var/lib/pacman"),
             "--config", str(root / "pacman.conf"), "--hookdir", str(root / "empty-hooks"),
             "--cachedir", str(root / "cache"), "--logfile", str(root / "pacman.log"),
-            "--noscriptlet", "--noconfirm", *arguments]
+            *transaction_options, "--noconfirm", *arguments]
 
 
 def new_root(work, name):

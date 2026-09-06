@@ -108,9 +108,9 @@ class LifecycleTest(unittest.TestCase):
                                ("--hookdir", "empty-hooks"), ("--cachedir", "cache"),
                                ("--logfile", "pacman.log")):
             self.assertEqual(command[command.index(option) + 1], str(root / suffix))
-        self.assertIn("--noscriptlet", command)
         self.assertNotIn("--nodeps", command)
         operation = command[command.index("--noconfirm") + 1:]
+        self.assertEqual("--noscriptlet" in command, operation[0] in ("-U", "-R"))
         code, out, err = 0, "", ""
         if operation == ["-U", str(self.package)]:
             if root.name == "mismatched":
@@ -179,6 +179,18 @@ class LifecycleTest(unittest.TestCase):
     def test_uninitialized_root_refused(self):
         with self.assertRaisesRegex(ValueError, "uninitialized"):
             lifecycle.pacman_command(Path("/"), "-U", str(self.package))
+
+    def test_query_omits_transaction_only_option_without_weakening_mutations(self):
+        root = lifecycle.new_root(self.work, "query-options")
+        for operation in ("-U", "-R", "-Q"):
+            with self.subTest(operation=operation):
+                command = lifecycle.pacman_command(root, operation, lifecycle.PACKAGE)
+                self.assertEqual("--noscriptlet" in command, operation != "-Q")
+                self.assertIn("--noconfirm", command)
+                self.assertEqual(command[-2:], [operation, lifecycle.PACKAGE])
+        for arguments in ((), ("-Syu",), ("--query",)):
+            with self.subTest(arguments=arguments), self.assertRaisesRegex(ValueError, "unexpected ALPM"):
+                lifecycle.pacman_command(root, *arguments)
 
     def test_package_provenance_and_unexpected_config_or_hook_payload(self):
         names = list(self.payload) + [".PKGINFO", ".BUILDINFO", ".MTREE"]

@@ -334,6 +334,40 @@ class OwnershipTests(unittest.TestCase):
         self.assertEqual(result['oracle'], oracle)
         self.assertEqual(result['snapshot'], before)
 
+    def test_freshness_starts_before_snapshot_and_records_each_phase(self):
+        spec, mcp = plan()['agents'][0], Mock()
+        mcp.tool.return_value = RESPONSE
+        before = {'proof_observation_started_ns': 200}
+        with patch('production_cancel_proof.grounded_snapshot', return_value=before), \
+             patch('production_cancel_proof.time.monotonic_ns', side_effect=[100, 300, 400, 500]):
+            prepared = prepare_drag(mcp, spec)
+            call_drag(mcp, spec, prepared)
+        self.assertEqual(prepared['prepared_ns'], 200)
+        self.assertEqual(prepared['timing'], {
+            'preparation_started_ns': 100, 'observation_started_ns': 200,
+            'observation_finished_ns': 300, 'grounding_finished_ns': 400,
+            'dispatch_attempt_ns': 500, 'grounding_age_ns': 300})
+
+    def test_slow_snapshot_or_guard_expires_without_input_and_retains_age(self):
+        spec, mcp = plan()['agents'][0], Mock()
+        for slow_phase in ('snapshot', 'guard'):
+            with self.subTest(slow_phase=slow_phase):
+                now = [100]
+                def snapshot(*args):
+                    if slow_phase == 'snapshot':
+                        now[0] += MAX_GROUNDING_AGE_NS + 1
+                    return {'proof_observation_started_ns': 100}
+                def guard():
+                    if slow_phase == 'guard':
+                        now[0] += MAX_GROUNDING_AGE_NS + 1
+                with patch('production_cancel_proof.grounded_snapshot', side_effect=snapshot), \
+                     patch('production_cancel_proof.time.monotonic_ns', side_effect=lambda: now[0]):
+                    prepared = prepare_drag(mcp, spec)
+                    with self.assertRaisesRegex(AssertionError, 'snapshot expired; no input sent'):
+                        call_drag(mcp, spec, prepared, guard)
+                self.assertEqual(prepared['timing']['grounding_age_ns'], MAX_GROUNDING_AGE_NS + 1)
+        mcp.tool.assert_not_called()
+
     def test_expired_or_retargeted_grounding_never_dispatches(self):
         spec, mcp = plan()['agents'][0], Mock()
         with patch('production_cancel_proof.grounded_snapshot', return_value={}), \
@@ -349,7 +383,7 @@ class OwnershipTests(unittest.TestCase):
     def test_prepared_drag_does_not_snapshot_during_sibling_gesture(self):
         spec, mcp = plan()['agents'][0], Mock()
         mcp.tool.return_value = RESPONSE
-        with patch('production_cancel_proof.grounded_snapshot') as snapshot, \
+        with patch('production_cancel_proof.grounded_snapshot', return_value={}) as snapshot, \
              patch('production_cancel_proof.time.monotonic_ns', return_value=100):
             prepared = prepare_drag(mcp, spec)
             result = call_drag(mcp, spec, prepared)
@@ -374,6 +408,33 @@ class OwnershipTests(unittest.TestCase):
                 else:
                     with self.assertRaises((AssertionError, FileNotFoundError)):
                         grounded_snapshot(mcp, spec['target'], spec)
+
+    def test_inkscape_pointer_snapshot_bounds_walk_without_limiting_depth(self):
+        spec = {**plan()['agents'][1], 'drag': {}, 'pointer_stage': 'move_rectangle'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'image.png').touch()
+            now = [100]
+            def tool(name, arguments):
+                if name == 'list_windows':
+                    now[0] = 200
+                    return {'structuredContent': {'windows': [spec['target']]}}
+                now[0] = 300
+                return {'structuredContent': {'window_bounds': BOUNDS, 'screenshot_width': 800,
+                                              'screenshot_height': 600},
+                        'content': [{'type': 'image', 'image_file': 'image.png'}]}
+            mcp = Mock(directory=root, tool=Mock(side_effect=tool))
+            with patch('production_cancel_proof.time.monotonic_ns', side_effect=lambda: now[0]):
+                result = grounded_snapshot(mcp, spec['target'], spec)
+            self.assertEqual(result['proof_observation_started_ns'], 200)
+            self.assertEqual(mcp.tool.call_args.args, ('get_window_state', {
+                **spec['target'], 'session': spec['name'], 'max_elements': 1000}))
+            # A bounded walk is not permission to omit the existing oracle.
+            with patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels'):
+                with self.assertRaisesRegex(RuntimeError, 'snapshot has no semantic elements'):
+                    prepare_drag(mcp, spec)
+            self.assertTrue(all(call.args[0] in ('list_windows', 'get_window_state')
+                                for call in mcp.tool.call_args_list))
 
     def test_cleanup_reaps_child_even_when_close_raises(self):
         owned = client(100)
@@ -437,7 +498,7 @@ class OwnershipTests(unittest.TestCase):
     def test_unknown_drag_is_called_once_with_fresh_grounding(self):
         mcp, spec = Mock(), plan()['agents'][0]
         mcp.tool.side_effect = TimeoutError('lost reply')
-        with patch('production_cancel_proof.grounded_snapshot') as snapshot:
+        with patch('production_cancel_proof.grounded_snapshot', return_value={}) as snapshot:
             result = call_drag(mcp, spec)
         snapshot.assert_called_once_with(mcp, spec['target'], spec)
         self.assertEqual(result['outcome'], 'unknown')

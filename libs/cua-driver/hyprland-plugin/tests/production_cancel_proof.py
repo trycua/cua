@@ -28,6 +28,10 @@ DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
 POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
 RECOVERY_STAGES = {'calc': {'click_a1', 'click_b2'}, 'inkscape': {'scroll_down'}}
 MAX_GROUNDING_AGE_NS = 5_000_000_000
+# The pinned Inkscape fixture exposes the selected object, geometry toolbar,
+# and selection status before its large trailing menu tree. Keep depth uncapped
+# (the object row is deeply nested). Missing oracle evidence still fails closed.
+POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 1000}}
 
 
 def validate_plan(plan):
@@ -162,11 +166,13 @@ def grounded_snapshot(client, target, spec=None, *, session=True):
     matches = [w for w in windows['structuredContent']['windows'] if w.get('pid') == target['pid']]
     assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], 'stale target identity'
     pixels = spec is not None and 'pointer_stage' in spec
+    observation_started_ns = time.monotonic_ns()
     result = client.tool('get_window_state', {**target,
-                         **({} if pixels else {'max_elements': 100, 'max_depth': 6}),
+                         **(POINTER_SNAPSHOT_LIMITS.get(spec['app'], {}) if pixels
+                            else {'max_elements': 100, 'max_depth': 6}),
                          **({'session': spec['name']} if spec and session else {})})
     assert not result.get('isError'), result
-    content = result['structuredContent']
+    content = {**result['structuredContent'], 'proof_observation_started_ns': observation_started_ns}
     width, height = content.get('screenshot_width', 0), content.get('screenshot_height', 0)
     assert width > 0 and height > 0, 'missing grounding image'
     if spec:
@@ -188,13 +194,18 @@ def prepare_drag(client, spec):
     """Ground once before either gesture starts; never reuse an earlier action's image."""
     started_ns = time.monotonic_ns()
     before = grounded_snapshot(client, spec['target'], spec)
+    observation_started_ns = before.get('proof_observation_started_ns', started_ns)
+    observed_ns = time.monotonic_ns()
     arguments, oracle = dict(spec['drag']), None
     if 'pointer_stage' in spec:
         arguments, oracle = pointer_grounding.action(
             before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], spec['pointer_stage'])
     return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
             'target': dict(spec['target']), 'session': spec['name'],
-            'prepared_ns': started_ns}
+            'prepared_ns': observation_started_ns,
+            'timing': {'preparation_started_ns': started_ns,
+                       'observation_started_ns': observation_started_ns, 'observation_finished_ns': observed_ns,
+                       'grounding_finished_ns': time.monotonic_ns()}}
 
 
 def prepare_drags(clients, specs, save):
@@ -316,10 +327,12 @@ def verify_cancellation(stopped, kill_prefix, victim_lane, sibling_lane):
 def call_drag(client, spec, prepared=None, guard=None):
     prepared = prepare_drag(client, spec) if prepared is None else prepared
     assert prepared['target'] == spec['target'] and prepared['session'] == spec['name']
-    age = time.monotonic_ns() - prepared['prepared_ns']
-    assert 0 <= age <= MAX_GROUNDING_AGE_NS, 'prepared drag snapshot expired; no input sent'
     if guard:
         guard()
+    dispatch_ns = time.monotonic_ns()
+    age = dispatch_ns - prepared['prepared_ns']
+    prepared.setdefault('timing', {}).update(dispatch_attempt_ns=dispatch_ns, grounding_age_ns=age)
+    assert 0 <= age <= MAX_GROUNDING_AGE_NS, 'prepared drag snapshot expired; no input sent'
     try:
         response = client.tool('drag', {**prepared['arguments'], **spec['target'],
                                'session': spec['name'], 'delivery_mode': 'background'})
@@ -476,6 +489,11 @@ def run(args):
                 assert all(future.done() for future in futures.values()), 'action worker did not stop'
             operations.append(('join_actions', join_actions))
             operations.append(('shutdown_pool', lambda: pool.shutdown(wait=False, cancel_futures=True)))
+        # Keep dispatch-attempt timing even when the freshness gate raises before
+        # MCP input. Initial grounding was already saved before either action.
+        for index, item in enumerate(prepared):
+            operations.append((f'preserve_grounding_{index}',
+                               lambda i=index, value=item: save(f'agent-{i}-drag-grounding.json', value)))
         if trace:
             def finish_trace():
                 trace.exchange('TRACE_STOP')

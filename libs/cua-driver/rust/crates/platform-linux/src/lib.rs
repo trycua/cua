@@ -52,6 +52,9 @@ mod clipboard;
 #[cfg(target_os = "linux")]
 pub mod atspi;
 
+#[cfg(any(target_os = "linux", test))]
+mod snapshot_queries;
+
 #[cfg(target_os = "linux")]
 pub mod a11y;
 

@@ -3223,6 +3223,7 @@ dependencies = [
  "dirs",
  "enumflags2",
  "evdev",
+ "futures-util",
  "getrandom 0.4.2",
  "image",
  "keyring",

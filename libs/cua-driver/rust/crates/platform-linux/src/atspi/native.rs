@@ -1185,6 +1185,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
         // deadline for both phases so a dead AT-SPI peer cannot outlive the
         // operation timeout while resolving geometry.
         let deadline = tokio::time::Instant::now() + timeout;
+        let walk_started = std::time::Instant::now();
         let walk = async {
             let conn = shared_connection().await?;
             collect_visited_bounded(conn, pid, xid, max_elements, max_depth).await
@@ -1199,7 +1200,9 @@ pub(super) fn walk_tree_bounded_with_timeout(
         let Some((visited, scoped_frame)) = walked else {
             return Ok(None);
         };
+        let walk_elapsed = walk_started.elapsed();
         let (markdown, nodes) = render(&visited, scoped_frame);
+        let bounds_started = std::time::Instant::now();
         let bounds = match before_snapshot_deadline(
             deadline,
             element_bounds_for_visited(&visited, pid, xid, scoped_frame),
@@ -1212,6 +1215,13 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 Vec::new()
             }
         };
+        dlog!(
+            "snapshot phases pid {pid}: walk_ms={} bounds_ms={} visited={} bounds={}",
+            walk_elapsed.as_millis(),
+            bounds_started.elapsed().as_millis(),
+            visited.len(),
+            bounds.len()
+        );
         // Bounds are keyed by the application-wide element index, so drop the
         // entries for windows this snapshot no longer shows.
         let bounds = if scoped_frame.is_some() {
@@ -2942,56 +2952,59 @@ async fn element_bounds_for_visited(
     // in time, but do not impose an index-based node cap: a cap silently
     // stripped frames from valid controls later in renderer trees and
     // made PX targeting depend on DOM order.
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    let mut out = Vec::with_capacity(action_nodes.len());
-    for (idx, node) in action_nodes.iter().enumerate() {
-        if scoped_frame.is_some_and(|scope| node.frame_ordinal != scope) {
-            continue;
-        }
-        if std::time::Instant::now() >= deadline {
-            dlog!(
-                "snapshot bounds: 20s budget exhausted at node {idx}; returning {} bound(s)",
-                out.len()
-            );
-            break;
-        }
-        if !node.has_component {
-            continue;
-        }
-        let proxies = match call(node.acc.proxies()).await {
-            Some(Ok(p)) => p,
-            _ => continue,
-        };
-        let comp = match call(proxies.component()).await {
-            Some(Ok(c)) => c,
-            _ => continue,
-        };
-        if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
-            // Unrealized widgets (e.g. items inside closed menus/popovers)
-            // report GetExtents as the i32::MIN sentinel and/or a degenerate
-            // 0x0 / 1x1 size. Emitting those poisons downstream consumers
-            // (overlay renderers, click targeting), so keep only elements
-            // with plausible on-screen geometry. (Validate the raw extents,
-            // before applying the screen offset, so the sentinel check still
-            // catches unrealized widgets.)
-            if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
-                continue;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    // Bounds are independent read-only queries. Overlap a bounded number of
+    // calls instead of serializing thousands of unrealized menu components.
+    // Preserve original indices, all extents checks, and per-call timeouts.
+    let queries = action_nodes
+        .iter()
+        .enumerate()
+        .map(|(idx, node)| async move {
+            if scoped_frame.is_some_and(|scope| node.frame_ordinal != scope) || !node.has_component
+            {
+                return None;
             }
-            let (document_x, document_y) = if node.in_web_doc {
-                web_document_origin.unwrap_or((0, 0))
-            } else {
-                (0, 0)
-            };
-            out.push((
-                idx,
-                x + offset_x + document_x,
-                y + offset_y + document_y,
-                w as u32,
-                h as u32,
-            ));
-        }
+            let proxies = call(node.acc.proxies()).await?.ok()?;
+            let comp = call(proxies.component()).await?.ok()?;
+            if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
+                // Unrealized widgets (e.g. items inside closed menus/popovers)
+                // report GetExtents as the i32::MIN sentinel and/or a degenerate
+                // 0x0 / 1x1 size. Emitting those poisons downstream consumers
+                // (overlay renderers, click targeting), so keep only elements
+                // with plausible on-screen geometry. (Validate the raw extents,
+                // before applying the screen offset, so the sentinel check still
+                // catches unrealized widgets.)
+                if !crate::snapshot_queries::plausible_raw_extents((x, y, w, h)) {
+                    return None;
+                }
+                let (document_x, document_y) = if node.in_web_doc {
+                    web_document_origin.unwrap_or((0, 0))
+                } else {
+                    (0, 0)
+                };
+                return Some((
+                    idx,
+                    (
+                        x + offset_x + document_x,
+                        y + offset_y + document_y,
+                        w as u32,
+                        h as u32,
+                    ),
+                ));
+            }
+            None
+        });
+    let collected = crate::snapshot_queries::collect_indexed(queries, deadline).await;
+    if tokio::time::Instant::now() >= deadline {
+        dlog!(
+            "snapshot bounds: 20s budget exhausted; returning {} bound(s)",
+            collected.len()
+        );
     }
-    out
+    collected
+        .into_iter()
+        .map(|(idx, (x, y, w, h))| (idx, x, y, w, h))
+        .collect()
 }
 
 #[cfg(test)]

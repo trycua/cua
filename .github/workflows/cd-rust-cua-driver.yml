@@ -176,6 +176,14 @@ jobs:
       # is bare. Install git + the build toolchain before anything else.
       - name: Install base tooling (container is bare)
         run: |
+          # The security CDN can serve an index whose ARM64 packages return
+          # 404. Use Debian's security origin, preserving signed apt metadata
+          # and the bullseye / glibc 2.31 build baseline.
+          for source in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+            if [ -f "$source" ]; then
+              sed -i 's|deb.debian.org/debian-security|security.debian.org/debian-security|g' "$source"
+            fi
+          done
           apt-get update
           # PipeWire ScreenCast capture remains Nix/modern-build only because
           # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal

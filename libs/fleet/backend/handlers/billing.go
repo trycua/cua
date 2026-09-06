@@ -30,7 +30,7 @@ type BillingUsageService interface {
 }
 
 type BillingSetupCompletionService interface {
-	CompleteSetupSession(ctx context.Context, subject, source, identityClass, sessionID string) (billing.SetupCompletion, error)
+	CompleteSetupSession(ctx context.Context, subject, source, sessionID string) (billing.SetupCompletion, error)
 }
 
 type BillingSessionResponse struct {
@@ -316,7 +316,7 @@ func (h Handlers) CompleteBillingSetupSession(w http.ResponseWriter, r *http.Req
 		return
 	}
 	result, err := completionService.CompleteSetupSession(
-		r.Context(), user.ID, source, string(productanalytics.ClassifyIdentity(user)), request.SessionID,
+		r.Context(), user.ID, source, request.SessionID,
 	)
 	switch {
 	case errors.Is(err, billing.ErrSetupSessionNotFound), errors.Is(err, billing.ErrSetupSessionNotOwned):

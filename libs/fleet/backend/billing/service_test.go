@@ -442,7 +442,7 @@ func TestCompleteSetupSessionVerifiesOwnershipAndAppliesCurrentGeneration(t *tes
 		defaultApplied: true,
 	}
 
-	result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+	result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "cs_test_owned")
 	if err != nil {
 		t.Fatalf("CompleteSetupSession() error = %v", err)
 	}
@@ -463,9 +463,31 @@ func TestCompleteSetupSessionRejectsUnownedSessionWithoutUpdatingCustomer(t *tes
 		setupSession: session,
 	}
 
-	_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+	_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "cs_test_owned")
 	if !errors.Is(err, ErrSetupSessionNotOwned) || gateway.defaultCustomerID != "" {
 		t.Fatalf("error/default customer = %v/%q, want ownership rejection/no update", err, gateway.defaultCustomerID)
+	}
+}
+
+func TestCompleteSetupSessionDoesNotRequireAnalyticsClassification(t *testing.T) {
+	for _, storedClass := range []string{"external", "internal", "unknown", "", "unrecognized"} {
+		t.Run(storedClass, func(t *testing.T) {
+			session := successfulSetupSession()
+			delete(session.Metadata, MetadataIdentityClass)
+			if storedClass != "" {
+				session.Metadata[MetadataIdentityClass] = storedClass
+			}
+			gateway := &fakeGateway{
+				customers:      []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
+				setupSession:   session,
+				defaultApplied: true,
+			}
+			result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "cs_test_owned")
+			if err != nil || result != (SetupCompletion{Applied: true, SetupIntentID: "seti_owned"}) ||
+				gateway.defaultCustomerID != "cus_owned" || gateway.defaultPaymentMethodID != "pm_card" || gateway.defaultGeneration != "current" {
+				t.Fatalf("classification must not gate owned successful setup: result=%#v, error=%v", result, err)
+			}
+		})
 	}
 }
 
@@ -477,7 +499,12 @@ func TestCompleteSetupSessionRejectsMismatchedTrustedMetadata(t *testing.T) {
 	}{
 		{name: "subject", mutate: func(session *SetupSession) { session.Metadata[MetadataSubject] = "other" }, want: ErrSetupSessionNotOwned},
 		{name: "source", mutate: func(session *SetupSession) { session.Metadata[MetadataSetupSource] = "user_key" }, want: ErrSetupSessionInvalid},
-		{name: "identity class", mutate: func(session *SetupSession) { session.Metadata[MetadataIdentityClass] = "internal" }, want: ErrSetupSessionInvalid},
+		{name: "checkout customer", mutate: func(session *SetupSession) { session.CustomerID = "cus_other" }, want: ErrSetupSessionNotOwned},
+		{name: "setup intent customer", mutate: func(session *SetupSession) { session.SetupIntentCustomerID = "cus_other" }, want: ErrSetupSessionNotOwned},
+		{name: "session ID", mutate: func(session *SetupSession) { session.ID = "cs_other" }, want: ErrSetupSessionInvalid},
+		{name: "mode", mutate: func(session *SetupSession) { session.Mode = "payment" }, want: ErrSetupSessionInvalid},
+		{name: "setup intent ID", mutate: func(session *SetupSession) { session.SetupIntentID = "" }, want: ErrSetupSessionInvalid},
+		{name: "payment method", mutate: func(session *SetupSession) { session.PaymentMethodID = "" }, want: ErrSetupSessionInvalid},
 		{name: "purpose", mutate: func(session *SetupSession) { session.Metadata["purpose"] = "other" }, want: ErrSetupSessionInvalid},
 		{name: "generation", mutate: func(session *SetupSession) { delete(session.Metadata, MetadataSetupGeneration) }, want: ErrSetupSessionInvalid},
 	}
@@ -489,7 +516,7 @@ func TestCompleteSetupSessionRejectsMismatchedTrustedMetadata(t *testing.T) {
 				customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
 				setupSession: session,
 			}
-			_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+			_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "cs_test_owned")
 			if !errors.Is(err, testCase.want) || gateway.defaultCustomerID != "" {
 				t.Fatalf("error/default customer = %v/%q, want %v/no update", err, gateway.defaultCustomerID, testCase.want)
 			}
@@ -513,7 +540,7 @@ func TestCompleteSetupSessionRequiresTerminalSuccess(t *testing.T) {
 				customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
 				setupSession: session,
 			}
-			_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+			_, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "cs_test_owned")
 			if !errors.Is(err, ErrSetupSessionIncomplete) || gateway.defaultCustomerID != "" {
 				t.Fatalf("error/default customer = %v/%q, want incomplete/no update", err, gateway.defaultCustomerID)
 			}
@@ -526,7 +553,7 @@ func TestCompleteSetupSessionDuplicateIsSuccessfulWithoutReapplying(t *testing.T
 		customers:    []Customer{{ID: "cus_owned", Metadata: map[string]string{MetadataSubject: "subject-123"}}},
 		setupSession: successfulSetupSession(),
 	}
-	result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "external", "cs_test_owned")
+	result, err := NewService(gateway).CompleteSetupSession(context.Background(), "subject-123", "spa", "cs_test_owned")
 	if err != nil || result.Applied || result.SetupIntentID != "seti_owned" {
 		t.Fatalf("result/error = %#v/%v, want safe duplicate", result, err)
 	}

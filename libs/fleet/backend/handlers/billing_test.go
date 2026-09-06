@@ -39,7 +39,6 @@ type fakeBillingService struct {
 	defaultErr             error
 	completeSubject        string
 	completeSource         string
-	completeIdentityClass  string
 	completeSessionID      string
 	completeResult         billing.SetupCompletion
 	completeCalls          int
@@ -94,11 +93,10 @@ func (f *fakeBillingService) CreatePortalSession(_ context.Context, subject, ret
 	return "https://billing.stripe.test/session", nil
 }
 
-func (f *fakeBillingService) CompleteSetupSession(_ context.Context, subject, source, identityClass, sessionID string) (billing.SetupCompletion, error) {
+func (f *fakeBillingService) CompleteSetupSession(_ context.Context, subject, source, sessionID string) (billing.SetupCompletion, error) {
 	f.completeCalls++
 	f.completeSubject = subject
 	f.completeSource = source
-	f.completeIdentityClass = identityClass
 	f.completeSessionID = sessionID
 	return f.completeResult, f.completeErr
 }
@@ -365,8 +363,8 @@ func TestCompleteSetupSessionUsesAuthenticatedOwnershipAndEmitsPrivacySafeSucces
 		t.Fatalf("status/calls = %d/%d; body = %s", response.Code, service.completeCalls, response.Body.String())
 	}
 	if service.completeSubject != billingAlice.ID || service.completeSource != productanalytics.SourceSPA ||
-		service.completeIdentityClass != string(productanalytics.IdentityExternal) || service.completeSessionID != "cs_test_owned" {
-		t.Fatalf("completion ownership = %q/%q/%q/%q", service.completeSubject, service.completeSource, service.completeIdentityClass, service.completeSessionID)
+		service.completeSessionID != "cs_test_owned" {
+		t.Fatalf("completion ownership = %q/%q/%q", service.completeSubject, service.completeSource, service.completeSessionID)
 	}
 	var body BillingSetupCompletionResponse
 	if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil || !body.Applied {
@@ -402,6 +400,82 @@ func TestCompleteSetupSessionDoesNotEmitForIdempotentReplay(t *testing.T) {
 	h.CompleteBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session/complete", `{"session_id":"cs_test_owned"}`, billingAlice))
 	if response.Code != http.StatusOK || len(capture.events) != 0 {
 		t.Fatalf("status/events = %d/%#v", response.Code, capture.events)
+	}
+}
+
+// Use the real billing service so this covers the handler/service boundary,
+// not just a fake that accepts any completion arguments.
+type classificationSetupGateway struct {
+	billing.Gateway
+	storedClass  string
+	defaultCalls int
+}
+
+func (g *classificationSetupGateway) SearchCustomers(_ context.Context, subject string) ([]billing.Customer, error) {
+	return []billing.Customer{{ID: "cus_owned", Metadata: map[string]string{billing.MetadataSubject: subject}}}, nil
+}
+
+func (g *classificationSetupGateway) RetrieveSetupSession(_ context.Context, sessionID string) (billing.SetupSession, error) {
+	return billing.SetupSession{
+		ID: sessionID, Mode: "setup", Status: "complete", CustomerID: "cus_owned",
+		SetupIntentID: "seti_owned", SetupIntentStatus: "succeeded", SetupIntentCustomerID: "cus_owned",
+		PaymentMethodID: "pm_card",
+		Metadata: map[string]string{
+			"purpose": billing.SetupPurpose, billing.MetadataSubject: billingAlice.ID,
+			billing.MetadataSetupSource:     productanalytics.SourceSPA,
+			billing.MetadataSetupGeneration: "current", billing.MetadataIdentityClass: g.storedClass,
+		},
+	}, nil
+}
+
+func (g *classificationSetupGateway) SetDefaultPaymentMethodForSetupGeneration(_ context.Context, customerID, paymentMethodID, generation string) (bool, error) {
+	if customerID != "cus_owned" || paymentMethodID != "pm_card" || generation != "current" {
+		return false, errors.New("unexpected default payment method arguments")
+	}
+	g.defaultCalls++
+	return true, nil
+}
+
+func TestCompleteSetupSessionClassificationChangesDoNotBlockPayment(t *testing.T) {
+	setBillingFlag(t, true)
+	for _, storedClass := range []string{"external", "internal", "unknown", ""} {
+		for _, current := range []struct {
+			class  productanalytics.IdentityClass
+			admins string
+		}{
+			{productanalytics.IdentityExternal, `[]`},
+			{productanalytics.IdentityInternal, `["user-alice"]`},
+			{productanalytics.IdentityUnknown, `{"invalid":"not a list"}`},
+		} {
+			t.Run(storedClass+"_to_"+string(current.class), func(t *testing.T) {
+				t.Setenv("CYCLOPS_CS_ADMIN_SUBS", current.admins)
+				auth.InvalidateFeatureFlags()
+				t.Cleanup(auth.InvalidateFeatureFlags)
+				gateway := &classificationSetupGateway{storedClass: storedClass}
+				capture := &analyticsCapture{}
+				h := Handlers{
+					Billing: billing.NewService(gateway), Analytics: capture,
+					AuthCfg: config.AuthConfiguration{SPAClientID: "cyclops-cs-spa"},
+					Stripe:  config.StripeConfiguration{SecretKey: "sk_test"},
+				}
+				response := httptest.NewRecorder()
+				h.CompleteBillingSetupSession(response, newBillingRequest(http.MethodPost, "/api/billing/setup-session/complete", `{"session_id":"cs_test_owned"}`, billingAlice))
+				if response.Code != http.StatusOK || gateway.defaultCalls != 1 {
+					t.Fatalf("status/default calls = %d/%d, body=%s", response.Code, gateway.defaultCalls, response.Body.String())
+				}
+				if len(capture.events) != 1 {
+					t.Fatalf("events = %#v", capture.events)
+				}
+				event := capture.events[0]
+				if event.Properties["identity_class"] != current.class || event.Name != productanalytics.EventPaymentMethodSetup ||
+					event.InsertID != "fleet-payment-setup:seti_owned" || event.DistinctID != billingAlice.ID {
+					t.Fatalf("completion must keep current analytics classification and deduplication: %#v", event)
+				}
+				if err := productanalytics.ValidateEvent(event); err != nil {
+					t.Fatalf("privacy-safe event validation failed: %v", err)
+				}
+			})
+		}
 	}
 }
 

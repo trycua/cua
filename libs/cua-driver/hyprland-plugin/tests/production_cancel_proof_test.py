@@ -2,6 +2,7 @@
 from contextlib import ExitStack
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 from types import SimpleNamespace
 import unittest
@@ -117,6 +118,7 @@ class TelemetryTests(unittest.TestCase):
 def client(pid):
     process = Mock(pid=pid, poll=Mock(return_value=None))
     process.kill.side_effect = lambda: setattr(process.poll, 'return_value', -9)
+    process.terminate.side_effect = lambda: setattr(process.poll, 'return_value', -15)
     return Mock(process=process, failed=False)
 
 
@@ -341,6 +343,39 @@ class OwnershipTests(unittest.TestCase):
         sibling.process.kill.assert_not_called()
         victim.tool.assert_not_called()
 
+    def test_sigterm_is_preselected_and_never_falls_back_to_kill(self):
+        candidate = {**plan(), 'termination_signal': 'SIGTERM'}
+        validate_plan(candidate)
+        victim, sibling = client(100), client(101)
+        result = terminate_owned(victim, sibling, [Mock(done=lambda: False)], 'SIGTERM')
+        self.assertTrue(victim.failed)
+        self.assertEqual(result['signal'], 'SIGTERM')
+        self.assertEqual(result['pid'], 100)
+        victim.process.terminate.assert_called_once_with()
+        victim.process.kill.assert_not_called()
+        sibling.process.terminate.assert_not_called()
+        sibling.process.kill.assert_not_called()
+
+        victim = client(100)
+        victim.process.terminate.side_effect = None
+        victim.process.wait.side_effect = subprocess.TimeoutExpired('owned-driver', 3)
+        with self.assertRaises(subprocess.TimeoutExpired):
+            terminate_owned(victim, sibling, [Mock(done=lambda: False)], 'SIGTERM')
+        self.assertTrue(victim.failed)
+        victim.process.terminate.assert_called_once_with()
+        victim.process.kill.assert_not_called()
+
+    def test_unknown_signal_is_refused_before_process_mutation(self):
+        for signal in ('SIGINT', 'SIGSTOP', '', None, 9):
+            victim, sibling = client(100), client(101)
+            with self.assertRaises(AssertionError):
+                validate_plan({**plan(), 'termination_signal': signal})
+            with self.assertRaises(AssertionError):
+                terminate_owned(victim, sibling, [Mock(done=lambda: False)], signal)
+            self.assertFalse(victim.failed)
+            victim.process.kill.assert_not_called()
+            victim.process.terminate.assert_not_called()
+
     def test_shared_exited_or_completed_process_cannot_be_killed(self):
         for same, exited, done in [(True, False, False), (False, True, False), (False, False, True)]:
             victim, sibling = client(100), client(100 if same else 101)
@@ -385,13 +420,15 @@ class OwnershipTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def test_success_and_failures_reap_all_owned_children_without_replay(self):
-        for failure in (None, 'pointer', 'pointer_effect', 'trace', 'unknown_sibling',
+        for failure in (None, 'sigterm', 'pointer', 'pointer_effect', 'trace', 'unknown_sibling',
                         'successful_victim', 'close', 'snapshot', 'grab',
                         'recovery_calc', 'recovery_inkscape', 'recovery_effect', 'recovery_close', 'recovery_trace'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 source_plan = root / 'plan.json'
                 candidate = plan()
+                if failure == 'sigterm':
+                    candidate['termination_signal'] = 'SIGTERM'
                 recovery = failure is not None and failure.startswith('recovery_')
                 if failure in ('pointer', 'pointer_effect') or recovery:
                     for spec, stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
@@ -469,8 +506,12 @@ class RunnerTests(unittest.TestCase):
                 }
                 for name, value in replacements.items():
                     stack.enter_context(patch('production_cancel_proof.' + name, value))
-                self.assertEqual(run(args), 0 if failure in (None, 'pointer', 'recovery_calc', 'recovery_inkscape') else 1)
+                self.assertEqual(run(args), 0 if failure in (None, 'sigterm', 'pointer', 'recovery_calc', 'recovery_inkscape') else 1)
                 result = json.loads((args.evidence / 'result.json').read_text())
+                if failure == 'sigterm':
+                    self.assertEqual(result['termination']['signal'], 'SIGTERM')
+                    agents[victim].process.terminate.assert_called_once_with()
+                    agents[victim].process.kill.assert_not_called()
                 if not recovery:
                     self.assertEqual(result['reacquisition'], 'unproven')
                 else:
@@ -500,7 +541,10 @@ class RunnerTests(unittest.TestCase):
                     self.assertFalse(held[0])
                 if failure not in ('snapshot', 'grab'):
                     self.assertEqual(pool.submit.call_count, 2)
-                    agents[victim].process.kill.assert_called_once()
+                    if failure == 'sigterm':
+                        agents[victim].process.terminate.assert_called_once()
+                    else:
+                        agents[victim].process.kill.assert_called_once()
                     agents[1 - victim].process.kill.assert_not_called()
                     trace_client.close.assert_called_once()
                     self.assertEqual(trace_client.exchange.call_args_list[0].args, ('TRACE_START',))

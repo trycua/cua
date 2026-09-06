@@ -7,14 +7,20 @@ runtime after cancellation. **Native cancellation and recovery remain unproven.*
 
 The test grounds both gestures before starting either drag. It starts one
 drag, identifies its compositor lane from admission and
-held-button telemetry, then starts the sibling drag. It sends `SIGKILL` to the
-first drag's exact owned Driver process only after a fresh trace prefix shows
+held-button telemetry, then starts the sibling drag. It sends the preselected
+termination signal to the first drag's exact owned Driver process only after a fresh trace prefix shows
 both buttons held and at least 100 ms of overlap. The last trace read must take
 at most 250 ms, neither call may have returned, and both owned processes must
 still be alive. A completed drag, stale read, or missing telemetry fails the
 test instead of authorizing termination. There is still a scheduling race
 between observation and termination; final trace validation rejects a drag
 that completed in that interval.
+
+Set `termination_signal` to `SIGKILL` (the default) or `SIGTERM` in the
+reviewed plan. The SIGTERM case fails if the process does not exit within three
+seconds; it does not substitute SIGKILL to pass. Unconditional cleanup can
+still terminate a surviving owned child after that failure. These are process
+termination tests, not evidence for MCP request cancellation or `end_session`.
 
 Only ordinary Driver calls target the apps. The trace connection uses `HELLO`,
 `TRACE_START`, `TRACE_READ`, and `TRACE_STOP`; it never sends target, input,

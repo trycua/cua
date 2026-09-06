@@ -32,6 +32,7 @@ MAX_GROUNDING_AGE_NS = 5_000_000_000
 def validate_plan(plan):
     assert plan['purpose'] == 'cancellation'
     assert type(plan['kill_agent']) is int and plan['kill_agent'] in (0, 1)
+    assert plan.get('termination_signal', 'SIGKILL') in ('SIGKILL', 'SIGTERM'), 'unsupported termination signal'
     assert len(plan['agents']) == 2
     assert {spec['app'] for spec in plan['agents']} == {'calc', 'inkscape'}
     targets = [plan['foreground'], *(spec['target'] for spec in plan['agents'])]
@@ -233,17 +234,23 @@ def poll_active(trace, previous, lanes, pending, timeout=3):
     raise AssertionError('no fresh active overlap within bounded wait')
 
 
-def terminate_owned(victim, sibling, pending):
+def terminate_owned(victim, sibling, pending, signal='SIGKILL'):
+    assert signal in ('SIGKILL', 'SIGTERM'), 'unsupported termination signal'
     assert_distinct_runtimes([victim, sibling])
     assert all(not future.done() for future in pending), 'action returned before termination'
     # Poison before killing: no further RPC, including a snapshot, may use it.
     victim.failed = True
     requested_ns = time.monotonic_ns()
-    victim.process.kill()
+    if signal == 'SIGKILL':
+        victim.process.kill()
+    else:
+        victim.process.terminate()
+    # A timeout fails this case. Cleanup may reap the exact child later, but
+    # must not turn an ignored SIGTERM into a passing SIGKILL result.
     victim.process.wait(timeout=3)
     assert victim.process.poll() is not None, 'owned runtime was not reaped'
     assert sibling.process.poll() is None, 'sibling exited during termination'
-    return {'pid': victim.process.pid, 'signal': 'SIGKILL', 'requested_ns': requested_ns,
+    return {'pid': victim.process.pid, 'signal': signal, 'requested_ns': requested_ns,
             'reaped_ns': time.monotonic_ns()}
 
 
@@ -366,7 +373,8 @@ def run(args):
         futures[sibling] = pool.submit(call_drag, clients[sibling], plan['agents'][sibling], prepared[sibling])
         kill_prefix, _ = poll_active(trace, first, {1, 2}, list(futures.values()))
         # No disk I/O or observation between the fresh trace gate and exact-child kill.
-        report['termination'] = terminate_owned(clients[victim], clients[sibling], list(futures.values()))
+        report['termination'] = terminate_owned(clients[victim], clients[sibling], list(futures.values()),
+                                                plan.get('termination_signal', 'SIGKILL'))
         lanes = victim_lane, 3 - victim_lane
         save('termination-prefix.json', kill_prefix)
         for index, future in futures.items():

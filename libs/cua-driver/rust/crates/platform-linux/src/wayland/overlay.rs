@@ -552,9 +552,11 @@ fn ensure_layer_surface(state: &mut OverlayState, id: u32, qh: &QueueHandle<Over
     output.layer_surface = Some(layer_surface);
 }
 
-/// Retain lifecycle state without touching the compositor. Return the first
-/// eligible renderer command unapplied so the active loop can drain it and
-/// any subsequent lifecycle transitions together, in their original order.
+/// Retain lifecycle and visual metadata without touching the compositor.
+/// Session labels and BeginAction/EndAction also arrive for observation and
+/// refused actions; none has a position to paint. Return the first positioned
+/// command unapplied so the active loop can drain it and later transitions
+/// together, in their original order.
 fn wait_for_renderer_command(
     rx: &Receiver<WlOverlayCmd>,
     state: &mut OverlayState,
@@ -566,8 +568,22 @@ fn wait_for_renderer_command(
                 remove_keyed_core(&mut state.cores, &mut state.ended, key);
             }
             WlOverlayCmd::Revive(key) => revive_key(&mut state.ended, key),
-            WlOverlayCmd::Cmd { ref key, .. } if !state.ended.contains(key) => {
-                return Some(command);
+            WlOverlayCmd::Cmd { ref key, ref cmd } if !state.ended.contains(key) => {
+                if matches!(
+                    cmd,
+                    OverlayCommand::MoveTo { .. }
+                        | OverlayCommand::SnapTo { .. }
+                        | OverlayCommand::ClickPulse { .. }
+                ) {
+                    return Some(command);
+                }
+                apply_keyed_command(
+                    &mut state.cores,
+                    &state.template,
+                    &state.ended,
+                    key.clone(),
+                    cmd.clone(),
+                );
             }
             WlOverlayCmd::Cmd { .. } => {}
         }
@@ -582,6 +598,7 @@ fn owner_thread(rx: Receiver<WlOverlayCmd>) -> anyhow::Result<()> {
         return Ok(());
     };
 
+    dbg("connecting after positioned cursor command");
     let conn = Connection::connect_to_env()?;
     let mut queue = conn.new_event_queue::<OverlayState>();
     let qh = queue.handle();
@@ -1658,6 +1675,80 @@ mod tests {
         assert!(state.ended.contains("session-a"));
         assert!(!state.cores.contains_key("session-a"));
         assert!(state.outputs.is_empty());
+    }
+
+    fn cold_metadata(key: &str) -> Vec<WlOverlayCmd> {
+        use cursor_overlay::CursorAction;
+        [
+            OverlayCommand::SetSessionLabel("Synthetic session".into()),
+            OverlayCommand::SetEnabled(true),
+            OverlayCommand::PinAbove(42),
+            OverlayCommand::SetPressed(false),
+            OverlayCommand::BeginAction {
+                action: CursorAction::Observe,
+                delivery: None,
+                target: None,
+            },
+            OverlayCommand::EndAction(CursorAction::Observe),
+            OverlayCommand::BeginAction {
+                action: CursorAction::Drag,
+                delivery: None,
+                target: None,
+            },
+            OverlayCommand::EndAction(CursorAction::Drag),
+        ]
+        .into_iter()
+        .map(|cmd| WlOverlayCmd::Cmd {
+            key: key.to_owned(),
+            cmd,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn cold_observation_and_refused_action_metadata_never_connects_to_wayland() {
+        for end_session in [false, true] {
+            let (tx, rx) = bounded(16);
+            for command in cold_metadata("session-a") {
+                tx.send(command).unwrap();
+            }
+            if end_session {
+                tx.send(WlOverlayCmd::Remove("session-a".to_owned()))
+                    .unwrap();
+            }
+            drop(tx);
+            // The real owner must finish without connecting, even when the
+            // process exits with observation/action metadata still queued.
+            assert!(owner_thread(rx).is_ok());
+        }
+    }
+
+    #[test]
+    fn cold_metadata_is_retained_before_first_positioned_command() {
+        let (tx, rx) = bounded(16);
+        for command in cold_metadata("session-a") {
+            tx.send(command).unwrap();
+        }
+        tx.send(snap_command("session-a")).unwrap();
+        tx.send(WlOverlayCmd::Remove("session-a".to_owned()))
+            .unwrap();
+        drop(tx);
+        let mut state = OverlayState::new(CursorConfig::default());
+        assert!(matches!(
+            wait_for_renderer_command(&rx, &mut state),
+            Some(WlOverlayCmd::Cmd {
+                cmd: OverlayCommand::SnapTo { .. },
+                ..
+            })
+        ));
+        let core = state.cores.get("session-a").unwrap();
+        assert_eq!(core.session_label.as_deref(), Some("Synthetic session"));
+        assert!(core.pos.0 < -50.0);
+        assert!(state.outputs.is_empty());
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(WlOverlayCmd::Remove(key)) if key == "session-a"
+        ));
     }
 
     #[test]

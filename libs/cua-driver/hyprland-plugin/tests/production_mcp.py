@@ -61,6 +61,9 @@ class DirectMCP(MCP):
     def __init__(self, driver, directory, profile):
         self.directory = directory
         env = profile_environment(profile)
+        # Bounded renderer lifecycle messages distinguish a cold runtime from
+        # one that created layer surfaces. No input payloads are logged here.
+        env['CUA_OVERLAY_DEBUG'] = '1'
         self.log = (directory / 'mcp.stderr').open('w')
         self.process = None
         self.counter = 0

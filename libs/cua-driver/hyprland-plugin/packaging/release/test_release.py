@@ -1,10 +1,14 @@
 """Source-release tests; native commands use synthetic contract fixtures."""
 
 import importlib.util
+import json
+import os
 from pathlib import Path
 import subprocess
+import sys
 import tarfile
 import tempfile
+import textwrap
 import unittest
 from unittest import mock
 
@@ -97,6 +101,104 @@ class ReleaseTest(unittest.TestCase):
         self.git("commit", "-qm", "Missing required source")
         with self.assertRaisesRegex(ValueError, "required committed regular file"):
             bundle.generate(self.repo, self.git("rev-parse", "HEAD"), "1.2.3", self.root / "missing")
+
+    def test_release_archives_match_local_kit_and_are_deterministic(self):
+        self.git("tag", "-a", "cua-driver-rs-v1.2.3", "-m", "Synthetic component tag")
+        local = self.generate()
+        outputs = [self.root / name for name in ("assets-first", "assets-second")]
+        for output in outputs:
+            bundle.generate(self.repo, self.revision, "1.2.3", output, release_assets=True)
+            self.write(bundle.RELEASE + "USAGE.md", "dirty documentation must not ship")
+        self.assertEqual({p.name: p.read_bytes() for p in outputs[0].iterdir()},
+                         {p.name: p.read_bytes() for p in outputs[1].iterdir()})
+        stem = f"cua-hyprland-plugin-1.2.3-{self.revision}"
+        self.assertEqual({p.name for p in outputs[0].iterdir()},
+                         {f"{stem}.tar.gz", f"{stem}-build-kit.tar.gz"})
+        self.assertEqual((outputs[0] / f"{stem}.tar.gz").read_bytes(),
+                         (local / f"{stem}.tar.gz").read_bytes())
+        with tarfile.open(outputs[0] / f"{stem}-build-kit.tar.gz") as archive:
+            self.assertEqual(archive.getnames(), sorted([
+                "PKGBUILD", "README.md", "SHA256SUMS", "SOURCE-PROVENANCE.json",
+            ]))
+            kit = {member.name: archive.extractfile(member).read() for member in archive.getmembers()}
+            for member in archive.getmembers():
+                self.assertTrue(member.isfile())
+                self.assertEqual((member.uid, member.gid, member.mtime, member.mode), (0, 0, 0, 0o644))
+                self.assertEqual(kit[member.name], (local / member.name).read_bytes())
+        for line in kit["SHA256SUMS"].decode().splitlines():
+            digest, name = line.split("  ")
+            self.assertEqual(digest, bundle.sha256((local / name).read_bytes()))
+        self.assertFalse(json.loads(kit["SOURCE-PROVENANCE.json"])["native_certified"])
+        with self.assertRaises(FileExistsError):
+            bundle.generate(self.repo, self.revision, "1.2.3", outputs[0], release_assets=True)
+
+    def test_release_assets_require_exact_tag_and_committed_version(self):
+        output = self.root / "invalid-assets"
+        with self.assertRaises(subprocess.CalledProcessError):
+            bundle.generate(self.repo, self.revision, "1.2.3", output, release_assets=True)
+        self.git("tag", "cua-driver-rs-v1.2.3")
+        self.write("unrelated.txt", "another commit")
+        self.git("add", "unrelated.txt")
+        self.git("commit", "-qm", "Different source revision")
+        with self.assertRaisesRegex(ValueError, "exact Driver release tag"):
+            bundle.generate(self.repo, self.git("rev-parse", "HEAD"), "1.2.3", output, release_assets=True)
+        self.git("tag", "cua-driver-rs-v1.2.4", self.revision)
+        for version in ("1.2.4", "1.2.3-nightly.20260905"):
+            with self.assertRaises(ValueError):
+                bundle.generate(self.repo, self.revision, version, output, release_assets=True)
+        self.assertFalse(output.exists())
+
+    def workflow_generate(self, version="1.2.3"):
+        workflow = (HERE.parents[4] / ".github/workflows/cd-rust-cua-driver.yml").read_text()
+        job = workflow.split("  build-hyprland-plugin-source:\n", 1)[1]
+        script = textwrap.dedent(job.split("        run: |\n", 1)[1].split(
+            "      - uses: actions/upload-artifact@v4", 1
+        )[0])
+        binaries = self.root / "bin"
+        binaries.mkdir(exist_ok=True)
+        python = binaries / "python3"
+        if not python.exists():
+            python.symlink_to(sys.executable)
+        return subprocess.run(["bash", "-e", "-c", script], cwd=self.repo,
+                              env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}",
+                                   "GITHUB_REF": "refs/heads/main", "REQUESTED_VERSION": version,
+                                   "GITHUB_OUTPUT": str(self.root / "step-output")},
+                              capture_output=True, text=True)
+
+    def test_workflow_legacy_recovery_still_checks_source_and_version(self):
+        self.git("tag", "cua-driver-rs-v1.2.3")
+        legacy = self.workflow_generate()
+        self.assertEqual(legacy.returncode, 0, legacy.stderr)
+        self.assertIn("Legacy source has no plugin bundler", legacy.stdout)
+        self.assertFalse((self.root / "step-output").exists())
+        self.git("tag", "cua-driver-rs-v1.2.4")
+        self.assertNotEqual(self.workflow_generate("1.2.4").returncode, 0)
+        self.write("unrelated.txt", "different source")
+        self.git("add", "unrelated.txt")
+        self.git("commit", "-qm", "Different checkout")
+        self.assertNotEqual(self.workflow_generate().returncode, 0)
+
+    def test_workflow_existing_bundler_failure_is_not_a_legacy_skip(self):
+        self.write(bundle.RELEASE + "bundle.py", "raise SystemExit(17)\n")
+        self.git("add", bundle.RELEASE + "bundle.py")
+        self.git("commit", "-qm", "Existing incompatible bundler")
+        self.git("tag", "cua-driver-rs-v1.2.3")
+        result = self.workflow_generate()
+        self.assertEqual(result.returncode, 17, result.stderr)
+        self.assertNotIn("Legacy source", result.stdout)
+        self.assertFalse((self.root / "step-output").exists())
+
+    def test_workflow_generates_both_assets_from_the_tag(self):
+        self.write(bundle.RELEASE + "bundle.py", (HERE / "bundle.py").read_text())
+        self.git("add", bundle.RELEASE + "bundle.py")
+        self.git("commit", "-qm", "Release-capable bundler")
+        self.git("tag", "cua-driver-rs-v1.2.3")
+        result = self.workflow_generate()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual((self.root / "step-output").read_text(), "available=true\n")
+        stem = f"cua-hyprland-plugin-1.2.3-{self.git('rev-parse', 'HEAD')}"
+        self.assertEqual({p.name for p in (self.repo / "plugin-release-assets").iterdir()},
+                         {f"{stem}.tar.gz", f"{stem}-build-kit.tar.gz"})
 
     def test_source_tampering_and_provenance_mismatch(self):
         source = self.source()

@@ -524,7 +524,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && inputs.publish && "
             "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
         )
-        self.assertEqual(workflow.count(immutable_ref), 6)
+        self.assertEqual(workflow.count(immutable_ref), 7)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -665,7 +665,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn(
             "[build-linux, build-windows, build-macos-universal, "
             "verify-windows-node-runtime, "
-            "verify-release-artifacts, verify-mcp-client-discovery]",
+            "verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]",
             workflow,
         )
 

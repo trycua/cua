@@ -20,9 +20,15 @@ compiler does not satisfy this contract. Arrange the pinned dependencies in the
 target environment before building; the recipe does not install a toolchain or
 alter runtime search paths.
 
-Download the source tarball, `PKGBUILD`, `SOURCE-PROVENANCE.json`, `README.md`, and
-`SHA256SUMS` from the same exact component release into a dedicated directory.
-Review the recipe and verify the downloaded assets:
+Download the `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA.tar.gz` source archive
+and matching `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA-build-kit.tar.gz` from
+the same exact component release. The filenames contain the release version
+and full source commit SHA. Verify both archives against that release's
+published checksums before extracting the build kit into a dedicated empty
+directory. Place the source archive alongside its extracted `PKGBUILD`,
+`SOURCE-PROVENANCE.json`, `README.md`, and `SHA256SUMS`.
+
+From that directory, review the recipe and verify its files and source archive:
 
 ```sh
 sha256sum -c SHA256SUMS

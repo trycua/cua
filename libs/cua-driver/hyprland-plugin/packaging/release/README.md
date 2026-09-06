@@ -34,11 +34,29 @@ refuses an existing output directory and mismatched versions.
 The output contains the source tarball, `PKGBUILD`, `SOURCE-PROVENANCE.json`,
 the standalone operator `README.md` from `USAGE.md`, and `SHA256SUMS`.
 The package version follows the Driver release version; the plugin's
-CMake version is recorded separately. Release automation must verify that the
-exact `cua-driver-rs-vDRIVER_VERSION` tag resolves to `COMMIT_SHA` before attaching
-these assets to that component release. The generator does not resolve a generic
-latest release or assert that a tag exists. Review the generated assets before
-publication. Checksums establish consistency with the reviewed recipe; they are
+CMake version is recorded separately.
+
+For component release assets, add `--release-assets`. This mode requires the
+exact `cua-driver-rs-vDRIVER_VERSION` tag to resolve to `COMMIT_SHA` and emits
+only two uniquely named archives:
+
+- `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA.tar.gz`: pinned source.
+- `cua-hyprland-plugin-DRIVER_VERSION-COMMIT_SHA-build-kit.tar.gz`: `PKGBUILD`,
+  `SOURCE-PROVENANCE.json`, operator `README.md`, and `SHA256SUMS`.
+
+The Driver release workflow generates these assets for stable component tag
+builds and publishing dispatches, with the same source override as the native
+Driver builds. The tag and committed Cargo version must match that source.
+Nightly and manual build-only runs do not generate plugin release assets.
+Recovery of historical tags that contain no bundler produces Driver-only
+assets. If a tag contains a bundler but generation fails, publication is blocked.
+Publication waits for this job and includes both archives in the component
+release checksums. The kit's `SHA256SUMS` remains inside its archive to avoid
+colliding with other release assets. Existing output directories are refused.
+
+The default local preparation mode does not require a tag. Neither mode resolves
+a generic latest release. Review the generated assets before publication.
+Checksums establish consistency with the reviewed recipe; they are
 not an independent signature or native certification.
 The manifest's `native_certified: false` describes the generator's evidence
 scope. An independently certified release must publish its separate native
@@ -46,9 +64,11 @@ evidence for the exact revision and environment; this field does not negate it.
 
 ## Build without a checkout
 
-Download all five assets from the same exact component release into a dedicated
-directory. Use the generated `README.md` for installation, activation, upgrade,
-restart, and rollback instructions.
+Download both archives from the same exact component release and verify them
+against its published checksums. Extract the build kit into a dedicated empty
+directory and place the source tarball alongside the extracted files. Verify
+`SHA256SUMS` from that directory. Use the generated `README.md` for installation,
+activation, upgrade, restart, and rollback instructions.
 Review the recipe, provide the pinned Hyprland package and matching compiler,
 and run `makepkg` as an ordinary user. `makepkg` can download the pinned source
 tarball itself; no Git checkout is needed.

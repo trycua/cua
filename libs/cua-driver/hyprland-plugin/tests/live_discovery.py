@@ -13,6 +13,9 @@ import subprocess
 import time
 from pathlib import Path
 
+if not __debug__:
+    raise RuntimeError("Discovery validation requires assertions; do not use -O or PYTHONOPTIMIZE")
+
 HEADER = struct.Struct("!4sHHHHQI")
 
 

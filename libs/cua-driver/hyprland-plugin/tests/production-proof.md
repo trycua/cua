@@ -76,6 +76,24 @@ Review a JSON plan before execution. The plan has:
   dialog stops the run without recovery keys or replay. Unmarked reviewed
   steps retain their existing grounding contract. Saved-file and trace oracles
   are still required; a grounded shortcut alone does not prove its effect.
+- Optional per-step `pointer_stage` derives coordinates from the same fresh
+  full snapshot used before dispatch. Supply empty `arguments` and the matching
+  tool: Calc `click_b2`/`click_a1` use `click`, `select_range` uses `drag`;
+  Inkscape `click_rectangle` uses `click`, `move_rectangle` uses `drag`. Both
+  apps accept `scroll_down`/`scroll_up` with `scroll`. These are app-effect
+  cases only, not refusal or partial-delivery cases. They cannot also use
+  `smoke_stage`. The native guest needs Python GI and GdkPixbuf for PNG reading.
+  Calc requires the visible, regular cell grid and a unique vertical scrollbar;
+  click/range cases require the top of the sheet and a changed name-field
+  selection. Inkscape requires the unique blue synthetic rectangle. Its click
+  case must start unselected and end selected; scroll must move the rendered
+  canvas without changing document geometry; drag must move the rectangle in
+  pixels and document coordinates without resizing it. The helper rejects
+  clipped, ambiguous, missing, or scaled observations. Exact derived arguments
+  and their source image are saved before the action. Both drags last 1.5 seconds
+  with 30 steps; a parallel phase still needs `require_overlap:true` and a
+  complete trace to prove actual overlap. Saved-output oracles remain required.
+  This is proof preparation, not evidence that these native cells have passed.
 - Optional per-step `expect`: `{kind:"refused",reason:"<exact observed contract reason>"}`,
   `{kind:"partial"}`, or `{kind:"unknown"}`. The default is dispatched. Denial
   phases run serially so the no-dispatch interval contains no other action.

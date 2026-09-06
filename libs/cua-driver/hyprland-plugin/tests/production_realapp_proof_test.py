@@ -704,6 +704,104 @@ class SmokeStageTests(unittest.TestCase):
                         self.assertEqual(report['actions'][0]['smoke_stage'], stage)
 
 
+class PointerStageTests(unittest.TestCase):
+    def test_pointer_stages_reject_supplied_coordinates_or_wrong_tool(self):
+        candidate = plan()
+        candidate['phases'] = [{'agent': 0, 'pointer_stage': 'click_b2', 'tool': 'click', 'arguments': {}}]
+        validate_plan(candidate)
+        for change in ({'arguments': {'x': 1, 'y': 2}}, {'tool': 'press_key'},
+                       {'pointer_stage': 'unknown'}, {'smoke_stage': 'insert'},
+                       {'expect': {'kind': 'partial'}}):
+            changed = copy.deepcopy(candidate)
+            changed['phases'][0].update(change)
+            with self.subTest(change=change), self.assertRaises(AssertionError):
+                validate_plan(changed)
+
+    def test_pointer_actions_use_the_same_response_image_and_never_replay(self):
+        for failure in (None, 'before', 'after', 'missing_image', 'transport'):
+            with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                root = Path(directory)
+                candidate = plan()
+                candidate['phases'] = [{'agent': 0, 'pointer_stage': 'click_b2', 'tool': 'click', 'arguments': {}}]
+                bounds = {'x': 0, 'y': 0, 'width': 600, 'height': 600}
+                for index, spec in enumerate(candidate['agents']):
+                    spec.update(bounds=bounds, name=f'agent-{index}', profile={'mode': 'standard'})
+                    output = root / f'{index}.xml'
+                    output.write_text('<synthetic/>')
+                    candidate['outputs'][index]['path'] = str(output)
+                plan_path = root / 'plan.json'
+                plan_path.write_text(json.dumps(candidate))
+                args = SimpleNamespace(plan=plan_path, evidence=root / 'evidence', trace_socket=None,
+                                       driver=root / 'driver', primary_grab=root / 'primary-grab',
+                                       foreground_journal=root / 'journal', record_video=False)
+                targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
+                clients, calls, held = [], [], [True]
+                def client(driver, folder, profile):
+                    mcp = Mock(directory=folder, counter=0,
+                               process=Mock(pid=100 + len(clients), poll=Mock(return_value=None)))
+                    clients.append(mcp)
+                    def tool(name, parameters):
+                        mcp.counter += 1
+                        if name == 'list_windows':
+                            return {'structuredContent': {'windows': targets}}
+                        if name == 'get_window_state':
+                            calls.append(('snapshot', parameters, folder.name, mcp.counter))
+                            image = folder / f'{mcp.counter}.png'
+                            image.write_bytes(b'synthetic image read by a stub')
+                            return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds},
+                                    'content': [] if failure == 'missing_image' else
+                                    [{'type': 'image', 'image_file': image.name}]}
+                        if name == 'get_desktop_state':
+                            return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}
+                        if name == 'click':
+                            calls.append(('input', parameters))
+                            if failure == 'transport':
+                                raise TimeoutError('unknown outcome')
+                            return {'structuredContent': {'route': 'synthetic_events', 'effect': 'unverifiable'}}
+                        return {'structuredContent': {}}
+                    mcp.tool.side_effect = tool
+                    return mcp
+                grounding = Mock(return_value=({'x': 103, 'y': 205}, {'app': 'calc', 'stage': 'click_b2'}),
+                                 side_effect=RuntimeError('missing grounding') if failure == 'before' else None)
+                verification = Mock(return_value={'verified': True},
+                                    side_effect=AssertionError('unchanged app') if failure == 'after' else None)
+                replacements = {'provenance': Mock(return_value={}), 'DirectMCP': client,
+                    'subprocess.Popen': Mock(return_value=Mock(poll=Mock(return_value=0))),
+                    'primary_acknowledgement': Mock(return_value='HELD\n'),
+                    'verify_output': Mock(return_value={'verified': True}),
+                    'wait_for': lambda predicate: self.assertTrue(predicate()),
+                    'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
+                    'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1, 'cursor': {'x': 100, 'y': 200}},
+                    'stop_process': lambda process: held.__setitem__(0, False),
+                    'pointer_grounding.read_pixels': lambda path: path,
+                    'pointer_grounding.action': grounding, 'pointer_grounding.verify': verification}
+                for name, replacement in replacements.items():
+                    stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                self.assertEqual(run(args), 0 if failure is None else 1)
+                inputs = [index for index, row in enumerate(calls) if row[0] == 'input']
+                self.assertEqual(len(inputs), 0 if failure in ('before', 'missing_image') else 1)
+                for index in inputs:
+                    self.assertEqual(calls[index - 1][0], 'snapshot')
+                    self.assertEqual(calls[index + 1][0], 'snapshot')
+                    self.assertEqual(calls[index][1], {**candidate['agents'][0]['target'],
+                                                      'session': 'agent-0', 'delivery_mode': 'background',
+                                                      'x': 103, 'y': 205})
+                    before = calls[index - 1]
+                    self.assertTrue(grounding.call_args.args[1].endswith(f'{before[2]}/{before[3]}.png'))
+                    self.assertEqual(grounding.call_args.args[0]['proof_image'], grounding.call_args.args[1])
+                if failure is None:
+                    after = calls[inputs[0] + 1]
+                    self.assertTrue(verification.call_args.args[1].endswith(f'{after[2]}/{after[3]}.png'))
+                    report = json.loads((args.evidence / 'result.json').read_text())
+                    self.assertTrue(report['actions'][0]['app_effect_verified'])
+                    self.assertEqual(report['actions'][0]['pointer_stage'], 'click_b2')
+                if inputs:
+                    self.assertEqual(len(list(args.evidence.glob('pointer-agent-*.json'))), 1)
+                for mcp in clients:
+                    mcp.close.assert_called_once()
+                self.assertFalse(held[0])
+
+
 class ResponseTests(unittest.TestCase):
     def test_common_policy_refusal_uses_existing_envelope_not_invented_action_fields(self):
         result = {'isError': True, 'structuredContent': {'status': 'refused',

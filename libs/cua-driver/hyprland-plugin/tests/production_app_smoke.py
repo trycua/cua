@@ -265,8 +265,8 @@ def rows(snapshot):
     return elements
 
 
-def calc_formula_selection(snapshot, elements):
-    """Recognize the pinned GTK3 Calc name field, not an arbitrary A1 label.
+def calc_formula_selection(snapshot, elements, expected='A1'):
+    """Recognize the pinned GTK3 Calc name field, not an arbitrary matching label.
 
     Calc's non-actionable Formula Tool Bar appears only in tree_markdown.
     Cross-check that section's indexed name-field panel against structured
@@ -285,7 +285,7 @@ def calc_formula_selection(snapshot, elements):
             break
         section.append(line.strip())
     candidates = [row for row in elements if row.get('role') == 'text'
-                  and row.get('label') == 'A1' and row.get('enabled') is True]
+                  and row.get('label') == expected and row.get('enabled') is True]
     if len(candidates) != 1:
         return False
     field = candidates[0]
@@ -294,7 +294,7 @@ def calc_formula_selection(snapshot, elements):
     if len(panels) != 1:
         return False
     panel = panels[0]
-    field_line = f'- [{field.get("element_index")}] text "A1" '
+    field_line = f'- [{field.get("element_index")}] text "{expected}" '
     panel_line = f'- [{panel.get("element_index")}] panel "" '
     return (sum(line.startswith(field_line) for line in section) == 1
             and sum(line.startswith(panel_line) for line in section) == 1

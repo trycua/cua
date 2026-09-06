@@ -1,0 +1,157 @@
+"""Synthetic pixels and semantic projections; no native operation is performed."""
+import copy
+import unittest
+
+import production_pointer_grounding as pointer
+from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
+
+
+class Image:
+    width = height = 500
+
+    def __init__(self):
+        self.points = {}
+
+    def rgb(self, x, y):
+        assert 0 <= x < self.width and 0 <= y < self.height
+        return self.points.get((x, y), (255, 255, 255))
+
+    def rectangle(self, x, y, w, h):
+        self.points.update({(a, b): (51, 102, 153) for a in range(x, x + w) for b in range(y, y + h)})
+
+
+def snapshot(app):
+    return {'window_title': f'cua-smoke-{app}', 'window_bounds': {'x': 600, 'y': 400, 'width': 500, 'height': 500},
+            'screenshot_width': 500, 'screenshot_height': 500}
+
+
+def calc(selection='A2', scroll=0):
+    state = snapshot('calc')
+    state.update(elements=[
+        {'role': 'panel', 'element_index': 1, 'enabled': True},
+        {'role': 'text', 'element_index': 2, 'parent_index': 1, 'label': selection, 'enabled': True},
+        {'role': 'combo box', 'element_index': 3, 'parent_index': 1, 'enabled': True},
+        {'role': 'table', 'element_index': 4, 'label': 'Sheet Smoke',
+         'frame': {'x': 645, 'y': 569, 'w': 340, 'h': 270}},
+        {'role': 'scroll bar', 'value': str(scroll), 'frame': {'x': 990, 'y': 569, 'w': 14, 'h': 270}}],
+        tree_markdown='\n'.join(['- tool bar = "Formula Tool Bar"',
+                                 '  - [1] panel "" [actions=[]]',
+                                 f'    - [2] text "{selection}" [actions=[]]']))
+    image = Image()
+    for x in (129, 214, 299, 384):
+        image.points.update({(x, y): (204, 204, 204) for y in range(169, 439)})
+    for y in range(186, 439, 18):
+        image.points.update({(x, y): (204, 204, 204) for x in range(45, 385)})
+    return state, image
+
+
+def ink(selected=True, dx=0, dy=0, scroll_y=0):
+    state = {**snapshot('inkscape'), **copy.deepcopy(INKSCAPE_SELECTED if selected else INKSCAPE)}
+    if selected:
+        for row in state['elements']:
+            if row['role'] == 'spin button':
+                row['frame'] = {'x': 700, 'y': 435, 'w': 100, 'h': 34}
+        for index, value in ((2, 40 + dx * .8), (3, 60 + dy * .8)):
+            row = next(row for row in state['elements'] if row['element_index'] == index)
+            state['tree_markdown'] = state['tree_markdown'].replace(
+                f'[{index}] spin button "{row["label"]}" value="{row["value"]}"',
+                f'[{index}] spin button "{value:.3f}" value="{value:.1f}"')
+            row.update(label=f'{value:.3f}', value=f'{value:.1f}')
+    image = Image()
+    image.rectangle(120 + dx, 150 + dy + scroll_y, 100, 60)
+    return state, image
+
+
+class PointerGroundingTests(unittest.TestCase):
+    def test_calc_points_are_derived_from_the_current_grid(self):
+        state, image = calc()
+        self.assertEqual(pointer.calc_cells(state, image), {'A1': (86, 177), 'B2': (171, 195), 'B3': (171, 213)})
+        args, oracle = pointer.action(state, image, 'calc', 'click_b2')
+        self.assertEqual(args, {'x': 171, 'y': 195})
+        self.assertTrue(pointer.verify(*calc('B2'), oracle)['verified'])
+        with self.assertRaises(AssertionError):
+            pointer.verify(*calc('A2'), oracle)
+        args, oracle = pointer.action(*calc('B2'), 'calc', 'select_range')
+        self.assertEqual(args, {'from_x': 86, 'from_y': 177, 'to_x': 171, 'to_y': 213,
+                                'duration_ms': 1500, 'steps': 30})
+        self.assertTrue(pointer.verify(*calc('A1:B3'), oracle)['verified'])
+
+    def test_calc_grid_and_scroll_refuse_ambiguous_or_clipped_state(self):
+        for failure in ('blank', 'duplicate', 'clipped', 'scrolled', 'irregular', 'already_selected', 'scaled'):
+            with self.subTest(failure=failure):
+                state, image = calc('B2' if failure == 'already_selected' else 'A2')
+                if failure == 'blank':
+                    image.points.clear()
+                elif failure == 'duplicate':
+                    state['elements'].append(copy.deepcopy(state['elements'][3]))
+                elif failure == 'clipped':
+                    state['elements'][3]['frame']['x'] = 900
+                elif failure == 'scrolled':
+                    state['elements'][4]['value'] = '5'
+                elif failure == 'irregular':
+                    image.points.update({(140, y): (204, 204, 204) for y in range(169, 439)})
+                elif failure == 'scaled':
+                    state['screenshot_width'] = 250
+                with self.assertRaises((AssertionError, pointer.GroundingUnavailable)):
+                    pointer.action(state, image, 'calc', 'click_b2')
+
+    def test_calc_scroll_requires_an_observed_value_change(self):
+        args, oracle = pointer.action(*calc(), 'calc', 'scroll_down')
+        self.assertEqual(args['amount'], 1)
+        self.assertTrue(pointer.verify(*calc(scroll=3), oracle)['verified'])
+        with self.assertRaises(AssertionError):
+            pointer.verify(*calc(), oracle)
+        _, oracle = pointer.action(*calc(scroll=3), 'calc', 'scroll_up')
+        self.assertTrue(pointer.verify(*calc(), oracle)['verified'])
+
+    def test_inkscape_click_requires_an_actual_selection_transition(self):
+        args, oracle = pointer.action(*ink(False), 'inkscape', 'click_rectangle')
+        self.assertEqual(args, {'x': 169, 'y': 179})
+        self.assertTrue(pointer.verify(*ink(), oracle)['verified'])
+        with self.assertRaises(pointer.GroundingUnavailable):
+            pointer.verify(*ink(False), oracle)
+        with self.assertRaises(pointer.GroundingUnavailable):
+            pointer.action(*ink(), 'inkscape', 'click_rectangle')
+
+    def test_inkscape_drag_and_scroll_need_pixels_and_semantics_to_agree(self):
+        args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
+        self.assertEqual([args['to_x'] - args['from_x'], args['to_y'] - args['from_y']], [40, 30])
+        self.assertTrue(pointer.verify(*ink(dx=40, dy=30), oracle)['verified'])
+        with self.assertRaises(AssertionError):
+            pointer.verify(*ink(), oracle)
+        _, oracle = pointer.action(*ink(), 'inkscape', 'scroll_down')
+        self.assertTrue(pointer.verify(*ink(scroll_y=-20), oracle)['verified'])
+        for state in (ink(), ink(scroll_y=20), ink(dx=10, dy=10)):
+            with self.assertRaises(AssertionError):
+                pointer.verify(*state, oracle)
+
+    def test_wrong_or_ambiguous_blue_pixels_do_not_ground(self):
+        for failure in ('wrong_title', 'dialog', 'blank', 'two_rectangles', 'clipped', 'semantic_mismatch'):
+            with self.subTest(failure=failure):
+                state, image = ink()
+                if failure == 'wrong_title':
+                    state['window_title'] = 'another.svg'
+                elif failure == 'dialog':
+                    state['elements'].append({'role': 'dialog'})
+                elif failure == 'blank':
+                    image.points.clear()
+                elif failure == 'two_rectangles':
+                    image.rectangle(300, 250, 80, 50)
+                elif failure == 'clipped':
+                    image.points.clear()
+                    image.rectangle(120, 80, 100, 60)
+                else:
+                    state['elements'][1]['value'] = '999.0'
+                with self.assertRaises((AssertionError, pointer.GroundingUnavailable)):
+                    pointer.action(state, image, 'inkscape', 'move_rectangle')
+
+    def test_rgb_accessor_honors_stride_and_alpha(self):
+        image = pointer.Pixels(2, 2, bytes([10, 20, 30, 255, 40, 50, 60, 255, 0, 0,
+                                          70, 80, 90, 255, 100, 110, 120, 255]), 10, 4)
+        self.assertEqual(image.rgb(1, 1), (100, 110, 120))
+        with self.assertRaises(AssertionError):
+            image.rgb(2, 1)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -22,6 +22,7 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_app_smoke import EXECUTABLES, ground, package_owner, provenance as runtime_provenance
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
+import production_pointer_grounding as pointer_grounding
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
 
 
@@ -116,6 +117,14 @@ def validate_plan(plan):
                     'invalid app smoke stage'
                 assert (step['tool'], step['arguments']) == SMOKE_STEPS[app][stage], \
                     'smoke stage must match its exact keyboard action'
+            if 'pointer_stage' in step:
+                app = plan['agents'][step['agent']].get('app')
+                stage = step['pointer_stage']
+                assert 'smoke_stage' not in step and plan['purpose'] == 'apps'
+                assert app in pointer_grounding.STAGES and stage in pointer_grounding.STAGES[app]
+                assert step['tool'] == pointer_grounding.STAGES[app][stage] and step['arguments'] == {}, \
+                    'pointer stages derive their exact arguments from the fresh image'
+                assert step.get('expect', {'kind': 'dispatched'}) == {'kind': 'dispatched'}
             expected = step.get('expect', {'kind': 'dispatched'})
             assert expected['kind'] in ('dispatched', 'refused', 'partial', 'unknown')
             if expected['kind'] == 'refused':
@@ -393,7 +402,7 @@ def provenance(args, plan):
     assert plan['package_versions'] == origin['packages'], 'package qualification mismatch'
     files = {'primary-grab': args.primary_grab}
     for name in ('production_realapp_proof.py', 'production_mcp.py', 'driver_input_live.py',
-                 'realapp_proof.py', 'primary_trace.py'):
+                 'realapp_proof.py', 'primary_trace.py', 'production_pointer_grounding.py'):
         files[name] = Path(__file__).with_name(name)
     windows = json.loads(subprocess.check_output(
         ['hyprctl', '-j', 'clients'], text=True, timeout=10))
@@ -449,7 +458,7 @@ def run(args):
         directory = args.evidence / name
         directory.mkdir()
         return DirectMCP(args.driver, directory, profile)
-    def snapshot(mcp, target, session=None, full=False):
+    def snapshot(mcp, target, session=None, full=False, pixels=False):
         if capacity or policy_cache or full:
             windows = mcp.tool('list_windows', {})
             assert not windows.get('isError'), windows
@@ -463,6 +472,14 @@ def run(args):
         assert not result.get('isError'), result
         content = result['structuredContent']
         assert content.get('screenshot_width', 0) > 0, 'missing grounding image'
+        if pixels:
+            images = [row for row in result.get('content', []) if row.get('type') == 'image']
+            assert len(images) == 1 and images[0].get('image_file'), 'missing exact snapshot image file'
+            path = mcp.directory / images[0]['image_file']
+            assert path.resolve(strict=True).parent == mcp.directory.resolve(strict=True)
+            # Evidence-only path; never sent back to Driver or inserted into its
+            # persisted snapshot. Pixels come from this exact MCP response.
+            content = {**content, 'proof_image': str(path)}
         return content
     def action(step, barrier=None):
         index = step['agent']
@@ -473,10 +490,19 @@ def run(args):
             trace_before = policy_cache_traces[-1] if policy_cache_traces else current_trace
             assert_no_dispatch(trace_before, current_trace)
         smoke_stage = step.get('smoke_stage')
-        before = snapshot(mcp, spec['target'], spec['name'], full=smoke_stage is not None)
+        pointer_stage = step.get('pointer_stage')
+        full = smoke_stage is not None or pointer_stage is not None
+        before = snapshot(mcp, spec['target'], spec['name'], full=full, pixels=pointer_stage is not None)
         assert before['window_bounds'] == spec['bounds'], 'reviewed geometry is stale'
         if smoke_stage is not None:
             ground(before, spec['app'], smoke_stage)
+        arguments = step['arguments']
+        if pointer_stage is not None:
+            arguments, pointer_oracle = pointer_grounding.action(
+                before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], pointer_stage)
+            save(f'pointer-agent-{index}-{mcp.counter}.json',
+                 {'snapshot_image': before['proof_image'], 'tool': step['tool'],
+                  'arguments': arguments, 'oracle': pointer_oracle})
         if policy_cache:
             # Keep the full interval quiet through fresh grounding, including
             # delayed events after the preceding denied response.
@@ -493,21 +519,25 @@ def run(args):
         mark('action_start', agent=index, tool=step['tool'], runtime_pid=mcp.process.pid)
         action_start = time.monotonic_ns()
         try:
-            response = mcp.tool(step['tool'], {**step['arguments'], **spec['target'],
+            response = mcp.tool(step['tool'], {**arguments, **spec['target'],
                                 'session': spec['name'], 'delivery_mode': 'background'})
         except Exception:
             # A transport failure poisons that runtime. Preserve a fresh independent
             # after-snapshot when available without retrying the mutation.
             with observer_lock:
-                snapshot(recorder, spec['target'], full=smoke_stage is not None)
+                snapshot(recorder, spec['target'], full=full, pixels=pointer_stage is not None)
             raise
         action_intervals.append((action_start, time.monotonic_ns()))
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
-        after = snapshot(mcp, spec['target'], spec['name'], full=smoke_stage is not None)
+        after = snapshot(mcp, spec['target'], spec['name'], full=full, pixels=pointer_stage is not None)
         result = check_response(response, expected)
         if smoke_stage is not None:
             ground(after, spec['app'], 'after')
             result['smoke_stage'] = smoke_stage
+        if pointer_stage is not None:
+            result['pointer_effect'] = pointer_grounding.verify(
+                after, pointer_grounding.read_pixels(after['proof_image']), pointer_oracle)
+            result.update(app_effect_verified=True, pointer_stage=pointer_stage, arguments=arguments)
         if policy_cache:
             trace_after = trace.collect()
             save(f'policy-cache-phase-{len(policy_cache_traces)}-trace.json',

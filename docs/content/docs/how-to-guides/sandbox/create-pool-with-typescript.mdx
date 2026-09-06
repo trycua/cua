@@ -42,7 +42,7 @@ public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:c1e601dbb748fdc467c663136f7592e3
 Install the Fleet lifecycle SDK and a TypeScript runner:
 
 ```bash
-npm install @trycua/fleet
+npm install @trycua/fleet@0.1.1
 npm install --save-dev tsx typescript
 npm pkg set type=module
 ```
@@ -155,6 +155,7 @@ try {
   console.log(`Reconciled template ${template.metadata.name}`);
 
   claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
+  console.log(`Claim: ${claim.metadata.namespace}/${claim.metadata.name}`);
   const sandbox = await client.waitClaim(claim);
 
   const requestBody = await new Blob([JSON.stringify({ command: 'screenshot' })]).arrayBuffer();
@@ -202,7 +203,7 @@ Create a Vite TypeScript project and install the browser SDK:
 npm create vite@latest fleet-browser -- --template vanilla-ts
 cd fleet-browser
 npm install
-npm install @trycua/fleet
+npm install @trycua/fleet@0.1.1
 ```
 
 Create `.env.local` with temporary, narrowly scoped OAuth client credentials
@@ -339,6 +340,7 @@ try {
   console.log(`Reconciled pool ${pool.metadata.name} with template ${template.metadata.name}`);
 
   claim = await client.createClaim(new CreateClaimRequestBuilder().pool(pool).build());
+  console.log(`Claim: ${claim.metadata.namespace}/${claim.metadata.name}`);
   const sandbox = await client.waitClaim(claim);
 
   const requestBody = await new Blob([JSON.stringify({ command: 'screenshot' })]).arrayBuffer();
@@ -402,28 +404,57 @@ URL guide.
 ## Keep or delete the pool
 
 Both examples release only the claim, so the one-replica pool remains warm for
-the next task. This is the normal reusable-pool lifecycle.
+the next task and continues consuming capacity. Each run creates a new claim;
+the logged namespace and claim name identify it if cleanup is interrupted.
+Copy results out before claim release. Reusing the pool does not guarantee the
+same VM or preserve files from the previous claim.
 
-The TypeScript SDK does not currently expose `pool.apply`. Instead,
+The `@trycua/fleet@0.1.1` SDK does not expose `pool.apply`. Instead,
 `reconcilePool()` and `reconcileTemplate()` are the lower-level UniFFI
 reconciliation primitives that Python `Pool.apply` delegates to internally.
 They do not provide `Pool.apply`'s request derivation, validation, ownership,
 rollback, or cleanup. Each method looks up its named resource, updates the
 existing resource's specification, or creates the resource when the lookup
 returns HTTP 403 or 404. Calling both methods lets you rerun the complete example
-without maintaining separate get-or-create branches.
+without maintaining separate get-or-create branches. Use reconciliation only
+when this application owns the pool and template configuration.
 
-To remove the pool permanently, retain the `pool` and `template` values and run
-the following after every claim has been released:
+To use a pool managed by another process or Terraform, replace both
+reconciliation calls and their resource-specific log statements with a lookup:
 
 ```ts
-await client.deleteTemplate(template);
+const pool = await client.getPool(POOL_NAME);
+```
+
+Keep the `createClaim`, `waitClaim`, and `deleteClaim` flow. This lookup does not
+create or reconfigure the pool. Avoid `Sandbox.suspend` or `Sandbox.resume`
+from other SDKs as a way to pause one Fleet claim: scaling shared capacity is
+not a per-claim operation.
+
+`client.uniffiDestroy()` only disposes of the local client. Remote claim release
+requires `deleteClaim()`. The `finally` blocks attempt that release even if
+claim readiness or the screenshot fails, provided `createClaim()` returned the
+claim. An interrupted process or a lost create response still needs inventory
+inspection; see [Recover interrupted cleanup](/how-to-guides/sandbox/troubleshoot-fleet-pools#recover-interrupted-cleanup).
+
+To remove a pool you own permanently, retain its `pool` value and call the
+following while the client is still open, after every user has released their
+claims:
+
+```ts
 await client.deletePool(pool);
 ```
 
-Pool names are globally unique across Cua accounts. If reconciliation returns
-HTTP 403, choose another pool name; changing the claim name does not resolve a
-pool namespace conflict.
+Pool deletion also deletes its namespace, including remaining templates and
+claims. Do not use it as per-task cleanup for a shared pool. The examples leave
+the pool in place if template reconciliation or later work fails; inspect what
+exists before deciding whether to repair or remove a dedicated pool.
+
+Pool names are globally unique across Cua accounts. For a confirmed namespace
+collision, choose another pool name; changing the claim name does not resolve
+it. HTTP 403 can also indicate a payment requirement, authorization, or a
+template policy denial. Read the failing operation and response body before
+choosing a fix in [Troubleshoot Fleet pools and claims](/how-to-guides/sandbox/troubleshoot-fleet-pools).
 
 ## Use autoscaling instead of one replica
 

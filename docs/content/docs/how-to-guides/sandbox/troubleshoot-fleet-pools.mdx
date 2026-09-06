@@ -1,0 +1,154 @@
+---
+title: Troubleshoot Fleet pools and claims
+description: Diagnose Fleet pool errors and recover interrupted claim or pool cleanup without provisioning replacements.
+---
+
+Use this guide when a Fleet pool or claim fails to start, an existing pool
+cannot be reused, or a process exits before releasing its resources. It applies
+to the [Python pool guide](/how-to-guides/sandbox/create-pool-with-python) and
+[TypeScript pool guide](/how-to-guides/sandbox/create-pool-with-typescript).
+
+## Identify the failing operation
+
+Record the SDK versions, pool namespace, claim name if known, failing
+operation, HTTP status, and sanitized error body. Keep credentials, tokens,
+signed URLs, and guest content out of shared logs.
+
+Read the operation as well as the exception class. `PoolAccessDeniedError`
+includes a name-collision hint, but HTTP 403 alone does not establish that the
+name belongs to another account.
+
+## Resolve authentication or access errors
+
+If token exchange fails or the API returns HTTP 401, verify that the credential
+has not expired or been revoked and that your process uses the intended Fleet
+and token endpoints. Follow the credential setup in the guide for your SDK,
+then retry an existing-resource lookup before attempting creation again.
+
+For HTTP 403, inspect the response body and operation:
+
+- If the body says a payment method is required, review the account's billing
+  setup with its owner. A different pool name or repeated retries will not
+  satisfy that requirement.
+- If an initial pool creation is denied and ownership checks show that the
+  namespace is unavailable to your account, choose a different globally unique
+  pool name. A different claim name does not resolve this conflict.
+- If access to a known pool is denied, verify that the credential belongs to
+  an account authorized for that pool. Do not interpret 403 as proof that the
+  resource is absent or that cleanup succeeded.
+- If `create template` or `update template` is denied, inspect the image
+  reference and image-pull configuration against the deployment's policy. A
+  successful pool creation does not prove the template is permitted. Preserve
+  the failing operation and sanitized response when asking for help.
+
+For local validation errors about names, use lowercase DNS labels: lowercase
+letters, digits, and hyphens, with a letter or digit at each end. Keep names at
+most 63 characters. Use a distinct claim name for each concurrent task.
+
+## Diagnose a claim that does not become ready
+
+Check the pool, template, and claim in [Fleet](https://run.cua.ai) using the
+recorded namespace and claim name. Separate these stages:
+
+1. Verify that the pool and its referenced template exist. Inspect the template
+   reference rather than assuming its name equals the pool name.
+2. Inspect available capacity and the claim's binding status. A pool scaled to
+   zero can require a cold start. A missing template, unavailable image, or
+   exhausted capacity is not fixed by extending a guest-service timeout.
+3. Once the claim is bound, verify that the selected service exists and the
+   guest process listens on its configured port. The Python example expects
+   `server` on port `8000` and a compatible computer-server image.
+4. If the configuration is correct and startup is still progressing, adjust
+   the relevant wait budget. Python's `time_to_start` controls the service
+   readiness wait after binding; TypeScript's `claimPollIntervalMs` and
+   `claimPollLimit` control claim polling. Neither setting extends a resource's
+   TTL or lifecycle deadline.
+
+An API connection, a created pool, and a bound claim are different checkpoints.
+Verify a successful service request before treating the guest as usable. On a
+readiness timeout, inspect whether the claim still exists before retrying:
+Python attempts to release newly created claims on acquisition failure, while
+a pre-existing named claim remains held. The TypeScript examples attempt
+release in `finally` if creation returned a claim handle.
+
+## Recover interrupted cleanup
+
+Use lookups and deletion with the identities recorded before the failure.
+Do not rerun `Pool.apply()`, `reconcilePool()`, or `createClaim()` to recover a
+handle: they can create or modify resources. Disconnecting a client or closing
+a browser tab does not prove that remote resources were released.
+
+First, inspect the named pool and its claims in Fleet. If the pool is shared,
+release only your task's claim. If a create response was lost before its claim
+name was recorded, inspect inventory and establish ownership before deleting
+anything. A timestamp or similar-looking name alone is not proof of ownership.
+
+For scripted recovery, initialize the TypeScript client using only the imports,
+configuration, and `CyclopsClient.connect(...)` setup from the
+[Node.js example](/how-to-guides/sandbox/create-pool-with-typescript). Do not run
+its reconciliation or claim-creation block. The following snippets use that
+open `client` and the exact `POOL_NAME` you recorded.
+
+List claim identities without waiting for a guest to become ready:
+
+```ts
+const claims = await client.listClaims(POOL_NAME);
+for (const claim of claims) {
+  console.log(`${claim.metadata.namespace}/${claim.metadata.name}`);
+}
+```
+
+After identifying a claim that your task owns, set `CUA_CLAIM_NAME` to that
+exact name and release it. This does not create a replacement claim or wait for
+service readiness:
+
+```ts
+const claimName = process.env.CUA_CLAIM_NAME;
+if (!claimName) throw new Error('Set CUA_CLAIM_NAME to the claim you own');
+const claims = await client.listClaims(POOL_NAME);
+const claim = claims.find((item) => item.metadata.name === claimName);
+if (claim) await client.deleteClaim(claim);
+const remaining = await client.listClaims(POOL_NAME);
+if (remaining.some((item) => item.metadata.name === claimName)) {
+  throw new Error('Claim deletion is still pending; inspect again');
+}
+```
+
+If you own the entire pool and all users have finished, fetch and delete it:
+
+```ts
+const pool = await client.getPool(POOL_NAME);
+await client.deletePool(pool);
+```
+
+This deletes the pool namespace and its remaining resources, including other
+claims and templates. Use this operation only for a pool you intend to remove
+completely. In Python, the equivalent is
+`pool = await Pool.get(POOL_NAME)` followed by `await pool.delete()`.
+
+If the pool lookup returns 404 but namespace inventory still shows the exact
+dedicated namespace, inspect its remaining claims and templates. Once you have
+confirmed that all remaining resources belong to the cleanup task, delete the
+namespace directly:
+
+```ts
+await client.deleteNamespace(POOL_NAME);
+```
+
+In `@trycua/fleet@0.1.1`, namespace deletion accepts an already-absent namespace
+as success, so the same exact deletion can be retried after interruption.
+Close the local client with `client.uniffiDestroy()` in a `finally` block when
+the recovery script ends.
+
+## Verify cleanup finished
+
+After claim-only cleanup, verify that the claim is absent and the shared pool
+still exists. After whole-pool cleanup, check namespace inventory again until
+the namespace and its resources are absent. An accepted DELETE can precede
+asynchronous removal. If a request returns 403, resolve authorization before
+claiming cleanup is complete.
+
+For future disposable work, configure a
+[creation-age TTL](/how-to-guides/sandbox/expire-pools-and-claims) as a backstop
+and retain explicit cleanup. A TTL does not replace copying out results or
+checking that resources were removed.

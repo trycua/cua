@@ -2677,29 +2677,83 @@ async fn track_overlay_drag_for(
     duration_ms: u64,
     steps: usize,
 ) {
-    crate::overlay::send_command_for(
-        cursor_id.clone(),
-        cursor_overlay::OverlayCommand::SetEnabled(true),
-    );
-    crate::overlay::send_command_for(
-        cursor_id.clone(),
-        cursor_overlay::OverlayCommand::SetPressed(true),
-    );
+    track_overlay_drag_with(
+        |command| crate::overlay::send_command_for(cursor_id.clone(), command),
+        from,
+        to,
+        duration_ms,
+        steps,
+    )
+    .await;
+}
+
+async fn track_overlay_drag_with(
+    send: impl Fn(cursor_overlay::OverlayCommand),
+    from: (f64, f64),
+    to: (f64, f64),
+    duration_ms: u64,
+    steps: usize,
+) {
+    send(cursor_overlay::OverlayCommand::SetEnabled(true));
+    let _pressed = cursor_overlay::PressedVisualGuard::new(&send);
     let steps = steps.max(1);
     let step_delay = std::time::Duration::from_millis(duration_ms / steps as u64);
     for index in 0..=steps {
         let t = index as f64 / steps as f64;
         let x = from.0 + (to.0 - from.0) * t;
         let y = from.1 + (to.1 - from.1) * t;
-        crate::overlay::send_command_for(
-            cursor_id.clone(),
-            cursor_overlay::track_pointer_command(x, y),
-        );
+        send(cursor_overlay::track_pointer_command(x, y));
         if index < steps && !step_delay.is_zero() {
             tokio::time::sleep(step_delay).await;
         }
     }
-    crate::overlay::send_command_for(cursor_id, cursor_overlay::OverlayCommand::SetPressed(false));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn cancelled_overlay_drag_releases_visual_press_without_native_commands() {
+    use std::{cell::RefCell, future::Future, task::Context};
+    let commands = RefCell::new(Vec::new());
+    let mut drag = Box::pin(track_overlay_drag_with(
+        |command| commands.borrow_mut().push(command),
+        (10.0, 20.0),
+        (30.0, 40.0),
+        2000,
+        20,
+    ));
+    let mut context = Context::from_waker(std::task::Waker::noop());
+    assert!(drag.as_mut().poll(&mut context).is_pending());
+    assert!(matches!(
+        commands.borrow()[1],
+        cursor_overlay::OverlayCommand::SetPressed(true)
+    ));
+    drop(drag);
+    let commands = commands.borrow();
+    assert_eq!(commands.len(), 4);
+    assert!(matches!(
+        commands.last(),
+        Some(cursor_overlay::OverlayCommand::SetPressed(false))
+    ));
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn completed_overlay_drag_balances_visual_press_once() {
+    use std::cell::RefCell;
+    let pressed = RefCell::new(Vec::new());
+    track_overlay_drag_with(
+        |command| {
+            if let cursor_overlay::OverlayCommand::SetPressed(value) = command {
+                pressed.borrow_mut().push(value);
+            }
+        },
+        (10.0, 20.0),
+        (30.0, 40.0),
+        0,
+        2,
+    )
+    .await;
+    assert_eq!(*pressed.borrow(), vec![true, false]);
 }
 
 fn process_name(pid: u32) -> Option<String> {
@@ -6029,7 +6083,6 @@ impl Tool for DragTool {
                 overlay_snap_to_for(&cursor_id, from.0 as f64, from.1 as f64, None);
                 tokio::select! {
                     result = &mut dispatch => {
-                        crate::overlay::send_command_for(cursor_id, cursor_overlay::OverlayCommand::SetPressed(false));
                         return match result { Ok(result) => isolated_hyprland_result(result), Err(error) => isolated_hyprland_task_error(error, acknowledged) };
                     }
                     () = track_overlay_drag_for(cursor_id.clone(), (from.0 as f64, from.1 as f64),

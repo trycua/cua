@@ -180,18 +180,19 @@ class PolicyTests(unittest.TestCase):
 class OracleTests(unittest.TestCase):
     def test_only_inkscape_snapshots_bound_visited_nodes_and_keep_images_and_depth(self):
         for app in ('calc', 'inkscape'):
-            candidate = plan(app=app)
-            client = Mock()
-            expected = window(candidate, 'select' if app == 'inkscape' else 'insert', 1)
-            client.tool.side_effect = [
-                {'structuredContent': {'windows': [candidate['target']]}}, expected]
-            self.assertEqual(snapshot(client, candidate), expected)
-            arguments = {**candidate['target'], 'session': 'policy-proof'}
-            if app == 'inkscape':
-                arguments['max_elements'] = 2500
-            client.tool.assert_called_with('get_window_state', arguments)
-            self.assertNotIn('max_depth', arguments)
-            self.assertNotIn('include_screenshot', arguments)
+            for stage in SMOKE_STEPS[app]:
+                for before in (True, False):
+                    with self.subTest(app=app, stage=stage, before=before):
+                        candidate = plan(app=app)
+                        client = Mock()
+                        expected = window(candidate, stage, 1)
+                        client.tool.side_effect = [
+                            {'structuredContent': {'windows': [candidate['target']]}}, expected]
+                        self.assertEqual(snapshot(client, candidate, stage=stage, before=before), expected)
+                        arguments = {**candidate['target'], 'session': 'policy-proof'}
+                        if app == 'inkscape' and not (stage == 'select' and before):
+                            arguments['max_elements'] = 2500
+                        client.tool.assert_called_with('get_window_state', arguments)
 
     def test_bounded_projection_cannot_omit_selection_grounding(self):
         candidate = plan('resource_allow', app='inkscape')
@@ -287,9 +288,10 @@ class OracleTests(unittest.TestCase):
 
 
 class OrchestrationTests(unittest.TestCase):
-    def exercise(self, directory, failure=None):
-        candidate = plan('managed_deny')
-        document = create_documents(directory)['calc']
+    def exercise(self, directory, failure=None, *, app='calc', case='managed_deny',
+                 missing_grounding=None):
+        candidate = plan(case, app=app)
+        document = create_documents(directory)[app]
         candidate['document'] = str(document.resolve())
         path = directory / 'plan.json'
         path.write_text(json.dumps(candidate))
@@ -318,6 +320,7 @@ class OrchestrationTests(unittest.TestCase):
                 self.directory, self.name, self.profile = path, path.name, profile
                 self.process = SimpleNamespace(pid=100 + len(clients))
                 self.failed, self.closed, self.counter = False, False, 0
+                self.snapshots = []
                 clients.append(self)
 
             def tool(self, tool, arguments):
@@ -327,7 +330,13 @@ class OrchestrationTests(unittest.TestCase):
                     assert self.name == 'observer', 'window-only manifest cannot enumerate application'
                     return {'structuredContent': {'windows': [candidate['target']]}}
                 if tool == 'get_window_state':
-                    return window(candidate, 'insert', f'{self.name}-{self.counter}')
+                    stage = list(SMOKE_STEPS[app])[
+                        len(self.snapshots) // 2 if self.name == 'control' else 0]
+                    self.snapshots.append(dict(arguments))
+                    result = window(candidate, stage, f'{self.name}-{self.counter}')
+                    if missing_grounding == (self.name, stage):
+                        result['structuredContent'].update(elements=[], tree_markdown='')
+                    return result
                 if failure == 'unknown':
                     self.failed = True
                     raise RuntimeError('unknown outcome; no replay')
@@ -339,8 +348,10 @@ class OrchestrationTests(unittest.TestCase):
                 for kind, pressed in [('agent_admitted', 0), ('keyboard_key', 1),
                                       ('keyboard_key', 0), ('agent_action_end', 0)]:
                     events.append([len(events) + 1, len(events), kind, 100, 100, 1, pressed])
-                if tool == 'hotkey':
-                    document.write_bytes(changed_ods(document.read_bytes()))
+                if tool == 'hotkey' and arguments['keys'] == ['ctrl', 's']:
+                    before = document.read_bytes()
+                    document.write_bytes(changed_ods(before) if app == 'calc' else
+                                         before.replace(b'x="40"', b'x="42"'))
                 return {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
                                                'delivery': {'mode': 'background'}}}
 
@@ -362,6 +373,39 @@ class OrchestrationTests(unittest.TestCase):
         self.assertTrue(trace.closed and not trace.active)
         self.assertTrue(all(client.closed for client in clients))
         return status, json.loads((args.evidence / 'result.json').read_text()), calls, clients
+
+    def test_inkscape_select_uses_default_snapshot_in_denial_and_control(self):
+        for case in ('managed_deny', 'resource_allow'):
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
+                status, report, calls, clients = self.exercise(
+                    Path(temporary), app='inkscape', case=case)
+            self.assertEqual(status, 0, report.get('error'))
+            default = {**report['plan']['target'], 'session': 'policy-proof'}
+            bounded = {**default, 'max_elements': 2500}
+            observed = {client.name: client.snapshots for client in clients}
+            self.assertEqual(observed['control'], [default] + [bounded] * 5)
+            self.assertEqual(observed['observer'],
+                             [default, bounded] if case == 'managed_deny' else [])
+            for index, (name, tool) in enumerate(calls):
+                if tool not in ('press_key', 'hotkey'):
+                    continue
+                observer = 'observer' if name == 'denied' else name
+                self.assertEqual(calls[index - 1], (observer, 'get_window_state'))
+                self.assertEqual(calls[index + 1:index + 3],
+                                 [('observer', 'list_windows'), (observer, 'get_window_state')])
+
+    def test_inkscape_missing_grounding_stops_before_dispatch_without_retry(self):
+        for missing, expected_actions in ((('observer', 'select'), []),
+                (('control', 'select'), [('denied', 'hotkey')]),
+                (('control', 'move'), [('denied', 'hotkey'), ('control', 'hotkey')])):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as temporary:
+                status, report, calls, clients = self.exercise(
+                    Path(temporary), app='inkscape', missing_grounding=missing)
+            self.assertEqual(status, 1)
+            self.assertEqual(report['error']['type'], 'GroundingUnavailable')
+            self.assertEqual([(name, tool) for name, tool in calls
+                              if tool in ('press_key', 'hotkey')], expected_actions)
+            self.assertNotIn('response', report['actions'][-1])
 
     def test_normal_direct_cell_checks_denial_then_saved_effect_and_closes_every_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:

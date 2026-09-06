@@ -54,11 +54,10 @@ DENIALS = frozenset(('resource_wrong_pid', 'resource_wrong_window', 'managed_den
 TOOLS = ['get_window_state', 'press_key', 'hotkey']
 MANAGED_ENV = 'CUA_DRIVER_MANAGED_POLICY_FILE'
 POLICY_ENV = (MANAGED_ENV, 'CUA_DRIVER_POLICY_FILE')
-# Use the same bounded Inkscape projection as native pointer qualification.
-# The default walk spends 5–6 seconds per snapshot on trailing menu nodes;
-# eight such observations can exhaust the unchanged 45-second policy episode.
-# 2,500 visited nodes retain the selection status (2,000 do not). Keep depth
-# uncapped, all before/after images, and the original fail-closed grounding.
+# Bound Inkscape observations except before Select All: its shortcut grounding
+# needs trailing menu nodes omitted by the pointer-qualified projection.
+# 2,500 visited nodes retain selection status for move grounding. Keep default
+# depth and images, and fail closed if either grounding check is unavailable.
 POLICY_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
 
 
@@ -170,7 +169,7 @@ def check_primary(primary, target):
         'target is the primary client; restore the separate foreground fixture first'
 
 
-def snapshot(client, plan, observer=None):
+def snapshot(client, plan, observer=None, *, stage=None, before=False):
     # list_windows(pid) attests an application resource, which is deliberately
     # outside a window-only manifest. Keep discovery on the explicit observer.
     windows = (observer or client).tool('list_windows', {'pid': plan['target']['pid']})
@@ -179,8 +178,10 @@ def snapshot(client, plan, observer=None):
                if row.get('pid') == plan['target']['pid']]
     assert len(matches) == 1 and matches[0].get('window_id') == plan['target']['window_id'], \
         'target is stale or ambiguous'
+    limits = ({} if before and stage == 'select' else
+              POLICY_SNAPSHOT_LIMITS.get(plan['app'], {}))
     result = client.tool('get_window_state', {**plan['target'], 'session': 'policy-proof',
-                         **POLICY_SNAPSHOT_LIMITS.get(plan['app'], {})})
+                         **limits})
     check_snapshot(result, plan)
     return result
 
@@ -324,7 +325,7 @@ def run(args):
                    'runtime_pid': actor.process.pid, 'arguments': {**arguments, **plan['target'],
                        'session': 'policy-proof', 'delivery_mode': 'background'}}
             report['actions'].append(row)
-            row['before'] = snapshot(observer_for_step, plan, observer)
+            row['before'] = snapshot(observer_for_step, plan, observer, stage=stage, before=True)
             ground(row['before']['structuredContent'], plan['app'], stage)
             row['primary_before'] = wm()
             check_primary(row['primary_before'], plan['target'])
@@ -336,7 +337,8 @@ def run(args):
             finally:
                 row['times_ns'].append(time.monotonic_ns())
                 # Independent observer survives an actor's poisoned MCP connection.
-                row['after'] = snapshot(observer if actor.failed else observer_for_step, plan, observer)
+                row['after'] = snapshot(observer if actor.failed else observer_for_step,
+                                        plan, observer, stage=stage)
                 row['times_ns'].append(time.monotonic_ns())
                 row['trace_after'] = trace.collect()
                 save()

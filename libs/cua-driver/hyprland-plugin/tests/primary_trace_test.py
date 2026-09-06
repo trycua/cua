@@ -35,6 +35,18 @@ class TraceTest(unittest.TestCase):
                                ('keyboard_key', 100, 200, 2, 1), STOP))
         self.assertEqual(result['result'], 'passed')
 
+    def test_surface_coordinates_are_separate_from_primary_coordinates(self):
+        data = trace(START, ('pointer_motion', 100, 200, 1, 0), STOP)
+        data['events'][1].extend([400, 300])
+        result = analyze(data)
+        self.assertEqual(result['result'], 'passed')
+        self.assertEqual(result['max_primary_displacement_px'], 0)
+        for change in ([400], [400, float('nan')], [True, 300], [400, 300, 500]):
+            bad = {**data, 'events': [data['events'][0], data['events'][1][:7] + change, data['events'][2]]}
+            self.assertEqual(analyze(bad)['result'], 'inconclusive')
+        data['events'][1][5] = 0
+        self.assertEqual(analyze(data)['result'], 'inconclusive')
+
     def test_v3_admission_marker_is_recognized_but_unknown_events_stay_inconclusive(self):
         self.assertEqual(analyze(trace(START, ('agent_admitted', 100, 200, 1, 0), STOP))['result'], 'passed')
         self.assertEqual(analyze(trace(START, ('unknown', 100, 200, 1, 0), STOP))['result'], 'inconclusive')

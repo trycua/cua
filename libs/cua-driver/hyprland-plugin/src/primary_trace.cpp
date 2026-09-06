@@ -20,6 +20,8 @@ struct PrimaryTrace::Impl {
         const char* kind = "";
         double x = 0, y = 0;
         unsigned actor = 0, state = 0;
+        bool surface_position = false;
+        double surface_x = 0, surface_y = 0;
     };
     static inline Impl* live = nullptr;
     std::array<Event, 32768> events{};
@@ -54,14 +56,15 @@ struct PrimaryTrace::Impl {
         if (motion) HyprlandAPI::removeFunctionHook(plugin, motion);
         if (live == this) live = nullptr;
     }
-    void record(const char* kind, unsigned owner, unsigned state = 0) noexcept {
+    void record(const char* kind, unsigned owner, unsigned state = 0,
+                bool surface_position = false, double surface_x = 0, double surface_y = 0) noexcept {
         if (!active) return;
         const auto now = Clock::now();
         if (now - started > std::chrono::seconds(60)) { timed_out = true; active = false; return; }
         if (count == events.size()) { overflow = true; active = false; return; }
         const auto position = Pointer::mgr()->position();
         events[count++] = Event{static_cast<std::uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(now.time_since_epoch()).count()),
-            kind, position.x, position.y, owner, state};
+            kind, position.x, position.y, owner, state, surface_position, surface_x, surface_y};
     }
     static void moved(void* pointer) {
         auto* self = live;
@@ -76,11 +79,13 @@ struct PrimaryTrace::Impl {
         const auto* type = wl_resource_get_class(message->resource);
         const auto* name = message->message->name;
         const auto owner = self.actor(message->resource);
-        // Only event categories and button/key state are retained, never typed
-        // keycodes, text, window names, or arbitrary protocol arguments.
+        // Only event categories, button/key state, and synthetic pointer
+        // coordinates are retained, never keycodes, text, or window names.
         if (!std::strcmp(type, "wl_pointer")) {
-            if (!std::strcmp(name, "motion")) self.record("pointer_motion", owner);
-            else if (!std::strcmp(name, "enter")) self.record("pointer_enter", owner);
+            if (!std::strcmp(name, "motion")) self.record("pointer_motion", owner, 0, owner != 0,
+                wl_fixed_to_double(message->arguments[1].f), wl_fixed_to_double(message->arguments[2].f));
+            else if (!std::strcmp(name, "enter")) self.record("pointer_enter", owner, 0, owner != 0,
+                wl_fixed_to_double(message->arguments[2].f), wl_fixed_to_double(message->arguments[3].f));
             else if (!std::strcmp(name, "leave")) self.record("pointer_leave", owner);
             else if (!std::strcmp(name, "button")) self.record("pointer_button", owner, message->arguments[3].u);
             else if (!std::strcmp(name, "axis")) self.record("pointer_axis", owner);
@@ -103,7 +108,8 @@ struct PrimaryTrace::Impl {
         for (std::size_t i = after; i < count && i < static_cast<std::size_t>(after) + 8; ++i) {
             const auto& event = events[i];
             if (!rows.empty()) rows += ',';
-            rows += std::format(R"([{}, {}, "{}", {}, {}, {}, {}])", i + 1, event.ns, event.kind, event.x, event.y, event.actor, event.state);
+            rows += std::format(R"([{}, {}, "{}", {}, {}, {}, {}{})", i + 1, event.ns, event.kind, event.x, event.y, event.actor, event.state,
+                event.surface_position ? std::format(", {}, {}]", event.surface_x, event.surface_y) : "]");
         }
         return std::format(R"({{"ok":true,"active":{},"overflow":{},"timed_out":{},"hook":true,"count":{},"events":[{}]}})",
             active, overflow, timed_out, count, rows);

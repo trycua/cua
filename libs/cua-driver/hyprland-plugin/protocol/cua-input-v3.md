@@ -5,15 +5,6 @@ independent compositor seats. It is not native certification or a release
 announcement. The default plugin build remains discovery-only, and discovery
 protocol v2 is unchanged.
 
-The current trace build contains a temporary drag-completion diagnostic: it
-delays pointer-leave and the final reply by at least 100 ms after releasing the
-button. The consumed grant admits no further input; conflict and lifecycle
-checks remain active until cleanup. This compares Inkscape event-queue behavior
-with immediate teardown. It is not a client-processing guarantee and is absent
-from the uninstrumented production build. Trace results with this diagnostic
-cannot certify production drag behavior. Resolve/remove the diagnostic before
-the final release candidate is certified.
-
 Driver completes common permission, resource, lifecycle, and application
 compatibility checks before each action. The plugin trusts the desktop account
 under a local trust model. Same-UID transport checks prevent accidental
@@ -86,11 +77,28 @@ or lower sequences return `replay`; no operation is replayed automatically.
 
 The plugin repeats target, geometry, desktop, keymap, and conflict checks at
 dispatch. It consumes the grant before the first synthetic focus/input event.
-Complete synchronous operations release synthetic focus immediately. A drag
-keeps its existing bounded lifetime while running; consuming its grant does
-not permit another action. A dispatch without fresh authority returns
-`action_not_admitted`. Malformed or refused requests never imply application
-rollback.
+Completed operations release their held buttons, keys, keyboard focus, and
+remaining technical authority. A drag keeps its bounded lifetime while
+running; consuming its grant does not permit another action. A dispatch without
+fresh authority returns `action_not_admitted`. Malformed or refused requests
+never imply application rollback.
+
+Pointer focus has a separate lifetime. After a successful pointer operation,
+the lane keeps passive pointer focus on that exact live surface. Fresh
+`TARGET` admission on the same surface and unchanged geometry preserves this
+focus while issuing a new token and one-operation grant. A key action releases
+its keyboard focus without removing a previously retained pointer focus.
+Retaining pointer focus prevents an unnecessary `wl_pointer.leave` directly
+after drag release; some clients coalesce motion and requeue the release.
+There is no fixed completion delay or trace-only timing behavior.
+
+Passive focus has no held input or authority, but still participates in
+primary-client and inter-lane conflicts. Target replacement, unmap, destruction,
+geometry change, cancellation, EOF, the connection's idle timeout, and
+desktop/keymap/configuration transitions clear it. The five-second action
+grant does not extend to passive focus. These boundaries may still end focus
+before a stalled client processes its events; dispatch acknowledgement is not
+an application-processing fence. Verify the application's effect independently.
 
 Successful dispatch returns
 `{"ok":true,"effect":"unverifiable","route":"synthetic_events"}`. This

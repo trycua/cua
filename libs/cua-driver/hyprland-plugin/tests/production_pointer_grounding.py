@@ -207,8 +207,16 @@ def verify(snapshot, image, oracle):
         assert abs(rectangle['w'] - previous['w']) <= 1 and abs(rectangle['h'] - previous['h']) <= 1, 'rectangle resized'
         delta = [a - b for a, b in zip(rectangle['center'], previous['center'])]
         if stage == 'move_rectangle':
-            assert all(abs(a - b) <= 2 for a, b in zip(delta, oracle['delta'])), 'rectangle did not follow drag'
+            # Inkscape 1.4.4 select-tool.cpp anchors _seltrans->grab(p) at the
+            # first processed motion, NOT at button press. Do not equate object
+            # translation with the complete pointer delta. Require a committed
+            # selection and matching pixel/document translation here, then match
+            # that translation to an actual motion anchor in verify_drag_trace.
+            assert all(2 < a <= b + 2 for a, b in zip(delta, oracle['delta'])), 'rectangle did not follow drag direction'
             assert geometry['X'] > oracle['geometry']['X'] and geometry['Y'] > oracle['geometry']['Y']
+            semantic_pixels = [(geometry[axis] - oracle['geometry'][axis]) * previous[size] / oracle['geometry'][extent]
+                               for axis, size, extent in (('X', 'w', 'W'), ('Y', 'h', 'H'))]
+            assert all(abs(a - b) <= 2 for a, b in zip(delta, semantic_pixels)), 'pixel/document translation disagrees'
         else:
             if oracle['geometry'] is not None:
                 assert geometry == oracle['geometry'], 'pointer operation changed document geometry'
@@ -216,4 +224,64 @@ def verify(snapshot, image, oracle):
                 assert abs(delta[0]) <= 1 and (delta[1] < -2 if stage == 'scroll_down' else delta[1] > 2), 'canvas did not scroll'
             else:
                 assert all(abs(value) <= 1 for value in delta), 'click unexpectedly moved rectangle'
-    return {'verified': True, 'scope': 'fresh-snapshot-pointer-effect', **oracle}
+    result = {'verified': True, 'scope': 'fresh-snapshot-pointer-effect', **oracle}
+    if app == 'inkscape' and stage == 'move_rectangle':
+        result.update(observed_delta=delta, observed_geometry=geometry, pointer_delivery='requires_trace')
+    return result
+
+
+def verify_drag_trace(trace, arguments, effect):
+    """Prove the wire endpoint independently of a client's drag threshold.
+
+    Surface coordinates come from the Wayland protocol logger, not actuator
+    intent or primary-cursor coordinates. Historical seven-field traces cannot
+    satisfy this oracle. This bounded episode must have one unambiguous stroke.
+    """
+    from primary_trace import analyze
+    assert analyze(trace).get('telemetry_complete') is True, 'incomplete pointer trace'
+    start = [arguments['from_x'], arguments['from_y']]
+    end = [arguments['to_x'], arguments['to_y']]
+    matched = []
+    for lane in (1, 2):
+        events = [row for row in trace['events'] if row[5] == lane]
+        for index, row in enumerate(events):
+            if row[2] != 'agent_drag_start':
+                continue
+            preceding = [r for r in events[:index] if r[2] == 'pointer_motion']
+            assert preceding and len(preceding[-1]) == 9, 'missing synthetic start coordinates'
+            if math.dist(preceding[-1][7:9], start) > .01:
+                continue
+            ends = [i for i in range(index + 1, len(events)) if events[i][2] in ('agent_drag_end', 'agent_cancel')]
+            assert ends and events[ends[0]][2] == 'agent_drag_end', 'drag did not complete'
+            stroke = events[index + 1:ends[0]]
+            assert not any(r[2] in ('pointer_leave', 'agent_drag_start') for r in stroke), 'drag focus changed'
+            buttons = [r for r in stroke if r[2] == 'pointer_button']
+            assert len(buttons) == 2 and [r[6] for r in buttons] == [1, 0], 'unbalanced drag buttons'
+            motion = [r for r in stroke if r[2] == 'pointer_motion']
+            assert len(motion) >= 2 and all(len(r) == 9 for r in motion), 'missing synthetic motion coordinates'
+            assert buttons[0][0] < motion[0][0] < motion[-1][0] < buttons[1][0], 'motion outside button hold'
+            assert math.dist(motion[-1][7:9], end) <= .01, 'synthetic pointer missed endpoint'
+            vector = [b - a for a, b in zip(start, end)]
+            norm = sum(v * v for v in vector)
+            assert norm > 0
+            last = 0.0
+            for sample in motion:
+                t = sum((p - a) * v for p, a, v in zip(sample[7:9], start, vector)) / norm
+                assert last - .001 <= t <= 1.001, 'synthetic path reversed or overshot'
+                assert math.dist(sample[7:9], [a + t * v for a, v in zip(start, vector)]) <= .01, 'synthetic path deviated'
+                last = t
+            if effect['app'] == 'inkscape':
+                delta = effect['observed_delta']
+                # Source: INKSCAPE_1_4_4/src/ui/tools/select-tool.cpp,
+                # root_handler(MotionEvent), _seltrans->grab(p)/moveTo(p).
+                # Coalescing may skip events. The translation must still match
+                # endpoint minus a motion the client could actually receive.
+                anchors = [r[0] for r in motion[:-1] if all(abs((e - p) - d) <= 2
+                           for e, p, d in zip(end, r[7:9], delta))]
+                assert anchors, 'object translation matches no delivered motion anchor'
+            else:
+                anchors = []
+            matched.append({'lane': lane, 'start': start, 'end': end, 'motion_events': len(motion),
+                            'compatible_anchor_events': anchors})
+    assert len(matched) == 1, 'missing or ambiguous matching drag'
+    return {'verified': True, 'scope': 'wire-pointer-endpoint-and-app-effect', **matched[0]}

@@ -785,6 +785,10 @@ def run(args):
                     assert isolation['agent_drag_overlap_ms'] >= 100, 'no proven two-lane overlap'
                 assert released_synthetic_input(data)
                 report['synthetic_cleanup'] = 'verified'
+                for action_result in report['actions']:
+                    if action_result.get('pointer_stage') in ('select_range', 'move_rectangle'):
+                        action_result['pointer_delivery'] = pointer_grounding.verify_drag_trace(
+                            data, action_result['arguments'], action_result['pointer_effect'])
             operations += [('finish_trace', finish_trace), ('close_trace', trace.close)]
         def release_primary():
             if grab:

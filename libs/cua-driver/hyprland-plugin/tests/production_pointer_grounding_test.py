@@ -4,6 +4,7 @@ import unittest
 
 import production_pointer_grounding as pointer
 from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
+from primary_trace_test import START, STOP, trace
 
 
 class Image:
@@ -117,8 +118,19 @@ class PointerGroundingTests(unittest.TestCase):
         args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
         self.assertEqual([args['to_x'] - args['from_x'], args['to_y'] - args['from_y']], [40, 30])
         self.assertTrue(pointer.verify(*ink(dx=40, dy=30), oracle)['verified'])
+        # A client may anchor at a processed motion after button press.
+        self.assertTrue(pointer.verify(*ink(dx=35, dy=27), oracle)['verified'])
         with self.assertRaises(AssertionError):
             pointer.verify(*ink(), oracle)
+        state, image = ink(dx=35, dy=27)
+        for row in state['elements']:
+            if row.get('element_index') == 2:
+                old = row['value']
+                row.update(label='100.000', value='100.0')
+                state['tree_markdown'] = state['tree_markdown'].replace(
+                    f'[{2}] spin button "68.000" value="{old}"', '[2] spin button "100.000" value="100.0"')
+        with self.assertRaisesRegex(AssertionError, 'pixel/document'):
+            pointer.verify(state, image, oracle)
         _, oracle = pointer.action(*ink(), 'inkscape', 'scroll_down')
         self.assertTrue(pointer.verify(*ink(scroll_y=-20), oracle)['verified'])
         for state in (ink(), ink(scroll_y=20), ink(dx=10, dy=10)):
@@ -151,6 +163,47 @@ class PointerGroundingTests(unittest.TestCase):
         self.assertEqual(image.rgb(1, 1), (100, 110, 120))
         with self.assertRaises(AssertionError):
             image.rgb(2, 1)
+
+    def test_drag_trace_proves_endpoint_separately_from_client_anchor(self):
+        args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
+        effect = pointer.verify(*ink(dx=35, dy=27), oracle)
+        data = trace(START, ('pointer_motion', 100, 200, 2, 0),
+                     ('agent_drag_start', 100, 200, 2, 0), ('pointer_button', 100, 200, 2, 1),
+                     ('pointer_motion', 100, 200, 2, 0), ('pointer_motion', 100, 200, 2, 0),
+                     ('pointer_motion', 100, 200, 2, 0), ('pointer_button', 100, 200, 2, 0),
+                     ('agent_drag_end', 100, 200, 2, 0), ('pointer_leave', 100, 200, 2, 0), STOP)
+        for index, xy in ((1, [169, 179]), (4, [173, 182]), (5, [189, 194]), (6, [209, 209])):
+            data['events'][index].extend(xy)
+        result = pointer.verify_drag_trace(data, args, effect)
+        self.assertEqual(result['lane'], 2)
+        self.assertEqual(result['compatible_anchor_events'], [5])
+        for failure in ('missing_endpoint', 'wrong_start', 'missing_coords', 'reversed', 'off_path',
+                        'cancelled', 'leave_during_drag', 'unreleased', 'no_anchor', 'incomplete'):
+            with self.subTest(failure=failure):
+                bad, changed_effect = copy.deepcopy(data), copy.deepcopy(effect)
+                if failure == 'missing_endpoint':
+                    bad['events'][6][7:9] = [208, 208.25]
+                elif failure == 'wrong_start':
+                    bad['events'][1][7] = 999
+                elif failure == 'missing_coords':
+                    bad['events'][4] = bad['events'][4][:7]
+                elif failure == 'reversed':
+                    bad['events'][5][7:9] = [171, 180.5]
+                elif failure == 'off_path':
+                    bad['events'][5][8] += 2
+                elif failure == 'cancelled':
+                    bad['events'][8][2] = 'agent_cancel'
+                elif failure == 'leave_during_drag':
+                    bad['events'][5] = bad['events'][5][:7]
+                    bad['events'][5][2] = 'pointer_leave'
+                elif failure == 'unreleased':
+                    bad['events'][7][6] = 1
+                elif failure == 'no_anchor':
+                    changed_effect['observed_delta'] = [10, 25]
+                else:
+                    bad['overflow'] = True
+                with self.assertRaises(AssertionError):
+                    pointer.verify_drag_trace(bad, args, changed_effect)
 
 
 if __name__ == '__main__':

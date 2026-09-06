@@ -50,12 +50,14 @@ def analyze(trace, *, expected_motion=None):
                  'pointer_enter', 'pointer_leave', 'pointer_button', 'pointer_axis',
                  'keyboard_enter', 'keyboard_leave', 'keyboard_key', 'agent_cancel',
                  'agent_approved', 'agent_admitted', 'agent_action_end', 'agent_drag_start', 'agent_drag_end'}
-        complete = all(isinstance(r, list) and len(r) == 7
+        complete = all(isinstance(r, list) and len(r) in (7, 9)
                        and type(r[0]) is int and type(r[1]) is int and r[1] >= 0
                        and isinstance(r[2], str) and r[2] in kinds
                        and all(type(v) in (int, float) and math.isfinite(v) for v in r[3:5])
                        and type(r[5]) is int and r[5] in (0, 1, 2)
-                       and type(r[6]) is int and r[6] in (0, 1) for r in rows)
+                       and type(r[6]) is int and r[6] in (0, 1)
+                       and (len(r) == 7 or (r[2] in ('pointer_enter', 'pointer_motion') and r[5] in (1, 2)
+                            and all(type(v) in (int, float) and math.isfinite(v) for v in r[7:9]))) for r in rows)
     if complete:
         complete = (rows[0][2] == 'start' and rows[-1][2] == 'stop'
                     and [r[0] for r in rows] == list(range(1, len(rows) + 1))

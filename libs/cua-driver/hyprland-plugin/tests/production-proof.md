@@ -94,6 +94,17 @@ Review a JSON plan before execution. The plan has:
   with 30 steps; a parallel phase still needs `require_overlap:true` and a
   complete trace to prove actual overlap. Saved-output oracles remain required.
   This is proof preparation, not evidence that these native cells have passed.
+  Drag proof separates the wire endpoint from app translation. Instrumented
+  synthetic pointer enter/motion records append surface-local X/Y to the seven
+  existing trace fields; primary cursor coordinates remain separate. The
+  complete trace must show the requested start/end, an ordered straight path,
+  balanced buttons, and uninterrupted drag focus. Inkscape's
+  [1.4.4 selection tool](https://gitlab.com/inkscape/inkscape/-/blob/INKSCAPE_1_4_4/src/ui/tools/select-tool.cpp)
+  anchors translation at its first processed motion, not button press. Its
+  completed selection, unchanged dimensions, and pixel/document translation
+  must agree, and the translation must match endpoint minus an actually
+  delivered motion position. A missing endpoint, unmatched translation, or
+  historical trace without synthetic coordinates fails this gate.
 - Optional per-step `expect`: `{kind:"refused",reason:"<exact observed contract reason>"}`,
   `{kind:"partial"}`, or `{kind:"unknown"}`. The default is dispatched. Denial
   phases run serially so the no-dispatch interval contains no other action.

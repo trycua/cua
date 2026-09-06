@@ -62,6 +62,13 @@ class PlanTests(unittest.TestCase):
 
 
 class ResponseTests(unittest.TestCase):
+    def test_common_policy_refusal_uses_existing_envelope_not_invented_action_fields(self):
+        result = {'isError': True, 'structuredContent': {'status': 'refused',
+                  'refusal': {'code': 'bounded_resource_outside_manifest', 'message': 'out of scope'}}}
+        check_response(result, {'kind': 'refused', 'reason': 'bounded_resource_outside_manifest'})
+        with self.assertRaises(AssertionError):
+            check_response(result, {'kind': 'refused', 'reason': 'permission_denied'})
+
     def test_dispatched_does_not_mean_verified_app_effect(self):
         response = {'structuredContent': {'route': 'synthetic_events', 'effect': 'unverifiable',
                                          'delivery': {'mode': 'background'}}}

@@ -75,8 +75,10 @@ def check_response(result, expected):
     kind = expected['kind']
     delivery = content.get('delivery')
     if kind == 'refused':
-        assert result.get('isError') is True and content.get('reason') == expected['reason'], result
-        assert content.get('effect') == 'refused', result
+        policy_refusal = content.get('status') == 'refused' and isinstance(content.get('refusal'), dict)
+        reason = content['refusal'].get('code') if policy_refusal else content.get('reason')
+        assert result.get('isError') is True and reason == expected['reason'], result
+        assert content.get('effect') == 'refused' or (policy_refusal and 'effect' not in content), result
         assert delivery is None, 'refusal must not imply acknowledged delivery'
     elif kind == 'partial':
         assert content.get('effect') == 'partial', result

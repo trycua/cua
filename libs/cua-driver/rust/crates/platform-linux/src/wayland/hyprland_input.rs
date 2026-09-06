@@ -17,6 +17,31 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
 
+/// A sent action has no trustworthy final reply. The count describes only
+/// acknowledged gesture phases (currently drag start), never a total event
+/// count or proof that no later events landed.
+#[derive(Debug)]
+pub struct DispatchUnknown {
+    pub acknowledged_phases: u32,
+    detail: String,
+}
+
+impl std::fmt::Display for DispatchUnknown {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}; final input delivery is unknown", self.detail)
+    }
+}
+
+impl std::error::Error for DispatchUnknown {}
+
+pub(crate) fn unknown_dispatch(error: anyhow::Error, acknowledged_phases: u32) -> anyhow::Error {
+    DispatchUnknown {
+        acknowledged_phases,
+        detail: error.to_string(),
+    }
+    .into()
+}
+
 pub fn enabled() -> bool {
     super::wayland_input_enabled()
         && super::hyprland::is_session()
@@ -362,25 +387,51 @@ impl Client {
         self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
         let is_drag = matches!(&action, Action::Drag { .. });
         let packet = action.packet(self.sequence, &token, revision, width, height)?;
-        let mut reply = self.request(&packet)?;
-        if reply["phase"] == "started" {
-            ensure!(is_drag, "unexpected input start acknowledgement");
-            if let Some(started) = started {
-                let _ = started.send(());
-            }
-            reply = self.receive(Instant::now() + TIMEOUT)?;
-        }
-        if reply["ok"] == true {
-            ensure!(
-                reply["effect"] == "unverifiable" && reply["route"] == "synthetic_events",
-                "invalid action acknowledgement"
-            );
-        } else if self.protocol == InputProtocol::Experiment {
+        let mut reply = self.dispatch(&packet, is_drag, started)?;
+        if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
             // Never report a pending operator grant as successful dispatch.
             reply["epoch"] = json!(self.epoch);
             reply["challenge"] = json!(self.challenge);
             reply["target"] = json!(token);
             reply["revision"] = json!(revision);
+        }
+        Ok(reply)
+    }
+
+    fn dispatch(
+        &self,
+        packet: &str,
+        is_drag: bool,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<Value> {
+        let mut reply = self
+            .request(packet)
+            .map_err(|error| unknown_dispatch(error, 0))?;
+        let acknowledged = reply["ok"] == true && reply["phase"] == "started";
+        if acknowledged {
+            if !is_drag {
+                return Err(unknown_dispatch(
+                    anyhow::anyhow!("unexpected input start acknowledgement"),
+                    0,
+                ));
+            }
+            if let Some(started) = started {
+                let _ = started.send(());
+            }
+            reply = self
+                .receive(Instant::now() + TIMEOUT)
+                .map_err(|error| unknown_dispatch(error, 1))?;
+        }
+        if reply["ok"] == true {
+            if reply["effect"] != "unverifiable" || reply["route"] != "synthetic_events" {
+                return Err(unknown_dispatch(
+                    anyhow::anyhow!("invalid action acknowledgement"),
+                    u32::from(acknowledged),
+                ));
+            }
+        } else if acknowledged {
+            reply["effect"] = json!("partial");
+            reply["delivery"] = json!({"mode":"background","delivered_count":1});
         }
         Ok(reply)
     }
@@ -829,6 +880,65 @@ mod tests {
 
     fn hello_reply() -> Value {
         json!({"ok":true,"protocol":0,"epoch":TOKEN,"challenge":TOKEN})
+    }
+
+    #[test]
+    fn interrupted_drag_preserves_acknowledged_progress_and_never_replays() {
+        for final_reply in [
+            Some(json!({"ok":false,"code":"cancelled","detail":"cancelled"})),
+            None,
+            Some(json!({"ok":true,"effect":"invalid"})),
+        ] {
+            let (client, peer) = test_connection();
+            let expected_cancel = final_reply
+                .as_ref()
+                .is_some_and(|value| value["ok"] == false);
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), "DRAG synthetic");
+                peer.send(br#"{"ok":true,"phase":"started"}"#).unwrap();
+                if let Some(reply) = final_reply {
+                    peer.send(reply.to_string().as_bytes()).unwrap();
+                }
+            });
+            let (started, acknowledged) = tokio::sync::oneshot::channel();
+            let result = client.dispatch("DRAG synthetic", true, Some(started));
+            assert!(acknowledged.blocking_recv().is_ok());
+            if expected_cancel {
+                let reply = result.unwrap();
+                assert_eq!(reply["effect"], "partial");
+                assert_eq!(
+                    reply["delivery"],
+                    json!({"mode":"background","delivered_count":1})
+                );
+            } else {
+                assert_eq!(
+                    result
+                        .unwrap_err()
+                        .downcast_ref::<DispatchUnknown>()
+                        .unwrap()
+                        .acknowledged_phases,
+                    1
+                );
+            }
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn missing_initial_action_reply_cannot_claim_acknowledged_progress() {
+        let (client, peer) = test_connection();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "CLICK synthetic");
+        });
+        let result = client.dispatch("CLICK synthetic", false, None).unwrap_err();
+        assert_eq!(
+            result
+                .downcast_ref::<DispatchUnknown>()
+                .unwrap()
+                .acknowledged_phases,
+            0
+        );
+        server.join().unwrap();
     }
 
     #[test]

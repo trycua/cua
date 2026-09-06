@@ -91,6 +91,15 @@ that first acknowledgement, cancellation can leave partial application
 effects. EOF or a missing final acknowledgement means delivery is unknown;
 Driver must not report that nothing happened or replay the operation.
 
+Driver maps a refusal before an acknowledged start to `effect:refused`, with
+no delivery field. After a drag-start acknowledgement, an explicit cancellation
+maps to `effect:partial` with `delivery.mode:background` and
+`delivery.delivered_count:1`. This count measures acknowledged gesture phases
+(the start), not pointer events or application changes. A lost or malformed
+final reply preserves that count but sets `delivery.mode:unknown`; later input
+may have landed without acknowledgement. A missing initial reply has unknown
+delivery with no count. Neither case permits replay.
+
 Refusals use `{"ok":false,"code":"<code>","detail":"<code>"}`. Codes
 include `lane_busy`, `lane_not_claimed`, `stale_target`, `stale_geometry`,
 `session_unavailable`, `unsupported_layout`, `primary_target_busy`,

@@ -32,6 +32,12 @@ Review a JSON plan before execution. The plan has:
 - Optional per-step `expect`: `{kind:"refused",reason:"<exact observed contract reason>"}`,
   `{kind:"partial"}`, or `{kind:"unknown"}`. The default is dispatched. Denial
   phases run serially so the no-dispatch interval contains no other action.
+- For interrupted drags, `delivery.delivered_count:1` accounts for the
+  acknowledged start phase, not a total event count. Explicit cancellation is
+  partial background delivery; loss of the final reply is unknown delivery,
+  retaining the start count when available. Neither means the document was
+  rolled back or that later events could not have landed. Preserve the output
+  and inspect fresh state without replaying the mutation.
 - `outputs`: independent saved-document oracles with `agent`, `path`, `xpath`,
   optional `namespaces`, and exact `attributes` or `text`. SVG rectangle movement
   can use `rect_translation:[[min_x,max_x],[min_y,max_y]]`, which also rejects

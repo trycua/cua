@@ -2017,41 +2017,100 @@ fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     let detail = detail.into();
     ToolResult::error(format!("background_unavailable: {detail}")).with_structured(json!({
         "ok": false, "code": "background_unavailable", "reason": "unsupported_operation",
-        "detail": detail, "route": "synthetic_events", "verified": false
+        "detail": detail, "route": "synthetic_events", "verified": false, "effect": "refused"
     }))
 }
 
 fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+    let record = |effect| {
+        ActionExecutionRecord::builder(
+            effect,
+            ActionTransport::LinuxHyprlandIsolatedInput,
+            RequestedDelivery::Background,
+        )
+    };
     match result {
-        Ok(value) if value["ok"] == true => {
-            use cua_driver_core::action_record::{
-                ActionEffect, ActionExecutionRecord, ActionTransport,
-                ActualDelivery, RequestedDelivery,
-            };
-            ToolResult::text("Dispatched isolated Hyprland input; application effect is unverifiable.")
-                .with_action_record(ActionExecutionRecord::builder(
-                    ActionEffect::Unverifiable,
-                    ActionTransport::LinuxHyprlandIsolatedInput,
-                    RequestedDelivery::Background,
-                ).actual_delivery(ActualDelivery::Background)
-                    .build().expect("isolated input record is valid"))
-        }
+        Ok(value) if value["ok"] == true => ToolResult::text(
+            "Dispatched isolated Hyprland input; application effect is unverifiable.",
+        )
+        .with_action_record(
+            record(ActionEffect::Unverifiable)
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("isolated input record is valid"),
+        ),
         Ok(mut value) => {
-            let code = value["code"].as_str().unwrap_or("protocol_error").to_owned();
-            let detail = value["detail"].as_str().unwrap_or("input refused").to_owned();
+            let code = value["code"]
+                .as_str()
+                .unwrap_or("protocol_error")
+                .to_owned();
+            let detail = value["detail"]
+                .as_str()
+                .unwrap_or("input refused")
+                .to_owned();
             value["reason"] = json!(code);
             value["code"] = json!("background_unavailable");
             value["route"] = json!("synthetic_events");
             value["verified"] = json!(false);
+            let outcome =
+                if value["effect"] == "partial" && value["delivery"]["delivered_count"] == 1 {
+                    record(ActionEffect::Partial)
+                        .actual_delivery(ActualDelivery::Background)
+                        .delivered_count(1)
+                } else {
+                    value["effect"] = json!("refused");
+                    value
+                        .as_object_mut()
+                        .expect("protocol reply is an object")
+                        .remove("delivery");
+                    record(ActionEffect::Refused)
+                }
+                .detail(&detail)
+                .build()
+                .expect("isolated input outcome is valid");
             ToolResult::error(format!("background_unavailable ({code}): {detail}"))
                 .with_structured(value)
+                .with_action_record(outcome)
         }
-        Err(error) => ToolResult::error(format!("background_unavailable: {error}")).with_structured(json!({
-            "ok": false, "code": "background_unavailable", "reason": "transport_or_protocol_error",
-            "detail": error.to_string(), "route": "synthetic_events", "verified": false,
-            "effect": "unverifiable"
-        })),
+        Err(error) => {
+            let count = error
+                .downcast_ref::<crate::wayland::hyprland_input::DispatchUnknown>()
+                .map(|error| error.acknowledged_phases)
+                .filter(|count| *count > 0);
+            let effect = if count.is_some() {
+                ActionEffect::Partial
+            } else {
+                ActionEffect::Unverifiable
+            };
+            let mut outcome = record(effect)
+                .actual_delivery(ActualDelivery::Unknown)
+                .detail(error.to_string());
+            if let Some(count) = count {
+                outcome = outcome.delivered_count(count);
+            }
+            let outcome = outcome
+                .build()
+                .expect("unknown delivery preserves acknowledged progress");
+            let mut value = serde_json::to_value(outcome.public_result().unwrap()).unwrap();
+            value["ok"] = json!(false);
+            value["code"] = json!("background_unavailable");
+            value["reason"] = json!("transport_or_protocol_error");
+            value["detail"] = json!(error.to_string());
+            ToolResult::error(format!("background_unavailable: {error}"))
+                .with_structured(value)
+                .with_action_record(outcome)
+        }
     }
+}
+
+fn isolated_hyprland_task_error(error: tokio::task::JoinError, acknowledged: bool) -> ToolResult {
+    isolated_hyprland_result(Err(crate::wayland::hyprland_input::unknown_dispatch(
+        error.into(),
+        u32::from(acknowledged),
+    )))
 }
 
 async fn isolated_hyprland_action(
@@ -2066,8 +2125,60 @@ async fn isolated_hyprland_action(
     .await
     {
         Ok(result) => isolated_hyprland_result(result),
-        Err(error) => isolated_hyprland_refusal(format!("input task failed: {error}")),
+        Err(error) => isolated_hyprland_task_error(error, false),
     }
+}
+
+#[cfg(test)]
+#[test]
+fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
+    let refused = isolated_hyprland_result(Ok(
+        json!({"ok":false,"code":"stale_target","detail":"stale_target"}),
+    ));
+    assert_eq!(
+        refused.structured_content.as_ref().unwrap()["effect"],
+        "refused"
+    );
+    let public = refused.action_record.unwrap().public_result().unwrap();
+    assert!(public.delivery.is_none());
+    public.validate_invariants().unwrap();
+
+    let partial = isolated_hyprland_result(Ok(
+        json!({"ok":false,"code":"cancelled","detail":"cancelled",
+        "effect":"partial","delivery":{"mode":"background","delivered_count":1}}),
+    ));
+    let public = partial.action_record.unwrap().public_result().unwrap();
+    assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
+    assert_eq!(public.delivery.unwrap().delivered_count, Some(1));
+
+    let unknown = isolated_hyprland_result(Err(anyhow::anyhow!("connection lost")));
+    let public = unknown.action_record.unwrap().public_result().unwrap();
+    assert_eq!(
+        public.effect,
+        cua_driver_contract::ActionEffect::Unverifiable
+    );
+    assert_eq!(
+        public.delivery.as_ref().unwrap().mode,
+        cua_driver_contract::ActionDeliveryMode::Unknown
+    );
+    assert_eq!(public.delivery.unwrap().delivered_count, None);
+
+    let unknown_after_start = isolated_hyprland_result(Err(
+        crate::wayland::hyprland_input::unknown_dispatch(anyhow::anyhow!("connection lost"), 1),
+    ));
+    let public = unknown_after_start
+        .action_record
+        .unwrap()
+        .public_result()
+        .unwrap();
+    public.validate_invariants().unwrap();
+    assert_eq!(public.effect, cua_driver_contract::ActionEffect::Partial);
+    let delivery = public.delivery.unwrap();
+    assert_eq!(
+        delivery.mode,
+        cua_driver_contract::ActionDeliveryMode::Unknown
+    );
+    assert_eq!(delivery.delivered_count, Some(1));
 }
 
 #[cfg(test)]
@@ -2839,7 +2950,7 @@ impl Tool for ClickTool {
                 .await
                 {
                     Ok(result) => isolated_hyprland_result(result),
-                    Err(error) => isolated_hyprland_refusal(error.to_string()),
+                    Err(error) => isolated_hyprland_task_error(error, false),
                 };
             }
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
@@ -4865,7 +4976,7 @@ impl Tool for ScrollTool {
             .await
             {
                 Ok(result) => isolated_hyprland_result(result),
-                Err(error) => isolated_hyprland_refusal(error.to_string()),
+                Err(error) => isolated_hyprland_task_error(error, false),
             };
         }
 
@@ -5751,12 +5862,13 @@ impl Tool for DragTool {
             });
             // Do not animate a drag that was refused. The compositor starts
             // the overlay clock only after accepting and pressing the button.
-            if acknowledged.await.is_ok() {
+            let acknowledged = acknowledged.await.is_ok();
+            if acknowledged {
                 overlay_snap_to_for(&cursor_id, from.0 as f64, from.1 as f64, None);
                 tokio::select! {
                     result = &mut dispatch => {
                         crate::overlay::send_command_for(cursor_id, cursor_overlay::OverlayCommand::SetPressed(false));
-                        return match result { Ok(result) => isolated_hyprland_result(result), Err(error) => isolated_hyprland_refusal(error.to_string()) };
+                        return match result { Ok(result) => isolated_hyprland_result(result), Err(error) => isolated_hyprland_task_error(error, acknowledged) };
                     }
                     () = track_overlay_drag_for(cursor_id.clone(), (from.0 as f64, from.1 as f64),
                         (to.0 as f64, to.1 as f64), duration_ms, steps) => {}
@@ -5764,7 +5876,7 @@ impl Tool for DragTool {
             }
             return match dispatch.await {
                 Ok(result) => isolated_hyprland_result(result),
-                Err(error) => isolated_hyprland_refusal(error.to_string()),
+                Err(error) => isolated_hyprland_task_error(error, acknowledged),
             };
         }
 

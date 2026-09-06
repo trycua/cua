@@ -12,6 +12,13 @@ release behavior differs from deleting a local VM. See [Your first Cloud Fleet](
 for a pool-and-claim workflow and [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
 for image and transport limits.
 
+On Fleet, `disconnect()` drops the connection without releasing the claim.
+Exiting a `pool.claim()` context releases the claim, but the pool can keep warm
+capacity available and incur cloud usage charges. Deleting the pool is a
+separate operation that removes its capacity and state. See the [Pool reference](/reference/sandbox-sdk/pool)
+for exact ownership and release behavior, and [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
+for cleanup deadlines.
+
 ## Create and auto-destroy a sandbox
 
 Use `Sandbox.ephemeral` for scripts, CI, and one-off tasks.

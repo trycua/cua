@@ -3,6 +3,7 @@
   "root": true,
   "pages": [
     "index",
+    "cloud-fleets",
     "---Learn---",
     "tutorials",
     "concepts",

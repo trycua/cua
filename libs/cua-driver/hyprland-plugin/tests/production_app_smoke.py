@@ -408,6 +408,20 @@ def launch_arguments(app, document, directory):
     return launch
 
 
+def require_background_target(target, directory):
+    """Reject bad fixture setup before input; the plugin remains authoritative.
+
+    Launching a native app can make it foreground. An external test fixture
+    must own primary interaction before this standalone smoke sends keys.
+    This read-only check does not move focus or prove pointer isolation.
+    """
+    active = json.loads(read(['hyprctl', '-j', 'activewindow']))
+    save_json(directory, 'primary-window-before-input.json', active)
+    pid = active.get('pid') if isinstance(active, dict) else None
+    if type(pid) is not int or pid <= 0 or pid == target['pid']:
+        raise GroundingUnavailable('a separate foreground fixture must be active before background input')
+
+
 def run_app(mcp, app, document, directory):
     old_pids = {int(path.name) for path in Path('/proc').iterdir() if path.name.isdigit()}
     before = document.read_bytes()
@@ -416,6 +430,7 @@ def run_app(mcp, app, document, directory):
     target, identity = discover(mcp, app, document, old_pids)
     save_json(directory, 'target.json', identity)
     try:
+        require_background_target(target, directory)
         if app == 'calc':
             steps = [('insert', 'press_key', {'key': 'a'}),
                      ('commit', 'press_key', {'key': 'Return'}),

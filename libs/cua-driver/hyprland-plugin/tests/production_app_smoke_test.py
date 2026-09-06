@@ -11,7 +11,7 @@ import zipfile
 from production_app_smoke import (
     LIMITS, GroundingUnavailable, check_delivery, create_documents, ground, input_step,
     kernel_file_identity, launch_arguments, mapped_plugin, package_owner,
-    require_enabled_plugin, verify_calc, verify_inkscape,
+    require_background_target, require_enabled_plugin, run_app, verify_calc, verify_inkscape,
 )
 
 
@@ -62,6 +62,18 @@ class FixtureTests(unittest.TestCase):
             self.assertEqual(archive.read('mimetype'), b'application/vnd.oasis.opendocument.spreadsheet')
         with self.assertRaises(FileExistsError):
             create_documents(self.directory)
+
+    def test_launched_foreground_app_is_retained_without_input(self):
+        mcp = Mock()
+        mcp.tool.return_value = {'structuredContent': {}}
+        original = self.documents['calc'].read_bytes()
+        with patch('production_app_smoke.Path.iterdir', return_value=iter([])), \
+                patch('production_app_smoke.discover', return_value=(TARGET, {})), \
+                patch('production_app_smoke.read', return_value='{"pid": 123}'):
+            with self.assertRaisesRegex(GroundingUnavailable, 'separate foreground fixture'):
+                run_app(mcp, 'calc', self.documents['calc'], self.directory)
+        self.assertEqual([call.args[0] for call in mcp.tool.call_args_list], ['launch_app'])
+        self.assertEqual((self.directory / 'after.ods').read_bytes(), original)
 
     def test_calc_requires_exact_saved_a1(self):
         original = self.documents['calc'].read_bytes()
@@ -172,6 +184,20 @@ class FixtureTests(unittest.TestCase):
 
 
 class InputTests(unittest.TestCase):
+    def test_foreground_target_or_missing_foreground_is_inspection_only(self):
+        for active in ('{}', 'null', '[]', '{"pid": 123}', '{"pid": 0}',
+                       '{"pid": true}', '{"pid": "456"}'):
+            with self.subTest(active=active), \
+                    patch('production_app_smoke.read', return_value=active), \
+                    patch('production_app_smoke.save_json') as save:
+                with self.assertRaisesRegex(GroundingUnavailable, 'separate foreground fixture'):
+                    require_background_target(TARGET, Path('/evidence'))
+                save.assert_called_once()
+        with patch('production_app_smoke.read', return_value='{"pid": 456}') as read, \
+                patch('production_app_smoke.save_json'):
+            require_background_target(TARGET, Path('/evidence'))
+            read.assert_called_once_with(['hyprctl', '-j', 'activewindow'])
+
     def test_inkscape_launch_uses_supported_positional_document(self):
         self.assertEqual(launch_arguments('inkscape', Path('/docs/smoke.svg'), Path('/evidence')),
                          {'launch_path': '/usr/bin/inkscape',

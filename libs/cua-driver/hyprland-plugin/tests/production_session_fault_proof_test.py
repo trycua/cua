@@ -205,6 +205,41 @@ class OracleTests(unittest.TestCase):
 
 
 class GroundingTests(unittest.TestCase):
+    def test_interrupted_state_is_observed_after_restoration_without_input(self):
+        observer, guard, save = Mock(), Mock(), Mock()
+        spec = plan()['agents'][0]
+        action = {'outcome': 'response', 'response': PARTIAL, 'replayed': False}
+        restoration = {'result': 'restored', 'emergency': False, 'observed_ns': 10}
+        snapshot = {'proof_observation_started_ns': 20, 'proof_image': 'interrupted.png'}
+        with patch.object(proof, 'grounded_snapshot', return_value=snapshot) as observed, \
+             patch.object(proof.time, 'monotonic_ns', return_value=30):
+            record = proof.preserve_interrupted_state(observer, spec, action, restoration, guard, save)
+        observed.assert_called_once_with(observer, spec['target'], spec, session=False)
+        save.assert_called_once_with('interrupted-state.json', record)
+        self.assertIs(record['action'], action)
+        self.assertIs(record['snapshot'], snapshot)
+        self.assertEqual(record['restoration_observed_ns'], 10)
+        self.assertEqual(record['observed_ns'], 30)
+        self.assertEqual(guard.call_count, 2)
+        observer.tool.assert_not_called()
+
+    def test_interrupted_state_refuses_emergency_wake_and_stale_capture(self):
+        for failure in ('emergency', 'not_restored', 'stale_capture', 'replayed'):
+            restoration = {'result': 'restored', 'emergency': False, 'observed_ns': 10}
+            action = {'replayed': failure == 'replayed'}
+            if failure == 'emergency':
+                restoration['emergency'] = True
+            if failure == 'not_restored':
+                restoration['result'] = 'unproven'
+            snapshot = {'proof_observation_started_ns': 5 if failure == 'stale_capture' else 20}
+            save = Mock()
+            with self.subTest(failure=failure), \
+                 patch.object(proof, 'grounded_snapshot', return_value=snapshot), \
+                 patch.object(proof.time, 'monotonic_ns', return_value=30), \
+                 self.assertRaises(AssertionError):
+                proof.preserve_interrupted_state(Mock(), plan()['agents'][0], action, restoration, Mock(), save)
+            save.assert_not_called()
+
     def test_one_observation_grounds_both_same_window_pixel_actions_without_input(self):
         clients = [Mock(process=Mock(pid=pid, poll=Mock(return_value=None))) for pid in (100, 101)]
         spec = plan()['agents'][0]

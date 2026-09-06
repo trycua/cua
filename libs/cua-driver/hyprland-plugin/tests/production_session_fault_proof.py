@@ -419,6 +419,21 @@ def connect_trace(path, config):
         raise
 
 
+def preserve_interrupted_state(observer, spec, action, restoration, guard, save):
+    """Observe the partial app state after explicit wake, before recovery input."""
+    assert restoration['result'] == 'restored' and restoration['emergency'] is False
+    assert action['replayed'] is False
+    guard()
+    snapshot = grounded_snapshot(observer, spec['target'], spec, session=False)
+    observed_ns = time.monotonic_ns()
+    assert restoration['observed_ns'] <= snapshot['proof_observation_started_ns'] <= observed_ns
+    record = {'snapshot': snapshot, 'action': action, 'replayed': False,
+              'restoration_observed_ns': restoration['observed_ns'], 'observed_ns': observed_ns}
+    save('interrupted-state.json', record)
+    guard()
+    return record
+
+
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
@@ -499,6 +514,7 @@ def run(args):
         boundary = trace.collect()
         save('pre-recovery-prefix.json', boundary)
         report['teardown'] = verify_recovery_cleanup(report['refusal']['trace_after'], stopped_prefix(boundary))
+        preserve_interrupted_state(observer, spec, report['action'], restoration, guard, save)
         clients.append(launch('recovery'))
         assert clients[-1].process.pid not in report['runtime_pids'], 'reused prior runtime'
         prefix = recover(clients[-1], observer, clients[0], spec, plan['recovery']['pointer_stage'],

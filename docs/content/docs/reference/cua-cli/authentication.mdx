@@ -1,6 +1,6 @@
 ---
 title: Authentication
-description: 'How the cua CLI logs in, where it stores tokens, how to authenticate on a headless host, and which environment variables take effect.'
+description: 'Authenticate the cua CLI and Fleet SDK, create a Fleet user API key, and check access before provisioning.'
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
@@ -8,6 +8,10 @@ import { Callout } from 'fumadocs-ui/components/callout';
 `cua` authenticates with OAuth device authorization. Endpoints are discovered
 from the issuer `https://auth.cua.ai/realms/cyclops-cs`; authenticated cloud
 requests then go to `https://run.cua.ai`.
+
+For the Sandbox SDK, Terraform, or `cua sb launch --pool`, use the separate
+[Fleet credential setup](#fleet-pools-need-their-own-credentials). A successful
+CLI login does not export credentials for those clients.
 
 ## Logging in
 
@@ -215,27 +219,126 @@ takes precedence over the environment.
 
 ## Fleet pools need their own credentials
 
-`cua auth login` covers the CLI's own cloud calls, but it does not cover Fleet.
-`cua sb launch --pool` invokes the SDK without passing the interactive session
-through, and the SDK resolves Fleet credentials only from `FLEETS_TOKEN`, or
-from `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`. With a perfectly valid session and
-none of those exported, the command fails:
+The Fleet SDK accepts an OAuth user API key or a Fleet bearer access token.
+`cua auth login` stores an interactive CLI session in the credential vault;
+it does not export either credential for the SDK. `cua sb launch --pool` also
+uses the SDK's separate credential configuration. Without it, even a logged-in
+CLI can fail with:
 
 ```console
 $ cua sb launch --pool my-pool --name my-sandbox
 Error: Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, or cua.configure(client_id=..., client_secret=...).
 ```
 
-`cua auth status` still reports a live session at that point, so the message is
-easy to misread as an authentication failure. It is not — it is a different
-credential for a different API. Export a client id and secret for interactive
-use, or use `cua wif-token github` in CI:
+### Create a Fleet user API key
+
+You need an account that can sign in to [Cua Fleet](https://run.cua.ai) and
+access **API keys**. Create the key while signed in as the account that will
+own the pools. User keys act on behalf of their owner; creating a key does not
+grant access to another account's pools or bypass pool admission rules.
+
+1. Sign in to [Cua Fleet](https://run.cua.ai), then select **API keys** in the
+   navigation, or open the [API keys page](https://run.cua.ai/user-keys).
+2. Under **Create API key**, enter a descriptive **Name**, such as
+   `first-fleet-tutorial`. For the first-Fleet tutorial, leave
+   **Allowed Namespaces (optional)** at its default,
+   **All namespaces (no restriction)**, because the tutorial creates a new
+   pool namespace.
+3. Select **Create key**. In **API key created**, copy **Client ID** and
+   **Client Secret** into your secret manager before selecting
+   **I have copied the credentials**. The secret is shown only once.
+
+If you cannot sign in, the page reports **API keys are unavailable**, or key
+creation is denied, contact [Cua support on Discord](https://discord.gg/mVnXXpdE85)
+to check account access before continuing. `cua auth login` is not a substitute
+for this key-creation step.
+
+Pool creation can also require a payment method. If Fleet shows
+**Payment method required**, open **Settings** and use **Add payment method**
+under **Payment method**. Review the applicable pricing and terms before
+adding a payment method or creating billable resources. The read-only access
+check below does not create a pool or claim.
+
+### Configure the Sandbox SDK
+
+Set `CUA_CLIENT_ID` to **Client ID** and `CUA_CLIENT_SECRET` to **Client Secret**.
+The token endpoint below is the default for `run.cua.ai`; the dashboard's
+credential dialog does not display it:
 
 ```bash
-export CUA_CLIENT_ID=...
-export CUA_CLIENT_SECRET=...
-cua sb launch --pool my-pool --name my-sandbox
+export CUA_CLIENT_ID="<your-client-id>"
+export CUA_CLIENT_SECRET="<your-client-secret>"
+export CUA_TOKEN_URL="https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+unset FLEETS_TOKEN
 ```
+
+`FLEETS_TOKEN` takes precedence over these client credentials, so unset it when
+switching to a user key. Inject secrets through your secret manager where
+possible; do not commit them or paste them into shared logs.
+
+### Check access before provisioning
+
+With [uv](https://docs.astral.sh/uv/) installed, run this check in the same
+shell. It exchanges the user key for a short-lived access token and sends
+`GET /api/namespaces`. It prints only the number of namespaces returned:
+
+```bash
+uv run --with 'httpx>=0.27,<1' python - <<'PY'
+import os
+
+import httpx
+
+with httpx.Client(timeout=30) as client:
+    token_response = client.post(
+        os.environ["CUA_TOKEN_URL"],
+        auth=(os.environ["CUA_CLIENT_ID"], os.environ["CUA_CLIENT_SECRET"]),
+        data={"grant_type": "client_credentials"},
+    )
+    token_response.raise_for_status()
+    access_token = token_response.json()["access_token"]
+    response = client.get(
+        "https://run.cua.ai/api/namespaces",
+        headers={"Authorization": f"Bearer {access_token}"},
+    )
+    response.raise_for_status()
+    print(f"Fleet access verified: {len(response.json())} namespace(s).")
+PY
+```
+
+A successful response with zero namespaces is valid for an account with no
+pools. This verifies authentication and namespace listing; pool creation still
+depends on account permissions, admission rules, and resource availability.
+If the token request fails, check the client ID, secret, and token endpoint. If
+the Fleet request returns `401` or `403`, resolve the account access problem
+before provisioning; contact support if the credentials are correct.
+
+### Credential lifetime and revocation
+
+A user API key is the client ID and secret used to request access tokens.
+Access-token lifetime comes from the issuer's `expires_in` response; do not
+assume a fixed duration. The key-creation form does not offer an expiration
+setting. When you finish using a key, return to **API keys**, select **Revoke**
+for that key, and confirm **Revoke** in **Revoke API key?**. Revocation removes
+the OAuth client so it cannot obtain new tokens. Already-issued access tokens
+can remain usable until they expire.
+
+`cua auth logout` revokes the CLI session's refresh token and clears its local
+vault entry. It does not revoke a Fleet user API key or unset environment
+variables. Remove your local secret references after revoking the key.
+
+### Existing access tokens and GitHub Actions
+
+If you already have a valid Fleet bearer token, the Sandbox SDK also accepts:
+
+```bash
+export FLEETS_TOKEN="<your-access-token>"
+```
+
+A pasted token is not an OAuth client secret and cannot renew itself. Replace
+it when it expires and restart clients that hold it. For GitHub Actions, use
+the [workload identity flow](#github-actions) instead of copying an interactive
+CLI session token. Terraform uses different variable names; see
+[Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform#authentication).
 
 ## GitHub Actions
 

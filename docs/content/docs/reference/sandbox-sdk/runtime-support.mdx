@@ -64,6 +64,26 @@ before pool creation. See [Prepare and reference a Fleet image](/how-to-guides/s
 
 ## Ports and transports
 
+### Fleet guest-service contract
+
+Image acceptance and service readiness are separate checks. In 0.4.3, the default
+pool template and Sandbox connection use these contracts:
+
+| Service        | Template or client behavior                                                      | Required guest behavior                                                         |
+| -------------- | -------------------------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| `server`       | Default port `8000`; TCP readiness probe; Sandbox connection waits for `/status` | Start a compatible computer-server endpoint reachable from the guest network    |
+| `port-N`       | `.expose(N)` adds a named service for a non-server port                          | Start the application on port `N`; the declaration does not install or start it |
+| Explicit names | `Pool.apply(services={...})` declares named ports while retaining `server`       | Start the corresponding services; clients must speak their protocol             |
+
+The SDK's default template probe checks the server port, not every additional
+service. A ready server does not prove that an MCP endpoint or application service
+works. An MCP service's name, port, path, and installed driver version belong to
+the artifact's documented contract; they cannot be inferred from its Linux or
+Windows label. For an example service layout, see the
+[Omarchy Fleet recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet).
+
+### Transport availability
+
 | Sandbox connection | `sb.tunnel.forward()` in 0.4.3 | Connection behavior |
 | --- | --- | --- |
 | Local VM through `HTTPTransport` | Not implemented | Use the runtime's startup mapping where available, such as bare-metal QEMU's `sb.exposed_ports` |

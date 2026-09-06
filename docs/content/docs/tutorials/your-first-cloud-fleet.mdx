@@ -23,23 +23,24 @@ active desktop as a claim on that pool.
 
 ## 1. Authenticate with Fleet
 
-The SDK connects to `https://run.cua.ai` by default. Export a Fleet access
-token:
+First, [create a Fleet user API key and check access](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials).
+That setup explains account access, the **API keys** page, payment-method
+requirements, and a read-only check that does not provision cloud resources.
+Complete it before continuing.
 
-```bash
-export FLEETS_TOKEN="<your-access-token>"
-```
-
-Or export OAuth client credentials:
+The SDK connects to `https://run.cua.ai` by default. In the same shell, use the
+**Client ID** and **Client Secret** from your Fleet key:
 
 ```bash
 export CUA_CLIENT_ID="<your-client-id>"
 export CUA_CLIENT_SECRET="<your-client-secret>"
+export CUA_TOKEN_URL="https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+unset FLEETS_TOKEN
 ```
 
-`cua auth login` does not supply credentials to the Fleet SDK. See
-[Authentication](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
-for the supported Fleet credential paths.
+`cua auth login` does not supply credentials to the Fleet SDK. If you already
+have a valid Fleet access token, you can set `FLEETS_TOKEN` instead; it takes
+precedence over the client credentials and must remain valid through cleanup.
 
 ## 2. Choose a unique Fleet name
 

@@ -3,6 +3,7 @@
 #include "input_experiment.hpp"
 #include "drag_geometry.hpp"
 #include "input_grant.hpp"
+#include "input_client_deadline.hpp"
 #include "primary_trace.hpp"
 #include "seat_lifetime.hpp"
 #include "owned_socket_path.hpp"
@@ -150,7 +151,7 @@ struct InputExperiment::Impl {
         WP<CWLSurfaceResource> surface;
         std::array<double, 6> geometry{};
         std::uint64_t revision = 1, sequence = 0, approved_deadline = 0;
-        Clock::time_point activity = Clock::now();
+        InputClientDeadline deadline;
         CHyprSignalListener unmap, destroy;
         ~Client() {
             if (source) wl_event_source_remove(source);
@@ -547,11 +548,16 @@ struct InputExperiment::Impl {
         auto& c = *static_cast<Client*>(data); auto& self = *c.owner;
         if (mask & (WL_EVENT_HANGUP | WL_EVENT_ERROR)) c.dead = true;
         for (unsigned i = 0; i < 8 && !c.dead; ++i) {
+            // Check before reading or changing HELLO state, even if the event
+            // loop's periodic expiry callback has not run yet.
+            if (c.deadline.expired(c.hello, Clock::now())) { c.dead = true; break; }
             std::array<char, kMaxPacket> buffer{};
             const auto n = recv(fd, buffer.data(), buffer.size(), MSG_DONTWAIT | MSG_TRUNC);
             if (n < 0) { if (errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) c.dead = true; break; }
             if (!n) { c.dead = true; break; }
-            c.activity = Clock::now();
+            const auto received = Clock::now();
+            if (c.deadline.expired(c.hello, received)) { c.dead = true; break; }
+            c.deadline.touch(received);
             if (static_cast<std::size_t>(n) > buffer.size()) { self.send(c, refusal("invalid_request")); continue; }
             try { self.request(c, fields(std::string_view(buffer.data(), n))); }
             catch (...) {
@@ -596,7 +602,7 @@ struct InputExperiment::Impl {
         // Approval begins the bounded active period. Time spent waiting for
         // the external operator must not consume the input connection's idle
         // budget while its newly approved lease is still valid.
-        lease->activity = Clock::now();
+        lease->deadline.touch(Clock::now());
         if (trace) trace->mark("agent_approved", lane + 1);
         send(c, R"({"ok":true})");
     }
@@ -844,7 +850,7 @@ struct InputExperiment::Impl {
                 send(*d.client, kDelivered);
             }
         }
-        for (auto& c : clients) if (Clock::now() - c->activity > std::chrono::seconds(c->hello ? 60 : 5)) c->dead = true;
+        for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
         if (lease && lease->dead) revoke("disconnected");
         if (reservation && reservation->dead) reservation = nullptr;
         std::erase_if(clients, [](auto& c) { return c->dead; });

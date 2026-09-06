@@ -138,6 +138,23 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_constructor_accepts_inert_baseline_but_not_reserved_input(self):
+        for reserved in (False, True):
+            with self.subTest(reserved=reserved), tempfile.TemporaryDirectory() as root:
+                before = status()
+                before['input']['lanes'][1].update(pointer_focus=True, reserved=reserved)
+                args = SimpleNamespace(evidence=Path(root))
+                with patch.object(proof.SessionFault, 'check_targets'), patch.object(proof, 'power'), \
+                     patch.object(proof, 'production_status', return_value=before):
+                    if reserved:
+                        with self.assertRaisesRegex(AssertionError, 'authority'):
+                            proof.SessionFault(plan(), args)
+                    else:
+                        fault = proof.SessionFault(plan(), args)
+                        self.assertFalse(fault.mutated)
+                        self.assertIsNone(fault.child)
+                self.assertEqual(json.loads((args.evidence / 'pre-fault-status.json').read_text()), before)
+
     def test_passive_recovery_does_not_relax_transition_or_held_state_checks(self):
         passive = status(1)
         passive['input']['lanes'][0]['pointer_focus'] = True

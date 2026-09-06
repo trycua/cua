@@ -38,6 +38,7 @@ from production_realapp_proof import (PRIMARY_LIFETIME_MS, capacity_lane,
     check_response, primary_acknowledgement, provenance, require_primary_active,
     trace_interval)
 from production_session_fault_proof import connect_trace, lanes, power, production_status
+from production_desktop_fault_proof import idle_lanes
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
@@ -97,7 +98,8 @@ class ActiveLockFixture(LockFixture):
         self.check_binary()
         assert self.child is None, 'fixture already armed'
         self.record['before'] = production_status(self.config)
-        stable_status(self.record['before'], self.record['before'])
+        (self.args.evidence / 'pre-fault-status.json').write_text(json.dumps(self.record['before']))
+        idle_lanes(self.record['before'])
         with (self.args.evidence / 'lock-fixture.stderr').open('wb') as log:
             self.child = subprocess.Popen([str(self.args.lock_fixture), str(LOCK_MS),
                 str(self.config['compositor']['pid'])], stdin=subprocess.PIPE,

@@ -46,7 +46,7 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag,
     close_owned, grounded_snapshot, poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup)
-from production_desktop_fault_proof import guest_identity, verify_status
+from production_desktop_fault_proof import guest_identity, idle_lanes, verify_status
 from production_geometry_fault_proof import recover, fault_outcome, validate_plan as geometry_plan
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
@@ -202,7 +202,8 @@ class SessionFault:
         self.check_targets()
         power(self.config, True)
         self.record['before'] = production_status(self.config)
-        lanes(self.record['before'], cleared=True)
+        (args.evidence / 'pre-fault-status.json').write_text(json.dumps(self.record['before']))
+        idle_lanes(self.record['before'])
 
     def check_targets(self):
         guard_guest(self.config)

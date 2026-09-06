@@ -102,6 +102,22 @@ def verify_keymap_transition(before, after):
         assert new[lane].get('reserved') is False, 'pre-transition reservation survived'
 
 
+def idle_lanes(status):
+    """Before a new episode, only unreserved inert pointer focus may remain.
+
+    Runtime close retires input authority without removing passive hover.
+    This is not the stronger post-keymap/DPMS/lock transition assertion.
+    """
+    rows = keymap_lanes(status)
+    for row in rows.values():
+        assert all(type(row.get(key)) is int and row[key] == 0
+                   for key in ('held_button', 'held_keys')), 'pre-fault input still held'
+        assert all(row.get(key) is False for key in
+                   ('drag_active', 'lease_active', 'keyboard_focus', 'reserved')), 'pre-fault authority remains'
+        assert type(row.get('pointer_focus')) is bool, 'missing pre-fault pointer state'
+    return rows
+
+
 def digest(data):
     return hashlib.sha256(data).hexdigest()
 
@@ -311,9 +327,10 @@ class ConfigFault:
         self.mutated = False
         _guard(self.config)
         self.record['before'] = production_status(expected['instance'], True)
+        (evidence / 'pre-fault-status.json').write_text(json.dumps(self.record['before']))
         if kind == 'keymap':
             self.record['keymap_before'] = keymap_options(expected['instance'], True)
-            keymap_lanes(self.record['before'], cleared=True)
+            idle_lanes(self.record['before'])
         # Files are prepared before the watchdog and before any live drag.
         # Known inodes let either process reject an unrelated replacement.
         try:

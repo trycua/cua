@@ -34,6 +34,7 @@ from primary_trace import analyze
 from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, close_owned,
     grounded_snapshot, stopped_prefix, verify_recovery_cleanup, verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
+from production_desktop_fault_proof import idle_lanes
 import production_pointer_grounding as pointer_grounding
 from production_realapp_proof import (PRIMARY_LIFETIME_MS, capacity_lane, check_response,
     primary_acknowledgement, provenance, require_primary_active, trace_interval)
@@ -59,7 +60,9 @@ def validate_plan(plan):
 
 
 def stable_status(before, after, *, advanced=False):
-    old, new = lanes(before, cleared=True), lanes(after, cleared=True)
+    # Only a pre-transition idle baseline may contain an inert pointer.
+    old = idle_lanes(before) if advanced else lanes(before, cleared=True)
+    new = lanes(after, cleared=True)
     assert set(old) == set(new)
     for lane in old:
         assert old[lane].get('reserved') is False and new[lane].get('reserved') is False
@@ -165,7 +168,8 @@ class LockFixture(SessionFault):
         self.check_binary()
         assert self.child is None
         self.record['before'] = production_status(self.config)
-        stable_status(self.record['before'], self.record['before'])
+        (self.args.evidence / 'pre-fault-status.json').write_text(json.dumps(self.record['before']))
+        idle_lanes(self.record['before'])
         with (self.args.evidence / 'lock-fixture.stderr').open('wb') as log:
             self.child = subprocess.Popen([str(self.args.lock_fixture), str(LOCK_MS),
                 str(self.config['compositor']['pid'])], stdin=subprocess.PIPE,

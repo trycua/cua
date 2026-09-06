@@ -301,10 +301,13 @@ class FixtureTests(unittest.TestCase):
         fixture.event.return_value = {'event': 'ready', 'observed_ns': 1}
         with tempfile.TemporaryDirectory() as directory:
             fixture.args = SimpleNamespace(evidence=Path(directory), lock_fixture=Path(identity['exe']))
-            with patch.object(proof, 'production_status', return_value=status()), \
+            before = status()
+            before['input']['lanes'][0]['pointer_focus'] = True
+            with patch.object(proof, 'production_status', return_value=before), \
                  patch.object(proof.subprocess, 'Popen', return_value=child) as launch, \
                  patch.object(proof, '_identity', return_value=identity):
                 fixture.arm()
+            self.assertEqual(json.loads((fixture.args.evidence / 'pre-fault-status.json').read_text()), before)
         self.assertEqual(launch.call_args.args[0], ['/test/session_lock_fixture', '20000', '50'])
         child.stdin.write.assert_not_called()
         fixture.event.assert_called_once_with('ready')

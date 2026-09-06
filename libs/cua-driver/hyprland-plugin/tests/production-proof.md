@@ -110,7 +110,8 @@ Review a JSON plan before execution. The plan has:
   archived PNGs. Traced pointer episodes also save compositor status before
   runtime close and after bounded cleanup: passive pointer focus must retain
   neither a lease nor held input or keyboard focus. The complete wire trace
-  must show no same-target focus churn and the matching leave on runtime close.
+  must show no same-target focus churn. Runtime close must release the lane
+  reservation without sending new input or disturbing its inert pointer focus.
   These checks are prepared; a passing native run is still required.
 - Optional per-step `expect`: `{kind:"refused",reason:"<exact observed contract reason>"}`,
   `{kind:"partial"}`, or `{kind:"unknown"}`. The default is dispatched. Denial

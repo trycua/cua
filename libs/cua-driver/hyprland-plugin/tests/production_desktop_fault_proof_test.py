@@ -83,6 +83,52 @@ def keymap_restoration():
 
 
 class KeymapTests(unittest.TestCase):
+    def test_idle_baseline_allows_only_unreserved_inert_hover_on_either_lane(self):
+        for lane in (0, 1):
+            passive = keymap_status(1)
+            passive['input']['lanes'][lane]['pointer_focus'] = True
+            proof.idle_lanes(passive)
+            proof.verify_keymap_transition(passive, keymap_status(2))
+            with self.assertRaises(AssertionError):
+                proof.keymap_lanes(passive, cleared=True)
+            for key, value in (('held_button', 272), ('held_button', False), ('held_keys', 1),
+                               ('drag_active', True), ('lease_active', True), ('keyboard_focus', True),
+                               ('reserved', True), ('reserved', None), ('pointer_focus', 1),
+                               ('pointer_focus', None)):
+                changed = deepcopy(passive)
+                changed['input']['lanes'][lane][key] = value
+                with self.subTest(lane=lane, key=key, value=value), self.assertRaises(AssertionError):
+                    proof.idle_lanes(changed)
+
+    def test_keymap_constructor_preserves_and_checks_passive_baseline_before_staging(self):
+        for reserved in (False, True):
+            with self.subTest(reserved=reserved), tempfile.TemporaryDirectory() as root, ExitStack() as stack:
+                directory = Path(root).resolve()
+                path = directory / 'keymap.lua'
+                path.write_text(proof.KEYMAP_US)
+                path.chmod(0o600)
+                candidate = plan('keymap')
+                candidate['config'] = {'path': str(path), **proof.file_identity(path)}
+                candidate['compositor']['uid'] = os.getuid()
+                identity = {k: v for k, v in candidate['compositor'].items() if k != 'instance'}
+                before = keymap_status(1)
+                before['input']['lanes'][0].update(pointer_focus=True, reserved=reserved)
+                stack.enter_context(patch.object(proof.platform, 'system', return_value='Linux'))
+                stack.enter_context(patch.object(proof.subprocess, 'run', return_value=Mock(returncode=0)))
+                stack.enter_context(patch.object(proof, '_identity', return_value=identity))
+                stack.enter_context(patch.object(proof, '_guard'))
+                stack.enter_context(patch.object(proof, 'production_status', return_value=before))
+                stack.enter_context(patch.object(proof, 'keymap_options', return_value=options()))
+                if reserved:
+                    with patch.object(proof.tempfile, 'mkstemp') as stage, self.assertRaisesRegex(AssertionError, 'authority'):
+                        proof.ConfigFault(candidate, directory)
+                    stage.assert_not_called()
+                else:
+                    fault = proof.ConfigFault(candidate, directory)
+                    fault.close()
+                self.assertEqual(json.loads((directory / 'pre-fault-status.json').read_text()), before)
+                self.assertEqual(path.read_text(), proof.KEYMAP_US)
+
     def test_keymap_plan_requires_its_own_exact_include(self):
         proof.validate_plan(plan('keymap'))
         for kind, data in (('keymap', proof.ENABLED), ('config_disable', proof.KEYMAP_US),
@@ -438,7 +484,7 @@ class SafetyTests(unittest.TestCase):
                 self.assertEqual(staged.suffix, '.stage')
             fault.close()
             self.assertEqual(proof.file_identity(path), original)
-            self.assertEqual(list(directory.iterdir()), [path])
+            self.assertEqual(set(directory.iterdir()), {path, directory / 'pre-fault-status.json'})
             reload.assert_not_called()
 
     def test_final_active_gate_failure_prevents_atomic_replacement(self):

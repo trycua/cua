@@ -30,6 +30,30 @@ def refusal():
 
 
 class PlanTests(unittest.TestCase):
+    def test_lock_preflight_accepts_only_inert_unreserved_hover_before_launch(self):
+        for reserved in (False, True):
+            with self.subTest(reserved=reserved), tempfile.TemporaryDirectory() as directory:
+                fixture = object.__new__(proof.LockFixture)
+                fixture.args = SimpleNamespace(evidence=Path(directory), lock_fixture=Path('/test/session_lock_fixture'))
+                fixture.config = {'compositor': {'pid': 50}}
+                fixture.check_targets = Mock()
+                fixture.check_binary = Mock()
+                fixture.child = None
+                fixture.record = {}
+                before = status()
+                before['input']['lanes'][1].update(pointer_focus=True, reserved=reserved)
+                with patch.object(proof, 'production_status', return_value=before), \
+                     patch.object(proof.subprocess, 'Popen', side_effect=RuntimeError('launch reached')) as launch:
+                    if reserved:
+                        with self.assertRaisesRegex(AssertionError, 'authority'):
+                            fixture.lock()
+                        launch.assert_not_called()
+                    else:
+                        with self.assertRaisesRegex(RuntimeError, 'launch reached'):
+                            fixture.lock()
+                        launch.assert_called_once()
+                self.assertEqual(json.loads((fixture.args.evidence / 'pre-fault-status.json').read_text()), before)
+
     def test_exact_lock_disposable_calc_identity_plan(self):
         proof.validate_plan(plan())
         for change in ({'purpose': 'session_fault'}, {'fault': {'kind': 'dpms'}},
@@ -211,6 +235,18 @@ class OracleTests(unittest.TestCase):
 
     def test_each_lock_transition_advances_generation_without_dispatch(self):
         proof.stable_status(status(1), status(2), advanced=True)
+        passive = status(1)
+        passive['input']['lanes'][0]['pointer_focus'] = True
+        proof.stable_status(passive, status(2), advanced=True)
+        with self.assertRaises(AssertionError):
+            proof.stable_status(passive, passive)
+        after = status(2)
+        after['input']['lanes'][0]['pointer_focus'] = True
+        with self.assertRaises(AssertionError):
+            proof.stable_status(passive, after, advanced=True)
+        passive['input']['lanes'][0]['reserved'] = True
+        with self.assertRaises(AssertionError):
+            proof.stable_status(passive, status(2), advanced=True)
         for after in (status(1), status(0)):
             with self.assertRaises(AssertionError):
                 proof.stable_status(status(1), after, advanced=True)

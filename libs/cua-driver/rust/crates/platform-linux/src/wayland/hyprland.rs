@@ -223,8 +223,8 @@ fn query_with<T: serde::de::DeserializeOwned>(
     for attempt in 1..=QUERY_MAX_ATTEMPTS {
         query_time_remaining(deadline)?;
         let attempt_deadline = deadline.min(Instant::now() + per_attempt);
-        // Connection and peer-attestation errors are permanent. Only reply
-        // timeouts below are eligible for a new query.
+        // Connection and peer-attestation errors are permanent. Only read-only
+        // request/reply timeouts below are eligible for a new query.
         let mut ipc = connect(attempt_deadline)?;
         let reply = query_time_remaining(attempt_deadline)
             .and_then(|remaining| read_reply(&mut ipc, command.as_bytes(), remaining));
@@ -638,7 +638,9 @@ mod tests {
             Duration::from_millis(1),
             |deadline| {
                 attempts += 1;
-                assert!(deadline <= start + Duration::from_millis(120));
+                assert!(
+                    deadline.saturating_duration_since(Instant::now()) <= Duration::from_millis(80)
+                );
                 std::thread::sleep(Duration::from_millis(10));
                 let (client, server) = UnixStream::pair()?;
                 stalled.push(server);
@@ -649,6 +651,50 @@ mod tests {
         assert!(is_query_timeout(&error));
         assert!(attempts <= QUERY_MAX_ATTEMPTS);
         assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    #[test]
+    fn observation_attempt_cap_applies_with_a_generous_total_budget() {
+        let mut attempts = 0;
+        let mut stalled = Vec::new();
+        let error = query_with::<serde_json::Value>(
+            "j/clients",
+            Duration::from_millis(30),
+            Duration::from_secs(10),
+            Duration::from_millis(1),
+            |_| {
+                attempts += 1;
+                let (client, server) = UnixStream::pair()?;
+                stalled.push(server);
+                Ok(client)
+            },
+        )
+        .unwrap_err();
+        assert!(is_query_timeout(&error));
+        assert_eq!(attempts, 2);
+    }
+
+    #[test]
+    fn observation_never_writes_after_connect_consumes_total_deadline() {
+        let (client, mut server) = UnixStream::pair().unwrap();
+        let mut client = Some(client);
+        let mut attempts = 0;
+        let error = query_with::<serde_json::Value>(
+            "j/clients",
+            Duration::from_millis(10),
+            Duration::from_millis(10),
+            Duration::from_millis(1),
+            |_| {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(30));
+                Ok(client.take().unwrap())
+            },
+        )
+        .unwrap_err();
+        assert!(is_query_timeout(&error));
+        assert_eq!(attempts, 1);
+        // The client was dropped without sending a request: EOF, not bytes.
+        assert_eq!(server.read(&mut [0; 64]).unwrap(), 0);
     }
 
     #[test]

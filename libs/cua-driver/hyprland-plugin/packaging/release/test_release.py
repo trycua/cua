@@ -200,6 +200,62 @@ class ReleaseTest(unittest.TestCase):
         self.assertEqual({p.name for p in (self.repo / "plugin-release-assets").iterdir()},
                          {f"{stem}.tar.gz", f"{stem}-build-kit.tar.gz"})
 
+    def prepare_staged_assets(self):
+        self.write(bundle.RELEASE + "bundle.py", (HERE / "bundle.py").read_text())
+        self.git("add", bundle.RELEASE + "bundle.py")
+        self.git("commit", "-qm", "Release-capable bundler")
+        self.revision = self.git("rev-parse", "HEAD")
+        self.git("tag", "cua-driver-rs-v1.2.3")
+        output = self.repo / "release-upload"
+        bundle.generate(self.repo, self.revision, "1.2.3", output, release_assets=True)
+        return sorted(output.iterdir())
+
+    def workflow_verify_staged_assets(self):
+        workflow = (HERE.parents[4] / ".github/workflows/cd-rust-cua-driver.yml").read_text()
+        step = workflow.split("      - name: Verify staged plugin source assets\n", 1)[1]
+        script = textwrap.dedent(step.split("        run: |\n", 1)[1].split("      - name:", 1)[0])
+        script = script.replace("${{ steps.version.outputs.version }}", "1.2.3").replace(
+            "${{ steps.version.outputs.sha }}", self.revision)
+        binaries = self.root / "bin"
+        binaries.mkdir(exist_ok=True)
+        (binaries / "python3").symlink_to(sys.executable)
+        return subprocess.run(["bash", "-e", "-c", script], cwd=self.repo,
+                              env={**os.environ, "PATH": f"{binaries}:{os.environ['PATH']}"},
+                              capture_output=True, text=True)
+
+    def test_staged_plugin_assets_match_exact_tag_bytes(self):
+        self.prepare_staged_assets()
+        result = self.workflow_verify_staged_assets()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_staged_plugin_assets_refuse_missing_archive(self):
+        assets = self.prepare_staged_assets()
+        assets[0].rename(self.root / "withheld.tar.gz")
+        self.assertNotEqual(self.workflow_verify_staged_assets().returncode, 0)
+
+    def test_staged_plugin_assets_refuse_extra_archive(self):
+        self.prepare_staged_assets()
+        self.write("release-upload/cua-hyprland-plugin-unexpected.tar.gz", "unexpected")
+        self.assertNotEqual(self.workflow_verify_staged_assets().returncode, 0)
+
+    def test_staged_plugin_assets_refuse_wrong_revision_filename(self):
+        assets = self.prepare_staged_assets()
+        assets[0].rename(assets[0].with_name(assets[0].name.replace(self.revision, "0" * 40)))
+        self.assertNotEqual(self.workflow_verify_staged_assets().returncode, 0)
+
+    def test_staged_plugin_assets_refuse_changed_bytes(self):
+        assets = self.prepare_staged_assets()
+        assets[0].write_bytes(b"altered download")
+        self.assertNotEqual(self.workflow_verify_staged_assets().returncode, 0)
+
+    def test_staged_legacy_assets_need_no_plugin(self):
+        result = self.workflow_verify_staged_assets()
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_staged_legacy_assets_refuse_unexpected_plugin(self):
+        self.write("release-upload/cua-hyprland-plugin-unexpected.tar.gz", "unexpected")
+        self.assertNotEqual(self.workflow_verify_staged_assets().returncode, 0)
+
     def test_source_tampering_and_provenance_mismatch(self):
         source = self.source()
         manifest = verify.verify_source(source, self.revision, "1.2.3")

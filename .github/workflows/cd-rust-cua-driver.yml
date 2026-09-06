@@ -1183,6 +1183,33 @@ jobs:
           echo "Release files:"
           ls -lh release-upload/
 
+      # Match the source job's Python/zlib runtime for deterministic archives.
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Verify staged plugin source assets
+        run: |
+          set -euo pipefail
+          VERSION="${{ steps.version.outputs.version }}"
+          SHA="${{ steps.version.outputs.sha }}"
+          shopt -s nullglob
+          PLUGIN_ASSETS=(release-upload/cua-hyprland-plugin-*.tar.gz)
+          if git cat-file -e HEAD:libs/cua-driver/hyprland-plugin/packaging/release/bundle.py 2>/dev/null; then
+            test "${#PLUGIN_ASSETS[@]}" -eq 2
+            # Rebuild deterministic source assets from the exact tag. Missing,
+            # extra, misnamed, or changed downloads must fail before publication.
+            python3 libs/cua-driver/hyprland-plugin/packaging/release/bundle.py \
+              --repo . --revision "$SHA" --driver-version "$VERSION" \
+              --release-assets --output plugin-release-expected
+            for EXPECTED in plugin-release-expected/*.tar.gz; do
+              cmp "$EXPECTED" "release-upload/$(basename "$EXPECTED")"
+            done
+          else
+            # Legacy tag recovery has no plugin source job or plugin assets.
+            test "${#PLUGIN_ASSETS[@]}" -eq 0
+          fi
+
       - name: Generate SHA256 checksums
         run: |
           cd release-upload

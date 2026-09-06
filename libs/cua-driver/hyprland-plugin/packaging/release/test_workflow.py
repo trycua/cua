@@ -51,6 +51,16 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("cua-hyprland-plugin-*.tar.gz", self.release)
         self.assertNotIn("--clobber", self.release)
 
+    def test_downloaded_plugin_assets_are_verified_before_checksums_and_publication(self):
+        verify = self.release.index("- name: Verify staged plugin source assets")
+        checksums = self.release.index("- name: Generate SHA256 checksums")
+        self.assertLess(self.release.index("- name: Download all artifacts"), verify)
+        self.assertLess(verify, checksums)
+        step = self.release[verify:checksums]
+        self.assertIn('test "${#PLUGIN_ASSETS[@]}" -eq 2', step)
+        self.assertIn('--release-assets --output plugin-release-expected', step)
+        self.assertIn('cmp "$EXPECTED" "release-upload/$(basename "$EXPECTED")"', step)
+
 
 if __name__ == "__main__":
     unittest.main()

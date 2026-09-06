@@ -7206,10 +7206,17 @@ impl Tool for GetScreenSizeTool {
             return result;
         }
         let result = tokio::task::spawn_blocking(|| {
+            if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+                // Shared manifest admission needs content-free display
+                // metadata even when this native desktop has no X11 DISPLAY.
+                // The adapter attests the IPC/Wayland compositor peer and
+                // refuses layouts outside its qualified 1:1 single-output frame.
+                return crate::wayland::hyprland::screen_size();
+            }
             // X11 reports pixel dimensions; scale factor on X11 is not
             // well-defined per-monitor, so report 1.0 (matches DPI-unaware
-            // assumption).  Wayland/HiDPI X11 callers should query
-            // `xrandr --query` for true scale.
+            // assumption). Other Wayland compositors retain their existing
+            // limitation; do not infer native metadata support there.
             let (w, h) = x11_screen_size()?;
             Ok::<(u32, u32, f64), anyhow::Error>((w, h, 1.0))
         })

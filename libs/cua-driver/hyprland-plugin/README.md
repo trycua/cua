@@ -200,6 +200,14 @@ application-state evidence. The host Hyprland/plugin ABI pair, plugin transport,
 opaque target binding, and isolated raw background input each require their
 own acceptance evidence on the exact host and candidate module.
 
+The input candidate resolves display-scoped manifest resources through a
+content-free Hyprland IPC geometry query, with the existing same-compositor
+peer check. This path requires one unscaled, unrotated output at the origin.
+It does not use a screenshot or an XWayland root as display identity, and it
+does not relax the manifest. Other layouts refuse this metadata query; native
+display metadata on other Wayland compositors remains a separate limitation.
+This source change is not evidence that the capability has been released.
+
 Compositor administration also remains explicit. Integrations may invoke
 `hyprctl` for an operator-requested workspace, monitor, window-rule, focus, or
 DPMS operation, but a Cua background action must never hide a target-delivery

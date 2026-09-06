@@ -42,6 +42,16 @@ struct Monitor {
     special_workspace: Workspace,
 }
 
+#[derive(Clone, Debug, Deserialize)]
+struct DisplayMonitor {
+    width: u32,
+    height: u32,
+    scale: f64,
+    x: i32,
+    y: i32,
+    transform: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Window {
     pub address: u64,
@@ -212,6 +222,26 @@ fn windows_from_clients(clients: Vec<Client>, active: &HashSet<i64>) -> Result<V
 
 fn valid_dimensions(width: u32, height: u32) -> bool {
     width > 0 && height > 0 && u64::from(width) * u64::from(height) <= MAX_LOGICAL_PIXELS
+}
+
+/// Content-free geometry for the qualified single-output, 1:1 desktop.
+/// The common policy adapter uses this for display-scoped observation. Never
+/// substitute a screenshot, XWayland root, or guessed primary monitor here.
+pub fn screen_size() -> Result<(u32, u32, f64)> {
+    screen_size_from_monitors(query("j/monitors")?)
+}
+
+fn screen_size_from_monitors(monitors: Vec<DisplayMonitor>) -> Result<(u32, u32, f64)> {
+    let [monitor] = monitors.as_slice() else {
+        bail!("Hyprland display identity requires exactly one active output");
+    };
+    if monitor.scale != 1.0 || monitor.transform != 0 || monitor.x != 0 || monitor.y != 0 {
+        bail!("Hyprland display identity requires an unscaled, unrotated output at the origin");
+    }
+    if !valid_dimensions(monitor.width, monitor.height) {
+        bail!("invalid Hyprland display dimensions");
+    }
+    Ok((monitor.width, monitor.height, monitor.scale))
 }
 
 pub fn list_windows() -> Result<Vec<Window>> {
@@ -386,5 +416,50 @@ mod tests {
         assert!(valid_dimensions(3840, 2160));
         assert!(!valid_dimensions(0, 1));
         assert!(!valid_dimensions(u32::MAX, u32::MAX));
+    }
+
+    fn display_monitor() -> DisplayMonitor {
+        serde_json::from_value(serde_json::json!({
+            "width": 1920, "height": 1080, "scale": 1.0,
+            "x": 0, "y": 0, "transform": 0,
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn display_identity_accepts_qualified_native_geometry() {
+        assert_eq!(
+            screen_size_from_monitors(vec![display_monitor()]).unwrap(),
+            (1920, 1080, 1.0)
+        );
+    }
+
+    #[test]
+    fn display_identity_rejects_ambiguous_outputs_and_unsupported_frames() {
+        assert!(screen_size_from_monitors(vec![]).is_err());
+        assert!(screen_size_from_monitors(vec![display_monitor(), display_monitor()]).is_err());
+        for scale in [0.0, 1.25, 2.0, f64::NAN, f64::INFINITY] {
+            let mut monitor = display_monitor();
+            monitor.scale = scale;
+            assert!(screen_size_from_monitors(vec![monitor]).is_err());
+        }
+        for (x, y, transform) in [(100, 0, 0), (0, -100, 0), (0, 0, 1), (0, 0, 7)] {
+            let mut monitor = display_monitor();
+            (monitor.x, monitor.y, monitor.transform) = (x, y, transform);
+            assert!(screen_size_from_monitors(vec![monitor]).is_err());
+        }
+    }
+
+    #[test]
+    fn display_identity_rejects_empty_oversized_and_missing_geometry() {
+        for (width, height) in [(0, 1080), (1920, 0), (u32::MAX, u32::MAX)] {
+            let mut monitor = display_monitor();
+            (monitor.width, monitor.height) = (width, height);
+            assert!(screen_size_from_monitors(vec![monitor]).is_err());
+        }
+        let value = serde_json::json!({
+            "width": 1920, "height": 1080, "scale": 1.0, "x": 0, "y": 0,
+        });
+        assert!(serde_json::from_value::<DisplayMonitor>(value).is_err());
     }
 }

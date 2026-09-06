@@ -12,7 +12,7 @@ import production_primary_conflict_proof as proof
 
 
 BOUNDS = {'x': 10, 'y': 20, 'width': 800, 'height': 600}
-REFUSED = {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'primary_target_busy'}}
+REFUSED = {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'primary_target_busy', 'lane': 0}}
 DELIVERED = {'structuredContent': {'effect': 'unverifiable', 'route': 'synthetic_events',
                                  'delivery': {'mode': 'background'}}}
 
@@ -59,6 +59,28 @@ def client(pid):
 
 
 class OracleTests(unittest.TestCase):
+    def test_refusal_keeps_only_its_connection_reservation_without_authority(self):
+        for lane in (0, 1):
+            response = {**REFUSED, 'structuredContent': {**REFUSED['structuredContent'], 'lane': lane}}
+            current = status()
+            current['input']['lanes'][lane]['reserved'] = True
+            self.assertIs(proof.verify_refusal_status(current, response), current)
+            for index, field, value in ((lane, 'reserved', False), (1 - lane, 'reserved', True),
+                    (lane, 'pointer_focus', True), (1 - lane, 'pointer_focus', True),
+                    (lane, 'keyboard_focus', True), (lane, 'lease_active', True),
+                    (lane, 'drag_active', True), (lane, 'held_button', 272), (lane, 'held_keys', 1)):
+                candidate = deepcopy(current)
+                candidate['input']['lanes'][index][field] = value
+                with self.subTest(lane=lane, index=index, field=field), self.assertRaises(AssertionError):
+                    proof.verify_refusal_status(candidate, response)
+            # The same reservation is forbidden after the runtime reaches EOF.
+            with self.assertRaises(AssertionError):
+                proof.clear_status(current, unreserved=True)
+            for invalid in (None, True, -1, 2):
+                with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                    proof.verify_refusal_status(current, {**response, 'structuredContent': {
+                        **response['structuredContent'], 'lane': invalid}})
+
     def test_exact_refusal_and_zero_synthetic_events_required(self):
         proof.verify_refusal(trace(), trace(), REFUSED)
         for response in (DELIVERED, {'isError': True, 'structuredContent': {'effect': 'refused', 'reason': 'policy_denied'}},
@@ -271,7 +293,7 @@ class RunTests(unittest.TestCase):
 
     def test_run_separates_setup_reaps_all_children_and_retains_failure_evidence(self):
         for failure in (None, 'refusal', 'recovery', 'close', 'release', 'primary_event', 'held',
-                        'reused', 'start_lost', 'restarted_trace', 'reserved_refusal'):
+                        'reused', 'start_lost', 'restarted_trace', 'reserved_refusal', 'reserved_after_close'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as root, ExitStack() as stack:
                 directory = Path(root)
                 path = directory / 'plan.json'
@@ -280,6 +302,7 @@ class RunTests(unittest.TestCase):
                     primary_grab=Path('/grab'), trace_socket=Path('/cua-input-v3.sock'), foreground_journal=Path('/journal'))
                 desktop = Mock()
                 desktop.status.return_value = status()
+                desktop.raw_status.return_value = status()
                 desktop.primary.side_effect = lambda target: {**target, 'cursor': {'x': 30, 'y': 40}, 'workspace': 1}
                 stack.enter_context(patch.object(proof, 'ExactDesktop', return_value=desktop))
                 stack.enter_context(patch.object(proof, 'app_process_identity'))
@@ -335,9 +358,16 @@ class RunTests(unittest.TestCase):
                 def do_action(actor, obs, spec, phase, trace_obj, guard, save, record):
                     guard()
                     action_done[0] = True
-                    record.update(trace_after=collect(), outcome='response', replayed=False)
-                    save(phase + '-action.json', record)
+                    record.update(trace_after=collect(), outcome='response', replayed=False,
+                                  response=REFUSED if phase == 'refusal' else DELIVERED)
+                    current = status()
+                    if phase == 'refusal':
+                        current['input']['lanes'][0]['reserved'] = True
                     if failure == 'reserved_refusal':
+                        current['input']['lanes'][1]['reserved'] = True
+                    desktop.raw_status.return_value = current
+                    save(phase + '-action.json', record)
+                    if failure == 'reserved_after_close':
                         def reserved_status(*, unreserved=False):
                             value = status()
                             value['input']['lanes'][0]['reserved'] = True
@@ -373,6 +403,10 @@ class RunTests(unittest.TestCase):
                         self.assertEqual(len(files[name]['sha256']), 64)
                 if failure == 'reserved_refusal':
                     self.assertEqual(len(launched), 2, 'recovery followed a non-idle refusal')
+                    self.assertTrue(report['phases']['refusal']['post_action_status']['input']['lanes'][1]['reserved'])
+                    self.assertEqual(report['error']['message'], 'unexpected refusal reservation')
+                if failure == 'reserved_after_close':
+                    self.assertEqual(len(launched), 2, 'recovery followed an unreleased reservation')
 
 
 if __name__ == '__main__':

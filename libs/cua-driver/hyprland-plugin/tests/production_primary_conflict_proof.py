@@ -95,6 +95,18 @@ def clear_status(status, *, unreserved=False):
     return status
 
 
+def verify_refusal_status(status, response):
+    """CLAIM survives TARGET refusal until EOF, but grants no input authority."""
+    clear_status(status)
+    check_response(response, {'kind': 'refused', 'reason': 'primary_target_busy'})
+    lane = response['structuredContent'].get('lane')
+    assert type(lane) is int and lane in (0, 1), 'missing refused connection lane'
+    for row in status['input']['lanes']:
+        assert row.get('reserved') is (row['lane'] == lane), 'unexpected refusal reservation'
+        assert row.get('pointer_focus') is False, 'refused connection retained pointer focus'
+    return status
+
+
 class ExactDesktop:
     """Read-only attestation; primary input belongs solely to the test fixture."""
     def __init__(self, plan):
@@ -133,8 +145,11 @@ class ExactDesktop:
                 'workspace': json.loads(_hypr(self.instance, '-j', 'activeworkspace'))['id']}
 
     def status(self, *, unreserved=False):
+        return clear_status(self.raw_status(), unreserved=unreserved)
+
+    def raw_status(self):
         self.guard()
-        return clear_status(json.loads(_hypr(self.instance, '-j', 'cua:status')), unreserved=unreserved)
+        return json.loads(_hypr(self.instance, '-j', 'cua:status'))
 
     def trace(self, path):
         self.guard()
@@ -333,7 +348,14 @@ def run(args):
                                 'pointer_stage': plan['recovery']['pointer_stage']}
             assert not actor.tool('start_session', {'session': current_spec['name']}).get('isError')
             action(actor, observer, current_spec, phase, trace, guard, save, row)
-            row['post_action_status'] = desktop.status(unreserved=phase == 'refusal')
+            # Retain the observed status before validation can raise. A live
+            # refused connection still owns its CLAIM; EOF must clear it below.
+            row['post_action_status'] = desktop.raw_status()
+            save(phase + '-action.json', row)
+            if phase == 'refusal':
+                verify_refusal_status(row['post_action_status'], row['response'])
+            else:
+                clear_status(row['post_action_status'])
             close_owned(actor)
             wait_for(lambda: desktop.status(unreserved=True), timeout=2)
             finish_trace()

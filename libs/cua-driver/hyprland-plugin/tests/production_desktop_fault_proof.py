@@ -1,17 +1,21 @@
-"""Production v3 config-disable proof preparation for an exact disposable VM.
+"""Production v3 config/keymap fault proof for an exact disposable VM.
 
 Use the geometry proof CLI flags. The plan has purpose=desktop_fault, one
 Calc/Inkscape pointer agent and new-action recovery as in the geometry proof.
-fault={kind:config_disable}; vm={machine_id,boot_id}; compositor includes
+fault={kind:config_disable|keymap}; vm={machine_id,boot_id}; compositor includes
 pid,instance,uid,starttime,exe; config includes absolute path,device,inode,uid,
-mode,sha256. The selected file must be the already sourced, exact ENABLED Lua
+mode,sha256. Config-disable requires the already sourced, exact ENABLED Lua
 include from input_config_toggle. Main configuration and policy are never edited.
 
 Config suspension disconnects the trace transport. Restore the fixture, reconnect
 without TRACE_START, and require unchanged trace history with cancellation and
 owned release BEFORE restoration. Normal Driver snapshots and one NEW action
 then prove recovery. No replay, signing, module swap, automatic wake or unlock.
-Keymap, DPMS and lock are deliberately unsupported here. Portable tests prepare
+Keymap uses the separate exact KEYMAP_US include, changes only to KEYMAP_DE,
+and restores the same original US map. Exact option readback, compositor lane
+generation changes and the compiled-map-gated unsupported_layout refusal from
+a fresh normal Driver action prove invalidation; no keymap hash is exposed.
+DPMS and lock are deliberately unsupported here. Portable tests prepare
 this proof; only execution on the exact native candidate can certify a row.
 """
 import argparse
@@ -36,13 +40,61 @@ from desktop_faults import _identity, _same_compositor, _hypr
 from input_config_toggle import ENABLED, DISABLED
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
-from production_cancel_proof import (PROFILE, active_drags, call_drag, close_owned,
+from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned,
     grounded_snapshot, poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup)
 from production_geometry_fault_proof import recover, fault_outcome, validate_plan as geometry_plan
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
-from production_realapp_proof import (PRIMARY_LIFETIME_MS, primary_acknowledgement,
+from production_realapp_proof import (PRIMARY_LIFETIME_MS, app_process_identity, check_response, primary_acknowledgement,
     provenance, require_primary_active, trace_interval)
 from realapp_proof import cleanup_all, released_synthetic_input
+import production_pointer_grounding as pointer_grounding
+
+
+KEYMAP_US = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "us", kb_variant = "", kb_options = "", kb_file = ""}})\n'
+KEYMAP_DE = 'hl.config({input = {kb_rules = "evdev", kb_model = "pc105", kb_layout = "de", kb_variant = "", kb_options = "", kb_file = ""}})\n'
+
+
+def fixed_bytes(kind):
+    assert kind in ('config_disable', 'keymap'), 'unsupported desktop fault'
+    return (ENABLED, DISABLED) if kind == 'config_disable' else (KEYMAP_US, KEYMAP_DE)
+
+
+def keymap_options(instance, restored):
+    expected = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us' if restored else 'de',
+                'kb_variant': '', 'kb_options': '', 'kb_file': ''}
+    replies = {key: json.loads(_hypr(instance, '-j', 'getoption', 'input:' + key)) for key in expected}
+    verify_keymap_options(replies, restored)
+    return replies
+
+
+def verify_keymap_options(replies, restored):
+    expected = {'kb_rules': 'evdev', 'kb_model': 'pc105', 'kb_layout': 'us' if restored else 'de',
+                'kb_variant': '', 'kb_options': '', 'kb_file': ''}
+    assert set(replies) == set(expected), 'incomplete keymap option readback'
+    for key, value in expected.items():
+        assert replies[key].get('option') == 'input:' + key and replies[key].get('str') == value, \
+            'exact sourced keymap option not observed'
+
+
+def keymap_lanes(status, *, cleared=False):
+    verify_status(status, True)
+    lanes = {row['lane']: row for row in status['input']['lanes']}
+    for row in lanes.values():
+        assert isinstance(row.get('epoch'), str) and row['epoch'], 'missing compositor epoch'
+        assert type(row.get('desktop_generation')) is int and row['desktop_generation'] >= 0
+        assert type(row.get('dispatches')) is int and row['dispatches'] >= 0
+        if cleared:
+            assert all(type(row.get(key)) is int and row[key] == 0 for key in ('held_button', 'held_keys'))
+            assert all(row.get(key) is False for key in ('drag_active', 'lease_active', 'pointer_focus', 'keyboard_focus'))
+    return lanes
+
+
+def verify_keymap_transition(before, after):
+    old, new = keymap_lanes(before), keymap_lanes(after, cleared=True)
+    for lane in old:
+        assert old[lane]['epoch'] == new[lane]['epoch'], 'compositor lane replaced'
+        assert new[lane]['desktop_generation'] > old[lane]['desktop_generation'], 'keymap did not invalidate authority'
+        assert new[lane].get('reserved') is False, 'pre-transition reservation survived'
 
 
 def digest(data):
@@ -76,7 +128,8 @@ def file_identity(path):
 
 
 def validate_plan(plan):
-    assert plan['purpose'] == 'desktop_fault' and plan['fault'] == {'kind': 'config_disable'}
+    assert plan['purpose'] == 'desktop_fault' and set(plan['fault']) == {'kind'}
+    original, _ = fixed_bytes(plan['fault']['kind'])
     # Reuse the strict existing target/grounding/recovery plan checks unchanged.
     bounds = plan['agents'][0]['bounds']
     geometry_plan({**plan, 'purpose': 'geometry_fault',
@@ -94,7 +147,7 @@ def validate_plan(plan):
     assert set(config) == {'path', 'device', 'inode', 'uid', 'mode', 'sha256'}
     assert Path(config['path']).is_absolute()
     assert all(type(config[key]) is int and config[key] >= 0 for key in ('device', 'inode', 'uid', 'mode'))
-    assert config['sha256'] == digest(ENABLED.encode()), 'only the dedicated enabled include is permitted'
+    assert config['sha256'] == digest(original.encode()), 'only the exact dedicated include is permitted'
 
 
 def _guard(config):
@@ -128,8 +181,9 @@ def _replace(config, enabled, before_replace=None):
     _guard(config)
     current = file_identity(config['path'])
     known = config['files']
+    original, changed = fixed_bytes(config.get('kind', 'config_disable'))
     assert set(known) == {'original', 'disabled', 'restored'}
-    for name, data in (('original', ENABLED), ('disabled', DISABLED), ('restored', ENABLED)):
+    for name, data in (('original', original), ('disabled', changed), ('restored', original)):
         assert known[name]['identity']['sha256'] == digest(data.encode()), 'only fixed toggle bytes are permitted'
         assert Path(known[name]['path']).parent == Path(config['path']).parent, 'stage escaped config directory'
     assert known['original']['path'] == config['path']
@@ -192,7 +246,7 @@ def connect_trace(path, config):
 def _reload(config, enabled):
     _guard(config)
     assert _hypr(config['instance'], 'reload') == 'ok', 'config reload refused'
-    return production_status(config['instance'], enabled)
+    return production_status(config['instance'], enabled or config.get('kind') == 'keymap')
 
 
 def restore_config(config):
@@ -201,9 +255,14 @@ def restore_config(config):
         untouched = file_identity(config['path']) == config['files']['original']['identity']
         _replace(config, True)
         status = production_status(config['instance'], True) if untouched else _reload(config, True)
-        assert Path(config['path']).read_bytes() == ENABLED.encode(), 'exact config bytes not restored'
-        return {'result': 'restored', 'started_ns': started, 'observed_ns': time.monotonic_ns(),
-                'config': file_identity(config['path']), 'status': status}
+        original, _ = fixed_bytes(config.get('kind', 'config_disable'))
+        assert Path(config['path']).read_bytes() == original.encode(), 'exact config bytes not restored'
+        options = keymap_options(config['instance'], True) if config.get('kind') == 'keymap' else None
+        record = {'result': 'restored', 'started_ns': started, 'observed_ns': time.monotonic_ns(),
+                  'config': file_identity(config['path']), 'status': status}
+        if options is not None:
+            record['keymap_options'] = options
+        return record
 
 
 def watchdog(config, cancel_fd):
@@ -226,6 +285,8 @@ def watchdog(config, cancel_fd):
 class ConfigFault:
     def __init__(self, plan, evidence):
         validate_plan(plan)
+        kind = plan['fault']['kind']
+        original, changed = fixed_bytes(kind)
         assert platform.system() == 'Linux', 'disposable Linux VM required'
         assert subprocess.run(['systemd-detect-virt', '--vm', '--quiet'], timeout=2).returncode == 0
         expected = plan['compositor']
@@ -233,22 +294,25 @@ class ConfigFault:
         assert compositor['uid'] == os.getuid() and _identity(compositor['pid']) == compositor
         path = Path(plan['config']['path'])
         assert file_identity(path) == {k: v for k, v in plan['config'].items() if k != 'path'}
-        assert path.read_bytes() == ENABLED.encode(), 'not the dedicated sourced toggle'
+        assert path.read_bytes() == original.encode(), 'not the dedicated sourced include'
         parent = path.parent.stat()
         assert parent.st_uid == os.getuid() and not parent.st_mode & 0o022, 'private owned config directory required'
-        self.config = {'vm': plan['vm'], 'compositor': compositor, 'instance': expected['instance'],
+        self.config = {'kind': kind, 'vm': plan['vm'], 'compositor': compositor, 'instance': expected['instance'],
                        'path': str(path), 'directory': [parent.st_dev, parent.st_ino, parent.st_uid, stat.S_IMODE(parent.st_mode)],
                        'record': str((evidence / 'config-watchdog.json').resolve()), 'files': {
                            'original': {'path': str(path), 'identity': file_identity(path)}}}
-        self.record, self.restoration = {'result': 'unproven', 'kind': 'config_disable'}, None
+        self.record, self.restoration = {'result': 'unproven', 'kind': kind}, None
         self.child = self.cancel_fd = None
         self.mutated = False
         _guard(self.config)
         self.record['before'] = production_status(expected['instance'], True)
+        if kind == 'keymap':
+            self.record['keymap_before'] = keymap_options(expected['instance'], True)
+            keymap_lanes(self.record['before'], cleared=True)
         # Files are prepared before the watchdog and before any live drag.
         # Known inodes let either process reject an unrelated replacement.
         try:
-            for name, data in (('disabled', DISABLED.encode()), ('restored', ENABLED.encode())):
+            for name, data in (('disabled', changed.encode()), ('restored', original.encode())):
                 fd, staged = tempfile.mkstemp(prefix='.cua-config-proof-', suffix='.stage', dir=path.parent)
                 with os.fdopen(fd, 'wb') as stream:
                     os.fchmod(stream.fileno(), plan['config']['mode'])
@@ -284,6 +348,16 @@ class ConfigFault:
         prefix, lanes = poll_active(trace, initial, None, [pending])
         gate_ns = time.monotonic_ns()
         with _locked(self.config):
+            if self.config.get('kind') == 'keymap':
+                self.record['gate_status'] = production_status(self.config['instance'], True)
+                previous = keymap_lanes(self.record['before'])
+                current = keymap_lanes(self.record['gate_status'])
+                for lane in previous:
+                    assert all(previous[lane][key] == current[lane][key] for key in ('epoch', 'desktop_generation'))
+                active = current[next(iter(lanes)) - 1]
+                assert active['drag_active'] is True and active['lease_active'] is True
+                assert type(active['held_button']) is int and active['held_button'] > 0, 'drag ended before keymap fault'
+                self.record['keymap_before'] = keymap_options(self.config['instance'], True)
             def authorize():
                 # Run AFTER all potentially blocking identity checks, directly
                 # before replacement: a slow guard must not authorize stale input.
@@ -298,6 +372,9 @@ class ConfigFault:
                 self.mutated = True  # Lost replies still require restoration.
             _replace(self.config, False, before_replace=authorize)
             self.record['after'] = _reload(self.config, False)
+            if self.config.get('kind') == 'keymap':
+                self.record['keymap_after'] = keymap_options(self.config['instance'], False)
+                verify_keymap_transition(self.record['gate_status'], self.record['after'])
             self.record['acknowledged_ns'] = time.monotonic_ns()
             self.record['config'] = file_identity(self.config['path'])
             self.record['result'] = 'observed'
@@ -331,36 +408,127 @@ class ConfigFault:
                 self._clean_staged()
 
 
-def verify_fault(boundary, record, restoration, action):
-    assert record['kind'] == 'config_disable' and record['result'] == 'observed'
-    assert restoration['result'] == 'restored'
-    assert record['config']['sha256'] == digest(DISABLED.encode())
-    assert restoration['config']['sha256'] == digest(ENABLED.encode())
-    verify_status(record['before'], True)
-    verify_status(record['after'], False)
-    verify_status(restoration['status'], True)
+def verify_cancelled(boundary, record, before_restore_ns):
+    """Check the live fault before any restoration or new action is attempted."""
     prefix, lane = record['prefix'], record['lane']
     assert set(active_drags(prefix)) == {lane}
     tail = trace_interval(prefix, boundary)
     assert prefix['events'][-1][1] <= record['gate_ns'] <= record['requested_ns'] <= record['acknowledged_ns']
-    assert record['acknowledged_ns'] <= restoration['started_ns'] <= restoration['observed_ns']
-    assert restoration['observed_ns'] < record['watchdog_deadline_ns'], 'watchdog recovery cannot certify the episode'
+    assert record['acknowledged_ns'] <= before_restore_ns
     assert 0 <= record['requested_ns'] - record['gate_ns'] <= 250_000_000
     synthetic = [row for row in tail if row[5] in (1, 2)]
     assert all(row[5] == lane for row in synthetic), 'cleanup crossed lanes'
     cancelled = [row for row in synthetic if row[2] == 'agent_cancel']
-    assert len(cancelled) == 1 and record['requested_ns'] <= cancelled[0][1] < restoration['started_ns'], 'no cancellation during fault'
+    assert len(cancelled) == 1 and record['requested_ns'] <= cancelled[0][1] < before_restore_ns, 'no cancellation during fault'
     assert not any(row[2] in ('agent_admitted', 'agent_drag_start', 'agent_drag_end', 'agent_action_end',
                               'keyboard_key', 'pointer_axis') for row in synthetic), 'extra action or false completion'
     releases = [row for row in synthetic if row[2] == 'pointer_button']
     assert len(releases) == 1 and releases[0][6] == 0 and releases[0][0] > cancelled[0][0]
-    assert releases[0][1] < restoration['started_ns'], 'release was delayed until restoration'
+    assert releases[0][1] < before_restore_ns, 'release was delayed until restoration'
     assert not any(row[2] in ('pointer_motion', 'pointer_enter') and row[0] > cancelled[0][0] for row in synthetic)
     stopped = stopped_prefix(boundary)
     isolation = analyze(stopped)
     assert isolation['result'] == 'passed' and released_synthetic_input(stopped), isolation
-    return {'result': 'verified', 'outcome': fault_outcome(action), 'continuous_isolation': isolation,
-            'synthetic_cleanup': 'verified', 'saved_document_effect': 'unproven'}
+    return isolation
+
+
+def verify_layout_refusal(record):
+    assert record['outcome'] == 'response' and record['replayed'] is False
+    assert record['tool'] in ('click', 'scroll')
+    assert type(record['runtime_pid']) is int and record['runtime_pid'] != record['previous_runtime_pid']
+    assert record['prepared_ns'] <= record['dispatch_ns'] <= record['observed_ns']
+    assert record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS
+    assert record['snapshot']['window_bounds'] == record['after_snapshot']['window_bounds'], 'refused target geometry changed'
+    check_response(record['response'], {'kind': 'refused', 'reason': 'unsupported_layout'})
+    content = record['response']['structuredContent']
+    assert content.get('route') == 'synthetic_events' and content.get('detail') == 'unsupported_layout'
+    assert content.get('code') == 'background_unavailable', 'not the compositor layout refusal'
+    before, after = keymap_lanes(record['before'], cleared=True), keymap_lanes(record['after'], cleared=True)
+    for lane in before:
+        assert all(before[lane][key] == after[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
+            'layout refusal changed compositor state or dispatched input'
+    verify_keymap_options(record['keymap_options'], False)
+    tail = trace_interval(record['trace_before'], record['trace_after'])
+    assert not any(row[5] in (1, 2) for row in tail), 'refused fresh action dispatched synthetic input'
+    assert analyze(stopped_prefix(record['trace_after']))['result'] == 'passed'
+    return {'result': 'verified', 'reason': 'unsupported_layout', 'no_dispatch': 'verified',
+            'compiled_map_invalidation': 'verified', 'keymap_hash': 'not_exposed'}
+
+
+def refuse_new_action(client, observer, victim, spec, stage, trace, config, guard, save):
+    """Exercise real Driver admission while the compiled physical map is invalid."""
+    assert victim.process.poll() is not None, 'old runtime must be reaped before refusal probe'
+    assert victim.process.pid not in assert_distinct_runtimes([client, observer])
+    fresh = {**spec, 'name': spec['name'] + '-wrong-layout', 'pointer_stage': stage}
+    assert not client.tool('start_session', {'session': fresh['name']}).get('isError')
+    app_process_identity(spec['app'], spec['target']['pid'])
+    prepared_ns = time.monotonic_ns()
+    snapshot = grounded_snapshot(client, spec['target'], fresh)
+    arguments, _ = pointer_grounding.action(snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), spec['app'], stage)
+    tool = pointer_grounding.STAGES[spec['app']][stage]
+    assert tool in ('click', 'scroll'), 'never replay the interrupted drag'
+    record = {'outcome': 'unknown', 'replayed': False, 'runtime_pid': client.process.pid,
+              'previous_runtime_pid': victim.process.pid, 'tool': tool, 'prepared_ns': prepared_ns,
+              'snapshot': snapshot, 'arguments': arguments, 'session': fresh['name'],
+              'before': production_status(config['instance'], True), 'trace_before': trace.collect()}
+    keymap_lanes(record['before'], cleared=True)
+    record['keymap_options'] = keymap_options(config['instance'], False)
+    guard()
+    _guard(config)
+    assert file_identity(config['path']) == config['files']['disabled']['identity']
+    record['dispatch_ns'] = time.monotonic_ns()
+    assert record['dispatch_ns'] - prepared_ns <= MAX_GROUNDING_AGE_NS
+    assert record['dispatch_ns'] + 1_000_000_000 < config['deadline_ns'], 'watchdog deadline too near'
+    save('wrong-layout-action.json', record)
+    try:
+        record['response'] = client.tool(tool, {**arguments, **spec['target'], 'session': fresh['name'],
+                                               'delivery_mode': 'background'})
+        record['outcome'] = 'response'
+        record['after_snapshot'] = grounded_snapshot(observer, spec['target'], fresh, session=False)
+        record['after'] = production_status(config['instance'], True)
+        record['trace_after'] = trace.collect()
+        record['keymap_options'] = keymap_options(config['instance'], False)
+        record['observed_ns'] = time.monotonic_ns()
+        assert record['observed_ns'] < config['deadline_ns'], 'watchdog restored during refusal probe'
+        guard()
+        record['verification'] = verify_layout_refusal(record)
+        return record
+    finally:
+        save('wrong-layout-action.json', record)
+
+
+def verify_fault(boundary, record, restoration, action):
+    original, changed = fixed_bytes(record['kind'])
+    assert record['result'] == 'observed' and restoration['result'] == 'restored'
+    assert record['config']['sha256'] == digest(changed.encode())
+    assert restoration['config']['sha256'] == digest(original.encode())
+    verify_status(record['before'], True)
+    verify_status(record['after'], record['kind'] == 'keymap')
+    verify_status(restoration['status'], True)
+    assert record['acknowledged_ns'] <= restoration['started_ns'] <= restoration['observed_ns']
+    assert restoration['observed_ns'] < record['watchdog_deadline_ns'], 'watchdog recovery cannot certify the episode'
+    if record['kind'] == 'keymap':
+        verify_keymap_options(record['keymap_before'], True)
+        verify_keymap_options(record['keymap_after'], False)
+        verify_keymap_options(restoration['keymap_options'], True)
+        assert record['keymap_before'] == restoration['keymap_options'], 'original map options not restored'
+        verify_keymap_transition(record['gate_status'], record['after'])
+        refusal = record['wrong_layout']
+        verify_layout_refusal(refusal)
+        after, before_refusal = keymap_lanes(record['after']), keymap_lanes(refusal['before'])
+        for lane in after:
+            assert all(after[lane][key] == before_refusal[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
+                'keymap state changed before fresh refusal'
+        trace_interval(record['prefix'], refusal['trace_before'])
+        trace_interval(refusal['trace_after'], boundary)
+        assert record['acknowledged_ns'] <= refusal['prepared_ns'] <= refusal['observed_ns'] < restoration['started_ns']
+        verify_keymap_transition(refusal['after'], restoration['status'])
+    isolation = verify_cancelled(boundary, record, restoration['started_ns'])
+    result = {'result': 'verified', 'outcome': fault_outcome(action), 'continuous_isolation': isolation,
+              'synthetic_cleanup': 'verified', 'saved_document_effect': 'unproven'}
+    if record['kind'] == 'keymap':
+        result['wrong_layout'] = verify_layout_refusal(record['wrong_layout'])
+    return result
 
 
 def run(args):
@@ -383,6 +551,7 @@ def run(args):
         plan = json.loads(args.plan.read_text())
         save('plan.json', plan)
         validate_plan(plan)
+        report['scope'] = 'native-' + plan['fault']['kind'].replace('_', '-')
         assert args.trace_socket.name in ('cua-input-v3.sock', 'cua-input-v3-2.sock')
         origin = provenance(args, plan)
         for name in ('production_desktop_fault_proof.py', 'production_desktop_fault_proof_test.py',
@@ -428,6 +597,17 @@ def run(args):
         save('fault.json', fault.record)
         report['action'] = future.result(timeout=5)
         save('drag-action.json', report['action'])
+        if plan['fault']['kind'] == 'keymap':
+            cancelled = trace.collect()
+            save('keymap-cancelled-prefix.json', cancelled)
+            verify_cancelled(cancelled, fault.record, time.monotonic_ns())
+            close_owned(clients[0])
+            clients.append(launch('wrong-layout'))
+            fault.record['wrong_layout'] = refuse_new_action(
+                clients[-1], observer, clients[0], spec, plan['recovery']['pointer_stage'],
+                trace, fault.config, guard, save)
+            close_owned(clients[-1])
+            save('fault.json', fault.record)
         restoration = fault.restore()
         save('restoration.json', restoration)
         trace.close()
@@ -440,6 +620,7 @@ def run(args):
                                        'action': report['action'], 'replayed': False})
         close_owned(clients[0])
         teardown = trace.collect()
+        save('pre-recovery-prefix.json', teardown)
         report['runtime_teardown'] = verify_recovery_cleanup(boundary, stopped_prefix(teardown))
         clients.append(launch('recovery'))
         prefix = recover(clients[-1], observer, clients[0], spec, plan['recovery']['pointer_stage'],

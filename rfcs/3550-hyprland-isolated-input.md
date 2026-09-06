@@ -4,7 +4,7 @@ authors:
   - f-trycua
 created: 2026-09-04
 last_updated: 2026-09-06
-status: review
+status: accepted
 discussion: https://github.com/trycua/cua/issues/3550
 rfc_pr: https://github.com/trycua/cua/pull/3551
 implementation:
@@ -41,9 +41,10 @@ approved manifest. Applicable
 manifests and user or managed policy remain binding. No separate approval
 panel, signer, or indicator-lifetime approval condition is required.
 
-`status: review` remains unchanged: implementation selection is not RFC
-acceptance, native certification, or a release. The production candidate must
-still prove its supported client/action cells and recovery behavior.
+The [maintainer decision](https://github.com/trycua/cua/issues/3550#issuecomment-5558699892)
+accepts this narrowed design. Acceptance is not native certification or a
+release. The production candidate must still prove its supported client/action
+cells and recovery behavior before implementation merge and release.
 
 ## Motivation
 
@@ -164,7 +165,7 @@ choice, and avoid treating a portal/libei connection as proof of isolation.
 This RFC remains the decision record through #3550; the related proposal is
 retained as a source of feedback, not marked accepted or superseded here.
 
-Three differences need explicit review:
+The decision resolves three differences:
 
 - A binary-path permission and an ASK policy are that proposal's entry point.
   This RFC uses Driver's shared admission and trusted desktop-account model;
@@ -506,8 +507,8 @@ enabled by plugin use.
 
 ## Implementation plan
 
-Continue the selected work in #3547, #3557, and #3572 under the recorded scope
-correction. These gates do not mark the RFC accepted or the candidate certified:
+Continue the selected work in #3547, #3557, and #3572 under the recorded
+decision. Design acceptance does not mark the candidate certified:
 
 1. Complete foundation CI and package/lifecycle evidence in #3547 while
    keeping mutation disabled. This does not depend on choosing input semantics.
@@ -618,12 +619,14 @@ cause. Test both an instrumented candidate for detailed event/cleanup evidence
 and an uninstrumented production package; neither portable tests nor an
 uninstrumented endpoint-only smoke proves continuous native isolation.
 
-## Unresolved questions
+## Implementation verification and upstream follow-up
 
 1. Does the v3 candidate's framing, target lifetime, action/connection quotas,
    sequence handling, and typed result model cover current-source dispatch,
    cancellation, epoch changes, and surviving-client recovery? Review the
-   concrete wire specification and measured cleanup bounds before acceptance.
+   accepted wire specification against the implementation and measure cleanup
+   bounds before implementation merge. Design acceptance does not supply native
+   evidence.
 2. Do both lanes satisfy real Calc/Inkscape focus/grab/serial/keymap semantics
    through normal Driver admission, including simultaneous primary input and
    partial/unknown results? Exact-SHA native evidence must qualify each cell.
@@ -649,11 +652,28 @@ Driver policy, existing activity/lifecycle behavior, historical experiment
 evidence, and contributor attribution. No RFC acceptance, native certification,
 or production release is recorded by this edit.
 
-The final disposition remains in [#3550](https://github.com/trycua/cua/issues/3550).
-Review the trust and protocol boundary for a period proportionate to its
-impact under [the RFC process](README.md). Breaking public contracts and
-cross-platform permission changes normally require seven days unless a
-maintainer records an explicit exception; this proposal reuses the existing
-permission contract rather than introducing a new cross-platform mode.
-Record acceptance before or with implementation merge; certify and release the
-Driver/plugin dependency chain before publishing the final supported Fleet image.
+The [2026-09-06 maintainer decision](https://github.com/trycua/cua/issues/3550#issuecomment-5558699892)
+accepts the shared-policy, trusted-local, two-lane plugin design. It accepts
+separate v3 input endpoints, complete bounded operations, fresh per-action
+target bindings, passive pointer focus without held input or authority,
+owner-scoped cancellation, and restart-required package replacement. Discovery
+v2 remains unchanged. There is no automatic replay, foreground fallback, wake,
+or unlock.
+
+The decision preserves the contributor feedback and alternatives above. It
+rejects borrowing primary-seat focus and the earlier separate consent/signer
+requirements. A patched compositor, direct-resource delivery, and portable
+standards work remain separate alternatives rather than silent substitutions.
+
+The maintainer records a shorter-than-seven-day design-review window because
+the approved scope is optional, narrowly qualified, and reuses Driver's
+existing cross-platform permission contract without a new public permission
+mode or automatic activation. This does not waive implementation review,
+exact-candidate native qualification, package lifecycle tests, canonical
+desktop coverage, or release and Fleet validation.
+
+The implementation-verification questions remain release gates, not unresolved
+permission-UI choices. Keep status `accepted` until the required criteria ship;
+then record completion. Certify and release the Driver/plugin dependency chain
+before publishing the final supported Fleet image. No upstream Hyprland
+endorsement or physical-host parity is implied.

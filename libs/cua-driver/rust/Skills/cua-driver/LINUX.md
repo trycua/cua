@@ -85,8 +85,9 @@ those through `verify_state` or multimodal reading.
 **Escalation** — action responses use the cross-platform closed
 `escalation:{target, reason}` shape. See `SKILL.md` → behavior matrix. On a
 standard Wayland compositor the Linux-specific target is **`foreground`**
-(raw background pixels cannot target an unfocused window); the opt-in nested
-compositor is a separate environment. Use **`pixel` on X11** (an element px
+(raw background pixels cannot target an unfocused window without a dedicated
+adapter); the opt-in nested compositor and Hyprland input v3 candidate below
+have separate limits. Use **`pixel` on X11** (an element px
 action — background pixel click — lands via
 AT-SPI `do_action`-at-point off the screenshot already in the snapshot — the
 matrix below).
@@ -120,9 +121,10 @@ Modality is chosen at **action time**, by how you address the target:
 
 `get_window_state` returning `degraded:true` (empty AT-SPI walk) is the cue to
 do an **element px action** off that same screenshot (X11) or escalate to
-`delivery_mode:"foreground"` (standard Wayland: raw background pixels cannot
-target an unfocused window there). The nested compositor has its own
-experimental per-surface routes.
+`delivery_mode:"foreground"` when authorized (standard Wayland has no general
+raw background route). The nested compositor and Hyprland input v3 candidate
+have their own experimental per-surface routes; an empty tree does not establish
+eligibility for either route.
 
 ## Cross-platform schema residuals (Linux)
 
@@ -216,6 +218,9 @@ driver selects a backend from compositor capabilities:
 
 - Sway and other wlroots compositors use foreign-toplevel discovery,
   wlr-screencopy, virtual pointer, and virtual keyboard protocols.
+- Hyprland has separate discovery and capture adapters. Its optional plugin
+  defaults to discovery-only; the opt-in input v3 source candidate has the
+  qualification and validation limits below. Do not inherit Sway coverage.
 - GNOME/Mutter uses the bundled WinRects Shell helper for target geometry and
   activation, plus portal/libei for foreground raw input.
 - KDE/KWin uses AT-SPI and portal facilities where available. Target-specific
@@ -235,12 +240,62 @@ control. Other focus-bound background pointer and keyboard shapes return an
 exact `background_unavailable` result. They do not report success after a
 silent drop.
 
-Raw Wayland input requires explicitly authorized `delivery_mode:"foreground"`.
+Outside an explicitly enabled, qualified compositor-owned background route,
+raw Wayland input requires authorized `delivery_mode:"foreground"`.
 The driver activates the selected target through a verified compositor adapter
 before dispatch. If
 the compositor has no target-addressable activation or input backend, the call
 refuses before sending input. Reconstructing coordinates alone does not make
 raw background PX possible on a standard compositor.
+
+### Hyprland input v3 source candidate
+
+Draft PR #3572 adds an opt-in input v3 candidate, pending native certification,
+review, packaging, and release. The default plugin build remains discovery-only.
+The candidate source reports Driver `0.23.2`; published Driver `0.23.2` does not
+include these branch changes. Switching Driver channels does not install or
+enable the plugin. Build and loading require the exact Hyprland ABI and compiler
+toolchain; v3 uses `CUA_HYPRLAND_INPUT=ON`, separate from the historical
+`CUA_HYPRLAND_TEST_INPUT` experiment.
+
+Driver admits each action through its normal shared permission, resource, and
+lifecycle policy. There is no additional Omarchy approval panel or external
+signer. The plugin accepts the trusted desktop account over same-user local
+sockets; this does not sandbox native code running as that user. Application
+qualification is a compatibility check, not authorization.
+
+The initial native qualification scope is Calc from `libreoffice-fresh 26.2.5-3`
+and Inkscape `1.4.4-6`, subject to per-operation native evidence. Before each
+action, Driver matches `/proc/<pid>/exe` to the canonical executable path
+(`/usr/lib/libreoffice/program/soffice.bin` or `/usr/bin/inkscape`), checks the
+exact package name and version in the local pacman database and its executable
+file listing, and rechecks process identity. Unknown or unavailable package
+identity refuses. Package eligibility does not certify every LibreOffice
+application or operation.
+
+The plugin separately binds the exact live native surface and checks geometry,
+desktop availability, primary-client and other-lane conflicts, and the compiled
+default `evdev`/`pc105`/`us` keymap. The candidate excludes variants, options,
+remaps, multiple layout groups, missing keyboards, Unicode, IME input,
+arbitrary held-key streams, and modified pointer gestures. Chromium, Electron,
+and XWayland raw input are outside this scope. Semantic AT-SPI routes retain
+their separate behavior.
+
+Two compositor seats, `Cua-Agent` and `Cua-Agent-2`, persist across configuration
+disable/re-enable. Each connection claims one lane, and each admitted action
+requires a fresh target binding. Plugin replacement requires a desktop restart;
+do not treat historical experiment reload workarounds as a supported lifecycle.
+Refusals never authorize a hidden foreground fallback, display wake, or session
+unlock. A dispatch acknowledgement is `effect:"unverifiable"`; verify the
+application effect from fresh state. Do not replay canceled, partial, or unknown
+actions.
+
+Portable tests and historical experiment evidence do not certify v3 native
+delivery. Remaining gates include the exact-candidate native operation matrix
+for both lanes, independent primary-input and held-state evidence, lifecycle
+and refusal coverage, an uninstrumented package smoke, review and merge,
+compatible release artifacts, and final Fleet image validation. Physical Omarchy
+parity requires a separate acceptance run.
 
 ## Quick triage
 
@@ -280,6 +335,7 @@ ask the user.
 |---|---|---|
 | X11/Openbox | AT-SPI trees and actions, foreground pointer and keyboard input, window and desktop capture, and video | Raw background delivery remains toolkit-specific; unsupported shapes refuse |
 | Sway/wlroots | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound |
+| Hyprland/Omarchy | Separate discovery-foundation and source-candidate evidence | Default plugin is discovery-only; opt-in input v3 is limited to qualified native Calc/Inkscape packages and plain US input, pending native certification and release |
 | GNOME/Mutter | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input | Requires the helper and portal grant; portal video parity remains open |
 | KDE/KWin | AT-SPI and generic discovery where exposed | Target-specific activation and behavioral coverage remain experimental |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage | The complete shared matrix remains experimental; do not infer standard-Wayland support |

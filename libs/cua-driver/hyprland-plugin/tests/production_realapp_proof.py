@@ -212,6 +212,46 @@ def assert_no_dispatch(before, after):
         'denied call reached a synthetic lane'
 
 
+def passive_focus_evidence(before, after, complete_trace):
+    """Pair compositor state with wire presence; passive focus grants no input."""
+    page = before['trace']
+    trace_interval(page, page)
+    assert analyze(complete_trace).get('telemetry_complete') is True
+    assert complete_trace['events'][:page['count']] == page['events'], 'focus trace history changed'
+    lanes = {row[5] for row in page['events'] if row[2] == 'pointer_enter' and row[5] in (1, 2)}
+    assert lanes, 'no passive pointer was observed'
+    states = []
+    for checkpoint in (before, after):
+        status = checkpoint['status']
+        assert status['state'] == 'input_v3_candidate' and status['input']['protocol'] == 3
+        assert status['input']['test_only'] is False and status['input']['transport_ready'] is True
+        values = status['input']['lanes']
+        assert len(values) == 2 and {value['lane'] for value in values} == {0, 1}
+        values = {value['lane'] + 1: value for value in values}
+        for lane in lanes:
+            value = values[lane]
+            assert value['lease_active'] is False and value['drag_active'] is False
+            assert value['held_button'] == 0 and value['held_keys'] == 0 and value['keyboard_focus'] is False
+        states.append(values)
+    for lane in lanes:
+        assert states[0][lane]['pointer_focus'] is True and states[0][lane]['reserved'] is True
+        assert states[1][lane]['pointer_focus'] is False and states[1][lane]['reserved'] is False
+        assert states[0][lane]['epoch'] == states[1][lane]['epoch']
+        assert states[0][lane]['desktop_generation'] == states[1][lane]['desktop_generation']
+        own = [row for row in page['events'] if row[5] == lane]
+        assert not any(row[2] == 'pointer_leave' for row in own), 'same-target action churned pointer focus'
+        tail = [row for row in complete_trace['events'][page['count']:] if row[5] == lane]
+        assert sum(row[2] == 'pointer_leave' for row in tail) == sum(row[2] == 'pointer_enter' for row in own)
+        assert not any(row[2] in ('pointer_enter', 'pointer_motion', 'pointer_button', 'pointer_axis',
+                                 'keyboard_key', 'agent_admitted') for row in tail), 'input after completed pointer proof'
+    return {'verified': True, 'scope': 'passive-focus-without-authority-and-runtime-close', 'lanes': sorted(lanes)}
+
+
+def read_input_status():
+    return json.loads(subprocess.run(['hyprctl', '-j', 'cua:status'], check=True,
+                                    capture_output=True, text=True, timeout=5).stdout)
+
+
 def capacity_lane(before, after, tool):
     """Identify one admitted, exercised, completed compositor lane, not a PID."""
     events = trace_interval(before, after)
@@ -478,6 +518,7 @@ def run(args):
     policy_cache_traces = []
     trajectory = None
     recording = False
+    focus_before = None
     baseline_outputs = {}
     report = {'result': 'failed', 'scope': 'native-production-input-proof',
               'full_desktop_matrix': False, 'actions': [], 'outputs': [],
@@ -719,6 +760,9 @@ def run(args):
             report['policy_cache'] = verify_policy_cache(report['actions'])
         for index, oracle in enumerate(plan.get('outputs', [])):
             report['outputs'].append(verify_output(baseline_outputs[index], Path(oracle['path']).read_bytes(), oracle))
+        if trace and any(row.get('pointer_stage') for row in report['actions']):
+            focus_before = {'status': read_input_status(), 'trace': trace.collect()}
+            save('passive-focus-before.json', focus_before)
         require_primary_active(grab, primary_deadline_ns)
         report['result'] = 'passed'
     except Exception as error:
@@ -754,9 +798,29 @@ def run(args):
         operations.extend((f'close_agent_{i}', mcp.close) for i, mcp in enumerate(clients))
         if trace:
             def finish_trace():
+                focus_after = None
+                focus_wait_error = None
+                if focus_before is not None:
+                    samples = []
+                    def released_focus():
+                        status = read_input_status()
+                        samples.append({'monotonic_ns': time.monotonic_ns(), 'status': status})
+                        return all(not row['pointer_focus'] and not row['keyboard_focus'] and not row['reserved']
+                                   and not row['lease_active'] and not row['drag_active']
+                                   and row['held_button'] == 0 and row['held_keys'] == 0
+                                   for row in status['input']['lanes'])
+                    try:
+                        wait_for(released_focus)
+                    except Exception as error:
+                        focus_wait_error = error
+                    finally:
+                        focus_after = {'status': samples[-1]['status'] if samples else {}, 'samples': samples}
+                        save('passive-focus-after.json', focus_after)
                 trace.exchange('TRACE_STOP')
                 data = trace.collect()
                 save('trace.json', data)
+                if focus_wait_error is not None:
+                    raise focus_wait_error
                 require_primary_active(grab, primary_deadline_ns)
                 if capacity_traces:
                     last = capacity_traces[-1]
@@ -787,6 +851,8 @@ def run(args):
                     assert isolation['agent_drag_overlap_ms'] >= 100, 'no proven two-lane overlap'
                 assert released_synthetic_input(data)
                 report['synthetic_cleanup'] = 'verified'
+                if focus_before is not None:
+                    report['passive_focus'] = passive_focus_evidence(focus_before, focus_after, data)
                 for action_result in report['actions']:
                     if action_result.get('pointer_stage') in ('select_range', 'move_rectangle'):
                         action_result['pointer_delivery'] = pointer_grounding.verify_drag_trace(

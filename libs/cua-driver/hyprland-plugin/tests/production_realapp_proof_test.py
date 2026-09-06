@@ -17,12 +17,55 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     assert_no_dispatch, assert_primary_state, check_response,
                                     capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
+                                    passive_focus_evidence,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
                                     parallel_actions, primary_trajectory, require_primary_active,
                                     PRIMARY_LIFETIME_MS, POINTER_EPISODES, run, validate_plan, verify_output)
 from primary_trace import analyze
 from primary_trace_test import START, STOP, trace
 from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
+
+
+class PassiveFocusTests(unittest.TestCase):
+    def test_passive_focus_retains_presence_without_authority_and_clears_on_close(self):
+        rows = [[1, 0, 'start', 100, 100, 0, 0],
+                [2, 1, 'pointer_enter', 100, 100, 1, 0, 10, 20],
+                [3, 2, 'pointer_motion', 100, 100, 1, 0, 10, 20],
+                [4, 3, 'agent_action_end', 100, 100, 1, 0]]
+        page = {'hook': True, 'active': True, 'overflow': False, 'timed_out': False,
+                'count': len(rows), 'events': rows}
+        values = [{'lane': lane, 'epoch': f'lane-{lane}', 'desktop_generation': 1,
+                   'reserved': lane == 0, 'pointer_focus': lane == 0,
+                   'keyboard_focus': False, 'lease_active': False, 'drag_active': False,
+                   'held_button': 0, 'held_keys': 0} for lane in (0, 1)]
+        status = {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
+                   'transport_ready': True, 'lanes': values}}
+        before = {'status': status, 'trace': page}
+        after = {'status': copy.deepcopy(status)}
+        after['status']['input']['lanes'][0].update(reserved=False, pointer_focus=False)
+        stopped = {**page, 'active': False, 'count': len(rows) + 2,
+                   'events': rows + [[5, 4, 'pointer_leave', 100, 100, 1, 0],
+                                     [6, 5, 'stop', 100, 100, 0, 0]]}
+        mutations = {
+            'grant': lambda b, a, t: b['status']['input']['lanes'][0].update(lease_active=True),
+            'held': lambda b, a, t: b['status']['input']['lanes'][0].update(held_button=272),
+            'keyboard': lambda b, a, t: b['status']['input']['lanes'][0].update(keyboard_focus=True),
+            'not_retained': lambda b, a, t: b['status']['input']['lanes'][0].update(pointer_focus=False),
+            'not_released': lambda b, a, t: a['status']['input']['lanes'][0].update(pointer_focus=True),
+            'epoch': lambda b, a, t: a['status']['input']['lanes'][0].update(epoch='replaced'),
+            'missing_leave': lambda b, a, t: t['events'][4].__setitem__(2, 'keyboard_leave'),
+            'new_input': lambda b, a, t: t['events'][4].__setitem__(2, 'agent_admitted'),
+            'incomplete': lambda b, a, t: t.update(overflow=True),
+        }
+        for mutation in (None, *mutations):
+            b, a, t = copy.deepcopy((before, after, stopped))
+            with self.subTest(mutation=mutation):
+                if mutation:
+                    mutations[mutation](b, a, t)
+                    with self.assertRaises(AssertionError):
+                        passive_focus_evidence(b, a, t)
+                else:
+                    self.assertEqual(passive_focus_evidence(b, a, t)['lanes'], [1])
 
 
 def plan():

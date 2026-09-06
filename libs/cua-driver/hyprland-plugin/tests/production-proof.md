@@ -105,6 +105,13 @@ Review a JSON plan before execution. The plan has:
   must agree, and the translation must match endpoint minus an actually
   delivered motion position. A missing endpoint, unmatched translation, or
   historical trace without synthetic coordinates fails this gate.
+  Each pointer action records the exact before/after MCP response numbers so
+  an artifact verifier can reconstruct its grounding and app effect from the
+  archived PNGs. Traced pointer episodes also save compositor status before
+  runtime close and after bounded cleanup: passive pointer focus must retain
+  neither a lease nor held input or keyboard focus. The complete wire trace
+  must show no same-target focus churn and the matching leave on runtime close.
+  These checks are prepared; a passing native run is still required.
 - Optional per-step `expect`: `{kind:"refused",reason:"<exact observed contract reason>"}`,
   `{kind:"partial"}`, or `{kind:"unknown"}`. The default is dispatched. Denial
   phases run serially so the no-dispatch interval contains no other action.

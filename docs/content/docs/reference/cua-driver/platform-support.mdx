@@ -79,7 +79,7 @@ For the relationship between distributions, desktops, and compositors, read
 | ------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | X11/Xorg                        | Supported             | Window discovery and capture, AT-SPI trees and actions, foreground pointer and keyboard input, semantic background delivery, desktop scope, and structured refusals | Raw background delivery depends on the target toolkit. X11 accepting an event does not prove the application handled it.                                                                                                  |
 | Sway (wlroots reference lane)   | Supported with limits | The complete typed Electron, Tauri, GTK, capture, and desktop-scope catalog, including foreground/background and AX/PX outcomes                                     | Focus-bound and raw background input shapes without a target-addressed protocol return structured refusals. Other wlroots compositors are expected to share protocol support but are not yet proven.                      |
-| Hyprland / Omarchy              | Experimental          | Separate [driver-branch and plugin-foundation evidence](#hyprland-and-omarchy); neither establishes a released general Hyprland support claim                       | Do not inherit Sway coverage. The optional plugin is discovery-only and does not deliver input. Driver capture, activation, semantic actions, and raw background input require separate evidence.                         |
+| Hyprland / Omarchy              | Experimental          | Separate [driver, discovery-foundation, and input-candidate evidence](#hyprland-and-omarchy); no released general Hyprland support claim                       | Do not inherit Sway coverage. The default plugin build is discovery-only. The opt-in input v3 candidate remains pending native certification, packaging, and release.                         |
 | GNOME/Mutter                    | Supported with limits | AT-SPI actions, GTK controls, compositor-backed window geometry and capture, verified foreground activation, and portal/libei foreground input                      | The bundled WinRects Shell helper and one Shell-session restart are prerequisites for authoritative geometry and activation. Portal video recording remains incomplete.                                                   |
 | KDE/KWin                        | Experimental          | Plasma 6 session startup, GTK AT-SPI discovery, generic discovery where exposed, and portal interface availability                                                  | The optional KWin helper exposes read-only window identity and state, not activation or input. Raw target-addressed input refuses until a target-bound KWin input path exists; no complete behavioral matrix is accepted. |
 | `cua-compositor` nested session | Experimental          | Native GTK behavior, capture and scope, private route metadata, independent observation, and per-cell video                                                         | The complete shared renderer matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability.                                            |
@@ -90,23 +90,49 @@ For the relationship between distributions, desktops, and compositors, read
 Omarchy uses Hyprland; it is not a separate display protocol. Modern Hyprland
 is not based on wlroots, so its support must be recorded separately from Sway.
 
-The following is a source-work status snapshot as of September 5, 2026, not an
+The following is a source-work status snapshot as of September 6, 2026, not an
 installer or release-support matrix:
 
 | Work                           | Evidence and boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Driver capture and observation | [Draft PR #3557](https://github.com/trycua/cua/pull/3557) reports scale-1 GTK3 capture, semantic actions, and independent focus/cursor checks at source `b50a4f78f277d05700200e84c5d0f0ea72f10c47`. Its canonical native suite stopped at the foreground-key preflight; no matrix cells ran. This is focused branch evidence, not desktop certification or released support.                                                                                                                            |
 | Optional Hyprland plugin       | [PR #3547](https://github.com/trycua/cua/pull/3547) adds discovery and liveness only. Its [validation report](https://github.com/trycua/cua/blob/feat/hyprland-plugin-foundation/libs/cua-driver/hyprland-plugin/tests/validation.md) records native build and live lifecycle evidence on Hyprland `0.56.2`. All six input message types return `background_unavailable`; the foundation creates no synthetic seat and changes no Driver delivery route.                                                |
-| Isolated raw background input  | [Draft experiment #3572](https://github.com/trycua/cua/pull/3572) contains a separately opted-in synthetic-seat integration. Its [desktop-transition report](https://github.com/trycua/cua/blob/e8542dece6c8195a8db50ba79aba9615a78340b1/libs/cua-driver/hyprland-plugin/tests/desktop-state-validation.md) records focused Fleet evidence and tested revisions. The experiment is not part of the discovery foundation, a released capability, or an accepted production input/authorization contract. |
+| Isolated raw background input  | [Draft PR #3572](https://github.com/trycua/cua/pull/3572) contains an opt-in input v3 candidate using Driver's shared per-action policy and two independent compositor seats. Earlier [desktop-transition evidence](https://github.com/trycua/cua/blob/e8542dece6c8195a8db50ba79aba9615a78340b1/libs/cua-driver/hyprland-plugin/tests/desktop-state-validation.md) applies to the separate signed experiment, not native certification of v3. The candidate is not released. |
 
 The plugin is disabled by default and outside the portable driver installation
 path. Switching driver channels alone does not install or enable it. Its
 Hyprland ABI and compiler toolchain must match the compositor that loads it.
 
+The v3 candidate adds no Omarchy-specific approval panel or external signer.
+Driver applies its normal permission, resource, and lifecycle checks on every
+action. Same-user local sockets and application qualification do not sandbox
+native code running as the desktop user. The two seats, `Cua-Agent` and
+`Cua-Agent-2`, persist across configuration disable/re-enable; replacing the
+plugin requires a desktop restart.
+
+The initial native application qualification scope is Calc from
+`libreoffice-fresh 26.2.5-3` and Inkscape `1.4.4-6`. Driver checks the running
+executable against the expected package path and exact local package metadata
+before each action. Those checks establish eligibility for the candidate, not
+proof that every application operation works. The plugin requires a live native
+surface and the exact compiled default `evdev`/`pc105`/`us` keymap. Variants,
+options, remaps, multiple layout groups, Unicode, IME input, arbitrary held-key
+streams, and modified pointer gestures are outside the candidate. Chromium,
+Electron, and XWayland raw input are also outside this scope.
+
+Unsupported targets and desktop states refuse. The candidate does not silently
+switch to foreground input, wake a display, or unlock a session. A dispatch
+acknowledgement does not prove an application effect; canceled, partial, or
+unknown actions must not be replayed automatically.
+
 The recorded plugin Fleet environment used Omarchy `4.0.1-1` and Cua Driver
 `0.22.2`. It does not certify the separate physical-host acceptance target of
-Omarchy `4.0.2-1` with Cua Driver `0.23.2`, or application control through
-either driver version. See the
+Omarchy `4.0.2-1` with Cua Driver `0.23.2`. The candidate source also reports
+`0.23.2`, but published Driver `0.23.2` does not contain these branch changes.
+Remaining gates include native per-operation evidence for both seats and
+independent primary input, lifecycle and refusal coverage, an uninstrumented
+package smoke, review and merge, compatible release artifacts, and final Fleet
+image validation. Physical-host parity requires a separate acceptance run. See the
 [Hyprland roadmap](/reference/cua-driver/platform-roadmap#hyprland-and-omarchy)
 for the remaining design and validation gates.
 

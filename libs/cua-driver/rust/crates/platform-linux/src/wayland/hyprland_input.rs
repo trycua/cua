@@ -640,10 +640,16 @@ impl SessionClient {
         loop {
             cancellation.check()?;
             match self.client.try_lock() {
-                Ok(slot) => {
+                Ok(mut slot) => {
                     // Cancellation may race with the previous owner releasing.
                     // Refuse before touching its connection or sending packets.
                     cancellation.check()?;
+                    // The compositor can expire an idle connection while its
+                    // owner remains active. Reconnect before any new dispatch,
+                    // keeping queued callers on this same serialization mutex.
+                    if slot.as_ref().is_some_and(Client::peer_closed) {
+                        *slot = None;
+                    }
                     return Ok(slot);
                 }
                 Err(TryLockError::WouldBlock) => std::thread::sleep(CANCELLATION_POLL),
@@ -995,6 +1001,108 @@ mod tests {
         assert!(!clients.contains_key("input-idle-b"));
         drop(clients);
         cleanup_session("input-idle-c");
+    }
+
+    #[test]
+    fn same_owner_resumes_after_idle_eof_under_the_existing_mutex() {
+        let _pool_test = POOL_TEST_LOCK.lock().unwrap();
+        let owner = "input-idle-resume";
+        let session = session_client(owner).unwrap();
+        let (mut client, peer) = test_connection();
+        client.lane = Some(0);
+        let (previous_guard, previous_cancellation) = ActionCancellation::invocation();
+        client.cancellation = previous_cancellation;
+        *session.client.lock().unwrap() = Some(client);
+        drop(previous_guard);
+        drop(peer);
+
+        let resumed = session_client(owner).unwrap();
+        assert!(Arc::ptr_eq(&session, &resumed));
+        let (_guard, cancellation) = ActionCancellation::invocation();
+        let mut slot = resumed.lock(&cancellation).unwrap();
+        assert!(
+            slot.is_none(),
+            "closed idle peer must be discarded before dispatch"
+        );
+        assert!(session.client.try_lock().is_err());
+        let (mut replacement, peer) = test_connection();
+        replacement.cancellation = cancellation;
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "HELLO");
+            peer.send(hello_reply().to_string().as_bytes()).unwrap();
+            assert_eq!(read_packet(&peer), "CLAIM");
+            peer.send(br#"{"ok":true,"lane":0}"#).unwrap();
+            assert_eq!(read_packet(&peer), "TARGET synthetic");
+            peer.send(br#"{"ok":true}"#).unwrap();
+            assert_eq!(read_packet(&peer), "CLICK synthetic");
+            peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                .unwrap();
+            // Keep the peer open until the reply has been consumed.
+            let mut byte = [0u8];
+            assert_eq!(
+                unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                0
+            );
+        });
+        let mut replacement = Some(replacement);
+        let mut claims = 0;
+        *slot = Some(
+            claim_available(|lane| {
+                claims += 1;
+                let mut client = replacement.take().unwrap();
+                assert!(client.handshake(lane)?);
+                Ok(Some(client))
+            })
+            .unwrap(),
+        );
+        let reply = dispatch_in_slot(&mut slot, |client| {
+            client.request("TARGET synthetic")?;
+            client.dispatch("CLICK synthetic", false, None)
+        })
+        .unwrap();
+        assert_eq!(claims, 1);
+        assert_eq!(reply["ok"], true);
+        assert_eq!(reply["lane"], 0);
+        drop(slot);
+        cleanup_session(owner);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn uncertain_io_after_reuse_is_an_error_without_replay() {
+        for malformed_reply in [false, true] {
+            let (mut client, peer) = test_connection();
+            client.lane = Some(0);
+            let session = SessionClient {
+                client: Mutex::new(Some(client)),
+            };
+            let mut slot = session.lock(&ActionCancellation::default()).unwrap();
+            assert!(slot.is_some(), "a live peer must remain reusable");
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), "CLICK synthetic");
+                if malformed_reply {
+                    peer.send(b"not-json").unwrap();
+                } else {
+                    peer.shutdown(std::net::Shutdown::Write).unwrap();
+                }
+                // The uncertain connection must close without another packet.
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0
+                );
+            });
+            let mut dispatches = 0;
+            let error = dispatch_in_slot(&mut slot, |client| {
+                dispatches += 1;
+                client.dispatch("CLICK synthetic", false, None)
+            })
+            .unwrap_err();
+            assert!(error.is::<DispatchUnknown>());
+            assert_eq!(dispatches, 1);
+            assert!(slot.is_none());
+            server.join().unwrap();
+        }
     }
 
     #[test]

@@ -1,173 +1,224 @@
 ---
 title: Sandbox SDK reference
-description: "API reference for the Cua Sandbox Python package: Sandbox, Image, Localhost, and top-level functions."
+description: Packages, configuration, and Sandbox lifecycle APIs for Python and TypeScript.
 ---
 
-## Package
+## Packages
 
-`cua-sandbox` is a Python package imported as `cua`.
+This reference describes the published `cua-sandbox` 0.4.3 Python package and
+`@trycua/fleet` 0.1.1 TypeScript package.
 
-| Field | Value |
-|-------|-------|
-| Package | `cua-sandbox` |
-| Import name | `cua` |
-| Python version | 3.12+ |
-| Install | `pip install cua` |
+| Distribution | Import | Requirement | API |
+| --- | --- | --- | --- |
+| [`cua-sandbox` 0.4.3](https://pypi.org/project/cua-sandbox/0.4.3/) | `cua_sandbox` | Python `>=3.11,<3.14` | `Sandbox`, `Image`, `Pool`, `Template`, and interfaces |
+| [`cua` 0.1.6](https://pypi.org/project/cua/0.1.6/) | `cua` | Python `>=3.12,<3.14` | Umbrella package; reexports `Sandbox` and `Image`, but not `Pool` |
+| [`@trycua/fleet` 0.1.1](/reference/sandbox-sdk/typescript) | `@trycua/fleet/node` or `@trycua/fleet/browser` | Environment-specific WebAssembly entry point | Fleet client, resource types, and builders |
 
-## Top-level exports
+The Python Sandbox distribution can be installed independently:
 
-| Export | Description |
-|--------|-------------|
-| `Sandbox` | VM or container control class |
-| `Image` | Image builder class |
-| `Localhost` | Direct host control class |
-| `SandboxInfo` | Sandbox metadata structure |
-| `configure()` | Global SDK configuration function |
-| `login()` | Browser login function |
-| `whoami()` | Authenticated user lookup function |
-
-## Environment variables
-
-| Variable | Description |
-|----------|-------------|
-| `CUA_API_KEY` | Cua API key for cloud sandboxes |
-
-## Sandbox class
-
-`Sandbox` controls a VM or container through `.mouse`, `.keyboard`, `.screen`, `.clipboard`, `.shell`, `.window`, `.terminal`, `.mobile`, and `.tunnel`.
-
-### Sandbox.ephemeral
-
-Async context manager. The sandbox is destroyed automatically on exit.
-
-```python
-async def ephemeral(cls, image: Image, name=None, api_key=None, local=False, runtime=None, cpu=None, memory_mb=None, disk_gb=None, region='us-east-1') -> AsyncIterator[Sandbox]
+```bash
+pip install cua-sandbox==0.4.3
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `image` | `Image` | required | Image to run |
-| `name` | `str or None` | `None` | Optional name |
-| `api_key` | `str or None` | `None` | Cua API key; reads `CUA_API_KEY` if `None` |
-| `local` | `bool` | `False` | Use local runtime (Docker/Lume/QEMU) |
-| `runtime` | `Runtime or None` | `None` | Explicit runtime backend |
-| `cpu` | `int or None` | `None` | CPU count (cloud) |
-| `memory_mb` | `int or None` | `None` | Memory in MB (cloud) |
-| `disk_gb` | `int or None` | `None` | Disk size in GB (cloud) |
-| `region` | `str` | `'us-east-1'` | Cloud region |
-
-### Sandbox.create
-
-Provisions a persistent sandbox. The sandbox keeps running after the script exits.
+Its primary imports are:
 
 ```python
-async def create(cls, image: Image, name=None, api_key=None, local=False, runtime=None, cpu=None, memory_mb=None, disk_gb=None, region='us-east-1') -> Sandbox
+from cua_sandbox import Image, Pool, Sandbox, Template
 ```
 
-Same parameters as `ephemeral`.
+See [Pool and claim reference](/reference/sandbox-sdk/pool),
+[Image reference](/reference/sandbox-sdk/image),
+[Sandbox interfaces](/reference/sandbox-sdk/interfaces), and
+[TypeScript Fleet reference](/reference/sandbox-sdk/typescript).
 
-### Sandbox.connect
+## Configuration and authentication
 
-Connects to an existing sandbox by name. Supports both `await` and `async with`. When used as a context manager, `disconnect()` is called on exit. The sandbox keeps running.
+`configure()` updates process-wide settings. All parameters are optional,
+keyword-only strings; `None` leaves a setting unchanged.
 
 ```python
-def connect(cls, name: str, api_key=None, local=False, ws_url=None, http_url=None, container_name=None, cpu=None, memory_mb=None, disk_gb=None, region='us-east-1') -> _ConnectResult
+def configure(
+    *, api_key=None, base_url=None, fleet_base_url=None, token_url=None,
+    client_id=None, client_secret=None, fleet_token=None,
+) -> None: ...
 ```
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `name` | `str` | required | Sandbox name |
-| `api_key` | `str or None` | `None` | Cua API key; reads `CUA_API_KEY` if `None` |
-| `local` | `bool` | `False` | Use local runtime (Docker/Lume/QEMU) |
-| `ws_url` | `str or None` | `None` | WebSocket URL |
-| `http_url` | `str or None` | `None` | HTTP URL |
-| `container_name` | `str or None` | `None` | Container name |
-| `cpu` | `int or None` | `None` | CPU count (cloud) |
-| `memory_mb` | `int or None` | `None` | Memory in MB (cloud) |
-| `disk_gb` | `int or None` | `None` | Disk size in GB (cloud) |
-| `region` | `str` | `'us-east-1'` | Cloud region |
+Fleet authentication uses a configured `fleet_token`, then `FLEETS_TOKEN`. If
+neither supplies a nonempty token, it uses `client_id` and `client_secret` from
+`configure()`, falling back to `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET`.
 
-### Sandbox instance methods
+| Environment variable | Purpose | Default |
+| --- | --- | --- |
+| `FLEETS_TOKEN` | Fleet bearer token; takes precedence over OAuth client credentials | None |
+| `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET` | Fleet OAuth client credentials | None |
+| `CUA_TOKEN_URL` | OAuth token endpoint | `https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token` |
+| `CUA_FLEET_BASE_URL` | Fleet API endpoint | `https://run.cua.ai` |
+| `CUA_API_KEY` | Legacy VM API key | None |
+| `CUA_BASE_URL` | Legacy VM API endpoint | `https://api.cua.ai` |
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `disconnect` | `async disconnect() -> None` | Drop transport connection. Sandbox keeps running. |
-| `destroy` | `async destroy() -> None` | Disconnect and permanently delete the sandbox. |
-| `screenshot` | `async screenshot(text=None, format='png', quality=95) -> bytes` | Capture screenshot. `format`: `'png'` or `'jpeg'`. `quality`: 1-95 (JPEG only). |
-| `screenshot_base64` | `async screenshot_base64(text=None, format='png', quality=95) -> str` | Screenshot as base64 string. |
-| `get_environment` | `async get_environment() -> str` | Returns `'linux'`, `'mac'`, `'windows'`, or `'browser'`. |
-| `get_display_url` | `async get_display_url(share=False) -> str` | URL to view the sandbox display. `share=True` returns a public link (cloud only). |
-| `get_dimensions` | `async get_dimensions() -> tuple[int, int]` | Screen width and height in pixels. |
+Endpoint environment variables override the corresponding `configure()` values.
+Legacy API keys resolve from the per-call `api_key`, global configuration,
+`~/.cua/credentials`, then `CUA_API_KEY`.
 
-### Sandbox class methods
+Credential acquisition is documented in
+[Fleet pools need their own credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials).
+`login(base_url=None)` and `whoami(api_key=None)` belong to the legacy API-key
+flow; they do not configure Fleet OAuth credentials.
 
-| Method | Signature | Description |
-|--------|-----------|-------------|
-| `list` | `async list(local=False, api_key=None) -> list[SandboxInfo]` | List running and suspended sandboxes. |
-| `get_info` | `async get_info(name, local=False, api_key=None) -> SandboxInfo` | Metadata for a specific sandbox. |
-| `suspend` | `async suspend(name, local=False, api_key=None) -> None` | Suspend a sandbox (save state). Local QEMU: QMP snapshot. Local Docker: pause. Local Lume: stop. Cloud: `POST /v1/vms/{name}/stop`. |
-| `resume` | `async resume(name, local=False, api_key=None) -> Sandbox` | Resume a suspended sandbox. Returns connected `Sandbox`. |
-| `restart` | `async restart(name, local=False, api_key=None) -> Sandbox` | Restart (suspend then resume). Returns connected `Sandbox`. |
-| `delete` | `async delete(name, local=False, api_key=None) -> None` | Permanently delete. Local: stops and removes state file. Cloud: `DELETE /v1/vms/{name}`. |
+## Sandbox creation
 
-### Sandbox attributes
+`Sandbox.create()` returns a connected `Sandbox`. `Sandbox.ephemeral()` is an
+async context manager that performs cleanup on exit.
 
-| Attribute | Type | Description |
-|-----------|------|-------------|
-| `name` | `str or None` | Sandbox name |
-| `shell` | `Shell` | Run shell commands |
-| `mouse` | `Mouse` | Mouse control |
-| `keyboard` | `Keyboard` | Keyboard control |
-| `screen` | `Screen` | Screenshots and screen info |
-| `clipboard` | `Clipboard` | Clipboard read/write |
-| `tunnel` | `Tunnel` | Port forwarding |
-| `terminal` | `Terminal` | PTY sessions |
-| `window` | `Window` | Window management |
-| `mobile` | `Mobile` | Mobile (Android) touch and hardware keys |
-
-## SandboxInfo
-
-Returned by `Sandbox.list()` and `Sandbox.get_info()`.
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | `str` | Sandbox name |
-| `status` | `str` | Current status |
-| `source` | `str` | Runtime source |
-| `os_type` | `str or None` | OS type |
-| `host` | `str or None` | Host address |
-| `vnc_url` | `str or None` | VNC URL |
-| `api_url` | `str or None` | API URL |
-| `created_at` | `str or None` | ISO timestamp |
-
-## configure, login, whoami
+The complete `create()` signature is:
 
 ```python
-def configure(api_key=None, base_url=None) -> None
-# Set global SDK config. Equivalent to setting CUA_API_KEY.
-
-def login(base_url=None) -> None
-# Open Cua login page in browser; store credentials in ~/.cua/credentials (Clerk flow).
-
-def whoami(api_key=None) -> Dict[str, Any]
-# Return dict with user info (id, email, etc.) from Cua API.
+async def create(
+    image=None, *, pool=None, name=None, replicas=1, service="server",
+    claim_spec=None, keep_alive_minutes=None, api_key=None, local=False,
+    runtime=None, cpu=None, memory_mb=None, disk_gb=None,
+    region="us-east-1", time_to_start=None, request_timeout=None,
+    server_port=8000, telemetry_enabled=True,
+) -> Sandbox: ...
 ```
 
-## Localhost
+`ephemeral()` accepts the same parameters plus `keep_pool=False`.
 
-Direct host control via `cua_auto`. No sandbox. Attributes: `screen`, `mouse`, `keyboard`, `clipboard`, `shell`, `window`, `terminal`.
+| Parameter | Type | Contract |
+| --- | --- | --- |
+| `image` | `Image or None` | Required when `pool` is omitted; mutually exclusive with `pool` |
+| `pool` | `Pool, str, or None` | Existing Fleet pool or pool name |
+| `name` | `str or None` | Claim name with `pool`; pool name for Fleet image-based `ephemeral`; sandbox name for local/legacy creation |
+| `replicas` | `int` | Pool replicas for Fleet image-based `ephemeral`; default `1` |
+| `service` | `str` | Fleet service to connect to; default `"server"` |
+| `claim_spec` | `ClaimSpec or None` | Explicit Fleet claim specification |
+| `keep_alive_minutes` | `float or None` | Renews an acquired Fleet claim's shutdown deadline; positive minutes |
+| `local` | `bool` | Selects local provisioning; default `False` |
+| `runtime` | Runtime instance or `None` | Explicit local runtime adapter |
+| `cpu`, `memory_mb`, `disk_gb` | `int or None` | Resource overrides where the selected backend accepts them |
+| `time_to_start` | `float or None` | Service startup timeout in seconds |
+| `request_timeout` | `float or None` | Transport request timeout where supported |
+| `server_port` | `int` | Server port, `1`–`65535`; default `8000` |
+| `api_key`, `region` | `str or None`, `str` | Legacy cloud options; region defaults to `"us-east-1"` |
+| `telemetry_enabled` | `bool` | Creation telemetry option; default `True` |
+| `keep_pool` | `bool` | `ephemeral()` only: retain the image-created Fleet pool after releasing the claim; requires `name` |
+
+### Fleet selection and constraints
+
+`pool=` explicitly selects Fleet. It rejects an image, resource overrides,
+`replicas != 1`, `local=True`, an explicit runtime or API key, a nondefault
+region, `request_timeout`, or a nondefault `server_port`. Configure the pool
+through `Pool.apply()` or `Pool.reconcile()` instead.
+
+For image-based calls, Fleet is selected when Fleet authentication is configured,
+no per-call `api_key` is supplied, the image resolves to a Fleet registry image,
+and neither `local=True` nor a runtime is supplied. Persistent Fleet creation
+requires an explicitly named pool: `Sandbox.create(image)` rejects this path.
+`Sandbox.ephemeral(image)` can create a disposable pool and claim. Fleet
+image-based provisioning rejects `disk_gb`, a nondefault region, and
+`request_timeout`.
+
+The presence of an image constructor does not establish backend support. See
+the [Fleet image constraints](/reference/sandbox-sdk/image#fleet-image-constraints).
+
+## Lifecycle and ownership
+
+Fleet pool configuration and claim lifetime are separate resources.
+
+| Operation | Fleet effect |
+| --- | --- |
+| `await pool.claim()` or `await Sandbox.create(pool=pool)` | Acquires a claim; caller owns its release |
+| `async with pool.claim()` | Acquires a claim and calls `close()` on exit |
+| `async with Sandbox.ephemeral(pool=pool)` | Releases the claim on exit; retains the supplied pool |
+| `async with Sandbox.ephemeral(image)` | Releases the claim and deletes its created pool/template on exit, unless `keep_pool=True` |
+| `await sb.disconnect()` | Closes the connection; does not release the claim |
+| `await sb.close()` | Releases a Fleet claim and disconnects; repeated calls are safe |
+| `await pool.delete()` | Deletes the pool; also deletes the template owned by that `Pool.apply()` result |
+
+`destroy()` is the local/legacy transport cleanup method. It does not release a
+claim obtained through `Pool.claim()`; use `close()` for that claim.
+Local and legacy `ephemeral()` call `destroy()` on exit, or suspend when the
+instance has snapshots. Cleanup can fail; it is not a guarantee of deletion.
+
+### Reconnection and renewal
+
+These methods apply to Fleet claim-backed instances:
+
+| Member | Signature or type | Contract |
+| --- | --- | --- |
+| `claim_name` | `str or None` | Claim identity, distinct from the bound sandbox's `name` |
+| `pool_name` | `str or None` | Pool owning the claim |
+| `to_dict` | `to_dict() -> dict[str, Any]` | Serializes claim identity and service, not credentials or a snapshot |
+| `from_dict` | `Sandbox.from_dict(data)` | Awaitable/context manager that reconnects; context exit disconnects without release |
+| `keep_alive` | `async keep_alive(*, minutes: float) -> None` | Moves the shutdown deadline to now plus positive minutes; caller must renew before expiry |
+| `close` | `async close() -> None` | Releases the claim and disconnects |
+
+The serialized shape is:
 
 ```python
-# plain await
-host = await Localhost.connect()
-await host.shell.run('echo hello')
-await host.disconnect()
-
-# context manager
-async with Localhost.connect() as host:
-    await host.shell.run('echo hello')
+{
+    "version": 1,
+    "provider": "fleet",
+    "namespace": "example-pool",
+    "pool": "example-pool",
+    "claim": "example-claim",
+    "service": "server",
+}
 ```
 
-Methods: same signatures as `Sandbox` (`screenshot`, `screenshot_base64`, `get_environment`, `get_dimensions`, `disconnect`).
+`Sandbox.from_dict()` requires the namespace to match the pool. It still requires
+Fleet credentials and a claim that exists. Serialization, renewal, and `close()`
+raise `NotImplementedError` on instances without a Fleet claim handle.
 
-See [Sandbox interfaces reference](/reference/sandbox-sdk/interfaces) for the full API of sb.shell, sb.mouse, sb.keyboard, sb.screen, sb.clipboard, sb.tunnel, sb.terminal, sb.window, and sb.mobile. See [Image reference](/reference/sandbox-sdk/image) for the full Image builder API.
+## Other Sandbox methods
+
+`Sandbox.connect()` supports `await` and `async with`; context exit disconnects.
+For durable Fleet claim reconnection, use the serialized reference above.
+
+```python
+def connect(
+    name: str, *, api_key=None, local=False, ws_url=None, http_url=None,
+    container_name=None, cpu=None, memory_mb=None, disk_gb=None,
+    region="us-east-1", telemetry_enabled=True,
+): ...
+```
+
+The lifecycle class methods accept keyword-only `local=False, api_key=None`:
+
+| Method | Return type | Purpose |
+| --- | --- | --- |
+| `await Sandbox.list(...)` | `list[SandboxInfo]` | Lists local sandboxes, legacy VMs, or Fleet pools according to backend selection |
+| `await Sandbox.get_info(name, ...)` | `SandboxInfo` | Gets metadata |
+| `await Sandbox.suspend(name, ...)` | `None` | Requests backend-specific suspension |
+| `await Sandbox.resume(name, ...)` | `Sandbox` | Requests resume and connects |
+| `await Sandbox.restart(name, ...)` | `Sandbox` | Requests restart and connects |
+| `await Sandbox.delete(name, ...)` | `None` | Requests backend-specific deletion |
+
+These name-based operations are backend-specific. For an explicitly acquired
+Fleet claim, use `close()` to release it and `Pool.delete()` to remove its pool.
+
+The connected instance also provides these methods:
+
+| Method | Return type | Purpose |
+| --- | --- | --- |
+| `await sb.screenshot(text=None, format="png", quality=95)` | `bytes` | Captures PNG or JPEG bytes; `text` is unused in this release |
+| `await sb.screenshot_base64(text=None, format="png", quality=95)` | `str` | Captures a base64 screenshot |
+| `await sb.get_environment()` | `str` | Reports the transport's environment |
+| `await sb.get_dimensions()` | `tuple[int, int]` | Returns width and height in pixels |
+| `await sb.get_display_url(share=False)` | `str` | Returns a display URL where the transport supports it; shared links may embed credentials |
+| `await sb.snapshot(name=None, stateful=False)` | `Image` | Backend-specific snapshot operation; not implemented for Fleet claim-backed instances |
+
+`SandboxInfo` has required string fields `name`, `status`, and `source`, plus
+optional string fields `os_type`, `host`, `vnc_url`, `api_url`, and `created_at`.
+
+## Interfaces and Localhost
+
+`Sandbox` exposes `shell`, `files`, `mouse`, `keyboard`, `screen`, `clipboard`,
+`tunnel`, `terminal`, `window`, `mobile`, `services`, and `apps`. Availability
+depends on the connected transport. `exposed_ports` maps local guest ports to
+host ports; Fleet publishes named services instead.
+
+`Localhost.connect()` supports `await` and `async with` and controls the host
+through `cua_auto`, without a sandbox. Context exit disconnects. Its interfaces
+include `screen`, `mouse`, `keyboard`, `clipboard`, `shell`, `window`, and
+`terminal`. See [Sandbox interfaces](/reference/sandbox-sdk/interfaces).

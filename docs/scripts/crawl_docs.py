@@ -13,12 +13,26 @@ from urllib.parse import urljoin, urlparse
 
 from playwright.async_api import Browser, async_playwright
 
+import sys
+sys.path.insert(0, str(Path(__file__).parent / "docs-mcp-server"))
+from docs_index import capture_corpus, write_json
+
 # Configuration
 BASE_URL = "https://cua.ai"
 DOCS_URL = f"{BASE_URL}/docs"
 OUTPUT_DIR = Path(__file__).parent.parent / "crawled_data"
 MAX_CONCURRENT = 5  # Limit concurrent requests to be polite
 DELAY_BETWEEN_REQUESTS = 0.5  # seconds
+
+
+async def load_docs_page(page, url: str) -> str:
+    """Wait for the docs body, not unrelated background network activity."""
+    response = await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+    if response is None or not response.ok:
+        status = response.status if response is not None else "no response"
+        raise RuntimeError(f"HTTP {status}")
+    await page.wait_for_selector("article, main", state="attached", timeout=30_000)
+    return await page.content()
 
 
 class HTMLToMarkdown(HTMLParser):
@@ -170,7 +184,7 @@ class CuaDocsCrawler:
             return False
 
         # Only crawl /docs paths
-        if not parsed.path.startswith("/docs"):
+        if parsed.path != "/docs" and not parsed.path.startswith("/docs/"):
             return False
 
         # Skip non-page resources
@@ -247,14 +261,7 @@ class CuaDocsCrawler:
                 print(f"Crawling: {url}")
 
                 page = await browser.new_page()
-                response = await page.goto(url, wait_until="networkidle", timeout=30_000)
-                if response is None or not response.ok:
-                    status = response.status if response else "no response"
-                    print(f"Failed to crawl {url}: HTTP {status}")
-                    self.failed_urls.add(url)
-                    return None
-
-                page_html = await page.content()
+                page_html = await load_docs_page(page, url)
                 metadata = extract_metadata(page_html, await page.title())
 
                 # Extract new links from the page
@@ -303,17 +310,8 @@ class CuaDocsCrawler:
         """Main crawl loop"""
         OUTPUT_DIR.mkdir(exist_ok=True)
 
-        # Start with the docs URL and key sections based on typical CUA docs structure
-        seed_urls = [
-            DOCS_URL,
-            f"{DOCS_URL}/cua",
-            f"{DOCS_URL}/cua/guide",
-            f"{DOCS_URL}/cua/guide/get-started",
-            f"{DOCS_URL}/cua/reference",
-            f"{DOCS_URL}/cua/reference/computer-sdk",
-            f"{DOCS_URL}/cua-bench",
-            f"{BASE_URL}/llms.txt",  # LLM-optimized content if available
-        ]
+        # Discover the public corpus from its canonical root.
+        seed_urls = [DOCS_URL]
 
         for url in seed_urls:
             normalized = self.normalize_url(url)
@@ -350,6 +348,11 @@ class CuaDocsCrawler:
                     )
             finally:
                 await browser.close()
+
+        corpus = capture_corpus(self.all_data, self.visited_urls, self.failed_urls)
+        temporary = OUTPUT_DIR / "_corpus.pending.json"
+        write_json(temporary, corpus)
+        temporary.replace(OUTPUT_DIR / "_corpus.json")
 
         # Save summary
         summary = {

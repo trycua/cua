@@ -780,7 +780,7 @@ class PointerStageTests(unittest.TestCase):
                 validate_plan(changed)
 
     def test_pointer_actions_use_the_same_response_image_and_never_replay(self):
-        for failure in (None, 'before', 'after', 'missing_image', 'transport',
+        for failure in (None, 'before', 'after', 'after_recovers', 'missing_image', 'transport',
                         'helper_before', 'deadline_before', 'helper_after', 'deadline_after'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
@@ -841,6 +841,8 @@ class PointerStageTests(unittest.TestCase):
                 grounding = Mock(side_effect=ground_pointer)
                 verification = Mock(return_value={'verified': True},
                                     side_effect=AssertionError('unchanged app') if failure == 'after' else None)
+                if failure == 'after_recovers':
+                    verification.side_effect = [AssertionError('not settled'), {'verified': True}, {'verified': True}]
                 replacements = {'provenance': Mock(return_value={}), 'DirectMCP': client,
                     'subprocess.Popen': Mock(return_value=grab),
                     'time.monotonic_ns': lambda: clock_now[0],
@@ -875,6 +877,16 @@ class PointerStageTests(unittest.TestCase):
                     self.assertEqual(report['actions'][0]['pointer_stage'], 'click_b2')
                 if inputs:
                     self.assertEqual(len(list(args.evidence.glob('pointer-agent-*.json'))), 1)
+                if failure in ('after', 'after_recovers'):
+                    diagnostic = json.loads((args.evidence / 'pointer-effect-failure-agent-0.json').read_text())
+                    self.assertFalse(diagnostic['replayed'])
+                    self.assertEqual(len(diagnostic['samples']), 2)
+                    self.assertEqual(verification.call_count, 3)
+                    if failure == 'after_recovers':
+                        self.assertTrue(all(row['effect']['verified'] for row in diagnostic['samples']))
+                    report = json.loads((args.evidence / 'result.json').read_text())
+                    self.assertEqual(report['result'], 'failed')
+                    self.assertEqual(report['actions'], [])
                 if failure and failure.startswith(('helper_', 'deadline_')):
                     report = json.loads((args.evidence / 'result.json').read_text())
                     self.assertEqual(report['result'], 'failed')

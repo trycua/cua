@@ -576,8 +576,33 @@ def run(args):
             ground(after, spec['app'], 'after')
             result['smoke_stage'] = smoke_stage
         if pointer_stage is not None:
-            result['pointer_effect'] = pointer_grounding.verify(
-                after, pointer_grounding.read_pixels(after['proof_image']), pointer_oracle)
+            try:
+                result['pointer_effect'] = pointer_grounding.verify(
+                    after, pointer_grounding.read_pixels(after['proof_image']), pointer_oracle)
+            except (AssertionError, pointer_grounding.GroundingUnavailable) as error:
+                # Preserve later read-only state to distinguish application
+                # settling from a dropped release. This remains a failed cell:
+                # no extra input, changed oracle, or successful retry is allowed.
+                diagnostic = {'agent': index, 'tool': step['tool'], 'response': response,
+                              'oracle': pointer_oracle, 'initial': after,
+                              'error': str(error), 'samples': [], 'replayed': False}
+                for _ in range(2):
+                    sample = {'monotonic_ns': time.monotonic_ns()}
+                    diagnostic['samples'].append(sample)
+                    try:
+                        require_primary_active(grab, primary_deadline_ns)
+                        later = snapshot(mcp, spec['target'], spec['name'], full=True, pixels=True)
+                        require_primary_active(grab, primary_deadline_ns)
+                        sample['snapshot'] = later
+                        assert later['window_bounds'] == spec['bounds'], 'target geometry changed'
+                        sample['effect'] = pointer_grounding.verify(
+                            later, pointer_grounding.read_pixels(later['proof_image']), pointer_oracle)
+                    except Exception as diagnostic_error:
+                        sample.update(error_type=type(diagnostic_error).__name__, error=str(diagnostic_error))
+                        if not isinstance(diagnostic_error, (AssertionError, pointer_grounding.GroundingUnavailable)):
+                            break
+                save(f'pointer-effect-failure-agent-{index}.json', diagnostic)
+                raise
             result.update(app_effect_verified=True, pointer_stage=pointer_stage, arguments=arguments)
         if policy_cache:
             trace_after = trace.collect()

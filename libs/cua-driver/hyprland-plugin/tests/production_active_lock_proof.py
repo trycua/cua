@@ -53,6 +53,18 @@ def recovery_stage(snapshot):
         snapshot, pointer_grounding.rows(snapshot), 'B2') else 'click_b2')
 
 
+def prepare_recovery(client, spec, allowed_stages):
+    before = grounded_snapshot(client, spec['target'], spec)
+    prepared_ns = before['proof_observation_started_ns']
+    assert type(prepared_ns) is int and 0 < prepared_ns <= time.monotonic_ns(), 'invalid observation timestamp'
+    stage = recovery_stage(before)
+    assert stage in allowed_stages
+    arguments, oracle = pointer_grounding.action(
+        before, pointer_grounding.read_pixels(before['proof_image']), 'calc', stage)
+    return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
+            'stage': stage, 'prepared_ns': prepared_ns}
+
+
 def held_status(status, lane):
     """Trace lanes are one-based; production status lanes are zero-based."""
     rows = lanes(status)
@@ -330,15 +342,10 @@ def run(args):
         recovery.update(runtime_pid=fresh.process.pid, previous_runtime_pid=actor.process.pid, replayed=False)
         spec = {**spec, 'name': spec['name'] + '-recovery'}
         assert not fresh.tool('start_session', {'session': spec['name']}).get('isError')
-        prepared_ns = time.monotonic_ns()
-        before = grounded_snapshot(fresh, spec['target'], spec)
-        stage = recovery_stage(before)
-        assert stage in plan['recovery']['pointer_stages']
-        recovery['stage'] = stage
-        spec['pointer_stage'] = stage
-        arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), 'calc', spec['pointer_stage'])
-        save('recovery-grounding.json', {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
-            'stage': stage, 'prepared_ns': prepared_ns})
+        grounding = prepare_recovery(fresh, spec, plan['recovery']['pointer_stages'])
+        prepared_ns, arguments, oracle = (grounding[key] for key in ('prepared_ns', 'arguments', 'oracle'))
+        recovery['stage'] = spec['pointer_stage'] = grounding['stage']
+        save('recovery-grounding.json', grounding)
         require_primary_active(grab, deadline)
         recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns}
         response = click_once(fresh, {**arguments, **spec['target'], 'session': spec['name'],

@@ -38,6 +38,34 @@ def record():
 
 
 class OracleTests(unittest.TestCase):
+    def test_recovery_grounding_uses_original_snapshot_time_not_wrapper_clock(self):
+        client = Mock()
+        spec = plan()['agents'][0]
+        snapshot = {'proof_observation_started_ns': 10, 'proof_image': 'synthetic.png'}
+        with patch.object(proof, 'grounded_snapshot', return_value=snapshot) as observe, \
+             patch.object(proof, 'recovery_stage', return_value='click_b2'), \
+             patch.object(proof.time, 'monotonic_ns', return_value=50), \
+             patch.object(proof.pointer_grounding, 'read_pixels', return_value='pixels'), \
+             patch.object(proof.pointer_grounding, 'action', return_value=({'x': 1}, {'cell': 'B2'})):
+            result = proof.prepare_recovery(client, spec, ['click_a1', 'click_b2'])
+        observe.assert_called_once_with(client, spec['target'], spec)
+        self.assertEqual(result, {'snapshot': snapshot, 'arguments': {'x': 1},
+            'oracle': {'cell': 'B2'}, 'stage': 'click_b2', 'prepared_ns': 10})
+        client.tool.assert_not_called()
+
+    def test_recovery_grounding_rejects_missing_invalid_or_future_snapshot_time(self):
+        for timestamp in (None, True, 0, -1, 51, 10.0):
+            snapshot = {'proof_image': 'synthetic.png'}
+            if timestamp is not None:
+                snapshot['proof_observation_started_ns'] = timestamp
+            with self.subTest(timestamp=timestamp), \
+                 patch.object(proof, 'grounded_snapshot', return_value=snapshot), \
+                 patch.object(proof.time, 'monotonic_ns', return_value=50), \
+                 patch.object(proof.pointer_grounding, 'action') as action, \
+                 self.assertRaises((AssertionError, KeyError)):
+                proof.prepare_recovery(Mock(), plan()['agents'][0], ['click_a1', 'click_b2'])
+            action.assert_not_called()
+
     def test_recovery_stage_is_chosen_from_new_selection_before_input(self):
         snapshot = {'snapshot_id': 'fresh-after-unlock'}
         for selected_b2, expected in ((True, 'click_a1'), (False, 'click_b2')):
@@ -383,7 +411,8 @@ class RunTests(unittest.TestCase):
                 if len(clients) == 3:
                     return final
                 return status(3 if 'explicit_unlock' in events else 2)
-            snapshot = {'window_bounds': {'x': 10, 'y': 20, 'width': 800, 'height': 600}, 'proof_image': 'fresh.png'}
+            snapshot = {'window_bounds': {'x': 10, 'y': 20, 'width': 800, 'height': 600},
+                        'proof_image': 'fresh.png', 'proof_observation_started_ns': 10}
             mocks = {
                 'ActiveLockFixture': Mock(return_value=fixture), 'provenance': Mock(return_value={'files': {}}),
                 'DirectMCP': launch, 'connect_trace': Mock(return_value=trace_client),
@@ -396,7 +425,8 @@ class RunTests(unittest.TestCase):
             }
             for name, value in mocks.items():
                 stack.enter_context(patch.object(proof, name, value))
-            stack.enter_context(patch.object(proof.time, 'monotonic_ns', return_value=0))
+            stack.enter_context(patch.object(proof.time, 'monotonic_ns',
+                side_effect=lambda: 50 if len(clients) == 3 else 0))
             stack.enter_context(patch.object(proof.subprocess, 'Popen', return_value=Mock()))
             stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels'))
             stack.enter_context(patch.object(proof.pointer_grounding, 'rows', return_value=[]))
@@ -415,6 +445,8 @@ class RunTests(unittest.TestCase):
         self.assertEqual(report['runtime_pids'], [30, 40, 50])
         self.assertEqual(report['cancellation']['result'], 'verified')
         self.assertEqual(report['recovery']['result'], 'verified')
+        self.assertEqual(evidence['recovery-grounding.json']['prepared_ns'], 10)
+        self.assertEqual(evidence['recovery-action.json']['prepared_ns'], 10)
         self.assertEqual(report['transition']['raw_primary_analysis']['result'], 'failed')
         self.assertEqual(report['continuous_isolation_across_transitions'], 'unproven')
         self.assertLess(events.index('drag'), events.index('LOCK'))

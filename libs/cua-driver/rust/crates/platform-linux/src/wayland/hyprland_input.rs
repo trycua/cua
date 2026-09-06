@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::os::fd::AsRawFd;
 use std::os::unix::fs::{FileTypeExt, MetadataExt};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock, TryLockError};
 use std::time::{Duration, Instant};
 
 use anyhow::{bail, ensure, Context, Result};
@@ -16,6 +17,43 @@ const TIMEOUT: Duration = Duration::from_secs(3);
 const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
+
+/// Cancellation belongs to one invocation, never to its session's next call.
+#[derive(Clone, Default)]
+pub(crate) struct ActionCancellation(Arc<AtomicBool>);
+
+pub(crate) struct CancelOnDrop(ActionCancellation);
+
+impl ActionCancellation {
+    pub(crate) fn invocation() -> (CancelOnDrop, Self) {
+        let cancellation = Self::default();
+        (CancelOnDrop(cancellation.clone()), cancellation)
+    }
+
+    fn check(&self) -> Result<()> {
+        if self.0.load(Ordering::Acquire) {
+            return Err(ActionCancelled.into());
+        }
+        Ok(())
+    }
+}
+
+impl Drop for CancelOnDrop {
+    fn drop(&mut self) {
+        self.0 .0.store(true, Ordering::Release);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct ActionCancelled;
+
+impl std::fmt::Display for ActionCancelled {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Hyprland input invocation cancelled")
+    }
+}
+
+impl std::error::Error for ActionCancelled {}
 
 /// Both reservations are explicitly occupied; no target or action was sent.
 #[derive(Debug)]
@@ -132,6 +170,7 @@ pub enum Action {
 
 struct Client {
     socket: socket2::Socket,
+    cancellation: ActionCancellation,
     protocol: InputProtocol,
     // Assigned by the compositor to this connection, never by the local pool.
     lane: Option<usize>,
@@ -191,8 +230,15 @@ fn validate_reply(value: &Value) -> Result<()> {
     }
 }
 
-fn wait(socket: &socket2::Socket, owner: &str, events: i16, deadline: Instant) -> Result<()> {
+fn wait(
+    socket: &socket2::Socket,
+    owner: &str,
+    cancellation: &ActionCancellation,
+    events: i16,
+    deadline: Instant,
+) -> Result<()> {
     loop {
+        cancellation.check()?;
         ensure!(
             !cua_driver_core::session::is_session_ending(owner),
             "Hyprland input session ending; dispatch effect is unknown"
@@ -219,6 +265,7 @@ fn wait(socket: &socket2::Socket, owner: &str, events: i16, deadline: Instant) -
         if result == 0 {
             continue;
         }
+        cancellation.check()?;
         ensure!(
             !cua_driver_core::session::is_session_ending(owner),
             "Hyprland input session ending; dispatch effect is unknown"
@@ -250,7 +297,9 @@ impl Client {
         pid: u32,
         address: u64,
         lane: usize,
+        cancellation: ActionCancellation,
     ) -> Result<Option<Self>> {
+        cancellation.check()?;
         let socket = socket2::Socket::new(
             socket2::Domain::UNIX,
             socket2::Type::from(libc::SOCK_SEQPACKET),
@@ -260,6 +309,7 @@ impl Client {
         socket.set_nonblocking(true)?;
         let mut client = Self {
             socket,
+            cancellation,
             protocol: protocol(),
             lane: None,
             owner,
@@ -318,7 +368,13 @@ impl Client {
         );
         let deadline = Instant::now() + TIMEOUT;
         loop {
-            wait(&self.socket, &self.owner, libc::POLLOUT, deadline)?;
+            wait(
+                &self.socket,
+                &self.owner,
+                &self.cancellation,
+                libc::POLLOUT,
+                deadline,
+            )?;
             let count = unsafe {
                 libc::send(
                     self.socket.as_raw_fd(),
@@ -346,7 +402,13 @@ impl Client {
     fn receive(&self, deadline: Instant) -> Result<Value> {
         let mut bytes = [0u8; MAX_PACKET];
         loop {
-            wait(&self.socket, &self.owner, libc::POLLIN, deadline)?;
+            wait(
+                &self.socket,
+                &self.owner,
+                &self.cancellation,
+                libc::POLLIN,
+                deadline,
+            )?;
             let count = unsafe {
                 libc::recv(
                     self.socket.as_raw_fd(),
@@ -380,6 +442,7 @@ impl Client {
         action: Action,
         started: Option<tokio::sync::oneshot::Sender<()>>,
     ) -> Result<Value> {
+        self.cancellation.check()?;
         ensure!(self.lane.is_some(), "isolated input lane is not claimed");
         self.attest()?;
         let target = self.request(&self.target_packet(&action))?;
@@ -558,6 +621,24 @@ struct SessionClient {
     client: Mutex<Option<Client>>,
 }
 
+impl SessionClient {
+    fn lock(&self, cancellation: &ActionCancellation) -> Result<MutexGuard<'_, Option<Client>>> {
+        loop {
+            cancellation.check()?;
+            match self.client.try_lock() {
+                Ok(slot) => {
+                    // Cancellation may race with the previous owner releasing.
+                    // Refuse before touching its connection or sending packets.
+                    cancellation.check()?;
+                    return Ok(slot);
+                }
+                Err(TryLockError::WouldBlock) => std::thread::sleep(CANCELLATION_POLL),
+                Err(TryLockError::Poisoned(_)) => bail!("input connection poisoned"),
+            }
+        }
+    }
+}
+
 /// The compositor owns the cross-process allocation. No target or action has
 /// been sent while this bounded search is running, and errors never fall back.
 fn claim_available(mut connect: impl FnMut(usize) -> Result<Option<Client>>) -> Result<Client> {
@@ -633,17 +714,25 @@ pub fn cleanup_runtime(prefix: &str) {
 
 /// Only same-lifecycle actions serialize. Independent authenticated sessions
 /// use independent sockets/seats and may overlap. Never retry unknown effects.
-pub fn execute(owner: Option<String>, pid: u32, address: u64, action: Action) -> Result<Value> {
-    execute_with_started(owner, pid, address, action, None)
+pub(crate) fn execute(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    action: Action,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_with_started(owner, pid, address, action, None, cancellation)
 }
 
-pub fn execute_with_started(
+pub(crate) fn execute_with_started(
     owner: Option<String>,
     pid: u32,
     address: u64,
     action: Action,
     started: Option<tokio::sync::oneshot::Sender<()>>,
+    cancellation: ActionCancellation,
 ) -> Result<Value> {
+    cancellation.check()?;
     ensure!(enabled(), "Hyprland isolated input is unavailable");
     ensure!(
         pid > 0 && address > 0,
@@ -656,10 +745,7 @@ pub fn execute_with_started(
         }
     }
     let client = session_client(&owner)?;
-    let mut slot = client
-        .client
-        .lock()
-        .map_err(|_| anyhow::anyhow!("input connection poisoned"))?;
+    let mut slot = client.lock(&cancellation)?;
     if let Some(client) = slot.as_ref() {
         let lane = client.lane.context("missing claimed input lane")?;
         if client.pid != pid
@@ -672,17 +758,31 @@ pub fn execute_with_started(
     }
     if slot.is_none() {
         *slot = Some(claim_available(|lane| {
-            Client::connect(socket_path(lane)?, owner.clone(), pid, address, lane)
+            Client::connect(
+                socket_path(lane)?,
+                owner.clone(),
+                pid,
+                address,
+                lane,
+                cancellation.clone(),
+            )
         })?);
     }
+    slot.as_mut()
+        .context("missing input connection")?
+        .cancellation = cancellation;
+    dispatch_in_slot(&mut slot, |client| client.execute(action, started))
+}
+
+fn dispatch_in_slot(
+    slot: &mut Option<Client>,
+    dispatch: impl FnOnce(&mut Client) -> Result<Value>,
+) -> Result<Value> {
     let lane = slot
         .as_ref()
         .and_then(|client| client.lane)
         .context("missing claimed input lane")?;
-    let mut result = slot
-        .as_mut()
-        .context("missing input connection")?
-        .execute(action, started);
+    let mut result = dispatch(slot.as_mut().context("missing input connection")?);
     if result.as_ref().map_or(true, terminal_connection_result) {
         *slot = None;
     }
@@ -990,6 +1090,7 @@ mod tests {
         (
             Client {
                 socket,
+                cancellation: ActionCancellation::default(),
                 protocol: InputProtocol::Experiment,
                 lane: None,
                 owner: "input-unregistered-test-client".into(),
@@ -1012,8 +1113,158 @@ mod tests {
         String::from_utf8(bytes[..count as usize].to_vec()).unwrap()
     }
 
+    #[tokio::test]
+    async fn aborted_queued_invocation_never_targets_or_changes_the_active_connection() {
+        let (client, peer) = test_connection();
+        let session = Arc::new(SessionClient {
+            client: Mutex::new(Some(client)),
+        });
+        let first = session.client.lock().unwrap();
+        let queued = session.clone();
+        let (started, waiting) = tokio::sync::oneshot::channel();
+        let (finished, done) = tokio::sync::oneshot::channel();
+        let call = tokio::spawn(async move {
+            let (_guard, cancellation) = ActionCancellation::invocation();
+            tokio::task::spawn_blocking(move || {
+                started.send(()).unwrap();
+                let result = queued
+                    .lock(&cancellation)
+                    .and_then(|slot| slot.as_ref().unwrap().request("TARGET synthetic"));
+                finished.send(result).unwrap();
+            })
+            .await
+            .unwrap();
+        });
+        waiting.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        // The canceled queue entry exits even while the first owns the lane.
+        assert!(tokio::time::timeout(Duration::from_secs(1), done)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err()
+            .is::<ActionCancelled>());
+        assert!(first.is_some());
+        drop(first);
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe {
+                libc::recv(
+                    peer.as_raw_fd(),
+                    byte.as_mut_ptr().cast(),
+                    1,
+                    libc::MSG_DONTWAIT,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
+        // The first connection is still usable; cancellation didn't clear it.
+        peer.send(br#"{"ok":true}"#).unwrap();
+        assert_eq!(
+            session
+                .client
+                .lock()
+                .unwrap()
+                .as_ref()
+                .unwrap()
+                .receive(Instant::now() + TIMEOUT)
+                .unwrap()["ok"],
+            true
+        );
+    }
+
+    #[tokio::test]
+    async fn aborted_acknowledged_drag_disconnects_only_its_own_lane_without_replay() {
+        let (mut client, peer) = test_connection();
+        client.lane = Some(0);
+        let (other, other_peer) = test_connection();
+        let (started, acknowledged) = tokio::sync::oneshot::channel();
+        let (finished, done) = tokio::sync::oneshot::channel();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "DRAG synthetic");
+            peer.send(br#"{"ok":true,"phase":"started"}"#).unwrap();
+            let mut bytes = [0u8; MAX_PACKET];
+            // EOF is the plugin's connection-scoped revoke/release signal.
+            // There must be no replay or unrelated release packet.
+            assert_eq!(
+                unsafe { libc::recv(peer.as_raw_fd(), bytes.as_mut_ptr().cast(), bytes.len(), 0) },
+                0
+            );
+        });
+        let call = tokio::spawn(async move {
+            let (_guard, cancellation) = ActionCancellation::invocation();
+            tokio::task::spawn_blocking(move || {
+                client.cancellation = cancellation;
+                let mut slot = Some(client);
+                let result = dispatch_in_slot(&mut slot, |client| {
+                    client.dispatch("DRAG synthetic", true, Some(started))
+                });
+                assert!(slot.is_none());
+                finished.send(result).unwrap();
+            })
+            .await
+            .unwrap();
+        });
+        acknowledged.await.unwrap();
+        call.abort();
+        assert!(call.await.unwrap_err().is_cancelled());
+        let error = tokio::time::timeout(Duration::from_secs(1), done)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<DispatchUnknown>()
+                .unwrap()
+                .acknowledged_phases,
+            1
+        );
+        server.join().unwrap();
+        other_peer.send(br#"{"ok":true}"#).unwrap();
+        assert_eq!(other.receive(Instant::now() + TIMEOUT).unwrap()["ok"], true);
+    }
+
     fn hello_reply() -> Value {
         json!({"ok":true,"protocol":0,"epoch":TOKEN,"challenge":TOKEN})
+    }
+
+    #[test]
+    fn canceled_invocation_cannot_send_on_a_ready_socket() {
+        let (mut client, peer) = test_connection();
+        let (guard, cancellation) = ActionCancellation::invocation();
+        client.cancellation = cancellation;
+        drop(guard);
+        for packet in [
+            "HELLO",
+            "CLAIM",
+            "TARGET synthetic",
+            "CLICK synthetic",
+            "DRAG synthetic",
+        ] {
+            assert!(client.request(packet).unwrap_err().is::<ActionCancelled>());
+        }
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe {
+                libc::recv(
+                    peer.as_raw_fd(),
+                    byte.as_mut_ptr().cast(),
+                    1,
+                    libc::MSG_DONTWAIT,
+                )
+            },
+            -1
+        );
+        assert_eq!(
+            std::io::Error::last_os_error().kind(),
+            std::io::ErrorKind::WouldBlock
+        );
     }
 
     #[test]

@@ -2080,6 +2080,11 @@ fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
                 "ok": false, "code": "lane_busy", "detail": error.to_string()
             })))
         }
+        Err(error) if error.is::<crate::wayland::hyprland_input::ActionCancelled>() => {
+            isolated_hyprland_result(Ok(json!({
+                "ok": false, "code": "cancelled", "detail": error.to_string()
+            })))
+        }
         Err(error) => {
             let count = error
                 .downcast_ref::<crate::wayland::hyprland_input::DispatchUnknown>()
@@ -2118,19 +2123,137 @@ fn isolated_hyprland_task_error(error: tokio::task::JoinError, acknowledged: boo
     )))
 }
 
+fn spawn_isolated_hyprland(
+    args: &Value,
+    work: impl FnOnce(crate::wayland::hyprland_input::ActionCancellation) -> anyhow::Result<Value>
+        + Send
+        + 'static,
+) -> Result<
+    (
+        crate::wayland::hyprland_input::CancelOnDrop,
+        tokio::task::JoinHandle<anyhow::Result<Value>>,
+    ),
+    ToolResult,
+> {
+    use cua_driver_core::session;
+    let owner = named_session_cursor_key(args)
+        .ok_or_else(|| isolated_hyprland_refusal("authenticated lifecycle required"))?;
+    let transport_owner = args
+        .get("_transport_session_id")
+        .and_then(Value::as_str)
+        .unwrap_or(&owner);
+    let snapshot = session::session_snapshot(&owner, transport_owner, std::time::Duration::ZERO)
+        .ok_or_else(|| isolated_hyprland_refusal("admitted lifecycle required"))?;
+    // Retain admission before spawning: aborting the async caller must not
+    // complete session teardown while its native worker still owns input.
+    let lifecycle = session::begin_session_dispatch(
+        &owner,
+        snapshot.public_label.as_deref(),
+        transport_owner,
+        snapshot.implicit,
+        snapshot.transport,
+        snapshot.client_kind,
+    )
+    .map_err(isolated_hyprland_refusal)?;
+    let (guard, cancellation) = crate::wayland::hyprland_input::ActionCancellation::invocation();
+    let dispatch = tokio::task::spawn_blocking(move || {
+        let _lifecycle = lifecycle;
+        work(cancellation)
+    });
+    Ok((guard, dispatch))
+}
+
 async fn isolated_hyprland_action(
-    owner: Option<String>,
+    args: &Value,
     pid: u32,
     xid: u64,
     action: crate::wayland::hyprland_input::Action,
 ) -> ToolResult {
-    match tokio::task::spawn_blocking(move || {
-        crate::wayland::hyprland_input::execute(owner, pid, xid, action)
-    })
-    .await
-    {
+    let owner = named_session_cursor_key(args);
+    let (_cancellation, dispatch) = match spawn_isolated_hyprland(args, move |cancellation| {
+        crate::wayland::hyprland_input::execute(owner, pid, xid, action, cancellation)
+    }) {
+        Ok(dispatch) => dispatch,
+        Err(refusal) => return refusal,
+    };
+    match dispatch.await {
         Ok(result) => isolated_hyprland_result(result),
         Err(error) => isolated_hyprland_task_error(error, false),
+    }
+}
+
+#[cfg(test)]
+#[tokio::test]
+async fn isolated_worker_retains_lifecycle_until_native_work_exits() {
+    use cua_driver_core::session::{self, SessionClientKind, SessionTransport};
+    let sid = "isolated-worker-lifecycle-test";
+    let owner = "isolated-worker-transport-test";
+    let caller = session::begin_session_dispatch(
+        sid,
+        None,
+        owner,
+        true,
+        SessionTransport::McpStdio,
+        SessionClientKind::Mcp,
+    )
+    .unwrap();
+    let (started, ready) = tokio::sync::oneshot::channel();
+    let (release, released) = std::sync::mpsc::channel();
+    let (cancellation, dispatch) = spawn_isolated_hyprland(
+        &json!({"_session_id":sid,"_transport_session_id":owner}),
+        move |_| {
+            started.send(()).unwrap();
+            released.recv().unwrap();
+            Ok(json!({"ok":true}))
+        },
+    )
+    .unwrap();
+    ready.await.unwrap();
+    drop(cancellation);
+    drop(caller);
+    assert!(session::end_session_for_owner(sid, owner));
+    assert!(session::is_session_ending(sid));
+    assert!(!session::is_session_ended(sid));
+    release.send(()).unwrap();
+    dispatch.await.unwrap().unwrap();
+    assert!(session::is_session_ended(sid));
+}
+
+#[cfg(test)]
+#[test]
+fn isolated_background_routes_do_not_reprobe_availability_before_primary_fallback() {
+    // Structural regression for the availability-loss race: each tool keeps
+    // the decision that bypassed background refusal until its returning
+    // native branch. A second probe here could select primary-seat input.
+    let source = include_str!("impl_.rs");
+    for (start, end) in [
+        ("impl Tool for ClickTool {", "impl Tool for TypeTextTool {"),
+        (
+            "impl Tool for ScrollTool {",
+            "impl Tool for DoubleClickTool {",
+        ),
+        (
+            "impl Tool for DragTool {",
+            "impl Tool for MouseButtonDownTool {",
+        ),
+    ] {
+        let body = source
+            .rsplit_once(start)
+            .unwrap()
+            .1
+            .split_once(end)
+            .unwrap()
+            .0;
+        let invoke = body.split_once("async fn invoke").unwrap().1;
+        assert_eq!(
+            invoke
+                .matches("isolated_hyprland_background(delivery)")
+                .count(),
+            1,
+            "{start}"
+        );
+        let native = invoke.split_once("if isolated_background {").unwrap().1;
+        assert!(native.contains("return match dispatch.await"), "{start}");
     }
 }
 
@@ -2842,6 +2965,7 @@ impl Tool for ClickTool {
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
         let count = args.u64_or("count", 1) as usize;
+        let isolated_background = isolated_hyprland_background(delivery);
         // Surface 5: reject unknown buttons so a typo can't silently fall through
         // to a left-click. Empty string keeps back-compat with old clients.
         let button_str_raw = args.str_or("button", "left").to_lowercase();
@@ -2939,7 +3063,7 @@ impl Tool for ClickTool {
                         .with_structured(structured);
                 }
             }
-            if isolated_hyprland_background(delivery) {
+            if isolated_background {
                 if !modifiers.is_empty() {
                     return isolated_hyprland_refusal(
                         "modified clicks are unsupported by isolated input",
@@ -2951,22 +3075,26 @@ impl Tool for ClickTool {
                     );
                 };
                 let owner = named_session_cursor_key(&args);
-                return match tokio::task::spawn_blocking(move || {
-                    let (_, x, y) = resolve_element_local_coords(pid, idx, Some(exact_xid))?;
-                    crate::wayland::hyprland_input::execute(
-                        owner,
-                        pid,
-                        exact_xid,
-                        crate::wayland::hyprland_input::Action::Click {
-                            x,
-                            y,
-                            button: u32::from(button),
-                            count,
-                        },
-                    )
-                })
-                .await
-                {
+                let (_cancellation, dispatch) =
+                    match spawn_isolated_hyprland(&args, move |cancellation| {
+                        let (_, x, y) = resolve_element_local_coords(pid, idx, Some(exact_xid))?;
+                        crate::wayland::hyprland_input::execute(
+                            owner,
+                            pid,
+                            exact_xid,
+                            crate::wayland::hyprland_input::Action::Click {
+                                x,
+                                y,
+                                button: u32::from(button),
+                                count,
+                            },
+                            cancellation,
+                        )
+                    }) {
+                        Ok(dispatch) => dispatch,
+                        Err(refusal) => return refusal,
+                    };
+                return match dispatch.await {
                     Ok(result) => isolated_hyprland_result(result),
                     Err(error) => isolated_hyprland_task_error(error, false),
                 };
@@ -3035,7 +3163,7 @@ impl Tool for ClickTool {
             };
         }
 
-        if !isolated_hyprland_background(delivery) {
+        if !isolated_background {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
@@ -3097,7 +3225,7 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
-        if isolated_hyprland_background(delivery) {
+        if isolated_background {
             if !modifiers.is_empty() {
                 return isolated_hyprland_refusal(
                     "modified clicks are unsupported by isolated input",
@@ -3115,7 +3243,7 @@ impl Tool for ClickTool {
                 }
             }
             return isolated_hyprland_action(
-                named_session_cursor_key(&args),
+                &args,
                 pid,
                 xid,
                 crate::wayland::hyprland_input::Action::Click {
@@ -4099,7 +4227,7 @@ impl Tool for PressKeyTool {
                 );
             }
             return isolated_hyprland_action(
-                named_session_cursor_key(&args),
+                &args,
                 pid,
                 xid,
                 crate::wayland::hyprland_input::Action::Key {
@@ -4486,7 +4614,7 @@ impl Tool for HotkeyTool {
                 }
             }
             return isolated_hyprland_action(
-                named_session_cursor_key(&args),
+                &args,
                 pid,
                 xid,
                 crate::wayland::hyprland_input::Action::Key {
@@ -4929,7 +5057,8 @@ impl Tool for ScrollTool {
         }
 
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if !isolated_hyprland_background(delivery) {
+        let isolated_background = isolated_hyprland_background(delivery);
+        if !isolated_background {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
@@ -4966,33 +5095,37 @@ impl Tool for ScrollTool {
             }
         }
 
-        if isolated_hyprland_background(delivery) {
+        if isolated_background {
             if xid_opt.is_none() {
                 return isolated_hyprland_refusal(
                     "an exact window_id or window-bound element token is required",
                 );
             }
             let owner = named_session_cursor_key(&args);
-            return match tokio::task::spawn_blocking(move || {
-                let point = if let Some(idx) = resolved_element_index {
-                    let (_, x, y) = resolve_element_local_coords(pid, idx, Some(xid))?;
-                    Some((x, y))
-                } else {
-                    pixel_target
+            let (_cancellation, dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    let point = if let Some(idx) = resolved_element_index {
+                        let (_, x, y) = resolve_element_local_coords(pid, idx, Some(xid))?;
+                        Some((x, y))
+                    } else {
+                        pixel_target
+                    };
+                    crate::wayland::hyprland_input::execute(
+                        owner,
+                        pid,
+                        xid,
+                        crate::wayland::hyprland_input::Action::Scroll {
+                            point,
+                            direction,
+                            amount,
+                        },
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(refusal) => return refusal,
                 };
-                crate::wayland::hyprland_input::execute(
-                    owner,
-                    pid,
-                    xid,
-                    crate::wayland::hyprland_input::Action::Scroll {
-                        point,
-                        direction,
-                        amount,
-                    },
-                )
-            })
-            .await
-            {
+            return match dispatch.await {
                 Ok(result) => isolated_hyprland_result(result),
                 Err(error) => isolated_hyprland_task_error(error, false),
             };
@@ -5684,7 +5817,12 @@ impl Tool for DragTool {
         // This opt-in branch below either uses its own leased synthetic seat
         // or refuses. It never falls back to primary-seat input. All ordinary
         // Linux routes retain the common process-wide input coordinator.
-        isolated_hyprland_background(crate::input::delivery::DeliveryMode::from_args(args))
+        // Socket availability can change between admission and invocation.
+        // Native Hyprland window drags remain fail-closed on their own lane.
+        args.opt_str("scope").as_deref() != Some("desktop")
+            && !crate::input::delivery::DeliveryMode::from_args(args).is_foreground()
+            && crate::wayland::wayland_input_enabled()
+            && crate::wayland::hyprland::is_session()
     }
 
     fn def(&self) -> &ToolDef {
@@ -5782,7 +5920,8 @@ impl Tool for DragTool {
             None => return ToolResult::error("window_id is required on Linux."),
         };
         let delivery = crate::input::delivery::DeliveryMode::from_args(&args);
-        if !isolated_hyprland_background(delivery) {
+        let isolated_background = isolated_hyprland_background(delivery);
+        if !isolated_background {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
@@ -5847,7 +5986,7 @@ impl Tool for DragTool {
             to_y *= ratio;
         }
 
-        if isolated_hyprland_background(delivery) {
+        if isolated_background {
             if button_str != "left" || args.get("modifier").is_some_and(|value| !value.is_null()) {
                 return isolated_hyprland_refusal(
                     "isolated drag supports only an unmodified left button",
@@ -5865,19 +6004,24 @@ impl Tool for DragTool {
                 to_y.round() as i32,
             );
             let (started, acknowledged) = tokio::sync::oneshot::channel();
-            let mut dispatch = tokio::task::spawn_blocking(move || {
-                crate::wayland::hyprland_input::execute_with_started(
-                    owner,
-                    pid,
-                    xid,
-                    crate::wayland::hyprland_input::Action::Drag {
-                        from: (from_x, from_y),
-                        to: (to_x, to_y),
-                        duration_ms,
-                    },
-                    Some(started),
-                )
-            });
+            let (_cancellation, mut dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_with_started(
+                        owner,
+                        pid,
+                        xid,
+                        crate::wayland::hyprland_input::Action::Drag {
+                            from: (from_x, from_y),
+                            to: (to_x, to_y),
+                            duration_ms,
+                        },
+                        Some(started),
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(refusal) => return refusal,
+                };
             // Do not animate a drag that was refused. The compositor starts
             // the overlay clock only after accepting and pressing the button.
             let acknowledged = acknowledged.await.is_ok();

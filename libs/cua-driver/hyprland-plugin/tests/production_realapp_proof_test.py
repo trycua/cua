@@ -18,7 +18,8 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
                                     expected_primary_motion, move_primary, primary_acknowledgement,
-                                    parallel_actions, primary_trajectory, run, validate_plan, verify_output)
+                                    parallel_actions, primary_trajectory, require_primary_active,
+                                    PRIMARY_LIFETIME_MS, POINTER_EPISODES, run, validate_plan, verify_output)
 from primary_trace import analyze
 from primary_trace_test import START, STOP, trace
 from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
@@ -310,7 +311,7 @@ class PolicyCacheTests(unittest.TestCase):
                 trace_client.collect.side_effect = collect
                 if failure == 'cleanup_failure':
                     agent.close.side_effect = RuntimeError('cleanup failed')
-                grab = Mock(poll=Mock(return_value=0))
+                grab = Mock(poll=Mock(return_value=None))
                 replacements = {'provenance': Mock(return_value={}),
                     'DirectMCP': Mock(side_effect=[agent, observer]), 'Trace': Mock(return_value=trace_client),
                     'subprocess.Popen': Mock(return_value=grab),
@@ -488,7 +489,7 @@ class CapacityTests(unittest.TestCase):
                         events[:] = [START]
                     return {**trace(*events), 'active': events[-1] != STOP, 'hook': failure != 'missing_hook'}
                 trace_client.collect.side_effect = collect
-                grab = Mock(poll=Mock(return_value=0))
+                grab = Mock(poll=Mock(return_value=None))
                 replacements = {'provenance': Mock(return_value={}),
                     'DirectMCP': Mock(side_effect=agents + [observer]), 'Trace': Mock(return_value=trace_client),
                     'subprocess.Popen': Mock(return_value=grab),
@@ -694,7 +695,7 @@ class SmokeStageTests(unittest.TestCase):
                         mcp.tool.side_effect = tool
                     replacements = {'provenance': Mock(return_value={}),
                         'DirectMCP': Mock(side_effect=agents + [observer]),
-                        'subprocess.Popen': Mock(return_value=Mock(poll=Mock(return_value=0))),
+                        'subprocess.Popen': Mock(return_value=Mock(poll=Mock(return_value=None))),
                         'primary_acknowledgement': Mock(return_value='HELD\n'),
                         'verify_output': Mock(return_value={'verified': True}),
                         'wait_for': lambda predicate: self.assertTrue(predicate()),
@@ -725,6 +726,47 @@ class SmokeStageTests(unittest.TestCase):
 
 
 class PointerStageTests(unittest.TestCase):
+    def test_only_declared_intermediate_episodes_may_omit_saved_outputs(self):
+        for index, name in enumerate(POINTER_EPISODES):
+            candidate = plan()
+            candidate.update(pointer_episode={'name': name, 'index': index, 'count': 5},
+                             require_overlap=name == 'drags')
+            if name != 'save':
+                candidate['outputs'] = []
+            validate_plan(candidate)
+            moving = copy.deepcopy(candidate)
+            moving['moving_primary'] = True
+            if name == 'drags':
+                validate_plan(moving)
+            else:
+                with self.assertRaises(AssertionError):
+                    validate_plan(moving)
+            for mutation in (lambda p: p['pointer_episode'].update(count=4),
+                             lambda p: p['pointer_episode'].update(index=True),
+                             lambda p: p['pointer_episode'].update(name='unknown'),
+                             lambda p: p['pointer_episode'].update(extra=True),
+                             lambda p: p.update(purpose='policy'),
+                             lambda p: p.update(require_overlap=name != 'drags')):
+                invalid = copy.deepcopy(candidate)
+                mutation(invalid)
+                with self.assertRaises(AssertionError):
+                    validate_plan(invalid)
+        for metadata in ({}, {'pointer_episode': None},
+                         {'pointer_episode': {'name': 'save', 'index': 4, 'count': 5}}):
+            with self.subTest(metadata=metadata), self.assertRaises(AssertionError):
+                validate_plan({**plan(), **metadata, 'outputs': []})
+
+    def test_primary_guard_fails_at_deadline_or_any_helper_exit(self):
+        helper = Mock(poll=Mock(return_value=None))
+        require_primary_active(helper, 100, now_ns=99)
+        for now in (100, 101):
+            with self.assertRaisesRegex(AssertionError, 'deadline expired'):
+                require_primary_active(helper, 100, now_ns=now)
+        for code in (0, 1, -15):
+            helper.poll.return_value = code
+            with self.assertRaisesRegex(AssertionError, 'helper exited'):
+                require_primary_active(helper, 100, now_ns=99)
+
     def test_pointer_stages_reject_supplied_coordinates_or_wrong_tool(self):
         candidate = plan()
         candidate['phases'] = [{'agent': 0, 'pointer_stage': 'click_b2', 'tool': 'click', 'arguments': {}}]
@@ -738,7 +780,8 @@ class PointerStageTests(unittest.TestCase):
                 validate_plan(changed)
 
     def test_pointer_actions_use_the_same_response_image_and_never_replay(self):
-        for failure in (None, 'before', 'after', 'missing_image', 'transport'):
+        for failure in (None, 'before', 'after', 'missing_image', 'transport',
+                        'helper_before', 'deadline_before', 'helper_after', 'deadline_after'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 candidate = plan()
@@ -756,6 +799,13 @@ class PointerStageTests(unittest.TestCase):
                                        foreground_journal=root / 'journal', record_video=False)
                 targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
                 clients, calls, held = [], [], [True]
+                clock_now = [1]
+                grab = Mock(poll=Mock(return_value=None))
+                def expire_primary(phase):
+                    if failure == 'helper_' + phase:
+                        grab.poll.return_value = 0
+                    if failure == 'deadline_' + phase:
+                        clock_now[0] = 1 + PRIMARY_LIFETIME_MS * 1_000_000
                 def client(driver, folder, profile):
                     mcp = Mock(directory=folder, counter=0,
                                process=Mock(pid=100 + len(clients), poll=Mock(return_value=None)))
@@ -765,6 +815,8 @@ class PointerStageTests(unittest.TestCase):
                         if name == 'list_windows':
                             return {'structuredContent': {'windows': targets}}
                         if name == 'get_window_state':
+                            if any(row[0] == 'input' for row in calls):
+                                expire_primary('after')
                             calls.append(('snapshot', parameters, folder.name, mcp.counter))
                             image = folder / f'{mcp.counter}.png'
                             image.write_bytes(b'synthetic image read by a stub')
@@ -781,12 +833,17 @@ class PointerStageTests(unittest.TestCase):
                         return {'structuredContent': {}}
                     mcp.tool.side_effect = tool
                     return mcp
-                grounding = Mock(return_value=({'x': 103, 'y': 205}, {'app': 'calc', 'stage': 'click_b2'}),
-                                 side_effect=RuntimeError('missing grounding') if failure == 'before' else None)
+                def ground_pointer(*_):
+                    if failure == 'before':
+                        raise RuntimeError('missing grounding')
+                    expire_primary('before')
+                    return {'x': 103, 'y': 205}, {'app': 'calc', 'stage': 'click_b2'}
+                grounding = Mock(side_effect=ground_pointer)
                 verification = Mock(return_value={'verified': True},
                                     side_effect=AssertionError('unchanged app') if failure == 'after' else None)
                 replacements = {'provenance': Mock(return_value={}), 'DirectMCP': client,
-                    'subprocess.Popen': Mock(return_value=Mock(poll=Mock(return_value=0))),
+                    'subprocess.Popen': Mock(return_value=grab),
+                    'time.monotonic_ns': lambda: clock_now[0],
                     'primary_acknowledgement': Mock(return_value='HELD\n'),
                     'verify_output': Mock(return_value={'verified': True}),
                     'wait_for': lambda predicate: self.assertTrue(predicate()),
@@ -799,7 +856,8 @@ class PointerStageTests(unittest.TestCase):
                     stack.enter_context(patch('production_realapp_proof.' + name, replacement))
                 self.assertEqual(run(args), 0 if failure is None else 1)
                 inputs = [index for index, row in enumerate(calls) if row[0] == 'input']
-                self.assertEqual(len(inputs), 0 if failure in ('before', 'missing_image') else 1)
+                self.assertEqual(len(inputs), 0 if failure in
+                                 ('before', 'missing_image', 'helper_before', 'deadline_before') else 1)
                 for index in inputs:
                     self.assertEqual(calls[index - 1][0], 'snapshot')
                     self.assertEqual(calls[index + 1][0], 'snapshot')
@@ -817,6 +875,11 @@ class PointerStageTests(unittest.TestCase):
                     self.assertEqual(report['actions'][0]['pointer_stage'], 'click_b2')
                 if inputs:
                     self.assertEqual(len(list(args.evidence.glob('pointer-agent-*.json'))), 1)
+                if failure and failure.startswith(('helper_', 'deadline_')):
+                    report = json.loads((args.evidence / 'result.json').read_text())
+                    self.assertEqual(report['result'], 'failed')
+                    self.assertIn('primary grab', report['error'])
+                    self.assertEqual(report['actions'], [])
                 for mcp in clients:
                     mcp.close.assert_called_once()
                 self.assertFalse(held[0])
@@ -1062,7 +1125,7 @@ class MovingPrimaryTests(unittest.TestCase):
                 agent = Mock(process=Mock(pid=11, poll=Mock(return_value=None)))
                 observer = Mock()
                 agent.tool.side_effect = observer.tool.side_effect = tool
-                grab = Mock(stdout=io.StringIO('HELD\n'), poll=Mock(return_value=0))
+                grab = Mock(stdout=io.StringIO('HELD\n'), poll=Mock(return_value=None))
                 trace_client = Mock(hello={'protocol': 3})
                 initial = ('cursor', 120, 200, 0, 0)
                 final = ('cursor', 140, 200, 0, 0)

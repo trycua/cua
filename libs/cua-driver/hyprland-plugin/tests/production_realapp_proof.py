@@ -28,6 +28,8 @@ from realapp_proof import cleanup_all, rect_position, released_synthetic_input
 
 TOOLS = {'click', 'press_key', 'hotkey', 'scroll', 'drag'}
 RESERVED = {'pid', 'window_id', 'session', 'delivery_mode'}
+POINTER_EPISODES = ('clicks', 'scroll-away', 'scroll-back', 'drags', 'save')
+PRIMARY_LIFETIME_MS = 60000
 SMOKE_STEPS = {
     'calc': {'insert': ('press_key', {'key': 'a'}),
              'commit': ('press_key', {'key': 'Return'}),
@@ -51,6 +53,18 @@ def validate_plan(plan):
         'negative control requires a parked primary'
     capacity = plan['purpose'] == 'capacity'
     policy_cache = plan['purpose'] == 'policy_cache'
+    episode = plan.get('pointer_episode')
+    if 'pointer_episode' in plan:
+        assert plan['purpose'] == 'apps' and isinstance(episode, dict), 'invalid pointer episode'
+        assert set(episode) == {'name', 'index', 'count'}, 'invalid pointer episode metadata'
+        assert type(episode['count']) is int and episode['count'] == len(POINTER_EPISODES)
+        assert type(episode['index']) is int and 0 <= episode['index'] < len(POINTER_EPISODES)
+        assert episode['name'] == POINTER_EPISODES[episode['index']], 'pointer episode order mismatch'
+        assert type(plan.get('require_overlap', False)) is bool
+        assert plan.get('require_overlap', False) == (episode['name'] == 'drags'), \
+            'only the drag episode requires overlap'
+        assert not plan.get('moving_primary') or episode['name'] == 'drags', \
+            'only the drag episode may move the primary'
     assert (len(plan['agents']) == 3 if capacity else 1 <= len(plan['agents']) <= 2)
     if policy_cache:
         assert len(plan['agents']) == 1, 'policy_cache needs one persistent runtime'
@@ -88,7 +102,10 @@ def validate_plan(plan):
     if plan['purpose'] == 'apps':
         assert len(plan['agents']) == 2
         assert {spec['app'] for spec in plan['agents']} == {'calc', 'inkscape'}
-        assert {oracle['agent'] for oracle in plan['outputs']} == {0, 1}
+        if episode and episode['name'] != 'save':
+            assert plan.get('outputs', []) == [], 'intermediate pointer episodes do not save outputs'
+        else:
+            assert len(plan['outputs']) == 2 and {oracle['agent'] for oracle in plan['outputs']} == {0, 1}
     targets = [spec['target'] for spec in plan['agents']]
     assert len({target['pid'] for target in targets}) == len(targets), 'apps must be distinct processes'
     assert plan['foreground']['pid'] not in {target['pid'] for target in targets}
@@ -433,6 +450,13 @@ def provenance(args, plan):
     return origin
 
 
+def require_primary_active(grab, deadline_ns, now_ns=None):
+    """Do not dispatch or accept a proof after its bounded primary grab ends."""
+    assert grab is not None and grab.poll() is None, 'primary grab helper exited'
+    now_ns = time.monotonic_ns() if now_ns is None else now_ns
+    assert deadline_ns is not None and now_ns < deadline_ns, 'primary grab deadline expired'
+
+
 def run(args):
     if not __debug__:
         raise RuntimeError('assertions must be enabled')
@@ -445,6 +469,7 @@ def run(args):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
     save('plan.json', plan)
     clients, recorder, grab, trace = [], None, None, None
+    primary_deadline_ns = None
     moving = plan.get('moving_primary', False)
     mover = None
     motion_done, motion_ready = threading.Event(), threading.Event()
@@ -529,6 +554,7 @@ def run(args):
             assert_no_dispatch(capacity_traces[-1] if capacity_traces else trace_before, trace_before)
         if barrier:
             barrier.wait(timeout=20)
+        require_primary_active(grab, primary_deadline_ns)
         mark('action_start', agent=index, tool=step['tool'], runtime_pid=mcp.process.pid)
         action_start = time.monotonic_ns()
         try:
@@ -543,6 +569,7 @@ def run(args):
         action_intervals.append((action_start, time.monotonic_ns()))
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
         after = snapshot(mcp, spec['target'], spec['name'], full=full, pixels=pointer_stage is not None)
+        require_primary_active(grab, primary_deadline_ns)
         result = (check_manifest_refusal(response, expected, step['tool'])
                   if policy_cache and expected['kind'] == 'refused' else check_response(response, expected))
         if smoke_stage is not None:
@@ -612,7 +639,8 @@ def run(args):
         grab_args = [str(args.primary_grab), str(fg['x'] + point[0]), str(fg['y'] + point[1]),
                      str(desktop['screen_width']), str(desktop['screen_height'])]
         snapshot(recorder, plan['foreground'])
-        grab = subprocess.Popen(grab_args + ['60000'] + (['controlled'] if moving else []),
+        primary_deadline_ns = time.monotonic_ns() + PRIMARY_LIFETIME_MS * 1_000_000
+        grab = subprocess.Popen(grab_args + [str(PRIMARY_LIFETIME_MS)] + (['controlled'] if moving else []),
                                 stdin=subprocess.PIPE if moving else None,
                                 stdout=subprocess.PIPE, text=True)
         assert primary_acknowledgement(grab.stdout) == 'HELD\n'
@@ -641,6 +669,7 @@ def run(args):
             assert motion_ready.wait(3), 'primary motion did not start'
             assert not motion_errors, motion_errors
         for phase in plan['phases']:
+            require_primary_active(grab, primary_deadline_ns)
             if phase.get('negative_control'):
                 assert trace, 'warp-and-return detector requires continuous trace'
                 snapshot(recorder, plan['foreground'])
@@ -663,6 +692,7 @@ def run(args):
             report['policy_cache'] = verify_policy_cache(report['actions'])
         for index, oracle in enumerate(plan.get('outputs', [])):
             report['outputs'].append(verify_output(baseline_outputs[index], Path(oracle['path']).read_bytes(), oracle))
+        require_primary_active(grab, primary_deadline_ns)
         report['result'] = 'passed'
     except Exception as error:
         report['error'] = str(error)
@@ -700,6 +730,7 @@ def run(args):
                 trace.exchange('TRACE_STOP')
                 data = trace.collect()
                 save('trace.json', data)
+                require_primary_active(grab, primary_deadline_ns)
                 if capacity_traces:
                     last = capacity_traces[-1]
                     assert data['events'][:last['count']] == last['events'], 'capacity trace history changed at cleanup'

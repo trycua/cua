@@ -27,6 +27,50 @@ from production_app_smoke_test import INKSCAPE, INKSCAPE_SELECTED
 
 
 class PassiveFocusTests(unittest.TestCase):
+    def test_only_initial_pre_admission_retirement_is_allowed(self):
+        def evidence(kinds):
+            rows = [[1, 0, 'start', 100, 100, 0, 0]]
+            for index, kind in enumerate(kinds, 2):
+                row = [index, index - 1, kind, 100, 100, 1, 0]
+                if kind in ('pointer_enter', 'pointer_motion'):
+                    row.extend((10, 20))
+                rows.append(row)
+            page = {'hook': True, 'active': True, 'overflow': False, 'timed_out': False,
+                    'count': len(rows), 'events': rows}
+            values = [{'lane': lane, 'epoch': f'lane-{lane}', 'desktop_generation': 1,
+                       'reserved': lane == 0, 'pointer_focus': lane == 0,
+                       'keyboard_focus': False, 'lease_active': False, 'drag_active': False,
+                       'held_button': 0, 'held_keys': 0} for lane in (0, 1)]
+            status = {'state': 'input_v3_candidate', 'input': {'protocol': 3, 'test_only': False,
+                       'transport_ready': True, 'lanes': values}}
+            before = {'status': status, 'trace': page}
+            after = {'status': copy.deepcopy(status)}
+            after['status']['input']['lanes'][0]['reserved'] = False
+            stopped = {**page, 'active': False, 'count': len(rows) + 1,
+                       'events': rows + [[len(rows) + 1, len(rows), 'stop', 100, 100, 0, 0]]}
+            return before, after, stopped
+
+        accepted = [
+            ['pointer_leave', 'agent_admitted', 'pointer_enter', 'pointer_motion', 'agent_action_end'],
+            ['agent_admitted', 'pointer_motion', 'agent_action_end'],  # Reuse unchanged inert hover.
+        ]
+        rejected = [
+            ['agent_admitted', 'pointer_leave', 'pointer_enter', 'pointer_motion'],
+            ['pointer_leave', 'pointer_leave', 'agent_admitted', 'pointer_enter'],
+            ['pointer_enter', 'pointer_leave', 'agent_admitted', 'pointer_enter'],
+            ['pointer_leave', 'pointer_enter', 'agent_admitted', 'pointer_motion'],
+            ['pointer_leave', 'pointer_enter', 'pointer_motion'],
+            ['pointer_motion', 'pointer_leave', 'agent_admitted', 'pointer_motion'],
+            ['agent_admitted', 'pointer_enter', 'pointer_leave', 'pointer_enter'],
+            ['agent_admitted', 'agent_action_end'],
+        ]
+        for kinds in accepted:
+            with self.subTest(kinds=kinds):
+                self.assertEqual(passive_focus_evidence(*evidence(kinds))['lanes'], [1])
+        for kinds in rejected:
+            with self.subTest(kinds=kinds), self.assertRaises(AssertionError):
+                passive_focus_evidence(*evidence(kinds))
+
     def test_passive_focus_retains_presence_without_authority_after_close(self):
         rows = [[1, 0, 'start', 100, 100, 0, 0],
                 [2, 1, 'pointer_enter', 100, 100, 1, 0, 10, 20],

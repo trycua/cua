@@ -218,7 +218,8 @@ def passive_focus_evidence(before, after, complete_trace):
     trace_interval(page, page)
     assert analyze(complete_trace).get('telemetry_complete') is True
     assert complete_trace['events'][:page['count']] == page['events'], 'focus trace history changed'
-    lanes = {row[5] for row in page['events'] if row[2] == 'pointer_enter' and row[5] in (1, 2)}
+    presence = {'pointer_enter', 'pointer_motion'}
+    lanes = {row[5] for row in page['events'] if row[2] in presence and row[5] in (1, 2)}
     assert lanes, 'no passive pointer was observed'
     states = []
     for checkpoint in (before, after):
@@ -239,7 +240,15 @@ def passive_focus_evidence(before, after, complete_trace):
         assert states[0][lane]['epoch'] == states[1][lane]['epoch']
         assert states[0][lane]['desktop_generation'] == states[1][lane]['desktop_generation']
         own = [row for row in page['events'] if row[5] == lane]
-        assert not any(row[2] == 'pointer_leave' for row in own), 'same-target action churned pointer focus'
+        leaves = [row for row in own if row[2] == 'pointer_leave']
+        if leaves:
+            # A previous episode may leave an inert pointer on this lane.
+            # Its one retirement must precede this episode's first admission
+            # and pointer use. Never ignore leave/re-enter during an action.
+            admitted = [row for row in own if row[2] == 'agent_admitted']
+            used = [row for row in own if row[2] in presence]
+            assert len(leaves) == 1 and own[0] == leaves[0] and admitted and \
+                leaves[0][0] < admitted[0][0] < used[0][0], 'same-target action churned pointer focus'
         tail = [row for row in complete_trace['events'][page['count']:] if row[5] == lane]
         assert not tail, 'runtime close changed inert pointer presence or sent new input'
     return {'verified': True, 'scope': 'passive-focus-without-authority-and-runtime-close', 'lanes': sorted(lanes)}

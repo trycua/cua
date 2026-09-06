@@ -2075,6 +2075,11 @@ fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
                 .with_structured(value)
                 .with_action_record(outcome)
         }
+        Err(error) if error.is::<crate::wayland::hyprland_input::LaneBusy>() => {
+            isolated_hyprland_result(Ok(json!({
+                "ok": false, "code": "lane_busy", "detail": error.to_string()
+            })))
+        }
         Err(error) => {
             let count = error
                 .downcast_ref::<crate::wayland::hyprland_input::DispatchUnknown>()
@@ -2132,6 +2137,19 @@ async fn isolated_hyprland_action(
 #[cfg(test)]
 #[test]
 fn isolated_hyprland_refused_partial_and_unknown_outcomes_stay_distinct() {
+    let busy = isolated_hyprland_result(Err(crate::wayland::hyprland_input::LaneBusy.into()));
+    let content = busy.structured_content.as_ref().unwrap();
+    assert_eq!(content["reason"], "lane_busy");
+    assert_eq!(content["effect"], "refused");
+    assert!(content.get("delivery").is_none());
+    assert!(busy
+        .action_record
+        .unwrap()
+        .public_result()
+        .unwrap()
+        .delivery
+        .is_none());
+
     let refused = isolated_hyprland_result(Ok(
         json!({"ok":false,"code":"stale_target","detail":"stale_target"}),
     ));

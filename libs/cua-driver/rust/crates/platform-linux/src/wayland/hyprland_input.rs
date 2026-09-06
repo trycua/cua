@@ -17,6 +17,18 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
 
+/// Both reservations are explicitly occupied; no target or action was sent.
+#[derive(Debug)]
+pub(crate) struct LaneBusy;
+
+impl std::fmt::Display for LaneBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("both isolated input lanes are in use; end an owning session first")
+    }
+}
+
+impl std::error::Error for LaneBusy {}
+
 /// A sent action has no trustworthy final reply. The count describes only
 /// acknowledged gesture phases (currently drag start), never a total event
 /// count or proof that no later events landed.
@@ -554,7 +566,7 @@ fn claim_available(mut connect: impl FnMut(usize) -> Result<Option<Client>>) -> 
             return Ok(client);
         }
     }
-    bail!("both isolated input seats are in use; end an owning session first")
+    Err(LaneBusy.into())
 }
 
 static CLIENTS: OnceLock<Mutex<HashMap<String, Arc<SessionClient>>>> = OnceLock::new();
@@ -576,10 +588,9 @@ fn session_client(owner: &str) -> Result<Arc<SessionClient>> {
     if let Some(client) = clients.get(owner) {
         return Ok(client.clone());
     }
-    ensure!(
-        clients.len() < MAX_LANES,
-        "both isolated input session slots are in use; end an owning session first"
-    );
+    if clients.len() >= MAX_LANES {
+        return Err(LaneBusy.into());
+    }
     let client = Arc::new(SessionClient {
         client: Mutex::new(None),
     });
@@ -727,7 +738,10 @@ mod tests {
             &a,
             &session_client("input-pool-test-a").unwrap()
         ));
-        assert!(session_client("input-pool-test-c").is_err());
+        assert!(session_client("input-pool-test-c")
+            .err()
+            .unwrap()
+            .is::<LaneBusy>());
         let a_lock = a.client.lock().unwrap();
         // No global action mutex: another seat remains independently usable.
         assert!(b.client.try_lock().is_ok());
@@ -1112,7 +1126,9 @@ mod tests {
             attempts.push(lane);
             fake_claim(lane, &pool)
         })
-        .is_err());
+        .err()
+        .unwrap()
+        .is::<LaneBusy>());
         assert_eq!(attempts, [0, 1]);
         drop(a);
         let c = claim_available(|lane| fake_claim(lane, &pool)).unwrap();

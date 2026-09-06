@@ -8,7 +8,8 @@ import unittest
 from unittest.mock import Mock, patch
 
 from production_cancel_proof import (
-    PROFILE, active_drags, call_drag, close_owned, grounded_snapshot, poll_active, run,
+    MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned, grounded_snapshot,
+    poll_active, prepare_drag, run,
     terminate_owned, validate_plan, verify_cancellation,
 )
 
@@ -114,6 +115,75 @@ def client(pid):
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_pointer_plan_requires_derived_drag_and_exact_app_stage(self):
+        candidate = plan()
+        for spec, stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
+            spec.update(drag={}, pointer_stage=stage)
+        validate_plan(candidate)
+        for change in ({'pointer_stage': 'click_a1'}, {'drag': plan()['agents'][0]['drag']},
+                       {'pointer_stage': 'move_rectangle'}):
+            invalid = json.loads(json.dumps(candidate))
+            invalid['agents'][0].update(change)
+            with self.assertRaises(AssertionError):
+                validate_plan(invalid)
+
+    def test_pointer_preparation_uses_exact_image_and_preserves_oracle(self):
+        spec = {**plan()['agents'][0], 'drag': {}, 'pointer_stage': 'select_range'}
+        before = {'proof_image': 'fresh.png', 'window_bounds': BOUNDS}
+        arguments = {**plan()['agents'][0]['drag'], 'steps': 30}
+        oracle = {'selection': 'A1:B3'}
+        with patch('production_cancel_proof.grounded_snapshot', return_value=before) as snapshot, \
+             patch('production_cancel_proof.pointer_grounding.read_pixels', return_value='pixels') as pixels, \
+             patch('production_cancel_proof.pointer_grounding.action', return_value=(arguments, oracle)) as action:
+            result = prepare_drag(Mock(), spec)
+        snapshot.assert_called_once()
+        pixels.assert_called_once_with('fresh.png')
+        action.assert_called_once_with(before, 'pixels', 'calc', 'select_range')
+        self.assertEqual(result['arguments'], arguments)
+        self.assertEqual(result['oracle'], oracle)
+        self.assertEqual(result['snapshot'], before)
+
+    def test_expired_or_retargeted_grounding_never_dispatches(self):
+        spec, mcp = plan()['agents'][0], Mock()
+        with patch('production_cancel_proof.grounded_snapshot', return_value={}), \
+             patch('production_cancel_proof.time.monotonic_ns', return_value=100):
+            prepared = prepare_drag(mcp, spec)
+        for change, now in [({}, 101 + MAX_GROUNDING_AGE_NS), ({}, 99),
+                            ({'target': {'pid': 99, 'window_id': 99}}, 100),
+                            ({'session': 'different'}, 100)]:
+            with patch('production_cancel_proof.time.monotonic_ns', return_value=now), self.assertRaises(AssertionError):
+                call_drag(mcp, spec, {**prepared, **change})
+        mcp.tool.assert_not_called()
+
+    def test_prepared_drag_does_not_snapshot_during_sibling_gesture(self):
+        spec, mcp = plan()['agents'][0], Mock()
+        mcp.tool.return_value = RESPONSE
+        with patch('production_cancel_proof.grounded_snapshot') as snapshot, \
+             patch('production_cancel_proof.time.monotonic_ns', return_value=100):
+            prepared = prepare_drag(mcp, spec)
+            result = call_drag(mcp, spec, prepared)
+        snapshot.assert_called_once()
+        self.assertEqual(result['outcome'], 'response')
+        mcp.tool.assert_called_once()
+
+    def test_pointer_snapshot_requires_own_exact_png(self):
+        spec = {**plan()['agents'][0], 'drag': {}, 'pointer_stage': 'select_range'}
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / 'image.png').touch()
+            content = {'window_bounds': BOUNDS, 'screenshot_width': 800, 'screenshot_height': 600}
+            for image_file, valid in [('image.png', True), ('missing.png', False), ('../escape.png', False)]:
+                mcp = Mock(directory=root, tool=Mock(side_effect=[
+                    {'structuredContent': {'windows': [spec['target']]}},
+                    {'structuredContent': content, 'content': [{'type': 'image', 'image_file': image_file}]}]))
+                if valid:
+                    result = grounded_snapshot(mcp, spec['target'], spec)
+                    self.assertEqual(result['proof_image'], str(root / 'image.png'))
+                    self.assertNotIn('max_elements', mcp.tool.call_args.args[1])
+                else:
+                    with self.assertRaises((AssertionError, FileNotFoundError)):
+                        grounded_snapshot(mcp, spec['target'], spec)
+
     def test_cleanup_reaps_child_even_when_close_raises(self):
         owned = client(100)
         owned.close.side_effect = RuntimeError('close failed')
@@ -175,11 +245,16 @@ class OwnershipTests(unittest.TestCase):
 
 class RunnerTests(unittest.TestCase):
     def test_success_and_failures_reap_all_owned_children_without_replay(self):
-        for failure in (None, 'trace', 'unknown_sibling', 'successful_victim', 'close', 'snapshot', 'grab'):
+        for failure in (None, 'pointer', 'pointer_effect', 'trace', 'unknown_sibling',
+                        'successful_victim', 'close', 'snapshot', 'grab'):
             with self.subTest(failure=failure), tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
                 root = Path(directory)
                 source_plan = root / 'plan.json'
-                source_plan.write_text(json.dumps(plan()))
+                candidate = plan()
+                if failure in ('pointer', 'pointer_effect'):
+                    for spec, stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
+                        spec.update(drag={}, pointer_stage=stage)
+                source_plan.write_text(json.dumps(candidate))
                 args = SimpleNamespace(plan=source_plan, evidence=root / 'evidence', driver=root / 'driver',
                                        trace_socket=root / 'cua-input-v3.sock', primary_grab=root / 'primary-grab',
                                        foreground_journal=root / 'journal')
@@ -209,7 +284,7 @@ class RunnerTests(unittest.TestCase):
                         return f.result.return_value
                     future.result.side_effect = finish
                 pool = Mock(submit=Mock(side_effect=futures))
-                snapshot = Mock(return_value={'window_bounds': BOUNDS})
+                snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': 'fresh.png'})
                 if failure == 'snapshot':
                     snapshot.side_effect = AssertionError('stale geometry')
                 if failure == 'close':
@@ -222,12 +297,23 @@ class RunnerTests(unittest.TestCase):
                     'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
                     'wm': lambda: {'pid': 10, 'cursor': {'x': 100, 'y': 100}}, 'Trace': Mock(return_value=trace_client),
                     'ThreadPoolExecutor': Mock(return_value=pool), 'stop_process': lambda proc: held.__setitem__(0, False),
+                    'pointer_grounding.read_pixels': Mock(return_value='pixels'),
+                    'pointer_grounding.action': Mock(return_value=(plan()['agents'][0]['drag'], {'stage': 'drag'})),
+                    'pointer_grounding.verify': Mock(side_effect=AssertionError('sibling did not move'))
+                        if failure == 'pointer_effect' else Mock(return_value={'verified': True}),
                 }
                 for name, value in replacements.items():
                     stack.enter_context(patch('production_cancel_proof.' + name, value))
-                self.assertEqual(run(args), 0 if failure is None else 1)
+                self.assertEqual(run(args), 0 if failure in (None, 'pointer') else 1)
                 result = json.loads((args.evidence / 'result.json').read_text())
                 self.assertEqual(result['reacquisition'], 'unproven')
+                if failure in ('pointer', 'pointer_effect'):
+                    replacements['pointer_grounding.verify'].assert_called_once()
+                    self.assertEqual(replacements['pointer_grounding.action'].call_count, 2)
+                    self.assertTrue((args.evidence / 'agent-0-drag-grounding.json').is_file())
+                    self.assertTrue((args.evidence / 'agent-1-drag-grounding.json').is_file())
+                if failure == 'pointer':
+                    self.assertEqual(result['sibling_app_effect'], {'verified': True})
                 agents[0].close.assert_called_once()
                 if failure != 'snapshot':
                     agents[1].close.assert_called_once()

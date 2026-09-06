@@ -4,7 +4,8 @@
 independent `cua-driver mcp --direct` processes. Its local tests use synthetic
 telemetry and mocked processes. **Native cancellation remains unproven.**
 
-The test starts one drag, identifies its compositor lane from admission and
+The test grounds both gestures before starting either drag. It starts one
+drag, identifies its compositor lane from admission and
 held-button telemetry, then starts the sibling drag. It sends `SIGKILL` to the
 first drag's exact owned Driver process only after a fresh trace prefix shows
 both buttons held and at least 100 ms of overlap. The last trace read must take
@@ -48,18 +49,28 @@ The plan fields are:
   `inkscape`, a `name`, exact `target` (`pid`, `window_id`), and reviewed
   `bounds` (`x`, `y`, `width`, `height`). An optional `profile` must equal
   `{"mode":"unrestricted","acknowledge_unrestricted":true}`.
-- Each agent's `drag`: exactly `from_x`, `from_y`, `to_x`, `to_y`, and integer
+- Prefer `pointer_stage:"select_range"` for Calc and
+  `pointer_stage:"move_rectangle"` for Inkscape, each with `drag:{}`. The
+  runner derives a 1500 ms, 30-step gesture from the exact fresh full snapshot's
+  pixels and semantic state. These stages require the synthetic documents
+  described in `production-proof.md`; ambiguous, clipped, scaled, or already
+  satisfied state refuses before dispatch.
+- For a separately reviewed coordinate plan, each agent's `drag` contains
+  exactly `from_x`, `from_y`, `to_x`, `to_y`, and integer
   `duration_ms`. Choose distinct endpoints inside that app's fresh screenshot
-  and a safe gesture on disposable content. Duration must be 1000–2000 ms;
-  2000 ms gives the sibling's snapshot and overlap gate more time. The harness
+  and a safe gesture on disposable content. Duration must be 1000–2000 ms. The harness
   supplies the target, session, and background delivery mode.
 
-The runner checks Driver's PID/window listing and a fresh image before each
-drag, rejects changed bounds or endpoints outside the image, and records fresh
-after-snapshots through its independent observer. It cannot establish that
-coordinates have the intended application meaning; plan review must establish
-that from the captured image. Slow snapshots can consume the first drag's
-entire duration. That is a failed setup, not permission to replay it.
+The runner checks Driver's PID/window listing and a fresh image for each drag,
+then retains both observations and derived arguments before dispatch. It
+rejects changed bounds, endpoints outside the image, and grounding older than
+five seconds at dispatch. No second-app snapshot runs during the first drag.
+The independent observer records fresh after-snapshots for both apps. When
+using pointer stages, the sibling must also show the expected selection or
+rectangle movement. The victim's interrupted effect remains uncertain and is
+preserved without replay. Explicit coordinate plans still require human
+review of their application meaning. Slow setup fails; it never authorizes a
+retry of an uncertain action.
 
 Run only after the native environment and plan are authorized and prepared.
 Substitute the reviewed paths and exact candidate SHA:
@@ -94,6 +105,7 @@ connection is poisoned before termination and is never reused. Neither action
 is replayed, including on failure.
 
 Evidence includes the reviewed plan, provenance, MCP images/results,
+`agent-N-drag-grounding.json` with each exact image and derived arguments,
 `termination-prefix.json`, the stopped `trace.json`, observer after-snapshots,
 and `result.json` with the exact terminated PID, signal, and monotonic request
 and reap times. `cleanup.json` retains failures. Cleanup attempts every owned

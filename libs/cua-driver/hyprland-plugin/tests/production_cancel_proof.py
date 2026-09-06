@@ -16,12 +16,15 @@ import time
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
+import production_pointer_grounding as pointer_grounding
 from production_realapp_proof import check_response, primary_acknowledgement, provenance, trace_interval
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
 PROFILE = {'mode': 'unrestricted', 'acknowledge_unrestricted': True}
 DRAG_KEYS = {'from_x', 'from_y', 'to_x', 'to_y', 'duration_ms'}
+POINTER_STAGES = {'calc': 'select_range', 'inkscape': 'move_rectangle'}
+MAX_GROUNDING_AGE_NS = 5_000_000_000
 
 
 def validate_plan(plan):
@@ -41,6 +44,10 @@ def validate_plan(plan):
         assert all(type(v) in (int, float) and math.isfinite(v) for v in spec['bounds'].values())
         assert spec['bounds']['width'] > 0 and spec['bounds']['height'] > 0
         drag = spec['drag']
+        if 'pointer_stage' in spec:
+            assert spec['pointer_stage'] == POINTER_STAGES[spec['app']] and drag == {}, \
+                'pointer cancellation derives its drag from the fresh image'
+            continue
         assert set(drag) == DRAG_KEYS, 'drag cannot override target/session/delivery'
         assert all(type(v) in (int, float) and math.isfinite(v) for v in drag.values())
         assert type(drag['duration_ms']) is int and 1000 <= drag['duration_ms'] <= 2000
@@ -54,7 +61,9 @@ def grounded_snapshot(client, target, spec=None, *, session=True):
     assert not windows.get('isError'), windows
     matches = [w for w in windows['structuredContent']['windows'] if w.get('pid') == target['pid']]
     assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], 'stale target identity'
-    result = client.tool('get_window_state', {**target, 'max_elements': 100, 'max_depth': 6,
+    pixels = spec is not None and 'pointer_stage' in spec
+    result = client.tool('get_window_state', {**target,
+                         **({} if pixels else {'max_elements': 100, 'max_depth': 6}),
                          **({'session': spec['name']} if spec and session else {})})
     assert not result.get('isError'), result
     content = result['structuredContent']
@@ -62,10 +71,30 @@ def grounded_snapshot(client, target, spec=None, *, session=True):
     assert width > 0 and height > 0, 'missing grounding image'
     if spec:
         assert content['window_bounds'] == spec['bounds'], 'reviewed geometry is stale'
-        for end in ('from', 'to'):
-            assert 0 < spec['drag'][end + '_x'] < width and 0 < spec['drag'][end + '_y'] < height, \
-                'drag leaves the fresh snapshot'
+        if not pixels:
+            for end in ('from', 'to'):
+                assert 0 < spec['drag'][end + '_x'] < width and 0 < spec['drag'][end + '_y'] < height, \
+                    'drag leaves the fresh snapshot'
+    if pixels:
+        images = [row for row in result.get('content', []) if row.get('type') == 'image']
+        assert len(images) == 1 and images[0].get('image_file'), 'missing exact snapshot image'
+        path = client.directory / images[0]['image_file']
+        assert path.resolve(strict=True).parent == client.directory.resolve(strict=True), 'image escapes evidence'
+        content = {**content, 'proof_image': str(path)}
     return content
+
+
+def prepare_drag(client, spec):
+    """Ground once before either gesture starts; never reuse an earlier action's image."""
+    started_ns = time.monotonic_ns()
+    before = grounded_snapshot(client, spec['target'], spec)
+    arguments, oracle = dict(spec['drag']), None
+    if 'pointer_stage' in spec:
+        arguments, oracle = pointer_grounding.action(
+            before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], spec['pointer_stage'])
+    return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
+            'target': dict(spec['target']), 'session': spec['name'],
+            'prepared_ns': started_ns}
 
 
 def active_drags(page):
@@ -160,10 +189,13 @@ def verify_cancellation(stopped, kill_prefix, victim_lane, sibling_lane):
             'continuous_isolation': isolation, 'synthetic_cleanup': 'verified'}
 
 
-def call_drag(client, spec):
-    grounded_snapshot(client, spec['target'], spec)
+def call_drag(client, spec, prepared=None):
+    prepared = prepare_drag(client, spec) if prepared is None else prepared
+    assert prepared['target'] == spec['target'] and prepared['session'] == spec['name']
+    age = time.monotonic_ns() - prepared['prepared_ns']
+    assert 0 <= age <= MAX_GROUNDING_AGE_NS, 'prepared drag snapshot expired; no input sent'
     try:
-        response = client.tool('drag', {**spec['drag'], **spec['target'],
+        response = client.tool('drag', {**prepared['arguments'], **spec['target'],
                                'session': spec['name'], 'delivery_mode': 'background'})
     except Exception as error:
         return {'outcome': 'unknown', 'error': str(error), 'replayed': False}
@@ -181,6 +213,7 @@ def run(args):
               'saved_app_effects': 'unproven', 'full_desktop_matrix': False}
     clients, observer, grab, trace, pool = [], None, None, None, None
     futures, kill_prefix, lanes = {}, None, None
+    prepared = []
     primary_before = baseline = None
     try:
         plan = json.loads(args.plan.read_text())
@@ -226,10 +259,16 @@ def run(args):
         assert not active_drags(initial) and not any(r[5] in (1, 2) for r in initial['events']), 'trace is not quiet'
         victim, sibling = plan['kill_agent'], 1 - plan['kill_agent']
         pool = ThreadPoolExecutor(max_workers=2)
-        futures[victim] = pool.submit(call_drag, clients[victim], plan['agents'][victim])
+        # Complete both app observations before starting either timed gesture.
+        # The exact images, derived coordinates, and oracles are retained before
+        # any dispatch. Expired grounding fails without replaying an action.
+        for index, spec in enumerate(plan['agents']):
+            prepared.append(prepare_drag(clients[index], spec))
+            save(f'agent-{index}-drag-grounding.json', prepared[-1])
+        futures[victim] = pool.submit(call_drag, clients[victim], plan['agents'][victim], prepared[victim])
         first, active = poll_active(trace, initial, None, list(futures.values()))
         victim_lane = next(iter(active))
-        futures[sibling] = pool.submit(call_drag, clients[sibling], plan['agents'][sibling])
+        futures[sibling] = pool.submit(call_drag, clients[sibling], plan['agents'][sibling], prepared[sibling])
         kill_prefix, _ = poll_active(trace, first, {1, 2}, list(futures.values()))
         # No disk I/O or observation between the fresh trace gate and exact-child kill.
         report['termination'] = terminate_owned(clients[victim], clients[sibling], list(futures.values()))
@@ -249,7 +288,11 @@ def run(args):
         for index in (victim, sibling):
             spec = plan['agents'][index]
             # The observer uses its own fresh read after the killed connection is lost.
-            save(f'agent-{index}-after.json', grounded_snapshot(observer, spec['target'], spec, session=False))
+            after = grounded_snapshot(observer, spec['target'], spec, session=False)
+            save(f'agent-{index}-after.json', after)
+            if index == sibling and prepared[index]['oracle'] is not None:
+                report['sibling_app_effect'] = pointer_grounding.verify(
+                    after, pointer_grounding.read_pixels(after['proof_image']), prepared[index]['oracle'])
         grounded_snapshot(observer, plan['foreground'])
         assert wm() == primary_before, 'primary cursor/focus/workspace changed'
         current = state(args.foreground_journal)

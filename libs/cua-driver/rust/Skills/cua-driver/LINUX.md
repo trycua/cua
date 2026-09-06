@@ -204,10 +204,12 @@ Each input rung and its stable public route:
 takes the focus-free AT-SPI `do_action`-at-point path (`x11_atspi`), exactly
 like the macOS/Windows background pixel click. It falls to the MPX
 virtual-pointer path (`x11_pixel`) only for non-AX surfaces, **and that path
-needs a real Xorg + `/dev/uinput`** — under Xvnc / minimal containers without
-uinput, escalate to `delivery_mode:"foreground"`. (`type_text` in the
-`background` rung is focus-dependent for non-editable widgets; that's the one
-genuine background limitation, and `foreground` is the documented escalation.)
+needs a real Xorg + `/dev/uinput`** — under Xvfb / Xvnc / minimal containers
+without uinput, the driver returns `background_unavailable` instead of a quiet
+`effect:"unverifiable"` XSendEvent success. Retry with
+`delivery_mode:"foreground"`. (`type_text` in the `background` rung is
+focus-dependent for non-editable widgets; that's the one genuine background
+limitation, and `foreground` is the documented escalation.)
 
 ## Wayland
 
@@ -246,10 +248,15 @@ raw background PX possible on a standard compositor.
 
 If a tool call surprises you on Linux:
 
-1. `cua-driver doctor` — reports the display server (X11 / Wayland),
-   **whether `org.a11y.Bus` actually answers on the session bus** (not just
-   "is there a bus"), the discovered `DBUS_SESSION_BUS_ADDRESS`, and
-   `ffmpeg` availability (for recording).
+1. `cua-driver doctor` — reports the display server (X11 / Xvfb / Xorg /
+   Wayland), compositor, **whether `/dev/uinput` is accessible**, session-bus
+   / `XDG_RUNTIME_DIR` presence, **whether `org.a11y.Bus` actually answers
+   on the session bus** (not just "is there a bus"), and whether background
+   MPX is available. On Xvfb or a host without uinput it warns that
+   background PX/scroll/drag cannot use MPX and should use
+   `delivery_mode:"foreground"`. `cua-driver diagnose` prints the same host
+   facts as a paste-able Linux section (macOS TCC / codesign is skipped).
+   Doctor does not install `at-spi2-core`.
 2. Check `XDG_SESSION_TYPE` — `x11` is fully supported; `wayland`
    needs `CUA_DRIVER_RS_ENABLE_WAYLAND=1` for the native backend,
    else XWayland.

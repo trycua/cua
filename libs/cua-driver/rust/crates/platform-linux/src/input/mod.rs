@@ -339,7 +339,7 @@ pub fn check_parallel_pointer_support() -> Result<()> {
 /// The file name of the X server binary backing `DISPLAY`, read from the PID in
 /// the server's standard `/tmp/.X{N}-lock` file. Used to recognise servers that
 /// can't expose uinput/libinput pointers as real X input slaves.
-fn x_server_exe_name() -> Option<String> {
+pub fn x_server_exe_name() -> Option<String> {
     let display = std::env::var("DISPLAY").unwrap_or_default();
     let display_num = display
         .rsplit(':')
@@ -375,6 +375,12 @@ fn x_server_exe_name() -> Option<String> {
 /// timeout per attempt before failing.
 fn is_xvfb_process_running() -> bool {
     x_server_exe_name().as_deref() == Some("Xvfb")
+}
+
+/// True when `DISPLAY` is served by a headless Xvfb. Public alias for doctor
+/// and diagnose so they share the same lock-file probe as the MPX gate.
+pub fn is_xvfb_display() -> bool {
+    is_xvfb_process_running()
 }
 
 /// Cheap up-front probe (no device creation, no slave-bind wait) for whether the

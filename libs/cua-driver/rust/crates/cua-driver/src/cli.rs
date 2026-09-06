@@ -4191,25 +4191,40 @@ pub fn run_dump_docs_with_type(tools_list: &serde_json::Value, pretty: bool, doc
     println!("{}", out.unwrap_or_else(|_| "{}".into()));
 }
 
-/// `cua-driver diagnose` — print a paste-able bundle-path / install-layout / TCC report.
+/// `cua-driver diagnose` — print a paste-able host / install-layout report.
 ///
-/// Mirrors Swift `DiagnoseCommand`. Covers:
-///   - running process identity (path, pid, version)
-///   - codesign info (cdhash, team-id, authority) via `codesign -dvvv`
-///   - AX + screen recording TCC status (check_permissions tool)
-///   - install layout (/Applications/CuaDriver.app, ~/.local/bin/cua-driver)
-///   - TCC DB rows for com.trycua.driver (sqlite3, best-effort)
-///   - config + state paths with existence booleans
+/// On macOS this mirrors Swift `DiagnoseCommand` (bundle path, codesign, TCC).
+/// On Linux it prints a host section (display server, compositor, uinput,
+/// session bus, AT-SPI, background MPX) and explicitly skips the macOS TCC
+/// dump so the command is usable on headless Xvfb VMs.
 pub fn run_diagnose_cmd() {
-    let sections = [
-        diagnose_runtime_section(),
-        diagnose_signature_section(),
-        diagnose_tcc_section(),
-        diagnose_install_layout_section(),
-        diagnose_tcc_db_section(),
-        diagnose_config_paths_section(),
-    ];
-    println!("{}", sections.join("\n\n"));
+    println!("{}", diagnose_report());
+}
+
+fn diagnose_report() -> String {
+    #[cfg(target_os = "linux")]
+    {
+        return [
+            diagnose_runtime_section(),
+            platform_linux::diagnostics::LinuxHostSnapshot::collect().format_diagnose(),
+            platform_linux::diagnostics::diagnose_macos_skipped_section(),
+            diagnose_linux_install_layout_section(),
+            diagnose_linux_config_paths_section(),
+        ]
+        .join("\n\n");
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        [
+            diagnose_runtime_section(),
+            diagnose_signature_section(),
+            diagnose_tcc_section(),
+            diagnose_install_layout_section(),
+            diagnose_tcc_db_section(),
+            diagnose_config_paths_section(),
+        ]
+        .join("\n\n")
+    }
 }
 
 fn diagnose_runtime_section() -> String {
@@ -4231,6 +4246,7 @@ fn diagnose_runtime_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "linux"))]
 fn diagnose_signature_section() -> String {
     let exe = std::env::current_exe()
         .ok()
@@ -4270,6 +4286,7 @@ fn diagnose_signature_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "linux"))]
 fn diagnose_tcc_section() -> String {
     let socket = crate::serve::default_socket_path();
     let status = crate::serve::is_daemon_listening(&socket)
@@ -4311,6 +4328,7 @@ fn diagnose_tcc_section() -> String {
     )
 }
 
+#[cfg(not(target_os = "linux"))]
 fn diagnose_install_layout_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let mut lines = vec!["## install layout".to_owned()];
@@ -4367,6 +4385,7 @@ fn diagnose_install_layout_section() -> String {
     lines.join("\n")
 }
 
+#[cfg(not(target_os = "linux"))]
 fn diagnose_tcc_db_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let db = format!("{home}/Library/Application Support/com.apple.TCC/TCC.db");
@@ -4407,6 +4426,7 @@ fn diagnose_tcc_db_section() -> String {
     lines.join("\n")
 }
 
+#[cfg(not(target_os = "linux"))]
 fn diagnose_config_paths_section() -> String {
     let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
     let paths: &[(&str, String)] = &[
@@ -4432,6 +4452,50 @@ fn diagnose_config_paths_section() -> String {
         (
             "daemon plist",
             format!("{home}/Library/LaunchAgents/com.trycua.cua_driver_daemon.plist"),
+        ),
+    ];
+    let mut lines = vec!["## config + state paths".to_owned()];
+    for (label, path) in paths {
+        let exists = std::path::Path::new(path).exists();
+        lines.push(format!("{:<18} exists={exists}   {path}", label));
+    }
+    lines.join("\n")
+}
+
+#[cfg(target_os = "linux")]
+fn diagnose_linux_install_layout_section() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let mut lines = vec!["## install layout".to_owned()];
+    let cli_paths = [
+        ("symlink", format!("{home}/.local/bin/cua-driver")),
+        ("legacy symlink", "/usr/local/bin/cua-driver".to_owned()),
+    ];
+    for (label, path) in &cli_paths {
+        let exists = std::path::Path::new(path).exists();
+        lines.push(format!("{label}: {path}   exists={exists}"));
+        if exists {
+            if let Ok(target) = std::fs::read_link(path) {
+                lines.push(format!("  resolves to: {}", target.display()));
+            }
+        }
+    }
+    lines.join("\n")
+}
+
+#[cfg(target_os = "linux")]
+fn diagnose_linux_config_paths_section() -> String {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".into());
+    let paths: &[(&str, String)] = &[
+        (
+            "user data dir",
+            format!("{home}/{}", crate::bundle::user_home_subdirectory()),
+        ),
+        (
+            "telemetry id",
+            format!(
+                "{home}/{}/.telemetry_id",
+                crate::bundle::user_home_subdirectory()
+            ),
         ),
     ];
     let mut lines = vec!["## config + state paths".to_owned()];
@@ -4657,6 +4721,40 @@ fn read_stdin_json() -> Option<serde_json::Value> {
     // chars, so a single `'\u{feff}'` is the right comparand.
     let stripped = trimmed.strip_prefix('\u{feff}').unwrap_or(trimmed);
     serde_json::from_str(stripped).ok()
+}
+
+#[cfg(all(test, target_os = "linux"))]
+mod diagnose_linux_tests {
+    use super::*;
+
+    #[test]
+    fn diagnose_report_is_linux_shaped() {
+        let text = diagnose_report();
+        assert!(text.contains("## running process"), "{text}");
+        assert!(text.contains("## linux host"), "{text}");
+        assert!(text.contains("display server:"), "{text}");
+        assert!(text.contains("/dev/uinput:"), "{text}");
+        assert!(text.contains("background MPX:"), "{text}");
+        assert!(text.contains("## macOS TCC / codesign (skipped)"), "{text}");
+        assert!(text.contains("not applicable on Linux"), "{text}");
+        assert!(
+            !text.contains("## tcc probes (daemon)"),
+            "macOS TCC dump must be skipped on Linux:\n{text}"
+        );
+        assert!(!text.contains("kTCCServiceAccessibility"), "{text}");
+        assert!(
+            !text.contains("Library/Application Support/com.apple.TCC"),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn linux_install_layout_omits_macos_bundle() {
+        let text = diagnose_linux_install_layout_section();
+        assert!(text.contains("## install layout"));
+        assert!(text.contains(".local/bin/cua-driver"));
+        assert!(!text.contains("/Applications/CuaDriver.app"));
+    }
 }
 
 #[cfg(test)]

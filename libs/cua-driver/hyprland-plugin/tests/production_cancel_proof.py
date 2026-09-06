@@ -197,6 +197,24 @@ def prepare_drag(client, spec):
             'prepared_ns': started_ns}
 
 
+def prepare_drags(clients, specs, save):
+    """Observe independent apps concurrently before either timed action starts.
+
+    Sequential multi-second accessibility snapshots can age the first image
+    past the unchanged five-second grounding limit. Each connection still has
+    one reader, and neither observation dispatches app input.
+    """
+    assert len(clients) == len(specs) == 2
+    assert_distinct_runtimes(clients)
+    with ThreadPoolExecutor(max_workers=2) as observations:
+        pending = [observations.submit(prepare_drag, client, spec)
+                   for client, spec in zip(clients, specs)]
+        prepared = [future.result() for future in pending]
+    for index, item in enumerate(prepared):
+        save(f'agent-{index}-drag-grounding.json', item)
+    return prepared
+
+
 def active_drags(page):
     """Reject incomplete telemetry before using its last observed lane state."""
     trace_interval(page, page)
@@ -376,9 +394,7 @@ def run(args):
         # Complete both app observations before starting either timed gesture.
         # The exact images, derived coordinates, and oracles are retained before
         # any dispatch. Expired grounding fails without replaying an action.
-        for index, spec in enumerate(plan['agents']):
-            prepared.append(prepare_drag(clients[index], spec))
-            save(f'agent-{index}-drag-grounding.json', prepared[-1])
+        prepared = prepare_drags(clients, plan['agents'], save)
         guard()
         futures[victim] = pool.submit(call_drag, clients[victim], plan['agents'][victim], prepared[victim], guard)
         first, active = poll_active(trace, initial, None, list(futures.values()))

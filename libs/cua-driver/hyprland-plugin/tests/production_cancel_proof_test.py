@@ -4,13 +4,14 @@ import json
 from pathlib import Path
 import subprocess
 import tempfile
+import threading
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
 from production_cancel_proof import (
     MAX_GROUNDING_AGE_NS, PROFILE, active_drags, call_drag, close_owned, grounded_snapshot,
-    poll_active, prepare_drag, recover_once, run, stopped_prefix,
+    poll_active, prepare_drag, prepare_drags, recover_once, run, stopped_prefix,
     terminate_owned, validate_plan, verify_cancellation, verify_recovery_cleanup, verify_recovery_trace,
 )
 
@@ -279,6 +280,32 @@ class RecoveryTests(unittest.TestCase):
 
 
 class OwnershipTests(unittest.TestCase):
+    def test_both_grounding_calls_overlap_without_app_input(self):
+        clients = [client(100), client(101)]
+        specs = plan()['agents']
+        rendezvous = threading.Barrier(2, timeout=2)
+        save = Mock()
+        def observe(owned, spec):
+            rendezvous.wait()
+            return {'target': spec['target'], 'session': spec['name']}
+        with patch('production_cancel_proof.prepare_drag', side_effect=observe):
+            result = prepare_drags(clients, specs, save)
+        self.assertEqual([item['target'] for item in result], [spec['target'] for spec in specs])
+        self.assertEqual([call.args[0] for call in save.call_args_list],
+                         ['agent-0-drag-grounding.json', 'agent-1-drag-grounding.json'])
+        for owned in clients:
+            owned.tool.assert_not_called()
+
+    def test_failed_parallel_grounding_never_dispatches(self):
+        clients = [client(100), client(101)]
+        save = Mock()
+        with patch('production_cancel_proof.prepare_drag', side_effect=AssertionError('bad image')):
+            with self.assertRaisesRegex(AssertionError, 'bad image'):
+                prepare_drags(clients, plan()['agents'], save)
+        save.assert_not_called()
+        for owned in clients:
+            owned.tool.assert_not_called()
+
     def test_pointer_plan_requires_derived_drag_and_exact_app_stage(self):
         candidate = plan()
         for spec, stage in zip(candidate['agents'], ('select_range', 'move_rectangle')):
@@ -550,6 +577,14 @@ class RunnerTests(unittest.TestCase):
                         if failure == 'recovery_effect' else Mock(return_value=sibling_effect),
                     'print': Mock(),
                 }
+                # The real concurrent preparation helper has its own barrier
+                # tests. Keep this runner's fake executor scoped to actions.
+                def observations(owned, specs, save):
+                    prepared = [prepare_drag(c, s) for c, s in zip(owned, specs)]
+                    for i, item in enumerate(prepared):
+                        save(f'agent-{i}-drag-grounding.json', item)
+                    return prepared
+                replacements['prepare_drags'] = observations
                 for name, value in replacements.items():
                     stack.enter_context(patch('production_cancel_proof.' + name, value))
                 self.assertEqual(run(args), 0 if failure in (None, 'sigterm', 'pointer', 'pointer_partial', 'recovery_calc', 'recovery_inkscape') else 1)

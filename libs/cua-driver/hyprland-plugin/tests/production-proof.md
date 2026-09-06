@@ -62,6 +62,16 @@ Review a JSON plan before execution. The plan has:
 - `phases`: sequential `{agent,tool,arguments}` objects, or `parallel` arrays
   with at most one call per runtime. Tools are click, press_key, hotkey, scroll,
   and drag. Reserved ownership/delivery arguments cannot override the plan.
+- Optional per-step `smoke_stage` reuses the bounded keyboard smoke's semantic
+  grounding. Calc accepts `insert` (`press_key`, `{"key":"a"}`), `commit`
+  (`press_key`, `{"key":"Return"}`), and `save` (`hotkey`, `{"keys":["ctrl","s"]}`).
+  Inkscape accepts `select` (`hotkey`, `{"keys":["ctrl","a"]}`), `move`
+  (`press_key`, `{"key":"Right"}`), and `save` (`hotkey`, `{"keys":["ctrl","s"]}`).
+  These steps use fresh default-depth snapshots and verify the exact sole app
+  window before and after input. Missing semantic grounding or an unexpected
+  dialog stops the run without recovery keys or replay. Unmarked reviewed
+  steps retain their existing grounding contract. Saved-file and trace oracles
+  are still required; a grounded shortcut alone does not prove its effect.
 - Optional per-step `expect`: `{kind:"refused",reason:"<exact observed contract reason>"}`,
   `{kind:"partial"}`, or `{kind:"unknown"}`. The default is dispatched. Denial
   phases run serially so the no-dispatch interval contains no other action.

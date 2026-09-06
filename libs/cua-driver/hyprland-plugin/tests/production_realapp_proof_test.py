@@ -12,7 +12,7 @@ from unittest.mock import Mock, patch
 import zipfile
 
 from production_mcp import DirectMCP, assert_distinct_runtimes, profile_environment, stop_process
-from production_realapp_proof import (app_process_identity, provenance,
+from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provenance,
                                     assert_no_dispatch, assert_primary_state, check_response,
                                     capacity_lane, verify_capacity, check_manifest_refusal,
                                     manifest_tool_messages, verify_policy_cache,
@@ -504,6 +504,26 @@ class CapacityTests(unittest.TestCase):
 
 
 class PlanTests(unittest.TestCase):
+    def test_smoke_stages_allow_only_the_exact_app_keyboard_steps(self):
+        for index, app in enumerate(('calc', 'inkscape')):
+            for stage, (tool, arguments) in SMOKE_STEPS[app].items():
+                with self.subTest(app=app, stage=stage):
+                    candidate = plan()
+                    candidate['phases'] = [{'agent': index, 'smoke_stage': stage,
+                                            'tool': tool, 'arguments': arguments}]
+                    validate_plan(candidate)
+                    for change in ({'smoke_stage': 'after'}, {'smoke_stage': None},
+                                   {'smoke_stage': []}, {'tool': 'click'},
+                                   {'arguments': {**arguments, 'x': 1}},
+                                   {'arguments': {'key': 'Escape'}}):
+                        bad = copy.deepcopy(candidate)
+                        bad['phases'][0].update(change)
+                        with self.assertRaises(AssertionError):
+                            validate_plan(bad)
+                    candidate['agents'][index]['app'] = 'unknown'
+                    with self.assertRaises(AssertionError):
+                        validate_plan(candidate)
+
     def test_moving_primary_is_optional_boolean_and_excludes_negative_control(self):
         validate_plan({**plan(), 'moving_primary': True})
         for value in ('true', 1, None):
@@ -550,6 +570,99 @@ class PlanTests(unittest.TestCase):
         bad['purpose'] = 'policy'
         with self.assertRaises(AssertionError):
             validate_plan(bad)
+
+
+class SmokeStageTests(unittest.TestCase):
+    def test_runner_grounds_full_snapshots_and_never_recovers_or_replays(self):
+        for app, stage, elements in (
+                ('calc', 'insert', [{'role': 'table cell', 'label': 'A1', 'selected': True}]),
+                ('inkscape', 'select', [{'role': 'drawing area'}]),
+                ('inkscape', 'move', [{'role': 'status bar', 'label': '1 object selected'}])):
+            for failure in (None, 'no_elements', 'dialog', 'extra_window', 'after_dialog', 'transport', 'unmarked'):
+                with self.subTest(app=app, stage=stage, failure=failure), \
+                        tempfile.TemporaryDirectory() as directory, ExitStack() as stack:
+                    root = Path(directory)
+                    candidate = plan()
+                    index = 0 if app == 'calc' else 1
+                    tool_name, arguments = SMOKE_STEPS[app][stage]
+                    candidate['phases'] = [{'agent': index, 'smoke_stage': stage,
+                                            'tool': tool_name, 'arguments': arguments}]
+                    if failure == 'unmarked':
+                        del candidate['phases'][0]['smoke_stage']
+                    bounds = {'x': 0, 'y': 0, 'width': 600, 'height': 600}
+                    for i, spec in enumerate(candidate['agents']):
+                        spec.update(bounds=bounds, name=f'agent-{i}', profile={'mode': 'standard'})
+                        path = root / f'{i}.xml'
+                        path.write_text('<synthetic/>')
+                        candidate['outputs'][i]['path'] = str(path)
+                    path = root / 'plan.json'
+                    path.write_text(json.dumps(candidate))
+                    args = SimpleNamespace(plan=path, evidence=root / 'evidence', trace_socket=None,
+                                           driver=root / 'driver', primary_grab=root / 'primary-grab',
+                                           foreground_journal=root / 'journal', record_video=False)
+                    calls, held = [], [True]
+                    agents = [Mock(process=Mock(pid=101 + i, poll=Mock(return_value=None))) for i in range(2)]
+                    observer = Mock()
+                    targets = [candidate['foreground']] + [spec['target'] for spec in candidate['agents']]
+
+                    def tool(name, parameters):
+                        if name == 'list_windows':
+                            windows = copy.deepcopy(targets)
+                            if failure == 'extra_window':
+                                windows.append({**candidate['agents'][index]['target'], 'window_id': 999})
+                            return {'structuredContent': {'windows': windows}}
+                        if name == 'get_window_state':
+                            calls.append(('snapshot', parameters))
+                            sent = any(row[0] == 'input' for row in calls)
+                            rows = elements
+                            if failure in ('no_elements', 'unmarked'):
+                                rows = []
+                            if failure == 'dialog' or (failure == 'after_dialog' and sent):
+                                rows = [{'role': 'dialog'}]
+                            return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
+                                                          'elements': rows}}
+                        if name == 'get_desktop_state':
+                            return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}
+                        if name != tool_name:
+                            return {'structuredContent': {}}
+                        calls.append(('input', parameters))
+                        if failure == 'transport':
+                            raise TimeoutError('unknown input outcome')
+                        return {'structuredContent': {'route': 'synthetic_events', 'effect': 'unverifiable',
+                                                      'delivery': {'mode': 'background'}}}
+
+                    for mcp in agents + [observer]:
+                        mcp.tool.side_effect = tool
+                    replacements = {'provenance': Mock(return_value={}),
+                        'DirectMCP': Mock(side_effect=agents + [observer]),
+                        'subprocess.Popen': Mock(return_value=Mock(poll=Mock(return_value=0))),
+                        'primary_acknowledgement': Mock(return_value='HELD\n'),
+                        'verify_output': Mock(return_value={'verified': True}),
+                        'wait_for': lambda predicate: self.assertTrue(predicate()),
+                        'state': lambda path: {'held': held[0], 'clicks': 0, 'keys': 0, 'scroll': 0},
+                        'wm': lambda: {'pid': 10, 'address': '0x10', 'workspace': 1,
+                                       'cursor': {'x': 100, 'y': 200}},
+                        'stop_process': lambda process: held.__setitem__(0, False)}
+                    for name, replacement in replacements.items():
+                        stack.enter_context(patch('production_realapp_proof.' + name, replacement))
+                    self.assertEqual(run(args), 0 if failure in (None, 'unmarked') else 1)
+                    inputs = [i for i, row in enumerate(calls) if row[0] == 'input']
+                    self.assertEqual(len(inputs), 0 if failure in ('no_elements', 'dialog', 'extra_window') else 1)
+                    if inputs:
+                        i = inputs[0]
+                        self.assertEqual(calls[i - 1][0], 'snapshot')
+                        self.assertEqual(calls[i + 1][0], 'snapshot')
+                        self.assertEqual(calls[i][1]['delivery_mode'], 'background')
+                        self.assertNotIn('smoke_stage', calls[i][1])
+                        for _, parameters in (calls[i - 1], calls[i + 1]):
+                            self.assertEqual('max_elements' in parameters, failure == 'unmarked')
+                            self.assertEqual('max_depth' in parameters, failure == 'unmarked')
+                    for mcp in agents + [observer]:
+                        mcp.close.assert_called_once()
+                    self.assertFalse(held[0])
+                    report = json.loads((args.evidence / 'result.json').read_text())
+                    if failure is None:
+                        self.assertEqual(report['actions'][0]['smoke_stage'], stage)
 
 
 class ResponseTests(unittest.TestCase):

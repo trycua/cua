@@ -20,13 +20,21 @@ import zipfile
 
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
-from production_app_smoke import EXECUTABLES, package_owner, provenance as runtime_provenance
+from production_app_smoke import EXECUTABLES, ground, package_owner, provenance as runtime_provenance
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
 
 
 TOOLS = {'click', 'press_key', 'hotkey', 'scroll', 'drag'}
 RESERVED = {'pid', 'window_id', 'session', 'delivery_mode'}
+SMOKE_STEPS = {
+    'calc': {'insert': ('press_key', {'key': 'a'}),
+             'commit': ('press_key', {'key': 'Return'}),
+             'save': ('hotkey', {'keys': ['ctrl', 's']})},
+    'inkscape': {'select': ('hotkey', {'keys': ['ctrl', 'a']}),
+                 'move': ('press_key', {'key': 'Right'}),
+                 'save': ('hotkey', {'keys': ['ctrl', 's']})},
+}
 
 
 def manifest_tool_messages(tool):
@@ -101,6 +109,13 @@ def validate_plan(plan):
         for step in steps:
             assert step['tool'] in TOOLS
             assert not RESERVED.intersection(step['arguments']), 'action overrides reviewed ownership'
+            if 'smoke_stage' in step:
+                app = plan['agents'][step['agent']].get('app')
+                stage = step['smoke_stage']
+                assert app in SMOKE_STEPS and isinstance(stage, str) and stage in SMOKE_STEPS[app], \
+                    'invalid app smoke stage'
+                assert (step['tool'], step['arguments']) == SMOKE_STEPS[app][stage], \
+                    'smoke stage must match its exact keyboard action'
             expected = step.get('expect', {'kind': 'dispatched'})
             assert expected['kind'] in ('dispatched', 'refused', 'partial', 'unknown')
             if expected['kind'] == 'refused':
@@ -408,15 +423,16 @@ def run(args):
         directory = args.evidence / name
         directory.mkdir()
         return DirectMCP(args.driver, directory, profile)
-    def snapshot(mcp, target, session=None):
-        if capacity or policy_cache:
+    def snapshot(mcp, target, session=None, full=False):
+        if capacity or policy_cache or full:
             windows = mcp.tool('list_windows', {})
             assert not windows.get('isError'), windows
             matches = [window for window in windows['structuredContent']['windows']
                        if window.get('pid') == target['pid']]
             assert len(matches) == 1 and matches[0].get('window_id') == target['window_id'], \
                 'reviewed PID/window identity is stale or ambiguous'
-        result = mcp.tool('get_window_state', {**target, 'max_elements': 100, 'max_depth': 6,
+        result = mcp.tool('get_window_state', {**target,
+                          **({} if full else {'max_elements': 100, 'max_depth': 6}),
                           **({'session': session} if session else {})})
         assert not result.get('isError'), result
         content = result['structuredContent']
@@ -430,8 +446,11 @@ def run(args):
             current_trace = trace.collect()
             trace_before = policy_cache_traces[-1] if policy_cache_traces else current_trace
             assert_no_dispatch(trace_before, current_trace)
-        before = snapshot(mcp, spec['target'], spec['name'])
+        smoke_stage = step.get('smoke_stage')
+        before = snapshot(mcp, spec['target'], spec['name'], full=smoke_stage is not None)
         assert before['window_bounds'] == spec['bounds'], 'reviewed geometry is stale'
+        if smoke_stage is not None:
+            ground(before, spec['app'], smoke_stage)
         if policy_cache:
             # Keep the full interval quiet through fresh grounding, including
             # delayed events after the preceding denied response.
@@ -454,12 +473,15 @@ def run(args):
             # A transport failure poisons that runtime. Preserve a fresh independent
             # after-snapshot when available without retrying the mutation.
             with observer_lock:
-                snapshot(recorder, spec['target'])
+                snapshot(recorder, spec['target'], full=smoke_stage is not None)
             raise
         action_intervals.append((action_start, time.monotonic_ns()))
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
-        after = snapshot(mcp, spec['target'], spec['name'])
+        after = snapshot(mcp, spec['target'], spec['name'], full=smoke_stage is not None)
         result = check_response(response, expected)
+        if smoke_stage is not None:
+            ground(after, spec['app'], 'after')
+            result['smoke_stage'] = smoke_stage
         if policy_cache:
             trace_after = trace.collect()
             save(f'policy-cache-phase-{len(policy_cache_traces)}-trace.json',

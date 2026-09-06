@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self'; script-src 'self'" />
+    <title>Cua Driver Workbench</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="titlebar">
+      <div class="brand">
+        <div class="brand-mark">C</div>
+        <div><strong>Cua Driver</strong><span>Electron workbench</span></div>
+      </div>
+      <div class="runtime"><span id="runtime-dot"></span><span id="runtime-label">Starting embedded runtime…</span></div>
+    </header>
+    <main>
+      <section class="hero">
+        <div>
+          <p class="eyebrow">TYPESCRIPT SDK · SAME PROCESS</p>
+          <h1>Drive the desktop<br />from an Electron host.</h1>
+          <p class="lede">A secure reference shell for session creation, discovery, perception, and native actions. No daemon or reusable socket is required.</p>
+        </div>
+        <div class="metadata-card">
+          <div class="card-heading"><span>Runtime identity</span><span class="live">LIVE</span></div>
+          <div id="metadata" class="metadata-grid"><div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div></div>
+          <div id="permission-status" class="permissions"></div>
+          <div class="permission-actions">
+            <button id="request-permissions" class="secondary" hidden>Grant access</button>
+            <button id="open-settings" class="ghost" hidden>Open settings</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="workspace-grid">
+        <div class="panel session-panel">
+          <div class="panel-title"><div><p class="eyebrow">01 · SESSION</p><h2>Authorization boundary</h2></div><div id="session-pill" class="pill">No active session</div></div>
+          <div class="form-grid">
+            <label>Session name<input id="session-name" autocomplete="off" /></label>
+            <label>Permission mode
+              <select id="permission-mode">
+                <option value="standard">Standard</option>
+                <option value="bounded">Bounded</option>
+                <option value="unrestricted">Unrestricted</option>
+              </select>
+            </label>
+            <label id="manifest-field" class="wide" hidden>Bounded manifest path<input id="manifest-path" placeholder="/absolute/path/to/manifest.json" /></label>
+          </div>
+          <div class="button-row"><button id="start-session" class="primary">Start session</button><button id="end-session" class="secondary" disabled>End session</button></div>
+        </div>
+
+        <div class="panel tool-panel">
+          <div class="panel-title"><div><p class="eyebrow">02 · ACTION</p><h2>SDK tool runner</h2></div></div>
+          <label>Allowlisted tool
+            <select id="tool-select">
+              <option>list_apps</option><option selected>list_windows</option><option>launch_app</option><option>get_window_state</option><option>get_desktop_state</option><option>click</option><option>type_text</option><option>scroll</option><option>press_key</option>
+            </select>
+          </label>
+          <label>Arguments JSON<textarea id="arguments-json" spellcheck="false"></textarea></label>
+          <button id="run-tool" class="primary" disabled>Run tool</button>
+        </div>
+
+        <div class="panel preview-panel">
+          <div class="panel-title"><div><p class="eyebrow">03 · PERCEPTION</p><h2>Latest screenshot</h2></div></div>
+          <div class="preview-stage">
+            <img id="screenshot" alt="Cua Driver screenshot result" hidden />
+            <div id="screenshot-empty" class="empty-state"><div class="reticle"></div><strong>No frame captured</strong><span>Run get_window_state or get_desktop_state</span></div>
+          </div>
+        </div>
+
+        <div class="panel output-panel">
+          <div class="panel-title"><div><p class="eyebrow">04 · RESULT</p><h2>Structured output</h2></div></div>
+          <pre id="output">Waiting for the first SDK call.</pre>
+        </div>
+      </section>
+
+      <section class="activity-panel">
+        <div><p class="eyebrow">ACTIVITY</p><h2>Host event log</h2></div>
+        <div id="activity" class="activity"></div>
+      </section>
+    </main>
+    <script type="module" src="./renderer.js"></script>
+  </body>
+</html>

@@ -1,0 +1,32 @@
+{
+  "name": "cua-driver-electron-workbench",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Electron reference app for the Cua Driver TypeScript SDK",
+  "type": "module",
+  "main": "dist/main.mjs",
+  "engines": {
+    "node": ">=22 <26"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node scripts/copy-static.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "npm run build && node --test test/*.test.mjs",
+    "start": "npm run build && electron-forge start",
+    "prepackage": "node scripts/check-package-runtime.mjs && npm run build",
+    "package": "electron-forge package"
+  },
+  "dependencies": {
+    "@trycua/cua-driver": "0.18.0"
+  },
+  "overrides": {
+    "tar": "7.5.22",
+    "tmp": "0.2.7"
+  },
+  "devDependencies": {
+    "@electron-forge/cli": "7.11.2",
+    "@types/node": "^22.0.0",
+    "electron": "43.2.0",
+    "typescript": "^5.7.0"
+  }
+}

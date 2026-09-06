@@ -17,6 +17,7 @@ cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 zeroize = { workspace = true }
 getrandom = { workspace = true }
+sha2 = { workspace = true }
 # tiny-skia for cursor rendering (shared cross-platform)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 

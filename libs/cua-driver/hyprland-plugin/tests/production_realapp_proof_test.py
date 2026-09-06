@@ -20,6 +20,7 @@ from production_realapp_proof import (SMOKE_STEPS, app_process_identity, provena
                                     primary_trajectory, run, validate_plan, verify_output)
 from primary_trace import analyze
 from primary_trace_test import START, STOP, trace
+from production_app_smoke_test import INKSCAPE
 
 
 def plan():
@@ -576,7 +577,7 @@ class SmokeStageTests(unittest.TestCase):
     def test_runner_grounds_full_snapshots_and_never_recovers_or_replays(self):
         for app, stage, elements in (
                 ('calc', 'insert', [{'role': 'table cell', 'label': 'A1', 'selected': True}]),
-                ('inkscape', 'select', [{'role': 'drawing area'}]),
+                ('inkscape', 'select', INKSCAPE['elements']),
                 ('inkscape', 'move', [{'role': 'status bar', 'label': '1 object selected'}])):
             for failure in (None, 'no_elements', 'dialog', 'extra_window', 'after_dialog', 'transport', 'unmarked'):
                 with self.subTest(app=app, stage=stage, failure=failure), \
@@ -620,6 +621,7 @@ class SmokeStageTests(unittest.TestCase):
                             if failure == 'dialog' or (failure == 'after_dialog' and sent):
                                 rows = [{'role': 'dialog'}]
                             return {'structuredContent': {'screenshot_width': 600, 'window_bounds': bounds,
+                                                          'tree_markdown': INKSCAPE['tree_markdown'],
                                                           'elements': rows}}
                         if name == 'get_desktop_state':
                             return {'structuredContent': {'screen_width': 800, 'screen_height': 800}}

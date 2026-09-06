@@ -22,6 +22,19 @@ GOOD_DELIVERY = {'structuredContent': {'route': 'synthetic_events',
 CALC = {'window_title': 'cua-smoke-calc.ods - LibreOffice Calc',
         'elements': [{'role': 'text', 'label': 'Name Box', 'value': 'A1'}]}
 WINDOWS = {'structuredContent': {'windows': [TARGET]}}
+INKSCAPE = {
+    'elements': [
+        {'element_index': 10, 'role': 'menu', 'label': 'Edit', 'enabled': True},
+        {'element_index': 11, 'parent_index': 10, 'role': 'menu item',
+         'label': 'Select All', 'enabled': True},
+        {'element_index': 12, 'role': 'table cell', 'label': 'smoke-rectangle', 'enabled': True}],
+    'tree_markdown': '\n'.join([
+        '  - [10] menu "Edit" [actions=[click]]',
+        '    - [11] menu item "Select All" [actions=[click]]',
+        '  - [12] table cell "smoke-rectangle" [actions=[activate]]',
+        '  - label = "No objects selected. Click, Shift+click, Alt+scroll mouse on top of '
+        'objects, or drag around objects to select."']),
+}
 
 
 def changed_ods(original, text='a', empty_first=False):
@@ -237,6 +250,31 @@ class InputTests(unittest.TestCase):
     def test_route_family_does_not_claim_plugin_transport_attribution(self):
         self.assertIs(LIMITS['plugin_transport_attribution'], False)
 
+    def test_inkscape_requires_document_command_and_exact_initial_status(self):
+        ground(INKSCAPE, 'inkscape', 'select')
+        for index, replacement in [(0, {'role': 'label'}), (0, {'enabled': False}),
+                                   (1, {'parent_index': 99}), (1, {'enabled': False}),
+                                   (1, {'label': 'Select All in All Layers'}),
+                                   (2, {'label': 'other-rectangle'}), (2, {'role': 'label'})]:
+            bad = copy.deepcopy(INKSCAPE)
+            bad['elements'][index].update(replacement)
+            with self.subTest(index=index, replacement=replacement), self.assertRaises(GroundingUnavailable):
+                ground(bad, 'inkscape', 'select')
+        for old, new in [('[10]', '[99]'), ('[11]', '[99]'), ('[12]', '[99]'),
+                         ('No objects selected.', '1 object selected.'), ('- label =', '- button =')]:
+            with self.subTest(old=old), self.assertRaises(GroundingUnavailable):
+                ground({**INKSCAPE, 'tree_markdown': INKSCAPE['tree_markdown'].replace(old, new)},
+                       'inkscape', 'select')
+        for markdown in ('', INKSCAPE['tree_markdown'] + '\n' + INKSCAPE['tree_markdown']):
+            with self.assertRaises(GroundingUnavailable):
+                ground({**INKSCAPE, 'tree_markdown': markdown}, 'inkscape', 'select')
+        for row in INKSCAPE['elements']:
+            with self.assertRaises(GroundingUnavailable):
+                ground({**INKSCAPE, 'elements': INKSCAPE['elements'] + [row]}, 'inkscape', 'select')
+        for role in ('canvas', 'drawing area'):
+            with self.assertRaises(GroundingUnavailable):
+                ground({'elements': [{'role': role}]}, 'inkscape', 'select')
+
     def test_only_acknowledged_synthetic_background_delivery_accepted(self):
         check_delivery(GOOD_DELIVERY)
         for replacement in ({'route': 'atspi'}, {'effect': 'partial'},
@@ -255,7 +293,7 @@ class InputTests(unittest.TestCase):
                 ground(state, 'calc', 'insert')
         with self.assertRaises(GroundingUnavailable):
             ground(CALC, 'inkscape', 'select')
-        ground({'elements': [{'role': 'drawing area'}]}, 'inkscape', 'select')
+        ground(INKSCAPE, 'inkscape', 'select')
         with self.assertRaises(GroundingUnavailable):
             ground({'elements': [{'role': 'status bar', 'value': 'No objects selected'}]}, 'inkscape', 'move')
         ground({'elements': [{'role': 'status bar', 'value': '1 object selected'}]}, 'inkscape', 'move')

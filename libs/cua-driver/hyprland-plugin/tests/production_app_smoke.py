@@ -304,6 +304,33 @@ def calc_formula_selection(snapshot, elements):
                     for row in elements))
 
 
+def inkscape_selection_command(snapshot, elements):
+    """Ground Ctrl+A in the pinned document UI, which exposes no canvas role.
+
+    The non-actionable selection status exists only in tree_markdown. Require
+    the exact initial status, the fixture's object row, and Edit > Select All
+    in both projections; a label mentioning a canvas is not evidence.
+    """
+    menus = [row for row in elements if row.get('role') == 'menu'
+             and row.get('label') == 'Edit' and row.get('enabled') is True]
+    objects = [row for row in elements if row.get('role') == 'table cell'
+               and row.get('label') == 'smoke-rectangle' and row.get('enabled') is True]
+    if len(menus) != 1 or len(objects) != 1:
+        return False
+    commands = [row for row in elements if row.get('role') == 'menu item'
+                and row.get('label') == 'Select All' and row.get('enabled') is True
+                and row.get('parent_index') == menus[0].get('element_index')]
+    if len(commands) != 1:
+        return False
+    lines = [line.strip() for line in snapshot.get('tree_markdown', '').splitlines()]
+    status = ('- label = "No objects selected. Click, Shift+click, Alt+scroll mouse '
+              'on top of objects, or drag around objects to select."')
+    return lines.count(status) == 1 and all(
+        sum(line.startswith(f'- [{row.get("element_index")}] {row["role"]} "{row["label"]}" ')
+            for line in lines) == 1
+        for row in (menus[0], objects[0], commands[0]))
+
+
 def ground(snapshot, app, stage):
     elements = rows(snapshot)
     if app == 'calc' and stage == 'insert':
@@ -314,8 +341,8 @@ def ground(snapshot, app, stage):
             raise GroundingUnavailable('cannot prove initial Calc selection A1 from the snapshot')
     if app == 'inkscape':
         if stage == 'select':
-            if not any(str(row.get('role', '')).lower() in ('drawing area', 'canvas') for row in elements):
-                raise GroundingUnavailable('cannot ground Inkscape canvas selection shortcut')
+            if not inkscape_selection_command(snapshot, elements):
+                raise GroundingUnavailable('cannot ground Inkscape document selection shortcut')
         elif stage == 'move':
             labels = ' '.join(str(row.get('label', '')) + ' ' + str(row.get('value', ''))
                               for row in elements if row.get('role') in ('status bar', 'label', 'text'))

@@ -11,9 +11,16 @@ For the broader model that combines code, structured tools, and graphical interf
 
 ## Sandboxes and real machines
 
-Cua Driver operates a real machine you already have. It can observe and control that machine, so its actions happen in the same desktop environment you use.
+Cua Driver observes and controls the desktop where it is installed and targeted.
+That can be your existing computer or a guest with a compatible installation and
+connection path. Running Driver on your host does not automatically target a
+sandbox guest.
 
-A sandbox is different. It is a disposable machine created for a task. It starts from a known state, accumulates state only while it lives, and can be deleted without consequence. Actions inside a sandbox affect only that sandbox. They do not move the host mouse, change host files, or touch other sandboxes.
+A sandbox is an isolated computer created for a task. It starts from an image and
+accumulates its own state. Deleting it discards that state, so save any results
+you need first. Code and GUI actions through the sandbox connection target the
+guest. Explicitly shared files and exposed services remain connections to the
+outside world.
 
 This isolation is what makes a sandbox useful for repeatable agent work. The agent gets a whole computer, but the effects are contained within that computer.
 
@@ -22,6 +29,13 @@ This isolation is what makes a sandbox useful for repeatable agent work. The age
 The _code half_ is how an agent runs programs inside the sandbox. It includes shell commands through `shell.run`, an interactive PTY or terminal through `computer.pty` and `cua do shell`, and sandboxed Python that runs a function inside the sandbox's own virtualenv through `venv_install`, `venv_exec`, and the `@sandboxed` decorator.
 
 The _GUI half_ is how an agent uses the sandbox like a desktop computer. It can observe the screen through screenshots and the accessibility tree, then act through clicks, typing, scrolling, keypresses, and other input events.
+
+The Sandbox SDK's default Fleet connection uses the guest's computer-server
+endpoint. Fleet provisions and manages the capacity; the SDK acquires a guest and
+connects to its service. Using Cua Driver in that guest requires its own
+compatible installation and validated integration; it does not follow merely
+from creating a pool. See [How Fleet images work](/concepts/how-fleet-images-work)
+for the default guest service contract.
 
 Because both halves are interfaces to the same machine, they can be mixed within one task. A shell command can create a file that is opened in the GUI. A GUI workflow can download data that is then inspected with Python. A PTY session can start a server, and the GUI half can open a browser against it. The important point is that all of these actions share the same filesystem and OS state.
 
@@ -42,6 +56,11 @@ The image builder composes layers such as `apt_install`, `pip_install`, `run`, `
 This separation makes environments reproducible. The `Image` describes what a fresh sandbox should look like. The sandbox is the live machine created from that description.
 
 ## Lifecycle patterns
+
+The patterns below describe local sandbox ownership. Fleet pools and claims add
+a separate capacity lifetime: releasing a claim does not delete its pool or
+remove the pool's desired warm capacity. [Cloud Fleets](/cloud-fleets) links the
+hosted workflow and resource cleanup guides.
 
 Sandbox lifetime is separate from agent connection lifetime. An ephemeral sandbox exists for one block of work and is destroyed at the end. This fits CI jobs, tests, and one-shot tasks where the state has no value afterward.
 

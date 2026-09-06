@@ -1,0 +1,47 @@
+---
+title: Cloud Fleets
+description: Find tutorials, guides, explanations, and reference for managed cloud sandboxes.
+---
+
+Cloud Fleets provisions and manages sandbox capacity for your workloads. The
+Sandbox SDK represents a Fleet as a `Pool`; your code claims a sandbox from the
+pool and uses that guest computer.
+
+Start with [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet) to provision
+a pool, run a command, save a screenshot, and clean up the cloud resources.
+
+## Find the right page
+
+Choose a page based on what you want to do:
+
+| Your goal                             | Start here                                                                                                                                                                             |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Learn through a first working example | [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet)                                                                                                                            |
+| Create reusable capacity              | [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python) or [Configure a sandbox pool with Terraform](/how-to-guides/sandbox/configure-pool-with-terraform) |
+| Control resource lifetime             | [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)                                                                                                |
+| Prepare a guest environment           | [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)                                                                                      |
+| Understand the model                  | [How sandboxes work](/concepts/how-sandboxes-work) and [How Fleet images work](/concepts/how-fleet-images-work)                                                                        |
+| Look up APIs and limits               | [Sandbox SDK reference](/reference/sandbox-sdk), [Pool reference](/reference/sandbox-sdk/pool), and [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)                  |
+
+## Which computer runs the work?
+
+With Fleet, the SDK connects to a claimed cloud guest. Shell commands and GUI
+actions through that sandbox act inside the guest. With `local=True`, the SDK
+uses a sandbox runtime on your own hardware. See [How sandboxes work](/concepts/how-sandboxes-work)
+for the distinction between the host, guest, and control connection.
+
+Fleet manages capacity; the Sandbox SDK acquires and uses a guest. The SDK's
+default guest endpoint is computer-server. Cua Driver can control the desktop
+where it is installed and targeted, but using it inside a Fleet guest requires
+a compatible image and a validated connection path. Choosing a Fleet image does
+not by itself establish Driver integration. Check the [image and runtime limits](/reference/sandbox-sdk/runtime-support)
+before selecting your environment.
+
+## Claims and capacity have separate lifetimes
+
+Exiting a `pool.claim()` context releases the claim. The pool can still retain
+warm sandboxes, and cloud resources can incur usage charges after your workload
+finishes. The hosted tutorial includes pool deletion; reusable pools need an
+explicit cleanup or expiry policy. See [Pool lifecycle](/reference/sandbox-sdk/pool)
+for connection and release semantics, and [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
+for deadlines and their effect on active work.

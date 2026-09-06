@@ -522,14 +522,35 @@ if [[ "$USE_RUST_BACKEND" == "1" ]]; then
         RUST_INSTALL_PRESENT=1
     fi
 
-    # Ownership-aware Claude cleanup currently uses Python's JSON + realpath
-    # support. If a Claude config exists but Python is unavailable, stop before
-    # touching the release so uninstall cannot report success while leaving a
-    # current shared-name registration behind.
+    # Ownership-aware Claude cleanup uses Python's JSON + realpath support.
+    # Validate the config before daemon shutdown or any release mutation so a
+    # malformed/unreadable config cannot turn into a successful partial
+    # uninstall that leaves ownership-sensitive registrations behind.
     CLAUDE_JSON="$HOME/.claude.json"
-    if [[ -f "$CLAUDE_JSON" ]] && ! command -v python3 >/dev/null 2>&1; then
-        printf 'error: python3 is required to safely inspect Claude MCP ownership before uninstalling a release with %s; install python3 and retry. No release files were removed.\n' "$CLAUDE_JSON" >&2
-        exit 1
+    if [[ -f "$CLAUDE_JSON" ]]; then
+        if ! command -v python3 >/dev/null 2>&1; then
+            printf 'error: python3 is required to safely inspect Claude MCP ownership before uninstalling a release with %s; install python3 and retry. No release files were removed.\n' "$CLAUDE_JSON" >&2
+            exit 1
+        fi
+        if ! CLAUDE_JSON="$CLAUDE_JSON" python3 <<'PYCLAUDE_VALIDATE'
+import json
+import os
+import sys
+
+path = os.environ["CLAUDE_JSON"]
+try:
+    with open(path, "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    if not isinstance(data, dict):
+        raise ValueError("top-level value must be a JSON object")
+except Exception as exc:
+    print(f"could not read Claude config {path}: {exc}", file=sys.stderr)
+    raise SystemExit(1)
+PYCLAUDE_VALIDATE
+        then
+            printf 'error: refusing to uninstall because Claude config could not be safely inspected. No release files were removed.\n' >&2
+            exit 1
+        fi
     fi
 
     DAEMON_PID_FILE="$(daemon_pid_file_path)"
@@ -585,7 +606,7 @@ try:
         data = json.load(handle)
 except Exception as exc:
     print(f"could not read Claude config {path}: {exc}", file=sys.stderr)
-    raise SystemExit(0)
+    raise SystemExit(1)
 
 removed = []
 preserved_local = []
@@ -600,28 +621,6 @@ def is_under(candidate, root):
         return os.path.commonpath((candidate, root)) == root
     except (ValueError, OSError):
         return False
-
-
-def text_parts(value):
-    if isinstance(value, str):
-        return [value]
-    if isinstance(value, list):
-        return [item for item in value if isinstance(item, str)]
-    return []
-
-
-def invokes_unambiguous_legacy_rust(server):
-    if not isinstance(server, dict):
-        return False
-    parts = []
-    parts.extend(text_parts(server.get("command")))
-    parts.extend(text_parts(server.get("args")))
-    joined = " ".join(parts)
-    return (
-        "CuaDriverRs.app" in joined
-        or ".cua-driver-rs" in joined
-        or "cua-driver-rs" in joined
-    )
 
 
 def release_owned_command(server):
@@ -676,7 +675,7 @@ def is_local_launcher(server):
 
 
 def should_remove(name, server):
-    if name == "cua-driver-rs" or invokes_unambiguous_legacy_rust(server):
+    if name == "cua-driver-rs":
         return True
     return release_owned_command(server)
 

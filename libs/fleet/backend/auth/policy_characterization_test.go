@@ -339,6 +339,31 @@ func characterizationCases() map[string][]routeCase {
 			path: "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools",
 			body: `{"spec":{"template":{"containerDiskImage":"evil.example/workspace:latest","imagePullSecret":"ecr-credentials"}}}`,
 		},
+
+		// Bound-sandbox service exposure. PATCH on a Sandbox item is the one
+		// Sandbox write on the allowlist, and only with a body that touches
+		// nothing but spec.vmTemplate.services — the two bodies record the
+		// sandbox-services admission conjunct's answer alongside the
+		// allowlist's. Every other verb on the item, and every write on the
+		// collection, stays denied.
+		{
+			name: "sandbox-item-services-patch",
+			path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1",
+			body: `{"spec":{"vmTemplate":{"services":[{"name":"source-mcp","targetPort":3100}]}}}`,
+		},
+		{
+			name: "sandbox-item-image-patch",
+			path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1",
+			body: `{"spec":{"vmTemplate":{"containerDiskImage":"evil.example/workspace:latest"}}}`,
+		},
+		// The field report's exact attempt: writing a core Service directly.
+		// Denied on every write verb (with a guidance message this table does
+		// not record); the read stays open.
+		{
+			name: "namespaced-services",
+			path: "api/v1/namespaces/ns-a/services",
+			body: `{"apiVersion":"v1","kind":"Service","spec":{"selector":{"app":"sandbox-1"},"ports":[{"port":80,"targetPort":3100}]}}`,
+		},
 	}
 	k8s := make([]routeCase, 0, len(k8sPaths))
 	for _, k8sPath := range k8sPaths {

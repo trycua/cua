@@ -34,8 +34,9 @@ import (
 // belonging in this table — reading input.facts is the point of that option.
 func TestRouteModulesNeverReadInputFacts(t *testing.T) {
 	modules := map[string]string{
-		"authz.rego":          authzPolicy,
-		"pool_admission.rego": poolAdmissionPolicy,
+		"authz.rego":                      authzPolicy,
+		"pool_admission.rego":             poolAdmissionPolicy,
+		"sandbox_services_admission.rego": sandboxServicesAdmissionPolicy,
 	}
 	// Every base and surface module too, read from the same map LoadOpa
 	// registers, so a surface added there is covered without being named here.

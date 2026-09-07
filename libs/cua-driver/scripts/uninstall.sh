@@ -660,9 +660,9 @@ def release_owned_command(server):
         return True
 
     # The canonical launcher is the only safe path-only fallback, and only
-    # when it no longer resolves to a live target. A live launcher at the same
-    # filename but pointing elsewhere belongs to that other installation.
-    return command_path == canonical_launcher and not os.path.exists(command_path)
+    # when no filesystem entry exists at that path. A symlink, including a
+    # dangling one, still identifies another installation's chosen target.
+    return command_path == canonical_launcher and not os.path.lexists(command_path)
 
 
 def is_local_launcher(server):

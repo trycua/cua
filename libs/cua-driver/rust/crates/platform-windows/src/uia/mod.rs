@@ -88,8 +88,9 @@ pub struct UiaNode {
     /// `element_index` of the nearest actionable ancestor, if any.
     /// Mirrors the markdown's parent-of-this-row.
     pub parent_element_index: Option<usize>,
-    /// True when this node is below a UIA Document control. Browser-owned
-    /// consent chrome must never match renderer-controlled descendants.
+    /// True when this node is below a UIA Document control. The Document root
+    /// itself remains false so browser setup can distinguish it from nested
+    /// documents. ID projection excludes both roots and descendants by type.
     pub in_web_content: bool,
 }
 
@@ -410,15 +411,15 @@ unsafe fn walk_tree_unsafe(
     // we mirror that here when the primary path yields nothing actionable.
     //
     // Trigger: walk produced zero actionable nodes (the primary path may have
-    // still pushed a wrapper-only node — that's why we filter on
-    // `element_index.is_some()`).
+    // still pushed a wrapper-only node). An AutomationId can now index that
+    // wrapper without making it actionable, so inspect action support directly.
     //
     // Stage the fallback walk into fresh accumulators and only swap them in
     // if the fallback actually finds actionable elements. Otherwise the
     // wrapper-only node from the primary walk stays the result — better than
     // erasing it AND leaving the consumed `MAX_TOTAL_ELEMENTS` budget intact
     // for the fallback (which would then truncate large trees prematurely).
-    if nodes.iter().filter(|n| n.element_index.is_some()).count() == 0 {
+    if !has_actionable_nodes(&nodes) {
         // Skip the desktop-root walk-by-pid fallback for VCL / SAL
         // targets (LibreOffice, OpenOffice). The fallback does its own
         // `BuildUpdatedCache(TreeScope.Subtree)` per matched top-level
@@ -469,7 +470,7 @@ unsafe fn walk_tree_unsafe(
                     max_depth,
                 );
 
-                if fallback_nodes.iter().any(|n| n.element_index.is_some()) {
+                if has_actionable_nodes(&fallback_nodes) {
                     nodes = fallback_nodes;
                     lines = fallback_lines;
                     // counter/total aren't read after this point — they're
@@ -667,6 +668,7 @@ unsafe fn walk_cached_bounded(
     *total += 1;
 
     let control_type = read_cached_control_type(element);
+    let id_in_web_content = is_document_or_descendant(in_web_content, &control_type);
     let name = read_cached_bstr_name(element);
     let value = read_cached_bstr_value(element);
     let automation_id = read_cached_bstr(element, UIA_AutomationIdPropertyId);
@@ -677,7 +679,12 @@ unsafe fn walk_cached_bounded(
     let is_enabled = enabled.unwrap_or(true);
     let selected = read_cached_selected(element);
     let actions = detect_cached_actions(element, &control_type, is_enabled);
-    let is_actionable = !actions.is_empty() && is_enabled;
+    let is_indexable = should_index_node(
+        &actions,
+        is_enabled,
+        automation_id.as_deref(),
+        id_in_web_content,
+    );
     let has_content = name
         .as_deref()
         .map(|s| !s.trim().is_empty())
@@ -688,12 +695,12 @@ unsafe fn walk_cached_bounded(
             .unwrap_or(false);
 
     let mut emitted_parent: Option<usize> = parent_index;
-    if is_actionable || has_content {
+    if is_indexable || has_content {
         let retained: IUIAutomationElement = element.clone();
         let ptr = retained.as_raw() as usize;
         std::mem::forget(retained);
 
-        let node = if is_actionable {
+        let node = if is_indexable {
             let idx = *counter;
             *counter += 1;
             let (center_x, center_y, rect) = read_cached_bounding_rect_full(element);
@@ -752,7 +759,7 @@ unsafe fn walk_cached_bounded(
                     &child,
                     depth + 1,
                     emitted_parent,
-                    in_web_content || control_type.eq_ignore_ascii_case("Document"),
+                    id_in_web_content,
                     nodes,
                     lines,
                     counter,
@@ -763,6 +770,29 @@ unsafe fn walk_cached_bounded(
             }
         }
     }
+}
+
+pub(crate) fn is_document_or_descendant(parent_in_web_content: bool, control_type: &str) -> bool {
+    parent_in_web_content || control_type.eq_ignore_ascii_case("Document")
+}
+
+/// Indexed host IDs are observation targets, not proof of action support.
+/// Preserve the empty-wrapper fallback and degraded-result policy when such
+/// a wrapper is the only node the primary UIA walk can reach.
+pub(crate) fn has_actionable_nodes(nodes: &[UiaNode]) -> bool {
+    nodes
+        .iter()
+        .any(|node| node.enabled != Some(false) && !node.actions.is_empty())
+}
+
+fn should_index_node(
+    actions: &[String],
+    is_enabled: bool,
+    automation_id: Option<&str>,
+    in_web_content: bool,
+) -> bool {
+    (!actions.is_empty() && is_enabled)
+        || (!in_web_content && automation_id.is_some_and(|id| !id.trim().is_empty()))
 }
 
 fn read_cached_control_type(element: &IUIAutomationElement) -> String {
@@ -1054,4 +1084,65 @@ fn filter_tree(markdown: &str, query: &str) -> String {
     let mut r = output.join("\n");
     r.push('\n');
     r
+}
+
+#[cfg(test)]
+mod developer_assigned_id_index_tests {
+    use super::{has_actionable_nodes, is_document_or_descendant, should_index_node, UiaNode};
+
+    #[test]
+    fn document_nodes_and_descendants_are_web_content() {
+        assert!(is_document_or_descendant(false, "Document"));
+        assert!(is_document_or_descendant(true, "Button"));
+        assert!(!is_document_or_descendant(false, "Button"));
+    }
+
+    #[test]
+    fn native_ids_keep_patternless_controls_indexed() {
+        assert!(should_index_node(
+            &[],
+            true,
+            Some("app.terms-accept"),
+            false
+        ));
+        assert!(should_index_node(&[], false, Some("app.disabled"), false));
+        assert!(!should_index_node(&[], true, Some("dom-node"), true));
+        assert!(!should_index_node(&[], true, Some("  "), false));
+        assert!(!should_index_node(&[], true, None, false));
+        assert!(should_index_node(&["invoke".into()], true, None, true));
+    }
+
+    #[test]
+    fn indexed_id_only_wrapper_does_not_suppress_action_fallback() {
+        let mut wrapper = UiaNode {
+            element_index: Some(0),
+            control_type: "Window".into(),
+            name: None,
+            value: None,
+            automation_id: Some("native-wrapper".into()),
+            help_text: None,
+            actions: Vec::new(),
+            enabled: Some(true),
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content: false,
+        };
+        assert!(should_index_node(
+            &wrapper.actions,
+            true,
+            wrapper.automation_id.as_deref(),
+            false
+        ));
+        assert!(!has_actionable_nodes(std::slice::from_ref(&wrapper)));
+        wrapper.actions.push("invoke".into());
+        assert!(has_actionable_nodes(std::slice::from_ref(&wrapper)));
+        wrapper.enabled = Some(false);
+        assert!(!has_actionable_nodes(std::slice::from_ref(&wrapper)));
+    }
 }

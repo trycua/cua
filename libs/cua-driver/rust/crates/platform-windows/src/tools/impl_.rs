@@ -1076,6 +1076,14 @@ fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
     }
 }
 
+fn structured_id(node: &crate::uia::UiaNode) -> Option<&str> {
+    (!crate::uia::is_document_or_descendant(node.in_web_content, &node.control_type))
+        .then_some(())?;
+    node.automation_id
+        .as_deref()
+        .filter(|id| !id.trim().is_empty())
+}
+
 pub struct GetWindowStateTool {
     state: Arc<ToolState>,
 }
@@ -1101,7 +1109,10 @@ impl Tool for GetWindowStateTool {
                 the next snapshot of the same (pid, window_id).\n\n\
                 PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
                 indexed row with `element_index`, `role`, `label`, `value`, `enabled`, \
-                `selected`, `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+                `selected`, `frame: {x,y,w,h}`, `parent_index`, `depth`, and optional \
+                developer-assigned `id`. On Windows, `id` is a non-empty native UIA \
+                AutomationId outside web content; an ID-only native control can therefore \
+                appear as an indexed row even without an action pattern. The markdown \
                 `tree_markdown` stays available \
                 and unchanged in shape for existing text-parsing callers — but new \
                 fields will only be added to the structured side.\n\n\
@@ -1401,7 +1412,7 @@ impl Tool for GetWindowStateTool {
                     // Structured `elements` array — preferred consumption
                     // path. Shape matches the cross-platform spec:
                     // `{element_index, element_token, role, label, depth,
-                    // parent_index?, frame?: {x,y,w,h}}`. Frame is
+                    // parent_index?, id?, frame?: {x,y,w,h}}`. Frame is
                     // included when UIA reported a usable BoundingRectangle.
                     let elements: Vec<serde_json::Value> = tr
                         .nodes
@@ -1445,6 +1456,9 @@ impl Tool for GetWindowStateTool {
                             }
                             if let Some(selected) = n.selected {
                                 entry["selected"] = json!(selected);
+                            }
+                            if let Some(id) = structured_id(n) {
+                                entry["id"] = json!(id);
                             }
                             if let Some(parent) = n.parent_element_index {
                                 entry["parent_index"] = json!(parent);
@@ -1497,16 +1511,20 @@ impl Tool for GetWindowStateTool {
                              Cua Driver used a partial MSAA tree. Treat it as discovery \
                              evidence only; it cannot prove checked state."
                         );
-                    } else if count == 0 {
+                    } else if !crate::uia::has_actionable_nodes(&tr.nodes) {
                         structured["degraded"] = json!(true);
-                        structured["degraded_reason"] = json!(
+                        structured["degraded_reason"] = json!(if count == 0 {
                             "ax_tree_empty: the UIA walk returned no actionable elements. \
                              The window may be a non-UIA surface (canvas/WebGL/custom-drawn) \
                              or its accessibility tree was not ready (Chromium/Electron \
                              require a UIA-enable + settle). Do not treat element data as \
                              authoritative — re-snapshot if the app just launched, otherwise \
                              switch to the visual path."
-                        );
+                        } else {
+                            "ax_tree_no_actions: the UIA walk returned indexed native IDs \
+                             but no actionable elements. IDs remain observation targets; \
+                             they do not prove action support or a complete accessibility tree."
+                        });
                         structured["escalation"] = json!({
                             "recommended": "px",
                             "reason": "non-AX surface — act by pixel (x,y) off the \
@@ -9848,6 +9866,55 @@ pub fn build_registry_with_provider(
     r.register_recording_tools();
     r.register_session_tools();
     r
+}
+
+#[cfg(test)]
+mod windows_structured_id_tests {
+    use super::structured_id;
+    use crate::uia::UiaNode;
+
+    fn node(automation_id: Option<&str>, in_web_content: bool) -> UiaNode {
+        UiaNode {
+            element_index: Some(0),
+            control_type: "Edit".into(),
+            name: None,
+            value: None,
+            automation_id: automation_id.map(str::to_owned),
+            help_text: None,
+            actions: Vec::new(),
+            enabled: None,
+            selected: None,
+            element_ptr: 0,
+            center_x: 0,
+            center_y: 0,
+            rect: None,
+            msaa_role: None,
+            depth: 0,
+            parent_element_index: None,
+            in_web_content,
+        }
+    }
+
+    #[test]
+    fn exposes_only_non_empty_native_ids() {
+        assert_eq!(
+            structured_id(&node(Some("workspace_name_input"), false)),
+            Some("workspace_name_input")
+        );
+        assert_eq!(structured_id(&node(Some(""), false)), None);
+        assert_eq!(structured_id(&node(Some("  "), false)), None);
+        assert_eq!(structured_id(&node(None, false)), None);
+        assert_eq!(structured_id(&node(Some("dom-id"), true)), None);
+    }
+
+    #[test]
+    fn document_root_id_is_excluded_with_the_existing_ancestor_flag() {
+        // A root Document has no Document ancestor. Browser setup relies on
+        // that distinction; ID projection must exclude the root by its type.
+        let mut document = node(Some("document-dom-id"), false);
+        document.control_type = "Document".into();
+        assert_eq!(structured_id(&document), None);
+    }
 }
 
 #[cfg(test)]

@@ -1124,6 +1124,7 @@ fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &s
         response.text()
     );
     assert_fixture_contains(fixture, "child_windows=1");
+    assert_native_hyprland_semantic_route(fixture, "child_window", addressing, delivery, &response);
     delivered_observation()
 }
 
@@ -1216,6 +1217,7 @@ fn native_hyprland_semantic_case(
         && matches!(
             (host, action, targeting),
             ("electron" | "tauri", "left_click", Targeting::Px)
+                | ("electron", "child_window", Targeting::Px)
                 | ("electron", "scroll", Targeting::Ax)
         )
 }
@@ -1447,6 +1449,7 @@ fn native_hyprland_semantic_expectations_are_limited_to_proven_cells() {
                 let expected = matches!(
                     (host, action, targeting),
                     ("electron" | "tauri", "left_click", Targeting::Px)
+                        | ("electron", "child_window", Targeting::Px)
                         | ("electron", "scroll", Targeting::Ax)
                 );
                 assert_eq!(
@@ -1486,6 +1489,7 @@ fn native_hyprland_semantic_declarations_require_delivery_and_all_background_ora
     for (host, action, addressing) in [
         ("electron", "left_click", "px"),
         ("tauri", "left_click", "px"),
+        ("electron", "child_window", "px"),
         ("electron", "scroll", "ax"),
     ] {
         let spec = HostSpec {

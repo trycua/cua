@@ -2239,62 +2239,23 @@ pub fn perform_action_at_screen_point(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let visited = match collect_visited(conn, pid).await? {
-                Some(v) => v,
-                None => return Ok(None),
-            };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, xid, None)
-                .await
-                .unwrap_or((0, 0));
+            let (visited, scoped_frame) =
+                match collect_visited_bounded(conn, pid, xid, None, None).await? {
+                    Some(walked) => walked,
+                    None => return Ok(None),
+                };
 
-            // Reconstruct each indexable element's SCREEN frame the same way
-            // get_window_state does: WINDOW-relative extents (GTK4 reports these
-            // correctly; Screen is (0,0)) plus the window's screen origin (the
-            // GNOME Shell helper on Wayland, _GTK_FRAME_EXTENTS on X11). When no
-            // offset resolves, fall back to CoordType::Screen (correct on Qt/GTK3).
-            let offset = window_to_screen_offset(pid, xid, None);
-            let coord = if offset.is_some() {
-                CoordType::Window
-            } else {
-                CoordType::Screen
-            };
-            let (ox, oy) = offset.unwrap_or((0, 0));
-
-            // (element_index, x, y, w, h, is_passive_label) over the SAME indexable
-            // list `perform_action`/`get_window_state` use, so the chosen index
-            // maps straight back to a verified `element_index` actuation.
+            // Share snapshot correlation and geometry, including renderer-frame
+            // rebasing and embedded WebProcess insets. Bounds retain application-
+            // wide indices even when only the target window's nodes are emitted.
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
-            let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
-            for (idx, node) in action_nodes.iter().enumerate() {
-                if !node.has_component {
-                    continue;
-                }
-                let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
-                    continue;
-                };
-                let Some(Ok(comp)) = call(proxies.component()).await else {
-                    continue;
-                };
-                let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await else {
-                    continue;
-                };
-                if x == i32::MIN || y == i32::MIN || w <= 1 || h <= 1 {
-                    continue;
-                }
-                let (document_x, document_y) = if node.in_web_doc {
-                    web_document_origin
-                } else {
-                    (0, 0)
-                };
-                frames.push((
-                    idx,
-                    x + ox + document_x,
-                    y + oy + document_y,
-                    w as u32,
-                    h as u32,
-                    is_passive_role(&node.role),
-                ));
-            }
+            let frames: Vec<_> = element_bounds_for_visited(&visited, pid, xid, scoped_frame)
+                .await
+                .into_iter()
+                .map(|(idx, x, y, w, h)| {
+                    (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
+                })
+                .collect();
 
             let Some(idx) = select_click_target(&frames, screen_x, screen_y) else {
                 return Ok(None);
@@ -2867,6 +2828,36 @@ fn rebase_renderer_window_offset(
     offset
 }
 
+fn project_screen_extents(
+    (x, y, w, h): (i32, i32, i32, i32),
+    (offset_x, offset_y): (i32, i32),
+    document_origin: Option<(i32, i32)>,
+) -> Option<(i32, i32, u32, u32)> {
+    // Reject unrealized-widget sentinels before applying any offsets.
+    if !crate::snapshot_queries::plausible_raw_extents((x, y, w, h)) {
+        return None;
+    }
+    let (document_x, document_y) = document_origin.unwrap_or((0, 0));
+    Some((
+        x + offset_x + document_x,
+        y + offset_y + document_y,
+        w as u32,
+        h as u32,
+    ))
+}
+
+fn scoped_component_nodes<'a, T>(
+    nodes: &'a [T],
+    scoped_frame: Option<usize>,
+    component: impl Fn(&T) -> (usize, bool) + 'a,
+) -> impl Iterator<Item = (usize, &'a T)> + 'a {
+    // Filter after enumeration: public element indices belong to the whole app.
+    nodes.iter().enumerate().filter(move |(_, node)| {
+        let (frame, has_component) = component(node);
+        has_component && scoped_frame.is_none_or(|scope| scope == frame)
+    })
+}
+
 /// Screen-coordinate bounds for the exact visited sequence rendered into the
 /// current snapshot. Nodes without a usable Component interface, or whose
 /// extents query fails/times out, are omitted rather than borrowing another
@@ -3012,44 +3003,23 @@ async fn element_bounds_for_visited(
     // Bounds are independent read-only queries. Overlap a bounded number of
     // calls instead of serializing thousands of unrealized menu components.
     // Preserve original indices, all extents checks, and per-call timeouts.
-    let queries = action_nodes
-        .iter()
-        .enumerate()
-        .map(|(idx, node)| async move {
-            if scoped_frame.is_some_and(|scope| node.frame_ordinal != scope) || !node.has_component
-            {
-                return None;
-            }
-            let proxies = call(node.acc.proxies()).await?.ok()?;
-            let comp = call(proxies.component()).await?.ok()?;
-            if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
-                // Unrealized widgets (e.g. items inside closed menus/popovers)
-                // report GetExtents as the i32::MIN sentinel and/or a degenerate
-                // 0x0 / 1x1 size. Emitting those poisons downstream consumers
-                // (overlay renderers, click targeting), so keep only elements
-                // with plausible on-screen geometry. (Validate the raw extents,
-                // before applying the screen offset, so the sentinel check still
-                // catches unrealized widgets.)
-                if !crate::snapshot_queries::plausible_raw_extents((x, y, w, h)) {
-                    return None;
-                }
-                let (document_x, document_y) = if node.in_web_doc {
-                    web_document_origin.unwrap_or((0, 0))
-                } else {
-                    (0, 0)
-                };
-                return Some((
-                    idx,
-                    (
-                        x + offset_x + document_x,
-                        y + offset_y + document_y,
-                        w as u32,
-                        h as u32,
-                    ),
-                ));
-            }
-            None
-        });
+    let queries = scoped_component_nodes(&action_nodes, scoped_frame, |node| {
+        (node.frame_ordinal, node.has_component)
+    })
+    .map(|(idx, node)| async move {
+        let proxies = call(node.acc.proxies()).await?.ok()?;
+        let comp = call(proxies.component()).await?.ok()?;
+        if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
+            let document_origin = if node.in_web_doc {
+                web_document_origin
+            } else {
+                None
+            };
+            return project_screen_extents((x, y, w, h), (offset_x, offset_y), document_origin)
+                .map(|bounds| (idx, bounds));
+        }
+        None
+    });
     let collected = crate::snapshot_queries::collect_indexed(queries, deadline).await;
     if tokio::time::Instant::now() >= deadline {
         dlog!(
@@ -3173,8 +3143,9 @@ mod coord_tests {
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
         hyprland_document_top_inset, is_activation_action, is_enabled_state,
         is_indexable_capabilities, is_passive_role, is_web_process_bus,
-        prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
-        select_click_target, select_web_document, ApplicationSelection,
+        prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
+        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
+        ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -3387,6 +3358,53 @@ mod coord_tests {
         assert_eq!(
             rebase_renderer_window_offset((100, 50), Some((0, 29))),
             (100, 50)
+        );
+    }
+
+    #[test]
+    fn point_hit_combines_negative_renderer_origin_and_web_process_inset() {
+        let offset = rebase_renderer_window_offset((100, 50), Some((-8, -29)));
+        let document = combine_wayland_content_offsets(None, Some((0, 47)), true);
+        let (x, y, w, h) = project_screen_extents((450, 270, 40, 20), offset, document).unwrap();
+        assert_eq!((x, y, w, h), (558, 396, 40, 20));
+        // Keep the application-wide index and prefer the button over its label.
+        let frames = [(82, x, y, w, h, false), (83, x + 1, y + 1, 38, 18, true)];
+        assert_eq!(select_click_target(&frames, 569, 404), Some(82));
+        assert_eq!(select_click_target(&frames, 569, 375), None);
+        assert_eq!(
+            project_screen_extents((450, 270, 40, 20), offset, None),
+            Some((558, 349, 40, 20))
+        );
+    }
+
+    #[test]
+    fn point_hit_projection_rejects_unrealized_extents_before_offsets() {
+        for raw in [(i32::MIN, 0, 40, 20), (0, i32::MIN, 40, 20), (0, 0, 1, 1)] {
+            assert_eq!(project_screen_extents(raw, (108, 79), Some((0, 47))), None);
+        }
+    }
+
+    #[test]
+    fn scoped_bounds_keep_application_indices_and_original_target_nodes() {
+        let nodes = [
+            (0, true, "sibling button"),
+            (1, false, "target without geometry"),
+            (1, true, "target button"),
+            (0, true, "sibling entry"),
+            (1, true, "target entry"),
+        ];
+        let scoped: Vec<_> = scoped_component_nodes(&nodes, Some(1), |node| (node.0, node.1))
+            .map(|(index, node)| (index, node.2))
+            .collect();
+        assert_eq!(scoped, [(2, "target button"), (4, "target entry")]);
+        assert_eq!(nodes[scoped[0].0].2, "target button");
+        let all: Vec<_> = scoped_component_nodes(&nodes, None, |node| (node.0, node.1))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(all, [0, 2, 3, 4]);
+        assert_eq!(
+            scoped_component_nodes(&nodes, Some(2), |node| (node.0, node.1)).count(),
+            0
         );
     }
 

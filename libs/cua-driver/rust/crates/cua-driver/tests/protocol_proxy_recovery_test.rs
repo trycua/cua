@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: MIT
+// Copyright (c) 2026 Cua AI, Inc.
+
 //! Real stdio proxies and a real daemon, with selective control-channel loss.
 //! Set CUA_PROXY_RECOVERY_IDLE_SECONDS=1200 for a long-idle diagnostic replay.
 //! This injects a known transport failure; it does not reproduce an unknown trigger.

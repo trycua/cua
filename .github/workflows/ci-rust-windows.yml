@@ -93,6 +93,8 @@ jobs:
         env:
           CUA_PROXY_RECOVERY_IDLE_SECONDS: ${{ inputs.proxy_idle_seconds || 1 }}
         run: cargo test -p cua-driver --test protocol_proxy_recovery_test --locked -- --nocapture
+      - name: Test sentinel setup barrier
+        run: node --test libs/cua-driver/tests/fixtures/apps/cross-platform/electron/preload.test.js
       - name: Run named-pipe readiness regression
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-testkit stalled_pipe_attempt_is_bounded_and_does_not_block_the_next_probe --lib --locked

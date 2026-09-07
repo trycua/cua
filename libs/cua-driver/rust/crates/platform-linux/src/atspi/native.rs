@@ -1949,13 +1949,348 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     )
 }
 
-/// Invoke an indexed scroll target's directional AT-SPI action.
-///
-/// Chromium exposes scrollable web regions as named actions such as
-/// `scrollDown`/`scrollForward`; using that accessibility route avoids the
-/// X11 `Button5` event path that Chromium silently drops in background mode.
-pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
-    bounded(
+/// A mutation was attempted; callers must not replay through another route.
+#[derive(Debug)]
+pub struct ScrollProgress {
+    pub acknowledged: u32,
+    pub complete: bool,
+    pub detail: Option<String>,
+}
+
+fn finish_scroll(result: Result<()>, attempted: bool, acknowledged: u32) -> Result<ScrollProgress> {
+    match result {
+        Ok(()) => Ok(ScrollProgress {
+            acknowledged,
+            complete: true,
+            detail: None,
+        }),
+        Err(error) if attempted => Ok(ScrollProgress {
+            acknowledged,
+            complete: false,
+            detail: Some(error.to_string()),
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+async fn scroll_sequence<D, DF, S, SF>(
+    amount: usize,
+    mut baseline: Option<Vec<(i64, i64)>>,
+    attempted: &std::cell::Cell<bool>,
+    acknowledged: &std::cell::Cell<u32>,
+    mut dispatch: D,
+    mut settle: S,
+) -> Result<()>
+where
+    D: FnMut() -> DF,
+    DF: std::future::Future<Output = Result<bool>>,
+    S: FnMut(Vec<(i64, i64)>) -> SF,
+    SF: std::future::Future<Output = Result<Vec<(i64, i64)>>>,
+{
+    for step in 0..amount.max(1) {
+        let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
+        attempted.set(true);
+        if !tokio::time::timeout_at(deadline, dispatch())
+            .await
+            .map_err(|_| anyhow!("scroll action timed out"))??
+        {
+            return Err(anyhow!("scroll action returned false"));
+        }
+        acknowledged.set(acknowledged.get() + 1);
+        if step + 1 < amount {
+            if let Some(previous) = baseline.take() {
+                baseline = Some(
+                    tokio::time::timeout_at(deadline, settle(previous))
+                        .await
+                        .map_err(|_| anyhow!("scroll movement did not settle before deadline"))??,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn descendant_indices(depths: impl Iterator<Item = usize>, target: usize) -> Vec<usize> {
+    let depths: Vec<_> = depths.collect();
+    ((target + 1)..depths.len())
+        .take_while(|&index| depths[index] > depths[target])
+        .take(64)
+        .collect()
+}
+
+fn relative_position(
+    target: (i32, i32, i32, i32),
+    probe: (i32, i32, i32, i32),
+) -> Option<(i64, i64)> {
+    let valid =
+        |(x, y, w, h): (i32, i32, i32, i32)| x != i32::MIN && y != i32::MIN && w > 0 && h > 0;
+    (valid(target) && valid(probe)).then(|| {
+        (
+            i64::from(probe.0) - i64::from(target.0),
+            i64::from(probe.1) - i64::from(target.1),
+        )
+    })
+}
+
+struct PageMotion {
+    baseline: Vec<(i64, i64)>,
+    previous: Vec<(i64, i64)>,
+    stable: usize,
+}
+
+impl PageMotion {
+    fn new(baseline: Vec<(i64, i64)>) -> Self {
+        Self {
+            previous: baseline.clone(),
+            baseline,
+            stable: 0,
+        }
+    }
+
+    fn observe(&mut self, sample: &[(i64, i64)], direction: &str) -> bool {
+        if sample.len() != self.baseline.len() || sample.is_empty() {
+            return false;
+        }
+        let axis = |point: (i64, i64)| {
+            if matches!(direction, "left" | "right") {
+                point.0
+            } else {
+                point.1
+            }
+        };
+        let moved = sample.iter().zip(&self.baseline).any(|(&now, &before)| {
+            if matches!(direction, "up" | "left") {
+                axis(now) > axis(before)
+            } else {
+                axis(now) < axis(before)
+            }
+        });
+        self.stable = if moved && sample == self.previous {
+            self.stable + 1
+        } else {
+            0
+        };
+        self.previous = sample.to_vec();
+        self.stable >= 2
+    }
+}
+
+#[cfg(test)]
+mod page_scroll_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn probes_are_bounded_descendants_in_preorder() {
+        assert_eq!(
+            descendant_indices([0, 1, 2, 3, 2, 1, 2].into_iter(), 1),
+            vec![2, 3, 4]
+        );
+        assert!(descendant_indices([0, 1, 1].into_iter(), 1).is_empty());
+        assert_eq!(
+            descendant_indices(std::iter::once(0).chain(std::iter::repeat(1).take(100)), 0).len(),
+            64
+        );
+    }
+
+    #[test]
+    fn relative_geometry_rejects_unrealized_and_window_motion() {
+        assert_eq!(
+            relative_position((10, 20, 200, 100), (30, 60, 10, 10)),
+            Some((20, 40))
+        );
+        assert_eq!(
+            relative_position((110, 220, 200, 100), (130, 260, 10, 10)),
+            Some((20, 40))
+        );
+        assert!(relative_position((0, 0, 200, 100), (i32::MIN, 0, 10, 10)).is_none());
+        assert!(relative_position((0, 0, 0, 100), (0, 0, 10, 10)).is_none());
+        let mut motion = PageMotion::new(vec![(20, 40)]);
+        for _ in 0..10 {
+            assert!(!motion.observe(&[(20, 40)], "down"));
+        }
+    }
+
+    #[test]
+    fn directional_motion_requires_consecutive_stable_samples() {
+        for (direction, moved) in [
+            ("down", (20, 10)),
+            ("up", (20, 70)),
+            ("left", (50, 40)),
+            ("right", (-10, 40)),
+        ] {
+            let mut motion = PageMotion::new(vec![(20, 40)]);
+            assert!(!motion.observe(&[moved], direction));
+            assert!(!motion.observe(&[moved], direction));
+            assert!(motion.observe(&[moved], direction));
+        }
+        let mut motion = PageMotion::new(vec![(20, 40)]);
+        for _ in 0..4 {
+            assert!(!motion.observe(&[(20, 70)], "down"));
+        }
+        assert!(!motion.observe(&[], "down"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn asynchronous_page_ack_waits_for_movement_and_stability() {
+        let events = RefCell::new(Vec::new());
+        let attempted = Cell::new(false);
+        let acknowledged = Cell::new(0);
+        scroll_sequence(
+            2,
+            Some(vec![(0, 100)]),
+            &attempted,
+            &acknowledged,
+            || async {
+                events.borrow_mut().push("ack");
+                Ok(true)
+            },
+            |baseline| async {
+                let mut motion = PageMotion::new(baseline);
+                for (event, y) in [
+                    ("unchanged", 100),
+                    ("move", 0),
+                    ("stable", 0),
+                    ("stable", 0),
+                ] {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    events.borrow_mut().push(event);
+                    if motion.observe(&[(0, y)], "down") {
+                        return Ok(vec![(0, y)]);
+                    }
+                }
+                unreachable!()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            vec!["ack", "unchanged", "move", "stable", "stable", "ack"]
+        );
+        assert_eq!(acknowledged.get(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_or_timed_out_attempts_never_become_fallback() {
+        for successful_before in [0, 1] {
+            for timeout in [false, true] {
+                let attempted = Cell::new(false);
+                let acknowledged = Cell::new(0);
+                let result = scroll_sequence(
+                    2,
+                    None,
+                    &attempted,
+                    &acknowledged,
+                    || async {
+                        if acknowledged.get() < successful_before {
+                            return Ok(true);
+                        }
+                        if timeout {
+                            std::future::pending::<()>().await;
+                        }
+                        Ok(false)
+                    },
+                    |baseline| async { Ok(baseline) },
+                )
+                .await;
+                let outcome = finish_scroll(result, attempted.get(), acknowledged.get()).unwrap();
+                assert!(!outcome.complete);
+                assert_eq!(outcome.acknowledged, successful_before);
+            }
+        }
+        assert!(finish_scroll(Err(anyhow!("unsupported before dispatch")), false, 0).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missing_or_stalled_probe_stops_after_first_ack() {
+        for timeout in [false, true] {
+            let attempted = Cell::new(false);
+            let acknowledged = Cell::new(0);
+            let result = scroll_sequence(
+                2,
+                Some(vec![(0, 100)]),
+                &attempted,
+                &acknowledged,
+                || async { Ok(true) },
+                |_| async {
+                    if timeout {
+                        std::future::pending::<()>().await;
+                    }
+                    Err(anyhow!("probe disappeared"))
+                },
+            )
+            .await;
+            let outcome = finish_scroll(result, attempted.get(), acknowledged.get()).unwrap();
+            assert!(!outcome.complete);
+            assert_eq!(outcome.acknowledged, 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overall_timeout_retains_progress() {
+        let attempted = Cell::new(false);
+        let acknowledged = Cell::new(0);
+        let result = tokio::time::timeout(
+            Duration::from_millis(1),
+            scroll_sequence(
+                2,
+                Some(vec![(0, 100)]),
+                &attempted,
+                &acknowledged,
+                || async { Ok(true) },
+                |_| std::future::pending::<Result<Vec<(i64, i64)>>>(),
+            ),
+        )
+        .await
+        .map_err(|_| anyhow!("overall timeout"))
+        .and_then(|r| r);
+        let outcome = finish_scroll(result, attempted.get(), acknowledged.get()).unwrap();
+        assert_eq!(outcome.acknowledged, 1);
+        assert!(!outcome.complete);
+    }
+}
+
+async fn sample_page_probes(
+    target: &atspi::proxy::component::ComponentProxy<'_>,
+    probes: &[atspi::proxy::component::ComponentProxy<'_>],
+    coord: CoordType,
+) -> Result<Vec<(i64, i64)>> {
+    let before = call(target.get_extents(coord))
+        .await
+        .and_then(|r| r.ok())
+        .ok_or_else(|| anyhow!("scroll target geometry unavailable"))?;
+    let mut sample = Vec::new();
+    for probe in probes {
+        let bounds = call(probe.get_extents(coord))
+            .await
+            .and_then(|r| r.ok())
+            .ok_or_else(|| anyhow!("scroll probe disappeared"))?;
+        sample.push(
+            relative_position(before, bounds)
+                .ok_or_else(|| anyhow!("scroll probe geometry invalid"))?,
+        );
+    }
+    let after = call(target.get_extents(coord)).await.and_then(|r| r.ok());
+    if after != Some(before) {
+        return Err(anyhow!("scroll target geometry changed during observation"));
+    }
+    Ok(sample)
+}
+
+/// Invoke the original target's semantic actions, pacing multi-page requests
+/// with descendant motion. `Err` means no mutation was attempted; an incomplete
+/// `ScrollProgress` preserves uncertainty after an attempted mutation.
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    let attempted = std::cell::Cell::new(false);
+    let acknowledged = std::cell::Cell::new(0);
+    let result = bounded(
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -2001,14 +2336,71 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
             }
 
             if let (Some(action), Some(action_index)) = (action_proxy, selected) {
-                for _ in 0..amount.max(1) {
-                    match call(action.do_action(action_index)).await {
-                        Some(Ok(true)) => {}
-                        Some(Ok(false)) => return Err(anyhow!("scroll action returned false")),
-                        Some(Err(e)) => return Err(anyhow!("scroll action failed: {e}")),
-                        None => return Err(anyhow!("scroll action timed out")),
+                let mut observation = None;
+                if by == cua_driver_contract::ScrollBy::Page && amount > 1 {
+                    let component = proxies.component().await?;
+                    let target_index = visited
+                        .iter()
+                        .position(|node| std::ptr::eq(node, target))
+                        .unwrap();
+                    let mut probes = Vec::new();
+                    // Fix probe identities before dispatch; never replace vanished descendants.
+                    for index in
+                        descendant_indices(visited.iter().map(|node| node.depth), target_index)
+                    {
+                        if !visited[index].has_component {
+                            continue;
+                        }
+                        if let Some(Ok(proxies)) = call(visited[index].acc.proxies()).await {
+                            if let Some(Ok(probe)) = call(proxies.component()).await {
+                                probes.push(probe);
+                            }
+                        }
+                    }
+                    for coord in [CoordType::Window, CoordType::Screen] {
+                        let mut usable = Vec::new();
+                        for probe in &probes {
+                            if sample_page_probes(&component, std::slice::from_ref(probe), coord)
+                                .await
+                                .is_ok()
+                            {
+                                usable.push(probe.clone());
+                                if usable.len() == 8 {
+                                    break;
+                                }
+                            }
+                        }
+                        if !usable.is_empty() {
+                            let baseline = sample_page_probes(&component, &usable, coord).await?;
+                            observation = Some((component.clone(), usable, coord, baseline));
+                            break;
+                        }
+                    }
+                    if observation.is_none() {
+                        return Err(anyhow!("no usable descendant scroll probes"));
                     }
                 }
+                scroll_sequence(
+                    amount,
+                    observation.as_ref().map(|o| o.3.clone()),
+                    &attempted,
+                    &acknowledged,
+                    || async { action.do_action(action_index).await.map_err(Into::into) },
+                    |baseline| async {
+                        let (component, probes, coord, _) = observation
+                            .as_ref()
+                            .expect("page probes selected before dispatch");
+                        let mut motion = PageMotion::new(baseline);
+                        loop {
+                            let sample = sample_page_probes(component, probes, *coord).await?;
+                            if motion.observe(&sample, direction) {
+                                return Ok(sample);
+                            }
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                    },
+                )
+                .await?;
                 return Ok(());
             }
 
@@ -2041,10 +2433,12 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
                 };
                 let next =
                     (current + sign * increment * amount.max(1) as f64).clamp(minimum, maximum);
+                attempted.set(true);
                 call(value.set_current_value(next))
                     .await
                     .and_then(|result| result.ok())
                     .ok_or_else(|| anyhow!("scroll value update timed out"))?;
+                acknowledged.set(1);
                 return Ok(());
             }
 
@@ -2053,7 +2447,8 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
             ))
         },
         || Err(anyhow!("scroll_element timed out for pid {pid}")),
-    )
+    );
+    finish_scroll(result, attempted.get(), acknowledged.get())
 }
 
 /// Give an indexed element keyboard focus through AT-SPI Component.GrabFocus

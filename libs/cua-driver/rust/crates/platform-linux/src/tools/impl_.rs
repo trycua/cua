@@ -5426,6 +5426,89 @@ impl Tool for SetValueTool {
 pub struct ScrollTool {
     state: Arc<ToolState>,
 }
+
+fn atspi_scroll_result(progress: crate::atspi::ScrollProgress, foreground: bool) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+    let effect = if !progress.complete && progress.acknowledged > 0 {
+        ActionEffect::Partial
+    } else {
+        ActionEffect::Unverifiable
+    };
+    let mut record = ActionExecutionRecord::builder(
+        effect,
+        ActionTransport::LinuxAtSpiAction,
+        if foreground {
+            RequestedDelivery::Foreground
+        } else {
+            RequestedDelivery::Background
+        },
+    )
+    .actual_delivery(if !progress.complete {
+        ActualDelivery::Unknown
+    } else if foreground {
+        ActualDelivery::Foreground
+    } else {
+        ActualDelivery::Background
+    });
+    if progress.acknowledged > 0 {
+        record = record.delivered_count(progress.acknowledged);
+    }
+    let text = if progress.complete {
+        format!(
+            "AT-SPI acknowledged {} scroll action(s); effect remains unverified.",
+            progress.acknowledged
+        )
+    } else {
+        format!("AT-SPI scroll stopped after {} acknowledged action(s): {}. Refresh state before another action.", progress.acknowledged, progress.detail.as_deref().unwrap_or("unknown outcome"))
+    };
+    let record = record
+        .detail(text.clone())
+        .build()
+        .expect("AT-SPI scroll preserves acknowledged progress");
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    let result = if progress.complete {
+        ToolResult::text(text)
+    } else {
+        ToolResult::error(text)
+    };
+    result.with_structured(public).with_action_record(record)
+}
+
+#[test]
+fn atspi_scroll_outcomes_preserve_uncertainty_and_acknowledged_count() {
+    use cua_driver_core::action_record::ActionEffect;
+    for (complete, acknowledged, effect) in [
+        (false, 0, ActionEffect::Unverifiable),
+        (false, 1, ActionEffect::Partial),
+        (true, 2, ActionEffect::Unverifiable),
+    ] {
+        let result = atspi_scroll_result(
+            crate::atspi::ScrollProgress {
+                acknowledged,
+                complete,
+                detail: None,
+            },
+            false,
+        );
+        let record = result.action_record.unwrap();
+        assert_eq!(record.effect, effect);
+        let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+        assert_eq!(
+            public["delivery"]["mode"],
+            if complete { "background" } else { "unknown" }
+        );
+        assert_eq!(
+            public["delivery"]["delivered_count"],
+            if acknowledged == 0 {
+                Value::Null
+            } else {
+                json!(acknowledged)
+            }
+        );
+    }
+}
 static SCROLL_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -5513,6 +5596,12 @@ impl Tool for ScrollTool {
             Err(e) => return e,
         };
         let amount = args.u64_or("amount", 3).clamp(1, 50) as usize;
+        let by = match serde_json::from_value::<cua_driver_contract::ScrollBy>(
+            args.get("by").cloned().unwrap_or(json!("line")),
+        ) {
+            Ok(by) => by,
+            Err(error) => return ToolResult::error(format!("Invalid scroll by: {error}")),
+        };
         // Surface 6: resolve element_token / element_index. The Linux
         // scroll implementation today doesn't actually pre-focus the
         // element (X11 scroll buttons go to the window root), but the
@@ -5650,23 +5739,24 @@ impl Tool for ScrollTool {
             if !(crate::wayland::wayland_input_enabled() && is_webkitgtk_embedder(pid)) {
                 let direction_for_ax = direction.clone();
                 let ax_result = tokio::task::spawn_blocking(move || {
-                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount)
+                    crate::atspi::scroll_element(pid, idx, &direction_for_ax, amount, by)
                 })
                 .await;
-                if matches!(ax_result, Ok(Ok(()))) {
-                    let mode = if delivery.is_foreground() {
-                        "foreground"
-                    } else {
-                        "background"
-                    };
-                    return ToolResult::text(format!(
-                        "Scrolled {direction} {amount} ticks via AT-SPI (delivery_mode:{mode})."
-                    ))
-                    .with_structured(json!({
-                        "path": "atspi",
-                        "verified": false,
-                        "delivery_mode": mode
-                    }));
+                match ax_result {
+                    Ok(Ok(progress)) => {
+                        return atspi_scroll_result(progress, delivery.is_foreground())
+                    }
+                    Err(error) => {
+                        return atspi_scroll_result(
+                            crate::atspi::ScrollProgress {
+                                acknowledged: 0,
+                                complete: false,
+                                detail: Some(error.to_string()),
+                            },
+                            delivery.is_foreground(),
+                        )
+                    }
+                    Ok(Err(_)) => {}
                 }
             }
         }

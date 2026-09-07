@@ -24,6 +24,7 @@ include/cua_hyprland/protocol.hpp
 include/cua_hyprland/session.hpp
 include/cua_hyprland/status.hpp
 src/drag_geometry.hpp
+src/foreground_route.hpp
 src/inject_server.cpp
 src/inject_server.hpp
 src/input_client_deadline.hpp
@@ -42,6 +43,7 @@ src/status.cpp
 tests/cmake-api/CMakeLists.txt
 tests/cmake-api/include/src/plugins/PluginAPI.hpp
 tests/drag_geometry_test.cpp
+tests/foreground_route_test.cpp
 tests/input_grant_test.cpp
 tests/input_client_deadline_test.cpp
 tests/mock-hyprland/mock.hpp

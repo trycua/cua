@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tarfile
@@ -89,6 +90,21 @@ class ReleaseTest(unittest.TestCase):
                 self.assertNotIn(b"excluded sentinel", archive.extractfile(member).read())
         self.assertEqual((first / "README.md").read_bytes(), (HERE / "USAGE.md").read_bytes())
         subprocess.run(["bash", "-n", str(first / "PKGBUILD")], check=True)
+
+    @unittest.skipUnless(shutil.which("cmake"), "requires the portable plugin CMake toolchain")
+    def test_actual_allowlist_configures_and_builds_foreground_guard(self):
+        source = self.root / "allowlisted-source"
+        for relative in bundle.SOURCE_FILES:
+            destination = source / relative
+            destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(HERE.parent.parent / relative, destination)
+        build = self.root / "portable-build"
+        for command in (
+            ["cmake", "-S", str(source), "-B", str(build), "-DCUA_HYPRLAND_BUILD_PLUGIN=OFF"],
+            ["cmake", "--build", str(build), "--target", "cua_hyprland_foreground_route_test"],
+        ):
+            result = subprocess.run(command, capture_output=True, text=True, timeout=120)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_refuses_revision_version_missing_source_and_existing_output(self):
         for revision, version in (("HEAD", "1.2.3"), (self.revision, "1.2.4"), (self.revision, "1.2.3;false")):

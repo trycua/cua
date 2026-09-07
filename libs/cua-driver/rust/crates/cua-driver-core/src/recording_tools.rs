@@ -45,9 +45,17 @@ impl Tool for StartRecordingTool {
     fn def(&self) -> &ToolDef {
         START_REC_DEF.get_or_init(|| ToolDef {
             name: "start_recording".into(),
-            description: "Start trajectory recording. Every subsequent action-tool \
-                invocation (click, right_click, scroll, type_text, press_key, hotkey, \
-                set_value) writes a turn folder under `output_dir`:\n\n\
+            description: "Start trajectory recording for the calling session. Every \
+                subsequent action-tool invocation from that same session (click, \
+                right_click, scroll, type_text, press_key, hotkey, set_value) writes a \
+                turn folder under `output_dir`. Calls from other sessions — a second \
+                MCP connection, or a one-shot `cua-driver <tool>` CLI invocation, which \
+                is its own implicit session — and session lifecycle calls \
+                (`start_session` / `end_session`) are not recorded, so unrelated \
+                activity cannot shift this recording's turn numbering. A recording \
+                started by the CLI (`cua-driver recording start`) has no owning session \
+                and stays daemon-wide.\n\n\
+                Each turn folder holds:\n\n\
                 - `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI \
                   state immediately before and after the action.\n\
                 - `before.png` / `after.png` — target-window screenshots immediately \

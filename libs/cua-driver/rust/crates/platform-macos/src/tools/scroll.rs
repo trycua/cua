@@ -451,7 +451,11 @@ impl Tool for ScrollTool {
             // click pixel path — undo any session downscale, then translate
             // through the shared window frame (which refuses a window with no
             // live frame rather than scrolling at screen-absolute coords).
-            if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+            if let Some(ratio) = self.state.resize_registry.ratio(
+                args.opt_str("_session_id").as_deref(),
+                pid as u32,
+                window_id.map(u64::from),
+            ) {
                 cx *= ratio;
                 cy *= ratio;
             }

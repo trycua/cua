@@ -450,13 +450,19 @@ impl Tool for GetWindowStateTool {
                         if let Some(ow) = orig_w {
                             if w > 0 {
                                 self.state.resize_registry.set_ratio(
-                                    pid,
-                                    window_id,
+                                    session_id.as_deref(),
+                                    pid as u32,
+                                    Some(u64::from(window_id)),
                                     ow as f64 / w as f64,
                                 );
                             }
                         } else {
-                            self.state.resize_registry.clear_ratio(pid, window_id);
+                            self.state.resize_registry.set_ratio(
+                                session_id.as_deref(),
+                                pid as u32,
+                                Some(u64::from(window_id)),
+                                1.0,
+                            );
                         }
                     }
                     Some((b64, file_path, w, h, bounds, scale))
@@ -466,7 +472,11 @@ impl Tool for GetWindowStateTool {
                         "Screenshot frame could not be verified for window {window_id}: {e:?}"
                     );
                     if !observation_only {
-                        self.state.resize_registry.clear_ratio(pid, window_id);
+                        self.state.resize_registry.clear_ratio(
+                            session_id.as_deref(),
+                            pid as u32,
+                            Some(u64::from(window_id)),
+                        );
                     }
                     screenshot_frame_error = Some(e);
                     None

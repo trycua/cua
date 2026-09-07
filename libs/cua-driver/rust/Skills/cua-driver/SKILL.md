@@ -948,6 +948,13 @@ Passing `window_id` alongside `x, y` is optional but recommended —
 it pins the coordinate conversion to the window whose screenshot
 produced the pixel.
 
+Keep the screenshot and pixel action in the same lifecycle session. Another
+client's capture must not change your coordinate transform. If the current
+session has no matching screenshot context, the driver returns
+`screenshot_context_missing` instead of guessing. For multi-call CLI work,
+repeat the same explicit `session` label on capture and action; unnamed
+one-shot CLI calls cannot carry screenshot context into the next process.
+
 PNGs returned by `get_window_state` are capped at **1568 px long-side
 by default** (`max_image_dimension` config), matching Anthropic's
 multimodal-vision downsampling limit. The image the model reasons

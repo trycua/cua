@@ -253,7 +253,11 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+        } else if let Some(ratio) = self.state.resize_registry.ratio(
+            args.opt_str("_session_id").as_deref(),
+            pid as u32,
+            window_id.map(u64::from),
+        ) {
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;

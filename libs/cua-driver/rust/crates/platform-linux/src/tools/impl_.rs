@@ -91,26 +91,7 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-pub struct ResizeRegistry {
-    ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
-}
-
-impl ResizeRegistry {
-    pub fn new() -> Self {
-        Self {
-            ratios: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set_ratio(&self, pid: u32, ratio: f64) {
-        self.ratios.lock().unwrap().insert(pid, ratio);
-    }
-    pub fn clear_ratio(&self, pid: u32) {
-        self.ratios.lock().unwrap().remove(&pid);
-    }
-    pub fn ratio(&self, pid: u32) -> Option<f64> {
-        self.ratios.lock().unwrap().get(&pid).copied()
-    }
-}
+pub use cua_driver_core::image_resize::ResizeRegistry;
 
 /// Per-process zoom context — stores padded crop origin and resize scale from
 /// the most recent `zoom` call so `click(from_zoom=true)` can translate
@@ -805,6 +786,7 @@ impl Tool for GetWindowStateTool {
             .and_then(|value| value.as_bool())
             == Some(true);
         let state = self.state.clone();
+        let session_id = args.opt_str("_session_id");
         let query_for_walk = query.clone();
 
         let result = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
@@ -1005,10 +987,20 @@ impl Tool for GetWindowStateTool {
                     if !observation_only {
                         if let Some(ow) = orig_w {
                             if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                                state.resize_registry.set_ratio(
+                                    session_id.as_deref(),
+                                    pid,
+                                    Some(xid),
+                                    ow as f64 / w as f64,
+                                );
                             }
                         } else {
-                            state.resize_registry.clear_ratio(pid);
+                            state.resize_registry.set_ratio(
+                                session_id.as_deref(),
+                                pid,
+                                Some(xid),
+                                1.0,
+                            );
                         }
                     }
                     // ax mode + screenshot_out_file writes the PNG to disk and
@@ -3660,7 +3652,11 @@ impl Tool for ClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) =
+            self.state
+                .resize_registry
+                .ratio(args.opt_str("_session_id").as_deref(), pid, Some(xid))
+        {
             x *= ratio;
             y *= ratio;
         }
@@ -5722,7 +5718,11 @@ impl Tool for ScrollTool {
                 // Pixel targets use the latest screenshot's coordinate frame.
                 // Apply the same buffer-to-window ratio as click/drag before
                 // positioning either the agent cursor or the input device.
-                let ratio = self.state.resize_registry.ratio(pid).unwrap_or(1.0);
+                let ratio = self
+                    .state
+                    .resize_registry
+                    .ratio(args.opt_str("_session_id").as_deref(), pid, Some(xid))
+                    .unwrap_or(1.0);
                 Some((x * ratio, y * ratio))
             }
             (None, None) => None,
@@ -6249,7 +6249,11 @@ impl Tool for DoubleClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) =
+            self.state
+                .resize_registry
+                .ratio(args.opt_str("_session_id").as_deref(), pid, Some(xid))
+        {
             x *= ratio;
             y *= ratio;
         }
@@ -6488,7 +6492,11 @@ impl Tool for RightClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) =
+            self.state
+                .resize_registry
+                .ratio(args.opt_str("_session_id").as_deref(), pid, Some(xid))
+        {
             x *= ratio;
             y *= ratio;
         }
@@ -6737,7 +6745,11 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) =
+            self.state
+                .resize_registry
+                .ratio(args.opt_str("_session_id").as_deref(), pid, Some(xid))
+        {
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
@@ -7200,7 +7212,11 @@ impl Tool for MouseButtonDownTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) =
+            self.state
+                .resize_registry
+                .ratio(args.opt_str("_session_id").as_deref(), pid, Some(xid))
+        {
             x *= ratio;
             y *= ratio;
         }
@@ -7346,7 +7362,11 @@ impl Tool for MouseDragTool {
                     .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+        } else if let Some(ratio) = self.state.resize_registry.ratio(
+            args.opt_str("_session_id").as_deref(),
+            hold.pid,
+            Some(hold.xid),
+        ) {
             to_x *= ratio;
             to_y *= ratio;
         }
@@ -7552,7 +7572,11 @@ impl Tool for MouseButtonUpTool {
                     .with_structured(mouse_hold_json(&cursor_id, Some(&hold)))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(hold.pid) {
+        } else if let Some(ratio) = self.state.resize_registry.ratio(
+            args.opt_str("_session_id").as_deref(),
+            hold.pid,
+            Some(hold.xid),
+        ) {
             x *= ratio;
             y *= ratio;
         }
@@ -9604,6 +9628,7 @@ pub fn build_registry_with_provider(
 ) -> ToolRegistry {
     let state = ToolState::new();
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    r.image_resize = Some(state.resize_registry.clone());
     if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
         let recording_state = Arc::downgrade(&state);
         r.recording
@@ -9615,7 +9640,11 @@ pub fn build_registry_with_provider(
                     // translating to the recording's full-output image.
                     if args.bool_or("from_zoom", false) {
                         (x, y) = state.zoom_registry.get(pid)?.zoom_to_window(x, y);
-                    } else if let Some(ratio) = state.resize_registry.ratio(pid) {
+                    } else if let Some(ratio) = state.resize_registry.ratio(
+                        args.opt_str("_session_id").as_deref(),
+                        pid,
+                        window_id,
+                    ) {
                         x *= ratio;
                         y *= ratio;
                     }
@@ -9662,6 +9691,9 @@ pub fn build_registry_with_provider(
         let cursor_registry = state.cursor_registry.clone();
         let state_for_session_end = state.clone();
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+            state_for_session_end
+                .resize_registry
+                .clear_session(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
             state_for_session_end

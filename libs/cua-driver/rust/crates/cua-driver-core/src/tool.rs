@@ -633,6 +633,7 @@ pub struct ToolRegistry {
     order: Vec<String>,
     /// Shared recording session — auto-records each non-read-only tool call.
     pub recording: Arc<RecordingSession>,
+    pub image_resize: Option<Arc<crate::image_resize::ResizeRegistry>>,
     /// Optional encrypted Computer History runtime. It is installed only by a
     /// trusted host that admitted the experimental preview.
     history: Option<Arc<crate::history::HistoryManager>>,
@@ -702,6 +703,7 @@ impl ToolRegistry {
             tools: HashMap::new(),
             order: Vec::new(),
             recording,
+            image_resize: None,
             history: None,
             replay_registry: Arc::new(std::sync::Mutex::new(std::sync::Weak::new())),
             session_end_hooks: vec![session_end_hook],
@@ -1484,6 +1486,14 @@ impl ToolRegistry {
             } else {
                 None
             };
+
+        if let Some(refusal) = self
+            .image_resize
+            .as_ref()
+            .and_then(|registry| registry.pixel_refusal(resolved_name, &args))
+        {
+            return refusal;
+        }
 
         // Capture start time for recording timestamps only after validation.
         let launch_snapshot = if resolved_name == "launch_app" {
@@ -4366,6 +4376,41 @@ resources:
             serde_json::Value::Bool(true)
         );
         assert!(received.get("_protected_process_fingerprint").is_none());
+    }
+
+    #[tokio::test]
+    async fn pixel_dispatch_requires_the_trusted_sessions_screenshot_context() {
+        let hits = Arc::new(AtomicUsize::new(0));
+        let mut registry = argument_registry("click", None, hits.clone());
+        let resize = Arc::new(crate::image_resize::ResizeRegistry::new());
+        Arc::get_mut(&mut registry).unwrap().image_resize = Some(resize.clone());
+        let context = unrestricted_context();
+        let mut adapter_args = serde_json::json!({"_session_id":"pixel-owner-a", "_transport_session_id":"pixel-transport-a"});
+        let evidence = TrustedInvocationEvidence::extract_from_adapter_args(&mut adapter_args);
+        let mut namespaced = serde_json::json!({"_session_id":"pixel-owner-a"});
+        namespace_runtime_args(&mut namespaced, context.as_ref(), &evidence);
+        let owner = namespaced["_session_id"].as_str().unwrap();
+        let args = serde_json::json!({"pid":123, "window_id":456, "x":99.5, "y":62.5, "_session_id":"pixel-forged-owner"});
+        resize.set_ratio(Some("pixel-forged-owner"), 123, Some(456), 7.35);
+        let refused = registry
+            .invoke_with_context_and_evidence(
+                "click",
+                args.clone(),
+                context.clone(),
+                evidence.clone(),
+            )
+            .await;
+        assert_eq!(
+            refused.structured_content.unwrap()["code"],
+            "screenshot_context_missing"
+        );
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+        resize.set_ratio(Some(owner), 123, Some(456), 7.35);
+        let allowed = registry
+            .invoke_with_context_and_evidence("click", args, context, evidence)
+            .await;
+        assert_ne!(allowed.is_error, Some(true), "{allowed:?}");
+        assert_eq!(hits.load(Ordering::SeqCst), 1);
     }
 
     #[tokio::test]

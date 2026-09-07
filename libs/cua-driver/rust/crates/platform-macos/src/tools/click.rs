@@ -811,7 +811,11 @@ impl Tool for ClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+            } else if let Some(ratio) = self.state.resize_registry.ratio(
+                args.opt_str("_session_id").as_deref(),
+                pid as u32,
+                window_id.map(u64::from),
+            ) {
                 // Coordinates are in the downscaled image space; scale back to native pixels.
                 cx *= ratio;
                 cy *= ratio;

@@ -548,26 +548,7 @@ pub fn load_driver_config() -> DriverConfig {
     cfg
 }
 
-pub struct ResizeRegistry {
-    ratios: std::sync::Mutex<std::collections::HashMap<u32, f64>>,
-}
-
-impl ResizeRegistry {
-    pub fn new() -> Self {
-        Self {
-            ratios: std::sync::Mutex::new(Default::default()),
-        }
-    }
-    pub fn set_ratio(&self, pid: u32, ratio: f64) {
-        self.ratios.lock().unwrap().insert(pid, ratio);
-    }
-    pub fn clear_ratio(&self, pid: u32) {
-        self.ratios.lock().unwrap().remove(&pid);
-    }
-    pub fn ratio(&self, pid: u32) -> Option<f64> {
-        self.ratios.lock().unwrap().get(&pid).copied()
-    }
-}
+pub use cua_driver_core::image_resize::ResizeRegistry;
 
 /// Per-process zoom context — stores padded crop origin and resize scale from
 /// the most recent `zoom` call so `click(from_zoom=true)` can translate
@@ -1381,6 +1362,7 @@ impl Tool for GetWindowStateTool {
         }
 
         let state = self.state.clone();
+        let session_id = args.opt_str("_session_id");
         let q = query.clone();
         let out_file = screenshot_out_file.clone();
         let blocking = tokio::task::spawn_blocking(move || -> anyhow::Result<_> {
@@ -1570,10 +1552,20 @@ impl Tool for GetWindowStateTool {
                     if !observation_only {
                         if let Some(ow) = orig_w {
                             if w > 0 {
-                                state.resize_registry.set_ratio(pid, ow as f64 / w as f64);
+                                state.resize_registry.set_ratio(
+                                    session_id.as_deref(),
+                                    pid,
+                                    Some(hwnd),
+                                    ow as f64 / w as f64,
+                                );
                             }
                         } else {
-                            state.resize_registry.clear_ratio(pid);
+                            state.resize_registry.set_ratio(
+                                session_id.as_deref(),
+                                pid,
+                                Some(hwnd),
+                                1.0,
+                            );
                         }
                     }
                     // base64 is embedded only when no out_file was given (vision
@@ -3824,7 +3816,11 @@ impl Tool for ClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else if let Some(ratio) = self.state.resize_registry.ratio(
+                args.opt_str("_session_id").as_deref(),
+                pid,
+                Some(hwnd),
+            ) {
                 px *= ratio;
                 py *= ratio;
             }
@@ -5283,7 +5279,11 @@ impl Tool for PressKeyTool {
                 Err(result) => return result,
             };
             let (mut px, mut py) = screen_to_bitmap(hwnd, cx, cy);
-            if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            if let Some(ratio) = self.state.resize_registry.ratio(
+                args.opt_str("_session_id").as_deref(),
+                pid,
+                Some(hwnd),
+            ) {
                 px = (px as f64 / ratio).round() as i32;
                 py = (py as f64 / ratio).round() as i32;
             }
@@ -6795,7 +6795,11 @@ impl Tool for DoubleClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else if let Some(ratio) = self.state.resize_registry.ratio(
+                args.opt_str("_session_id").as_deref(),
+                pid,
+                Some(hwnd),
+            ) {
                 px *= ratio;
                 py *= ratio;
             }
@@ -7139,7 +7143,11 @@ impl Tool for RightClickTool {
                         ))
                     }
                 }
-            } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+            } else if let Some(ratio) = self.state.resize_registry.ratio(
+                args.opt_str("_session_id").as_deref(),
+                pid,
+                Some(hwnd),
+            ) {
                 px *= ratio;
                 py *= ratio;
             }
@@ -7378,7 +7386,11 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) =
+            self.state
+                .resize_registry
+                .ratio(args.opt_str("_session_id").as_deref(), pid, hwnd_opt)
+        {
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
@@ -9872,8 +9884,10 @@ pub fn build_registry_with_provider(
     // deregisters when that runtime's registry is dropped. Mirrors the macOS
     // `register_all` session_end hook (platform-macos/src/tools/mod.rs).
     let cursor_registry = state.cursor_registry.clone();
+    let resize_registry = state.resize_registry.clone();
     let session_end_hook =
         cua_driver_core::session::register_scoped_session_end_hook(move |session_id| {
+            resize_registry.clear_session(session_id);
             cursor_registry.remove(session_id);
             crate::overlay::remove_cursor(session_id.to_owned());
         });
@@ -9883,6 +9897,7 @@ pub fn build_registry_with_provider(
         });
 
     let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    r.image_resize = Some(state.resize_registry.clone());
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
     r.retain_session_revive_hook(session_revive_hook);

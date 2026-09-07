@@ -184,7 +184,11 @@ impl Tool for DoubleClickTool {
         };
 
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
+        if let Some(ratio) = self.state.resize_registry.ratio(
+            args.opt_str("_session_id").as_deref(),
+            pid as u32,
+            window_id.map(u64::from),
+        ) {
             cx *= ratio;
             cy *= ratio;
         }

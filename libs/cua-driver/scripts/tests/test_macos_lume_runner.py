@@ -77,6 +77,12 @@ def _fields(output: str) -> dict[str, str]:
 # --------------------------------------------------------------------------
 
 
+def test_native_sheet_regression_is_selected_by_canonical_runner() -> None:
+    text = RUN_RUST_E2E.read_text(encoding="utf-8")
+    selected = text.split("for appkit_test in", 1)[1].split("; do", 1)[0]
+    assert "harness_appkit_native_sheet_descendant_targets_parent_window" in selected.split()
+
+
 @pytest.mark.parametrize(
     "script",
     [RUN_ALL, RUN_RUST_E2E, SEED_TCC, SEED_TCC_GUEST, ELECTRON_BUILD, TAURI_BUILD],

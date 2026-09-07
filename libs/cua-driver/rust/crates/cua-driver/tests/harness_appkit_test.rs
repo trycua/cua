@@ -13,6 +13,7 @@
 //!   - click_target   : right_click / double_click recognised by NSView
 //!   - scroll_target  : scroll updates VerticalOffset label
 //!   - ns_menubar     : main menubar item enumerable (Mac-specific)
+//!   - native_sheet   : NSOpenPanel descendant token targets its parent window
 //!
 //! Run locally (after `libs/cua-driver/tests/fixtures/build/macos.sh`):
 //!   cargo test --test harness_appkit_test -- --ignored --nocapture
@@ -62,10 +63,21 @@ struct Harness {
 
 impl Harness {
     fn launch() -> Self {
-        Self::launch_with_command_oracle(None)
+        Self::launch_with_options(None, None)
+    }
+
+    fn launch_native_sheet(oracle: &Path) -> Self {
+        Self::launch_with_options(None, Some(oracle))
     }
 
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, None)
+    }
+
+    fn launch_with_options(
+        command_oracle: Option<&Path>,
+        native_sheet_oracle: Option<&Path>,
+    ) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -78,6 +90,10 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if let Some(path) = native_sheet_oracle {
+            command.env("CUA_HARNESS_OPEN_PANEL", "1");
+            command.env("CUA_HARNESS_OPEN_PANEL_ORACLE", path);
         }
         let app = command
             .spawn()
@@ -110,9 +126,7 @@ fn snapshot_elements(driver: &mut McpDriver, pid: u32, window_id: u64) -> ToolRe
     )
 }
 
-fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
-    let index = element_index_by_id(snapshot.tree_text(), identifier)
-        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+fn element_token_at_index(snapshot: &ToolResponse, index: u64) -> String {
     snapshot.structured()["elements"]
         .as_array()
         .and_then(|elements| {
@@ -121,8 +135,14 @@ fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
                 .find(|element| element["element_index"].as_u64() == Some(index))
         })
         .and_then(|element| element["element_token"].as_str())
-        .unwrap_or_else(|| panic!("{identifier} element_token not found"))
+        .unwrap_or_else(|| panic!("element_token for index {index} not found"))
         .to_owned()
+}
+
+fn element_token_by_id(snapshot: &ToolResponse, identifier: &str) -> String {
+    let index = element_index_by_id(snapshot.tree_text(), identifier)
+        .unwrap_or_else(|| panic!("{identifier} element_index not found"));
+    element_token_at_index(snapshot, index)
 }
 
 fn element_pixel_frame(snapshot: &ToolResponse, identifier: &str) -> (f64, f64, f64, f64) {
@@ -320,6 +340,143 @@ fn harness_appkit_query_projects_structured_elements() {
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_native_sheet_descendant_targets_parent_window() {
+    let case = native_background_case(
+        "appkit",
+        "native_sheet_cancel",
+        Targeting::Ax,
+        DriverRoute::MacosAxAction,
+    );
+    let cell_id = case.cell_id.clone();
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_macos_daemon_proxy_named(&cell_id)
+            .expect("start installed macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let oracle_dir = tempfile::tempdir().expect("create native sheet oracle directory");
+        let oracle_path = driver
+            .recording_dir()
+            .unwrap_or(oracle_dir.path())
+            .join("native-sheet-result.txt");
+        let harness = Harness::launch_native_sheet(&oracle_path);
+        let pid = harness.pid;
+        let (wid, _) = driver
+            .find_window(pid as i64, "CuaTestHarness AppKit")
+            .expect("AppKit main window not found");
+
+        let (_, passed) = run_with_background_oracles(
+            &mut driver,
+            TargetWindow {
+                pid,
+                native_id: wid,
+            },
+            |driver| {
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                let sheet = loop {
+                    let snapshot = snapshot_elements(driver, pid, wid);
+                    if !snapshot.is_error()
+                        && !snapshot.degraded()
+                        && snapshot.tree_text().contains("AXSheet")
+                        && snapshot.tree_text().contains("Cancel")
+                    {
+                        break snapshot;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "native open-panel sheet did not appear under the parent snapshot:\n{}",
+                        snapshot.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                };
+                assert_eq!(
+                    std::fs::read_to_string(&oracle_path).expect("native sheet pending oracle"),
+                    "pending\n"
+                );
+
+                let cancel_index = element_index_containing(sheet.tree_text(), "Cancel")
+                    .expect("native sheet Cancel element_index not found");
+                let cancel = element_token_at_index(&sheet, cancel_index);
+                let cancelled = driver.call(
+                    "click",
+                    serde_json::json!({
+                        "pid": pid as i64,
+                        "window_id": wid,
+                        "element_token": cancel,
+                        "delivery_mode": "background"
+                    }),
+                );
+                assert!(
+                    !cancelled.is_error(),
+                    "fresh native sheet token was refused: {}",
+                    cancelled.text()
+                );
+
+                let deadline = std::time::Instant::now() + Duration::from_secs(5);
+                loop {
+                    let post = snapshot_elements(driver, pid, wid);
+                    let result = std::fs::read_to_string(&oracle_path).unwrap_or_default();
+                    if native_sheet_dismissed(
+                        post.is_error(),
+                        post.degraded(),
+                        post.tree_text(),
+                        &result,
+                    ) {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "native sheet token did not dismiss the panel:\n{}",
+                        post.tree_text()
+                    );
+                    std::thread::sleep(Duration::from_millis(100));
+                }
+            },
+        )
+        .unwrap_or_else(|error| panic!("native sheet background contract failed: {error}"));
+        Observation::delivered_with_fixture_state(passed)
+    });
+}
+
+fn native_sheet_dismissed(
+    is_error: bool,
+    degraded: bool,
+    tree: &str,
+    fixture_result: &str,
+) -> bool {
+    !is_error
+        && !degraded
+        && has_id(tree, "wnd-main")
+        && has_id(tree, "btn-increment")
+        && !tree.contains("AXSheet")
+        && fixture_result == "cancelled\n"
+}
+
+#[test]
+fn native_sheet_dismissal_rejects_missing_or_untrusted_evidence() {
+    let parent = "[0] AXWindow id=wnd-main\n  [1] AXButton id=btn-increment";
+    assert!(native_sheet_dismissed(false, false, parent, "cancelled\n"));
+    assert!(!native_sheet_dismissed(true, false, parent, "cancelled\n"));
+    assert!(!native_sheet_dismissed(false, true, parent, "cancelled\n"));
+    for tree in [
+        "",
+        "Window not found",
+        "[0] AXWindow id=wnd-main",
+        "[1] AXButton id=btn-increment",
+    ] {
+        assert!(!native_sheet_dismissed(false, false, tree, "cancelled\n"));
+    }
+    assert!(!native_sheet_dismissed(
+        false,
+        false,
+        &format!("{parent}\n[2] AXSheet"),
+        "cancelled\n"
+    ));
+    for result in ["", "pending\n", "other\n"] {
+        assert!(!native_sheet_dismissed(false, false, parent, result));
+    }
 }
 
 #[test]

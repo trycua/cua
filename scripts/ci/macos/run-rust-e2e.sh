@@ -344,6 +344,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     for appkit_test in \
     harness_appkit_smoke \
     harness_appkit_query_projects_structured_elements \
+    harness_appkit_native_sheet_descendant_targets_parent_window \
     harness_appkit_stale_element_token_fails_closed \
     harness_appkit_invoke_menu_live_path \
     harness_appkit_text_input \

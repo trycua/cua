@@ -908,7 +908,9 @@ impl Tool for ClickTool {
                     // Require proven ancestry in the requested window before
                     // acting; otherwise fall through to the routed pixel path
                     // (already gated for this exact window).
-                    if crate::ax::exact_target::element_window_id(element) != Some(hit_test_wid) {
+                    if crate::ax::exact_target::element_window_ancestry(element, hit_test_wid)
+                        != cua_driver_core::background_input::ElementAncestry::ProvenDescendant
+                    {
                         CFRelease(element as _);
                         return Ok(false);
                     }

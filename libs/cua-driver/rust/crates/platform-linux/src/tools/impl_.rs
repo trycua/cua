@@ -2074,9 +2074,12 @@ fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> Too
             if foreground && value["code"] == "foreground_partial_unknown" {
                 return hyprland_input_result(
                     Err(crate::wayland::hyprland_input::unknown_dispatch(
-                        anyhow::anyhow!(value["detail"]
-                            .as_str()
-                            .unwrap_or("foreground acquisition may have changed focus")),
+                        anyhow::anyhow!(
+                            "{}",
+                            value["detail"]
+                                .as_str()
+                                .unwrap_or("foreground acquisition may have changed focus")
+                        ),
                         value["delivery"]["delivered_count"]
                             .as_u64()
                             .and_then(|count| u32::try_from(count).ok())

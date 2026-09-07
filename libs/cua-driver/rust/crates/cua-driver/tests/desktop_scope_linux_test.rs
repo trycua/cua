@@ -154,6 +154,13 @@ fn marker_value(snap: &serde_json::Value, marker: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
+fn tree_contains(snap: &serde_json::Value, marker: &str) -> bool {
+    snap["tree_markdown"]
+        .as_str()
+        .map(|tree| tree.contains(marker))
+        .unwrap_or(false)
+}
+
 fn desktop_input_route() -> DriverRoute {
     if std::env::var_os("CUA_INJECT_SOCKET").is_some() {
         DriverRoute::LinuxCuaCompositorInject
@@ -441,6 +448,94 @@ fn desktop_scope_hotkey_releases_modifiers() {
             assert!(
                 Instant::now() < deadline,
                 "plain F5 did not match after hotkey; modifier state may still be latched"
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        Observation::delivered_with_fixture_state(Vec::new())
+    });
+}
+
+#[test]
+#[ignore]
+fn desktop_scope_drag_holds_and_releases_modifier() {
+    let cell_id = "linux-gtk3-desktop-drag-modifier-px-foreground";
+    let case = CaseSpec::delivered(
+        cell_id,
+        "gtk3",
+        "gtk3",
+        "drag",
+        Targeting::Px,
+        Delivery::Foreground,
+        Scope::Desktop,
+        desktop_input_route(),
+        vec![OracleKind::FixtureState],
+    );
+    execute_case(case, |evidence| {
+        let mut driver = McpDriver::spawn_named(cell_id).expect("start source-built Linux driver");
+        *evidence = recording_evidence(driver.recording_dir());
+        let window_session = format!("{cell_id}-window");
+        let desktop_session = format!("{cell_id}-desktop");
+        start_scope(&mut driver, &window_session, "window");
+        start_scope(&mut driver, &desktop_session, "desktop");
+        let (pid, wid) = launch(&mut driver).expect("required GTK3 harness did not launch");
+        let posture = driver.call(
+            "bring_to_front",
+            serde_json::json!({"session": window_session, "pid": pid as i64, "window_id": wid}),
+        );
+        assert!(
+            !posture.is_error(),
+            "could not foreground GTK3 fixture: {}",
+            posture.text()
+        );
+        std::thread::sleep(Duration::from_millis(300));
+
+        let snap = ax_snapshot(&mut driver, &window_session, pid, wid);
+        let (x, y) = element_center_containing(&snap, "btn-clicktarget")
+            .expect("GTK3 drag target frame not found");
+        let before_keys = marker_value(&snap, "key_presses=").unwrap_or(0);
+        driver.start_behavior_recording();
+        let drag = driver.call(
+            "drag",
+            serde_json::json!({
+                "session": desktop_session, "scope": "desktop",
+                "from_x": x - 20, "from_y": y, "to_x": x + 20, "to_y": y,
+                "duration_ms": 250, "steps": 8, "modifier": ["ctrl"]
+            }),
+        );
+        assert!(!drag.is_error(), "modified desktop drag failed: {}", drag.text());
+
+        let deadline = Instant::now() + Duration::from_secs(3);
+        loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if tree_contains(&state, "drag_modifier=ctrl") {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "GTK3 did not observe ctrl during drag: {}",
+                drag.text()
+            );
+            std::thread::sleep(Duration::from_millis(100));
+        }
+
+        let plain_key = driver.call(
+            "press_key",
+            serde_json::json!({"session": desktop_session, "scope": "desktop", "key": "f5"}),
+        );
+        assert!(
+            !plain_key.is_error(),
+            "post-drag plain F5 failed: {}",
+            plain_key.text()
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            let state = ax_snapshot(&mut driver, &window_session, pid, wid);
+            if marker_value(&state, "key_presses=").unwrap_or(before_keys) > before_keys {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "plain F5 did not match after modified drag; modifier may be latched"
             );
             std::thread::sleep(Duration::from_millis(100));
         }

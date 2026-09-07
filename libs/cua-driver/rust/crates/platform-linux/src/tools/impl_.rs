@@ -9443,6 +9443,26 @@ pub fn build_registry_with_provider(
     provider: Option<std::sync::Arc<dyn cua_driver_core::consent::ProtectedConsentProvider>>,
 ) -> ToolRegistry {
     let state = ToolState::new();
+    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
+    if crate::wayland::is_wayland() && crate::wayland::hyprland::is_session() {
+        let recording_state = Arc::downgrade(&state);
+        r.recording
+            .set_pixel_point_fn(move |args, window_id, pid, mut x, mut y| {
+                let state = recording_state.upgrade()?;
+                if let Some(pid) = pid {
+                    let pid = u32::try_from(pid).ok()?;
+                    // Match ClickTool's screenshot and zoom conversion before
+                    // translating to the recording's full-output image.
+                    if args.bool_or("from_zoom", false) {
+                        (x, y) = state.zoom_registry.get(pid)?.zoom_to_window(x, y);
+                    } else if let Some(ratio) = state.resize_registry.ratio(pid) {
+                        x *= ratio;
+                        y *= ratio;
+                    }
+                }
+                crate::recording_hooks::hyprland_pixel_recording_point(window_id, pid, x, y)
+            });
+    }
     let cursor_outcome_reader = {
         let cursor_registry = state.cursor_registry.clone();
         cua_driver_core::session::register_scoped_cursor_outcome_reader(std::sync::Arc::new(
@@ -9497,7 +9517,6 @@ pub fn build_registry_with_provider(
         cua_driver_core::session::register_scoped_session_revive_hook(move |session_id| {
             crate::overlay::revive_cursor(session_id.to_owned());
         });
-    let mut r = ToolRegistry::new_with_protected_consent_provider(provider);
     r.retain_cursor_outcome_reader(cursor_outcome_reader);
     r.retain_session_end_hook(session_end_hook);
     r.retain_session_revive_hook(session_revive_hook);

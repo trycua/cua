@@ -83,13 +83,23 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 - `click.png` — for click-family actions (`click`, `double_click`,
   `right_click`): a copy of `before.png` with a red marker drawn at
   the click point. **Both addressing modes are covered:** explicit
-  `x, y` clicks use the supplied coordinates directly, and
+  `x, y` clicks use the platform's recording-coordinate mapping, and
   `element_index`-addressed clicks resolve to the element's center
-  via the live AX/UIA cache, then convert to window-local screenshot
-  pixels. Absent for non-click tools. It is also absent, and explicitly
+  via the live AX/UIA cache, then convert to the retained image's coordinate
+  space. Native Hyprland recording retains the output image, so both kinds of
+  marker use output coordinates. Pixel markers also account for the target
+  window's origin and any snapshot resize or zoom. Absent for non-click tools.
+  It is also absent, and explicitly
   classified as not applicable, when the driver refuses a click before target
-  resolution; no input was aimed in that case. A dispatched click whose marker
-  cannot be resolved or rendered remains an evidence failure.
+  resolution; no input was aimed in that case. A successful plain Linux AT-SPI
+  element click can activate a control without a visible point, such as an
+  offscreen button. In that case, `semantic_action_without_point` records why
+  there is no marker. The action must carry explicit accessibility transport
+  and known delivery metadata; its before/after state, images, and requested
+  video remain required. This exception does not apply to pixel clicks,
+  uncertain delivery, or failed marker rendering. Out-of-image points are
+  rejected, never moved to an image edge. Other dispatched clicks whose markers
+  cannot be resolved or rendered remain evidence failures.
 
 ## When to use it
 

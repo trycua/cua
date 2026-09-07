@@ -8,6 +8,9 @@ modifier to the client.
 """
 
 import os
+import sys
+from types import ModuleType, SimpleNamespace
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from computer_server.backend_policy import env_flag, vnc_force_caps
@@ -231,3 +234,89 @@ def test_computer_preserves_positional_run_opts():
     assert computer.custom_run_opts == run_opts
     assert computer.vnc_force_caps is False
     assert "CUA_VNC_FORCE_CAPS" not in computer._backend_env()
+
+
+def test_cli_startup_passes_force_caps_to_server(monkeypatch):
+    from computer_server.cli import main
+
+    # Restore every environment variable CLI startup can change.
+    for name in ("CUA_BACKEND", "CUA_VNC_HOST", "CUA_VNC_PORT", "CUA_VNC_FORCE_CAPS"):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setattr(
+        sys, "argv", ["computer-server", "--vnc-host", "127.0.0.1", "--vnc-force-caps"]
+    )
+    startup_env = {}
+    server = Mock()
+    server.start.side_effect = lambda: startup_env.update(os.environ)
+    server_module = ModuleType("computer_server.server")
+    server_module.Server = Mock(return_value=server)
+    monkeypatch.setitem(sys.modules, "computer_server.server", server_module)
+
+    main()
+
+    server.start.assert_called_once_with()
+    assert startup_env["CUA_BACKEND"] == "vnc"
+    assert startup_env["CUA_VNC_FORCE_CAPS"] == "true"
+
+
+@pytest.mark.asyncio
+async def test_computer_run_passes_force_caps_to_provider(monkeypatch):
+    from computer.computer import Computer, InterfaceFactory, VMProviderFactory, helpers
+
+    provider = AsyncMock()
+    provider.get_vm.return_value = {"status": "stopped"}
+    monkeypatch.setattr(VMProviderFactory, "create_provider", Mock(return_value=provider))
+    interface = AsyncMock()
+    monkeypatch.setattr(InterfaceFactory, "create_interface_for_os", Mock(return_value=interface))
+    monkeypatch.setattr(helpers, "set_default_computer", Mock())
+    computer = Computer(
+        name="force-caps-test",
+        provider_type="lume",
+        telemetry_enabled=False,
+        backend="vnc",
+        vnc_host="127.0.0.1",
+        vnc_force_caps=True,
+    )
+    monkeypatch.setattr(computer, "get_ip", AsyncMock(return_value="127.0.0.1"))
+
+    try:
+        await computer.run()
+
+        provider.run_vm.assert_awaited_once()
+        options = provider.run_vm.call_args.kwargs["run_opts"]
+        assert options["env"]["CUA_BACKEND"] == "vnc"
+        assert options["env"]["CUA_VNC_FORCE_CAPS"] == "true"
+        interface.wait_for_ready.assert_awaited_once()
+    finally:
+        if hasattr(computer, "_keep_alive_task"):
+            computer._stop_event.set()
+            await computer._keep_alive_task
+
+
+def test_connection_uses_force_caps_factory(monkeypatch):
+    _require_vncdotool()
+    import twisted.internet
+
+    client = SimpleNamespace(transport=Mock(), keyPress=Mock())
+    factories = []
+
+    def connect(host, port, factory):
+        assert (host, port) == ("127.0.0.1", 5900)
+        factories.append(factory)
+        factory.deferred.callback(client)
+
+    reactor = SimpleNamespace(
+        running=True,
+        connectTCP=Mock(side_effect=connect),
+        callFromThread=lambda work: work(),
+    )
+    monkeypatch.setattr(twisted.internet, "reactor", reactor)
+    connection = _VNCConnection("127.0.0.1", 5900, "secret", force_caps=True)
+
+    connection.key_press("_")
+
+    reactor.connectTCP.assert_called_once()
+    assert factories[0].force_caps is True
+    assert factories[0].password == "secret"
+    client.keyPress.assert_called_once_with("_")
+    client.transport.loseConnection.assert_called_once_with()

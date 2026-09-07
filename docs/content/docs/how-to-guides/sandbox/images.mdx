@@ -7,15 +7,21 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Use an **Image** to define the OS and software environment for a sandbox before you start it.
 
+Start with [Choose a sandbox image](/how-to-guides/sandbox/choose-an-image) if you
+need to decide between using a published Fleet artifact, customizing a local
+image, or publishing a Fleet artifact.
+
 For Fleet, [choose a published image](#choose-a-published-fleet-image). For local
 execution, [choose a base image](#choose-a-base-image) and add the setup steps below.
 
 <Callout type="warn">
-  **SDK builder customization is local-only in `cua-sandbox` 0.4.3.** `apt_install()`, `pip_install()`, `env()`,
-  `run()`, `copy()` and the other builder methods are applied when you boot the image
-  locally (`local=True`). Fleet runs a prebuilt registry artifact and rejects
-  a customized one with `NotImplementedError: Fleet cloud supports registry images with
-  optional exposed services only`. For Fleet customization, [prepare and publish the guest image first](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image). See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support) for versioned acceptance and verification limits.
+  **SDK builder customization is local-only in `cua-sandbox` 0.4.3.** `apt_install()`,
+  `pip_install()`, `env()`, `run()`, `copy()` and the other builder methods are applied when you
+  boot the image locally (`local=True`). Fleet runs a prebuilt registry artifact and rejects a
+  customized one with `NotImplementedError: Fleet cloud supports registry images with optional
+  exposed services only`. For Fleet customization, [prepare and publish the guest image
+  first](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image). See [Sandbox runtime
+  support](/reference/sandbox-sdk/runtime-support) for versioned acceptance and verification limits.
 </Callout>
 
 ## Choose a published Fleet image
@@ -63,7 +69,7 @@ Fleet artifact or run during a Fleet claim.
 
 ## Choose a base image
 
-An Image describes the OS and software environment. Images are *immutable* and *chainable*. Each builder method returns a new Image.
+An Image describes the OS and software environment. Images are _immutable_ and _chainable_. Each builder method returns a new Image.
 
 Start with the built-in constructor that matches the operating system and isolation level you need.
 
@@ -117,10 +123,9 @@ RuntimeError: Image.linux() is a VM and needs QEMU, which was not found on this 
 `Image.linux(kind='container')` is the Docker path instead, and needs no QEMU.
 
 <Callout type="warn">
-  Passing `runtime=QEMURuntime()` explicitly selects `mode='docker'`, which wraps
-  QEMU in a container and does **not** boot the pinned containerDisk. Use
-  `QEMURuntime(mode='bare-metal')` if you are naming a runtime by hand, or leave
-  `runtime=` off and let the default pick it.
+  Passing `runtime=QEMURuntime()` explicitly selects `mode='docker'`, which wraps QEMU in a
+  container and does **not** boot the pinned containerDisk. Use `QEMURuntime(mode='bare-metal')` if
+  you are naming a runtime by hand, or leave `runtime=` off and let the default pick it.
 </Callout>
 
 ## Install packages
@@ -151,7 +156,7 @@ Image.linux().env(DATABASE_URL='postgres://localhost/mydb', LOG_LEVEL='debug')
 ```
 
 Variables are baked in as `/etc/profile.d/cua-env.sh` on Linux and macOS, and as
-machine-scoped `setx` variables on Windows. On Linux that file is read by *login*
+machine-scoped `setx` variables on Windows. On Linux that file is read by _login_
 shells, so a bare `sb.shell.run()` does not see them — ask for a login shell:
 
 ```python
@@ -160,7 +165,8 @@ await sb.shell.run("bash -lc 'echo $MY_TOKEN'") # abc123
 ```
 
 <Callout type="warn">
-  Avoid putting real secrets in .env() because anyone who can read the Image spec can see the values.
+  Avoid putting real secrets in .env() because anyone who can read the Image spec can see the
+  values.
 </Callout>
 
 ## Run setup commands
@@ -188,10 +194,10 @@ Image.linux().expose(8080).expose(5432)
 ```
 
 <Callout type="warn">
-  In 0.4.3, bare-metal QEMU forwards exposed ports at startup and reports their
-  host ports in `sb.exposed_ports`. Other local backends can differ. Fleet creates
-  named services instead. `expose()` does not make `tunnel.forward()` available
-  on every transport; see [ports and transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
+  In 0.4.3, bare-metal QEMU forwards exposed ports at startup and reports their host ports in
+  `sb.exposed_ports`. Other local backends can differ. Fleet creates named services instead.
+  `expose()` does not make `tunnel.forward()` available on every transport; see [ports and
+  transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
 </Callout>
 
 ## Chain builder calls
@@ -248,10 +254,10 @@ async with Sandbox.ephemeral(img, local=True, runtime=QEMURuntime(mode='bare-met
 ```
 
 <Callout type="warn">
-  Replace the example reference with an artifact you published. `Image.from_registry()`
-  defaults to `os_type='linux'`; set `os_type='windows', kind='vm'` for a Windows VM
-  disk. The registry reference does not prove that the artifact is accessible or
-  bootable. Local pull authentication and Fleet registry access are separate requirements.
+  Replace the example reference with an artifact you published. `Image.from_registry()` defaults to
+  `os_type='linux'`; set `os_type='windows', kind='vm'` for a Windows VM disk. The registry
+  reference does not prove that the artifact is accessible or bootable. Local pull authentication
+  and Fleet registry access are separate requirements.
 </Callout>
 
 ## Use a local disk image

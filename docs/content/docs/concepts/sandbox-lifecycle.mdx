@@ -1,109 +1,64 @@
 ---
 title: Sandbox lifecycle
-description: Choose the right Sandbox SDK lifecycle pattern for temporary, persistent, and reconnectable sandboxes.
+description: How connection lifetime, local sandbox lifetime, and Fleet pool capacity differ.
 ---
 
-import { Callout } from 'fumadocs-ui/components/callout';
+A connection, a local sandbox, and a Fleet pool have separate lifetimes.
+Choose who owns each resource before deciding when to disconnect or clean up.
 
-Use the **lifecycle pattern** that matches whether you want the sandbox _deleted after the job_, _kept for later_, or _attached to while it is already running_.
+## Local machine and connection lifetime
 
-The examples below use local execution. Fleet uses managed pools and claims, whose
-release behavior differs from deleting a local VM. See [Your first Cloud Fleet](/tutorials/your-first-cloud-fleet)
-for a pool-and-claim workflow and [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
-for image and transport limits.
+An ephemeral local sandbox belongs to one block of work. Its context manager
+calls cleanup when the block exits. A persistent local sandbox outlives the
+creating script until you delete it. Give it a name so another process can
+reconnect later.
+
+`Sandbox.connect` attaches to an existing running local sandbox. Closing that
+connection leaves the sandbox running; deleting the sandbox discards its state.
+Save results before deleting it. The [local lifecycle guide](/how-to-guides/sandbox/manage-local-lifecycle)
+shows creation, reconnection, and cleanup patterns.
+
+## Fleet claims and pool capacity
 
 On Fleet, `disconnect()` drops the connection without releasing the claim.
 Exiting a `pool.claim()` context releases the claim, but the pool can keep warm
 capacity available and incur cloud usage charges. Deleting the pool is a
-separate operation that removes its capacity and state. See the [Pool reference](/reference/sandbox-sdk/pool)
-for exact ownership and release behavior, and [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
-for cleanup deadlines.
+separate operation that removes its capacity and state.
+
+The [Pool reference](/reference/sandbox-sdk/pool) defines ownership and release
+behavior. [Expire pools and claims automatically](/how-to-guides/sandbox/expire-pools-and-claims)
+explains cleanup deadlines. Keep claim cleanup inside each workload and delete
+a pool only when you own its lifecycle; a shared pool can serve other callers.
+
+## Runtime limits
+
+Local execution and Fleet share SDK concepts, but that does not make their
+lifecycle operations interchangeable. See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support)
+for versioned image and transport limits. In `cua-sandbox` 0.4.3,
+`Sandbox.snapshot()` is not implemented for local sandboxes or Fleet creation
+paths, and Fleet rejects snapshot-derived images.
 
 ## Create and auto-destroy a sandbox
 
-Use `Sandbox.ephemeral` for scripts, CI, and one-off tasks.
-
-```python
-import asyncio
-from cua import Sandbox, Image
-
-async def main():
-    async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
-        result = await sb.shell.run('echo hello')
-        print(result.stdout)  # 'hello\n'
-    # sandbox deleted here
-
-asyncio.run(main())
-```
-
-`Sandbox.ephemeral` is **auto-destroyed** when the `async with` block exits. Its context manager tears the sandbox down automatically.
+See [Create and auto-destroy a sandbox](/how-to-guides/sandbox/manage-local-lifecycle#create-and-auto-destroy-a-sandbox)
+for the local SDK pattern.
 
 ## Create a persistent sandbox
 
-Use `Sandbox.create` when the sandbox **must outlive the script**. Call `await sb.disconnect()` to drop the connection while the sandbox keeps running.
-
-```python
-sb = await Sandbox.create(Image.linux(), name='my-dev-sandbox', local=True)
-await sb.shell.run('apt-get install -y vim')
-await sb.disconnect()  # sandbox keeps running
-```
-
-Delete the sandbox when you are done with it.
-
-```python
-async with Sandbox.connect('my-dev-sandbox', local=True) as sb:
-    await sb.destroy()
-```
-
-| Method                       | Effect                                      | When            |
-| ---------------------------- | ------------------------------------------- | --------------- |
-| `await sb.disconnect()`      | keeps running                               | reconnect later |
-| `await sb.destroy()`         | permanently destroyed                       | done with it    |
-| `await Sandbox.delete(name)` | permanently destroyed (by name, no connect) | classmethod     |
+See [Create a persistent sandbox](/how-to-guides/sandbox/manage-local-lifecycle#create-a-persistent-sandbox)
+for the local SDK pattern.
 
 ## Reconnect to a running sandbox
 
-Use `Sandbox.connect` to attach to an already-running sandbox.
-
-<Callout type="info">
-  Sandbox.connect never starts or stops the sandbox. It only manages the network connection.
-</Callout>
-
-Reconnect by name.
-
-```python
-async with Sandbox.connect('my-dev-sandbox', local=True) as sb:
-    result = await sb.shell.run('vim --version')
-    print(result.stdout)
-```
-
-`Sandbox.connect` supports both `await` and `async with`. Its context manager calls `disconnect()` automatically, so the sandbox keeps running after the connection closes.
-
-```python
-async with Sandbox.connect('my-sandbox', local=True) as sb:
-    await sb.shell.run('echo reconnected')
-# connection dropped, sandbox keeps running
-```
+See [Reconnect to a running sandbox](/how-to-guides/sandbox/manage-local-lifecycle#reconnect-to-a-running-sandbox)
+for the local SDK pattern.
 
 ## List running sandboxes
 
-List available sandboxes, then filter to local runtimes when needed.
-
-```python
-sandboxes = await Sandbox.list(local=True)
-for info in sandboxes:
-    print(info.name, info.os_type, info.status)
-```
+See [List running sandboxes](/how-to-guides/sandbox/manage-local-lifecycle#list-running-sandboxes)
+for the local SDK pattern.
 
 ## Choose a local runtime
 
-Pass `local=True` to use a runtime on your own machine. Cua selects a local runtime from the image type: Docker for Linux containers, QEMU for Linux VMs, Lume for macOS VMs, and QEMU or Hyper-V for Windows VMs. Selection still requires a compatible host and usable image; it is not a boot check. See the [runtime support reference](/reference/sandbox-sdk/runtime-support#operating-systems-and-image-kinds) before choosing a backend.
-
-```python
-# local Docker desktop container
-async with Sandbox.ephemeral(
-    Image.linux(kind='container'),
-    local=True,
-) as sb:
-    ...
-```
+See [Choose a local runtime](/how-to-guides/sandbox/manage-local-lifecycle#choose-a-local-runtime)
+for the local SDK pattern.

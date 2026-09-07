@@ -70,6 +70,10 @@ impl ForegroundSentinel {
             .args(&electron.args)
             .env("CUA_E2E_SENTINEL", "1")
             .env("CUA_E2E_SENTINEL_JOURNAL", &journal_path)
+            .env(
+                "CUA_E2E_SENTINEL_CONTROL",
+                journal_path.with_extension("control.json"),
+            )
             .env("CUA_E2E_USER_DATA_DIR", user_data.path())
             .env("CUA_ELECTRON_CDP_PORT", cdp_port.to_string())
             .stdout(Stdio::null())
@@ -113,13 +117,13 @@ impl ForegroundSentinel {
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
-            try_activate_native_foreground(driver, target)?;
+            activate_and_drain_setup_click(driver, target, &journal_path)?;
             // Electron may already be focused before its preload listener is ready.
             // The compositor observation is the authoritative Wayland focus gate.
             wait_for_native_focus_stable(target);
         } else {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
-            try_activate_native_foreground(driver, target)?;
+            activate_and_drain_setup_click(driver, target, &journal_path)?;
             wait_for_native_focus_stable(target);
             // On macOS the Electron renderer can report `document.hasFocus()`
             // as false at DOMContentLoaded, then become natively focused
@@ -282,7 +286,7 @@ impl ForegroundSentinel {
             }
         }
 
-        activate_native_foreground(driver, self.target);
+        activate_and_drain_setup_click(driver, self.target, &self.journal_path)?;
         #[cfg(target_os = "linux")]
         set_sway_fullscreen(driver, self.target, true)?;
         wait_for_native_focus_stable(self.target);
@@ -328,15 +332,12 @@ impl ForegroundSentinel {
         driver: &mut impl Driver,
         target: TargetWindow,
     ) -> Result<(), String> {
-        activate_native_foreground(driver, self.target);
+        activate_and_drain_setup_click(driver, self.target, &self.journal_path)?;
         wait_for_native_focus_stable(self.target);
         std::thread::sleep(Duration::from_millis(100));
         reset_journal(&self.journal_path)?;
-        // Windows establishes focus with a physical click. Its DOM `click`
-        // can arrive after the native focus transition and the first journal
-        // reset, falsely attributing setup input to the background action.
-        // A later heartbeat is an event-loop barrier: once observed, clear the
-        // journal again so the action boundary starts from a quiet sentinel.
+        // This heartbeat checks liveness only. Windows setup input has already
+        // crossed its explicit renderer/main journal barrier before the reset.
         wait_for_event(&self.journal_path, "heartbeat", Duration::from_secs(2))?;
         reset_journal(&self.journal_path)?;
         self.assert_background_posture(target)
@@ -470,9 +471,52 @@ fn is_wayland_session() -> bool {
             .is_ok_and(|session| session.eq_ignore_ascii_case("wayland"))
 }
 
-fn activate_native_foreground(driver: &mut impl Driver, target: TargetWindow) {
-    try_activate_native_foreground(driver, target)
-        .unwrap_or_else(|error| panic!("could not activate foreground sentinel: {error}"));
+fn activate_and_drain_setup_click(
+    driver: &mut impl Driver,
+    target: TargetWindow,
+    _journal_path: &std::path::Path,
+) -> Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let token = {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT_TOKEN: AtomicU64 = AtomicU64::new(1);
+        let token = NEXT_TOKEN.fetch_add(1, Ordering::Relaxed).to_string();
+        fs::write(
+            _journal_path.with_extension("control.json"),
+            serde_json::json!({ "token": token }).to_string(),
+        )
+        .map_err(|error| format!("arm sentinel setup click: {error}"))?;
+        wait_for_setup_click_marker(_journal_path, "setup-click-armed", &token)?;
+        token
+    };
+    try_activate_native_foreground(driver, target)?;
+    #[cfg(target_os = "windows")]
+    wait_for_setup_click_marker(_journal_path, "setup-click-drained", &token)?;
+    Ok(())
+}
+
+#[cfg(target_os = "windows")]
+fn wait_for_setup_click_marker(
+    path: &std::path::Path,
+    kind: &str,
+    token: &str,
+) -> Result<(), String> {
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let events = read_journal_events(path)?;
+        if events
+            .iter()
+            .any(|event| event_kind(event) == Some(kind) && event["token"].as_str() == Some(token))
+        {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(format!(
+                "sentinel setup barrier {kind:?} token {token:?} timed out: {events:?}"
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
 }
 
 fn raise_for_focus_canary(driver: &mut impl Driver, target: TargetWindow) -> Result<(), String> {

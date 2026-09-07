@@ -2013,6 +2013,12 @@ fn isolated_hyprland_background(delivery: crate::input::delivery::DeliveryMode) 
     !delivery.is_foreground() && crate::wayland::hyprland_input::enabled()
 }
 
+fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
+    delivery.is_foreground()
+        && crate::wayland::wayland_input_enabled()
+        && crate::wayland::hyprland::is_session()
+}
+
 fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     let detail = detail.into();
     ToolResult::error(format!("background_unavailable: {detail}")).with_structured(json!({
@@ -2022,27 +2028,63 @@ fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
 }
 
 fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
+    hyprland_input_result(result, false)
+}
+
+fn hyprland_input_result(result: anyhow::Result<Value>, foreground: bool) -> ToolResult {
     use cua_driver_core::action_record::{
         ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
     };
     let record = |effect| {
         ActionExecutionRecord::builder(
             effect,
-            ActionTransport::LinuxHyprlandIsolatedInput,
-            RequestedDelivery::Background,
+            if foreground {
+                ActionTransport::LinuxHyprlandForegroundInput
+            } else {
+                ActionTransport::LinuxHyprlandIsolatedInput
+            },
+            if foreground {
+                RequestedDelivery::Foreground
+            } else {
+                RequestedDelivery::Background
+            },
         )
+    };
+    let actual = if foreground {
+        ActualDelivery::Foreground
+    } else {
+        ActualDelivery::Background
+    };
+    let unavailable = if foreground {
+        "foreground_unavailable"
+    } else {
+        "background_unavailable"
     };
     match result {
         Ok(value) if value["ok"] == true => ToolResult::text(
-            "Dispatched isolated Hyprland input; application effect is unverifiable.",
+            "Dispatched exact-target Hyprland input; application effect is unverifiable.",
         )
         .with_action_record(
             record(ActionEffect::Unverifiable)
-                .actual_delivery(ActualDelivery::Background)
+                .actual_delivery(actual)
                 .build()
                 .expect("isolated input record is valid"),
         ),
         Ok(mut value) => {
+            if foreground && value["code"] == "foreground_partial_unknown" {
+                return hyprland_input_result(
+                    Err(crate::wayland::hyprland_input::unknown_dispatch(
+                        anyhow::anyhow!(value["detail"]
+                            .as_str()
+                            .unwrap_or("foreground acquisition may have changed focus")),
+                        value["delivery"]["delivered_count"]
+                            .as_u64()
+                            .and_then(|count| u32::try_from(count).ok())
+                            .unwrap_or(0),
+                    )),
+                    true,
+                );
+            }
             let code = value["code"]
                 .as_str()
                 .unwrap_or("protocol_error")
@@ -2052,38 +2094,53 @@ fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
                 .unwrap_or("input refused")
                 .to_owned();
             value["reason"] = json!(code);
-            value["code"] = json!("background_unavailable");
-            value["route"] = json!("synthetic_events");
+            value["code"] = json!(unavailable);
+            value["route"] = json!(if foreground {
+                "global_input"
+            } else {
+                "synthetic_events"
+            });
             value["verified"] = json!(false);
-            let outcome =
-                if value["effect"] == "partial" && value["delivery"]["delivered_count"] == 1 {
-                    record(ActionEffect::Partial)
-                        .actual_delivery(ActualDelivery::Background)
-                        .delivered_count(1)
-                } else {
-                    value["effect"] = json!("refused");
-                    value
-                        .as_object_mut()
-                        .expect("protocol reply is an object")
-                        .remove("delivery");
-                    record(ActionEffect::Refused)
-                }
-                .detail(&detail)
-                .build()
-                .expect("isolated input outcome is valid");
-            ToolResult::error(format!("background_unavailable ({code}): {detail}"))
+            let delivered = value["delivery"]["delivered_count"]
+                .as_u64()
+                .and_then(|count| u32::try_from(count).ok())
+                .filter(|count| *count > 0);
+            let outcome = if value["effect"] == "partial"
+                && delivered.is_some_and(|count| foreground || count == 1)
+            {
+                record(ActionEffect::Partial)
+                    .actual_delivery(actual)
+                    .delivered_count(delivered.unwrap())
+            } else {
+                value["effect"] = json!("refused");
+                value
+                    .as_object_mut()
+                    .expect("protocol reply is an object")
+                    .remove("delivery");
+                record(ActionEffect::Refused)
+            }
+            .detail(&detail)
+            .build()
+            .expect("isolated input outcome is valid");
+            ToolResult::error(format!("{unavailable} ({code}): {detail}"))
                 .with_structured(value)
                 .with_action_record(outcome)
         }
         Err(error) if error.is::<crate::wayland::hyprland_input::LaneBusy>() => {
-            isolated_hyprland_result(Ok(json!({
-                "ok": false, "code": "lane_busy", "detail": error.to_string()
-            })))
+            hyprland_input_result(
+                Ok(json!({
+                    "ok": false, "code": "lane_busy", "detail": error.to_string()
+                })),
+                foreground,
+            )
         }
         Err(error) if error.is::<crate::wayland::hyprland_input::ActionCancelled>() => {
-            isolated_hyprland_result(Ok(json!({
-                "ok": false, "code": "cancelled", "detail": error.to_string()
-            })))
+            hyprland_input_result(
+                Ok(json!({
+                    "ok": false, "code": "cancelled", "detail": error.to_string()
+                })),
+                foreground,
+            )
         }
         Err(error) => {
             let count = error
@@ -2106,10 +2163,10 @@ fn isolated_hyprland_result(result: anyhow::Result<Value>) -> ToolResult {
                 .expect("unknown delivery preserves acknowledged progress");
             let mut value = serde_json::to_value(outcome.public_result().unwrap()).unwrap();
             value["ok"] = json!(false);
-            value["code"] = json!("background_unavailable");
+            value["code"] = json!(unavailable);
             value["reason"] = json!("transport_or_protocol_error");
             value["detail"] = json!(error.to_string());
-            ToolResult::error(format!("background_unavailable: {error}"))
+            ToolResult::error(format!("{unavailable}: {error}"))
                 .with_structured(value)
                 .with_action_record(outcome)
         }
@@ -2180,6 +2237,113 @@ async fn isolated_hyprland_action(
         Ok(result) => isolated_hyprland_result(result),
         Err(error) => isolated_hyprland_task_error(error, false),
     }
+}
+
+fn foreground_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
+    hyprland_input_result(
+        Ok(json!({
+            "ok": false, "code": "unsupported_operation", "detail": detail.into()
+        })),
+        true,
+    )
+}
+
+async fn foreground_hyprland_action(
+    args: &Value,
+    pid: u32,
+    xid: u64,
+    action: crate::wayland::hyprland_input::Action,
+) -> ToolResult {
+    if !crate::wayland::hyprland_input::enabled() {
+        return foreground_hyprland_refusal("production Hyprland input plugin is unavailable");
+    }
+    let owner = named_session_cursor_key(args);
+    let (_cancellation, dispatch) = match spawn_isolated_hyprland(args, move |cancellation| {
+        crate::wayland::hyprland_input::execute_foreground(owner, pid, xid, action, cancellation)
+    }) {
+        Ok(dispatch) => dispatch,
+        Err(_) => return foreground_hyprland_refusal("authenticated admitted lifecycle required"),
+    };
+    hyprland_input_result(
+        match dispatch.await {
+            Ok(result) => result,
+            Err(error) => Err(crate::wayland::hyprland_input::unknown_dispatch(
+                error.into(),
+                0,
+            )),
+        },
+        true,
+    )
+}
+
+fn foreground_hyprland_key(
+    key: String,
+    mut modifiers: Vec<String>,
+) -> Result<crate::wayland::hyprland_input::Action, ToolResult> {
+    let parts: Vec<&str> = key.split('+').collect();
+    let key = if parts.len() > 1 && key != "+" {
+        if parts[..parts.len() - 1]
+            .iter()
+            .any(|part| !is_modifier(part))
+            || parts.last() == Some(&"")
+        {
+            return Err(foreground_hyprland_refusal("invalid modified key chord"));
+        }
+        modifiers.extend(
+            parts[..parts.len() - 1]
+                .iter()
+                .map(|part| part.to_lowercase()),
+        );
+        parts.last().unwrap().to_string()
+    } else {
+        key
+    };
+    Ok(crate::wayland::hyprland_input::Action::Key { key, modifiers })
+}
+
+async fn focus_hyprland_foreground(
+    state: &Arc<ToolState>,
+    args: &Value,
+    pid: u32,
+    xid: u64,
+    element: Option<usize>,
+    pixel: Option<(f64, f64)>,
+) -> Result<(), ToolResult> {
+    if !crate::wayland::hyprland_input::enabled() {
+        return Err(foreground_hyprland_refusal(
+            "production Hyprland input plugin is unavailable",
+        ));
+    }
+    if let Some((x, y)) = pixel {
+        return focus_by_pixel(
+            state,
+            pid,
+            Some(xid),
+            x,
+            y,
+            true,
+            args,
+            args.bool_or("from_zoom", false),
+        )
+        .await;
+    }
+    if let Some(index) = element {
+        let activation = foreground_hyprland_action(
+            args,
+            pid,
+            xid,
+            crate::wayland::hyprland_input::Action::Activate,
+        )
+        .await;
+        if activation.is_error == Some(true) {
+            return Err(activation);
+        }
+        match tokio::task::spawn_blocking(move || crate::atspi::focus_element(pid, index)).await {
+            Ok(Ok(true)) => {}
+            _ => return Err(foreground_hyprland_refusal("AT-SPI child focus failed")),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -2352,6 +2516,72 @@ fn experimental_dispatch_does_not_claim_application_success() {
     assert_eq!(value["effect"], "unverifiable");
     assert_eq!(value["route"], "synthetic_events");
     assert!(value.get("verified").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn foreground_hyprland_reports_foreground_and_preserves_partial_progress() {
+    use cua_driver_core::action_record::{ActionTransport, RequestedDelivery};
+    for (reply, expected_effect, count) in [
+        (json!({"ok":true}), "unverifiable", None),
+        (
+            json!({"ok":false,"code":"stale_target","detail":"stale"}),
+            "refused",
+            None,
+        ),
+        (
+            json!({"ok":false,"code":"cancelled","detail":"cancelled","effect":"partial",
+            "delivery":{"mode":"foreground","delivered_count":3}}),
+            "partial",
+            Some(3),
+        ),
+    ] {
+        let result = hyprland_input_result(Ok(reply), true);
+        let record = result.action_record.unwrap();
+        assert_eq!(
+            record.transport,
+            ActionTransport::LinuxHyprlandForegroundInput
+        );
+        assert_eq!(record.requested_delivery, RequestedDelivery::Foreground);
+        let public = record.public_result().unwrap();
+        public.validate_invariants().unwrap();
+        let value = serde_json::to_value(public).unwrap();
+        assert_eq!(value["route"], "global_input");
+        assert_eq!(value["effect"], expected_effect);
+        if expected_effect == "refused" {
+            assert!(value.get("delivery").is_none());
+        } else {
+            assert_eq!(value["delivery"]["mode"], "foreground");
+            assert_eq!(value["delivery"]["delivered_count"].as_u64(), count);
+        }
+    }
+    for reply in [
+        Err(crate::wayland::hyprland_input::unknown_dispatch(
+            anyhow::anyhow!("lost"),
+            2,
+        )),
+        Ok(json!({"ok":false,"code":"foreground_partial_unknown","detail":"focus changed"})),
+    ] {
+        let unknown = hyprland_input_result(reply, true);
+        let value =
+            serde_json::to_value(unknown.action_record.unwrap().public_result().unwrap()).unwrap();
+        assert_eq!(value["delivery"]["mode"], "unknown");
+        assert_ne!(value["effect"], "refused");
+    }
+}
+
+#[cfg(test)]
+#[test]
+fn foreground_hyprland_chords_preserve_all_modifiers() {
+    let action = foreground_hyprland_key("Ctrl+Shift+H".into(), vec!["alt".into()]).unwrap();
+    match action {
+        crate::wayland::hyprland_input::Action::Key { key, modifiers } => {
+            assert_eq!(key, "H");
+            assert_eq!(modifiers, ["alt", "ctrl", "shift"]);
+        }
+        _ => panic!("expected a key chord"),
+    }
+    assert!(foreground_hyprland_key("bogus+H".into(), vec![]).is_err());
 }
 
 #[cfg(test)]
@@ -3100,6 +3330,40 @@ impl Tool for ClickTool {
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
+            if hyprland_foreground(delivery) {
+                if !modifiers.is_empty() {
+                    return foreground_hyprland_refusal("modified clicks are unsupported");
+                }
+                let Some(xid) = window_id_resolved else {
+                    return foreground_hyprland_refusal(
+                        "an exact window_id or window-bound element token is required",
+                    );
+                };
+                let point = tokio::task::spawn_blocking(move || {
+                    resolve_element_local_coords(pid, idx, Some(xid))
+                })
+                .await;
+                let (x, y) = match point {
+                    Ok(Ok((_, x, y))) => (x, y),
+                    _ => {
+                        return foreground_hyprland_refusal(
+                            "could not resolve exact element coordinates",
+                        )
+                    }
+                };
+                return foreground_hyprland_action(
+                    &args,
+                    pid,
+                    xid,
+                    crate::wayland::hyprland_input::Action::Click {
+                        x,
+                        y,
+                        button: u32::from(button),
+                        count,
+                    },
+                )
+                .await;
+            }
             if modifiers.is_empty() {
                 let ax_result =
                     tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
@@ -3279,6 +3543,26 @@ impl Tool for ClickTool {
 
         let (xi, yi) = (x as i32, y as i32);
         let (output_x, output_y) = wayland_output_point.unwrap_or((xi, yi));
+        if hyprland_foreground(delivery) {
+            if !modifiers.is_empty() {
+                return foreground_hyprland_refusal("modified clicks are unsupported");
+            }
+            if window_id_resolved.is_none() {
+                return foreground_hyprland_refusal("an exact window_id is required");
+            }
+            return foreground_hyprland_action(
+                &args,
+                pid,
+                xid,
+                crate::wayland::hyprland_input::Action::Click {
+                    x,
+                    y,
+                    button: u32::from(button),
+                    count,
+                },
+            )
+            .await;
+        }
         if isolated_background {
             if !modifiers.is_empty() {
                 return isolated_hyprland_refusal(
@@ -3447,10 +3731,7 @@ impl Tool for ClickTool {
 /// translation + delivery_mode so it lands on the same pixel a px-click would.
 /// `Ok(())` on success; `Err(ToolResult)` short-circuits the caller.
 ///
-/// Mirrors macOS `tools::focus_by_pixel`. Linux differences: `pid` is `u32`,
-/// `window_id` is `u64` (the X11 XID / window id), and there is no `_session_id`
-/// field — the Linux ClickTool resolves the agent cursor from `session` /
-/// `cursor_id` only (`resolve_cursor_key`).
+/// Retains the parent's authenticated session admission for the nested click.
 async fn focus_by_pixel(
     state: &Arc<ToolState>,
     pid: u32,
@@ -3458,7 +3739,7 @@ async fn focus_by_pixel(
     x: f64,
     y: f64,
     foreground: bool,
-    session: Option<String>,
+    parent_args: &Value,
     from_zoom: bool,
 ) -> Result<(), ToolResult> {
     let mut click_args = json!({
@@ -3468,8 +3749,15 @@ async fn focus_by_pixel(
     if let Some(wid) = window_id {
         click_args["window_id"] = json!(wid);
     }
-    if let Some(s) = session {
-        click_args["session"] = json!(s);
+    for field in [
+        "session",
+        "_session_id",
+        "_transport_session_id",
+        "cursor_id",
+    ] {
+        if let Some(value) = parent_args.get(field) {
+            click_args[field] = value.clone();
+        }
     }
     if from_zoom {
         click_args["from_zoom"] = json!(true);
@@ -3480,9 +3768,7 @@ async fn focus_by_pixel(
     .invoke(click_args)
     .await;
     if focus.is_error == Some(true) {
-        return Err(ToolResult::error(format!(
-            "focus pixel-click at ({x:.0},{y:.0}) failed."
-        )));
+        return Err(focus);
     }
     // Brief settle so the renderer registers focus before the keystrokes.
     tokio::time::sleep(std::time::Duration::from_millis(120)).await;
@@ -3659,6 +3945,76 @@ impl Tool for TypeTextTool {
             );
         }
 
+        if hyprland_foreground(delivery) {
+            if xid_opt.is_none() {
+                return foreground_hyprland_refusal("an exact window_id is required");
+            }
+            // Native editables retain their verifiable, addressed AT-SPI route.
+            if !is_chromium_embedder(pid) && !is_webkitgtk_embedder(pid) {
+                if let Some(index) = resolved_elem_idx {
+                    let text_ax = text.clone();
+                    if matches!(
+                        tokio::task::spawn_blocking(move || crate::atspi::type_into_editable_at(
+                            pid, index, &text_ax
+                        ))
+                        .await,
+                        Ok(Ok(()))
+                    ) {
+                        return type_text_ax_result(
+                            pid,
+                            text.chars().count(),
+                            "via targeted AT-SPI",
+                        );
+                    }
+                }
+            }
+            match crate::wayland::hyprland_input::foreground_text_actions(&text) {
+                Ok(actions) if !actions.is_empty() => {}
+                Ok(_) => return foreground_hyprland_refusal("foreground text must not be empty"),
+                Err(error) => return foreground_hyprland_refusal(error.to_string()),
+            }
+            if let Err(error) = focus_hyprland_foreground(
+                &self.state,
+                &args,
+                pid,
+                xid,
+                resolved_elem_idx,
+                px.zip(py),
+            )
+            .await
+            {
+                return error;
+            }
+            let owner = named_session_cursor_key(&args);
+            let (_cancellation, dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_foreground_text(
+                        owner,
+                        pid,
+                        xid,
+                        &text,
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(_) => {
+                        return foreground_hyprland_refusal(
+                            "authenticated admitted lifecycle required",
+                        )
+                    }
+                };
+            return hyprland_input_result(
+                match dispatch.await {
+                    Ok(result) => result,
+                    Err(error) => Err(crate::wayland::hyprland_input::unknown_dispatch(
+                        error.into(),
+                        0,
+                    )),
+                },
+                true,
+            );
+        }
+
         position_named_session_keyboard_cursor(
             &self.state,
             &args,
@@ -3736,7 +4092,7 @@ impl Tool for TypeTextTool {
                 cx,
                 cy,
                 delivery.is_foreground(),
-                args.opt_str("session"),
+                &args,
                 from_zoom,
             )
             .await
@@ -4316,6 +4672,29 @@ impl Tool for PressKeyTool {
             );
         }
 
+        if hyprland_foreground(delivery) {
+            if xid_opt.is_none() {
+                return foreground_hyprland_refusal("an exact window_id is required");
+            }
+            let action = match foreground_hyprland_key(key, mods) {
+                Ok(action) => action,
+                Err(error) => return error,
+            };
+            if let Err(error) = focus_hyprland_foreground(
+                &self.state,
+                &args,
+                pid,
+                xid,
+                resolved_element_index,
+                px.zip(py),
+            )
+            .await
+            {
+                return error;
+            }
+            return foreground_hyprland_action(&args, pid, xid, action).await;
+        }
+
         position_named_session_keyboard_cursor(
             &self.state,
             &args,
@@ -4369,7 +4748,7 @@ impl Tool for PressKeyTool {
                     cx,
                     cy,
                     delivery.is_foreground(),
-                    args.opt_str("session"),
+                    &args,
                     from_zoom,
                 )
                 .await
@@ -4702,6 +5081,42 @@ impl Tool for HotkeyTool {
             );
         }
 
+        if hyprland_foreground(delivery) {
+            if xid_opt.is_none() {
+                return foreground_hyprland_refusal("an exact window_id is required");
+            }
+            if let Some(keys) = args.get("keys").and_then(Value::as_array) {
+                if keys.iter().any(|key| !key.is_string())
+                    || keys
+                        .iter()
+                        .filter(|key| key.as_str().is_some_and(|key| !is_modifier(key)))
+                        .count()
+                        != 1
+                {
+                    return foreground_hyprland_refusal(
+                        "hotkeys require exactly one non-modifier key",
+                    );
+                }
+            }
+            let action = match foreground_hyprland_key(key, mods) {
+                Ok(action) => action,
+                Err(error) => return error,
+            };
+            if let Err(error) = focus_hyprland_foreground(
+                &self.state,
+                &args,
+                pid,
+                xid,
+                resolved_element_index,
+                px.zip(py),
+            )
+            .await
+            {
+                return error;
+            }
+            return foreground_hyprland_action(&args, pid, xid, action).await;
+        }
+
         position_named_session_keyboard_cursor(
             &self.state,
             &args,
@@ -4751,17 +5166,8 @@ impl Tool for HotkeyTool {
                     Ok(Err(error)) => return ToolResult::error(error.to_string()),
                     Err(error) => return ToolResult::error(format!("Task error: {error}")),
                 };
-                if let Err(error) = focus_by_pixel(
-                    &self.state,
-                    pid,
-                    Some(xid),
-                    x,
-                    y,
-                    true,
-                    args.opt_str("session"),
-                    false,
-                )
-                .await
+                if let Err(error) =
+                    focus_by_pixel(&self.state, pid, Some(xid), x, y, true, &args, false).await
                 {
                     return error;
                 }
@@ -4799,7 +5205,7 @@ impl Tool for HotkeyTool {
                     cx,
                     cy,
                     delivery.is_foreground(),
-                    args.opt_str("session"),
+                    &args,
                     from_zoom,
                 )
                 .await
@@ -5116,6 +5522,40 @@ impl Tool for ScrollTool {
             if let Some(refusal) = unavailable_chromium_background(pid, delivery) {
                 return refusal;
             }
+        }
+        if hyprland_foreground(delivery) {
+            if xid_opt.is_none() {
+                return foreground_hyprland_refusal(
+                    "an exact window_id or window-bound element token is required",
+                );
+            }
+            let point = if let Some(index) = resolved_element_index {
+                match tokio::task::spawn_blocking(move || {
+                    resolve_element_local_coords(pid, index, Some(xid))
+                })
+                .await
+                {
+                    Ok(Ok((_, x, y))) => Some((x, y)),
+                    _ => {
+                        return foreground_hyprland_refusal(
+                            "could not resolve exact element coordinates",
+                        )
+                    }
+                }
+            } else {
+                pixel_target
+            };
+            return foreground_hyprland_action(
+                &args,
+                pid,
+                xid,
+                crate::wayland::hyprland_input::Action::Scroll {
+                    point,
+                    direction,
+                    amount,
+                },
+            )
+            .await;
         }
         if let cua_driver_core::element_token::ResolvedElement::Element { element_index, .. } =
             &resolved
@@ -6038,6 +6478,74 @@ impl Tool for DragTool {
             from_y *= ratio;
             to_x *= ratio;
             to_y *= ratio;
+        }
+
+        if hyprland_foreground(delivery) {
+            if button_str != "left" || args.get("modifier").is_some_and(|value| !value.is_null()) {
+                return foreground_hyprland_refusal(
+                    "foreground drag supports only an unmodified left button",
+                );
+            }
+            if !crate::wayland::hyprland_input::enabled() {
+                return foreground_hyprland_refusal(
+                    "production Hyprland input plugin is unavailable",
+                );
+            }
+            let owner = named_session_cursor_key(&args);
+            let from = crate::wayland::window_local_to_output(
+                xid,
+                from_x.round() as i32,
+                from_y.round() as i32,
+            );
+            let to = crate::wayland::window_local_to_output(
+                xid,
+                to_x.round() as i32,
+                to_y.round() as i32,
+            );
+            let (started, acknowledged) = tokio::sync::oneshot::channel();
+            let (_cancellation, mut dispatch) =
+                match spawn_isolated_hyprland(&args, move |cancellation| {
+                    crate::wayland::hyprland_input::execute_foreground_with_started(
+                        owner,
+                        pid,
+                        xid,
+                        crate::wayland::hyprland_input::Action::Drag {
+                            from: (from_x, from_y),
+                            to: (to_x, to_y),
+                            duration_ms,
+                        },
+                        Some(started),
+                        cancellation,
+                    )
+                }) {
+                    Ok(dispatch) => dispatch,
+                    Err(_) => {
+                        return foreground_hyprland_refusal(
+                            "authenticated admitted lifecycle required",
+                        )
+                    }
+                };
+            let acknowledged = acknowledged.await.is_ok();
+            let result = if acknowledged {
+                overlay_snap_to_for(&cursor_id, from.0 as f64, from.1 as f64, None);
+                tokio::select! {
+                    result = &mut dispatch => result,
+                    () = track_overlay_drag_for(cursor_id.clone(), (from.0 as f64, from.1 as f64),
+                        (to.0 as f64, to.1 as f64), duration_ms, steps) => dispatch.await,
+                }
+            } else {
+                dispatch.await
+            };
+            return hyprland_input_result(
+                match result {
+                    Ok(result) => result,
+                    Err(error) => Err(crate::wayland::hyprland_input::unknown_dispatch(
+                        error.into(),
+                        u32::from(acknowledged),
+                    )),
+                },
+                true,
+            );
         }
 
         if isolated_background {
@@ -8754,6 +9262,18 @@ impl Tool for BringToFrontTool {
                     }
                 },
             };
+            if crate::wayland::wayland_input_enabled() && crate::wayland::hyprland::is_session() {
+                if args.opt_u64("window_id").is_none() {
+                    return foreground_hyprland_refusal("an exact window_id is required");
+                }
+                return foreground_hyprland_action(
+                    &args,
+                    pid,
+                    window_id,
+                    crate::wayland::hyprland_input::Action::Activate,
+                )
+                .await;
+            }
             let result = tokio::task::spawn_blocking(move || {
                 crate::wayland::activate_window_for_input_target(window_id, Some(pid))
             })

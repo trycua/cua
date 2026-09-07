@@ -1,7 +1,8 @@
 # Local input protocol v3 candidate
 
 This opt-in candidate connects Driver's existing per-action admission to two
-independent compositor seats. It is not native certification or a release
+independent compositor seats. The accepted extension adds a distinct exact-target
+primary-seat foreground route. It is not native certification or a release
 announcement. The default plugin build remains discovery-only, and discovery
 protocol v2 is unchanged.
 
@@ -45,13 +46,20 @@ its original seat names.
 The request sequence for every Driver-admitted action is:
 
 1. Send `HELLO` once per connection. The response is
-   `{"ok":true,"protocol":3,"epoch":"<epoch>"}`.
+   `{"ok":true,"protocol":3,"epoch":"<epoch>","foreground_target":true}`
+   for a production plugin implementing the foreground extension. Driver must
+   require that explicit capability before using the foreground route.
 2. Send `CLAIM`. The response is `{"ok":true,"lane":0}` or lane `1`.
-3. Send `TARGET <pid> <hex-address> <capability>`. The capability is exactly one
-   of `1` (click), `2` (key), `4` (scroll), or `8` (drag). Combined masks refuse.
+3. For background input, send `TARGET <pid> <hex-address> <capability>`.
+   For foreground input, send
+   `FOREGROUND_TARGET <pid> <hex-address> <capability>`. The capability is exactly
+   one of `1` (click), `2` (key), `4` (scroll), or `8` (drag); foreground selection
+   also permits `16` (activate). Combined masks refuse.
    The response includes `ok`, `target`, `revision`, `width`, and `height`.
 4. Send the one matching bounded operation using that token and revision.
-   A subsequent action requires a fresh `TARGET`, even on a cached connection.
+   A subsequent action requires fresh route-specific target selection, even on
+   a cached connection. The binding fixes the route; an operation cannot turn
+   a background grant into a foreground grant.
 
 `TARGET` binds the exact live native top-level surface, generates a fresh token,
 and grants at most five seconds of steady-clock technical lifetime. It first
@@ -65,6 +73,7 @@ The complete operation requests are:
 
 | Request | Limits |
 | --- | --- |
+| `ACTIVATE <sequence> <target> <revision>` | Capability 16; foreground bindings only. |
 | `CLICK <sequence> <target> <revision> <x> <y> <button> <count>` | Evdev buttons 272–274; count 1–2. |
 | `KEY <sequence> <target> <revision> <key> <modifiers>` | Evdev key 1–247 except lock keys 58, 69, and 70. Modifier bits: shift=1, ctrl=2, alt=4, super=8. |
 | `SCROLL <sequence> <target> <revision> <x> <y> <axis> <value>` | Axis 0=vertical, 1=horizontal; nonzero value in [-1000,1000]. |
@@ -75,15 +84,16 @@ and `0 <= y < height`. Subsurface hits refuse. Sequence numbers increase
 strictly across the connection, including fresh target selections. Repeated
 or lower sequences return `replay`; no operation is replayed automatically.
 
-The plugin repeats target, geometry, desktop, keymap, and conflict checks at
+The plugin repeats target, geometry, desktop, keymap, and conflict checks on
+the compositor thread at
 dispatch. It consumes the grant before the first synthetic focus/input event.
-Completed operations release their held buttons, keys, keyboard focus, and
+Completed background operations release their held buttons, keys, keyboard focus, and
 remaining technical authority. A drag keeps its bounded lifetime while
 running; consuming its grant does not permit another action. A dispatch without
 fresh authority returns `action_not_admitted`. Malformed or refused requests
 never imply application rollback.
 
-Pointer focus has a separate lifetime. After a successful pointer operation,
+Background pointer focus has a separate lifetime. After a successful background pointer operation,
 the lane keeps passive pointer focus on that exact live surface. This internal
 state is separate from the visible Driver overlay, whose idle fade and
 session-end removal remain unchanged. Fresh
@@ -121,7 +131,7 @@ may still end focus before a stalled client processes its events; dispatch
 acknowledgement is not an application-processing fence. Verify the application's
 effect independently.
 
-Successful dispatch returns
+Successful background dispatch returns
 `{"ok":true,"effect":"unverifiable","route":"synthetic_events"}`. This
 acknowledges synthetic delivery, not an application outcome. A drag first
 returns `{"ok":true,"phase":"started"}` and later its final result. After
@@ -144,6 +154,33 @@ include `lane_busy`, `lane_not_claimed`, `stale_target`, `stale_geometry`,
 `agent_target_busy`, `lease_expired`, `action_not_admitted`, `lease_busy`,
 `client_not_bound`, `replay`, `unsupported`, and `invalid_request`.
 
+## Exact-target foreground extension
+
+`FOREGROUND_TARGET` binds an ordinary live native top-level surface to
+`primary_foreground`. The plugin validates the exact PID, compositor address,
+surface lifetime, geometry revision, and route at admission and dispatch on the
+compositor thread. `ACTIVATE` intentionally activates that target. Foreground
+click, key, scroll, and drag use the same bounded operation shapes with a
+foreground binding; primary focus and cursor position may change. This route
+makes no promise to restore focus or cursor position after delivery.
+
+Before taking over primary input, the plugin must refuse held physical keys or
+buttons, active grabs, pointer constraints, and drag-and-drop. It requires a
+single primary seat binding, excluding its own agent seats by resource identity,
+and refuses binding or input-resource changes during dispatch. Keyboard delivery
+requires neutral primary modifiers and layout group zero; latched or locked
+modifiers refuse before activation. Foreground drag
+cancellation on primary-input and focus transitions remains subject to review
+and native verification; do not infer background isolation from this route.
+Foreground results use foreground delivery metadata. A drag cancellation after
+its start is partial, and a missing acknowledgement is unknown, under the same
+no-replay rules as background delivery.
+
+Discovery or activation read-back followed by global `wtype` input does not
+establish exact-target delivery and is not a fallback. Background refusal never
+escalates to foreground. Both routes use Driver's existing permission and
+lifecycle admission, without a separate approval UI.
+
 ## Cancellation and recovery
 
 `CANCEL` and `STOP` both require the connection's lane claim. They revoke only
@@ -163,8 +200,8 @@ for the separate cancellation paths and transport limits.
 EOF cancels only the departing connection's work and frees its reservation.
 Lock/unlock, DPMS, session activity, and monitor transitions revoke authority.
 Keymap/layout changes revoke authority, including synchronous layout and
-active-keyboard keymap notifications. Changing primary focus to a target
-client cancels that lane synchronously. Dispatch and timer checks supplement
+active-keyboard keymap notifications. For background bindings, changing primary
+focus to a target client cancels that lane synchronously. Dispatch and timer checks supplement
 these listeners. None of these paths wake the display or unlock the session.
 
 Config disable closes input transports but preserves client-owned seats and
@@ -180,14 +217,21 @@ of bounded cleanup latency.
 
 ## Compatibility and build gates
 
-Driver restricts app/package/version/operation eligibility before connecting.
-The initial qualification scope is native Calc and Inkscape. The plugin checks
+For background `TARGET`, Driver restricts app/package/version/operation
+eligibility before connecting. Its qualification scope remains native Calc and
+Inkscape. Foreground `FOREGROUND_TARGET` has no Calc/Inkscape package gate; its
+scope is ordinary native top-level surfaces. Native GTK3, Electron, and Tauri
+foreground coverage is planned and still requires certification. The plugin checks
 native surface identity, geometry, client conflicts, and exact compiled XKB
 content against the default `evdev`/`pc105`/`us` keymap. Variants, options,
 remaps, multiple groups, missing keyboards, XWayland, Unicode, IME input,
 arbitrary held-key streams, and modified pointer gestures are outside this
 candidate. Layout names alone never establish eligibility. Existing semantic
 Driver routes retain their own behavior.
+
+Driver expands bounded ASCII text into complete key operations under the exact
+US keymap. The protocol adds no text or IME stream. Background application
+qualification is unchanged by this foreground extension.
 
 Build against the exact Hyprland 0.56.2 ABI with `CUA_HYPRLAND_INPUT=ON`.
 This option defaults to `OFF` and is mutually exclusive with
@@ -202,6 +246,10 @@ native implementation and verify each supported app/operation, both lanes,
 independent primary interaction, stale/refusal paths, partial delivery,
 cleanup, and surviving-client recovery at the exact candidate SHA. Include
 both instrumented evidence and an uninstrumented production-package smoke.
+The foreground extension must also pass the existing complete canonical Linux
+Rust suite in native Hyprland at the candidate SHA, preserving its runner,
+required cells, assertions, and evidence checks. No foreground certification
+result is recorded here.
 
 The independent-seat design adapts Dillon DuPont's Hyprland prototype. Earlier
 signed-experiment results remain historical evidence for that source only.

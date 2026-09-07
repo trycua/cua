@@ -576,9 +576,13 @@ The 2026-09-07 validation-strategy decision uses
 native Hyprland desktop at the exact candidate SHA. This supplies canonical
 fixture regression coverage. Preserve required cells, assertions, and evidence
 checks, and report environment failures explicitly. Ordinary GTK, Electron,
-and Tauri fixtures are outside `hyprland_compatibility.rs`'s production package
-gate; their v3 raw-input refusals do not establish delivered plugin input.
-Do not broaden production admission or introduce a test bypass.
+and Tauri fixtures are outside `hyprland_compatibility.rs`'s background production
+package gate; their v3 background raw-input refusals do not establish delivered
+plugin input. Do not broaden background admission or introduce a test bypass.
+The accepted foreground scope adjustment below adds a distinct production route
+for ordinary native top-level fixtures. Its GTK3, Electron, and Tauri foreground
+cells must pass the existing complete suite without changing the runner,
+assertions, or evidence checks. These cells are not yet certified.
 
 Short production real-app smoke and instrumented isolation checks on native
 Calc `26.2.5-3` and Inkscape `1.4.4-6` remain required supporting compatibility
@@ -718,8 +722,8 @@ approval UI, test bypass, or new passing certification claim. Implementation
 merge still requires passing affected CI and E2E evidence; release, Fleet,
 and physical-host requirements retain their separate scope.
 
-The decision preserves the contributor feedback and alternatives above. It
-rejects borrowing primary-seat focus and the earlier separate consent/signer
+The background decision preserves the contributor feedback and alternatives above. It
+rejects borrowing primary-seat focus for background input and the earlier separate consent/signer
 requirements. A patched compositor, direct-resource delivery, and portable
 standards work remain separate alternatives rather than silent substitutions.
 
@@ -735,3 +739,37 @@ permission-UI choices. Keep status `accepted` until the required criteria ship;
 then record completion. Certify and release the Driver/plugin dependency chain
 before publishing the final supported Fleet image. No upstream Hyprland
 endorsement or physical-host parity is implied.
+
+### Accepted exact-target foreground scope adjustment
+
+The [maintainer's foreground scope adjustment](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+accepts a separate production foreground route. It extends the accepted design
+without changing the earlier background decisions, qualification, or contributor
+credit. `HELLO` explicitly advertises `foreground_target:true`.
+`FOREGROUND_TARGET <pid> <hex-address> <capability>` binds the exact live native
+top-level surface to `primary_foreground`. Background `TARGET` remains unchanged.
+The plugin validates identity, lifetime, geometry, and route on the compositor
+thread at admission and dispatch; discovery followed by global `wtype` input is
+not an exact-target fallback.
+
+The foreground route supports the existing complete click (1), key (2), scroll
+(4), and bounded drag (8) operations and adds foreground-only activation (16)
+through `ACTIVATE <sequence> <target> <revision>`. Activation and primary-cursor
+movement are intentional. There is no focus or cursor restoration promise and
+no escalation from a refused background action. Driver's shared permission and
+lifecycle checks remain in force, without a separate approval UI.
+
+Foreground admission has no Calc/Inkscape package gate, but supports only ordinary
+native top-level surfaces. Driver expands bounded ASCII text into complete key
+operations under the exact compiled US keymap; Unicode and IME input remain
+outside scope. Held physical keys/buttons, grabs, pointer constraints, and
+drag-and-drop must refuse before primary takeover. Cancellation of foreground
+drags on primary-input and focus transitions remains under review and requires
+native verification; acceptance does not establish that behavior as proven.
+
+Native GTK3, Electron, and Tauri foreground coverage is planned. The extension
+must pass the existing complete canonical Linux Rust suite on native Hyprland at
+the candidate SHA. This adjustment neither records a passing certification nor
+changes canonical runner/tests. Background Calc/Inkscape qualification and its
+supporting isolation evidence remain required; the extension does not promote
+generic fixtures to background raw-input support.

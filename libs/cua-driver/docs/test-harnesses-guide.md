@@ -60,12 +60,24 @@ and backend provenance; an X11 run does not establish native Hyprland coverage.
 Environment failures and failed cells remain failures, not permission to skip
 tests or change expected results.
 
-This is fixture regression coverage. The production compatibility gate in
+This is fixture regression coverage. For background `TARGET` input, the production compatibility gate in
 `platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
 native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,
-and Tauri fixtures do not qualify for v3 raw input. Their declared refusals
+and Tauri fixtures do not qualify for v3 background raw input. Their declared refusals
 can prove refusal behavior, but cannot prove plugin delivery or isolation.
-Do not widen production admission or add a test bypass to make them qualify.
+Do not widen background production admission or add a test bypass to make them qualify.
+
+The [accepted foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+adds a separate production `FOREGROUND_TARGET` route for ordinary native
+top-level surfaces, advertised by `HELLO` with `foreground_target:true`.
+It does not apply the Calc/Inkscape background package gate. Native GTK3,
+Electron, and Tauri foreground coverage must pass this existing complete suite;
+it is planned coverage, not a passing result. Preserve the runner and tests.
+Foreground activation and primary-cursor movement are intentional, with no
+restoration promise. Verify exact-target delivery and refusals for held
+keys/buttons, grabs, constraints, and drag-and-drop before primary takeover.
+Foreground drag cancellation on primary-input/focus transitions still requires
+review and native evidence. No background refusal may escalate to this route.
 
 Retain a short real-app production smoke and instrumented isolation proof on
 both qualified apps as supporting compatibility evidence. Verify actual app

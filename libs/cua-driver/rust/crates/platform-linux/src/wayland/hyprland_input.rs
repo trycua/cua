@@ -18,6 +18,95 @@ const CANCELLATION_POLL: Duration = Duration::from_millis(25);
 const MAX_PACKET: usize = 2048;
 const MAX_LANES: usize = 2;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum DeliveryRoute {
+    Background,
+    Foreground,
+}
+
+impl DeliveryRoute {
+    fn mode(self) -> &'static str {
+        match self {
+            Self::Background => "background",
+            Self::Foreground => "foreground",
+        }
+    }
+
+    fn acknowledgement(self) -> &'static str {
+        match self {
+            Self::Background => "synthetic_events",
+            Self::Foreground => "primary_foreground",
+        }
+    }
+}
+
+fn validate_target_route(target: &Value, route: DeliveryRoute) -> Result<()> {
+    if route == DeliveryRoute::Foreground {
+        ensure!(
+            target["route"] == "primary_foreground",
+            "foreground target route mismatch"
+        );
+    }
+    Ok(())
+}
+
+/// Validate the whole string before dispatching any keys. Physical key delivery
+/// uses the compositor's keyboard layout; these codes describe US ASCII keys.
+pub(crate) fn foreground_text_actions(text: &str) -> Result<Vec<Action>> {
+    ensure!(
+        text.len() <= 4096 && text.is_ascii(),
+        "foreground text requires at most 4096 ASCII bytes"
+    );
+    text.bytes()
+        .map(|byte| {
+            let (keycode, shift) = match byte {
+                b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' => (
+                    super::key_to_evdev(&(byte as char).to_string())
+                        .context("unsupported text key")?,
+                    byte.is_ascii_uppercase(),
+                ),
+                b' ' => (57, false),
+                b'\t' => (15, false),
+                b'\n' => (28, false),
+                b'-' => (12, false),
+                b'_' => (12, true),
+                b'=' => (13, false),
+                b'+' => (13, true),
+                b'[' => (26, false),
+                b'{' => (26, true),
+                b']' => (27, false),
+                b'}' => (27, true),
+                b';' => (39, false),
+                b':' => (39, true),
+                b'\'' => (40, false),
+                b'"' => (40, true),
+                b'`' => (41, false),
+                b'~' => (41, true),
+                b'\\' => (43, false),
+                b'|' => (43, true),
+                b',' => (51, false),
+                b'<' => (51, true),
+                b'.' => (52, false),
+                b'>' => (52, true),
+                b'/' => (53, false),
+                b'?' => (53, true),
+                b'!' => (2, true),
+                b'@' => (3, true),
+                b'#' => (4, true),
+                b'$' => (5, true),
+                b'%' => (6, true),
+                b'^' => (7, true),
+                b'&' => (8, true),
+                b'*' => (9, true),
+                b'(' => (10, true),
+                b')' => (11, true),
+                _ => bail!("unsupported foreground text control character"),
+            };
+            Ok(Action::TextKey { keycode, shift })
+        })
+        .collect()
+}
+
 /// Cancellation belongs to one invocation, never to its session's next call.
 #[derive(Clone, Default)]
 pub(crate) struct ActionCancellation(Arc<AtomicBool>);
@@ -68,8 +157,8 @@ impl std::fmt::Display for LaneBusy {
 impl std::error::Error for LaneBusy {}
 
 /// A sent action has no trustworthy final reply. The count describes only
-/// acknowledged gesture phases (currently drag start), never a total event
-/// count or proof that no later events landed.
+/// acknowledged gesture phases (drag start or completed text keys), never a
+/// total event count or proof that no later events landed.
 #[derive(Debug)]
 pub struct DispatchUnknown {
     pub acknowledged_phases: u32,
@@ -146,6 +235,11 @@ impl InputProtocol {
 /// the later preview resize (or zoom), so no additional scale division belongs
 /// here. TARGET bounds and revision remain authoritative at dispatch.
 pub enum Action {
+    Activate,
+    TextKey {
+        keycode: u32,
+        shift: bool,
+    },
     Click {
         x: f64,
         y: f64,
@@ -172,6 +266,8 @@ struct Client {
     socket: socket2::Socket,
     cancellation: ActionCancellation,
     protocol: InputProtocol,
+    foreground_supported: bool,
+    delivery_route: Option<DeliveryRoute>,
     // Assigned by the compositor to this connection, never by the local pool.
     lane: Option<usize>,
     owner: String,
@@ -325,6 +421,8 @@ impl Client {
             socket,
             cancellation,
             protocol: protocol(),
+            foreground_supported: false,
+            delivery_route: None,
             lane: None,
             owner,
             path,
@@ -352,6 +450,8 @@ impl Client {
             "isolated input protocol mismatch; no downgrade is permitted"
         );
         self.epoch = hex_field(&hello, "epoch")?;
+        self.foreground_supported =
+            self.protocol == InputProtocol::Production && hello["foreground_target"] == true;
         if self.protocol == InputProtocol::Experiment {
             self.challenge = hex_field(&hello, "challenge")?;
         } else {
@@ -451,15 +551,27 @@ impl Client {
         }
     }
 
-    fn execute(
+    fn execute_routed(
         &mut self,
         action: Action,
         started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
     ) -> Result<Value> {
         self.cancellation.check()?;
         ensure!(self.lane.is_some(), "isolated input lane is not claimed");
+        self.check_route(route)?;
+        ensure!(
+            route == DeliveryRoute::Foreground
+                || !matches!(&action, Action::Activate | Action::TextKey { .. }),
+            "action requires foreground input"
+        );
+        ensure!(
+            self.delivery_route.is_none_or(|bound| bound == route),
+            "input route is immutable"
+        );
+        self.delivery_route = Some(route);
         self.attest()?;
-        let target = self.request(&self.target_packet(&action))?;
+        let target = self.bind_target(&action, route)?;
         if target["ok"] == false {
             return Ok(target);
         }
@@ -476,7 +588,7 @@ impl Client {
         self.sequence = self.sequence.checked_add(1).context("sequence exhausted")?;
         let is_drag = matches!(&action, Action::Drag { .. });
         let packet = action.packet(self.sequence, &token, revision, width, height)?;
-        let mut reply = self.dispatch(&packet, is_drag, started)?;
+        let mut reply = self.dispatch_routed(&packet, is_drag, started, route)?;
         if reply["ok"] == false && self.protocol == InputProtocol::Experiment {
             // Never report a pending operator grant as successful dispatch.
             reply["epoch"] = json!(self.epoch);
@@ -487,11 +599,22 @@ impl Client {
         Ok(reply)
     }
 
+    #[cfg(test)]
     fn dispatch(
         &self,
         packet: &str,
         is_drag: bool,
         started: Option<tokio::sync::oneshot::Sender<()>>,
+    ) -> Result<Value> {
+        self.dispatch_routed(packet, is_drag, started, DeliveryRoute::Background)
+    }
+
+    fn dispatch_routed(
+        &self,
+        packet: &str,
+        is_drag: bool,
+        started: Option<tokio::sync::oneshot::Sender<()>>,
+        route: DeliveryRoute,
     ) -> Result<Value> {
         let mut reply = self
             .request(packet)
@@ -511,8 +634,17 @@ impl Client {
                 .receive(Instant::now() + TIMEOUT)
                 .map_err(|error| unknown_dispatch(error, 1))?;
         }
+        if route == DeliveryRoute::Foreground
+            && reply["ok"] == false
+            && reply["code"] == "foreground_partial_unknown"
+        {
+            return Err(unknown_dispatch(
+                anyhow::anyhow!("foreground activation or input may have started"),
+                u32::from(acknowledged),
+            ));
+        }
         if reply["ok"] == true {
-            if reply["effect"] != "unverifiable" || reply["route"] != "synthetic_events" {
+            if reply["effect"] != "unverifiable" || reply["route"] != route.acknowledgement() {
                 return Err(unknown_dispatch(
                     anyhow::anyhow!("invalid action acknowledgement"),
                     u32::from(acknowledged),
@@ -520,13 +652,40 @@ impl Client {
             }
         } else if acknowledged {
             reply["effect"] = json!("partial");
-            reply["delivery"] = json!({"mode":"background","delivered_count":1});
+            reply["delivery"] = json!({"mode":route.mode(),"delivered_count":1});
         }
         Ok(reply)
     }
 
+    #[cfg(test)]
     fn target_packet(&self, action: &Action) -> String {
-        let target = format!("TARGET {} {:x}", self.pid, self.address);
+        self.target_packet_routed(action, DeliveryRoute::Background)
+    }
+
+    fn check_route(&self, route: DeliveryRoute) -> Result<()> {
+        ensure!(
+            route == DeliveryRoute::Background
+                || (self.protocol == InputProtocol::Production && self.foreground_supported),
+            "Hyprland foreground input is unavailable; no fallback or downgrade is permitted"
+        );
+        Ok(())
+    }
+
+    fn bind_target(&self, action: &Action, route: DeliveryRoute) -> Result<Value> {
+        self.check_route(route)?;
+        let target = self.request(&self.target_packet_routed(action, route))?;
+        if target["ok"] == true {
+            validate_target_route(&target, route)?;
+        }
+        Ok(target)
+    }
+
+    fn target_packet_routed(&self, action: &Action, route: DeliveryRoute) -> String {
+        let command = match route {
+            DeliveryRoute::Background => "TARGET",
+            DeliveryRoute::Foreground => "FOREGROUND_TARGET",
+        };
+        let target = format!("{command} {} {:x}", self.pid, self.address);
         if self.protocol == InputProtocol::Production {
             format!("{target} {}", action.capability())
         } else {
@@ -538,8 +697,9 @@ impl Client {
 impl Action {
     fn capability(&self) -> u8 {
         match self {
+            Self::Activate => 16,
             Self::Click { .. } => 1,
-            Self::Key { .. } => 2,
+            Self::Key { .. } | Self::TextKey { .. } => 2,
             Self::Scroll { .. } => 4,
             Self::Drag { .. } => 8,
         }
@@ -562,6 +722,11 @@ impl Action {
         };
         let prefix = format!("{sequence} {token} {revision}");
         Ok(match self {
+            Self::Activate => format!("ACTIVATE {prefix}"),
+            Self::TextKey { keycode, shift } => {
+                ensure!((1..=57).contains(&keycode), "unsupported text key");
+                format!("KEY {prefix} {keycode} {}", u8::from(shift))
+            }
             Self::Click {
                 x,
                 y,
@@ -755,6 +920,98 @@ pub(crate) fn execute_with_started(
     started: Option<tokio::sync::oneshot::Sender<()>>,
     cancellation: ActionCancellation,
 ) -> Result<Value> {
+    execute_routed(
+        owner,
+        pid,
+        address,
+        action,
+        started,
+        cancellation,
+        DeliveryRoute::Background,
+    )
+}
+
+pub(crate) fn execute_foreground(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    action: Action,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_foreground_with_started(owner, pid, address, action, None, cancellation)
+}
+
+pub(crate) fn execute_foreground_with_started(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    action: Action,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    execute_routed(
+        owner,
+        pid,
+        address,
+        action,
+        started,
+        cancellation,
+        DeliveryRoute::Foreground,
+    )
+}
+
+fn execute_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    action: Action,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+) -> Result<Value> {
+    execute_actions_routed(
+        owner,
+        pid,
+        address,
+        vec![action],
+        started,
+        cancellation,
+        route,
+        false,
+    )
+}
+
+pub(crate) fn execute_foreground_text(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    text: &str,
+    cancellation: ActionCancellation,
+) -> Result<Value> {
+    let actions = foreground_text_actions(text)?;
+    ensure!(!actions.is_empty(), "foreground text must not be empty");
+    execute_actions_routed(
+        owner,
+        pid,
+        address,
+        actions,
+        None,
+        cancellation,
+        DeliveryRoute::Foreground,
+        true,
+    )
+}
+
+fn execute_actions_routed(
+    owner: Option<String>,
+    pid: u32,
+    address: u64,
+    actions: Vec<Action>,
+    started: Option<tokio::sync::oneshot::Sender<()>>,
+    cancellation: ActionCancellation,
+    route: DeliveryRoute,
+    text: bool,
+) -> Result<Value> {
     cancellation.check()?;
     ensure!(enabled(), "Hyprland isolated input is unavailable");
     ensure!(
@@ -762,7 +1019,11 @@ pub(crate) fn execute_with_started(
         "exact pid and window address required"
     );
     let owner = owner.context("authenticated lifecycle required")?;
-    if protocol() == InputProtocol::Production {
+    ensure!(
+        route == DeliveryRoute::Background || protocol() == InputProtocol::Production,
+        "foreground input requires production protocol; no downgrade is permitted"
+    );
+    if route == DeliveryRoute::Background && protocol() == InputProtocol::Production {
         if let Err(reason) = super::hyprland_compatibility::qualify(pid) {
             return Ok(json!({"ok":false,"code":reason,"detail":reason}));
         }
@@ -775,6 +1036,7 @@ pub(crate) fn execute_with_started(
             || client.address != address
             || client.path != socket_path(lane)?
             || client.protocol != protocol()
+            || client.delivery_route.is_some_and(|bound| bound != route)
         {
             *slot = None;
         }
@@ -794,7 +1056,53 @@ pub(crate) fn execute_with_started(
     slot.as_mut()
         .context("missing input connection")?
         .cancellation = cancellation;
-    dispatch_in_slot(&mut slot, |client| client.execute(action, started))
+    dispatch_in_slot(&mut slot, |client| {
+        if !text {
+            return client.execute_routed(
+                actions.into_iter().next().context("missing input action")?,
+                started,
+                route,
+            );
+        }
+        execute_text_actions(actions, |action| client.execute_routed(action, None, route))
+    })
+}
+
+fn execute_text_actions(
+    actions: Vec<Action>,
+    mut dispatch: impl FnMut(Action) -> Result<Value>,
+) -> Result<Value> {
+    let route = DeliveryRoute::Foreground;
+    let mut delivered = 0u32;
+    for action in actions {
+        match dispatch(action) {
+            Ok(mut reply) if reply["ok"] == false => {
+                reply["effect"] = json!(if delivered > 0 { "partial" } else { "none" });
+                reply["delivery"] = json!({"mode":route.mode(),"delivered_count":delivered});
+                return Ok(reply);
+            }
+            Ok(_) => delivered += 1,
+            Err(error) => {
+                if let Some(unknown) = error.downcast_ref::<DispatchUnknown>() {
+                    return Err(unknown_dispatch(
+                        anyhow::anyhow!(unknown.detail.clone()),
+                        delivered + unknown.acknowledged_phases,
+                    ));
+                }
+                if delivered == 0 {
+                    return Err(error);
+                }
+                return Ok(
+                    json!({"ok":false,"code":"text_interrupted","detail":error.to_string(),
+                        "effect":"partial","delivery":{"mode":route.mode(),"delivered_count":delivered}}),
+                );
+            }
+        }
+    }
+    Ok(
+        json!({"ok":true,"effect":"unverifiable","route":route.acknowledgement(),
+            "delivery":{"mode":route.mode(),"delivered_count":delivered}}),
+    )
 }
 
 fn dispatch_in_slot(
@@ -822,7 +1130,11 @@ fn terminal_connection_result(value: &Value) -> bool {
         && matches!(
             value["code"].as_str(),
             Some(
-                "desktop_changed" | "plugin_disabled" | "plugin_shutdown" | "generation_exhausted"
+                "desktop_changed"
+                    | "plugin_disabled"
+                    | "plugin_shutdown"
+                    | "generation_exhausted"
+                    | "text_interrupted"
             )
         )
 }
@@ -833,6 +1145,295 @@ mod tests {
     use std::os::fd::FromRawFd;
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
     static POOL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn foreground_requires_advertisement_and_production_without_sending_target() {
+        for protocol in [InputProtocol::Production, InputProtocol::Experiment] {
+            let (mut client, peer) = test_connection();
+            client.protocol = protocol;
+            client.foreground_supported = protocol == InputProtocol::Experiment;
+            assert!(client
+                .bind_target(&Action::Activate, DeliveryRoute::Foreground)
+                .is_err());
+            drop(client);
+            let mut byte = [0u8];
+            assert_eq!(
+                unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                0
+            );
+        }
+    }
+
+    #[test]
+    fn foreground_target_checks_route_and_never_retries_background() {
+        for reply in [
+            json!({"ok":true,"route":"primary_foreground"}),
+            json!({"ok":true,"route":"synthetic_events"}),
+            json!({"ok":true}),
+            json!({"ok":false,"code":"unsupported","detail":"unsupported"}),
+        ] {
+            let (mut client, peer) = test_connection();
+            client.protocol = InputProtocol::Production;
+            client.foreground_supported = true;
+            let expected_ok = reply["ok"] == false || reply["route"] == "primary_foreground";
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), "FOREGROUND_TARGET 1 1 16");
+                peer.send(reply.to_string().as_bytes()).unwrap();
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0
+                );
+            });
+            assert_eq!(
+                client
+                    .bind_target(&Action::Activate, DeliveryRoute::Foreground)
+                    .is_ok(),
+                expected_ok
+            );
+            drop(client);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn foreground_handshake_records_capability_and_exact_claim() {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "HELLO");
+            peer.send(
+                json!({"ok":true,"protocol":3,"epoch":TOKEN,"foreground_target":true})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(read_packet(&peer), "CLAIM");
+            peer.send(br#"{"ok":true,"lane":0}"#).unwrap();
+        });
+        assert!(client.handshake(0).unwrap());
+        assert!(client.foreground_supported);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_drag_refusal_preserves_started_phase_and_foreground_count() {
+        let (client, peer) = test_connection();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "DRAG synthetic");
+            peer.send(br#"{"ok":true,"phase":"started"}"#).unwrap();
+            peer.send(br#"{"ok":false,"code":"cancelled","detail":"cancelled"}"#)
+                .unwrap();
+        });
+        let (started, acknowledgement) = tokio::sync::oneshot::channel();
+        let reply = client
+            .dispatch_routed(
+                "DRAG synthetic",
+                true,
+                Some(started),
+                DeliveryRoute::Foreground,
+            )
+            .unwrap();
+        assert!(acknowledgement.blocking_recv().is_ok());
+        assert_eq!(reply["effect"], "partial");
+        assert_eq!(
+            reply["delivery"],
+            json!({"mode":"foreground","delivered_count":1})
+        );
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_action_cannot_acknowledge_background_delivery() {
+        let (client, peer) = test_connection();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "KEY synthetic");
+            peer.send(br#"{"ok":true,"effect":"unverifiable","route":"synthetic_events"}"#)
+                .unwrap();
+        });
+        assert!(client
+            .dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
+            .unwrap_err()
+            .is::<DispatchUnknown>());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_partial_unknown_keeps_only_proven_acknowledgements() {
+        for started in [false, true] {
+            let (client, peer) = test_connection();
+            let packet = if started {
+                "DRAG synthetic"
+            } else {
+                "KEY synthetic"
+            };
+            let server = std::thread::spawn(move || {
+                assert_eq!(read_packet(&peer), packet);
+                if started {
+                    peer.send(br#"{"ok":true,"phase":"started"}"#).unwrap();
+                }
+                peer.send(br#"{"ok":false,"code":"foreground_partial_unknown","detail":"foreground_partial_unknown"}"#).unwrap();
+                let mut byte = [0u8];
+                assert_eq!(
+                    unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                    0
+                );
+            });
+            let error = client
+                .dispatch_routed(packet, started, None, DeliveryRoute::Foreground)
+                .unwrap_err();
+            assert_eq!(
+                error
+                    .downcast_ref::<DispatchUnknown>()
+                    .unwrap()
+                    .acknowledged_phases,
+                u32::from(started)
+            );
+            drop(client);
+            server.join().unwrap();
+        }
+    }
+
+    #[test]
+    fn foreground_text_partial_unknown_counts_prior_completed_keys() {
+        let (client, peer) = test_connection();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "KEY synthetic");
+            peer.send(br#"{"ok":true,"effect":"unverifiable","route":"primary_foreground"}"#)
+                .unwrap();
+            assert_eq!(read_packet(&peer), "KEY synthetic");
+            peer.send(br#"{"ok":false,"code":"foreground_partial_unknown","detail":"foreground_partial_unknown"}"#).unwrap();
+            let mut byte = [0u8];
+            assert_eq!(
+                unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                0
+            );
+        });
+        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
+            client.dispatch_routed("KEY synthetic", false, None, DeliveryRoute::Foreground)
+        })
+        .unwrap_err();
+        assert_eq!(
+            error
+                .downcast_ref::<DispatchUnknown>()
+                .unwrap()
+                .acknowledged_phases,
+            1
+        );
+        drop(client);
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_unknown_code_does_not_change_background_refusals() {
+        let (client, peer) = test_connection();
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "KEY synthetic");
+            peer.send(br#"{"ok":false,"code":"foreground_partial_unknown","detail":"foreground_partial_unknown"}"#).unwrap();
+        });
+        let reply = client.dispatch("KEY synthetic", false, None).unwrap();
+        assert_eq!(reply["ok"], false);
+        assert_eq!(reply["code"], "foreground_partial_unknown");
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_text_is_bounded_and_fully_prevalidated() {
+        for text in ["valid prefix\u{00e9}", "valid prefix\0", "\r", "\u{007f}"] {
+            assert!(foreground_text_actions(text).is_err());
+        }
+        assert!(foreground_text_actions(&"a".repeat(4097)).is_err());
+        assert_eq!(
+            foreground_text_actions(&"a".repeat(4096)).unwrap().len(),
+            4096
+        );
+        let actions = foreground_text_actions("Aa!? \t\n").unwrap();
+        let packets: Vec<_> = actions
+            .into_iter()
+            .map(|action| action.packet(1, TOKEN, 1, 1.0, 1.0).unwrap())
+            .collect();
+        for (packet, suffix) in packets
+            .iter()
+            .zip(["30 1", "30 0", "2 1", "53 1", "57 0", "15 0", "28 0"])
+        {
+            assert_eq!(*packet, format!("KEY 1 {TOKEN} 1 {suffix}"));
+        }
+        assert_eq!(
+            foreground_text_actions(&(32u8..127).map(char::from).collect::<String>())
+                .unwrap()
+                .len(),
+            95
+        );
+    }
+
+    #[test]
+    fn foreground_text_stops_after_refusal_or_cancellation_without_replay() {
+        for cancel in [false, true] {
+            let mut calls = 0;
+            let reply = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
+                calls += 1;
+                match calls {
+                    1 => Ok(json!({"ok":true})),
+                    2 if cancel => Err(ActionCancelled.into()),
+                    2 => Ok(json!({"ok":false,"code":"target_changed","detail":"target_changed"})),
+                    _ => panic!("replayed text after interrupted dispatch"),
+                }
+            })
+            .unwrap();
+            assert_eq!(calls, 2);
+            assert_eq!(reply["ok"], false);
+            assert_eq!(reply["effect"], "partial");
+            assert_eq!(
+                reply["delivery"],
+                json!({"mode":"foreground","delivered_count":1})
+            );
+            if cancel {
+                assert!(terminal_connection_result(&reply));
+            }
+        }
+    }
+
+    #[test]
+    fn foreground_text_unknown_delivery_keeps_only_acknowledged_key_count() {
+        let mut calls = 0;
+        let error = execute_text_actions(foreground_text_actions("abc").unwrap(), |_| {
+            calls += 1;
+            if calls == 1 {
+                Ok(json!({"ok":true}))
+            } else {
+                Err(unknown_dispatch(anyhow::anyhow!("peer closed"), 0))
+            }
+        })
+        .unwrap_err();
+        assert_eq!(calls, 2);
+        assert_eq!(
+            error
+                .downcast_ref::<DispatchUnknown>()
+                .unwrap()
+                .acknowledged_phases,
+            1
+        );
+    }
+
+    #[test]
+    fn cancelled_foreground_target_sends_no_input() {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        client.foreground_supported = true;
+        let (guard, cancellation) = ActionCancellation::invocation();
+        client.cancellation = cancellation;
+        drop(guard);
+        assert!(client
+            .bind_target(&Action::Activate, DeliveryRoute::Foreground)
+            .unwrap_err()
+            .is::<ActionCancelled>());
+        drop(client);
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0
+        );
+    }
 
     #[test]
     fn revoked_connections_are_dropped_without_replaying_the_action() {
@@ -1280,6 +1881,8 @@ mod tests {
                 socket,
                 cancellation: ActionCancellation::default(),
                 protocol: InputProtocol::Experiment,
+                foreground_supported: false,
+                delivery_route: None,
                 lane: None,
                 owner: "input-unregistered-test-client".into(),
                 path: PathBuf::new(),

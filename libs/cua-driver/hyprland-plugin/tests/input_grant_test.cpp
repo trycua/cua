@@ -20,7 +20,7 @@ int main() {
     const auto now = InputGrant::Clock::time_point{} + 1h;
     InputGrant first, second;
     check(!first.permits(1, now), "fresh connection has no input authority");
-    for (const auto cap : {1u, 2u, 4u, 8u}) {
+    for (const auto cap : {1u, 2u, 4u, 8u, 16u}) {
         check(first.arm(cap, now), "each bounded operation can be admitted");
         check(first.permits(cap, now + 4999ms), "admission lasts less than five seconds");
         check(!first.permits(cap, now + 5s), "deadline is exclusive");
@@ -29,7 +29,7 @@ int main() {
         check(first.consume(cap, now + 1s), "first dispatch consumes the grant");
         check(!first.consume(cap, now + 1s), "a second dispatch cannot reuse authority");
     }
-    for (const auto cap : {0ull, 3ull, 5ull, 7ull, 15ull, 16ull,
+    for (const auto cap : {0ull, 3ull, 5ull, 7ull, 15ull, 17ull,
                            std::numeric_limits<unsigned long long>::max()}) {
         check(first.arm(1, now), "seed valid authority");
         check(!first.arm(cap, now), "zero, combined and unknown capability masks refuse");

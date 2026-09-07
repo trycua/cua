@@ -290,6 +290,17 @@ unlock. A dispatch acknowledgement is `effect:"unverifiable"`; verify the
 application effect from fresh state. Do not replay canceled, partial, or unknown
 actions.
 
+The candidate also adds an explicitly requested foreground route, advertised
+by the plugin as `foreground_target:true`. It binds the exact native top-level
+surface on the compositor thread and intentionally changes primary focus and,
+for pointer actions, cursor position. It does not restore the previous focus or
+cursor. This route has no Calc/Inkscape background package gate, but native
+GTK3, Electron, and Tauri coverage remains pending certification. It refuses
+held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
+bindings, and non-neutral keyboard modifiers. Background refusal never selects
+this route automatically. Driver expands bounded ASCII text under the exact
+US keymap; Unicode and IME remain outside its raw-input scope.
+
 Portable tests and historical experiment evidence do not certify v3 native
 delivery. Remaining gates include the exact-candidate native operation matrix
 for both lanes, independent primary-input and held-state evidence, lifecycle

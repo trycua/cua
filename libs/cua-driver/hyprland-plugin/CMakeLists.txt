@@ -40,6 +40,12 @@ cua_hyprland_harden(cua_hyprland_protocol)
 set_target_properties(cua_hyprland_protocol PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(BUILD_TESTING)
+    add_executable(cua_hyprland_foreground_route_test tests/foreground_route_test.cpp)
+    target_compile_features(cua_hyprland_foreground_route_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_foreground_route_test PRIVATE src)
+    target_compile_options(cua_hyprland_foreground_route_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_foreground_route_test COMMAND cua_hyprland_foreground_route_test)
+
     add_executable(cua_hyprland_passive_pointer_target_test tests/passive_pointer_target_test.cpp)
     target_compile_features(cua_hyprland_passive_pointer_target_test PRIVATE cxx_std_26)
     target_include_directories(cua_hyprland_passive_pointer_target_test PRIVATE src)

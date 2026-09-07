@@ -240,8 +240,8 @@ unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
     }
     if type_id == CFNumber::type_id() {
         return match CFNumber::wrap_under_get_rule(value as _).to_f64()? {
-            value if value.abs() < f64::EPSILON => Some(false),
-            value if (value - 1.0).abs() < f64::EPSILON => Some(true),
+            0.0 => Some(false),
+            1.0 => Some(true),
             _ => None,
         };
     }
@@ -797,6 +797,28 @@ mod tests {
         );
         assert_eq!(unsafe { coerce_binary_value(other.as_CFTypeRef()) }, None);
         assert_eq!(unsafe { coerce_binary_value(string.as_CFTypeRef()) }, None);
+    }
+
+    #[test]
+    fn binary_value_rejects_near_binary_and_non_finite_numbers() {
+        for value in [
+            1e-20,
+            -1e-20,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::from_bits(1.0_f64.to_bits() - 1),
+            f64::from_bits(1.0_f64.to_bits() + 1),
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let number = CFNumber::from(value);
+            assert_eq!(
+                unsafe { coerce_binary_value(number.as_CFTypeRef()) },
+                None,
+                "unexpected binary state for {value:?}"
+            );
+        }
     }
 
     #[test]

@@ -12,6 +12,7 @@ pub mod ax_actions;
 pub mod interactive;
 pub mod keyboard;
 pub mod mouse;
+pub(crate) mod pacing;
 pub mod skylight;
 
 pub use ax_actions::perform_ax_action;

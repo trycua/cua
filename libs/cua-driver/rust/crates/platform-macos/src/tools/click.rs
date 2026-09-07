@@ -700,10 +700,11 @@ impl Tool for ClickTool {
                     ),
                     fronted,
                 ))) => {
-                    // For text inputs, wait 800ms for WebKit DOM focus to settle
+                    // For text inputs, wait for WebKit DOM focus to settle
+                    // (default 800ms; CUA_DRIVER_RS_WEBKIT_SETTLE_MS overrides)
                     // before returning — matches the Swift reference behaviour.
                     if needs_webkit_delay {
-                        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+                        tokio::time::sleep(crate::input::pacing::webkit_settle()).await;
                     }
                     msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning

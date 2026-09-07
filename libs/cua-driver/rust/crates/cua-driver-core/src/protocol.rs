@@ -203,6 +203,8 @@ pub enum ResponseBody {
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl Response {
@@ -215,6 +217,15 @@ impl Response {
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
+        Self::error_with_data(id, code, message, None)
+    }
+
+    pub fn error_with_data(
+        id: Value,
+        code: i64,
+        message: impl Into<String>,
+        data: Option<Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -222,6 +233,7 @@ impl Response {
                 error: RpcError {
                     code,
                     message: message.into(),
+                    data,
                 },
             },
         }
@@ -331,7 +343,7 @@ impl ToolResult {
 pub fn initialize_result() -> Value {
     serde_json::json!({
         "protocolVersion": "2025-06-18",
-        "capabilities": { "tools": {} },
+        "capabilities": crate::mcp_wire::server_capabilities(),
         "serverInfo": { "name": "cua-driver", "version": env!("CARGO_PKG_VERSION") },
         "instructions": agent_instructions()
     })
@@ -381,7 +393,7 @@ Workflow per turn:
 2. Act with the fresh index.
 3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
+The bundled workflow is available at `skill://cua-driver/SKILL.md` through `skills/get` and `resources/read`. Skill activation and consent belong to the host. If the skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
     )
 }
 

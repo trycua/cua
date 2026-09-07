@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use cua_driver_core::mcp_wire::{self, ProtocolSession};
 use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
@@ -60,6 +61,7 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
     let mut session_observed = false;
+    let mut protocol_session = ProtocolSession::default();
     let transport_session = format!("mcp-{}", uuid::Uuid::new_v4());
     struct DirectTransportCleanup {
         sdk: Arc<crate::sdk_adapter::SdkAdapter>,
@@ -91,6 +93,25 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
             }
             Ok(request) if request.is_notification() => continue,
             Ok(mut request) => {
+                let admission = protocol_session.validate(&request).and_then(|era| {
+                    if request.method == "tools/call" {
+                        mcp_wire::validate_tool_call(
+                            &request,
+                            request.id.clone().unwrap_or_default(),
+                            era,
+                            &sdk.tools_list(),
+                        )?;
+                    }
+                    Ok(era)
+                });
+                if let Err(response) = admission {
+                    writer
+                        .write_all(serde_json::to_string(&response)?.as_bytes())
+                        .await?;
+                    writer.write_all(b"\n").await?;
+                    writer.flush().await?;
+                    continue;
+                }
                 apply_direct_session_identity(&mut request, &transport_session);
                 let initialize_metadata = (!session_observed)
                     .then(|| request.initialize_metadata())
@@ -289,6 +310,7 @@ where
 {
     let mut line = String::new();
     let mut session_observed = false;
+    let mut protocol_session = ProtocolSession::default();
 
     loop {
         line.clear();
@@ -312,6 +334,23 @@ where
                 continue;
             }
             Ok(req) => {
+                let admission = protocol_session.validate(&req).and_then(|era| {
+                    mcp_wire::validate_tool_call(
+                        &req,
+                        req.id.clone().unwrap_or_default(),
+                        era,
+                        cached_tools_list,
+                    )?;
+                    Ok(era)
+                });
+                if let Err(response) = admission {
+                    writer
+                        .write_all(serde_json::to_string(&response)?.as_bytes())
+                        .await?;
+                    writer.write_all(b"\n").await?;
+                    writer.flush().await?;
+                    continue;
+                }
                 let initialize_metadata = (!session_observed)
                     .then(|| req.initialize_metadata())
                     .flatten();
@@ -785,8 +824,44 @@ async fn handle_proxy_request(
     session_id: &str,
     daemon_observes_tool_calls: bool,
 ) -> Response {
+    let era = match mcp_wire::classify_request(&req) {
+        Ok(era) => era,
+        Err(response) => return response,
+    };
+    if let Err(response) = mcp_wire::validate_tool_call(&req, id.clone(), era, cached_tools_list) {
+        return response;
+    }
+    let method = req.method.clone();
+    let response = if let Some(response) = mcp_wire::handle_metadata_request(&req, id.clone()) {
+        response
+    } else {
+        handle_proxy_tool_request(
+            req,
+            id,
+            socket_path,
+            cached_tools_list,
+            session_id,
+            daemon_observes_tool_calls,
+        )
+        .await
+    };
+    mcp_wire::finish_response(era, &method, response)
+}
+
+async fn handle_proxy_tool_request(
+    req: Request,
+    id: serde_json::Value,
+    socket_path: &str,
+    cached_tools_list: &Arc<serde_json::Value>,
+    session_id: &str,
+    daemon_observes_tool_calls: bool,
+) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize"
+            if mcp_wire::classify_request(&req).ok() == Some(mcp_wire::ProtocolEra::Legacy) =>
+        {
+            Response::ok(id, initialize_result())
+        }
 
         "tools/list" => Response::ok(id, (**cached_tools_list).clone()),
 
@@ -942,6 +1017,76 @@ fn daemon_response_to_tool_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn modern_proxy_metadata_and_rejections_need_no_daemon_call() {
+        use serde_json::json;
+        let meta = json!({
+            mcp_wire::PROTOCOL_VERSION_KEY: mcp_wire::MODERN_PROTOCOL_VERSION,
+            mcp_wire::CLIENT_CAPABILITIES_KEY: {}
+        });
+        let mut input = Vec::new();
+        for (id, method, mut params) in [
+            (1, "server/discover", json!({})),
+            (2, "skills/list", json!({})),
+            (
+                3,
+                "resources/read",
+                json!({"uri":"skill://cua-driver/SKILL.md"}),
+            ),
+            (4, "tools/call", json!({"name":"get_config","arguments":[]})),
+            (
+                5,
+                "tools/call",
+                json!({"name":"unknown_tool","arguments":{"session":"must-not-start"}}),
+            ),
+        ] {
+            params["_meta"] = meta.clone();
+            serde_json::to_writer(
+                &mut input,
+                &json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+            )
+            .unwrap();
+            input.push(b'\n');
+        }
+        let inventory = Arc::new(json!({"tools":[{"name":"get_config"}]}));
+        let mut output = Vec::new();
+        run_proxy_io(
+            BufReader::new(input.as_slice()),
+            &mut output,
+            "unreachable-test-endpoint",
+            &inventory,
+            "modern-test",
+            false,
+        )
+        .await
+        .unwrap();
+        let replies: Vec<serde_json::Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(replies.len(), 5);
+        assert_eq!(
+            replies[0]["result"]["supportedVersions"],
+            json!(["2026-07-28"])
+        );
+        assert_eq!(
+            replies[1]["result"]["skills"][0]["uri"],
+            "skill://cua-driver/SKILL.md"
+        );
+        assert!(replies[2]["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("---"));
+        for reply in &replies[..3] {
+            assert_eq!(reply["result"]["resultType"], "complete");
+            assert_eq!(reply["result"]["cacheScope"], "private");
+        }
+        for reply in &replies[3..] {
+            assert_eq!(reply["error"]["code"], -32602);
+        }
+    }
 
     #[tokio::test]
     async fn proxy_authorization_refusal_is_a_tool_error_without_forwarding() {

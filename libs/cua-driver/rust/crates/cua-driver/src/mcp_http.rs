@@ -138,6 +138,15 @@ async fn serve_conn(
             )
             .await?;
         } else {
+            if let Some(error) =
+                unsupported_protocol_error(&req.body, req.protocol_version.as_deref())
+            {
+                write_http(&mut stream, 400, error.as_bytes(), keep_alive).await?;
+                if !keep_alive {
+                    return Ok(());
+                }
+                continue;
+            }
             match dispatch(&req.body, &sdk, &transport_session).await {
                 Some(resp_json) => {
                     write_http(&mut stream, 200, resp_json.as_bytes(), keep_alive).await?
@@ -163,6 +172,9 @@ async fn dispatch(
     sdk: &Arc<crate::sdk_adapter::SdkAdapter>,
     transport_session: &str,
 ) -> Option<String> {
+    if let Some(error) = unsupported_protocol_error(body, None) {
+        return Some(error);
+    }
     let mut req: Request = match serde_json::from_slice(body) {
         Ok(r) => r,
         Err(_) => return Some(serialize(&Response::parse_error())),
@@ -196,6 +208,41 @@ async fn dispatch(
         );
     }
     Some(serialize(&response))
+}
+
+fn is_legacy_protocol(version: &str) -> bool {
+    matches!(version, "2024-11-05" | "2025-03-26" | "2025-06-18")
+}
+
+// HTTP still uses connection-scoped sessions. A legacy error permits dual-era
+// clients to fall back to initialize; -32022 would falsely identify a modern
+// endpoint and tell clients to retry per-request version negotiation here.
+fn unsupported_protocol_error(body: &[u8], header: Option<&str>) -> Option<String> {
+    let body: serde_json::Value = serde_json::from_slice(body).unwrap_or_default();
+    let requested = header
+        .filter(|version| !is_legacy_protocol(version))
+        .map(serde_json::Value::from)
+        .or_else(|| {
+            let params = body.get("params")?;
+            params
+                .get("_meta")
+                .and_then(|meta| meta.get("io.modelcontextprotocol/protocolVersion"))
+                .filter(|version| !version.as_str().is_some_and(is_legacy_protocol))
+                .cloned()
+        })
+        .or_else(|| {
+            (body.get("method")?.as_str()? == "server/discover")
+                .then(|| serde_json::Value::from("2026-07-28"))
+        })?;
+    Some(serde_json::json!({
+        "jsonrpc": "2.0",
+        "id": body.get("id").cloned().unwrap_or(serde_json::Value::Null),
+        "error": {
+            "code": -32600,
+            "message": "This HTTP endpoint supports legacy MCP only. Modern MCP is currently available over stdio; use cua-driver mcp or request HTTP protocol version 2025-06-18.",
+            "data": {"supported": ["2025-06-18"], "requested": requested}
+        }
+    }).to_string())
 }
 
 fn http_tool_observation_timer(
@@ -250,6 +297,7 @@ struct HttpRequest {
     /// false if the client sent `Connection: close` or spoke HTTP/1.0).
     keep_alive: bool,
     authorized: bool,
+    protocol_version: Option<String>,
 }
 
 /// Read one HTTP/1.1 request, or `None` on clean EOF. Minimal: request line +
@@ -284,6 +332,7 @@ async fn read_http_request(
     let mut has_origin = false;
     let mut keep_alive = version.eq_ignore_ascii_case("HTTP/1.1"); // 1.1 defaults to keep-alive
     let mut authorized = false;
+    let mut protocol_version = None;
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
             let (k, v) = (k.trim(), v.trim());
@@ -301,6 +350,11 @@ async fn read_http_request(
                 authorized = v.split_once(' ').is_some_and(|(scheme, candidate)| {
                     scheme.eq_ignore_ascii_case("bearer") && constant_time_equal(candidate, token)
                 });
+            } else if k.eq_ignore_ascii_case("mcp-protocol-version") {
+                // Keep an unsupported value even if a later duplicate is legacy.
+                if protocol_version.as_deref().is_none_or(is_legacy_protocol) {
+                    protocol_version = Some(v.to_owned());
+                }
             }
         }
     }
@@ -318,6 +372,7 @@ async fn read_http_request(
         has_origin,
         keep_alive,
         authorized,
+        protocol_version,
     }))
 }
 
@@ -370,6 +425,7 @@ async fn write_http(
     let reason = match status {
         200 => "OK",
         202 => "Accepted",
+        400 => "Bad Request",
         403 => "Forbidden",
         401 => "Unauthorized",
         405 => "Method Not Allowed",
@@ -434,6 +490,126 @@ mod tests {
         )
         .await;
         assert!(with_origin.starts_with("HTTP/1.1 403 Forbidden\r\n"));
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn http_rejects_modern_requests_before_dispatch() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let tool_call = json!({
+            "jsonrpc": "2.0", "id": 7, "method": "tools/call",
+            "params": {"name": "unknown", "arguments": {}}
+        });
+        let mut modern_tool_call = tool_call.clone();
+        modern_tool_call["params"]["_meta"] = json!({
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28"
+        });
+        let discover = json!({"jsonrpc": "2.0", "id": 7, "method": "server/discover"});
+        for (headers, body, requested) in [
+            (
+                "mCp-PrOtOcOl-VeRsIoN: 2026-07-28\r\n",
+                &tool_call,
+                "2026-07-28",
+            ),
+            ("MCP-Protocol-Version: future\r\n", &tool_call, "future"),
+            ("", &modern_tool_call, "2026-07-28"),
+            ("", &discover, "2026-07-28"),
+            (
+                "MCP-Protocol-Version: 2025-06-18\r\n",
+                &modern_tool_call,
+                "2026-07-28",
+            ),
+            (
+                "MCP-Protocol-Version: future\r\nMCP-Protocol-Version: 2025-06-18\r\n",
+                &tool_call,
+                "future",
+            ),
+        ] {
+            let body = body.to_string();
+            let request = format!(
+                "POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\n{headers}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let response = serve_raw_request(sdk.clone(), request.as_bytes()).await;
+            assert!(
+                response.starts_with("HTTP/1.1 400 Bad Request\r\n"),
+                "{response}"
+            );
+            let response: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(response["id"], 7);
+            assert_eq!(response["error"]["code"], -32600);
+            assert_eq!(
+                response["error"]["data"],
+                json!({
+                    "supported": ["2025-06-18"], "requested": requested
+                })
+            );
+            assert!(response["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("stdio"));
+            assert!(response.get("result").is_none());
+        }
+        for body in [&modern_tool_call, &discover] {
+            let response = dispatch(body.to_string().as_bytes(), &sdk, "http-test")
+                .await
+                .unwrap();
+            let response: serde_json::Value = serde_json::from_str(&response).unwrap();
+            assert_eq!(response["error"]["code"], -32600);
+        }
+        for (headers, status) in [
+            ("Authorization: Bearer wrong\r\n", "401 Unauthorized"),
+            ("Authorization: Bearer 0123456789abcdef0123456789abcdef\r\nOrigin: https://example.com\r\n", "403 Forbidden"),
+        ] {
+            let body = discover.to_string();
+            let request = format!(
+                "POST /mcp HTTP/1.1\r\n{headers}MCP-Protocol-Version: 2026-07-28\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let response = serve_raw_request(sdk.clone(), request.as_bytes()).await;
+            assert!(response.starts_with(&format!("HTTP/1.1 {status}\r\n")));
+            assert!(!response.contains("Modern MCP is currently available"));
+        }
+        sdk.shutdown().await.expect("SDK shutdown");
+    }
+
+    #[tokio::test]
+    async fn http_keeps_legacy_initialize_negotiation() {
+        let _runtime_guard = crate::test_runtime_lock().lock().await;
+        let sdk = crate::sdk_adapter::SdkAdapter::load(crate::build_driver_without_cursor())
+            .await
+            .expect("SDK adapter");
+        let body = json!({
+            "jsonrpc": "2.0", "id": 1, "method": "initialize",
+            "params": {"protocolVersion": "2025-11-25", "capabilities": {},
+                "clientInfo": {"name": "legacy-test", "version": "1"}}
+        })
+        .to_string();
+        for version in [
+            None,
+            Some("2024-11-05"),
+            Some("2025-03-26"),
+            Some("2025-06-18"),
+        ] {
+            let header = version
+                .map(|version| format!("MCP-Protocol-Version: {version}\r\n"))
+                .unwrap_or_default();
+            let request = format!(
+                "POST /mcp HTTP/1.1\r\nAuthorization: Bearer 0123456789abcdef0123456789abcdef\r\n{header}Content-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let response = serve_raw_request(sdk.clone(), request.as_bytes()).await;
+            assert!(response.starts_with("HTTP/1.1 200 OK\r\n"), "{response}");
+            let response: serde_json::Value =
+                serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+            assert_eq!(response["result"]["protocolVersion"], "2025-06-18");
+            assert!(response["result"].get("protocolVersions").is_none());
+            assert!(response["result"]["capabilities"].get("apps").is_none());
+        }
         sdk.shutdown().await.expect("SDK shutdown");
     }
 

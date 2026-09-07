@@ -6,7 +6,7 @@ publish = false
 
 [features]
 default = ["yaml", "rego"]
-yaml = ["dep:serde_yaml_ng", "dep:regex"]
+yaml = ["dep:regex"]
 rego = ["dep:regorus"]
 
 [dependencies]
@@ -18,7 +18,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = "0.1"
-serde_yaml_ng = { version = "0.10", optional = true }
+serde_yaml_ng = "0.10"
 regex = { version = "1", optional = true }
 regorus = { version = "0.10.1", optional = true }
 # Used by the shared `image_utils` module — pure PNG/JPEG/resize/crosshair

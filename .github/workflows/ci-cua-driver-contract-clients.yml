@@ -104,6 +104,15 @@ jobs:
           CUA_DRIVER_EXPECTED_VERSION="$VERSION" \
             npm run verify
 
+      - name: Install the pinned modern MCP client
+        working-directory: .github/scripts/cua-driver-mcp-compat/modern-client
+        run: npm ci --ignore-scripts
+
+      - name: Verify modern MCP and embedded skill resources
+        env:
+          CUA_DRIVER_BINARY: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver
+        run: node .github/scripts/cua-driver-mcp-compat/verify-modern.mjs
+
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})
     runs-on: ${{ matrix.os }}

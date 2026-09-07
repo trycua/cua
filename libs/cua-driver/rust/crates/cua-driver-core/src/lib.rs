@@ -1,14 +1,10 @@
-//! MCP JSON-RPC 2.0 server over stdio — platform-independent core.
+//! Platform-independent Driver core and dual-era MCP dispatch.
 //!
-//! Implements the Model Context Protocol (MCP) 2024-11-05 over stdio,
-//! matching the interface of `libs/cua-driver` (Swift/macOS) and
-//! `CuaDriver.Win` (.NET/Windows).
-//!
-//! # Protocol
-//! - Line-delimited JSON-RPC 2.0 on stdin/stdout
-//! - Methods: `initialize`, `notifications/initialized`, `tools/list`, `tools/call`
-//! - Each request has `jsonrpc: "2.0"`, `id` (any), `method`, optional `params`
-//! - Notifications (no `id`) are silently ignored
+//! Stdio supports legacy initialization and modern per-request negotiation.
+//! Protocol metadata does not grant Driver permissions or session ownership.
+
+pub mod mcp_skills;
+pub mod mcp_wire;
 
 pub const RESPONSIBILITY_DISCLAIMED_ENV: &str = "CUA_DRIVER_RS_RESPONSIBILITY_DISCLAIMED";
 

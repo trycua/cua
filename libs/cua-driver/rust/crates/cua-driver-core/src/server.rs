@@ -880,8 +880,38 @@ async fn handle_request_inner(
     provider: &dyn ToolProvider,
     transport_session: Option<&str>,
 ) -> Response {
+    let era = match crate::mcp_wire::classify_request(&req) {
+        Ok(era) => era,
+        Err(response) => return response,
+    };
+    if req.method == "tools/call" {
+        if let Err(response) =
+            crate::mcp_wire::validate_tool_call(&req, id.clone(), era, &provider.tools_list())
+        {
+            return response;
+        }
+    }
+    let method = req.method.clone();
+    let response =
+        if let Some(response) = crate::mcp_wire::handle_metadata_request(&req, id.clone()) {
+            response
+        } else {
+            dispatch_request(req, id, provider, transport_session, era).await
+        };
+    crate::mcp_wire::finish_response(era, &method, response)
+}
+
+async fn dispatch_request(
+    req: Request,
+    id: serde_json::Value,
+    provider: &dyn ToolProvider,
+    transport_session: Option<&str>,
+    era: crate::mcp_wire::ProtocolEra,
+) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize" if era == crate::mcp_wire::ProtocolEra::Legacy => {
+            Response::ok(id, initialize_result())
+        }
 
         "tools/list" => Response::ok(id, provider.tools_list()),
 
@@ -957,6 +987,69 @@ mod dispatch_contract_tests {
 
     use super::*;
     use cua_driver_contract::{advertised_tool_output_schema, TOOL_INVOCATION_FAILED_CODE};
+
+    struct NeverInvokeProvider;
+
+    #[async_trait::async_trait]
+    impl ToolProvider for NeverInvokeProvider {
+        fn tools_list(&self) -> serde_json::Value {
+            serde_json::json!({"tools": [{"name": "get_config"}]})
+        }
+
+        async fn invoke_tool(
+            &self,
+            _name: &str,
+            _arguments: serde_json::Value,
+        ) -> Result<serde_json::Value, String> {
+            panic!("invalid requests must not execute tools")
+        }
+    }
+
+    #[tokio::test]
+    async fn modern_invalid_requests_never_execute_tools() {
+        for (version, capabilities, name, arguments, expected_code) in [
+            (
+                "2026-07-28",
+                serde_json::json!({}),
+                "unknown",
+                serde_json::json!({}),
+                -32602,
+            ),
+            (
+                "2026-07-28",
+                serde_json::json!({}),
+                "get_config",
+                serde_json::json!([]),
+                -32602,
+            ),
+            (
+                "2026-07-28",
+                serde_json::Value::Null,
+                "get_config",
+                serde_json::json!({}),
+                -32602,
+            ),
+            (
+                "unknown",
+                serde_json::json!({}),
+                "get_config",
+                serde_json::json!({}),
+                -32022,
+            ),
+        ] {
+            let req = serde_json::from_value(serde_json::json!({
+                "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": arguments, "_meta": {
+                    "io.modelcontextprotocol/protocolVersion": version,
+                    "io.modelcontextprotocol/clientCapabilities": capabilities
+                }}
+            }))
+            .unwrap();
+            let response = handle_request(req, serde_json::json!(1), &NeverInvokeProvider).await;
+            let wire = serde_json::to_value(response).unwrap();
+            assert_eq!(wire["error"]["code"], expected_code);
+        }
+    }
 
     struct StubProvider(Result<serde_json::Value, String>);
 

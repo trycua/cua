@@ -476,11 +476,16 @@ impl Client {
     }
 
     fn request(&self, packet: &str) -> Result<Value> {
+        let deadline = Instant::now() + TIMEOUT;
+        self.send_packet(packet, deadline)?;
+        self.receive(deadline)
+    }
+
+    fn send_packet(&self, packet: &str, deadline: Instant) -> Result<()> {
         ensure!(
             packet.len() <= MAX_PACKET && packet.is_ascii(),
             "invalid input packet"
         );
-        let deadline = Instant::now() + TIMEOUT;
         loop {
             wait(
                 &self.socket,
@@ -510,7 +515,7 @@ impl Client {
             ensure!(count as usize == packet.len(), "partial input packet");
             break;
         }
-        self.receive(deadline)
+        Ok(())
     }
 
     fn receive(&self, deadline: Instant) -> Result<Value> {
@@ -616,8 +621,18 @@ impl Client {
         started: Option<tokio::sync::oneshot::Sender<()>>,
         route: DeliveryRoute,
     ) -> Result<Value> {
+        let deadline = Instant::now() + TIMEOUT;
+        self.send_packet(packet, deadline).map_err(|error| {
+            // Cancellation here precedes sending the action. Once sent, even
+            // cancellation while waiting for its first reply is indeterminate.
+            if error.is::<ActionCancelled>() {
+                error
+            } else {
+                unknown_dispatch(error, 0)
+            }
+        })?;
         let mut reply = self
-            .request(packet)
+            .receive(deadline)
             .map_err(|error| unknown_dispatch(error, 0))?;
         let acknowledged = reply["ok"] == true && reply["phase"] == "started";
         if acknowledged {
@@ -2097,6 +2112,91 @@ mod tests {
             std::io::Error::last_os_error().kind(),
             std::io::ErrorKind::WouldBlock
         );
+    }
+
+    #[test]
+    fn cancelled_dispatch_before_send_is_an_exact_refusal() {
+        for route in [DeliveryRoute::Background, DeliveryRoute::Foreground] {
+            let (mut client, peer) = test_connection();
+            let (guard, cancellation) = ActionCancellation::invocation();
+            client.cancellation = cancellation;
+            drop(guard);
+            let error = client
+                .dispatch_routed("CLICK synthetic", false, None, route)
+                .unwrap_err();
+            assert!(error.is::<ActionCancelled>());
+            assert!(!error.is::<DispatchUnknown>());
+            let mut byte = [0u8];
+            assert_eq!(
+                unsafe {
+                    libc::recv(
+                        peer.as_raw_fd(),
+                        byte.as_mut_ptr().cast(),
+                        byte.len(),
+                        libc::MSG_DONTWAIT,
+                    )
+                },
+                -1
+            );
+            assert_eq!(
+                std::io::Error::last_os_error().kind(),
+                std::io::ErrorKind::WouldBlock
+            );
+        }
+    }
+
+    #[test]
+    fn cancelled_dispatch_after_send_preserves_unknown_progress() {
+        for route in [DeliveryRoute::Background, DeliveryRoute::Foreground] {
+            for is_drag in [false, true] {
+                let (mut client, peer) = test_connection();
+                let (guard, cancellation) = ActionCancellation::invocation();
+                client.cancellation = cancellation;
+                let (started, acknowledged) = tokio::sync::oneshot::channel();
+                let (finished, done) = std::sync::mpsc::channel();
+                let packet = if is_drag {
+                    "DRAG synthetic"
+                } else {
+                    "CLICK synthetic"
+                };
+                let server = std::thread::spawn(move || {
+                    assert_eq!(read_packet(&peer), packet);
+                    if is_drag {
+                        peer.send(br#"{"ok":true,"phase":"started"}"#).unwrap();
+                        acknowledged.blocking_recv().unwrap();
+                    }
+                    drop(guard);
+                    // Keep the peer open until dispatch returns so cancellation,
+                    // rather than EOF, determines the result.
+                    done.recv_timeout(TIMEOUT).unwrap();
+                    let mut byte = [0u8];
+                    assert_eq!(
+                        unsafe {
+                            libc::recv(
+                                peer.as_raw_fd(),
+                                byte.as_mut_ptr().cast(),
+                                byte.len(),
+                                libc::MSG_DONTWAIT,
+                            )
+                        },
+                        -1
+                    );
+                    assert_eq!(
+                        std::io::Error::last_os_error().kind(),
+                        std::io::ErrorKind::WouldBlock
+                    );
+                });
+                let error = client
+                    .dispatch_routed(packet, is_drag, Some(started), route)
+                    .unwrap_err();
+                let unknown = error.downcast_ref::<DispatchUnknown>().unwrap();
+                assert_eq!(unknown.acknowledged_phases, u32::from(is_drag));
+                assert_eq!(unknown.detail, ActionCancelled.to_string());
+                assert!(!error.is::<ActionCancelled>());
+                finished.send(()).unwrap();
+                server.join().unwrap();
+            }
+        }
     }
 
     #[test]

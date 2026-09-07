@@ -230,7 +230,6 @@ pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option
     None
 }
 
-/// Convert a borrowed AX attribute value only when it is an exact binary state.
 unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
@@ -248,17 +247,6 @@ unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
     None
 }
 
-/// Copy an exact binary attribute from an AX element in one read.
-///
-/// Accepts native `CFBoolean` values and numeric `0` or `1`. Other numeric
-/// values and all other types return `None` instead of being coerced to true.
-/// Use this for two-state controls whose intermediate or malformed values must
-/// fail closed; use [`copy_bool_attr`] for ordinary truthy attributes.
-///
-/// # Safety
-///
-/// `element` must be a valid Accessibility object reference for the duration
-/// of this call.
 pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
     let attr = CFStr::new(attr_name);
     let mut value: CFTypeRef = std::ptr::null();

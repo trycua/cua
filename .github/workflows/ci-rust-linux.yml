@@ -54,6 +54,11 @@ jobs:
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Verify shared fixture scroll journal
+        run: node --test libs/cua-driver/tests/fixtures/shared/web/journal.test.cjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
         with:

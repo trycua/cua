@@ -622,12 +622,59 @@ fn assert_fixture_text(fixture: &Fixture, id: &str, expected: &str) {
     }
 }
 
-fn fixture_marker_number(fixture: &Fixture, id: &str, prefix: &str) -> Option<u64> {
-    fixture
-        .journal
-        .text(id)
-        .and_then(|text| text.strip_prefix(prefix).map(str::to_owned))
-        .and_then(|value| value.parse().ok())
+fn fixture_scroll_reached_viewport(state: &serde_json::Value) -> bool {
+    let scroll = &state["scroll-tall"];
+    let (Some(offset), Some(page)) = (
+        scroll["scrollTop"].as_f64(),
+        scroll["clientHeight"].as_f64(),
+    ) else {
+        return false;
+    };
+    offset.is_finite() && page.is_finite() && page > 0.0 && offset >= page
+}
+
+#[test]
+fn scroll_oracle_reads_live_geometry_not_event_mirrors() {
+    use serde_json::json;
+    let mut state = json!({
+        "scroll-tall": {"scrollTop": 208, "clientHeight": 128},
+        "lbl-scroll-offset": {"text": "scroll_offset=104"},
+        "lbl-scroll-client-height": {"text": "scroll_client_height=128"}
+    });
+    assert!(fixture_scroll_reached_viewport(&state));
+    state["scroll-tall"]["scrollTop"] = json!(128.25);
+    assert!(fixture_scroll_reached_viewport(&state));
+    state["lbl-scroll-offset"]["text"] = json!("scroll_offset=256");
+    for offset in [0.0, 104.0, 127.99] {
+        state["scroll-tall"]["scrollTop"] = json!(offset);
+        assert!(!fixture_scroll_reached_viewport(&state));
+    }
+}
+
+#[test]
+fn scroll_oracle_rejects_missing_or_invalid_geometry() {
+    use serde_json::{json, Value};
+    for invalid in [Value::Null, json!("128"), json!(true), json!({}), json!([])] {
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": invalid.clone(), "clientHeight": 128}
+        })));
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": 256, "clientHeight": invalid}
+        })));
+    }
+    for height in [0, -1] {
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": 256, "clientHeight": height}
+        })));
+    }
+    for absent in [
+        json!({}),
+        json!({"scroll-tall": {}}),
+        json!({"scroll-tall": {"scrollTop": 256}}),
+        json!({"scroll-tall": {"clientHeight": 128}}),
+    ] {
+        assert!(!fixture_scroll_reached_viewport(&absent));
+    }
 }
 
 fn action_target_args(
@@ -1047,12 +1094,7 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
     assert_native_hyprland_semantic_route(fixture, "scroll", addressing, delivery, &response);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        let offset =
-            fixture_marker_number(fixture, "lbl-scroll-offset", "scroll_offset=").unwrap_or(0);
-        let page =
-            fixture_marker_number(fixture, "lbl-scroll-client-height", "scroll_client_height=")
-                .unwrap_or(0);
-        if page > 0 && offset >= page {
+        if fixture_scroll_reached_viewport(&fixture.journal.snapshot()) {
             break;
         }
         assert!(

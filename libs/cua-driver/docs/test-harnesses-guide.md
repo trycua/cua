@@ -50,6 +50,37 @@ Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
 what was run at that time. They are not current execution instructions and do
 not override this guide or `scripts/ci/README.md`.
 
+### Hyprland validation decision (2026-09-07)
+
+The maintainer selects the same canonical Linux Rust harness for native
+Hyprland: run `scripts/ci/linux/run-rust-e2e.sh` with its complete `all` suite
+in the prepared native Hyprland desktop at the exact candidate SHA. Preserve
+the runner's required cells, assertions, and evidence checks. Record compositor
+and backend provenance; an X11 run does not establish native Hyprland coverage.
+Environment failures and failed cells remain failures, not permission to skip
+tests or change expected results.
+
+This is fixture regression coverage. The production compatibility gate in
+`platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
+native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,
+and Tauri fixtures do not qualify for v3 raw input. Their declared refusals
+can prove refusal behavior, but cannot prove plugin delivery or isolation.
+Do not widen production admission or add a test bypass to make them qualify.
+
+Retain a short real-app production smoke and instrumented isolation proof on
+both qualified apps as supporting compatibility evidence. Verify actual app
+effects, plugin transport attribution, primary-seat isolation, and cleanup;
+the uninstrumented smoke alone cannot establish those trace-based claims.
+See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+for the existing bounded plans and their limits.
+
+Three complete repetitions of the long Python Calc/Inkscape plan, including
+the 34 policy cases across both apps, are no longer a merge requirement.
+Extended Python stress runs remain diagnostics for specific unresolved
+failures. This decision changes test strategy, records no new passing result,
+and does not waive the affected CI, native evidence, or release gates in
+[RFC 3550](../../../rfcs/3550-hyprland-isolated-input.md).
+
 ## Repository Map
 
 ```text

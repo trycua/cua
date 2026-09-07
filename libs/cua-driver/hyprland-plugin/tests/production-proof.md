@@ -10,10 +10,41 @@ The pinned qualification targets are native LibreOffice Calc package
 `26.2.5-3` and Inkscape package `1.4.4-6`; package versions alone are not proof
 that either app received isolated input.
 
+## Validation strategy decision (2026-09-07)
+
+The maintainer selects `scripts/ci/linux/run-rust-e2e.sh`, running its complete
+`all` suite in the prepared native Hyprland desktop at the exact candidate
+SHA, as the canonical regression gate. See the
+[test-harnesses guide](../../docs/test-harnesses-guide.md#hyprland-validation-decision-2026-09-07).
+Keep its required cells and evidence checks intact. Ordinary GTK, Electron,
+and Tauri fixtures are outside the production v3 package qualification gate;
+their refusals do not prove delivered plugin input. No admission widening,
+test bypass, or additional approval UI is part of this decision.
+
+Short real-app checks remain required supporting compatibility evidence:
+run the bounded production smoke on both pinned apps, and use bounded traced
+plans to establish actual v3 delivery, app effects, primary-seat isolation,
+and cleanup. Retain focused evidence for the supported operations and two-lane
+behavior being promoted. A smoke reporting `plugin_transport_attribution:false`
+cannot satisfy transport attribution or continuous isolation. Neither a
+canonical all-refusal result nor mocked helper tests close that evidence gap.
+
+The earlier requirement for three complete long Python Calc/Inkscape runs,
+including 34 policy cases across both apps, is retired. The extended plans below
+remain available for focused compatibility checks and stress diagnostics;
+they are not a second canonical E2E suite or a mandatory repetition count.
+Use focused policy coverage for the shared admission contract and investigate
+unresolved native failures with the relevant plan. Keep every executed plan's
+assertions and evidence requirements intact, and preserve failed results.
+
+This addendum records a strategy change, not completed native certification.
+Exact package versions, operation limits, existing Driver policy, and the
+separate release/package/Fleet requirements remain in force.
+
 ## Bounded real-app smoke
 
-`production_app_smoke.py` is an earlier, narrower gate. Run it in a disposable
-desktop with the exact source-built production plugin already loaded and
+`production_app_smoke.py` provides the bounded production smoke. Run it in a
+disposable desktop with the exact source-built production plugin already loaded and
 enabled. Pass `--source`, `--source-sha`, `--driver`, `--plugin`, and a new
 `--evidence` directory. The runner verifies a clean source checkout, canonical
 ALPM-owned app executables, and the plugin's current mapped path, device, and
@@ -310,15 +341,16 @@ only for those children, releases the foreground hold, and retains app files
 after failures or partial/unknown delivery. Transport failures poison the
 connection and are never replayed. Any cleanup failure fails the run.
 
-Remaining native work includes executing the cached-connection plan at the exact
-candidate SHA with verified loaded artifacts, successful plugin input on both
+Available focused native work includes executing the cached-connection plan at
+the exact candidate SHA with verified loaded artifacts, successful plugin input on both
 sides of the exact manifest denial, the quiet trace interval, continuous
 foreground isolation, and cleanup. The complete mode/manifest/resource and
-managed-policy allow/deny matrix remains separate. Other native gates include
-execution of the moving-primary and capacity plans, runtime cancellation during overlapping gestures,
-target/keymap/display/session faults, exact loaded-artifact
-provenance, repeat controls, and the canonical desktop matrix. No existing
-failed row is superseded by these helper tests.
+managed-policy allow/deny matrix remains separate. Other focused plans cover
+moving-primary and capacity checks, runtime cancellation during overlapping
+gestures, target/keymap/display/session faults, exact loaded-artifact
+provenance, and repeat controls. Select these diagnostics for unresolved claims
+under the validation strategy above; the canonical desktop matrix remains
+required. No existing failed row is superseded by these helper tests.
 
 Focused local verification:
 

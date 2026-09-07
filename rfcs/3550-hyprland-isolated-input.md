@@ -571,6 +571,32 @@ Use the canonical commands in
 typed catalog, not replace it with an unrelated scripted demo. Do not assume
 an unmerged PR's runner is present on main.
 
+The 2026-09-07 validation-strategy decision uses
+`scripts/ci/linux/run-rust-e2e.sh` with its complete `all` suite in the prepared
+native Hyprland desktop at the exact candidate SHA. This supplies canonical
+fixture regression coverage. Preserve required cells, assertions, and evidence
+checks, and report environment failures explicitly. Ordinary GTK, Electron,
+and Tauri fixtures are outside `hyprland_compatibility.rs`'s production package
+gate; their v3 raw-input refusals do not establish delivered plugin input.
+Do not broaden production admission or introduce a test bypass.
+
+Short production real-app smoke and instrumented isolation checks on native
+Calc `26.2.5-3` and Inkscape `1.4.4-6` remain required supporting compatibility
+evidence for actual plugin delivery, app effects, primary-seat isolation, and
+cleanup. Retain focused proof of the supported operations and two-lane behavior
+being promoted. An uninstrumented smoke without plugin transport attribution
+cannot prove continuous isolation, and an all-refusal canonical result cannot
+replace positive delivery evidence. The
+[production proof guide](../libs/cua-driver/hyprland-plugin/tests/production-proof.md)
+documents the bounded plans and their limits.
+
+Three whole repetitions of the long Python Calc/Inkscape plan, including 34
+policy cases across both apps, are no longer a merge requirement. Extended Python
+stress runs are diagnostics for specific unresolved failures. Shared policy
+coverage and focused native checks must still substantiate the claims below;
+the decision changes the test strategy, not production qualification or action
+admission. It records no completed native certification.
+
 | Gate                              | Required evidence                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Protocol and authority            | Malformed/oversized requests, quota exhaustion, wrong target/epoch/sequence, expired bindings, disconnect races, and incompatible protocols refuse without unsafe dispatch. Standard/unrestricted manifest and no-manifest cases, bounded allow/deny, managed/user policy, and cached-connection re-admission prove the common contract. Public labels/arguments cannot confer ownership; policy denial causes no plugin mutation.    |
@@ -625,8 +651,9 @@ later executable, harness, or environment change. Retain sanitized results,
 environment/package identities, and source provenance. Post-merge smoke and
 release-path checks remain separate delivery requirements.
 
-Define the repeat set before execution, preserve sanitized diagnostics for
-discovery/IPC failures, and diagnose every recurrence rather than retrying a
+When a failure needs repeat diagnostics, define that repeat set before
+execution. Preserve sanitized diagnostics for discovery/IPC failures, and
+diagnose every recurrence rather than retrying a
 failed cell into a pass. Passing repeats do not identify a historical failure's
 cause. Test both an instrumented candidate for detailed event/cleanup evidence
 and an uninstrumented production package; neither portable tests nor an
@@ -679,6 +706,17 @@ without changing visible cursor behavior, held-state cleanup, or fresh-action
 admission. It selects an implementation direction for native verification; it
 does not certify cancellation recovery or authorize a release before the gates
 below pass.
+
+The 2026-09-07 maintainer validation-strategy addendum selects the canonical
+Linux Rust harness in native Hyprland and retires the requirement for three
+complete long Python Calc/Inkscape repetitions. Short real-app production and
+instrumented isolation evidence remains necessary to prove the actual plugin
+path within its existing qualification limits. Extended Python stress plans
+remain diagnostic. This supersedes the earlier repetition requirement while
+preserving historical results, failures, and design decisions. It adds no
+approval UI, test bypass, or new passing certification claim. Implementation
+merge still requires passing affected CI and E2E evidence; release, Fleet,
+and physical-host requirements retain their separate scope.
 
 The decision preserves the contributor feedback and alternatives above. It
 rejects borrowing primary-seat focus and the earlier separate consent/signer

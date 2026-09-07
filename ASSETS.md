@@ -66,3 +66,4 @@ does not. That is why assets are minted here rather than in the destination page
 | `omarchy-apple-silicon-hero.png` | [`883af3b5…`](https://github.com/user-attachments/assets/883af3b5-6adc-40af-a5c8-0e0f84406757) | `blog/omarchy-arm64-on-lume-x-thread.md` |
 | `omarchy-arm64-architecture.png` | [`352315ab…`](https://github.com/user-attachments/assets/352315ab-87d8-4b6c-acfa-dfc2be79b025) | `blog/omarchy-arm64-on-lume-x-thread.md` |
 | `omarchy-arm64-capability-matrix.png` | [`1be4f977…`](https://github.com/user-attachments/assets/1be4f977-9229-455d-b650-a87994a8098b) | `blog/omarchy-arm64-on-lume-x-thread.md` |
+| `omarchy-background-selection-take-4.mp4` | [Video](https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2) | `how-to-guides/sandbox/run-omarchy-on-cloud-fleet` |

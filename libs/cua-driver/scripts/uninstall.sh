@@ -613,7 +613,18 @@ preserved_local = []
 
 
 def normalize(value):
-    return os.path.abspath(os.path.expanduser(value))
+    """Absolute path for a registered command, or None when it is relative.
+
+    Claude runs a registration from its own working directory, which is not
+    the uninstaller's. Resolving a relative command here would attribute an
+    unrelated project's ./cua-driver to this release whenever the uninstaller
+    happens to run from the release package tree, so a command that is still
+    relative after home expansion is never ownership evidence.
+    """
+    expanded = os.path.expanduser(value)
+    if not os.path.isabs(expanded):
+        return None
+    return os.path.abspath(expanded)
 
 
 def is_under(candidate, root):
@@ -631,6 +642,8 @@ def release_owned_command(server):
         return False
 
     command_path = normalize(command)
+    if command_path is None:
+        return False
     resolved = os.path.realpath(command_path)
     candidates = (command_path, resolved)
 
@@ -671,7 +684,9 @@ def is_local_launcher(server):
     command = server.get("command")
     if not isinstance(command, str) or not command:
         return False
-    return os.path.basename(normalize(command)) == "cua-driver-local"
+    # Advisory only: a relative command still names the local launcher, so
+    # match on the basename without resolving it against any directory.
+    return os.path.basename(os.path.expanduser(command)) == "cua-driver-local"
 
 
 def should_remove(name, server):

@@ -223,6 +223,29 @@ mod tests {
         );
     }
 
+    #[test]
+    fn admitted_element_survives_cache_destruction_until_native_work_finishes() {
+        let value = CFString::new("cua-driver-invariant-admitted-native-work");
+        let ptr = value.as_concrete_TypeRef() as usize;
+        let base = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
+        unsafe { CFRetain(ptr as CFTypeRef) };
+        let cache = ElementCache::new();
+        cache.update(1, 2, &[node_with_ptr(ptr)]);
+        let guard = cache.get_element_retained(1, 2, 0).unwrap();
+        let (finish_tx, finish_rx) = std::sync::mpsc::channel();
+        let native_work = std::thread::spawn(move || {
+            finish_rx.recv().unwrap();
+            assert_eq!(guard.as_ptr(), ptr);
+            drop(guard);
+        });
+        drop(cache);
+        let retained_during_native_work = unsafe { CFGetRetainCount(ptr as CFTypeRef) };
+        finish_tx.send(()).unwrap();
+        native_work.join().unwrap();
+        assert_eq!(retained_during_native_work, base + 1);
+        assert_eq!(unsafe { CFGetRetainCount(ptr as CFTypeRef) }, base);
+    }
+
     /// A missing index returns None without retaining anything.
     #[test]
     fn missing_index_returns_none() {

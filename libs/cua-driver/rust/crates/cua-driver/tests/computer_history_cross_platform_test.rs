@@ -464,20 +464,8 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
     let pure_wayland = cfg!(target_os = "linux")
         && std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var_os("DISPLAY").is_none();
-    #[cfg(target_os = "linux")]
-    let hyprland_foreground = pure_wayland && platform_linux::wayland::hyprland::is_session();
-    #[cfg(not(target_os = "linux"))]
-    let hyprland_foreground = false;
     let (case_action, case_route) = if pure_wayland {
-        (
-            "left_click",
-            if hyprland_foreground {
-                // AT-SPI resolves the element; the compositor delivers primary input.
-                DriverRoute::Composite
-            } else {
-                DriverRoute::LinuxAtSpiAction
-            },
-        )
+        ("left_click", DriverRoute::LinuxAtSpiAction)
     } else {
         ("computer_history_continuity", DriverRoute::WindowState)
     };
@@ -600,12 +588,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             .action_route()
             .expect("Wayland click emitted no action route");
         assert_eq!(
-            route,
-            if hyprland_foreground {
-                "global_input"
-            } else {
-                "accessibility"
-            },
+            route, "accessibility",
             "Wayland foreground click used an unexpected route: {}",
             clicked.raw
         );

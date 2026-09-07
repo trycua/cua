@@ -309,6 +309,9 @@ pub fn build_registry() -> cua_driver_core::tool::ToolRegistry {
     r.register(Box::new(ListWindowsTool));
     r.register(Box::new(GetWindowStateTool));
     r.register(Box::new(
+        cua_driver_core::accessibility_surface::UnsupportedAccessibilitySurfaceTool::new("linux"),
+    ));
+    r.register(Box::new(
         cua_driver_core::expectation::VerifyStateTool::new(std::sync::Arc::new(
             cua_driver_core::expectation::ToolObservationProvider::new(
                 std::sync::Arc::new(ListWindowsTool),

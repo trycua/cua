@@ -1988,6 +1988,10 @@ where
     SF: std::future::Future<Output = Result<Vec<(i64, i64)>>>,
 {
     for step in 0..amount.max(1) {
+        dlog!(
+            "scroll sequence dispatch step={} baseline={baseline:?}",
+            step + 1
+        );
         let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
         attempted.set(true);
         if !tokio::time::timeout_at(deadline, dispatch())
@@ -1997,6 +2001,7 @@ where
             return Err(anyhow!("scroll action returned false"));
         }
         acknowledged.set(acknowledged.get() + 1);
+        dlog!("scroll sequence acknowledged step={}", step + 1);
         if step + 1 < amount {
             if let Some(previous) = baseline.take() {
                 baseline = Some(
@@ -2391,9 +2396,15 @@ pub fn scroll_element(
                             .as_ref()
                             .expect("page probes selected before dispatch");
                         let mut motion = PageMotion::new(baseline);
+                        let started = tokio::time::Instant::now();
                         loop {
                             let sample = sample_page_probes(component, probes, *coord).await?;
-                            if motion.observe(&sample, direction) {
+                            let settled = motion.observe(&sample, direction);
+                            dlog!(
+                                "scroll sequence sample elapsed_ms={} positions={sample:?} settled={settled}",
+                                started.elapsed().as_millis()
+                            );
+                            if settled {
                                 return Ok(sample);
                             }
                             tokio::time::sleep(Duration::from_millis(25)).await;

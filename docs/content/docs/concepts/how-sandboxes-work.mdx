@@ -5,6 +5,8 @@ description: 'How a Cua Sandbox gives an agent one isolated computer it can both
 
 A Cua Sandbox is a **full, isolated computer**, not a remote desktop session. In that one machine, an agent can run code through Python, shell commands, or a PTY, and it can also drive the graphical interface through screenshots, the accessibility tree, clicks, and typing.
 
+Those are two complementary halves of the same computer. The code half and the GUI half share one filesystem, one set of processes, and one OS state. The value is that they live in the same place. An agent can click through an app and then run a Python function against the files or process state that app produced. It can also set up state in code and then automate the UI over that state.
+
 The Sandbox SDK is the shared interface. Local execution starts the guest through
 a runtime on your hardware; Fleet manages hosted capacity in pools, and a claim
 reserves a guest for your workload. They share the sandbox concept, but differ in
@@ -12,8 +14,6 @@ image preparation, credentials, supported operations, and cleanup. Use
 [Cloud Fleets](/cloud-fleets) for the hosted path or
 [Manage local sandbox lifecycle](/how-to-guides/sandbox/manage-local-lifecycle)
 for local setup.
-
-Those are two complementary halves of the same computer. The code half and the GUI half share one filesystem, one set of processes, and one OS state. The value is that they live in the same place. An agent can click through an app and then run a Python function against the files or process state that app produced. It can also set up state in code and then automate the UI over that state.
 
 For the broader model that combines code, structured tools, and graphical interfaces, read [What is computer use?](/concepts/what-is-computer-use).
 

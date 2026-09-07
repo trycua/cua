@@ -10,6 +10,7 @@ Install, uninstall, local-build, and VM sync helpers for cua-driver.
 | `uninstall.sh` / `uninstall.ps1` | Remove installed driver artifacts |
 | `_install-common.sh` / `_install-common.psm1` | Shared install helper logic |
 | `_install-rust.sh` / `_install-local-rust.sh` | Rust build/install internals |
+| `generate-agent-plugin.py` | Generate the shared Claude, Grok, and Codex plugin package |
 | `sync-vm-worktree.sh` | Sync this checkout to verification VMs and pull artifacts back |
 | `post-install-hints.txt` | User-facing hints printed by install scripts |
 

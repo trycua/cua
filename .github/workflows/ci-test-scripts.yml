@@ -24,6 +24,8 @@ on:
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
       - "docs/release-backfill-runbook.md"
+      - "libs/cua-driver/plugins/**"
+      - "libs/cua-driver/rust/Skills/cua-driver/**"
       - "libs/cua-driver/scripts/**"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
       - "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/package-lock.json"

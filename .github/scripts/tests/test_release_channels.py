@@ -154,6 +154,9 @@ def test_driver_version_staging_updates_only_declared_build_sites(tmp_path: Path
         "libs/cua-driver/rust/Cargo.toml",
         "libs/cua-driver/rust/Cargo.lock",
         "libs/cua-driver/rust/Skills/cua-driver/SKILL.md",
+        "libs/cua-driver/plugins/cua-driver/.claude-plugin/plugin.json",
+        "libs/cua-driver/plugins/cua-driver/.codex-plugin/plugin.json",
+        "libs/cua-driver/plugins/cua-driver/.grok-plugin/plugin.json",
     }
     assert (root / "libs/cua-driver/rust/VERSION").read_text().strip().endswith(".3097")
     lock = (root / "libs/cua-driver/rust/Cargo.lock").read_text()

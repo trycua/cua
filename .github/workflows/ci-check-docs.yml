@@ -75,9 +75,12 @@ jobs:
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Check generated reference
-        if: steps.scope.outputs.selected == 'true'
-        shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
+        if: steps.scope.outputs.selected == 'true' && matrix.platform != 'windows'
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
+      - name: Check generated reference in PowerShell
+        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'windows'
+        shell: pwsh
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
 
   check-docs-sync:
     name: Check Documentation Sync

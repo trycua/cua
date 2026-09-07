@@ -113,6 +113,12 @@ impl ForegroundSentinel {
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
+            #[cfg(target_os = "linux")]
+            if hyprland::is_session() {
+                target
+                    .wait_for_hyprland_sentinel_geometry()
+                    .map_err(|error| error.to_string())?;
+            }
             try_activate_native_foreground(driver, target)?;
             // Electron may already be focused before its preload listener is ready.
             // The compositor observation is the authoritative Wayland focus gate.

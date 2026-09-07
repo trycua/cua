@@ -60,6 +60,25 @@ and backend provenance; an X11 run does not establish native Hyprland coverage.
 Environment failures and failed cells remain failures, not permission to skip
 tests or change expected results.
 
+Before launching the native Hyprland harness, apply this map-time rule in the
+disposable desktop's Lua configuration and reload it:
+
+```lua
+hl.window_rule({
+    name = "cua-canonical-sentinel-animation",
+    match = {title = "^CuaTestHarness Sentinel \\[cdp=[0-9]+\\]$"},
+    no_anim = true,
+})
+```
+
+The preflight independently verifies `no_anim` for the exact sentinel, then
+waits for mapped fullscreen readiness before its first Driver activation.
+`hyprctl clients` reports geometry goals, not animated surface bounds; repeated
+equal goals alone cannot establish animation completion. This rule changes
+only the test sentinel's animation, not its placement or the product's geometry
+guard. Restore the original configuration after the run. It is a deterministic
+fixture requirement, not an Omarchy user configuration requirement.
+
 This is fixture regression coverage. For background `TARGET` input, the production compatibility gate in
 `platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
 native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,

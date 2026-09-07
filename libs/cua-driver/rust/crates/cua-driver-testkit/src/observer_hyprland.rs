@@ -200,6 +200,173 @@ pub(super) fn client_address(target: TargetWindow) -> Result<String, ObserverErr
         .ok_or_else(|| ObserverError::new("Hyprland target client not found"))
 }
 
+fn sentinel_clients_without_animation(
+    target: TargetWindow,
+    mut query_clients: impl FnMut() -> Result<Vec<Client>, ObserverError>,
+    query_property: impl FnOnce() -> Result<serde_json::Value, ObserverError>,
+) -> Result<Vec<Client>, ObserverError> {
+    let check_identity = |clients: &[Client]| {
+        if target.pid == 0 || target.native_id == 0 {
+            return Err(ObserverError::new(
+                "Hyprland sentinel requires exact pid and native_id",
+            ));
+        }
+        select(clients, target)?.ok_or_else(|| {
+            ObserverError::new(format!(
+                "Hyprland sentinel missing during no_anim query: pid={} native_id={:#x}",
+                target.pid, target.native_id
+            ))
+        })?;
+        Ok(())
+    };
+    check_identity(&query_clients()?)?;
+    let property = query_property();
+    let clients = query_clients()?;
+    check_identity(&clients)?;
+    let property = property.map_err(|error| {
+        ObserverError::new(format!(
+            "Hyprland sentinel no_anim property unavailable: {error}; configure an exact-title sentinel-only no_anim rule before mapping"
+        ))
+    })?;
+    if property.get("no_anim").and_then(serde_json::Value::as_bool) != Some(true) {
+        return Err(ObserverError::new(format!(
+            "Hyprland sentinel requires no_anim=true, received {property}; configure an exact-title sentinel-only no_anim rule before mapping; client: {:?}",
+            select(&clients, target)?
+        )));
+    }
+    Ok(clients)
+}
+
+fn sentinel_no_anim_property(target: TargetWindow) -> Result<serde_json::Value, ObserverError> {
+    let output = bounded_output(
+        Command::new("hyprctl").args([
+            "-j",
+            "getprop",
+            &format!("address:{:#x}", target.native_id),
+            "no_anim",
+        ]),
+        QUERY_TIMEOUT,
+        OUTPUT_LIMIT,
+    )?;
+    serde_json::from_slice(&output)
+        .map_err(|error| ObserverError::new(format!("invalid getprop no_anim JSON: {error}")))
+}
+
+#[derive(Debug, PartialEq)]
+struct SentinelGeometryGoal {
+    at: [i64; 2],
+    size: [i64; 2],
+    monitor: i64,
+    workspace: i64,
+    monitor_region: (f64, f64, f64, f64),
+}
+
+fn sentinel_geometry(
+    clients: &[Client],
+    monitors: &[Monitor],
+    target: TargetWindow,
+) -> Result<Option<SentinelGeometryGoal>, ObserverError> {
+    if target.pid == 0 || target.native_id == 0 {
+        return Err(ObserverError::new(
+            "Hyprland sentinel requires exact pid and native_id",
+        ));
+    }
+    let Some(client) = select(clients, target)? else {
+        return Ok(None);
+    };
+    let Some(monitor) = monitors.iter().find(|monitor| monitor.id == client.monitor) else {
+        return Ok(None);
+    };
+    let region = monitor_region(monitor)?;
+    // hyprctl reports geometry goals, not animated surface bounds. These
+    // samples prove fullscreen/map readiness only; the separate no_anim gate
+    // excludes the known animation race. Driver's surface guard stays decisive.
+    if !client.mapped
+        || client.hidden
+        || client.fullscreen != 2
+        || client.size.iter().any(|size| *size <= 0)
+        || client.workspace.id != monitor.active_workspace.id
+        || monitor.special_workspace.id != 0
+        || ![
+            (client.at[0] as f64, region.0),
+            (client.at[1] as f64, region.1),
+            (client.size[0] as f64, region.2),
+            (client.size[1] as f64, region.3),
+        ]
+        .iter()
+        .all(|(actual, expected)| (actual - expected).abs() <= 1.0)
+    {
+        return Ok(None);
+    }
+    Ok(Some(SentinelGeometryGoal {
+        at: client.at,
+        size: client.size,
+        monitor: client.monitor,
+        workspace: client.workspace.id,
+        monitor_region: region,
+    }))
+}
+
+fn wait_for_sentinel_geometry(
+    target: TargetWindow,
+    timeout: Duration,
+    unchanged_for: Duration,
+    mut query: impl FnMut() -> Result<(Vec<Client>, Vec<Monitor>), ObserverError>,
+    mut elapsed: impl FnMut() -> Duration,
+    mut pause: impl FnMut(Duration),
+) -> Result<(), ObserverError> {
+    let mut candidate = None;
+    let mut since = Duration::ZERO;
+    loop {
+        let (clients, monitors) = query().map_err(|error| {
+            ObserverError::new(format!(
+                "Hyprland sentinel geometry query failed for pid={} native_id={:#x}; last candidate: {candidate:?}: {error}",
+                target.pid, target.native_id
+            ))
+        })?;
+        let now = elapsed();
+        let geometry = sentinel_geometry(&clients, &monitors, target).map_err(|error| {
+            ObserverError::new(format!(
+                "Hyprland sentinel geometry invalid for pid={} native_id={:#x}; last candidate: {candidate:?}: {error}",
+                target.pid, target.native_id
+            ))
+        })?;
+        if geometry != candidate || geometry.is_none() {
+            since = now;
+            candidate = geometry;
+        }
+        if now < timeout && candidate.is_some() && now.saturating_sub(since) >= unchanged_for {
+            return Ok(());
+        }
+        if now >= timeout {
+            return Err(ObserverError::new(format!(
+                "Hyprland sentinel fullscreen geometry goal did not become ready for pid={} native_id={:#x}; last client: {:?}; monitors: {monitors:?}",
+                target.pid, target.native_id, select(&clients, target)?
+            )));
+        }
+        pause((timeout - now).min(Duration::from_millis(25)));
+    }
+}
+
+impl TargetWindow {
+    pub(crate) fn wait_for_hyprland_sentinel_geometry(self) -> Result<(), ObserverError> {
+        let started = Instant::now();
+        wait_for_sentinel_geometry(
+            self,
+            Duration::from_secs(5),
+            Duration::from_millis(150),
+            || {
+                let clients = sentinel_clients_without_animation(self, clients, || {
+                    sentinel_no_anim_property(self)
+                })?;
+                Ok((clients, query("monitors")?))
+            },
+            || started.elapsed(),
+            std::thread::sleep,
+        )
+    }
+}
+
 fn parse_focus(value: serde_json::Value) -> Result<Option<u64>, ObserverError> {
     if value.as_object().is_some_and(|object| object.is_empty()) {
         return Ok(None);
@@ -486,6 +653,295 @@ mod tests {
         TargetWindow {
             pid: 100,
             native_id: 0x10,
+        }
+    }
+
+    fn fullscreen_client() -> Client {
+        let mut client = client(0x10, 100);
+        client.fullscreen = 2;
+        client.at = [-100, 0];
+        client.size = [720, 1280];
+        client
+    }
+
+    #[test]
+    fn sentinel_stable_goal_never_admits_enabled_or_unknown_animations() {
+        for property in [
+            json!({"no_anim": false}),
+            json!({}),
+            json!({"no_anim": "true"}),
+            json!({"no_anim": 1}),
+            json!(null),
+        ] {
+            let mut calls = 0;
+            let error = wait_for_sentinel_geometry(
+                target(),
+                Duration::from_millis(250),
+                Duration::ZERO,
+                || {
+                    calls += 1;
+                    let clients = sentinel_clients_without_animation(
+                        target(),
+                        || Ok(vec![fullscreen_client()]),
+                        || Ok(property.clone()),
+                    )?;
+                    Ok((clients, vec![monitor()]))
+                },
+                || Duration::ZERO,
+                |_| panic!("invalid no_anim must fail before another observation"),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains("requires no_anim=true"), "{error}");
+            assert!(
+                error.contains("sentinel-only no_anim rule before mapping"),
+                "{error}"
+            );
+            assert!(error.contains("native_id=0x10"), "{error}");
+            assert_eq!(calls, 1);
+        }
+    }
+
+    #[test]
+    fn sentinel_no_anim_requires_exact_identity_on_both_sides_of_query() {
+        for bad_sample in [0, 1] {
+            for missing in [false, true] {
+                let mut samples = 0;
+                let mut property_calls = 0;
+                let result = sentinel_clients_without_animation(
+                    target(),
+                    || {
+                        let mut client = fullscreen_client();
+                        let bad = samples == bad_sample;
+                        samples += 1;
+                        if bad {
+                            client.pid += 1;
+                        }
+                        Ok(if bad && missing { vec![] } else { vec![client] })
+                    },
+                    || {
+                        property_calls += 1;
+                        Ok(json!({"no_anim": true}))
+                    },
+                );
+                assert!(result.is_err());
+                assert_eq!(property_calls, bad_sample);
+                assert_eq!(samples, bad_sample + 1);
+            }
+        }
+    }
+
+    #[test]
+    fn sentinel_no_anim_accepts_only_true_and_preserves_query_errors() {
+        let mut samples = 0;
+        let clients = sentinel_clients_without_animation(
+            target(),
+            || {
+                samples += 1;
+                Ok(vec![fullscreen_client()])
+            },
+            || Ok(json!({"no_anim": true})),
+        )
+        .unwrap();
+        assert_eq!(samples, 2);
+        assert!(sentinel_geometry(&clients, &[monitor()], target())
+            .unwrap()
+            .is_some());
+        for message in ["invalid getprop no_anim JSON", "hyprctl query timed out"] {
+            let error = sentinel_clients_without_animation(
+                target(),
+                || Ok(vec![fullscreen_client()]),
+                || Err(ObserverError::new(message)),
+            )
+            .unwrap_err()
+            .to_string();
+            assert!(error.contains(message), "{error}");
+            assert!(error.contains("no_anim property unavailable"), "{error}");
+        }
+    }
+
+    fn wait_geometry_samples(
+        mut sample: impl FnMut(usize) -> (Vec<Client>, Vec<Monitor>),
+    ) -> (Result<(), ObserverError>, usize) {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut calls = 0;
+        let result = wait_for_sentinel_geometry(
+            target(),
+            Duration::from_millis(250),
+            Duration::from_millis(75),
+            || {
+                let value = sample(calls);
+                calls += 1;
+                Ok(value)
+            },
+            || elapsed.get(),
+            |duration| elapsed.set(elapsed.get() + duration),
+        );
+        (result, calls)
+    }
+
+    #[test]
+    fn sentinel_geometry_waits_for_fullscreen_and_unchanged_goals() {
+        let (result, calls) = wait_geometry_samples(|index| {
+            let mut client = fullscreen_client();
+            match index {
+                0 => client.size = [0, 0],
+                1..=4 => {
+                    // Equal nonempty startup samples must never suffice.
+                    client.fullscreen = 0;
+                    client.size = [100, 80];
+                }
+                5 => client.at[0] += 1,
+                _ => {}
+            }
+            (vec![client], vec![monitor()])
+        });
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(calls, 10);
+    }
+
+    #[test]
+    fn sentinel_geometry_accepts_stable_native_fullscreen() {
+        let (result, calls) =
+            wait_geometry_samples(|_| (vec![fullscreen_client()], vec![monitor()]));
+        assert!(result.is_ok(), "{result:?}");
+        assert_eq!(calls, 4);
+    }
+
+    #[test]
+    fn sentinel_geometry_query_time_counts_toward_fixed_deadline() {
+        let elapsed = std::cell::Cell::new(Duration::ZERO);
+        let mut calls = 0;
+        let result = wait_for_sentinel_geometry(
+            target(),
+            Duration::from_millis(250),
+            Duration::from_millis(75),
+            || {
+                calls += 1;
+                elapsed.set(elapsed.get() + Duration::from_millis(150));
+                Ok((vec![fullscreen_client()], vec![monitor()]))
+            },
+            || elapsed.get(),
+            |duration| elapsed.set(elapsed.get() + duration),
+        );
+        assert!(result.is_err());
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn sentinel_geometry_query_failure_preserves_identity_and_geometry() {
+        let mut calls = 0;
+        let error = wait_for_sentinel_geometry(
+            target(),
+            Duration::from_millis(250),
+            Duration::from_millis(75),
+            || {
+                calls += 1;
+                if calls == 1 {
+                    Ok((vec![fullscreen_client()], vec![monitor()]))
+                } else {
+                    Err(ObserverError::new("query unavailable"))
+                }
+            },
+            || Duration::ZERO,
+            |_| {},
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(error.contains("native_id=0x10"), "{error}");
+        assert!(error.contains("size: [720, 1280]"), "{error}");
+        assert!(error.contains("query unavailable"), "{error}");
+        assert_eq!(calls, 2);
+    }
+
+    #[test]
+    fn sentinel_geometry_deadline_bounds_unready_and_flapping_samples() {
+        for flapping in [false, true] {
+            let (result, calls) = wait_geometry_samples(|index| {
+                let mut client = fullscreen_client();
+                if flapping {
+                    client.at[0] += (index % 2) as i64;
+                } else {
+                    client.size = [0, 0];
+                }
+                (vec![client], vec![monitor()])
+            });
+            let error = result.unwrap_err().to_string();
+            assert!(error.contains("native_id=0x10"), "{error}");
+            assert!(error.contains("size:"), "{error}");
+            assert!(error.contains("monitors:"), "{error}");
+            assert_eq!(calls, 11);
+        }
+    }
+
+    #[test]
+    fn sentinel_geometry_rejects_wrong_or_lost_identity() {
+        let mut wrong_pid = fullscreen_client();
+        wrong_pid.pid += 1;
+        assert!(sentinel_geometry(&[wrong_pid], &[monitor()], target()).is_err());
+        assert!(sentinel_geometry(
+            &[fullscreen_client()],
+            &[monitor()],
+            TargetWindow {
+                native_id: 0,
+                ..target()
+            }
+        )
+        .is_err());
+        for missing in [false, true] {
+            let (result, calls) = wait_geometry_samples(|index| {
+                let mut client = fullscreen_client();
+                if index > 1 {
+                    client.address = "0x11".into();
+                }
+                let clients = if missing && index > 1 {
+                    vec![]
+                } else {
+                    vec![client]
+                };
+                (clients, vec![monitor()])
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, 11);
+        }
+    }
+
+    #[test]
+    fn sentinel_geometry_rejects_missing_wrong_or_changed_monitor() {
+        for missing in [false, true] {
+            let (result, calls) = wait_geometry_samples(|_| {
+                let mut wrong = monitor();
+                wrong.id += 1;
+                (
+                    vec![fullscreen_client()],
+                    if missing { vec![] } else { vec![wrong] },
+                )
+            });
+            assert!(result.is_err());
+            assert_eq!(calls, 11);
+        }
+        let mut wrong = monitor();
+        wrong.width += 100.0;
+        assert!(
+            sentinel_geometry(&[fullscreen_client()], &[wrong], target())
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn sentinel_geometry_rejects_unmapped_hidden_and_off_workspace_clients() {
+        for mode in 0..4 {
+            let mut client = fullscreen_client();
+            match mode {
+                0 => client.mapped = false,
+                1 => client.hidden = true,
+                2 => client.workspace.id += 1,
+                _ => client.fullscreen = 1,
+            }
+            assert!(sentinel_geometry(&[client], &[monitor()], target())
+                .unwrap()
+                .is_none());
         }
     }
 

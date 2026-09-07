@@ -2019,6 +2019,71 @@ fn hyprland_foreground(delivery: crate::input::delivery::DeliveryMode) -> bool {
         && crate::wayland::hyprland::is_session()
 }
 
+fn element_click_prefers_ax(
+    hyprland_foreground: bool,
+    button: u8,
+    count: usize,
+    has_modifiers: bool,
+) -> bool {
+    !has_modifiers && (!hyprland_foreground || (button == 1 && count == 1))
+}
+
+fn foreground_ax_click_unknown(pid: u32, idx: usize) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+    let record = ActionExecutionRecord::builder(
+        ActionEffect::Unverifiable,
+        ActionTransport::LinuxAtSpiAction,
+        RequestedDelivery::Foreground,
+    )
+    .actual_delivery(ActualDelivery::Unknown)
+    .build()
+    .expect("uncertain semantic activation has no delivered count or replay");
+    let public = serde_json::to_value(record.public_result().unwrap()).unwrap();
+    ToolResult::error(format!(
+        "click: AT-SPI activation outcome is unknown for element [{idx}] (pid {pid}); refresh state before another action."
+    ))
+    .with_structured(public)
+    .with_action_record(record)
+}
+
+#[cfg(test)]
+#[test]
+fn foreground_ax_click_error_does_not_claim_delivery_or_request_replay() {
+    let result = foreground_ax_click_unknown(123, 4);
+    assert_eq!(result.is_error, Some(true));
+    let wire = serde_json::to_value(&result).unwrap();
+    assert_eq!(wire["isError"], true);
+    let public = &wire["structuredContent"];
+    assert_eq!(
+        *public,
+        serde_json::to_value(result.action_record.unwrap().public_result().unwrap()).unwrap()
+    );
+    assert_eq!(public["effect"], "unverifiable");
+    assert_eq!(public["route"], "accessibility");
+    assert_eq!(public["delivery"]["mode"], "unknown");
+    assert!(public.get("escalation").is_none());
+    assert!(public["delivery"].get("delivered_count").is_none());
+}
+
+#[cfg(test)]
+#[test]
+fn hyprland_foreground_semantic_click_preserves_pointer_gestures() {
+    assert!(element_click_prefers_ax(true, 1, 1, false));
+    for (button, count) in [(2, 1), (3, 1), (1, 0), (1, 2), (1, 3), (2, 2), (3, 3)] {
+        assert!(!element_click_prefers_ax(true, button, count, false));
+    }
+    // Preserve the existing AT-SPI eligibility for all other delivery routes.
+    for button in [1, 2, 3] {
+        for count in [0, 1, 2, 3] {
+            assert!(element_click_prefers_ax(false, button, count, false));
+            assert!(!element_click_prefers_ax(false, button, count, true));
+            assert!(!element_click_prefers_ax(true, button, count, true));
+        }
+    }
+}
+
 fn isolated_hyprland_refusal(detail: impl Into<String>) -> ToolResult {
     let detail = detail.into();
     ToolResult::error(format!("background_unavailable: {detail}")).with_structured(json!({
@@ -3333,7 +3398,37 @@ impl Tool for ClickTool {
 
             // Chromium can execute a genuine AT-SPI action without focus. Try
             // that route before applying its background synthetic-input gate.
-            if hyprland_foreground(delivery) {
+            // Plain Hyprland foreground clicks also retain semantic activation
+            // for offscreen controls; other pointer gestures need raw input.
+            let foreground_hyprland = hyprland_foreground(delivery);
+            if foreground_hyprland && window_id_resolved.is_none() {
+                return foreground_hyprland_refusal(
+                    "an exact window_id or window-bound element token is required",
+                );
+            }
+            if element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty()) {
+                let ax_result =
+                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
+                        .await;
+                if let Ok(Ok((_action, suspected_noop))) = ax_result {
+                    let mut structured = json!({
+                        "path": "ax",
+                        "verified": false,
+                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
+                    });
+                    if suspected_noop {
+                        structured["escalation"] = non_ax_escalation();
+                    }
+                    return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
+                        .with_structured(structured);
+                }
+                // AT-SPI errors can arrive after dispatch. Do not introduce a
+                // primary-seat replay when its semantic outcome is uncertain.
+                if foreground_hyprland {
+                    return foreground_ax_click_unknown(pid, idx);
+                }
+            }
+            if foreground_hyprland {
                 if !modifiers.is_empty() {
                     return foreground_hyprland_refusal("modified clicks are unsupported");
                 }
@@ -3366,23 +3461,6 @@ impl Tool for ClickTool {
                     },
                 )
                 .await;
-            }
-            if modifiers.is_empty() {
-                let ax_result =
-                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
-                        .await;
-                if let Ok(Ok((_action, suspected_noop))) = ax_result {
-                    let mut structured = json!({
-                        "path": "ax",
-                        "verified": false,
-                        "effect": if suspected_noop { "suspected_noop" } else { "unverifiable" },
-                    });
-                    if suspected_noop {
-                        structured["escalation"] = non_ax_escalation();
-                    }
-                    return ToolResult::text(format!("Clicked element [{idx}] (pid {pid})."))
-                        .with_structured(structured);
-                }
             }
             if isolated_background {
                 if !modifiers.is_empty() {

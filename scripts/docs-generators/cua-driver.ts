@@ -205,6 +205,7 @@ export function getLatestReleasedVersion(git: GitRunner = runGit): string {
 async function main() {
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check') || args.includes('--check-only');
+  const platform = referencePlatform(process.platform);
 
   console.log('Cua Driver Documentation Generator');
   console.log('===================================\n');
@@ -244,10 +245,11 @@ async function main() {
   const currentVersion = dumpDocs.cli.version || dumpDocs.mcp.version || releasedVersion;
 
   const cliMdx = generateCLIReferenceMDX(dumpDocs.cli, currentVersion);
-  const mcpMdx = generateMCPToolsMDX(dumpDocs.mcp, currentVersion);
+  const mcpMdx = generateMCPToolsMDX(dumpDocs.mcp, currentVersion, platform);
 
   const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli-reference.mdx');
-  const mcpPath = path.join(DOCS_OUTPUT_DIR, 'mcp-tools.mdx');
+  const mcpFile = mcpReferenceFile(platform);
+  const mcpPath = path.join(DOCS_OUTPUT_DIR, mcpFile);
 
   if (checkOnly) {
     // Check mode: compare with existing files
@@ -271,13 +273,13 @@ async function main() {
     if (fs.existsSync(mcpPath)) {
       const existingMcp = fs.readFileSync(mcpPath, 'utf-8');
       if (existingMcp !== mcpMdx) {
-        console.error('mcp-tools.mdx is out of sync with source code');
+        console.error(`${mcpFile} is out of sync with source code`);
         hasDrift = true;
       } else {
-        console.log('mcp-tools.mdx is up to date');
+        console.log(`${mcpFile} is up to date`);
       }
     } else {
-      console.error('mcp-tools.mdx does not exist');
+      console.error(`${mcpFile} does not exist`);
       hasDrift = true;
     }
 
@@ -600,13 +602,30 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
 // MCP Tools Generator
 // ============================================================================
 
-export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: string): string {
+export type ReferencePlatform = 'macos' | 'linux';
+
+export function referencePlatform(host: string): ReferencePlatform {
+  if (host === 'darwin') return 'macos';
+  if (host === 'linux') return 'linux';
+  throw new Error(`Native MCP reference generation is not implemented for ${host} in this draft slice`);
+}
+
+export function mcpReferenceFile(platform: ReferencePlatform): string {
+  return `mcp-tools-${platform}.mdx`;
+}
+
+export function generateMCPToolsMDX(
+  docs: MCPDocumentation,
+  releasedVersion: string,
+  platform: ReferencePlatform
+): string {
   const lines: string[] = [];
 
   // Frontmatter — must be at the very beginning of the file
   lines.push('---');
-  lines.push('title: MCP Tools');
-  lines.push('description: Reference for every MCP tool Cua Driver exposes');
+  const platformName = platform === 'macos' ? 'macOS' : 'Linux';
+  lines.push(`title: MCP Tools (${platformName})`);
+  lines.push(`description: Reference for MCP tools Cua Driver exposes on ${platformName}`);
   lines.push('---');
   lines.push('');
   lines.push(`{/*
@@ -617,6 +636,9 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
 */}`);
   lines.push('');
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
+  lines.push('');
+
+  lines.push(`This reference describes the **${platformName}** native tool registry. See [MCP tools](/reference/cua-driver/mcp-tools) for shared guidance and other platforms.`);
   lines.push('');
 
   // Introduction — mirror the existing hand-written header prose

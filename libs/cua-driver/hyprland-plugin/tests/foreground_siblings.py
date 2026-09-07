@@ -14,8 +14,8 @@ from pathlib import Path
 import gi
 
 gi.require_version("Gtk", "3.0")
-gi.require_version("GdkWayland", "3.0")
-from gi.repository import Gdk, GdkWayland, GLib, Gtk
+gi.require_version("Gdk", "3.0")
+from gi.repository import Gdk, GLib, GObject, Gtk
 
 
 class Actor:
@@ -86,10 +86,14 @@ def main():
     parser.add_argument("--journal-dir", type=Path, required=True)
     args = parser.parse_args()
     display = Gdk.Display.get_default()
-    assert isinstance(display, GdkWayland.WaylandDisplay), "native Wayland required"
+    # The runtime backend type is available even without the GdkWayland typelib.
+    if display is None or GObject.type_name(display.__gtype__) != "GdkWaylandDisplay":
+        raise RuntimeError("native Wayland required")
     actors = [Actor(name, args.journal_dir) for name in ("Target", "Sibling")]
     for actor in actors:
-        assert actor.window.get_display() == display
+        if actor.window.get_display() != display:
+            raise RuntimeError("siblings must share one Gdk.Display")
+    for actor in actors:
         actor.record("ready", pid=os.getpid(), same_display=True, native_wayland=True)
     Gtk.main()
     for actor in actors:

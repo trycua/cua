@@ -39,6 +39,13 @@ fn active_address() -> String {
     active["address"].as_str().unwrap_or("").to_owned()
 }
 
+fn focus_window(address: &str) {
+    let selector = serde_json::to_string(&format!("address:{address}")).unwrap();
+    let action = format!("hl.dsp.focus({{ window = {selector} }})");
+    assert_eq!(hyprctl(&["dispatch", &action]).trim(), "ok");
+    assert_eq!(active_address(), address);
+}
+
 fn events(path: &Path) -> Vec<Value> {
     let text = std::fs::read_to_string(path).expect("fixture journal must exist");
     // A concurrently written final line is not an event until its newline lands.
@@ -159,12 +166,7 @@ fn launch_siblings(driver: &mut McpDriver, dir: &Path) -> (Fixture, Fixture) {
             std::thread::sleep(Duration::from_millis(10));
         }
     }
-    let selector = format!("address:{}", sibling.address);
-    assert_eq!(
-        hyprctl(&["dispatch", "focuswindow", &selector]).trim(),
-        "ok"
-    );
-    assert_eq!(active_address(), sibling.address);
+    focus_window(&sibling.address);
     (target, sibling)
 }
 
@@ -252,6 +254,7 @@ fn drag_focus_loss(same_client: bool) {
     let successor_start = events(&successor.journal).len();
     let width = before.structured()["screenshot_width"].as_f64().unwrap();
     let height = before.structured()["screenshot_height"].as_f64().unwrap();
+    driver.start_behavior_recording();
 
     // Interrupt only after the application independently confirms the press.
     // The MCP call remains in flight while this thread changes primary focus.
@@ -267,10 +270,7 @@ fn drag_focus_loss(same_client: bool) {
                     .any(|event| event["kind"] == "button-press" && event["button"] == 1)
                 {
                     assert_eq!(active_address(), target_address);
-                    let selector = format!("address:{successor_address}");
-                    let reply = hyprctl(&["dispatch", "focuswindow", &selector]);
-                    assert_eq!(reply.trim(), "ok", "focus intervention failed");
-                    assert_eq!(active_address(), successor_address);
+                    focus_window(&successor_address);
                     return;
                 }
                 assert!(
@@ -460,6 +460,7 @@ fn foreground_action_refused_while_independent_virtual_pointer_holds_primary_gra
     let width = desktop.structured()["screen_width"].as_u64().unwrap();
     let height = desktop.structured()["screen_height"].as_u64().unwrap();
     assert!(x >= 0 && y >= 0 && (x as u64) < width && (y as u64) < height);
+    driver.start_behavior_recording();
     // Independent virtual pointer on the primary seat, not physical hardware.
     // Closing controlled stdin releases immediately; the helper also has a timeout.
     let mut grab = spawn_in_job(

@@ -176,12 +176,21 @@ jobs:
       # is bare. Install git + the build toolchain before anything else.
       - name: Install base tooling (container is bare)
         run: |
-          apt-get update
+          # Freeze bullseye indexes and packages together: the live security
+          # mirror can advertise packages it no longer serves. HTTP bootstraps
+          # ca-certificates; APT still verifies Debian signatures and hashes.
+          cat > /etc/apt/sources.list <<'EOF'
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian/20260901T000000Z/ bullseye-updates main
+          deb [check-valid-until=no signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] http://snapshot.debian.org/archive/debian-security/20260901T000000Z/ bullseye-security main
+          EOF
+          # Ignore any additional image-provided sources for this bootstrap.
+          apt-get -o Dir::Etc::sourceparts=- update
           # PipeWire ScreenCast capture remains Nix/modern-build only because
           # bullseye's 0.3.19 headers are too old for libspa-sys 0.8. Portal
           # RemoteDesktop/libei input is pure Rust plus libxkbcommon and ships
           # in these portable release binaries.
-          apt-get install -y --no-install-recommends \
+          apt-get -o Dir::Etc::sourceparts=- install -y --no-install-recommends \
             git ca-certificates curl python3 build-essential pkg-config \
             libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev \
             libxkbcommon-dev

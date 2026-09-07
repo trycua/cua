@@ -71,6 +71,34 @@ fn validate_wire_output(tool: &str, structured: &Value) -> Result<(), String> {
 /// - A successful result for a tool that advertises no schema is returned
 ///   unchanged: there is nothing for a client to validate it against.
 pub fn conforming_tool_result(tool: &str, result: Value) -> Value {
+    conforming_tool_result_inner(tool, result, advertises_output_schema(tool))
+}
+
+/// Reject contracts this proxy cannot safely normalize errors against. An older
+/// daemon may omit its schema; that does not promise the local success contract.
+pub fn validate_proxy_output_schema(tool: &str, schema: Option<&Value>) -> Result<(), String> {
+    if let Some(schema) = schema {
+        if advertised_tool_output_schema(tool).as_ref() != Some(schema) {
+            return Err(format!(
+                "incompatible daemon output schema for {tool}; use matching proxy and daemon versions"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// Apply the result boundary using the executing daemon's advertised contract.
+/// Only matching canonical schemas enter the bounded validator cache.
+pub fn conforming_proxy_tool_result(
+    tool: &str,
+    result: Value,
+    schema: Option<&Value>,
+) -> Result<Value, String> {
+    validate_proxy_output_schema(tool, schema)?;
+    Ok(conforming_tool_result_inner(tool, result, schema.is_some()))
+}
+
+fn conforming_tool_result_inner(tool: &str, result: Value, has_schema: bool) -> Value {
     let Value::Object(mut result) = result else {
         return internal_error_result(format!(
             "internal result mismatch for {tool}: tool result is not an object"
@@ -86,7 +114,7 @@ pub fn conforming_tool_result(tool: &str, result: Value) -> Value {
         return Value::Object(result);
     }
 
-    if !advertises_output_schema(tool) {
+    if !has_schema {
         return Value::Object(result);
     }
 

@@ -467,6 +467,10 @@ async fn run_control_connection(
         match reader.read_line(&mut buf).await {
             Ok(0) | Err(_) => return,
             Ok(_) => {
+                if let Err(error) = validate_session_begin_ack(&buf) {
+                    warn!("control connection: {error}");
+                    return;
+                }
                 let _ = control_ready.send(());
             }
         }
@@ -514,6 +518,10 @@ async fn run_control_connection(
         match reader.read_line(&mut buf).await {
             Ok(0) | Err(_) => return,
             Ok(_) => {
+                if let Err(error) = validate_session_begin_ack(&buf) {
+                    warn!("control connection: {error}");
+                    return;
+                }
                 let _ = control_ready.send(());
             }
         }
@@ -531,6 +539,21 @@ async fn run_control_connection(
     {
         let _ = (line, session_id, socket_path, control_ready);
     }
+}
+
+fn validate_session_begin_ack(line: &str) -> Result<(), String> {
+    let response: DaemonResponse = serde_json::from_str(line)
+        .map_err(|_| "malformed session_begin acknowledgement".to_owned())?;
+    if !response.ok
+        || response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("session_begin"))
+            != Some(&serde_json::Value::Bool(true))
+    {
+        return Err("daemon did not acknowledge session_begin".to_owned());
+    }
+    Ok(())
 }
 
 /// Mint a session id unique among the live proxies sharing one daemon, for the
@@ -577,6 +600,8 @@ fn fetch_tools_list_from_daemon(
         .get("tools")
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("daemon list response missing `tools` array"))?;
+
+    validate_daemon_output_schemas(tools_array)?;
 
     // Reshape the daemon's `{name, description, input_schema, output_schema,
     // read_only, ..., capabilities}` envelope into MCP's `{name, description,
@@ -695,6 +720,48 @@ fn fetch_tools_list_from_daemon(
     ))
 }
 
+fn validate_daemon_output_schemas(tools: &[serde_json::Value]) -> anyhow::Result<()> {
+    for tool in tools {
+        let name = tool
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("daemon tool entry missing name"))?;
+        cua_driver_core::mcp_result::validate_proxy_output_schema(name, tool.get("output_schema"))
+            .map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
+}
+
+fn proxy_output_schema<'a>(
+    tools: &'a serde_json::Value,
+    name: &str,
+) -> Option<&'a serde_json::Value> {
+    let tools = tools.get("tools")?.as_array()?;
+    tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(serde_json::Value::as_str) == Some(name))
+        .or_else(|| {
+            (name == "type_text_chars")
+                .then(|| {
+                    tools.iter().find(|tool| {
+                        tool.get("name").and_then(serde_json::Value::as_str) == Some("type_text")
+                    })
+                })
+                .flatten()
+        })?
+        .get("outputSchema")
+}
+
+fn proxy_tool_result_response(
+    id: serde_json::Value,
+    result: Result<serde_json::Value, String>,
+) -> Response {
+    match result {
+        Ok(result) => Response::ok(id, result),
+        Err(error) => Response::error(id, -32603, error),
+    }
+}
+
 fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
     result
         .get("tool_observation_owner")
@@ -727,24 +794,26 @@ async fn handle_proxy_request(
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
-                    return Response::ok(
+                    return proxy_tool_result_response(
                         id,
-                        cua_driver_core::mcp_result::conforming_tool_result(
+                        cua_driver_core::mcp_result::conforming_proxy_tool_result(
                             &call.name,
                             cua_driver_core::mcp_result::tool_error_result(
                                 error.to_string(),
                                 serde_json::json!({"code": "permission_denied"}),
                             ),
+                            proxy_output_schema(cached_tools_list, &call.name),
                         ),
                     );
                 }
                 forward_tool_call(
                     id,
-                    call.name,
+                    call.name.clone(),
                     call.args,
                     socket_path,
                     session_id,
                     daemon_observes_tool_calls,
+                    proxy_output_schema(cached_tools_list, &call.name).cloned(),
                 )
                 .await
             }
@@ -776,6 +845,7 @@ async fn forward_tool_call(
     socket_path: &str,
     session_id: &str,
     daemon_observes_tool_calls: bool,
+    output_schema: Option<serde_json::Value>,
 ) -> Response {
     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
     let req = DaemonRequest {
@@ -812,7 +882,10 @@ async fn forward_tool_call(
         Ok(Ok(r)) => r,
     };
 
-    Response::ok(id, daemon_response_to_tool_result(&name, resp))
+    proxy_tool_result_response(
+        id,
+        daemon_response_to_tool_result(&name, resp, output_schema.as_ref()),
+    )
 }
 
 /// Translate one `DaemonResponse` into the `CallTool.Result` the MCP client
@@ -835,7 +908,11 @@ async fn forward_tool_call(
 /// that carries none — leaves through the same boundary the direct dispatch
 /// uses, so a daemon-backed call is held to the tool's advertised
 /// `outputSchema` exactly as a direct one is.
-fn daemon_response_to_tool_result(name: &str, resp: DaemonResponse) -> serde_json::Value {
+fn daemon_response_to_tool_result(
+    name: &str,
+    resp: DaemonResponse,
+    output_schema: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, String> {
     let result = if resp.ok {
         resp.result.unwrap_or_else(|| {
             serde_json::json!({
@@ -853,7 +930,7 @@ fn daemon_response_to_tool_result(name: &str, resp: DaemonResponse) -> serde_jso
             serde_json::json!({ "exit_code": exit_code }),
         )
     };
-    cua_driver_core::mcp_result::conforming_tool_result(name, result)
+    cua_driver_core::mcp_result::conforming_proxy_tool_result(name, result, output_schema)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -1119,11 +1196,94 @@ mod tests {
         assert!(response.get("result").is_some());
     }
 
+    #[test]
+    fn session_begin_requires_a_positive_typed_acknowledgement() {
+        assert!(
+            validate_session_begin_ack(r#"{"ok":true,"result":{"session_begin":true}}"#).is_ok()
+        );
+        for line in [
+            "not JSON",
+            r#"{"ok":false,"error":"denied"}"#,
+            r#"{"ok":false,"result":{"session_begin":true}}"#,
+            r#"{"ok":true}"#,
+            r#"{"ok":true,"result":{"session_begin":false}}"#,
+            r#"{"ok":true,"result":{"session_begin":"true"}}"#,
+            r#"{"ok":true,"result":{"other":true}}"#,
+        ] {
+            assert!(validate_session_begin_ack(line).is_err(), "accepted {line}");
+        }
+    }
+
+    #[test]
+    fn incompatible_daemon_schema_is_rejected_before_advertising() {
+        let schema = serde_json::json!({"type": "object", "required": ["legacy_clicked"]});
+        let tools = vec![serde_json::json!({"name": "click", "output_schema": schema})];
+        let error = validate_daemon_output_schemas(&tools)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("incompatible daemon output schema for click"));
+        assert!(error.contains("matching proxy and daemon versions"));
+
+        let daemon_resp = DaemonResponse {
+            ok: true,
+            result: Some(serde_json::json!({
+                "content": [], "structuredContent": {"legacy_clicked": true}
+            })),
+            error: None,
+            exit_code: None,
+        };
+        let response = proxy_tool_result_response(
+            serde_json::json!(1),
+            daemon_response_to_tool_result("click", daemon_resp, Some(&schema)),
+        );
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["error"]["code"], -32603);
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn daemon_without_schema_preserves_legacy_success() {
+        let tools = vec![serde_json::json!({"name": "click"})];
+        validate_daemon_output_schemas(&tools).unwrap();
+        for result in [
+            serde_json::json!({"content": [], "isError": false}),
+            serde_json::json!({
+                "content": [], "isError": false,
+                "structuredContent": {"legacy_clicked": true}
+            }),
+        ] {
+            let daemon_resp = DaemonResponse {
+                ok: true,
+                result: Some(result.clone()),
+                error: None,
+                exit_code: None,
+            };
+            assert_eq!(
+                daemon_response_to_tool_result("click", daemon_resp, None).unwrap(),
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn matching_daemon_schema_retains_local_output_validation() {
+        let tools =
+            vec![serde_json::json!({"name": "click", "output_schema": click_output_schema()})];
+        validate_daemon_output_schemas(&tools).unwrap();
+    }
+
+    fn click_output_schema() -> Option<serde_json::Value> {
+        cua_driver_contract::advertised_tool_output_schema("click")
+    }
+
     /// Serialize the production conversion the way the proxy answers it, so
     /// these assertions run against `forward_tool_call`'s own branch without
     /// spinning up a real daemon.
     fn tool_call_response(id: serde_json::Value, resp: DaemonResponse) -> Response {
-        Response::ok(id, daemon_response_to_tool_result("click", resp))
+        Response::ok(
+            id,
+            daemon_response_to_tool_result("click", resp, click_output_schema().as_ref()).unwrap(),
+        )
     }
 
     #[test]
@@ -1199,7 +1359,9 @@ mod tests {
             exit_code: None,
         };
 
-        let result = daemon_response_to_tool_result("click", daemon_resp);
+        let result =
+            daemon_response_to_tool_result("click", daemon_resp, click_output_schema().as_ref())
+                .unwrap();
 
         assert_eq!(result["isError"], serde_json::json!(true));
         assert_eq!(
@@ -1228,7 +1390,11 @@ mod tests {
             exit_code: None,
         };
 
-        assert_eq!(daemon_response_to_tool_result("click", daemon_resp), result);
+        assert_eq!(
+            daemon_response_to_tool_result("click", daemon_resp, click_output_schema().as_ref())
+                .unwrap(),
+            result
+        );
     }
 
     #[test]

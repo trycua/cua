@@ -118,8 +118,8 @@ class Computer:
         vnc_host: Optional[str] = None,
         vnc_port: int = 5900,
         vnc_password: str = "",
-        vnc_force_caps: bool = False,
         run_opts: Optional[Dict[str, Any]] = None,
+        vnc_force_caps: bool = False,
     ):
         """Initialize a new Computer instance.
 
@@ -164,11 +164,11 @@ class Computer:
             vnc_host: VNC server host (required when backend='vnc')
             vnc_port: VNC server port (default: 5900)
             vnc_password: VNC server password
+            run_opts: Optional dictionary of provider-specific run options.
             vnc_force_caps: Synthesise Shift around shifted characters when typing over
                 VNC. Some servers (notably QEMU's) only apply the shift level implied by
                 a keysym to letters, so symbols like '@' arrive as '2'. Only used when
                 backend='vnc'.
-            run_opts: Optional dictionary of provider-specific run options.
         """
 
         self.logger = Logger("computer", verbosity)

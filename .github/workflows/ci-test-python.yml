@@ -51,6 +51,10 @@ jobs:
           fi
         shell: bash
 
+      - name: Install Computer SDK for server integration tests
+        if: matrix.package == 'computer-server'
+        run: uv pip install --system -e ./libs/python/computer
+
       - name: Install test dependencies
         run: |
           # Install test dependencies from root pyproject.toml if tests directory exists

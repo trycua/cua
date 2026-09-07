@@ -191,3 +191,43 @@ def test_computer_sends_no_backend_env_for_the_native_backend():
     from computer.computer import Computer
 
     assert Computer(use_host_computer_server=True)._backend_env() == {}
+
+
+def test_computer_preserves_positional_run_opts():
+    from computer.computer import Computer
+
+    run_opts = {"env": {"CUSTOM_OPTION": "preserved"}}
+    computer = Computer(
+        "1024x768",
+        "8GB",
+        "4",
+        "macos",
+        "",
+        None,
+        None,
+        True,
+        20,
+        False,
+        "lume",
+        7777,
+        8006,
+        None,
+        "localhost",
+        None,
+        None,
+        False,
+        None,
+        None,
+        None,
+        None,
+        100,
+        "vnc",
+        "127.0.0.1",
+        5900,
+        "",
+        run_opts,
+    )
+
+    assert computer.custom_run_opts == run_opts
+    assert computer.vnc_force_caps is False
+    assert "CUA_VNC_FORCE_CAPS" not in computer._backend_env()

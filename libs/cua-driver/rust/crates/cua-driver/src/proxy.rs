@@ -713,7 +713,16 @@ async fn handle_proxy_request(
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
-                    return Response::error(id, -32603, error.to_string());
+                    return Response::ok(
+                        id,
+                        cua_driver_core::mcp_result::conforming_tool_result(
+                            &call.name,
+                            cua_driver_core::mcp_result::tool_error_result(
+                                error.to_string(),
+                                serde_json::json!({"code": "permission_denied"}),
+                            ),
+                        ),
+                    );
                 }
                 forward_tool_call(
                     id,
@@ -842,6 +851,76 @@ fn daemon_response_to_tool_result(name: &str, resp: DaemonResponse) -> serde_jso
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn proxy_authorization_refusal_is_a_tool_error_without_forwarding() {
+        const CHILD_ENV: &str = "CUA_DRIVER_PROXY_REFUSAL_TEST_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            // Policy configuration is process-wide and immutable; keep this
+            // denial out of other tests without mutating the parent environment.
+            let directory = tempfile::tempdir().expect("temporary policy directory");
+            let policy = directory.path().join("deny.yaml");
+            std::fs::write(&policy, "deny:\n  tools: [click]\n").expect("write policy");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "proxy::tests::proxy_authorization_refusal_is_a_tool_error_without_forwarding",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .env(cua_driver_core::policy::POLICY_FILE_ENV, &policy)
+                .env_remove(cua_driver_core::policy::MANAGED_POLICY_FILE_ENV)
+                .output()
+                .expect("run isolated refusal test");
+            assert!(
+                output.status.success(),
+                "isolated refusal test failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let directory = tempfile::tempdir().expect("temporary socket directory");
+        let socket = directory.path().join("daemon.sock");
+        #[cfg(unix)]
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind test daemon");
+        let request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": 19, "method": "tools/call",
+            "params": {"name": "click", "arguments": {"pid": 42, "x": 10, "y": 20}}
+        }))
+        .expect("valid tool request");
+        let cached_tools = Arc::new(serde_json::json!({"tools": [{"name": "click"}]}));
+        let response = handle_proxy_request(
+            request,
+            serde_json::json!(19),
+            socket.to_str().unwrap(),
+            &cached_tools,
+            "refusal-test-session",
+            false,
+        );
+        #[cfg(unix)]
+        let response = tokio::select! {
+            response = response => response,
+            connection = listener.accept() => {
+                drop(connection);
+                panic!("a locally denied call must never connect to the daemon");
+            }
+        };
+        #[cfg(not(unix))]
+        let response = response.await;
+        let value = serde_json::to_value(response).expect("serialize response");
+        assert_eq!(value["id"], 19);
+        assert!(value.get("error").is_none(), "{value}");
+        let result = &value["result"];
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["code"], "permission_denied");
+        assert_eq!(result["content"][0]["type"], "text");
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("explicitly denied"));
+    }
 
     #[tokio::test]
     async fn proxy_loop_returns_promptly_on_clean_eof() {

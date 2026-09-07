@@ -20,16 +20,45 @@
 //! through.
 
 use serde_json::{json, Value};
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock, Mutex},
+};
 use tracing::warn;
 
 use cua_driver_contract::{
-    advertises_output_schema, conforming_error_envelope, is_refusal_envelope,
-    validate_success_output,
+    advertised_tool_output_schema, advertises_output_schema, conforming_error_envelope,
+    is_refusal_envelope, validate_success_output,
 };
 
 /// Marker code for a result the driver replaced because the tool's own payload
 /// could not be advertised under its `outputSchema`.
 pub const TOOL_OUTPUT_INVALID_CODE: &str = "tool_output_invalid";
+
+type CachedValidator = Result<Arc<jsonschema::Validator>, String>;
+static OUTPUT_VALIDATORS: LazyLock<Mutex<HashMap<String, CachedValidator>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn validate_wire_output(tool: &str, structured: &Value) -> Result<(), String> {
+    // Only published tools reach this cache, so arbitrary client names cannot grow it.
+    let validator = OUTPUT_VALIDATORS
+        .lock()
+        .map_err(|_| "output schema cache unavailable".to_owned())?
+        .entry(tool.to_owned())
+        .or_insert_with(|| {
+            let schema = advertised_tool_output_schema(tool)
+                .ok_or_else(|| "advertised output schema unavailable".to_owned())?;
+            jsonschema::validator_for(&schema)
+                .map(Arc::new)
+                .map_err(|error| format!("invalid advertised output schema: {error}"))
+        })
+        .clone()?;
+    if validator.is_valid(structured) {
+        Ok(())
+    } else {
+        Err("structured content does not match the advertised output schema".to_owned())
+    }
+}
 
 /// Hold one `tools/call` result to the tool's advertised `outputSchema`.
 ///
@@ -67,7 +96,7 @@ pub fn conforming_tool_result(tool: &str, result: Value) -> Value {
                 tool,
                 "successful tool result declared an output schema but carried no structured content"
             );
-            internal_error_result(format!(
+            invalid_output_result(result, format!(
                 "internal output mismatch for {tool}: tool advertises an output schema but returned no structured content"
             ))
         }
@@ -75,27 +104,50 @@ pub fn conforming_tool_result(tool: &str, result: Value) -> Value {
         // typed success validator would reject it, so ask the arm it belongs
         // to rather than replacing a payload a client accepts.
         Some(structured) if is_refusal_envelope(structured) => Value::Object(result),
-        Some(structured) => match validate_success_output(tool, structured.clone()) {
+        Some(structured) => match validate_wire_output(tool, structured)
+            .and_then(|()| validate_success_output(tool, structured.clone()))
+        {
             Ok(_) => Value::Object(result),
             Err(error) => {
                 warn!(
                     tool,
                     "successful tool result carried structured content its output schema rejects"
                 );
-                internal_error_result(format!("internal output mismatch for {tool}: {error}"))
+                invalid_output_result(
+                    result,
+                    format!("internal output mismatch for {tool}: {error}"),
+                )
             }
         },
     }
 }
 
+fn invalid_output_result(original: serde_json::Map<String, Value>, message: String) -> Value {
+    let mut result = internal_error_result(message);
+    if let Some(Value::Array(content)) = original.get("content") {
+        result["content"]
+            .as_array_mut()
+            .unwrap()
+            .extend(content.clone());
+    }
+    if let Some(structured) = original.get("structuredContent") {
+        // Preserve evidence as an explicitly invalid diagnostic, never as success.
+        result["structuredContent"]["invalid_output"] = structured.clone();
+    }
+    result
+}
+
 /// Build the `isError: true` result for a call that produced no usable tool
 /// payload, already normalized into the refusal arm.
 pub fn internal_error_result(message: impl Into<String>) -> Value {
-    let message = message.into();
+    let message = format!(
+        "{}; the tool may have executed. Verify state before retrying.",
+        message.into()
+    );
     json!({
         "content": [{"type": "text", "text": message}],
         "isError": true,
-        "structuredContent": {"code": TOOL_OUTPUT_INVALID_CODE},
+        "structuredContent": {"code": TOOL_OUTPUT_INVALID_CODE, "execution_state": "unknown"},
     })
 }
 
@@ -248,6 +300,44 @@ mod tests {
 
         assert_conforms(ACTION_TOOL, &result);
         assert_eq!(result, success);
+    }
+
+    #[test]
+    fn a_success_missing_required_nullable_fields_becomes_a_conforming_error() {
+        let structured = json!({
+            "session": "schema-test",
+            "capture_scope": "window",
+            "effective_scope": "window",
+            "desktop_capture_authorized": false,
+            "desktop_unlocked": false,
+        });
+        let tool = "get_session_state";
+        assert!(validate_success_output(tool, structured.clone()).is_ok());
+        let result = conforming_tool_result(
+            tool,
+            json!({
+                "content": [{"type": "text", "text": "action completed"}],
+                "isError": false,
+                "structuredContent": structured,
+            }),
+        );
+
+        assert_conforms(tool, &result);
+        assert_eq!(result["isError"], true);
+        assert_eq!(
+            result["structuredContent"]["code"],
+            TOOL_OUTPUT_INVALID_CODE
+        );
+        assert_eq!(result["structuredContent"]["execution_state"], "unknown");
+        assert_eq!(
+            result["structuredContent"]["invalid_output"]["session"],
+            "schema-test"
+        );
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("Verify state before retrying"));
+        assert_eq!(result["content"][1]["text"], "action completed");
     }
 
     /// A tool with no advertised schema has no contract to violate, so its

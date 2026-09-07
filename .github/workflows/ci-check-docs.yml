@@ -76,7 +76,7 @@ jobs:
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Check generated reference
         if: steps.scope.outputs.selected == 'true'
-        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        shell: ${{ matrix.os == 'windows-latest' && 'pwsh' || 'bash' }}
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
 
   check-docs-sync:

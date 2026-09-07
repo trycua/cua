@@ -33,6 +33,11 @@ on:
       - "libs/cua-driver/tests/fixtures/**"
       - ".github/workflows/ci-rust-windows.yml"
   workflow_dispatch:
+    inputs:
+      proxy_idle_seconds:
+        description: "Idle duration for MCP recovery diagnostic (1-3600 seconds)"
+        type: number
+        default: 1
 
 permissions:
   contents: read
@@ -45,7 +50,7 @@ jobs:
   unit:
     name: Rust Windows unit and compile
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: ${{ github.event_name == 'workflow_dispatch' && inputs.proxy_idle_seconds > 1 && 90 || 30 }}
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@stable
@@ -77,6 +82,11 @@ jobs:
       - name: Run MCP proxy lifecycle regressions
         working-directory: libs/cua-driver/rust
         run: "cargo test -p cua-driver --bin cua-driver proxy::tests:: --locked"
+      - name: Run real MCP proxy recovery regression
+        working-directory: libs/cua-driver/rust
+        env:
+          CUA_PROXY_RECOVERY_IDLE_SECONDS: ${{ inputs.proxy_idle_seconds || 1 }}
+        run: cargo test -p cua-driver --test protocol_proxy_recovery_test --locked -- --nocapture
       - name: Run named-pipe readiness regression
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver-testkit stalled_pipe_attempt_is_bounded_and_does_not_block_the_next_probe --lib --locked

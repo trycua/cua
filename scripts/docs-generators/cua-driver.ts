@@ -227,11 +227,7 @@ async function main() {
   // Step 2: Extract all docs in a single invocation
   console.log('\nExtracting documentation...');
   const binary = process.env.CUA_DRIVER_BINARY || CUA_DRIVER_BIN;
-  const dumpDocsJson = execFileSync(binary, ['dump-docs', '--type', 'all', '--pretty'], {
-    cwd: CUA_DRIVER_DIR,
-    encoding: 'utf-8',
-  });
-  const dumpDocs: DumpDocsOutput = JSON.parse(dumpDocsJson);
+  const dumpDocs = extractDocumentation(binary);
   console.log(`   Found ${dumpDocs.cli.commands.length} CLI commands`);
   console.log(`   Found ${dumpDocs.mcp.tools.length} MCP tools`);
 
@@ -257,6 +253,30 @@ async function main() {
     checkOnly
       ? 'Native and shared references are up to date.'
       : 'Native and shared references generated.'
+  );
+}
+
+type DocumentationRunner = (
+  binary: string,
+  args: string[],
+  options: { cwd: string; encoding: 'utf-8'; env: NodeJS.ProcessEnv }
+) => string;
+
+export function extractDocumentation(
+  binary: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  run: DocumentationRunner = (command, args, options) => execFileSync(command, args, options)
+): DumpDocsOutput {
+  const policyVariables = new Set(['CUA_DRIVER_POLICY_FILE', 'CUA_DRIVER_MANAGED_POLICY_FILE']);
+  const env = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !policyVariables.has(key.toUpperCase()))
+  );
+  return JSON.parse(
+    run(binary, ['dump-docs', '--type', 'all', '--pretty'], {
+      cwd: CUA_DRIVER_DIR,
+      encoding: 'utf-8',
+      env,
+    })
   );
 }
 

@@ -11,7 +11,8 @@
       "watchPaths": [
         "libs/cua-driver/rust/crates/**/*.rs",
         "libs/cua-driver/rust/Cargo.toml",
-        "libs/cua-driver/rust/Cargo.lock"
+        "libs/cua-driver/rust/Cargo.lock",
+        "scripts/docs-generators/cua-driver-policy.test.ts"
       ],
       "buildCommand": "cargo build -p cua-driver --release",
       "buildDirectory": "libs/cua-driver/rust",

@@ -3,7 +3,12 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { referencePlatform, syncReferences, type DumpDocsOutput } from './cua-driver';
+import {
+  extractDocumentation,
+  referencePlatform,
+  syncReferences,
+  type DumpDocsOutput,
+} from './cua-driver';
 
 const platforms = [
   { host: 'linux', name: 'Linux', outputFile: 'mcp-tools-linux.mdx' },
@@ -30,6 +35,30 @@ function docs(description = 'Inspect the native tree.'): DumpDocsOutput {
     },
   };
 }
+
+test('documentation extraction isolates both policy layers only in its metadata child', () => {
+  const environment = Object.freeze({
+    Path: 'native-toolchain',
+    CARGO: 'cargo.exe',
+    CUA_DRIVER_POLICY_FILE: 'restricted.yaml',
+    cua_driver_policy_file: 'another-case.yaml',
+    CuA_DrIvEr_MaNaGeD_PoLiCy_FiLe: 'managed.yaml',
+  });
+  const expected = docs();
+  let calls = 0;
+  const actual = extractDocumentation('native-driver', environment, (binary, args, options) => {
+    calls++;
+    assert.equal(binary, 'native-driver');
+    assert.deepEqual(args, ['dump-docs', '--type', 'all', '--pretty']);
+    assert.deepEqual(options.env, { Path: 'native-toolchain', CARGO: 'cargo.exe' });
+    assert.equal(options.encoding, 'utf-8');
+    return JSON.stringify(expected);
+  });
+  assert.equal(calls, 1);
+  assert.deepEqual(actual, expected);
+  assert.equal(environment.CUA_DRIVER_POLICY_FILE, 'restricted.yaml');
+  assert.equal(environment.CuA_DrIvEr_MaNaGeD_PoLiCy_FiLe, 'managed.yaml');
+});
 
 test('maps native hosts and refuses unsupported hosts before generation', () => {
   for (const platform of platforms) assert.deepEqual(referencePlatform(platform.host), platform);

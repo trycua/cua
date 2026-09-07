@@ -16,7 +16,7 @@ This reference describes the **Windows** native tool registry.
 Other platforms: [macOS MCP tools](/reference/cua-driver/mcp-tools), [Linux MCP tools](/reference/cua-driver/mcp-tools-linux).
 See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.
 
-`cua-driver` exposes 26 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 57 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -109,6 +109,14 @@ Windows requires no special permissions.
 {"pid":844,"window_id":10725}
 ```
 
+### `get_accessibility_tree`
+
+Return a lightweight snapshot of the desktop: running processes and on-screen visible windows with their bounds and owner pid.
+
+For the full UIA subtree of a single window (with interactive element indices you can click by), use get_window_state instead — this is a fast discovery read.
+
+**Arguments:** none.
+
 ### `get_desktop_state`
 
 Capture the full display in true screen pixels with no downscale. Use its native-size PNG as the coordinate source for actions whose target is &#123;kind:"desktop",display_id:"primary"&#125;. Returns the true screen size. Vision-only: no UIA tree walk.
@@ -117,6 +125,63 @@ Capture the full display in true screen pixels with no downscale. Use its native
 
 - `screenshot_out_file` (string, optional): Write PNG here instead of base64.
 - `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+
+### `get_screen_size`
+
+Return the size of the main display in physical pixels plus its display scale factor. On Windows, screenshots and pixel clicks use this same physical-pixel coordinate space. Requires no special permissions.
+
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+
+### `get_cursor_position`
+
+Return the current mouse cursor position in screen points (origin top-left).
+
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+
+### `get_config`
+
+Report the current persistent driver config.
+
+Pure read-only. Returns defaults when the underlying state is unset — same fallback the daemon uses at startup. Sibling to `set_config`.
+
+Current schema (Windows):
+
+  &#123;
+    "schema_version": 1,
+    "version": "&lt;crate version&gt;",
+    "source_sha": "&lt;maintainer build commit or null&gt;",
+    "platform": "windows",
+    "capture_mode": "ax" | "vision" (DEPRECATED, ignored),
+    "max_image_dimension": 0
+  &#125;
+
+`capture_mode` is deprecated and no longer affects behavior — `get_window_state` always returns both the UIA tree and a screenshot.
+
+**Arguments:** none.
+
+### `get_recording_state`
+
+Report the current trajectory recorder state: whether recording is enabled, the output directory (when enabled), and the 1-based counter for the next turn folder that will be written. Counter increments on every recorded action tool call and resets to 1 each time recording is (re-)enabled.
+
+Pure read-only.
+
+**Arguments:** none.
+
+### `get_agent_cursor_state`
+
+Return the session cursor's theme, semantic playback, position, visibility, and motion.
+
+**Arguments:**
+
+- `session` (string, required)
+
+```json
+{"session":"example"}
+```
 
 ## Action tools
 
@@ -174,6 +239,25 @@ Implementation uses the `AttachThreadInput` trick to bypass Windows' foreground-
 {"pid":844}
 ```
 
+### `set_window_frame`
+
+Set one exact top-level window's frame in the desktop-coordinate space reported by list_windows and verify the resulting geometry through an independent readback.
+
+**Arguments:**
+
+- `height` (number, required): range: 1–unbounded
+- `pid` (integer, required): range: 1–unbounded
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `width` (number, required): range: 1–unbounded
+- `window_id` (integer, required): range: 1–unbounded
+- `x` (number, required)
+- `y` (number, required)
+
+```json
+{"height":1,"pid":844,"width":1,"window_id":10725,"x":100,"y":200}
+```
+
 ### `click`
 
 Left-click against a target pid. **Prefer `element_index` over pixel coordinates** — element_index works on backgrounded / minimized / hidden / off-desktop windows, surfaces a stable handle that survives rebuilds, and tells you what you're clicking via the cached element's role + label. Reach for `x, y` only when the target is a canvas / video / WebGL / custom-drawn surface that doesn't appear in the UIA tree.
@@ -219,6 +303,34 @@ Double-click against a target pid. Two addressing modes:
 - `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts two WM_LBUTTONDOWN/UP pairs in quick succession to the deepest child window at that point.
 
 Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. The macOS-only `modifier` field is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
+
+**Arguments:**
+
+- `delivery_mode` (string, optional): Input delivery mode. 'background' (default) never swaps foreground: it routes through UIA Invoke / PostMessage and the window is never raised. For targets whose input stack silently drops posted events (Chromium/Electron content, GTK buttons, VCL/LibreOffice accelerators) the tool returns a structured background_unavailable error rather than fronting. 'foreground' is the explicit escalation: a brief SetForegroundWindow swap + SendInput, restoring the prior foreground afterward. IMPORTANT: 'background' is not a hint to weigh — it is the mandatory first attempt. Do NOT pass 'foreground' preemptively because a target 'looks like' GTK/Chromium/Electron; the DRIVER decides when background is impossible and tells you so via a background_unavailable error (or a verified no-op). Only THEN re-issue the same action with 'foreground'. The lists above are the driver's detectors, not a checklist for you to front on a guess — fronting up-front needlessly steals the user's focus and is a bug, not a shortcut. Matches the macOS delivery_mode surface.
+- `element_index` (integer, optional): Element index from get_window_state. Requires the matching `snapshot_id` alongside it. Prefer `element_token`, which carries both values.
+- `element_token` (string, optional): Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. If element_index, snapshot_id, or window_id are also supplied they must agree. Returns an explicit stale error once a newer snapshot supersedes it.
+- `from_zoom` (boolean, optional): After a zoom call, pass true to translate zoom-image coords back to window space.
+- `modifier` (array of string, optional): Modifier keys held during the action: cmd, shift, option/alt, ctrl.
+- `pid` (integer, required): Target process ID.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `snapshot_id` (string, optional): Snapshot handle from get_window_state. Required when targeting by element_index; stale snapshots fail closed.
+- `window_id` (integer, optional): HWND for the target window. Required when element_index is used. Optional when element_token is supplied (the token carries it).
+- `x` (number, optional): X in window-local screenshot pixels. Must be provided together with y.
+- `y` (number, optional): Y in window-local screenshot pixels. Must be provided together with x.
+
+```json
+{"pid":844}
+```
+
+### `right_click`
+
+Right-click against a target pid. Two addressing modes:
+
+- `element_index` + `window_id` (from the last `get_window_state` snapshot of that window) — posts WM_RBUTTONDOWN/UP at the element's cached on-screen center via PostMessage. (Windows has no AXShowMenu analogue wired up yet; Swift's AX-action path falls through to the same pixel recipe on non-advertising elements, so user-visible behavior matches.)
+
+- `x`, `y` (window-local screenshot pixels, top-left origin of the PNG returned by `get_window_state`) — posts WM_RBUTTONDOWN/UP to the deepest child window at that point.
+
+Exactly one of `element_index` or (`x` AND `y`) must be provided. `pid` is required in both modes. `window_id` is required when `element_index` is used. `modifier` is accepted for parity (no-op on Windows — PostMessage doesn't propagate modifier-key state).
 
 **Arguments:**
 
@@ -434,7 +546,193 @@ than silently changing coordinate spaces.
 {"direction":"up"}
 ```
 
+### `move_cursor`
+
+Move the agent cursor overlay to (x, y). Does NOT move the real mouse cursor.
+
+**Arguments:**
+
+- `cursor_id` (string, optional)
+- `scope` (string, optional): desktop moves the real OS pointer; window moves only the agent overlay.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `target` (window target or desktop target, optional): Preferred per-call target. New callers should set this field.
+- `x` (number, required)
+- `y` (number, required)
+
+```json
+{"x":100,"y":200}
+```
+
+### `zoom`
+
+Zoom into a rectangular region of a window screenshot at full (native) resolution. Use this when `get_window_state` returned a resized image and you need to read small text, identify icons, or verify UI details.
+
+Coordinates `x1, y1, x2, y2` are in the same pixel space as the screenshot returned by `get_window_state` (i.e. the resized image if `max_image_dimension` is active). The maximum zoom region width is 500 px in scaled-image coordinates.
+
+A 20% padding is automatically added on every side of the requested region so the target remains visible even if the caller's coordinates are slightly off.
+
+After a zoom, pass `from_zoom=true` to click/type_text to auto-translate coordinates back to full-window space.
+
+Windows-specific: `window_id` is the canonical addressing field (HWND). `pid` is also required (used to scope the zoom translation registry, matching Swift's per-pid zoom context).
+
+**Arguments:**
+
+- `pid` (integer, optional): Target process ID. Validated in code (an explicit "Missing required integer field pid" error when absent); kept out of `required` to match the shared cross-platform zoom contract.
+- `window_id` (integer, required): HWND of the target window.
+- `x1` (number, required): Left edge of the region (resized-image pixels).
+- `x2` (number, required): Right edge of the region (resized-image pixels).
+- `y1` (number, required): Top edge of the region (resized-image pixels).
+- `y2` (number, required): Bottom edge of the region (resized-image pixels).
+
+```json
+{"window_id":10725,"x1":100,"x2":100,"y1":200,"y2":200}
+```
+
+## Browser tools
+
+### `page`
+
+Legacy browser compatibility tool. Prefer get_browser_state and the typed browser_* tools for exact targeting, endpoint ownership, and consent. Read-only get_text and query_dom remain available by default. Mutating actions require the daemon operator to set CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1 before daemon startup (restart the daemon after changing it); this escape hatch does not provide the typed browser surface's exact binding or existing-profile grant guarantees. Supports Chrome, Brave, Edge, Safari (via AppleScript on macOS), Electron apps (via CDP), Chromium/Firefox on Windows (via UIA for read; CDP for execute_javascript when --remote-debugging-port is set), and WKWebView/Tauri/AT-SPI fallbacks.
+
+Actions:
+- execute_javascript: Run JS and return the result.
+- get_text: Extract visible text from the page.
+- query_dom: Find elements matching a CSS selector.
+- click_element: Click a CSS-selected element AND animate the agent cursor to its on-screen center first (so the user sees what the agent is doing). Prefer over `execute_javascript('el.click()')` whenever you want visible cursor feedback.
+- insert_text: Insert `text` at whatever currently holds DOM focus in one native operation (CDP Input.insertText) — no synthesized key events, but more durable than a one-shot execute_javascript write since rich-text editors already have to treat it like an IME commit. Try this before type_keystrokes on a contenteditable that discarded an execute_javascript write. Click/focus the target field first.
+- type_keystrokes: Type `text` via real per-character keystroke events into whatever currently holds DOM focus. Slower than insert_text but the most durable rung — use it when insert_text also gets discarded, or the editor's own keydown/keyup handlers need to see real keys. Click/focus the target field first.
+- enable_javascript_apple_events: macOS-only — patch the browser's Preferences to allow JS from Apple Events (Chrome/Brave/Edge, requires user confirmation and a browser restart).
+
+**Arguments:**
+
+- `action` (string, required): Action to perform.
+- `attributes` (array of string, optional): Element attributes to include in query_dom results.
+- `bundle_id` (string, optional): Bundle ID of the browser. Required for enable_javascript_apple_events (macOS only).
+- `cdp_port` (integer, optional): Optional, for execute_javascript/insert_text/type_keystrokes: use this exact CDP port instead of auto-discovering one from pid. Needed when the port was opened via the browser's own remote-debugging toggle rather than a launch-time flag, since that path may not answer the auto-discovery probe. range: 1–65535
+- `css_selector` (string, optional): CSS selector for query_dom (e.g. 'a', 'button', 'input', 'h1'-'h6', 'p', 'img', 'select', '*').
+- `javascript` (string, optional): JavaScript to execute. Required for execute_javascript.
+- `pid` (integer, optional): Target process ID.
+- `selector` (string, optional): CSS selector for click_element (e.g. 'button.submit', '#login a').
+- `target_url_contains` (string, optional): Optional, for execute_javascript/insert_text/type_keystrokes: require exactly one browser tab whose URL contains this substring. Use this on a multi-tab browser — there's no built-in link between window_id and which tab a CDP call reaches.
+- `text` (string, optional): Text to insert or type. Required for insert_text and type_keystrokes. The target field must already have DOM focus (click/focus it first).
+- `user_has_confirmed_enabling` (boolean, optional): Must be true to proceed with enable_javascript_apple_events. This will quit and relaunch the browser.
+- `window_id` (integer, optional): Target window ID from list_windows.
+
+```json
+{"action":"execute_javascript"}
+```
+
+## Clipboard tools
+
+### `clipboard_read`
+
+List available system clipboard types and optionally return privacy-sensitive plain text. Clipboard content is never retained in telemetry.
+
+**Arguments:**
+
+- `include_text` (boolean, optional): Return plain-text clipboard content in addition to the available types.
+Clipboard content is privacy-sensitive and is never retained in telemetry. default: `false`
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+
+### `clipboard_write`
+
+Replace the system clipboard with exactly one value: plain text, an image from an absolute local path, or a file URL from an absolute local path. Returns the available types for read-back before paste.
+
+**Arguments:**
+
+- `file_path` (string, optional): Absolute path to a local file to place on the clipboard as a file URL.
+- `image_path` (string, optional): Absolute path to a local image to place on the clipboard.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `text` (string, optional): Plain text to place on the clipboard.
+
+## Recording tools
+
+### `start_recording`
+
+Start trajectory recording. Every subsequent action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) writes a turn folder under `output_dir`:
+
+- `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.
+- `before.png` / `after.png` — target-window screenshots immediately before and after the action.
+- `evidence.json` — capture status and a stable classification when an expected artifact could not be captured.
+- `app_state.json` — post-action AX/UIA snapshot for the target pid.
+- `screenshot.png` — compatibility alias of `after.png`.
+- `action.json` — tool name, full input arguments, result summary, result-error flag, pid, click point (when applicable), ISO-8601 timestamp.
+- `click.png` — for dispatched click-family actions only, `before.png` with a red marker at the click point. A call refused before target resolution is explicitly not applicable instead.
+
+Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
+
+**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.
+
+**macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) so video inherits the daemon's Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
+
+**Windows + Linux use an ffmpeg subprocess** (`gdigrab` / `x11grab` + libx264). Requires ffmpeg on PATH (winget install Gyan.FFmpeg / apt install ffmpeg); when ffmpeg is missing or fails on startup the per-turn capture (screenshots + action.json) still runs and the session's `last_error` field carries the diagnostic.
+
+State persists for the life of the daemon; a restart resets to disabled with no on-disk state. Call `stop_recording` to disable + finalize the mp4.
+
+**Arguments:**
+
+- `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
+- `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+
+```json
+{"output_dir":"~/cua-trajectories/demo1"}
+```
+
+### `stop_recording`
+
+Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
+
+A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
+
+**Arguments:** none.
+
+### `replay_trajectory`
+
+Replay a recorded trajectory by re-invoking every turn's tool call in lexical order. `dir` must point at a directory previously written by `start_recording`. Each `turn-NNNNN/` is parsed for `action.json`, and the recorded tool is called with its recorded `arguments` via the same dispatch path an MCP / CLI call uses.
+
+Caveats:
+- Element-indexed actions (`click({pid, element_index})` etc.) will fail because element indices are per-snapshot and don't survive across sessions. Pixel clicks (`click({pid, x, y})`) and all keyboard tools replay cleanly. Failures are reported but don't stop replay unless `stop_on_error` is true.
+- `get_window_state` and other read-only tools are NOT currently recorded, so replays do not re-populate the per-(pid, window_id) element cache.
+- If recording is ENABLED while replay runs, the replay itself is recorded into the currently configured output directory.  That's deliberate: recording a replay against a new build and diffing the two trajectories is the regression-test workflow.
+
+**Arguments:**
+
+- `delay_ms` (integer, optional): Milliseconds to sleep between turns, for human-observable pacing. Default 500. range: 0–10000
+- `dir` (string, required): Trajectory directory previously written by `start_recording`. Absolute or ~-rooted.
+- `stop_on_error` (boolean, optional): Stop replay on the first tool-call error. Default true — set false to best-effort through the full trajectory.
+
+```json
+{"dir":"~/cua-trajectories/demo1"}
+```
+
 ## Configuration tools
+
+### `set_config`
+
+Write a setting into the persistent driver config. Values take effect immediately.
+
+Two input shapes:
+- **Swift-compatible** (preferred): `{"key": "max_image_dimension", "value": 1568}` — single dotted-path leaf write.
+- **Legacy per-field** (Rust-only): `{"max_image_dimension": 0}` — bulk write of named fields.
+
+Known keys:
+- `capture_mode` (string: `vision` | `ax` | `som`) — DEPRECATED and ignored; `get_window_state` always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect.
+- `max_image_dimension` (integer)
+- `experimental_pip` (boolean; persisted to config.json, applies on next daemon restart — Windows backend stubbed today, see issue #1729)
+- `experimental_pip_geometry` (string `WxH` or `WxH+X+Y`; persisted; applies on next daemon restart)
+
+Returns the full updated config in the same shape as `get_config`.
+
+**Arguments:**
+
+- `capture_mode` (string, optional): DEPRECATED and ignored — get_window_state always returns both the UIA tree and a screenshot. Still accepted/persisted for back-compat but has no effect. ("som"/"screenshot" still decode as deprecated aliases.)
+- `experimental_pip` (boolean, optional): Legacy per-field shape. Enables PiP preview (applies next restart).
+- `experimental_pip_geometry` (string, optional): Legacy per-field shape. PiP window size + optional position.
+- `key` (string, optional): Dotted snake_case path to a leaf config field (Swift-compatible shape). Pair with `value`.
+- `max_image_dimension` (integer, optional): Legacy per-field shape.
+- `value` (unknown, optional): New value for `key`. JSON type depends on the key.
 
 ### `start_session`
 
@@ -459,7 +757,176 @@ End one visible lifecycle session and run its cursor, recording, configuration, 
 - `session` (string, optional): Optional public label to end. When omitted, end the caller's attached
 implicit session.
 
+### `set_agent_cursor_enabled`
+
+Show or hide the agent cursor owned by a session.
+
+**Arguments:**
+
+- `enabled` (boolean, required)
+- `session` (string, required)
+
+```json
+{"enabled":false,"session":"example"}
+```
+
+### `set_agent_cursor_motion`
+
+Configure only movement physics and visibility timing for a session cursor.
+
+**Arguments:**
+
+- `arc_flow` (number or null, optional)
+- `arc_size` (number or null, optional)
+- `dwell_after_click_ms` (number or null, optional)
+- `end_handle` (number or null, optional)
+- `glide_duration_ms` (number or null, optional)
+- `idle_hide_ms` (number or null, optional)
+- `session` (string, required)
+- `spring` (number or null, optional)
+- `start_handle` (number or null, optional)
+- `turn_radius` (number or null, optional)
+
+```json
+{"session":"example"}
+```
+
+## Maintenance tools
+
+### `check_permissions`
+
+Check required permissions for cua-driver-rs on Windows.
+
+**Arguments:** none.
+
+### `health_report`
+
+Single-call end-to-end driver diagnostics. Designed to let downstream consumers ship one stable call instead of stitching together check_permissions, doctor, version, bundle attribution, and platform capability status. On macOS, prompt-capable direct capture is deliberately skipped; use `cua-driver permissions grant` to verify it explicitly. cua-driver owns the health model; consumers stay thin.
+
+Input — all optional:
+  &#123;
+    "include": ["&lt;check_name&gt;", ...],   // run only these
+    "skip":    ["&lt;check_name&gt;", ...]    // skip these
+  &#125;
+If both are given, `include` wins.
+
+Canonical check names:
+  macOS  : binary_version, platform_supported, session_active,
+           bundle_identity, tcc_accessibility, tcc_screen_recording,
+           ax_capability, screen_capture_capability
+  Windows: binary_version, platform_supported, session_active,
+           ax_capability (via UIA), screen_capture_capability (via DXGI)
+  Linux  : binary_version, platform_supported, session_active,
+           ax_capability (via AT-SPI), screen_capture_capability (via X11)
+
+Output — stable contract, schema_version="1":
+  &#123;
+    "schema_version": "1",
+    "platform": "darwin" | "win32" | "linux",
+    "driver_version": "&lt;semver&gt;",
+    "overall": "ok" | "degraded" | "failed",
+    "checks": [
+      &#123;
+        "name": "&lt;one of the canonical names above&gt;",
+        "status": "pass" | "fail" | "skip",
+        "message": "&lt;one-line summary, always present&gt;",
+        "hint": "&lt;remediation step, present when status=fail&gt;",
+        "data": &#123; /* check-specific structured fields */ &#125;
+      &#125;,
+      ...
+    ]
+  &#125;
+
+`overall` rules:
+  - `ok`       — every non-skipped check passes
+  - `degraded` — at least one non-core check fails (binary is still usable)
+  - `failed`   — any core check fails (binary_version, platform_supported, session_active)
+
+Stability: schema_version="1" is the contract. Future breaking changes will be `"2"`. Adding new check names under the same schema_version is non-breaking; consumers must tolerate unknown check names.
+
+**Arguments:**
+
+- `include` (array of string, optional): Only run these checks (canonical names). Wins over `skip`.
+- `skip` (array of string, optional): Skip these checks (canonical names). Ignored when `include` is set.
+
+### `check_for_update`
+
+Check the saved stable/nightly Cua Driver channel for a release on GitHub. Returns current and selected channels, current and latest versions, an `update_available` boolean, the install one-liner, and the release notes URL. Read-only — never installs. Mirror of `cua-driver check-update --json`.
+
+**Arguments:** none.
+
+### `install_ffmpeg`
+
+Install the ffmpeg binary used by start_recording's video capture (Linux/Windows; macOS records natively and needs no ffmpeg). Two-step and confirmed: called without `confirm` it only REPORTS the exact install command for this platform's package manager; pass `confirm: true` to actually run it. No-op if ffmpeg is already on PATH. ffmpeg is run as a separate process, never linked into the driver.
+
+**Arguments:**
+
+- `confirm` (boolean, optional): Run the install command. Without it, only the planned command is reported.
+
 ## Other tools
+
+### `verify_state`
+
+Deterministically verify bounded predicates against one exact window. The driver evaluates structured window/accessibility state and may return the final screenshot as uninterpreted visual evidence for a multimodal caller. Predicate results are satisfied, unsatisfied, or unknown; unknown never implies success. Accessibility projections are conservative: absence remains unknown unless the observed search domain is proven exhaustive.
+
+**Arguments:**
+
+- `expect` (array of object, required): One to eight predicates, combined with logical AND. items: 1–8
+- `include_screenshot` (boolean or null, optional): Return the final window screenshot as image content for a multimodal
+caller. The driver does not interpret that image.
+- `pid` (integer, required): Exact process whose window may be observed. range: 1–unbounded
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
+field never selects capture modality or authorization.
+- `stable_samples` (integer, optional): Consecutive satisfied samples required before returning success. default: `2`; range: 1–5
+- `timeout_ms` (integer, optional): Bounded wait. Zero performs one sample. default: `5000`; range: 0–10000
+- `window_id` (integer, required): Exact native window identifier.
+
+```json
+{"expect":[{"window":{"exists":true}}],"pid":844,"window_id":10725}
+```
+
+### `invoke_menu`
+
+Resolve an exact application-menu path one live native level at a time and invoke its final item through accessibility APIs. Missing, ambiguous, disabled, or structurally mismatched segments fail closed; this tool never falls back to pixels.
+
+**Arguments:**
+
+- `path` (array of string, required): items: 1–16
+- `pid` (integer, required): range: 1–unbounded
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that
+accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+- `window_id` (integer, required): range: 1–unbounded
+
+```json
+{"path":["example"],"pid":844,"window_id":10725}
+```
+
+### `debug_window_info`
+
+Diagnostic: dump everything cua-driver sees about a pid's top-level windows from the daemon's session perspective. Returns window class names, owning .exe basename + path, and — when CUIAutomation succeeds — the focused UIA element with the list of patterns it supports (ValuePattern, InvokePattern, TextPattern, TogglePattern, etc.). Used to design / debug input routing for XAML / UWP / WinUI3 targets; see CUA-543.
+
+**Arguments:**
+
+- `pid` (integer, required): PID of the process to inspect.
+
+```json
+{"pid":844}
+```
+
+### `set_agent_cursor_theme`
+
+Select an already-installed cursor theme for a session.
+
+**Arguments:**
+
+- `reduced_motion` (string, optional): default: `"auto"`
+- `session` (string, required)
+- `theme_id` (string, required)
+
+```json
+{"session":"example","theme_id":"example"}
+```
 
 ### `get_browser_state`
 
@@ -615,3 +1082,45 @@ Perform hover, right-click, double-click, scroll, or drag in an exactly-bound br
 ```json
 {"action":"hover","session":"example","tab_id":"example","target_id":"example"}
 ```
+
+### `escalate_session`
+
+Deprecated compatibility tool for legacy capture-scope sessions. New callers select window or desktop modality on each action. No deescalate_session tool exists.
+
+**Arguments:**
+
+- `detail` (string, optional): Optional bounded diagnostic detail. Never use secrets or page content.
+- `reason` (string, required)
+- `session` (string, required)
+
+```json
+{"reason":"ax_tree_pixel_mismatch","session":"example"}
+```
+
+### `get_session`
+
+Read content-free lifecycle, cursor, recording, and idle status for one session visible to this authenticated transport. Omit `session` to inspect its implicit session.
+
+**Arguments:**
+
+- `session` (string, optional): Optional public label. When omitted, inspect the caller's attached
+implicit session.
+
+### `list_sessions`
+
+List content-free lifecycle summaries attached to this authenticated transport lease. It does not enumerate other callers' sessions.
+
+**Arguments:**
+
+- `cursor` (string, optional): Opaque continuation cursor returned by a previous call.
+- `limit` (integer or null, optional): Maximum number of content-free summaries to return (default 50, max
+100). Ordinary agent transports are scoped to their own lease. range: 0–unbounded
+
+### `get_session_state`
+
+Deprecated compatibility alias that reads a live legacy session's capture policy. Use get_session for lifecycle state.
+
+**Arguments:**
+
+- `session` (string, optional): Optional public label. When omitted, inspect the caller's attached
+implicit session.

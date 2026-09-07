@@ -288,6 +288,31 @@ def test_missing_canonical_launcher_is_safe_fallback(tmp_path: Path) -> None:
     assert _user_servers(config) == set()
 
 
+def test_foreign_dangling_canonical_launcher_is_preserved(tmp_path: Path) -> None:
+    launcher = tmp_path / "home/.local/bin/cua-driver"
+    foreign_target = tmp_path / "other-install/bin/cua-driver"
+    launcher.parent.mkdir(parents=True, exist_ok=True)
+    launcher.symlink_to(foreign_target)
+
+    config, _ = _run(
+        tmp_path,
+        {
+            "mcpServers": {
+                "cua-computer-use": {
+                    "command": "{home}/.local/bin/cua-driver",
+                    "args": ["mcp"],
+                }
+            }
+        },
+        rust_marker=True,
+        create_canonical_launcher=False,
+    )
+
+    assert _user_servers(config) == {"cua-computer-use"}
+    assert launcher.is_symlink()
+    assert launcher.readlink() == foreign_target
+
+
 def test_scope_ownership_does_not_leak_to_same_name_in_project(tmp_path: Path) -> None:
     other_launcher = tmp_path / "other/bin/cua-driver"
     _executable(other_launcher)

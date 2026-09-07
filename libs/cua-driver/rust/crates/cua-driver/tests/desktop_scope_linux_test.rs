@@ -502,7 +502,11 @@ fn desktop_scope_drag_holds_and_releases_modifier() {
                 "duration_ms": 250, "steps": 8, "modifier": ["ctrl"]
             }),
         );
-        assert!(!drag.is_error(), "modified desktop drag failed: {}", drag.text());
+        assert!(
+            !drag.is_error(),
+            "modified desktop drag failed: {}",
+            drag.text()
+        );
 
         let deadline = Instant::now() + Duration::from_secs(3);
         loop {

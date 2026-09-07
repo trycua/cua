@@ -143,9 +143,11 @@ std::string refusal(std::string_view code) {
     // Only internal fixed identifiers enter JSON. No caller-provided strings.
     return std::format(R"({{"ok":false,"code":"{}","detail":"{}"}})", code, code);
 }
+std::string refusal(std::string_view code, ForegroundFailure failure) {
+    return std::format(R"({{"ok":false,"code":"{}","detail":"{}"}})", code, failure.detail());
+}
 constexpr auto kDelivered = R"({"ok":true,"effect":"unverifiable","route":"synthetic_events"})";
 constexpr auto kForegroundDelivered = R"({"ok":true,"effect":"unverifiable","route":"primary_foreground"})";
-struct ForegroundFailure {};
 } // namespace
 
 struct InputExperiment::Impl {
@@ -585,10 +587,12 @@ struct InputExperiment::Impl {
         leave_keyboard();
         retire_grant();
     }
-    void revoke(std::string_view reason, bool retain_pointer = false) {
+    void revoke(std::string_view reason, bool retain_pointer = false, ForegroundFailure failure = {ForegroundFailureReason::none}) {
         if (lease && trace && reason != "completed") trace->mark("agent_cancel", lane + 1);
         if (drag && drag->client && !drag->client->dead)
-            send(*drag->client, refusal(foreground_started ? "foreground_partial_unknown" : reason));
+            send(*drag->client, failure.reason == ForegroundFailureReason::none ?
+                refusal(foreground_started ? "foreground_partial_unknown" : reason) :
+                refusal(foreground_started ? "foreground_partial_unknown" : reason, failure));
         drag.reset();
         finish_foreground();
         if (retain_pointer) release_pointer_button(); else leave_pointer();
@@ -662,11 +666,11 @@ struct InputExperiment::Impl {
             c.deadline.touch(received);
             if (static_cast<std::size_t>(n) > buffer.size()) { self.send(c, refusal("invalid_request")); continue; }
             try { self.request(c, fields(std::string_view(buffer.data(), n))); }
-            catch (const ForegroundFailure&) {
+            catch (const ForegroundFailure& failure) {
                 const bool started = c.foreground_attempted;
                 const bool drag_reply = self.drag && self.drag->client == &c;
-                self.revoke("foreground_partial_unknown");
-                if (!drag_reply) self.send(c, refusal(started ? "foreground_partial_unknown" : "primary_target_busy"));
+                self.revoke("foreground_partial_unknown", false, failure);
+                if (!drag_reply) self.send(c, refusal(ForegroundFailure::code(started), failure));
             }
             catch (...) {
                 const bool foreground_partial = c.foreground_attempted;
@@ -759,8 +763,10 @@ struct InputExperiment::Impl {
             if (!kb->m_enabled || kb->isVirtual()) continue;
             for (std::uint32_t code = 0; code <= KEY_MAX && !pressed; ++code) pressed = kb->getPressed(code);
         }
+        const bool exact_root = geometry && *geometry == c.geometry;
         return {
-            .exact_root = geometry && *geometry == c.geometry && unique_primary_seat(root->client()),
+            .exact_root = exact_root,
+            .primary_binding = !exact_root || unique_primary_seat(root->client()),
             .peer_conflict = agent_conflict(c),
             .physical_keys = pressed,
             .physical_buttons = g_pInputManager->hasHeldButtons(),
@@ -774,8 +780,13 @@ struct InputExperiment::Impl {
         };
     }
     void require_foreground(Client& c) {
-        if (lease != &c || c.dead || !available() || !layout_qualified() || Clock::now() >= expires ||
-            !foreground_guard(c).can_dispatch(foreground_needs_pointer)) throw ForegroundFailure{};
+        if (lease != &c) throw ForegroundFailure{ForegroundFailureReason::lease};
+        if (c.dead) throw ForegroundFailure{ForegroundFailureReason::client_dead};
+        if (!available()) throw ForegroundFailure{ForegroundFailureReason::session_unavailable};
+        if (!layout_qualified()) throw ForegroundFailure{ForegroundFailureReason::unsupported_layout};
+        if (Clock::now() >= expires) throw ForegroundFailure{ForegroundFailureReason::lease_expired};
+        const auto failure = foreground_guard(c).dispatch_failure(foreground_needs_pointer);
+        if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
     }
     void finish_foreground() {
         foreground_activating = false;
@@ -803,16 +814,20 @@ struct InputExperiment::Impl {
     void start_foreground(Client& c, double x, double y, bool needs_pointer, bool needs_keyboard) {
         const auto root = c.surface.lock();
         const auto physical = g_pSeatManager->m_keyboard.lock();
-        if (!foreground_guard(c).can_activate() || !physical || !keyboard_state || (needs_pointer && !g_pSeatManager->m_mouse))
-            throw ForegroundFailure{};
+        const auto failure = foreground_guard(c).activation_failure();
+        if (failure != ForegroundFailureReason::none) throw ForegroundFailure{failure};
+        if (!physical) throw ForegroundFailure{ForegroundFailureReason::physical_keyboard};
+        if (!keyboard_state) throw ForegroundFailure{ForegroundFailureReason::keyboard_state};
+        if (needs_pointer && !g_pSeatManager->m_mouse) throw ForegroundFailure{ForegroundFailureReason::physical_pointer};
         const Vector2D local{x + c.geometry[0] - c.geometry[4], y + c.geometry[1] - c.geometry[5]};
-        if (needs_pointer && (!point(c, x, y) || root->at(local, true).first != root)) throw ForegroundFailure{};
+        if (needs_pointer && (!point(c, x, y) || root->at(local, true).first != root)) throw ForegroundFailure{ForegroundFailureReason::pointer_target};
         const auto seat = g_pSeatManager->seatResourceForClient(root->client());
-        if (!seat || !seat->good()) throw ForegroundFailure{};
+        if (!seat || !seat->good()) throw ForegroundFailure{ForegroundFailureReason::seat_resource};
         foreground_pointers.clear(); foreground_keyboards.clear();
         for (const auto& p : seat->m_pointers) if (p && p->good()) foreground_pointers.push_back(p);
         for (const auto& k : seat->m_keyboards) if (k && k->good()) foreground_keyboards.push_back(k);
-        if ((needs_pointer && foreground_pointers.empty()) || foreground_keyboards.empty()) throw ForegroundFailure{};
+        if (needs_pointer && foreground_pointers.empty()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
+        if (foreground_keyboards.empty()) throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
         foreground_modifiers = {physical->m_modifiersState.depressed, physical->m_modifiersState.latched,
             physical->m_modifiersState.locked, physical->m_modifiersState.group};
         for (const auto& kb : g_pInputManager->m_keyboards) {
@@ -821,7 +836,10 @@ struct InputExperiment::Impl {
             foreground_modifiers[1] |= kb->m_modifiersState.latched;
             foreground_modifiers[2] |= kb->m_modifiersState.locked;
         }
-        if (needs_keyboard && !foreground_key_modifiers_supported(foreground_modifiers)) throw ForegroundFailure{};
+        if (needs_keyboard) {
+            const auto modifier_failure = foreground_key_modifier_failure(foreground_modifiers);
+            if (modifier_failure != ForegroundFailureReason::none) throw ForegroundFailure{modifier_failure};
+        }
         xkb_state_update_mask(keyboard_state, foreground_modifiers[0], foreground_modifiers[1], foreground_modifiers[2], 0, 0, foreground_modifiers[3]);
         foreground_surface = root;
         foreground_seat = seat;
@@ -834,11 +852,15 @@ struct InputExperiment::Impl {
             Desktop::focusState()->surface() != root)
             Desktop::focusState()->fullWindowFocus(c.window.lock(), Desktop::FOCUS_REASON_OTHER, root);
         foreground_activating = false;
-        if (lease != &c || !foreground_guard(c).can_dispatch(false)) throw ForegroundFailure{};
+        if (lease != &c) throw ForegroundFailure{ForegroundFailureReason::lease};
+        const auto focus_failure = foreground_guard(c).dispatch_failure(false);
+        if (focus_failure != ForegroundFailureReason::none) throw ForegroundFailure{focus_failure};
         if (!needs_pointer) { require_foreground(c); return; }
         foreground_activating = true;
         ::Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
-        if (lease != &c || !foreground_guard(c).can_dispatch(false)) throw ForegroundFailure{};
+        if (lease != &c) throw ForegroundFailure{ForegroundFailureReason::lease};
+        const auto warp_failure = foreground_guard(c).dispatch_failure(false);
+        if (warp_failure != ForegroundFailureReason::none) throw ForegroundFailure{warp_failure};
         g_pSeatManager->setPointerFocus(root, local);
         foreground_activating = false;
         require_foreground(c);
@@ -847,11 +869,11 @@ struct InputExperiment::Impl {
     void foreground_motion(Client& c, double x, double y) {
         require_foreground(c);
         const Vector2D local{x + c.geometry[0] - c.geometry[4], y + c.geometry[1] - c.geometry[5]};
-        if (!point(c, x, y) || c.surface.lock()->at(local, true).first != c.surface.lock()) throw ForegroundFailure{};
+        if (!point(c, x, y) || c.surface.lock()->at(local, true).first != c.surface.lock()) throw ForegroundFailure{ForegroundFailureReason::pointer_target};
         ::Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
         require_foreground(c);
         for (const auto& weak : foreground_pointers) {
-            const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{};
+            const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
             p->sendMotion(event_ms(), local); p->sendFrame();
         }
     }
@@ -860,7 +882,7 @@ struct InputExperiment::Impl {
         // Mark ownership before sending, so a later resource failure can unwind.
         if (pressed) held_button = code;
         for (const auto& weak : foreground_pointers) {
-            const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{};
+            const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
             p->sendButton(event_ms(), code, pressed ? WL_POINTER_BUTTON_STATE_PRESSED : WL_POINTER_BUTTON_STATE_RELEASED);
             p->sendFrame();
         }
@@ -872,7 +894,7 @@ struct InputExperiment::Impl {
         xkb_state_update_key(keyboard_state, code + 8, pressed ? XKB_KEY_DOWN : XKB_KEY_UP);
         if (pressed) held_keys.push_back(code); else std::erase(held_keys, code);
         for (const auto& weak : foreground_keyboards) {
-            const auto k = weak.lock(); if (!k || !k->good()) throw ForegroundFailure{};
+            const auto k = weak.lock(); if (!k || !k->good()) throw ForegroundFailure{ForegroundFailureReason::keyboard_resources};
             k->sendKey(event_ms(), code, pressed ? WL_KEYBOARD_KEY_STATE_PRESSED : WL_KEYBOARD_KEY_STATE_RELEASED);
             k->sendMods(xkb_state_serialize_mods(keyboard_state, XKB_STATE_MODS_DEPRESSED),
                 xkb_state_serialize_mods(keyboard_state, XKB_STATE_MODS_LATCHED),
@@ -1034,8 +1056,11 @@ struct InputExperiment::Impl {
             if (kProduction) {
                 if (primary_conflict(c)) { invalidate(c); send(c, refusal("primary_target_busy")); return; }
                 if (agent_conflict(c)) { invalidate(c); send(c, refusal("agent_target_busy")); return; }
-                if (route == InputRoute::primary_foreground && !foreground_guard(c).can_activate()) {
-                    invalidate(c); send(c, refusal("primary_target_busy")); return;
+                if (route == InputRoute::primary_foreground) {
+                    const auto failure = foreground_guard(c).activation_failure();
+                    if (failure != ForegroundFailureReason::none) {
+                        invalidate(c); send(c, refusal("primary_target_busy", ForegroundFailure{failure})); return;
+                    }
                 }
                 if (route == InputRoute::primary_foreground) leave_pointer();
                 c.foreground_attempted = false;
@@ -1168,7 +1193,7 @@ struct InputExperiment::Impl {
         } else if (command == "SCROLL") {
             require_foreground(c);
             for (const auto& weak : foreground_pointers) {
-                const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{};
+                const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{ForegroundFailureReason::pointer_resources};
                 p->sendAxisSource(WL_POINTER_AXIS_SOURCE_WHEEL);
                 p->sendAxis(event_ms(), static_cast<wl_pointer_axis>(axis), value); p->sendFrame();
             }

@@ -7,6 +7,51 @@
 using namespace cua::hyprland;
 void check(bool value) { if (!value) std::abort(); }
 int main() {
+    constexpr std::array labels{
+        "foreground_none", "foreground_exact_root", "foreground_primary_binding", "foreground_peer_conflict",
+        "foreground_physical_keys", "foreground_physical_buttons", "foreground_grab", "foreground_dnd",
+        "foreground_constraint", "foreground_keyboard_focus", "foreground_pointer_focus", "foreground_lease",
+        "foreground_client_dead", "foreground_session_unavailable", "foreground_unsupported_layout",
+        "foreground_lease_expired", "foreground_physical_keyboard", "foreground_keyboard_state",
+        "foreground_physical_pointer", "foreground_pointer_target", "foreground_seat_resource",
+        "foreground_pointer_resources", "foreground_keyboard_resources", "foreground_keyboard_depressed",
+        "foreground_keyboard_latched", "foreground_keyboard_locked", "foreground_keyboard_group",
+    };
+    static_assert(labels.size() == static_cast<unsigned>(ForegroundFailureReason::keyboard_group) + 1);
+    for (unsigned i = 0; i < labels.size(); ++i)
+        check(ForegroundFailure{static_cast<ForegroundFailureReason>(i)}.detail() == labels[i]);
+    check(ForegroundFailure::code(false) == "primary_target_busy");
+    check(ForegroundFailure::code(true) == "foreground_partial_unknown");
+
+    // Exhaust every guard combination against the original admission predicates.
+    for (unsigned bits = 0; bits < 1024; ++bits) {
+        const ForegroundGuard candidate{
+            .exact_root = bool(bits & 1), .primary_binding = bool(bits & 2),
+            .peer_conflict = bool(bits & 4), .physical_keys = bool(bits & 8),
+            .physical_buttons = bool(bits & 16), .grab = bool(bits & 32),
+            .dnd = bool(bits & 64), .constraint = bool(bits & 128),
+            .exact_keyboard_focus = bool(bits & 256), .exact_pointer_focus = bool(bits & 512),
+        };
+        const bool activate = candidate.exact_root && candidate.primary_binding && !candidate.peer_conflict &&
+            !candidate.physical_keys && !candidate.physical_buttons && !candidate.grab && !candidate.dnd && !candidate.constraint;
+        check(candidate.can_activate() == activate);
+        check(candidate.can_dispatch(false) == (activate && candidate.exact_keyboard_focus));
+        check(candidate.can_dispatch(true) == (activate && candidate.exact_keyboard_focus && candidate.exact_pointer_focus));
+        const auto expected = !candidate.exact_root ? ForegroundFailureReason::exact_root :
+            !candidate.primary_binding ? ForegroundFailureReason::primary_binding :
+            candidate.peer_conflict ? ForegroundFailureReason::peer_conflict :
+            candidate.physical_keys ? ForegroundFailureReason::physical_keys :
+            candidate.physical_buttons ? ForegroundFailureReason::physical_buttons :
+            candidate.grab ? ForegroundFailureReason::grab : candidate.dnd ? ForegroundFailureReason::dnd :
+            candidate.constraint ? ForegroundFailureReason::constraint : ForegroundFailureReason::none;
+        check(candidate.activation_failure() == expected);
+        for (const bool needs_pointer : {false, true}) {
+            const auto dispatch = expected != ForegroundFailureReason::none ? expected :
+                !candidate.exact_keyboard_focus ? ForegroundFailureReason::keyboard_focus :
+                needs_pointer && !candidate.exact_pointer_focus ? ForegroundFailureReason::pointer_focus : ForegroundFailureReason::none;
+            check(candidate.dispatch_failure(needs_pointer) == dispatch);
+        }
+    }
     struct Resource {
         bool valid = true;
         bool good() const { return valid; }
@@ -48,13 +93,18 @@ int main() {
     check(!bindings.unique());
 
     std::array<std::uint32_t, 4> modifiers{};
+    constexpr std::array modifier_reasons{ForegroundFailureReason::keyboard_depressed,
+        ForegroundFailureReason::keyboard_latched, ForegroundFailureReason::keyboard_locked, ForegroundFailureReason::keyboard_group};
     check(foreground_key_modifiers_supported(modifiers));
+    check(foreground_key_modifier_failure(modifiers) == ForegroundFailureReason::none);
     for (unsigned i = 0; i < modifiers.size(); ++i) {
         // Depressed, latched, locked, and nonzero layout group each refuse.
         modifiers[i] = 1;
         check(!foreground_key_modifiers_supported(modifiers));
+        check(foreground_key_modifier_failure(modifiers) == modifier_reasons[i]);
         modifiers[i] = 0x80000000u;
         check(!foreground_key_modifiers_supported(modifiers));
+        check(foreground_key_modifier_failure(modifiers) == modifier_reasons[i]);
         modifiers[i] = 0;
     }
     check(foreground_key_modifiers_supported(modifiers));

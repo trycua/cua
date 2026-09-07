@@ -22,6 +22,17 @@ trait Stream: AsyncRead + AsyncWrite + Unpin + Send {}
 impl<T: AsyncRead + AsyncWrite + Unpin + Send> Stream for T {}
 type Connection = Box<dyn Stream>;
 
+async fn copy_until_disconnect<A: Stream, B: Stream>(incoming: &mut A, upstream: &mut B) {
+    let (mut client_read, mut client_write) = tokio::io::split(incoming);
+    let (mut daemon_read, mut daemon_write) = tokio::io::split(upstream);
+    // Named pipes cannot half-close: AsyncWrite::shutdown only flushes. Drop
+    // both handles on either EOF so the relay preserves peer-disconnect semantics.
+    tokio::select! {
+        _ = tokio::io::copy(&mut client_read, &mut daemon_write) => {},
+        _ = tokio::io::copy(&mut daemon_read, &mut client_write) => {},
+    }
+}
+
 async fn connect(endpoint: &str) -> std::io::Result<Connection> {
     #[cfg(unix)]
     return Ok(Box::new(tokio::net::UnixStream::connect(endpoint).await?));
@@ -61,10 +72,10 @@ async fn forward(
         controls.send(cut).unwrap();
         tokio::select! {
             _ = cut_rx => {},
-            _ = tokio::io::copy_bidirectional(&mut incoming, &mut upstream) => {},
+            _ = copy_until_disconnect(&mut incoming, &mut upstream) => {},
         }
     } else {
-        let _ = tokio::io::copy_bidirectional(&mut incoming, &mut upstream).await;
+        copy_until_disconnect(&mut incoming, &mut upstream).await;
     }
 }
 

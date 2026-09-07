@@ -616,10 +616,14 @@ def normalize(value):
     """Absolute path for a registered command, or None when it is relative.
 
     Claude runs a registration from its own working directory, which is not
-    the uninstaller's. Resolving a relative command here would attribute an
-    unrelated project's ./cua-driver to this release whenever the uninstaller
-    happens to run from the release package tree, so a command that is still
-    relative after home expansion is never ownership evidence.
+    the one this uninstaller runs in. Resolving a relative command here would
+    attribute a ./cua-driver in an unrelated project to this release whenever
+    the uninstaller happens to run from the release package tree, so a command
+    that is still relative after home expansion is never ownership evidence.
+
+    Apostrophes are avoided in this heredoc on purpose: bash 3.2, the system
+    bash on macOS, tracks quotes while scanning for the closing paren of the
+    surrounding command substitution and fails to parse the script otherwise.
     """
     expanded = os.path.expanduser(value)
     if not os.path.isabs(expanded):
@@ -674,7 +678,7 @@ def release_owned_command(server):
 
     # The canonical launcher is the only safe path-only fallback, and only
     # when no filesystem entry exists at that path. A symlink, including a
-    # dangling one, still identifies another installation's chosen target.
+    # dangling one, still identifies the chosen target of another installation.
     return command_path == canonical_launcher and not os.path.lexists(command_path)
 
 

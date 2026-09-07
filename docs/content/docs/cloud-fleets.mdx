@@ -30,6 +30,11 @@ actions through that sandbox act inside the guest. With `local=True`, the SDK
 uses a sandbox runtime on your own hardware. See [How sandboxes work](/concepts/how-sandboxes-work)
 for the distinction between the host, guest, and control connection.
 
+The SDK is shared, but setup instructions are not interchangeable. Follow Fleet
+guides for hosted pools and claims. For work on your own hardware, start with
+[Manage local sandbox lifecycle](/how-to-guides/sandbox/manage-local-lifecycle).
+Local image-builder steps do not run when Fleet claims a guest.
+
 Fleet manages capacity; the Sandbox SDK acquires and uses a guest. The SDK's
 default guest endpoint is computer-server. Cua Driver can control the desktop
 where it is installed and targeted, but using it inside a Fleet guest requires

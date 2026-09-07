@@ -590,7 +590,7 @@ export function referencePlatform(host: string): ReferencePlatform {
 }
 
 export function mcpReferenceFile(platform: ReferencePlatform): string {
-  return `mcp-tools-${platform}.mdx`;
+  return platform === 'macos' ? 'mcp-tools.mdx' : 'mcp-tools-linux.mdx';
 }
 
 export function generateMCPToolsMDX(
@@ -618,7 +618,7 @@ export function generateMCPToolsMDX(
   lines.push('');
 
   lines.push(
-    `This reference describes the **${platformName}** native tool registry. See [MCP tools](/reference/cua-driver/mcp-tools) for shared guidance and other platforms.`
+    `This reference describes the **${platformName}** native tool registry. See [${platform === 'macos' ? 'Linux' : 'macOS'} MCP tools](/reference/cua-driver/${platform === 'macos' ? 'mcp-tools-linux' : 'mcp-tools'}) for the other platform and [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.`
   );
   lines.push('');
 

@@ -27,31 +27,35 @@ for (const platform of ['linux', 'macos'] as const) {
   test(`${platform} generation and checking own only the native MCP and shared CLI files`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), 'cua-docs-test-'));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
-    const other = platform === 'linux' ? 'macos' : 'linux';
-    writeFileSync(join(dir, 'mcp-tools.mdx'), 'Shared guidance.');
-    writeFileSync(join(dir, `mcp-tools-${other}.mdx`), 'Other platform.');
+    const ownFile = platform === 'linux' ? 'mcp-tools-linux.mdx' : 'mcp-tools.mdx';
+    const otherFile = platform === 'linux' ? 'mcp-tools.mdx' : 'mcp-tools-linux.mdx';
+    writeFileSync(join(dir, 'mcp-tool-notes.mdx'), 'Shared guidance.');
+    writeFileSync(join(dir, otherFile), 'Other platform.');
     assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, true), [
       'cli-reference.mdx',
-      `mcp-tools-${platform}.mdx`,
+      ownFile,
     ]);
     assert.equal(readdirSync(dir).length, 2);
     syncReferences(dir, docs(), '1.0.0', platform, false);
     assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, false), []);
     assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, true), []);
-    assert.equal(readFileSync(join(dir, 'mcp-tools.mdx'), 'utf8'), 'Shared guidance.');
-    assert.equal(readFileSync(join(dir, `mcp-tools-${other}.mdx`), 'utf8'), 'Other platform.');
-    const before = readFileSync(join(dir, `mcp-tools-${platform}.mdx`), 'utf8');
+    assert.equal(readFileSync(join(dir, 'mcp-tool-notes.mdx'), 'utf8'), 'Shared guidance.');
+    assert.equal(readFileSync(join(dir, otherFile), 'utf8'), 'Other platform.');
+    const before = readFileSync(join(dir, ownFile), 'utf8');
     assert.deepEqual(
       syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, true),
-      [`mcp-tools-${platform}.mdx`]
+      [ownFile]
     );
-    assert.equal(readFileSync(join(dir, `mcp-tools-${platform}.mdx`), 'utf8'), before);
+    assert.equal(readFileSync(join(dir, ownFile), 'utf8'), before);
     syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, false);
-    assert.match(
-      readFileSync(join(dir, `mcp-tools-${platform}.mdx`), 'utf8'),
-      /Updated native description/
-    );
-    assert.equal(readFileSync(join(dir, `mcp-tools-${other}.mdx`), 'utf8'), 'Other platform.');
+    assert.match(readFileSync(join(dir, ownFile), 'utf8'), /Updated native description/);
+    assert.equal(readFileSync(join(dir, otherFile), 'utf8'), 'Other platform.');
+    assert.deepEqual(readdirSync(dir).sort(), [
+      'cli-reference.mdx',
+      'mcp-tool-notes.mdx',
+      'mcp-tools-linux.mdx',
+      'mcp-tools.mdx',
+    ]);
   });
 }
 
@@ -61,7 +65,7 @@ test('shared CLI rendering does not depend on native MCP definitions or platform
   syncReferences(dir, docs('AT-SPI tree.'), '1.0.0', 'linux', false);
   const cli = readFileSync(join(dir, 'cli-reference.mdx'), 'utf8');
   assert.deepEqual(syncReferences(dir, docs('AX tree.'), '1.0.0', 'macos', false), [
-    'mcp-tools-macos.mdx',
+    'mcp-tools.mdx',
   ]);
   assert.equal(readFileSync(join(dir, 'cli-reference.mdx'), 'utf8'), cli);
 });

@@ -26,9 +26,11 @@ jobs:
         include:
           - library: cua-driver
             platform: linux
+            mcp-file: mcp-tools-linux.mdx
             os: ubuntu-latest
           - library: cua-driver
             platform: macos
+            mcp-file: mcp-tools.mdx
             os: macos-latest
           - library: lume
             platform: macos
@@ -78,9 +80,10 @@ jobs:
         env:
           LIBRARY: ${{ matrix.library }}
           PLATFORM: ${{ matrix.platform }}
+          MCP_FILE: ${{ matrix.mcp-file }}
         run: |
           if [[ "$LIBRARY" == "cua-driver" ]]; then
-            FILES=("docs/content/docs/reference/cua-driver/cli-reference.mdx" "docs/content/docs/reference/cua-driver/mcp-tools-$PLATFORM.mdx")
+            FILES=("docs/content/docs/reference/cua-driver/cli-reference.mdx" "docs/content/docs/reference/cua-driver/$MCP_FILE")
           else
             FILES=("docs/content/docs/reference/lume/cli-reference.mdx" "docs/content/docs/reference/lume/http-api.mdx")
           fi
@@ -96,7 +99,7 @@ jobs:
           name: cua-driver-reference-${{ matrix.platform }}
           path: |
             docs/content/docs/reference/cua-driver/cli-reference.mdx
-            docs/content/docs/reference/cua-driver/mcp-tools-${{ matrix.platform }}.mdx
+            docs/content/docs/reference/cua-driver/${{ matrix.mcp-file }}
           if-no-files-found: error
 
   check-docs-sync:

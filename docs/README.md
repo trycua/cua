@@ -32,9 +32,10 @@ pnpm docs:check:lume
 ```
 
 On Linux or macOS, `pnpm docs:generate:cua-driver` regenerates the shared CLI
-reference and only the host's `mcp-tools-linux.mdx` or `mcp-tools-macos.mdx`.
+reference and only the host's native reference: `mcp-tools-linux.mdx` on Linux,
+`mcp-tools.mdx` on macOS. The existing macOS URL and anchors are preserved.
 The corresponding check compares those same two files without writing them.
-The shared `mcp-tools.mdx` introduction is hand-maintained. Use the native
+Shared guidance stays in the hand-maintained `mcp-tool-notes.mdx`. Use the native
 reference for the machine running the driver, not the agent's machine.
 
 Native generation requires Rust and the component's native build dependencies.

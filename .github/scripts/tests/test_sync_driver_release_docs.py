@@ -18,7 +18,7 @@ def test_sync_driver_release_docs_updates_generated_markers(tmp_path: Path):
         destination.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy(source, destination)
 
-    landing = tmp_path / "docs/content/docs/reference/cua-driver/mcp-tools.mdx"
+    landing = tmp_path / "docs/content/docs/reference/cua-driver/mcp-tool-notes.mdx"
     landing.write_text("Shared guidance without a release marker.\n")
     sync_driver_release_docs(tmp_path)
 

@@ -315,7 +315,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'docs/content/docs/use-cua-with/hermes.mdx',
       'docs/content/docs/reference/cua-driver/macos-permissions.mdx',
-      'docs/content/docs/reference/cua-driver/mcp-tools.mdx',
+      'docs/content/docs/reference/cua-driver/mcp-tool-notes.mdx',
     ],
     []
   );
@@ -337,12 +337,8 @@ function testGeneratorRouting(config: Config): void {
     ],
     ['lume']
   );
-  for (const platform of ['linux', 'macos']) {
-    assertSelection(
-      config,
-      [`docs/content/docs/reference/cua-driver/mcp-tools-${platform}.mdx`],
-      ['cua-driver']
-    );
+  for (const file of ['mcp-tools.mdx', 'mcp-tools-linux.mdx']) {
+    assertSelection(config, [`docs/content/docs/reference/cua-driver/${file}`], ['cua-driver']);
   }
   assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
   assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);

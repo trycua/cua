@@ -196,7 +196,7 @@ jobs:
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
                 docs/content/docs/reference/cua-driver/cli-reference.mdx \
-                docs/content/docs/reference/cua-driver/mcp-tools-macos.mdx \
+                docs/content/docs/reference/cua-driver/mcp-tools.mdx \
                 docs/content/docs/reference/cua-driver/mcp-tools-linux.mdx
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             else

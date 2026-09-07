@@ -711,6 +711,15 @@ fn run_pointer_action(
         response.text()
     );
     assert_fixture_contains(fixture, expected_marker);
+    if tool == "click" {
+        assert_native_hyprland_semantic_route(
+            fixture,
+            "left_click",
+            addressing,
+            delivery,
+            &response,
+        );
+    }
     delivered_observation()
 }
 
@@ -1035,6 +1044,7 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text(),
         response.raw
     );
+    assert_native_hyprland_semantic_route(fixture, "scroll", addressing, delivery, &response);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
         let offset =
@@ -1178,7 +1188,91 @@ fn linux_real_pointer_input_available() -> bool {
     false
 }
 
+fn native_hyprland_semantic_input_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // AT-SPI does not need an input-plugin socket. DISPLAY can coexist
+        // with native Wayland for XWayland clients in the same desktop.
+        platform_linux::wayland::wayland_input_enabled()
+            && platform_linux::wayland::hyprland::is_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn native_hyprland_semantic_case(
+    available: bool,
+    host: &str,
+    action: &str,
+    targeting: Targeting,
+    delivery: Delivery,
+) -> bool {
+    // These fixture controls have proven focus-free AT-SPI actions. Do not
+    // extend this to other PX targets merely because they accept a click.
+    available
+        && delivery == Delivery::Background
+        && matches!(
+            (host, action, targeting),
+            ("electron" | "tauri", "left_click", Targeting::Px)
+                | ("electron", "scroll", Targeting::Ax)
+        )
+}
+
+fn assert_native_hyprland_semantic_route(
+    fixture: &Fixture,
+    action: &str,
+    addressing: &str,
+    delivery: &str,
+    response: &ToolResponse,
+) {
+    let targeting = match addressing {
+        "ax" => Targeting::Ax,
+        "px" => Targeting::Px,
+        _ => Targeting::NotApplicable,
+    };
+    if delivery == "background"
+        && native_hyprland_semantic_case(
+            native_hyprland_semantic_input_available(),
+            fixture.name,
+            action,
+            targeting,
+            Delivery::Background,
+        )
+    {
+        assert_eq!(
+            response.action_route(),
+            Some("accessibility"),
+            "{}",
+            response.raw
+        );
+        assert_eq!(
+            response.action_delivery_mode(),
+            Some("background"),
+            "{}",
+            response.raw
+        );
+    }
+}
+
 fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) -> CaseSpec {
+    shared_case_with_native_hyprland(
+        spec,
+        action,
+        addressing,
+        delivery,
+        native_hyprland_semantic_input_available(),
+    )
+}
+
+fn shared_case_with_native_hyprland(
+    spec: &HostSpec,
+    action: &str,
+    addressing: &str,
+    delivery: &str,
+    native_hyprland: bool,
+) -> CaseSpec {
     let targeting = match addressing {
         "ax" => Targeting::Ax,
         "px" => Targeting::Px,
@@ -1191,8 +1285,11 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     };
     let scenario = format!("{action}_{addressing}_{delivery}");
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
-    let expected_refusals = if cfg!(target_os = "windows") && delivery_kind == Delivery::Background
-    {
+    let native_semantic =
+        native_hyprland_semantic_case(native_hyprland, spec.name, action, targeting, delivery_kind);
+    let expected_refusals = if native_semantic {
+        Vec::new()
+    } else if cfg!(target_os = "windows") && delivery_kind == Delivery::Background {
         match (spec.name, action, targeting) {
             ("electron", "right_click" | "double_click" | "drag", _) => {
                 vec![RefusalCode::BackgroundOccluded]
@@ -1293,7 +1390,9 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    if cfg!(target_os = "windows")
+    if native_semantic {
+        route = cua_driver_testkit::e2e::DriverRoute::LinuxAtSpiAction;
+    } else if cfg!(target_os = "windows")
         && spec.name == "electron"
         && action == "left_click"
         && delivery_kind == Delivery::Background
@@ -1325,6 +1424,87 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         case.expecting_refusal(expected_refusals)
     } else {
         case
+    }
+}
+
+#[test]
+fn native_hyprland_semantic_expectations_are_limited_to_proven_cells() {
+    for host in ["electron", "tauri", "wkwebview", "webview2"] {
+        for action in [
+            "left_click",
+            "child_window",
+            "right_click",
+            "double_click",
+            "scroll",
+            "drag",
+            "type_text",
+            "type_submit",
+            "press_key",
+            "hotkey",
+            "editor_save",
+        ] {
+            for targeting in [Targeting::Ax, Targeting::Px] {
+                let expected = matches!(
+                    (host, action, targeting),
+                    ("electron" | "tauri", "left_click", Targeting::Px)
+                        | ("electron", "scroll", Targeting::Ax)
+                );
+                assert_eq!(
+                    native_hyprland_semantic_case(
+                        true,
+                        host,
+                        action,
+                        targeting,
+                        Delivery::Background
+                    ),
+                    expected,
+                    "{host}/{action}/{targeting:?}",
+                );
+                assert!(!native_hyprland_semantic_case(
+                    false,
+                    host,
+                    action,
+                    targeting,
+                    Delivery::Background
+                ));
+                assert!(!native_hyprland_semantic_case(
+                    true,
+                    host,
+                    action,
+                    targeting,
+                    Delivery::Foreground
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn native_hyprland_semantic_declarations_require_delivery_and_all_background_oracles() {
+    use cua_driver_testkit::e2e::{ContractExpectation, DriverRoute};
+
+    for (host, action, addressing) in [
+        ("electron", "left_click", "px"),
+        ("tauri", "left_click", "px"),
+        ("electron", "scroll", "ax"),
+    ] {
+        let spec = HostSpec {
+            name: host,
+            path: PathBuf::new(),
+            args: Vec::new(),
+            title: "test",
+        };
+        let case = shared_case_with_native_hyprland(&spec, action, addressing, "background", true);
+        assert_eq!(case.expected_behavior, ContractExpectation::Deliver);
+        assert_eq!(case.driver_route, DriverRoute::LinuxAtSpiAction);
+        for oracle in [
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(case.oracles.contains(&oracle), "missing {oracle:?}");
+        }
     }
 }
 

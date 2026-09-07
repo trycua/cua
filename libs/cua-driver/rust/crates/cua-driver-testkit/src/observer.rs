@@ -1095,6 +1095,10 @@ pub mod linux {
         super::hyprland::client_address(target)
     }
 
+    pub(crate) fn hyprland_focus_identity() -> Result<Option<u64>, ObserverError> {
+        super::hyprland::focus_identity()
+    }
+
     pub(crate) fn hyprland_cursor_position() -> Result<(f64, f64), ObserverError> {
         super::hyprland::cursor_position()
     }

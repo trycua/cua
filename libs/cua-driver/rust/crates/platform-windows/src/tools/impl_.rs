@@ -1,6 +1,7 @@
 //! Real Windows tool implementations (compiled only on Windows).
 
 use async_trait::async_trait;
+use cua_driver_core::action_record::ActionTransport;
 
 /// Pin the agent-cursor overlay above `hwnd` in the z-order, normalising to
 /// the **root** ancestor so the pin lands on the window that actually appears
@@ -2955,6 +2956,61 @@ fn posted_pixel_click_result(pid: u32, click_word: &str) -> ToolResult {
     }))
 }
 
+enum BackgroundElementClick {
+    Semantic {
+        message: String,
+        transport: ActionTransport,
+        failed_calls: Vec<ActionTransport>,
+    },
+    Inject {
+        x: i32,
+        y: i32,
+        failed_calls: Vec<ActionTransport>,
+    },
+    Post {
+        x: i32,
+        y: i32,
+        failed_calls: Vec<ActionTransport>,
+    },
+}
+
+fn background_element_click_result(
+    message: String,
+    transport: ActionTransport,
+    failed_calls: Vec<ActionTransport>,
+) -> ToolResult {
+    use cua_driver_core::action_record::{
+        ActionAttempt, ActionEffect, ActionExecutionRecord, ActionFallback, ActualDelivery,
+        RequestedDelivery,
+    };
+    let path = match transport {
+        ActionTransport::WindowsTargetedInjection => "pixel",
+        ActionTransport::WindowsPostMessage => "post_message",
+        _ => "ax",
+    };
+    let mut record = ActionExecutionRecord::new(
+        ActionEffect::Unverifiable,
+        transport,
+        RequestedDelivery::Background,
+    );
+    record.actual_delivery = Some(ActualDelivery::Background);
+    for (index, attempted) in failed_calls.iter().copied().enumerate() {
+        record.attempts.push(ActionAttempt {
+            transport: attempted,
+            delivery: ActualDelivery::Background,
+            detail: Some("UIA provider action returned an error".into()),
+        });
+        record.fallbacks.push(ActionFallback {
+            from: attempted,
+            to: failed_calls.get(index + 1).copied().unwrap_or(transport),
+            reason: "Previous UIA provider action failed".into(),
+        });
+    }
+    ToolResult::text(message)
+        .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" }))
+        .with_action_record(record)
+}
+
 pub struct ClickTool {
     state: Arc<ToolState>,
 }
@@ -3449,6 +3505,7 @@ impl Tool for ClickTool {
                 // ScrollViewers report a clipped item as on-screen because its
                 // stale rectangle is still inside the outer HWND. Ask the item
                 // to scroll itself into view before trusting that rectangle.
+                let recorded_center = (cx, cy);
                 let (cx, cy) = if !modifiers.is_empty() {
                     self.state
                         .element_cache
@@ -3483,6 +3540,9 @@ impl Tool for ClickTool {
                 let prev_fg_addr = unsafe {
                     windows::Win32::UI::WindowsAndMessaging::GetForegroundWindow().0 as usize
                 };
+                if (cx, cy) != recorded_center {
+                    crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
+                }
                 let send_result = tokio::task::spawn_blocking(move || {
                     let mod_refs: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                     crate::input::send_click_synthesized_active_mods(
@@ -3534,15 +3594,14 @@ impl Tool for ClickTool {
                 })
                 .await;
                 return match posted {
-                    Ok(Ok(())) => ToolResult::text(format!(
-                        "✅ Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
+                    Ok(Ok(())) => background_element_click_result(
+                        format!(
+                            "✅ Posted click on Chromium element [{idx}] at screen ({cx},{cy}) \
                          (background, no foreground swap)."
-                    ))
-                    .with_structured(json!({
-                        "path": "post_message",
-                        "verified": false,
-                        "effect": "unverifiable"
-                    })),
+                        ),
+                        ActionTransport::WindowsPostMessage,
+                        vec![],
+                    ),
                     Ok(Err(error)) => ToolResult::error(error.to_string()),
                     Err(error) => ToolResult::error(format!("Task error: {error}")),
                 };
@@ -3559,7 +3618,8 @@ impl Tool for ClickTool {
             //     concept — PostMessage produces the actual WM_LBUTTONDBLCLK)
             let state_clone = self.state.clone();
             let use_uia_invoke = (btn == "left" || btn == "middle") && count == 1;
-            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            let result = tokio::task::spawn_blocking(move || -> anyhow::Result<BackgroundElementClick> {
+                let mut failed_calls = Vec::new();
                 // Direct Chromium UIA Invoke can return S_OK without firing a
                 // DOM event while occluded. Try the honest coordinate actuator
                 // first: it lands while visible and reports occlusion without
@@ -3571,13 +3631,7 @@ impl Tool for ClickTool {
                         &state_clone.element_cache, pid, hwnd, idx, cx, cy, "clicking",
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
-                        .map(|()| format!(
-                            "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
-                        ))
-                        .map_err(|error| anyhow::anyhow!(
-                            "__CUA_BG_UNAVAILABLE_CLICK__{error}"
-                        ));
+                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
                 }
                 if use_uia_invoke {
                     // Retain the element out of the cache (AddRef under the
@@ -3619,13 +3673,14 @@ impl Tool for ClickTool {
                                 match outcome {
                                     Ok(()) => {
                                         std::mem::forget(elem);
-                                        return Ok(format!(
+                                        return Ok(BackgroundElementClick::Semantic { message: format!(
                                             "✅ Performed UIA Invoke on [{idx}] (screen ({cx},{cy}))."
-                                        ));
+                                        ), transport: ActionTransport::WindowsUiaInvoke, failed_calls });
                                     }
                                     Err(e) => tracing::debug!(target: "click",
                                         "UIA Invoke on [{idx}]: {e}, trying Toggle"),
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaInvoke);
                             }
                         }
                         let toggle_result = unsafe { elem.GetCurrentPattern(UIA_TogglePatternId) };
@@ -3635,10 +3690,11 @@ impl Tool for ClickTool {
                                     hwnd as isize, || unsafe { tg.Toggle() });
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
-                                    return Ok(format!(
+                                    return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA Toggle on [{idx}] (screen ({cx},{cy}))."
-                                    ));
+                                    ), transport: ActionTransport::WindowsUiaToggle, failed_calls });
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaToggle);
                             }
                         }
                         let sel_result = unsafe { elem.GetCurrentPattern(UIA_SelectionItemPatternId) };
@@ -3648,10 +3704,11 @@ impl Tool for ClickTool {
                                     hwnd as isize, || unsafe { si.Select() });
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
-                                    return Ok(format!(
+                                    return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA SelectionItem.Select on [{idx}] (screen ({cx},{cy}))."
-                                    ));
+                                    ), transport: ActionTransport::WindowsUiaSelection, failed_calls });
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaSelection);
                             }
                         }
                         let exp_result = unsafe { elem.GetCurrentPattern(UIA_ExpandCollapsePatternId) };
@@ -3661,10 +3718,11 @@ impl Tool for ClickTool {
                                     hwnd as isize, || unsafe { ec.Expand() });
                                 if outcome.is_ok() {
                                     std::mem::forget(elem);
-                                    return Ok(format!(
+                                    return Ok(BackgroundElementClick::Semantic { message: format!(
                                         "✅ Performed UIA ExpandCollapse.Expand on [{idx}] (screen ({cx},{cy}))."
-                                    ));
+                                    ), transport: ActionTransport::WindowsUiaExpandCollapse, failed_calls });
                                 }
+                                failed_calls.push(ActionTransport::WindowsUiaExpandCollapse);
                             }
                         }
                         std::mem::forget(elem);
@@ -3686,43 +3744,67 @@ impl Tool for ClickTool {
                         "clicking",
                     )
                     .map_err(|result| anyhow::anyhow!(tool_result_text(result)))?;
-                    return crate::input::inject_click_screen(hwnd, cx, cy, count, &btn)
-                        .map(|()| {
-                            format!(
-                                "✅ Injected click on [{idx}] (screen ({cx},{cy}), background, no foreground swap)."
-                            )
-                        })
-                        .map_err(|error| {
-                            anyhow::anyhow!("__CUA_BG_UNAVAILABLE_CLICK__{error}")
-                        });
+                    return Ok(BackgroundElementClick::Inject { x: cx, y: cy, failed_calls });
                 }
-                crate::input::post_click_screen(hwnd, cx, cy, count, &btn)?;
-                let action_name = match btn.as_str() {
-                    "right"  => "ShowMenu",
-                    _        => "PostMessage click",
-                };
-                Ok(format!("✅ Performed {action_name} on [{idx}] (screen ({cx},{cy}))."))
+                Ok(BackgroundElementClick::Post { x: cx, y: cy, failed_calls })
             }).await;
-            match result {
-                // UIA Invoke/Toggle/SelectionItem (or the PostMessage/injection
-                // fallback) dispatched, but none of these is driver-verifiable —
-                // UIA Invoke has no read-back. `effect: unverifiable`; the caller
-                // confirms via screenshot. (The would_be_silently_dropped surfaces
-                // are diverted to `background_unavailable` below before reaching
-                // here, so a success here always means a real dispatch.)
-                Ok(Ok(msg)) => ToolResult::text(msg).with_structured(
-                    json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
-                ),
-                Ok(Err(e)) if e.to_string().contains("__CUA_BG_UNAVAILABLE_CLICK__") => {
-                    let cause = e.to_string().replace("__CUA_BG_UNAVAILABLE_CLICK__", "");
+            let plan = match result {
+                Ok(Ok(plan)) => plan,
+                Ok(Err(e)) => return ToolResult::error(e.to_string()),
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            };
+            let (x, y, failed_calls, inject) = match plan {
+                BackgroundElementClick::Semantic {
+                    message,
+                    transport,
+                    failed_calls,
+                } => {
+                    return background_element_click_result(message, transport, failed_calls);
+                }
+                BackgroundElementClick::Inject { x, y, failed_calls } => (x, y, failed_calls, true),
+                BackgroundElementClick::Post { x, y, failed_calls } => (x, y, failed_calls, false),
+            };
+            // Return to the dispatch task before capturing: task-local recording
+            // context does not propagate into the blocking scroll resolver.
+            if (x, y) != (cx, cy) {
+                crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, x, y);
+            }
+            let btn = button.clone();
+            let action_name = if btn == "right" {
+                "ShowMenu"
+            } else {
+                "PostMessage click"
+            };
+            let sent = tokio::task::spawn_blocking(move || {
+                if inject {
+                    crate::input::inject_click_screen(hwnd, x, y, count, &btn)
+                } else {
+                    crate::input::post_click_screen(hwnd, x, y, count, &btn)
+                }
+            })
+            .await;
+            match sent {
+                Ok(Ok(())) => {
+                    let (message, transport) = if inject {
+                        (format!("✅ Injected click on [{idx}] (screen ({x},{y}), background, no foreground swap)."),
+                            ActionTransport::WindowsTargetedInjection)
+                    } else {
+                        (
+                            format!("✅ Performed {action_name} on [{idx}] (screen ({x},{y}))."),
+                            ActionTransport::WindowsPostMessage,
+                        )
+                    };
+                    background_element_click_result(message, transport, failed_calls)
+                }
+                Ok(Err(error)) if inject => {
                     crate::input::delivery::background_unavailable_error_with_cause(
                         hwnd,
                         EventKind::MouseClick,
-                        cause,
+                        error.to_string(),
                     )
                 }
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
-                Err(e) => ToolResult::error(format!("Task error: {e}")),
+                Ok(Err(error)) => ToolResult::error(error.to_string()),
+                Err(error) => ToolResult::error(format!("Task error: {error}")),
             }
         } else if let (Some(mut px), Some(mut py)) = (x, y) {
             let from_zoom = args
@@ -3992,6 +4074,73 @@ mod pixel_click_transport_tests {
             .expect("serialize ActionResult");
         assert_eq!(public["route"], "synthetic_events");
         assert_eq!(public["delivery"]["mode"], "background");
+    }
+}
+
+#[cfg(test)]
+mod background_element_click_record_tests {
+    use super::{background_element_click_result, ActionTransport};
+
+    #[test]
+    fn raw_fallback_reports_its_physical_transport() {
+        for (transport, path) in [
+            (ActionTransport::WindowsTargetedInjection, "pixel"),
+            (ActionTransport::WindowsPostMessage, "post_message"),
+        ] {
+            let result = background_element_click_result(
+                "physical fallback".into(),
+                transport,
+                vec![ActionTransport::WindowsUiaInvoke],
+            );
+            assert_eq!(result.structured_content.as_ref().unwrap()["path"], path);
+            let record = result.action_record.unwrap();
+            assert_eq!(record.transport, transport);
+            let truth = record.debug_json();
+            assert_ne!(truth["route"], "accessibility");
+            assert_eq!(
+                record.attempts[0].transport,
+                ActionTransport::WindowsUiaInvoke
+            );
+            assert_eq!(record.fallbacks[0].to, transport);
+        }
+    }
+
+    #[test]
+    fn failed_provider_calls_disqualify_single_action_marker_exemption() {
+        let result = background_element_click_result(
+            "semantic success after provider failure".into(),
+            ActionTransport::WindowsUiaToggle,
+            vec![ActionTransport::WindowsUiaInvoke],
+        );
+        let record = result.action_record.unwrap();
+        assert_eq!(record.transport, ActionTransport::WindowsUiaToggle);
+        assert_eq!(record.attempts.len(), 1);
+        assert_eq!(record.fallbacks.len(), 1);
+        assert_eq!(record.fallbacks[0].from, ActionTransport::WindowsUiaInvoke);
+        assert_eq!(record.fallbacks[0].to, ActionTransport::WindowsUiaToggle);
+        // Point-free recording requires an empty fallback journal.
+        assert!(!record.debug_json()["fallbacks"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
+    fn single_provider_success_has_no_invented_attempts() {
+        for transport in [
+            ActionTransport::WindowsUiaInvoke,
+            ActionTransport::WindowsUiaToggle,
+            ActionTransport::WindowsUiaSelection,
+            ActionTransport::WindowsUiaExpandCollapse,
+        ] {
+            let result =
+                background_element_click_result("semantic success".into(), transport, vec![]);
+            assert_eq!(result.structured_content.as_ref().unwrap()["path"], "ax");
+            let record = result.action_record.unwrap();
+            assert_eq!(record.transport, transport);
+            assert!(record.attempts.is_empty());
+            assert!(record.fallbacks.is_empty());
+        }
     }
 }
 
@@ -6526,6 +6675,7 @@ impl Tool for DoubleClickTool {
                     ))
                 }
             };
+            let recorded_center = (cx, cy);
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &self.state.element_cache,
                 pid,
@@ -6567,6 +6717,9 @@ impl Tool for DoubleClickTool {
             // actuator (system input queue, NO foreground swap), exactly like
             // ClickTool, instead of refusing. Only error if injection can't
             // express this click (e.g. right/middle on such a target).
+            if (cx, cy) != recorded_center {
+                crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
+            }
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {
@@ -6873,6 +7026,7 @@ impl Tool for RightClickTool {
                     ))
                 }
             };
+            let recorded_center = (cx, cy);
             let (cx, cy) = match resolve_onscreen_point_with_scroll(
                 &self.state.element_cache,
                 pid,
@@ -6909,6 +7063,9 @@ impl Tool for RightClickTool {
             // delivery_mode:"background" (default): try coordinate injection (no
             // foreground swap) for drop-prone targets (#1984); a right-click
             // injection that the actuator can't express falls back to the error.
+            if (cx, cy) != recorded_center {
+                crate::recording_hooks::capture_dispatch_click_target(hwnd, pid, cx, cy);
+            }
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
             {

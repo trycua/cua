@@ -136,6 +136,56 @@ pub(super) fn is_session() -> bool {
 }
 
 #[cfg(target_os = "linux")]
+pub(super) fn wait_for_focus_transfer(
+    sentinel: crate::observer::TargetWindow,
+    background: crate::observer::TargetWindow,
+) -> Result<(), String> {
+    use crate::observer::linux::{hyprland_focus_identity, hyprland_target_address};
+
+    let identity = |target| {
+        let address = hyprland_target_address(target).map_err(|error| error.to_string())?;
+        address
+            .strip_prefix("0x")
+            .and_then(|value| u64::from_str_radix(value, 16).ok())
+            .filter(|value| *value != 0)
+            .ok_or_else(|| format!("invalid Hyprland target address: {address}"))
+    };
+    let sentinel = identity(sentinel)?;
+    let background = identity(background)?;
+    if sentinel == background {
+        return Err(
+            "Hyprland focus canary requires distinct sentinel and background clients".into(),
+        );
+    }
+    // A raised floating target may only partially overlap the sentinel, so
+    // focus transfer must not depend on full-occlusion z-order classification.
+    wait_for_focus_identity(background, std::time::Duration::from_secs(3), || {
+        hyprland_focus_identity().map_err(|error| error.to_string())
+    })
+}
+
+fn wait_for_focus_identity(
+    expected: u64,
+    timeout: std::time::Duration,
+    mut query: impl FnMut() -> Result<Option<u64>, String>,
+) -> Result<(), String> {
+    let deadline = std::time::Instant::now() + timeout;
+    loop {
+        let current = query()?;
+        if current == Some(expected) {
+            return Ok(());
+        }
+        let remaining = deadline.saturating_duration_since(std::time::Instant::now());
+        if remaining.is_zero() {
+            return Err(format!(
+                "Hyprland focus-transfer canary did not focus expected client {expected:#x}; last focus: {current:?}"
+            ));
+        }
+        std::thread::sleep(remaining.min(std::time::Duration::from_millis(25)));
+    }
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn activate(
     driver: &mut impl crate::Driver,
     target: crate::observer::TargetWindow,
@@ -145,7 +195,7 @@ pub(super) fn activate(
     // native id or ambiguous pid must not focus another client.
     crate::observer::linux::hyprland_target_address(target).map_err(|error| error.to_string())?;
     let observer = DesktopObserver::new(NativeObserver::new(), target);
-    observer.snapshot().map_err(|error| error.to_string())?;
+    crate::observer::linux::hyprland_focus_identity().map_err(|error| error.to_string())?;
     let response = driver.call(
         "bring_to_front",
         serde_json::json!({
@@ -238,6 +288,55 @@ pub(super) fn calibrate(
 mod tests {
     use super::*;
     use std::collections::VecDeque;
+
+    #[test]
+    fn focus_canary_accepts_only_expected_transfer() {
+        let mut samples = VecDeque::from([Some(7), None, Some(9), Some(11)]);
+        wait_for_focus_identity(11, std::time::Duration::from_secs(1), || {
+            Ok(samples.pop_front().expect("bounded focus samples"))
+        })
+        .unwrap();
+        assert!(samples.is_empty());
+    }
+
+    #[test]
+    fn focus_canary_rejects_unchanged_missing_and_wrong_focus() {
+        for current in [Some(7), None, Some(9)] {
+            let error =
+                wait_for_focus_identity(11, std::time::Duration::ZERO, || Ok(current)).unwrap_err();
+            assert!(error.contains("expected client 0xb"), "{error}");
+            assert!(
+                error.contains(&format!("last focus: {current:?}")),
+                "{error}"
+            );
+        }
+    }
+
+    #[test]
+    fn focus_canary_preserves_query_errors() {
+        let mut samples = VecDeque::from([
+            Ok(Some(7)),
+            Err("activewindow query failed".to_owned()),
+            Ok(Some(11)),
+        ]);
+        let error = wait_for_focus_identity(11, std::time::Duration::from_secs(1), || {
+            samples.pop_front().expect("bounded focus samples")
+        })
+        .unwrap_err();
+        assert_eq!(error, "activewindow query failed");
+        assert_eq!(samples.len(), 1);
+    }
+
+    #[test]
+    fn focus_canary_timeout_bounds_polling() {
+        let mut calls = 0;
+        let result = wait_for_focus_identity(11, std::time::Duration::ZERO, || {
+            calls += 1;
+            Ok(Some(7))
+        });
+        assert!(result.is_err());
+        assert_eq!(calls, 1);
+    }
 
     fn state(cursor: Point) -> DesktopSnapshot {
         DesktopSnapshot {

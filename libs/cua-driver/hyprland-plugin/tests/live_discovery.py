@@ -10,6 +10,7 @@ import socket
 import stat
 import struct
 import subprocess
+import time
 from pathlib import Path
 
 if not __debug__:
@@ -24,10 +25,14 @@ def hyprctl(*args):
 
 def status():
     value = json.loads(hyprctl("-j", "cua:status"))
-    assert value["state"] == "discovery_only"
+    if value.get("experiment"):
+        assert value["state"] == "input_experiment"
+        assert value["experiment"]["test_only"] is True
+    else:
+        assert value["state"] == "discovery_only"
     assert value["abi"]["match"] is True
     assert value["capabilities"]["supported"] == ["discovery"]
-    assert value["capabilities"]["enabled"] == ["discovery"]
+    assert value["capabilities"]["enabled"] == ["discovery"], value
     assert value["transport"]["ready"] is True
     assert value["compositor_epoch"] != 0
     assert value["protocol"] == {"major": 2, "minor": 0, "max_frame_bytes": 4120}
@@ -54,6 +59,34 @@ def desktop_state():
             for c in clients
         ),
     }
+
+
+def stable_desktop_state(timeout=5, samples=3, interval=0.1):
+    """Establish readiness before requests; never retry a mutation assertion."""
+    deadline = time.monotonic() + timeout
+    previous = None
+    consecutive = 0
+    while time.monotonic() < deadline:
+        current = desktop_state()
+        consecutive = consecutive + 1 if current == previous else 1
+        if consecutive >= samples:
+            return current
+        previous = current
+        time.sleep(interval)
+    raise TimeoutError("desktop state did not stabilize before discovery requests")
+
+
+def assert_unchanged(before, after):
+    if after == before:
+        return
+    # No titles, addresses, target tokens, or raw client records in diagnostics.
+    delta = {"changed_fields": sorted(key for key in before.keys() | after.keys()
+                                     if before.get(key) != after.get(key))}
+    for label, state in (("before", before), ("after", after)):
+        delta[label] = {"cursor": state.get("cursor"),
+                        "active_workspace": state.get("active_workspace"),
+                        "window_count": len(state.get("windows", []))}
+    raise AssertionError("refused packets changed compositor state: " + json.dumps(delta, sort_keys=True))
 
 
 def exchange(client, message, request_id, payload=b""):
@@ -84,8 +117,10 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--reload-module", type=Path)
     args = parser.parse_args()
+    if not __debug__:
+        raise RuntimeError("assertions must be enabled; do not run Python with -O")
     initial = status()
-    before = desktop_state()
+    before = stable_desktop_state()
     with connect(initial) as client:
         assert exchange(client, 3, 2) == (4, b"")
         kind, payload = exchange(client, 5, 3)
@@ -94,7 +129,7 @@ def main():
         for request_id, kind in enumerate((0x100, 0x101, 0x102, 0x103, 0x110, 0x111), 4):
             response_kind, payload = exchange(client, kind, request_id)
             assert response_kind == 0xFFFF and struct.unpack_from("!I", payload)[0] == 8
-        assert desktop_state() == before, "refused packets changed compositor state"
+        assert_unchanged(before, desktop_state())
         if args.reload_module:
             module = str(args.reload_module.resolve(strict=True))
             assert hyprctl("plugin", "unload", module).strip() == "ok"

@@ -622,12 +622,59 @@ fn assert_fixture_text(fixture: &Fixture, id: &str, expected: &str) {
     }
 }
 
-fn fixture_marker_number(fixture: &Fixture, id: &str, prefix: &str) -> Option<u64> {
-    fixture
-        .journal
-        .text(id)
-        .and_then(|text| text.strip_prefix(prefix).map(str::to_owned))
-        .and_then(|value| value.parse().ok())
+fn fixture_scroll_reached_viewport(state: &serde_json::Value) -> bool {
+    let scroll = &state["scroll-tall"];
+    let (Some(offset), Some(page)) = (
+        scroll["scrollTop"].as_f64(),
+        scroll["clientHeight"].as_f64(),
+    ) else {
+        return false;
+    };
+    offset.is_finite() && page.is_finite() && page > 0.0 && offset >= page
+}
+
+#[test]
+fn scroll_oracle_reads_live_geometry_not_event_mirrors() {
+    use serde_json::json;
+    let mut state = json!({
+        "scroll-tall": {"scrollTop": 208, "clientHeight": 128},
+        "lbl-scroll-offset": {"text": "scroll_offset=104"},
+        "lbl-scroll-client-height": {"text": "scroll_client_height=128"}
+    });
+    assert!(fixture_scroll_reached_viewport(&state));
+    state["scroll-tall"]["scrollTop"] = json!(128.25);
+    assert!(fixture_scroll_reached_viewport(&state));
+    state["lbl-scroll-offset"]["text"] = json!("scroll_offset=256");
+    for offset in [0.0, 104.0, 127.99] {
+        state["scroll-tall"]["scrollTop"] = json!(offset);
+        assert!(!fixture_scroll_reached_viewport(&state));
+    }
+}
+
+#[test]
+fn scroll_oracle_rejects_missing_or_invalid_geometry() {
+    use serde_json::{json, Value};
+    for invalid in [Value::Null, json!("128"), json!(true), json!({}), json!([])] {
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": invalid.clone(), "clientHeight": 128}
+        })));
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": 256, "clientHeight": invalid}
+        })));
+    }
+    for height in [0, -1] {
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": 256, "clientHeight": height}
+        })));
+    }
+    for absent in [
+        json!({}),
+        json!({"scroll-tall": {}}),
+        json!({"scroll-tall": {"scrollTop": 256}}),
+        json!({"scroll-tall": {"clientHeight": 128}}),
+    ] {
+        assert!(!fixture_scroll_reached_viewport(&absent));
+    }
 }
 
 fn action_target_args(
@@ -711,6 +758,15 @@ fn run_pointer_action(
         response.text()
     );
     assert_fixture_contains(fixture, expected_marker);
+    if tool == "click" {
+        assert_native_hyprland_semantic_route(
+            fixture,
+            "left_click",
+            addressing,
+            delivery,
+            &response,
+        );
+    }
     delivered_observation()
 }
 
@@ -1035,14 +1091,10 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text(),
         response.raw
     );
+    assert_native_hyprland_semantic_route(fixture, "scroll", addressing, delivery, &response);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        let offset =
-            fixture_marker_number(fixture, "lbl-scroll-offset", "scroll_offset=").unwrap_or(0);
-        let page =
-            fixture_marker_number(fixture, "lbl-scroll-client-height", "scroll_client_height=")
-                .unwrap_or(0);
-        if page > 0 && offset >= page {
+        if fixture_scroll_reached_viewport(&fixture.journal.snapshot()) {
             break;
         }
         assert!(
@@ -1114,6 +1166,7 @@ fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &s
         response.text()
     );
     assert_fixture_contains(fixture, "child_windows=1");
+    assert_native_hyprland_semantic_route(fixture, "child_window", addressing, delivery, &response);
     delivered_observation()
 }
 
@@ -1178,7 +1231,92 @@ fn linux_real_pointer_input_available() -> bool {
     false
 }
 
+fn native_hyprland_semantic_input_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // AT-SPI does not need an input-plugin socket. DISPLAY can coexist
+        // with native Wayland for XWayland clients in the same desktop.
+        platform_linux::wayland::wayland_input_enabled()
+            && platform_linux::wayland::hyprland::is_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn native_hyprland_semantic_case(
+    available: bool,
+    host: &str,
+    action: &str,
+    targeting: Targeting,
+    delivery: Delivery,
+) -> bool {
+    // These fixture controls have proven focus-free AT-SPI actions. Do not
+    // extend this to other PX targets merely because they accept a click.
+    available
+        && delivery == Delivery::Background
+        && matches!(
+            (host, action, targeting),
+            ("electron" | "tauri", "left_click", Targeting::Px)
+                | ("electron" | "tauri", "child_window", Targeting::Px)
+                | ("electron", "scroll", Targeting::Ax)
+        )
+}
+
+fn assert_native_hyprland_semantic_route(
+    fixture: &Fixture,
+    action: &str,
+    addressing: &str,
+    delivery: &str,
+    response: &ToolResponse,
+) {
+    let targeting = match addressing {
+        "ax" => Targeting::Ax,
+        "px" => Targeting::Px,
+        _ => Targeting::NotApplicable,
+    };
+    if delivery == "background"
+        && native_hyprland_semantic_case(
+            native_hyprland_semantic_input_available(),
+            fixture.name,
+            action,
+            targeting,
+            Delivery::Background,
+        )
+    {
+        assert_eq!(
+            response.action_route(),
+            Some("accessibility"),
+            "{}",
+            response.raw
+        );
+        assert_eq!(
+            response.action_delivery_mode(),
+            Some("background"),
+            "{}",
+            response.raw
+        );
+    }
+}
+
 fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) -> CaseSpec {
+    shared_case_with_native_hyprland(
+        spec,
+        action,
+        addressing,
+        delivery,
+        native_hyprland_semantic_input_available(),
+    )
+}
+
+fn shared_case_with_native_hyprland(
+    spec: &HostSpec,
+    action: &str,
+    addressing: &str,
+    delivery: &str,
+    native_hyprland: bool,
+) -> CaseSpec {
     let targeting = match addressing {
         "ax" => Targeting::Ax,
         "px" => Targeting::Px,
@@ -1191,8 +1329,11 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     };
     let scenario = format!("{action}_{addressing}_{delivery}");
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
-    let expected_refusals = if cfg!(target_os = "windows") && delivery_kind == Delivery::Background
-    {
+    let native_semantic =
+        native_hyprland_semantic_case(native_hyprland, spec.name, action, targeting, delivery_kind);
+    let expected_refusals = if native_semantic {
+        Vec::new()
+    } else if cfg!(target_os = "windows") && delivery_kind == Delivery::Background {
         match (spec.name, action, targeting) {
             ("electron", "right_click" | "double_click" | "drag", _) => {
                 vec![RefusalCode::BackgroundOccluded]
@@ -1293,7 +1434,9 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    if cfg!(target_os = "windows")
+    if native_semantic {
+        route = cua_driver_testkit::e2e::DriverRoute::LinuxAtSpiAction;
+    } else if cfg!(target_os = "windows")
         && spec.name == "electron"
         && action == "left_click"
         && delivery_kind == Delivery::Background
@@ -1325,6 +1468,90 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         case.expecting_refusal(expected_refusals)
     } else {
         case
+    }
+}
+
+#[test]
+fn native_hyprland_semantic_expectations_are_limited_to_proven_cells() {
+    for host in ["electron", "tauri", "wkwebview", "webview2"] {
+        for action in [
+            "left_click",
+            "child_window",
+            "right_click",
+            "double_click",
+            "scroll",
+            "drag",
+            "type_text",
+            "type_submit",
+            "press_key",
+            "hotkey",
+            "editor_save",
+        ] {
+            for targeting in [Targeting::Ax, Targeting::Px] {
+                let expected = matches!(
+                    (host, action, targeting),
+                    ("electron" | "tauri", "left_click", Targeting::Px)
+                        | ("electron" | "tauri", "child_window", Targeting::Px)
+                        | ("electron", "scroll", Targeting::Ax)
+                );
+                assert_eq!(
+                    native_hyprland_semantic_case(
+                        true,
+                        host,
+                        action,
+                        targeting,
+                        Delivery::Background
+                    ),
+                    expected,
+                    "{host}/{action}/{targeting:?}",
+                );
+                assert!(!native_hyprland_semantic_case(
+                    false,
+                    host,
+                    action,
+                    targeting,
+                    Delivery::Background
+                ));
+                assert!(!native_hyprland_semantic_case(
+                    true,
+                    host,
+                    action,
+                    targeting,
+                    Delivery::Foreground
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn native_hyprland_semantic_declarations_require_delivery_and_all_background_oracles() {
+    use cua_driver_testkit::e2e::{ContractExpectation, DriverRoute};
+
+    for (host, action, addressing) in [
+        ("electron", "left_click", "px"),
+        ("tauri", "left_click", "px"),
+        ("electron", "child_window", "px"),
+        ("tauri", "child_window", "px"),
+        ("electron", "scroll", "ax"),
+    ] {
+        let spec = HostSpec {
+            name: host,
+            path: PathBuf::new(),
+            args: Vec::new(),
+            title: "test",
+        };
+        let case = shared_case_with_native_hyprland(&spec, action, addressing, "background", true);
+        assert_eq!(case.expected_behavior, ContractExpectation::Deliver);
+        assert_eq!(case.driver_route, DriverRoute::LinuxAtSpiAction);
+        for oracle in [
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(case.oracles.contains(&oracle), "missing {oracle:?}");
+        }
     }
 }
 

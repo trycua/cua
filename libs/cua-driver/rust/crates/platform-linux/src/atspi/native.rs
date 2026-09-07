@@ -1185,6 +1185,7 @@ pub(super) fn walk_tree_bounded_with_timeout(
         // deadline for both phases so a dead AT-SPI peer cannot outlive the
         // operation timeout while resolving geometry.
         let deadline = tokio::time::Instant::now() + timeout;
+        let walk_started = std::time::Instant::now();
         let walk = async {
             let conn = shared_connection().await?;
             collect_visited_bounded(conn, pid, xid, max_elements, max_depth).await
@@ -1199,7 +1200,9 @@ pub(super) fn walk_tree_bounded_with_timeout(
         let Some((visited, scoped_frame)) = walked else {
             return Ok(None);
         };
+        let walk_elapsed = walk_started.elapsed();
         let (markdown, nodes) = render(&visited, scoped_frame);
+        let bounds_started = std::time::Instant::now();
         let bounds = match before_snapshot_deadline(
             deadline,
             element_bounds_for_visited(&visited, pid, xid, scoped_frame),
@@ -1212,6 +1215,13 @@ pub(super) fn walk_tree_bounded_with_timeout(
                 Vec::new()
             }
         };
+        dlog!(
+            "snapshot phases pid {pid}: walk_ms={} bounds_ms={} visited={} bounds={}",
+            walk_elapsed.as_millis(),
+            bounds_started.elapsed().as_millis(),
+            visited.len(),
+            bounds.len()
+        );
         // Bounds are keyed by the application-wide element index, so drop the
         // entries for windows this snapshot no longer shows.
         let bounds = if scoped_frame.is_some() {
@@ -1939,13 +1949,353 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
     )
 }
 
-/// Invoke an indexed scroll target's directional AT-SPI action.
-///
-/// Chromium exposes scrollable web regions as named actions such as
-/// `scrollDown`/`scrollForward`; using that accessibility route avoids the
-/// X11 `Button5` event path that Chromium silently drops in background mode.
-pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
-    bounded(
+/// A mutation was attempted; callers must not replay through another route.
+#[derive(Debug)]
+pub struct ScrollProgress {
+    pub acknowledged: u32,
+    pub complete: bool,
+    pub detail: Option<String>,
+}
+
+fn finish_scroll(result: Result<()>, attempted: bool, acknowledged: u32) -> Result<ScrollProgress> {
+    match result {
+        Ok(()) => Ok(ScrollProgress {
+            acknowledged,
+            complete: true,
+            detail: None,
+        }),
+        Err(error) if attempted => Ok(ScrollProgress {
+            acknowledged,
+            complete: false,
+            detail: Some(error.to_string()),
+        }),
+        Err(error) => Err(error),
+    }
+}
+
+async fn scroll_sequence<D, DF, S, SF>(
+    amount: usize,
+    mut baseline: Option<Vec<(i64, i64)>>,
+    attempted: &std::cell::Cell<bool>,
+    acknowledged: &std::cell::Cell<u32>,
+    mut dispatch: D,
+    mut settle: S,
+) -> Result<()>
+where
+    D: FnMut() -> DF,
+    DF: std::future::Future<Output = Result<bool>>,
+    S: FnMut(Vec<(i64, i64)>) -> SF,
+    SF: std::future::Future<Output = Result<Vec<(i64, i64)>>>,
+{
+    for step in 0..amount.max(1) {
+        dlog!(
+            "scroll sequence dispatch step={} baseline={baseline:?}",
+            step + 1
+        );
+        let deadline = tokio::time::Instant::now() + CALL_TIMEOUT;
+        attempted.set(true);
+        if !tokio::time::timeout_at(deadline, dispatch())
+            .await
+            .map_err(|_| anyhow!("scroll action timed out"))??
+        {
+            return Err(anyhow!("scroll action returned false"));
+        }
+        acknowledged.set(acknowledged.get() + 1);
+        dlog!("scroll sequence acknowledged step={}", step + 1);
+        if step + 1 < amount {
+            if let Some(previous) = baseline.take() {
+                baseline = Some(
+                    tokio::time::timeout_at(deadline, settle(previous))
+                        .await
+                        .map_err(|_| anyhow!("scroll movement did not settle before deadline"))??,
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+fn descendant_indices(depths: impl Iterator<Item = usize>, target: usize) -> Vec<usize> {
+    let depths: Vec<_> = depths.collect();
+    ((target + 1)..depths.len())
+        .take_while(|&index| depths[index] > depths[target])
+        .take(64)
+        .collect()
+}
+
+fn relative_position(
+    target: (i32, i32, i32, i32),
+    probe: (i32, i32, i32, i32),
+) -> Option<(i64, i64)> {
+    let valid =
+        |(x, y, w, h): (i32, i32, i32, i32)| x != i32::MIN && y != i32::MIN && w > 0 && h > 0;
+    (valid(target) && valid(probe)).then(|| {
+        (
+            i64::from(probe.0) - i64::from(target.0),
+            i64::from(probe.1) - i64::from(target.1),
+        )
+    })
+}
+
+struct PageMotion {
+    baseline: Vec<(i64, i64)>,
+    previous: Vec<(i64, i64)>,
+    stable: usize,
+}
+
+impl PageMotion {
+    fn new(baseline: Vec<(i64, i64)>) -> Self {
+        Self {
+            previous: baseline.clone(),
+            baseline,
+            stable: 0,
+        }
+    }
+
+    fn observe(&mut self, sample: &[(i64, i64)], direction: &str) -> bool {
+        if sample.len() != self.baseline.len() || sample.is_empty() {
+            return false;
+        }
+        let axis = |point: (i64, i64)| {
+            if matches!(direction, "left" | "right") {
+                point.0
+            } else {
+                point.1
+            }
+        };
+        let moved = sample.iter().zip(&self.baseline).any(|(&now, &before)| {
+            if matches!(direction, "up" | "left") {
+                axis(now) > axis(before)
+            } else {
+                axis(now) < axis(before)
+            }
+        });
+        self.stable = if moved && sample == self.previous {
+            self.stable + 1
+        } else {
+            0
+        };
+        self.previous = sample.to_vec();
+        self.stable >= 2
+    }
+}
+
+#[cfg(test)]
+mod page_scroll_tests {
+    use super::*;
+    use std::cell::{Cell, RefCell};
+
+    #[test]
+    fn probes_are_bounded_descendants_in_preorder() {
+        assert_eq!(
+            descendant_indices([0, 1, 2, 3, 2, 1, 2].into_iter(), 1),
+            vec![2, 3, 4]
+        );
+        assert!(descendant_indices([0, 1, 1].into_iter(), 1).is_empty());
+        assert_eq!(
+            descendant_indices(std::iter::once(0).chain(std::iter::repeat(1).take(100)), 0).len(),
+            64
+        );
+    }
+
+    #[test]
+    fn relative_geometry_rejects_unrealized_and_window_motion() {
+        assert_eq!(
+            relative_position((10, 20, 200, 100), (30, 60, 10, 10)),
+            Some((20, 40))
+        );
+        assert_eq!(
+            relative_position((110, 220, 200, 100), (130, 260, 10, 10)),
+            Some((20, 40))
+        );
+        assert!(relative_position((0, 0, 200, 100), (i32::MIN, 0, 10, 10)).is_none());
+        assert!(relative_position((0, 0, 0, 100), (0, 0, 10, 10)).is_none());
+        let mut motion = PageMotion::new(vec![(20, 40)]);
+        for _ in 0..10 {
+            assert!(!motion.observe(&[(20, 40)], "down"));
+        }
+    }
+
+    #[test]
+    fn directional_motion_requires_consecutive_stable_samples() {
+        for (direction, moved) in [
+            ("down", (20, 10)),
+            ("up", (20, 70)),
+            ("left", (50, 40)),
+            ("right", (-10, 40)),
+        ] {
+            let mut motion = PageMotion::new(vec![(20, 40)]);
+            assert!(!motion.observe(&[moved], direction));
+            assert!(!motion.observe(&[moved], direction));
+            assert!(motion.observe(&[moved], direction));
+        }
+        let mut motion = PageMotion::new(vec![(20, 40)]);
+        for _ in 0..4 {
+            assert!(!motion.observe(&[(20, 70)], "down"));
+        }
+        assert!(!motion.observe(&[], "down"));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn asynchronous_page_ack_waits_for_movement_and_stability() {
+        let events = RefCell::new(Vec::new());
+        let attempted = Cell::new(false);
+        let acknowledged = Cell::new(0);
+        scroll_sequence(
+            2,
+            Some(vec![(0, 100)]),
+            &attempted,
+            &acknowledged,
+            || async {
+                events.borrow_mut().push("ack");
+                Ok(true)
+            },
+            |baseline| async {
+                let mut motion = PageMotion::new(baseline);
+                for (event, y) in [
+                    ("unchanged", 100),
+                    ("move", 0),
+                    ("stable", 0),
+                    ("stable", 0),
+                ] {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                    events.borrow_mut().push(event);
+                    if motion.observe(&[(0, y)], "down") {
+                        return Ok(vec![(0, y)]);
+                    }
+                }
+                unreachable!()
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            vec!["ack", "unchanged", "move", "stable", "stable", "ack"]
+        );
+        assert_eq!(acknowledged.get(), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn failed_or_timed_out_attempts_never_become_fallback() {
+        for successful_before in [0, 1] {
+            for timeout in [false, true] {
+                let attempted = Cell::new(false);
+                let acknowledged = Cell::new(0);
+                let result = scroll_sequence(
+                    2,
+                    None,
+                    &attempted,
+                    &acknowledged,
+                    || async {
+                        if acknowledged.get() < successful_before {
+                            return Ok(true);
+                        }
+                        if timeout {
+                            std::future::pending::<()>().await;
+                        }
+                        Ok(false)
+                    },
+                    |baseline| async { Ok(baseline) },
+                )
+                .await;
+                let outcome = finish_scroll(result, attempted.get(), acknowledged.get()).unwrap();
+                assert!(!outcome.complete);
+                assert_eq!(outcome.acknowledged, successful_before);
+            }
+        }
+        assert!(finish_scroll(Err(anyhow!("unsupported before dispatch")), false, 0).is_err());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn missing_or_stalled_probe_stops_after_first_ack() {
+        for timeout in [false, true] {
+            let attempted = Cell::new(false);
+            let acknowledged = Cell::new(0);
+            let result = scroll_sequence(
+                2,
+                Some(vec![(0, 100)]),
+                &attempted,
+                &acknowledged,
+                || async { Ok(true) },
+                |_| async {
+                    if timeout {
+                        std::future::pending::<()>().await;
+                    }
+                    Err(anyhow!("probe disappeared"))
+                },
+            )
+            .await;
+            let outcome = finish_scroll(result, attempted.get(), acknowledged.get()).unwrap();
+            assert!(!outcome.complete);
+            assert_eq!(outcome.acknowledged, 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn overall_timeout_retains_progress() {
+        let attempted = Cell::new(false);
+        let acknowledged = Cell::new(0);
+        let result = tokio::time::timeout(
+            Duration::from_millis(1),
+            scroll_sequence(
+                2,
+                Some(vec![(0, 100)]),
+                &attempted,
+                &acknowledged,
+                || async { Ok(true) },
+                |_| std::future::pending::<Result<Vec<(i64, i64)>>>(),
+            ),
+        )
+        .await
+        .map_err(|_| anyhow!("overall timeout"))
+        .and_then(|r| r);
+        let outcome = finish_scroll(result, attempted.get(), acknowledged.get()).unwrap();
+        assert_eq!(outcome.acknowledged, 1);
+        assert!(!outcome.complete);
+    }
+}
+
+async fn sample_page_probes(
+    target: &atspi::proxy::component::ComponentProxy<'_>,
+    probes: &[atspi::proxy::component::ComponentProxy<'_>],
+    coord: CoordType,
+) -> Result<Vec<(i64, i64)>> {
+    let before = call(target.get_extents(coord))
+        .await
+        .and_then(|r| r.ok())
+        .ok_or_else(|| anyhow!("scroll target geometry unavailable"))?;
+    let mut sample = Vec::new();
+    for probe in probes {
+        let bounds = call(probe.get_extents(coord))
+            .await
+            .and_then(|r| r.ok())
+            .ok_or_else(|| anyhow!("scroll probe disappeared"))?;
+        sample.push(
+            relative_position(before, bounds)
+                .ok_or_else(|| anyhow!("scroll probe geometry invalid"))?,
+        );
+    }
+    let after = call(target.get_extents(coord)).await.and_then(|r| r.ok());
+    if after != Some(before) {
+        return Err(anyhow!("scroll target geometry changed during observation"));
+    }
+    Ok(sample)
+}
+
+/// Invoke the original target's semantic actions, pacing multi-page requests
+/// with descendant motion. `Err` means no mutation was attempted; an incomplete
+/// `ScrollProgress` preserves uncertainty after an attempted mutation.
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    let attempted = std::cell::Cell::new(false);
+    let acknowledged = std::cell::Cell::new(0);
+    let result = bounded(
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -1991,14 +2341,77 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
             }
 
             if let (Some(action), Some(action_index)) = (action_proxy, selected) {
-                for _ in 0..amount.max(1) {
-                    match call(action.do_action(action_index)).await {
-                        Some(Ok(true)) => {}
-                        Some(Ok(false)) => return Err(anyhow!("scroll action returned false")),
-                        Some(Err(e)) => return Err(anyhow!("scroll action failed: {e}")),
-                        None => return Err(anyhow!("scroll action timed out")),
+                let mut observation = None;
+                if by == cua_driver_contract::ScrollBy::Page && amount > 1 {
+                    let component = proxies.component().await?;
+                    let target_index = visited
+                        .iter()
+                        .position(|node| std::ptr::eq(node, target))
+                        .unwrap();
+                    let mut probes = Vec::new();
+                    // Fix probe identities before dispatch; never replace vanished descendants.
+                    for index in
+                        descendant_indices(visited.iter().map(|node| node.depth), target_index)
+                    {
+                        if !visited[index].has_component {
+                            continue;
+                        }
+                        if let Some(Ok(proxies)) = call(visited[index].acc.proxies()).await {
+                            if let Some(Ok(probe)) = call(proxies.component()).await {
+                                probes.push(probe);
+                            }
+                        }
+                    }
+                    for coord in [CoordType::Window, CoordType::Screen] {
+                        let mut usable = Vec::new();
+                        for probe in &probes {
+                            if sample_page_probes(&component, std::slice::from_ref(probe), coord)
+                                .await
+                                .is_ok()
+                            {
+                                usable.push(probe.clone());
+                                if usable.len() == 8 {
+                                    break;
+                                }
+                            }
+                        }
+                        if !usable.is_empty() {
+                            let baseline = sample_page_probes(&component, &usable, coord).await?;
+                            observation = Some((component.clone(), usable, coord, baseline));
+                            break;
+                        }
+                    }
+                    if observation.is_none() {
+                        return Err(anyhow!("no usable descendant scroll probes"));
                     }
                 }
+                scroll_sequence(
+                    amount,
+                    observation.as_ref().map(|o| o.3.clone()),
+                    &attempted,
+                    &acknowledged,
+                    || async { action.do_action(action_index).await.map_err(Into::into) },
+                    |baseline| async {
+                        let (component, probes, coord, _) = observation
+                            .as_ref()
+                            .expect("page probes selected before dispatch");
+                        let mut motion = PageMotion::new(baseline);
+                        let started = tokio::time::Instant::now();
+                        loop {
+                            let sample = sample_page_probes(component, probes, *coord).await?;
+                            let settled = motion.observe(&sample, direction);
+                            dlog!(
+                                "scroll sequence sample elapsed_ms={} positions={sample:?} settled={settled}",
+                                started.elapsed().as_millis()
+                            );
+                            if settled {
+                                return Ok(sample);
+                            }
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                    },
+                )
+                .await?;
                 return Ok(());
             }
 
@@ -2031,10 +2444,12 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
                 };
                 let next =
                     (current + sign * increment * amount.max(1) as f64).clamp(minimum, maximum);
+                attempted.set(true);
                 call(value.set_current_value(next))
                     .await
                     .and_then(|result| result.ok())
                     .ok_or_else(|| anyhow!("scroll value update timed out"))?;
+                acknowledged.set(1);
                 return Ok(());
             }
 
@@ -2043,7 +2458,8 @@ pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> R
             ))
         },
         || Err(anyhow!("scroll_element timed out for pid {pid}")),
-    )
+    );
+    finish_scroll(result, attempted.get(), acknowledged.get())
 }
 
 /// Give an indexed element keyboard focus through AT-SPI Component.GrabFocus
@@ -2132,7 +2548,7 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, 0, None)
                 .await
                 .unwrap_or((0, 0));
 
@@ -2229,62 +2645,23 @@ pub fn perform_action_at_screen_point(
     bounded(
         async {
             let conn = shared_connection().await?;
-            let visited = match collect_visited(conn, pid).await? {
-                Some(v) => v,
-                None => return Ok(None),
-            };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
-                .await
-                .unwrap_or((0, 0));
+            let (visited, scoped_frame) =
+                match collect_visited_bounded(conn, pid, xid, None, None).await? {
+                    Some(walked) => walked,
+                    None => return Ok(None),
+                };
 
-            // Reconstruct each indexable element's SCREEN frame the same way
-            // get_window_state does: WINDOW-relative extents (GTK4 reports these
-            // correctly; Screen is (0,0)) plus the window's screen origin (the
-            // GNOME Shell helper on Wayland, _GTK_FRAME_EXTENTS on X11). When no
-            // offset resolves, fall back to CoordType::Screen (correct on Qt/GTK3).
-            let offset = window_to_screen_offset(pid, xid, None);
-            let coord = if offset.is_some() {
-                CoordType::Window
-            } else {
-                CoordType::Screen
-            };
-            let (ox, oy) = offset.unwrap_or((0, 0));
-
-            // (element_index, x, y, w, h, is_passive_label) over the SAME indexable
-            // list `perform_action`/`get_window_state` use, so the chosen index
-            // maps straight back to a verified `element_index` actuation.
+            // Share snapshot correlation and geometry, including renderer-frame
+            // rebasing and embedded WebProcess insets. Bounds retain application-
+            // wide indices even when only the target window's nodes are emitted.
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
-            let mut frames: Vec<(usize, i32, i32, u32, u32, bool)> = Vec::new();
-            for (idx, node) in action_nodes.iter().enumerate() {
-                if !node.has_component {
-                    continue;
-                }
-                let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
-                    continue;
-                };
-                let Some(Ok(comp)) = call(proxies.component()).await else {
-                    continue;
-                };
-                let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await else {
-                    continue;
-                };
-                if x == i32::MIN || y == i32::MIN || w <= 1 || h <= 1 {
-                    continue;
-                }
-                let (document_x, document_y) = if node.in_web_doc {
-                    web_document_origin
-                } else {
-                    (0, 0)
-                };
-                frames.push((
-                    idx,
-                    x + ox + document_x,
-                    y + oy + document_y,
-                    w as u32,
-                    h as u32,
-                    is_passive_role(&node.role),
-                ));
-            }
+            let frames: Vec<_> = element_bounds_for_visited(&visited, pid, xid, scoped_frame)
+                .await
+                .into_iter()
+                .map(|(idx, x, y, w, h)| {
+                    (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
+                })
+                .collect();
 
             let Some(idx) = select_click_target(&frames, screen_x, screen_y) else {
                 return Ok(None);
@@ -2429,7 +2806,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, 0, None)
                 .await
                 .unwrap_or((0, 0));
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -2704,6 +3081,35 @@ fn combine_wayland_content_offsets(
     }
 }
 
+fn hyprland_document_top_inset(
+    target: (u64, u32),
+    window: Option<(u64, u32, u32, u32)>,
+    document: (i32, i32, i32, i32),
+) -> Option<i32> {
+    let (address, pid, window_width, window_height) = window?;
+    let (x, y, width, height) = document;
+    if target.0 == 0 || target != (address, pid) || x != 0 || y < 0 || width <= 0 || height <= 0 {
+        return None;
+    }
+    let top = i64::from(window_height) - i64::from(height);
+    // A full-width embedded document can omit GTK's CSD header from its
+    // WINDOW origin. Reject partial panes and gaps larger than a title bar.
+    if (i64::from(window_width) - i64::from(width)).abs() > 4 || !(1..=128).contains(&top) {
+        return None;
+    }
+    Some(y.max(top as i32))
+}
+
+fn select_web_document<T>(
+    candidates: impl Iterator<Item = (T, usize, bool)>,
+    require_web_process_bus: bool,
+) -> Option<T> {
+    candidates
+        .filter(|(_, _, on_web_process_bus)| !require_web_process_bus || *on_web_process_bus)
+        .min_by_key(|(_, depth, _)| *depth)
+        .map(|(document, _, _)| document)
+}
+
 /// Offset of embedded web content inside a captured Wayland toplevel.
 /// Compositor decorations and toolkit document offsets are independent and
 /// therefore additive: choosing one or the other leaves WebKit controls one
@@ -2711,6 +3117,7 @@ fn combine_wayland_content_offsets(
 async fn web_document_origin_for_visited(
     visited: &[Visited<'_>],
     pid: u32,
+    xid: u64,
     scoped_frame: Option<usize>,
 ) -> Option<(i32, i32)> {
     if !crate::wayland::is_wayland() {
@@ -2720,17 +3127,40 @@ async fn web_document_origin_for_visited(
     let compositor = sway_window
         .as_ref()
         .map(|window| (window.content_x, window.content_y));
-    let document = visited
-        .iter()
-        .filter(|node| scoped_frame.is_none_or(|scope| node.frame_ordinal == scope))
-        .filter(|node| node.has_component)
-        .filter(|node| is_document_role(&node.role) || node.in_web_doc)
-        .min_by_key(|node| node.depth);
+    let document_is_separate = visited.iter().any(|node| {
+        scoped_frame.is_none_or(|scope| node.frame_ordinal == scope) && node.on_web_process_bus
+    });
+    // Only a correlated AX frame proves these document dimensions belong to
+    // the named client; an application-wide walk could select a sibling.
+    let hyprland_window = if document_is_separate
+        && scoped_frame.is_some()
+        && xid != 0
+        && crate::wayland::hyprland::is_session()
+    {
+        crate::wayland::hyprland::accessibility_window(xid, pid)
+            .map(|window| (window.address, window.pid, window.width, window.height))
+    } else {
+        None
+    };
+    // Hyprland's inferred inset must use dimensions from the WebProcess whose
+    // descendants receive that inset, not a shallower application-bus document.
+    let document = select_web_document(
+        visited
+            .iter()
+            .filter(|node| scoped_frame.is_none_or(|scope| node.frame_ordinal == scope))
+            .filter(|node| node.has_component)
+            .filter(|node| is_document_role(&node.role) || node.in_web_doc)
+            .map(|node| (node, node.depth, node.on_web_process_bus)),
+        hyprland_window.is_some(),
+    );
     let document = if let Some(document) = document {
         match call(document.acc.proxies()).await {
             Some(Ok(proxies)) => match call(proxies.component()).await {
                 Some(Ok(component)) => match call(component.get_extents(CoordType::Window)).await {
                     Some(Ok((x, y, width, height))) if x >= 0 && y >= 0 => {
+                        dlog!(
+                            "Wayland web document extents: target={xid:#x} pid={pid} document=({x},{y},{width},{height}) hyprland={hyprland_window:?}"
+                        );
                         let inferred_top = match (compositor, sway_window.as_ref()) {
                             (Some((_, 0)), Some(window))
                                 if width > 0
@@ -2743,7 +3173,13 @@ async fn web_document_origin_for_visited(
                             }
                             _ => 0,
                         };
-                        Some((x, y.max(inferred_top)))
+                        let top = hyprland_document_top_inset(
+                            (xid, pid),
+                            hyprland_window,
+                            (x, y, width, height),
+                        )
+                        .unwrap_or(y.max(inferred_top));
+                        Some((x, top))
                     }
                     _ => None,
                 },
@@ -2754,9 +3190,6 @@ async fn web_document_origin_for_visited(
     } else {
         None
     };
-    let document_is_separate = visited.iter().any(|node| {
-        scoped_frame.is_none_or(|scope| node.frame_ordinal == scope) && node.on_web_process_bus
-    });
     let combined = combine_wayland_content_offsets(compositor, document, document_is_separate);
     dlog!(
         "Wayland web content offset: compositor={compositor:?} document={document:?} separate_process={document_is_separate} combined={combined:?}"
@@ -2799,6 +3232,36 @@ fn rebase_renderer_window_offset(
         }
     }
     offset
+}
+
+fn project_screen_extents(
+    (x, y, w, h): (i32, i32, i32, i32),
+    (offset_x, offset_y): (i32, i32),
+    document_origin: Option<(i32, i32)>,
+) -> Option<(i32, i32, u32, u32)> {
+    // Reject unrealized-widget sentinels before applying any offsets.
+    if !crate::snapshot_queries::plausible_raw_extents((x, y, w, h)) {
+        return None;
+    }
+    let (document_x, document_y) = document_origin.unwrap_or((0, 0));
+    Some((
+        x + offset_x + document_x,
+        y + offset_y + document_y,
+        w as u32,
+        h as u32,
+    ))
+}
+
+fn scoped_component_nodes<'a, T>(
+    nodes: &'a [T],
+    scoped_frame: Option<usize>,
+    component: impl Fn(&T) -> (usize, bool) + 'a,
+) -> impl Iterator<Item = (usize, &'a T)> + 'a {
+    // Filter after enumeration: public element indices belong to the whole app.
+    nodes.iter().enumerate().filter(move |(_, node)| {
+        let (frame, has_component) = component(node);
+        has_component && scoped_frame.is_none_or(|scope| scope == frame)
+    })
 }
 
 /// Screen-coordinate bounds for the exact visited sequence rendered into the
@@ -2921,7 +3384,7 @@ async fn element_bounds_for_visited(
     // descendants only. Electron commonly contributes zero for both; WebKitGTK
     // under Sway needs the sum.
     let web_document_origin = if offset.is_some() {
-        web_document_origin_for_visited(visited, pid, scoped_frame).await
+        web_document_origin_for_visited(visited, pid, xid, scoped_frame).await
     } else {
         None
     };
@@ -2942,56 +3405,38 @@ async fn element_bounds_for_visited(
     // in time, but do not impose an index-based node cap: a cap silently
     // stripped frames from valid controls later in renderer trees and
     // made PX targeting depend on DOM order.
-    let deadline = std::time::Instant::now() + Duration::from_secs(20);
-    let mut out = Vec::with_capacity(action_nodes.len());
-    for (idx, node) in action_nodes.iter().enumerate() {
-        if scoped_frame.is_some_and(|scope| node.frame_ordinal != scope) {
-            continue;
-        }
-        if std::time::Instant::now() >= deadline {
-            dlog!(
-                "snapshot bounds: 20s budget exhausted at node {idx}; returning {} bound(s)",
-                out.len()
-            );
-            break;
-        }
-        if !node.has_component {
-            continue;
-        }
-        let proxies = match call(node.acc.proxies()).await {
-            Some(Ok(p)) => p,
-            _ => continue,
-        };
-        let comp = match call(proxies.component()).await {
-            Some(Ok(c)) => c,
-            _ => continue,
-        };
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    // Bounds are independent read-only queries. Overlap a bounded number of
+    // calls instead of serializing thousands of unrealized menu components.
+    // Preserve original indices, all extents checks, and per-call timeouts.
+    let queries = scoped_component_nodes(&action_nodes, scoped_frame, |node| {
+        (node.frame_ordinal, node.has_component)
+    })
+    .map(|(idx, node)| async move {
+        let proxies = call(node.acc.proxies()).await?.ok()?;
+        let comp = call(proxies.component()).await?.ok()?;
         if let Some(Ok((x, y, w, h))) = call(comp.get_extents(coord)).await {
-            // Unrealized widgets (e.g. items inside closed menus/popovers)
-            // report GetExtents as the i32::MIN sentinel and/or a degenerate
-            // 0x0 / 1x1 size. Emitting those poisons downstream consumers
-            // (overlay renderers, click targeting), so keep only elements
-            // with plausible on-screen geometry. (Validate the raw extents,
-            // before applying the screen offset, so the sentinel check still
-            // catches unrealized widgets.)
-            if x == i32::MIN || y == i32::MIN || x < -16384 || y < -16384 || w <= 1 || h <= 1 {
-                continue;
-            }
-            let (document_x, document_y) = if node.in_web_doc {
-                web_document_origin.unwrap_or((0, 0))
+            let document_origin = if node.in_web_doc {
+                web_document_origin
             } else {
-                (0, 0)
+                None
             };
-            out.push((
-                idx,
-                x + offset_x + document_x,
-                y + offset_y + document_y,
-                w as u32,
-                h as u32,
-            ));
+            return project_screen_extents((x, y, w, h), (offset_x, offset_y), document_origin)
+                .map(|bounds| (idx, bounds));
         }
+        None
+    });
+    let collected = crate::snapshot_queries::collect_indexed(queries, deadline).await;
+    if tokio::time::Instant::now() >= deadline {
+        dlog!(
+            "snapshot bounds: 20s budget exhausted; returning {} bound(s)",
+            collected.len()
+        );
     }
-    out
+    collected
+        .into_iter()
+        .map(|(idx, (x, y, w, h))| (idx, x, y, w, h))
+        .collect()
 }
 
 #[cfg(test)]
@@ -3102,9 +3547,11 @@ mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_web_process_bus, prefer_authoritative_wayland_origin, rebase_renderer_window_offset,
-        screen_extent_rebase, select_click_target, ApplicationSelection,
+        hyprland_document_top_inset, is_activation_action, is_enabled_state,
+        is_indexable_capabilities, is_passive_role, is_web_process_bus,
+        prefer_authoritative_wayland_origin, project_screen_extents, rebase_renderer_window_offset,
+        scoped_component_nodes, screen_extent_rebase, select_click_target, select_web_document,
+        ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -3321,6 +3768,53 @@ mod coord_tests {
     }
 
     #[test]
+    fn point_hit_combines_negative_renderer_origin_and_web_process_inset() {
+        let offset = rebase_renderer_window_offset((100, 50), Some((-8, -29)));
+        let document = combine_wayland_content_offsets(None, Some((0, 47)), true);
+        let (x, y, w, h) = project_screen_extents((450, 270, 40, 20), offset, document).unwrap();
+        assert_eq!((x, y, w, h), (558, 396, 40, 20));
+        // Keep the application-wide index and prefer the button over its label.
+        let frames = [(82, x, y, w, h, false), (83, x + 1, y + 1, 38, 18, true)];
+        assert_eq!(select_click_target(&frames, 569, 404), Some(82));
+        assert_eq!(select_click_target(&frames, 569, 375), None);
+        assert_eq!(
+            project_screen_extents((450, 270, 40, 20), offset, None),
+            Some((558, 349, 40, 20))
+        );
+    }
+
+    #[test]
+    fn point_hit_projection_rejects_unrealized_extents_before_offsets() {
+        for raw in [(i32::MIN, 0, 40, 20), (0, i32::MIN, 40, 20), (0, 0, 1, 1)] {
+            assert_eq!(project_screen_extents(raw, (108, 79), Some((0, 47))), None);
+        }
+    }
+
+    #[test]
+    fn scoped_bounds_keep_application_indices_and_original_target_nodes() {
+        let nodes = [
+            (0, true, "sibling button"),
+            (1, false, "target without geometry"),
+            (1, true, "target button"),
+            (0, true, "sibling entry"),
+            (1, true, "target entry"),
+        ];
+        let scoped: Vec<_> = scoped_component_nodes(&nodes, Some(1), |node| (node.0, node.1))
+            .map(|(index, node)| (index, node.2))
+            .collect();
+        assert_eq!(scoped, [(2, "target button"), (4, "target entry")]);
+        assert_eq!(nodes[scoped[0].0].2, "target button");
+        let all: Vec<_> = scoped_component_nodes(&nodes, None, |node| (node.0, node.1))
+            .map(|(index, _)| index)
+            .collect();
+        assert_eq!(all, [0, 2, 3, 4]);
+        assert_eq!(
+            scoped_component_nodes(&nodes, Some(2), |node| (node.0, node.1)).count(),
+            0
+        );
+    }
+
+    #[test]
     fn compositor_origin_wins_over_stale_accessibility_observation() {
         assert_eq!(
             prefer_authoritative_wayland_origin(Some((0, 0)), Some((120, 120))),
@@ -3347,6 +3841,79 @@ mod coord_tests {
             Some((0, 47))
         );
         assert_eq!(combine_wayland_content_offsets(None, None, true), None);
+    }
+
+    #[test]
+    fn hyprland_document_selection_requires_its_own_web_process_bus() {
+        let mixed_bus_documents = [("application", 1, false), ("web-process", 3, true)];
+        assert_eq!(
+            select_web_document(mixed_bus_documents.into_iter(), true),
+            Some("web-process")
+        );
+        // Sway retains its existing shallowest-document selection.
+        assert_eq!(
+            select_web_document(mixed_bus_documents.into_iter(), false),
+            Some("application")
+        );
+        assert_eq!(
+            select_web_document([("application", 1, false)].into_iter(), true),
+            None
+        );
+    }
+
+    #[test]
+    fn hyprland_document_infers_csd_without_double_counting() {
+        let target = (0x1234_5678_9abc, 42);
+        let window = Some((target.0, target.1, 940, 700));
+        for y in [0, 20, 47] {
+            assert_eq!(
+                hyprland_document_top_inset(target, window, (0, y, 940, 653)),
+                Some(47)
+            );
+        }
+        assert_eq!(
+            combine_wayland_content_offsets(None, Some((0, 47)), false),
+            None
+        );
+    }
+
+    #[test]
+    fn hyprland_document_rejects_invalid_or_partial_dimensions() {
+        let target = (0x1234_5678_9abc, 42);
+        let window = Some((target.0, target.1, 940, 700));
+        for document in [
+            (0, 0, 0, 653),
+            (0, 0, 940, 0),
+            (0, 0, -1, 653),
+            (0, 0, 940, -1),
+            (0, 0, 935, 653),
+            (0, 0, 945, 653),
+            (0, 0, 940, 700),
+            (0, 0, 940, 701),
+            (0, 0, 940, 500),
+            (1, 0, 940, 653),
+            (0, -1, 940, 653),
+        ] {
+            assert_eq!(hyprland_document_top_inset(target, window, document), None);
+        }
+    }
+
+    #[test]
+    fn hyprland_document_requires_full_address_and_pid() {
+        let target = (0x1234_5678_9abc, 42);
+        let document = (0, 0, 940, 653);
+        for window in [
+            None,
+            Some((0x5678_9abc, 42, 940, 700)),
+            Some((0x1234_5678_9abd, 42, 940, 700)),
+            Some((target.0, 43, 940, 700)),
+        ] {
+            assert_eq!(hyprland_document_top_inset(target, window, document), None);
+        }
+        assert_eq!(
+            hyprland_document_top_inset((0, 42), Some((0, 42, 940, 700)), document),
+            None
+        );
     }
 
     #[test]

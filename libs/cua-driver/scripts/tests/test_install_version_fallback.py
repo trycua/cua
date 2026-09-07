@@ -323,6 +323,72 @@ Get-LatestVersionFromApi
     assert result.stdout.strip() == "1.20.3"
 
 
+@requires_powershell
+@pytest.mark.parametrize(
+    ("gh_token", "github_token", "expected"),
+    [
+        ("  gh-secret  ", "github-secret", "Bearer gh-secret"),
+        ("   ", "  github-secret  ", "Bearer github-secret"),
+        (None, None, None),
+    ],
+)
+def test_windows_api_request_applies_token_precedence_without_leaking_errors(
+    tmp_path: Path,
+    gh_token: str | None,
+    github_token: str | None,
+    expected: str | None,
+) -> None:
+    source = _windows_source()
+    functions = "\n\n".join(
+        _extract_powershell_function(source, name)
+        for name in (
+            "Get-GitHubApiToken",
+            "Get-GitHubApiHeaders",
+            "Get-LatestVersionFromApi",
+        )
+    )
+
+    def ps_env(value: str | None) -> str:
+        if value is None:
+            return "$null"
+        return "'" + value.replace("'", "''") + "'"
+
+    result = _run_powershell(
+        tmp_path,
+        f"""
+$env:GH_TOKEN = {ps_env(gh_token)}
+$env:GITHUB_TOKEN = {ps_env(github_token)}
+$Repo = 'trycua/cua'
+$TagPrefix = 'cua-driver-rs-v'
+$NightlyTagPrefix = 'nightly-cua-driver-rs-v'
+$Script:CuaDriverRsSelectedChannel = 'stable'
+$script:ObservedAuthorization = $null
+$script:WarningMessage = $null
+function Write-Step {{ param([string]$Message) }}
+function Write-WarningStep {{ param([string]$Message) $script:WarningMessage = $Message }}
+function Invoke-RestMethod {{
+    param([string]$Uri, [hashtable]$Headers, [switch]$UseBasicParsing)
+    $script:ObservedAuthorization = $Headers['Authorization']
+    throw "request failed with $($Headers['Authorization']); env=$env:GH_TOKEN/$env:GITHUB_TOKEN"
+}}
+
+{functions}
+
+$resolved = Get-LatestVersionFromApi
+[pscustomobject]@{{
+    Authorization = $script:ObservedAuthorization
+    Warning = $script:WarningMessage
+    IsNull = $null -eq $resolved
+}} | ConvertTo-Json -Compress
+""",
+    )
+    observed = json.loads(result.stdout)
+    assert observed["Authorization"] == expected
+    assert observed["IsNull"] is True
+    assert "gh-secret" not in observed["Warning"]
+    assert "github-secret" not in observed["Warning"]
+
+
 # ---------- Unix ----------------------------------------------------------
 
 

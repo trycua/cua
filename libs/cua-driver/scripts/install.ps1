@@ -50,6 +50,8 @@
 #                                    disable GC entirely). Per-target —
 #                                    multi-arch dirs are pruned
 #                                    independently of each other.
+#   $env:GH_TOKEN / GITHUB_TOKEN     optional GitHub API bearer token for
+#                                    rate-limited networks; GH_TOKEN wins.
 #
 # Params:
 #   -Release    release to install ("latest", a bare stable version, or a
@@ -875,16 +877,21 @@ function Invoke-OldReleasesGc {
 $Script:CuaDriverRsVersionSource = $null
 $Script:CuaDriverRsReleaseTag = $null
 
-function Get-GitHubApiHeaders {
-    # GH_TOKEN matches the GitHub CLI's precedence. Keep the token in a header
-    # object only; never include it in installer diagnostics.
-    $token = $env:GH_TOKEN
-    if (-not $token) { $token = $env:GITHUB_TOKEN }
+function Get-GitHubApiToken {
+    # GH_TOKEN matches the GitHub CLI and Unix installer precedence.
+    foreach ($value in @($env:GH_TOKEN, $env:GITHUB_TOKEN)) {
+        if ($value -and $value.Trim()) { return $value.Trim() }
+    }
+    return $null
+}
 
+function Get-GitHubApiHeaders {
+    # Keep the token in a header object only; never include it in diagnostics.
     $headers = @{
         Accept = "application/vnd.github+json"
         "User-Agent" = "cua-driver-installer"
     }
+    $token = Get-GitHubApiToken
     if ($token) {
         $headers["Authorization"] = "Bearer $token"
     }
@@ -952,7 +959,13 @@ function Get-LatestVersionFromApi {
         }
     }
     catch {
-        Write-WarningStep "GitHub Releases API query failed: $($_.Exception.Message)"
+        $message = $_.Exception.Message
+        foreach ($value in @($env:GH_TOKEN, $env:GITHUB_TOKEN)) {
+            if ($value -and $value.Trim()) {
+                $message = $message.Replace($value.Trim(), '<redacted>')
+            }
+        }
+        Write-WarningStep "GitHub Releases API query failed: $message"
         return $null
     }
     if (-not $releaseMatches -or $releaseMatches.Count -eq 0) {

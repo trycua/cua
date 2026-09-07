@@ -54,10 +54,9 @@ DENIALS = frozenset(('resource_wrong_pid', 'resource_wrong_window', 'managed_den
 TOOLS = ['get_window_state', 'press_key', 'hotkey']
 MANAGED_ENV = 'CUA_DRIVER_MANAGED_POLICY_FILE'
 POLICY_ENV = (MANAGED_ENV, 'CUA_DRIVER_POLICY_FILE')
-# Bound Inkscape observations except before Select All: its shortcut grounding
-# needs trailing menu nodes omitted by the pointer-qualified projection.
-# 2,500 visited nodes retain selection status for move grounding. Keep default
-# depth and images, and fail closed if either grounding check is unavailable.
+# Bound Inkscape observations except before select and move: their grounding
+# needs trailing menu nodes and selection status that the cap can omit. Keep
+# default depth and images, and fail closed if either grounding check is unavailable.
 POLICY_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
 
 
@@ -178,7 +177,7 @@ def snapshot(client, plan, observer=None, *, stage=None, before=False):
                if row.get('pid') == plan['target']['pid']]
     assert len(matches) == 1 and matches[0].get('window_id') == plan['target']['window_id'], \
         'target is stale or ambiguous'
-    limits = ({} if before and stage == 'select' else
+    limits = ({} if before and stage in ('select', 'move') else
               POLICY_SNAPSHOT_LIMITS.get(plan['app'], {}))
     result = client.tool('get_window_state', {**plan['target'], 'session': 'policy-proof',
                          **limits})

@@ -190,7 +190,7 @@ class OracleTests(unittest.TestCase):
                             {'structuredContent': {'windows': [candidate['target']]}}, expected]
                         self.assertEqual(snapshot(client, candidate, stage=stage, before=before), expected)
                         arguments = {**candidate['target'], 'session': 'policy-proof'}
-                        if app == 'inkscape' and not (stage == 'select' and before):
+                        if app == 'inkscape' and not (stage in ('select', 'move') and before):
                             arguments['max_elements'] = 2500
                         client.tool.assert_called_with('get_window_state', arguments)
 
@@ -335,7 +335,13 @@ class OrchestrationTests(unittest.TestCase):
                     self.snapshots.append(dict(arguments))
                     result = window(candidate, stage, f'{self.name}-{self.counter}')
                     if missing_grounding == (self.name, stage):
-                        result['structuredContent'].update(elements=[], tree_markdown='')
+                        if stage == 'move':
+                            content = result['structuredContent']
+                            content['tree_markdown'] = '\n'.join(
+                                line for line in content['tree_markdown'].splitlines()
+                                if 'Rectangle  in root.' not in line)
+                        else:
+                            result['structuredContent'].update(elements=[], tree_markdown='')
                     return result
                 if failure == 'unknown':
                     self.failed = True
@@ -374,7 +380,7 @@ class OrchestrationTests(unittest.TestCase):
         self.assertTrue(all(client.closed for client in clients))
         return status, json.loads((args.evidence / 'result.json').read_text()), calls, clients
 
-    def test_inkscape_select_uses_default_snapshot_in_denial_and_control(self):
+    def test_inkscape_select_and_move_use_default_snapshots_in_denial_and_control(self):
         for case in ('managed_deny', 'resource_allow'):
             with self.subTest(case=case), tempfile.TemporaryDirectory() as temporary:
                 status, report, calls, clients = self.exercise(
@@ -383,7 +389,8 @@ class OrchestrationTests(unittest.TestCase):
             default = {**report['plan']['target'], 'session': 'policy-proof'}
             bounded = {**default, 'max_elements': 2500}
             observed = {client.name: client.snapshots for client in clients}
-            self.assertEqual(observed['control'], [default] + [bounded] * 5)
+            self.assertEqual(observed['control'],
+                             [default, bounded, default, bounded, bounded, bounded])
             self.assertEqual(observed['observer'],
                              [default, bounded] if case == 'managed_deny' else [])
             for index, (name, tool) in enumerate(calls):
@@ -406,6 +413,28 @@ class OrchestrationTests(unittest.TestCase):
             self.assertEqual([(name, tool) for name, tool in calls
                               if tool in ('press_key', 'hotkey')], expected_actions)
             self.assertNotIn('response', report['actions'][-1])
+
+    def test_inkscape_missing_selection_status_refuses_before_right_without_retry(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            status, report, calls, clients = self.exercise(
+                Path(temporary), app='inkscape', case='resource_allow',
+                missing_grounding=('control', 'move'))
+        self.assertEqual(status, 1)
+        self.assertEqual(report['error'], {
+            'type': 'GroundingUnavailable',
+            'message': 'cannot prove the single rectangle is selected before Right'})
+        self.assertEqual([(name, tool) for name, tool in calls
+                          if tool in ('press_key', 'hotkey')], [('control', 'hotkey')])
+        default = {**report['plan']['target'], 'session': 'policy-proof'}
+        control = next(client for client in clients if client.name == 'control')
+        self.assertEqual(control.snapshots,
+                         [default, {**default, 'max_elements': 2500}, default])
+        move = report['actions'][-1]
+        self.assertEqual(move['stage'], 'move')
+        self.assertEqual(move['before']['structuredContent']['elements'],
+                         INKSCAPE_SELECTED['elements'])
+        self.assertIn('spin button', move['before']['structuredContent']['tree_markdown'])
+        self.assertNotIn('response', move)
 
     def test_normal_direct_cell_checks_denial_then_saved_effect_and_closes_every_runtime(self):
         with tempfile.TemporaryDirectory() as temporary:

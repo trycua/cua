@@ -63,6 +63,9 @@ const DOCS_TSX_PATH = path.join(
 const SHARED_GENERATOR_FILES = new Set([
   'scripts/docs-generators/runner.ts',
   'scripts/docs-generators/config.json',
+  '.github/workflows/ci-check-docs.yml',
+  'docs/package.json',
+  'docs/pnpm-lock.yaml',
 ]);
 
 // ============================================================================
@@ -312,6 +315,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'docs/content/docs/use-cua-with/hermes.mdx',
       'docs/content/docs/reference/cua-driver/macos-permissions.mdx',
+      'docs/content/docs/reference/cua-driver/mcp-tools.mdx',
     ],
     []
   );
@@ -333,6 +337,13 @@ function testGeneratorRouting(config: Config): void {
     ],
     ['lume']
   );
+  for (const platform of ['linux', 'macos']) {
+    assertSelection(
+      config,
+      [`docs/content/docs/reference/cua-driver/mcp-tools-${platform}.mdx`],
+      ['cua-driver']
+    );
+  }
   assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
   assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
 

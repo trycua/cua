@@ -316,6 +316,7 @@ pub enum RefusalCode {
     BrowserInputIncomplete,
     BrowserActionUnavailable,
     WindowMinimized,
+    OffSpaceOrAxUnresolved,
 }
 
 impl RefusalCode {
@@ -338,6 +339,7 @@ impl RefusalCode {
             "browser_input_incomplete" => Some(Self::BrowserInputIncomplete),
             "browser_action_unavailable" => Some(Self::BrowserActionUnavailable),
             "window_minimized" => Some(Self::WindowMinimized),
+            "off_space_or_ax_unresolved" => Some(Self::OffSpaceOrAxUnresolved),
             _ => None,
         }
     }
@@ -1847,6 +1849,10 @@ mod tests {
             Some(RefusalCode::BackgroundUnavailable)
         );
         assert_eq!(RefusalCode::from_driver_code("background_timeout"), None);
+        assert_eq!(
+            RefusalCode::from_driver_code("off_space_or_ax_unresolved"),
+            Some(RefusalCode::OffSpaceOrAxUnresolved)
+        );
     }
 
     #[test]

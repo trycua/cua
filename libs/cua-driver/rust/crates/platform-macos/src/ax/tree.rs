@@ -154,11 +154,10 @@ pub struct TreeWalkResult {
 /// walked (plus non-window children like the menu bar). When None, all
 /// top-level children are walked.
 ///
-/// Key background-app fix: at the application root we union `AXChildren`
-/// and `AXWindows`. macOS only puts windows in `AXChildren` when the app
-/// is frontmost; `AXWindows` returns the window list regardless of focus
-/// state. Without this union, Safari / any backgrounded app returns an
-/// empty tree.
+/// At the application root we union `AXChildren` with freshly discoverable
+/// application windows. Background windows can be absent from `AXChildren`,
+/// and off-Space windows can be absent from `AXWindows` while their exact
+/// `AXMainWindow` or `AXFocusedWindow` references remain available.
 ///
 /// # Safety
 /// Calls macOS AX API. Must be called on a thread that has a CF run loop.
@@ -222,9 +221,8 @@ pub fn walk_tree_bounded(
         // the now-materialized (potentially large) tree bounded.
         super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
-        // Union AXChildren + AXWindows — the only way to see background windows.
-        // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
-        // AXWindows returns the window list regardless of activation state.
+        // Union root children with fresh window-list and main/focused candidates.
+        // Neither AXChildren nor AXWindows alone enumerates every off-Space target.
         let from_children = copy_children(app_elem);
         let from_windows = copy_ax_windows(app_elem);
 

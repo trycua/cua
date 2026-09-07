@@ -2,7 +2,7 @@
 //!
 //! Gathers the facts [`cua_driver_core::background_input`] needs about one
 //! requested `(pid, CGWindowID)` immediately before a background mutation:
-//! WindowServer ownership, fresh `AXWindows` membership (mapped through
+//! WindowServer ownership, fresh AX window candidates (mapped through
 //! `_AXUIElementGetWindow`), minimized/hidden state, competing same-pid AX
 //! top-level keyboard destinations, and addressed-element ancestry. All reads are
 //! bounded and fail closed — an unreadable fact never unlocks a route.
@@ -13,8 +13,8 @@ use cua_driver_core::background_input::{
 };
 
 use super::bindings::{
-    ax_get_window_id, copy_ax_windows, copy_bool_attr, copy_element_attr, copy_string_attr,
-    focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
+    ax_get_window_id, copy_ax_windows_with_list_count, copy_bool_attr, copy_element_attr,
+    copy_string_attr, focused_element_of_pid, AXUIElementCreateApplication, AXUIElementRef,
 };
 use crate::windows::{all_windows, resolve_window_owner, WindowOwner};
 
@@ -89,24 +89,29 @@ pub unsafe fn focused_element_in_window(pid: i32, window_id: u32) -> Option<AXUI
     }
 }
 
-/// One fresh `AXWindows` row: the mapped CGWindowID plus its minimized state.
+/// One fresh AX window candidate: the mapped CGWindowID plus its minimized state.
 /// `minimized: None` means the attribute could not be read — unknown, not
 /// "not minimized".
 struct AxWindowRecord {
     window_id: u32,
     minimized: Option<bool>,
+    listed: bool,
 }
 
-/// Map the application's fresh `AXWindows` through `_AXUIElementGetWindow`.
+/// Map the application's fresh window-list and main/focused candidates through
+/// `_AXUIElementGetWindow`.
 /// Windows whose id the SPI cannot resolve are omitted: an unmappable window
 /// can never satisfy an exact-target requirement.
 unsafe fn ax_window_records(app: AXUIElementRef) -> Vec<AxWindowRecord> {
-    copy_ax_windows(app)
+    let (windows, listed_count) = copy_ax_windows_with_list_count(app);
+    windows
         .into_iter()
-        .filter_map(|window| {
+        .enumerate()
+        .filter_map(|(index, window)| {
             let record = ax_get_window_id(window).map(|window_id| AxWindowRecord {
                 window_id,
                 minimized: copy_bool_attr(window, "AXMinimized"),
+                listed: index < listed_count,
             });
             CFRelease(window as CFTypeRef);
             record
@@ -119,7 +124,7 @@ unsafe fn ax_window_records(app: AXUIElementRef) -> Vec<AxWindowRecord> {
 /// WindowServer may expose several layer-0 compositor surfaces for one native
 /// Electron, Tauri, or WebKit window. A raw same-pid CGWindow row is therefore
 /// not enough to prove another process-scoped keyboard destination. Requiring a
-/// fresh `AXWindows` mapping preserves the fail-closed two-window guard while
+/// fresh exact AX window mapping preserves the fail-closed two-window guard while
 /// ignoring render surfaces that cannot independently become the AX key window.
 fn count_competing_keyboard_destinations(
     pid: i32,
@@ -200,7 +205,9 @@ pub fn gather_background_facts(
         ax_window_present: target.is_some(),
         target_minimized: target.and_then(|record| record.minimized),
         app_hidden,
-        competing_keyboard_destinations,
+        competing_keyboard_destinations: target
+            .filter(|target| target.listed)
+            .map(|_| competing_keyboard_destinations),
         element: element.unwrap_or(ElementAncestry::NotAddressed),
     }
 }
@@ -213,6 +220,7 @@ mod tests {
         AxWindowRecord {
             window_id,
             minimized,
+            listed: true,
         }
     }
 

@@ -1,6 +1,6 @@
 ---
-title: Forward a port from a sandbox
-description: Reach a sandbox service through a local startup mapping, a Fleet service request, or a supported tunnel transport.
+title: Connect to a sandbox service
+description: Reach a sandbox service through a Fleet service request, a local startup mapping, or a supported tunnel transport.
 ---
 
 Choose the connection method for your sandbox's transport. In `cua-sandbox`
@@ -9,10 +9,28 @@ Choose the connection method for your sandbox's transport. In `cua-sandbox`
 [Sandbox runtime support](/reference/sandbox-sdk/runtime-support#ports-and-transports)
 for the versioned transport contract.
 
+## Request a named Fleet service
+
+For a hosted Fleet guest, configure [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
+and use a pool whose guest starts the desired service. Within the claimed
+sandbox's context, send an authenticated request by service name:
+
+```python
+response = await sb.services.request('port-3000', method='GET', path='/healthz')
+response.raise_for_status()
+print(response.text)
+```
+
+An image's `.expose(3000)` declaration creates the `port-3000` service in the
+default pool template. It does not start an application on that port or create
+a localhost listener. See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
+for the complete image and claim workflow. External clients need the Fleet
+service URL and authentication; an endpoint URL is not anonymous access.
+
 ## Expose a local QEMU service at startup
 
-Declare the port on the image before starting a bare-metal QEMU VM, then read the
-host mapping from `sb.exposed_ports`. This example requires QEMU, a compatible
+For a local sandbox, declare the port on the image before starting a bare-metal
+QEMU VM, then read the host mapping from `sb.exposed_ports`. This example requires QEMU, a compatible
 host, `cua==0.1.6`, and `httpx`:
 
 ```python
@@ -54,28 +72,10 @@ For multiple ports, chain declarations such as
 `Image.linux().expose(8080).expose(9222)` and read each guest port's entry from
 `sb.exposed_ports` after startup.
 
-## Request a named Fleet service
-
-Configure [Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
-and use a pool whose guest starts the desired service. Within the claimed
-sandbox's context, send an authenticated request by service name:
-
-```python
-response = await sb.services.request('port-3000', method='GET', path='/healthz')
-response.raise_for_status()
-print(response.text)
-```
-
-An image's `.expose(3000)` declaration creates the `port-3000` service in the
-default pool template. It does not start an application on that port or create
-a localhost listener. See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
-for the complete image and claim workflow. External clients need the Fleet
-service URL and authentication; an endpoint URL is not anonymous access.
-
 ## Forward through SSH or ADB
 
-For an existing sandbox connected through `SSHTransport` or `ADBTransport`, the
-tunnel helper creates a localhost forwarding endpoint. Start the guest service
+This section applies only to an existing sandbox connected through
+`SSHTransport` or `ADBTransport`. The tunnel helper creates a localhost forwarding endpoint. Start the guest service
 first, then keep its tunnel open for as long as the client needs it:
 
 ```python

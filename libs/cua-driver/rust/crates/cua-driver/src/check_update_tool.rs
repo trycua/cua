@@ -33,7 +33,8 @@ fn def() -> &'static ToolDef {
         description: "Check the saved stable/nightly Cua Driver channel for a release on GitHub. \
              Returns current and selected channels, current and latest versions, an `update_available` boolean, \
              the install one-liner, and the release notes URL. Read-only — never \
-             installs. Mirror of `cua-driver check-update --json`."
+             installs. Pacman-owned Linux executables return package-manager guidance \
+             without checking GitHub. Mirror of `cua-driver check-update --json`."
             .into(),
         input_schema: serde_json::json!({
             "type": "object",

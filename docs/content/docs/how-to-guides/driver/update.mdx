@@ -11,6 +11,33 @@ Version numbers, timestamps, and release links in the sample output below are
 illustrative. Use your command's actual output to identify the installed and
 available releases; the 0.13.0 migration notes describe that historical upgrade.
 
+## Pacman-managed installations
+
+If pacman owns the running Cua Driver executable, use your package repository
+to update it:
+
+```bash
+sudo pacman -Syu
+```
+
+Driver does not run this command for you. It skips the upstream update banner
+and refuses its vendor installer and stable/nightly channel changes. The package
+repository controls which version is available, including its release-age policy.
+Having pacman installed alone does not change an independently installed Driver's
+update behavior.
+
+For a pacman-owned executable, `check-update`, `update`, and `update --apply`
+return an unavailable-check result with pacman guidance and a nonzero exit code.
+The CLI JSON and MCP `check_for_update` payload keep `latest_version`,
+`selected_channel`, `install_command`, and `release_notes_url` as `null`, set
+`update_available` and `cache_hit` to `false`, and explain the reason in `error`.
+This does not mean that the package is up to date: Driver does not query pacman's
+repository databases or reuse a cached GitHub release. The `source` field remains
+`github_releases`, identifying the upstream check that was not performed.
+
+The vendor update and channel instructions that follow apply to installations
+not managed by pacman.
+
 ## Before updating from 0.12.x to 0.13.0
 
 The installer command, CLI/MCP connection flow, tool names, and Python and

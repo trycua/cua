@@ -118,6 +118,7 @@ struct Process(Child, #[allow(dead_code)] tempfile::TempDir);
 impl Process {
     fn spawn(args: &[&str]) -> Self {
         let driver_home = tempfile::tempdir().expect("isolated driver state");
+        let idle_seconds = recovery_idle_seconds();
         let mut command = Command::new(env!("CARGO_BIN_EXE_cua-driver"));
         command
             .args(args)
@@ -125,6 +126,11 @@ impl Process {
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "false")
+            // This test isolates transport lifetime from intentional session expiry.
+            .env(
+                "CUA_DRIVER_RS_SESSION_IDLE_TTL_SECS",
+                (idle_seconds + 60).max(300).to_string(),
+            )
             .env("HOME", driver_home.path())
             .env("USERPROFILE", driver_home.path())
             .env("LOCALAPPDATA", driver_home.path())
@@ -151,6 +157,21 @@ impl Process {
             std::thread::sleep(Duration::from_millis(20));
         }
     }
+}
+
+fn recovery_idle_seconds() -> u64 {
+    let seconds = std::env::var("CUA_PROXY_RECOVERY_IDLE_SECONDS")
+        .map(|value| {
+            value
+                .parse::<u64>()
+                .expect("idle seconds must be an integer")
+        })
+        .unwrap_or(1);
+    assert!(
+        (1..=3600).contains(&seconds),
+        "idle seconds must be 1..=3600"
+    );
+    seconds
 }
 
 impl Drop for Process {
@@ -346,17 +367,7 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     session_active(&daemon_endpoint, "peer-client").await;
     session_active(&daemon_endpoint, "idle-client").await;
 
-    let idle_seconds = std::env::var("CUA_PROXY_RECOVERY_IDLE_SECONDS")
-        .map(|value| {
-            value
-                .parse::<u64>()
-                .expect("idle seconds must be an integer")
-        })
-        .unwrap_or(1);
-    assert!(
-        (1..=3600).contains(&idle_seconds),
-        "idle seconds must be 1..=3600"
-    );
+    let idle_seconds = recovery_idle_seconds();
     tokio::time::sleep(Duration::from_secs(idle_seconds)).await;
     drop(peer.stdin.take());
     assert!(

@@ -837,7 +837,7 @@ struct InputExperiment::Impl {
         if (lease != &c || !foreground_guard(c).can_dispatch(false)) throw ForegroundFailure{};
         if (!needs_pointer) { require_foreground(c); return; }
         foreground_activating = true;
-        Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
+        ::Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
         if (lease != &c || !foreground_guard(c).can_dispatch(false)) throw ForegroundFailure{};
         g_pSeatManager->setPointerFocus(root, local);
         foreground_activating = false;
@@ -848,7 +848,7 @@ struct InputExperiment::Impl {
         require_foreground(c);
         const Vector2D local{x + c.geometry[0] - c.geometry[4], y + c.geometry[1] - c.geometry[5]};
         if (!point(c, x, y) || c.surface.lock()->at(local, true).first != c.surface.lock()) throw ForegroundFailure{};
-        Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
+        ::Pointer::mgr()->warpTo({x + c.geometry[0], y + c.geometry[1]});
         require_foreground(c);
         for (const auto& weak : foreground_pointers) {
             const auto p = weak.lock(); if (!p || !p->good()) throw ForegroundFailure{};

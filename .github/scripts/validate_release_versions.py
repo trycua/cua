@@ -90,8 +90,11 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
         "docs/cli-reference.mdx:body": read_match(
             docs / "cli-reference.mdx", r"Documented against Cua Driver \*\*(\S+)\*\*\."
         ),
-        "docs/mcp-tools.mdx:metadata": read_match(
-            docs / "mcp-tools.mdx", r"^  Version: (\S+)$"
+        "docs/mcp-tools-macos.mdx:metadata": read_match(
+            docs / "mcp-tools-macos.mdx", r"^  Version: (\S+)$"
+        ),
+        "docs/mcp-tools-linux.mdx:metadata": read_match(
+            docs / "mcp-tools-linux.mdx", r"^  Version: (\S+)$"
         ),
     }
 

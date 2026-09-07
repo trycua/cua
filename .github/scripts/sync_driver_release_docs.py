@@ -11,7 +11,8 @@ from typing import Sequence
 
 DOC_PATHS = (
     "docs/content/docs/reference/cua-driver/cli-reference.mdx",
-    "docs/content/docs/reference/cua-driver/mcp-tools.mdx",
+    "docs/content/docs/reference/cua-driver/mcp-tools-macos.mdx",
+    "docs/content/docs/reference/cua-driver/mcp-tools-linux.mdx",
 )
 
 

@@ -366,6 +366,19 @@ approval requirement. Measure cleanup with a
 responsive compositor and report stalls separately: Stop is neither undo nor
 instantaneous cleanup under every fault.
 
+The [maintainer's passive-focus clarification](https://github.com/trycua/cua/issues/3550#issuecomment-5560882875)
+permits inert internal pointer focus to survive owner cancellation, disconnect,
+or idle expiry. This is separate from Driver's visible cursor overlay: existing
+idle fade and session-end removal remain unchanged. Release every held button
+and key, clear keyboard focus, and revoke action authority immediately. Retained
+focus must have an independent, lifetime-safe target reference, not a pointer to
+a destroyed owner or a reservation for a disconnected runtime. Continue to
+handle target destruction/replacement, geometry changes, primary and other-lane
+conflicts, and desktop/keymap/configuration transitions safely. A retained hover
+is neither admission for another action nor acknowledgement that the client has
+processed a release. Native application-state and isolation evidence remain
+required.
+
 Do not equate the private transport's cancellation messages with cancellation
 on every public transport. Direct stdio MCP executes calls serially and ignores
 cancellation notifications. An `end_session` call or input EOF waits behind the
@@ -558,6 +571,36 @@ Use the canonical commands in
 typed catalog, not replace it with an unrelated scripted demo. Do not assume
 an unmerged PR's runner is present on main.
 
+The 2026-09-07 validation-strategy decision uses
+`scripts/ci/linux/run-rust-e2e.sh` with its complete `all` suite in the prepared
+native Hyprland desktop at the exact candidate SHA. This supplies canonical
+fixture regression coverage. Preserve required cells, assertions, and evidence
+checks, and report environment failures explicitly. Ordinary GTK, Electron,
+and Tauri fixtures are outside `hyprland_compatibility.rs`'s background production
+package gate; their v3 background raw-input refusals do not establish delivered
+plugin input. Do not broaden background admission or introduce a test bypass.
+The accepted foreground scope adjustment below adds a distinct production route
+for ordinary native top-level fixtures. Its GTK3, Electron, and Tauri foreground
+cells must pass the existing complete suite without changing the runner,
+assertions, or evidence checks. These cells are not yet certified.
+
+Short production real-app smoke and instrumented isolation checks on native
+Calc `26.2.5-3` and Inkscape `1.4.4-6` remain required supporting compatibility
+evidence for actual plugin delivery, app effects, primary-seat isolation, and
+cleanup. Retain focused proof of the supported operations and two-lane behavior
+being promoted. An uninstrumented smoke without plugin transport attribution
+cannot prove continuous isolation, and an all-refusal canonical result cannot
+replace positive delivery evidence. The
+[production proof guide](../libs/cua-driver/hyprland-plugin/tests/production-proof.md)
+documents the bounded plans and their limits.
+
+Three whole repetitions of the long Python Calc/Inkscape plan, including 34
+policy cases across both apps, are no longer a merge requirement. Extended Python
+stress runs are diagnostics for specific unresolved failures. Shared policy
+coverage and focused native checks must still substantiate the claims below;
+the decision changes the test strategy, not production qualification or action
+admission. It records no completed native certification.
+
 | Gate                              | Required evidence                                                                                                                                                                                                                                                                                                                                                                                                                     |
 | --------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Protocol and authority            | Malformed/oversized requests, quota exhaustion, wrong target/epoch/sequence, expired bindings, disconnect races, and incompatible protocols refuse without unsafe dispatch. Standard/unrestricted manifest and no-manifest cases, bounded allow/deny, managed/user policy, and cached-connection re-admission prove the common contract. Public labels/arguments cannot confer ownership; policy denial causes no plugin mutation.    |
@@ -612,8 +655,9 @@ later executable, harness, or environment change. Retain sanitized results,
 environment/package identities, and source provenance. Post-merge smoke and
 release-path checks remain separate delivery requirements.
 
-Define the repeat set before execution, preserve sanitized diagnostics for
-discovery/IPC failures, and diagnose every recurrence rather than retrying a
+When a failure needs repeat diagnostics, define that repeat set before
+execution. Preserve sanitized diagnostics for discovery/IPC failures, and
+diagnose every recurrence rather than retrying a
 failed cell into a pass. Passing repeats do not identify a historical failure's
 cause. Test both an instrumented candidate for detailed event/cleanup evidence
 and an uninstrumented production package; neither portable tests nor an
@@ -660,8 +704,26 @@ owner-scoped cancellation, and restart-required package replacement. Discovery
 v2 remains unchanged. There is no automatic replay, foreground fallback, wake,
 or unlock.
 
-The decision preserves the contributor feedback and alternatives above. It
-rejects borrowing primary-seat focus and the earlier separate consent/signer
+The [2026-09-06 cleanup clarification](https://github.com/trycua/cua/issues/3550#issuecomment-5560882875)
+allows owner-independent inert pointer focus after cancellation or disconnection,
+without changing visible cursor behavior, held-state cleanup, or fresh-action
+admission. It selects an implementation direction for native verification; it
+does not certify cancellation recovery or authorize a release before the gates
+below pass.
+
+The 2026-09-07 maintainer validation-strategy addendum selects the canonical
+Linux Rust harness in native Hyprland and retires the requirement for three
+complete long Python Calc/Inkscape repetitions. Short real-app production and
+instrumented isolation evidence remains necessary to prove the actual plugin
+path within its existing qualification limits. Extended Python stress plans
+remain diagnostic. This supersedes the earlier repetition requirement while
+preserving historical results, failures, and design decisions. It adds no
+approval UI, test bypass, or new passing certification claim. Implementation
+merge still requires passing affected CI and E2E evidence; release, Fleet,
+and physical-host requirements retain their separate scope.
+
+The background decision preserves the contributor feedback and alternatives above. It
+rejects borrowing primary-seat focus for background input and the earlier separate consent/signer
 requirements. A patched compositor, direct-resource delivery, and portable
 standards work remain separate alternatives rather than silent substitutions.
 
@@ -677,3 +739,37 @@ permission-UI choices. Keep status `accepted` until the required criteria ship;
 then record completion. Certify and release the Driver/plugin dependency chain
 before publishing the final supported Fleet image. No upstream Hyprland
 endorsement or physical-host parity is implied.
+
+### Accepted exact-target foreground scope adjustment
+
+The [maintainer's foreground scope adjustment](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+accepts a separate production foreground route. It extends the accepted design
+without changing the earlier background decisions, qualification, or contributor
+credit. `HELLO` explicitly advertises `foreground_target:true`.
+`FOREGROUND_TARGET <pid> <hex-address> <capability>` binds the exact live native
+top-level surface to `primary_foreground`. Background `TARGET` remains unchanged.
+The plugin validates identity, lifetime, geometry, and route on the compositor
+thread at admission and dispatch; discovery followed by global `wtype` input is
+not an exact-target fallback.
+
+The foreground route supports the existing complete click (1), key (2), scroll
+(4), and bounded drag (8) operations and adds foreground-only activation (16)
+through `ACTIVATE <sequence> <target> <revision>`. Activation and primary-cursor
+movement are intentional. There is no focus or cursor restoration promise and
+no escalation from a refused background action. Driver's shared permission and
+lifecycle checks remain in force, without a separate approval UI.
+
+Foreground admission has no Calc/Inkscape package gate, but supports only ordinary
+native top-level surfaces. Driver expands bounded ASCII text into complete key
+operations under the exact compiled US keymap; Unicode and IME input remain
+outside scope. Held physical keys/buttons, grabs, pointer constraints, and
+drag-and-drop must refuse before primary takeover. Cancellation of foreground
+drags on primary-input and focus transitions remains under review and requires
+native verification; acceptance does not establish that behavior as proven.
+
+Native GTK3, Electron, and Tauri foreground coverage is planned. The extension
+must pass the existing complete canonical Linux Rust suite on native Hyprland at
+the candidate SHA. This adjustment neither records a passing certification nor
+changes canonical runner/tests. Background Calc/Inkscape qualification and its
+supporting isolation evidence remain required; the extension does not promote
+generic fixtures to background raw-input support.

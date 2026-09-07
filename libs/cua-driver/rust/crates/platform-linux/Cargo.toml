@@ -11,12 +11,14 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 async-trait = "0.1"
+futures-util = "0.3"
 cua-driver-core = { path = "../cua-driver-core" }
 cua-driver-contract = { path = "../cua-driver-contract" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 zeroize = { workspace = true }
 getrandom = { workspace = true }
+sha2 = { workspace = true }
 # tiny-skia for cursor rendering (shared cross-platform)
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 

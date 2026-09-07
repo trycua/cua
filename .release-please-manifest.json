@@ -1,4 +1,4 @@
 {
-  "libs/cua-driver": "0.23.2",
+  "libs/cua-driver": "0.24.0",
   "libs/lume": "0.5.3"
 }

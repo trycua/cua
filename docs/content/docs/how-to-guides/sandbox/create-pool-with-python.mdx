@@ -33,13 +33,24 @@ endpoint.
 
 ## Create and claim the pool
 
+Set a globally unique pool name that you own before running the example:
+
+```bash
+export CUA_POOL_NAME="my-team-sandbox-pool"
+export CUA_CLAIM_NAME="my-task"
+```
+
+The example uses `cua-sandbox==0.4.3`. Use `Pool.apply()` only when this script
+owns the pool configuration. For a pool managed by another process or
+Terraform, use [an existing pool](#use-an-existing-pool) instead.
+
 Save the following script as `create_pool.py`:
 
 ```python title="create_pool.py"
 # /// script
 # requires-python = ">=3.11,<3.14"
 # dependencies = [
-#   "cua-sandbox",
+#   "cua-sandbox==0.4.3",
 # ]
 # ///
 
@@ -55,7 +66,7 @@ IMAGE = (
     "@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57"
 )
 
-POOL_NAME = os.environ.get("CUA_POOL_NAME", "cua-live-main-source-manual")
+POOL_NAME = os.environ["CUA_POOL_NAME"]
 CLAIM_NAME = os.environ.get("CUA_CLAIM_NAME", POOL_NAME)
 
 
@@ -106,13 +117,75 @@ uv run create_pool.py
 If the named pool already exists, it reconciles the pool to the image, replica,
 CPU, memory, and service configuration in the script.
 
-`pool.claim()` creates or reconnects to the named claim and waits up to 900
-seconds for the `server` service on port `8000`. Exiting the `async with` block
+`pool.claim()` creates or reconnects to the named claim, waits for binding, then
+waits up to 900 seconds for the `server` service on port `8000`. The service
+timeout is separate from claim binding. Exiting the `async with` block
 releases the claim, but the pool and its one warm replica remain available for
 the next claim.
 
 The script writes `sandbox.png` in the current directory and raises an error if
 `uname -a` does not complete successfully.
+
+## Use an existing pool
+
+Replace the `Pool.apply(...)` call with a lookup to keep the pool's image,
+capacity, and services unchanged:
+
+```python
+pool = await Pool.get(POOL_NAME)
+```
+
+Keep the claim block from the example. Give concurrent tasks different claim
+names, or omit `name=` to generate one. A named claim that still exists is
+reused; once released, reusing its name creates a new claim. Reusing a pool or
+claim name does not guarantee the same VM or preserve files from a released
+claim. Copy results out before releasing it.
+
+The claim context releases even an existing claim that it successfully attaches
+to. Use it only when this task owns that claim's release. If acquisition fails,
+the SDK attempts to release a claim it just created, but leaves a pre-existing
+claim alone.
+
+## Keep a claim between processes
+
+To keep a claim after the connection closes, await the claim directly and save
+its reference before disconnecting:
+
+```python
+import json
+
+sandbox = await pool.claim(name=CLAIM_NAME, service="server", time_to_start=900)
+try:
+    Path("claim.json").write_text(json.dumps(sandbox.to_dict()))
+    result = await sandbox.shell.run("uname -a")
+    print(result.stdout)
+finally:
+    await sandbox.disconnect()
+```
+
+`disconnect()` closes the client transport and leaves the claim held. A later
+process can reconnect using the saved reference without creating a pool or
+claim:
+
+```python
+import json
+from pathlib import Path
+from cua_sandbox import Sandbox
+
+reference = json.loads(Path("claim.json").read_text())
+async with Sandbox.from_dict(reference) as sandbox:
+    result = await sandbox.shell.run("uname -a")
+    print(result.stdout)
+```
+
+This reconnect context only disconnects on exit. When the task is finished,
+call `await sandbox.close()` to release its claim. A reference does not extend
+an expiry deadline. Protect it as resource metadata and keep authenticating
+with credentials authorized for that pool.
+
+For Fleet claims, use these explicit pool and claim APIs. The legacy
+`Sandbox.list()`, `Sandbox.suspend()`, and `Sandbox.resume()` methods are not
+per-claim Fleet lifecycle controls.
 
 ## Scale the pool with claim demand
 
@@ -149,8 +222,8 @@ fixed time after creation. See
 
 ## Choose pool and claim names
 
-The defaults use the same value for the pool and claim. Override either name
-without editing the script:
+`CUA_POOL_NAME` is required. If `CUA_CLAIM_NAME` is omitted, the script uses the
+pool name for its claim. Override either name without editing the script:
 
 ```bash
 export CUA_POOL_NAME="my-sandbox-pool"
@@ -158,8 +231,8 @@ export CUA_CLAIM_NAME="my-sandbox-claim"
 uv run create_pool.py
 ```
 
-Use stable names when later runs should reconcile the same pool and reuse the
-same claim identity. Names must be lowercase DNS labels.
+Use a stable pool name for shared capacity and a distinct claim name for each
+independent task. Names must be lowercase DNS labels.
 
 ## Pool names are globally unique
 
@@ -173,8 +246,8 @@ pool = await Pool.apply(image, name="my-team-windows-pool")
 sandbox = await Sandbox.create(pool=pool, name="my-claim")
 ```
 
-If the name you pick already belongs to another account, the SDK raises
-`PoolAccessDeniedError` explaining that the name is taken:
+If the name belongs to another account, the SDK can raise
+`PoolAccessDeniedError` with a name-collision hint:
 
 ```text
 PoolAccessDeniedError: Fleet denied create pool on pool namespace
@@ -184,11 +257,14 @@ try a new pool name. If that does not work, contact support on Discord:
 https://discord.gg/mVnXXpdE85
 ```
 
-Retrying does not help, and neither does claiming with fresh claim names: the
-conflict is on the pool and its namespace, not the claim. Choose a different
-pool name. Claim names never have this problem — they only need to be unique
-inside your own pool's namespace, which is why the SDK generates random
-`claim-<petname>` claims for you but never generates pool names.
+For a confirmed name collision, choose another pool name; changing claim names
+does not fix a pool namespace conflict. Claim names are scoped to their pool's
+namespace. The SDK generates random `claim-<petname>` claim names when omitted.
+
+The exception's name-collision hint is not a diagnosis for every HTTP 403.
+Inspect the operation and response body: a payment requirement or template
+policy denial needs a different action. See
+[Troubleshoot Fleet pools and claims](/how-to-guides/sandbox/troubleshoot-fleet-pools).
 
 `Sandbox.ephemeral(image)` remains a one-liner: it creates a disposable pool
 under a random `cua-eph-<hex>` name and deletes it on exit. Passing
@@ -196,6 +272,18 @@ under a random `cua-eph-<hex>` name and deletes it on exit. Passing
 
 ## Delete the pool
 
-The example intentionally leaves the pool warm. If you no longer need it, call
-`await pool.delete()` after the claim context exits. This deletes the pool and
-the template created by that `Pool.apply()` call.
+The example intentionally leaves the pool warm, consuming capacity after the
+script exits. When you own the pool and all of its users have finished, call
+`await pool.delete()` after releasing every claim. Pool deletion also deletes
+the pool namespace and its remaining resources. Do not put it in a worker's
+per-task cleanup for a shared pool.
+
+`Pool.apply()` tracks its reconciled template for cleanup, including when that
+template already existed. In `cua-sandbox==0.4.3`, a template reconciliation
+failure also triggers an attempt to delete the reconciled pool. It is not a
+transaction that preserves an existing pool on failure. Use `Pool.get()` when
+you only need to consume existing capacity.
+
+If a process exits before cleanup completes, follow
+[Recover interrupted cleanup](/how-to-guides/sandbox/troubleshoot-fleet-pools#recover-interrupted-cleanup).
+Do not rerun provisioning merely to obtain a handle to delete.

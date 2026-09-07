@@ -3,6 +3,16 @@ cmake_minimum_required(VERSION 3.30)
 project(cua_hyprland_plugin VERSION 0.1.0 LANGUAGES CXX)
 
 option(CUA_HYPRLAND_BUILD_PLUGIN "Build the ABI-pinned Hyprland plugin" ON)
+option(CUA_HYPRLAND_INPUT "Build trusted-local per-action input protocol v3 candidate" OFF)
+option(CUA_HYPRLAND_INPUT_TRACE "Instrument v3 input for native certification only" OFF)
+option(CUA_HYPRLAND_TEST_INPUT "Build nonshipping isolated-input VM experiment" OFF)
+if(CUA_HYPRLAND_INPUT AND CUA_HYPRLAND_TEST_INPUT)
+    message(FATAL_ERROR "Production v3 and signed experimental input are mutually exclusive")
+endif()
+if(CUA_HYPRLAND_INPUT_TRACE AND NOT CUA_HYPRLAND_INPUT)
+    message(FATAL_ERROR "Input trace instrumentation requires CUA_HYPRLAND_INPUT")
+endif()
+set(CUA_HYPRLAND_TEST_OPERATOR_KEY "" CACHE STRING "Test operator Ed25519 public key (hex); never a private key")
 set(CUA_HYPRLAND_EXPECTED_VERSION "" CACHE STRING
     "Require an exact hyprland pkg-config version when building the plugin")
 
@@ -30,6 +40,36 @@ cua_hyprland_harden(cua_hyprland_protocol)
 set_target_properties(cua_hyprland_protocol PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(BUILD_TESTING)
+    add_executable(cua_hyprland_foreground_route_test tests/foreground_route_test.cpp)
+    target_compile_features(cua_hyprland_foreground_route_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_foreground_route_test PRIVATE src)
+    target_compile_options(cua_hyprland_foreground_route_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_foreground_route_test COMMAND cua_hyprland_foreground_route_test)
+
+    add_executable(cua_hyprland_passive_pointer_target_test tests/passive_pointer_target_test.cpp)
+    target_compile_features(cua_hyprland_passive_pointer_target_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_passive_pointer_target_test PRIVATE src)
+    target_compile_options(cua_hyprland_passive_pointer_target_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_passive_pointer_target_test COMMAND cua_hyprland_passive_pointer_target_test)
+
+    add_executable(cua_hyprland_input_client_deadline_test tests/input_client_deadline_test.cpp)
+    target_compile_features(cua_hyprland_input_client_deadline_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_input_client_deadline_test PRIVATE src)
+    target_compile_options(cua_hyprland_input_client_deadline_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_input_client_deadline_test COMMAND cua_hyprland_input_client_deadline_test)
+
+    add_executable(cua_hyprland_input_grant_test tests/input_grant_test.cpp)
+    target_compile_features(cua_hyprland_input_grant_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_input_grant_test PRIVATE src)
+    target_compile_options(cua_hyprland_input_grant_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_input_grant_test COMMAND cua_hyprland_input_grant_test)
+
+    add_executable(cua_hyprland_drag_geometry_test tests/drag_geometry_test.cpp)
+    target_compile_features(cua_hyprland_drag_geometry_test PRIVATE cxx_std_26)
+    target_include_directories(cua_hyprland_drag_geometry_test PRIVATE src)
+    target_compile_options(cua_hyprland_drag_geometry_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+    add_test(NAME cua_hyprland_drag_geometry_test COMMAND cua_hyprland_drag_geometry_test)
+
     add_test(NAME cua_hyprland_cmake_api_test
         COMMAND ${CMAKE_COMMAND}
             -S ${CMAKE_CURRENT_SOURCE_DIR}/tests/cmake-api
@@ -82,6 +122,34 @@ if(UNIX)
     set_target_properties(cua_hyprland_transport PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
     if(BUILD_TESTING)
+        foreach(lifetime_test IN ITEMS owned_socket_path seat_lifetime)
+            add_executable(cua_hyprland_${lifetime_test}_test tests/${lifetime_test}_test.cpp)
+            target_compile_features(cua_hyprland_${lifetime_test}_test PRIVATE cxx_std_26)
+            target_include_directories(cua_hyprland_${lifetime_test}_test PRIVATE src)
+            target_compile_options(cua_hyprland_${lifetime_test}_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+            add_test(NAME cua_hyprland_${lifetime_test}_test COMMAND cua_hyprland_${lifetime_test}_test)
+        endforeach()
+        add_executable(cua_hyprland_plugin_input_lifetime_test
+            tests/plugin_input_lifetime_test.cpp src/plugin.cpp)
+        target_compile_features(cua_hyprland_plugin_input_lifetime_test PRIVATE cxx_std_26)
+        target_include_directories(cua_hyprland_plugin_input_lifetime_test PRIVATE tests tests/mock-hyprland include src)
+        target_compile_definitions(cua_hyprland_plugin_input_lifetime_test PRIVATE
+            CUA_HYPRLAND_PLUGIN_VERSION="${PROJECT_VERSION}" CUA_HYPRLAND_SOCKET1_API=0 CUA_HYPRLAND_TEST_INPUT=1)
+        target_compile_options(cua_hyprland_plugin_input_lifetime_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror -Wno-return-type-c-linkage)
+        target_link_libraries(cua_hyprland_plugin_input_lifetime_test PRIVATE cua_hyprland_transport)
+        add_test(NAME cua_hyprland_plugin_input_lifetime_test COMMAND cua_hyprland_plugin_input_lifetime_test)
+        add_executable(cua_hyprland_plugin_v3_lifetime_test
+            tests/plugin_input_lifetime_test.cpp src/plugin.cpp)
+        target_compile_features(cua_hyprland_plugin_v3_lifetime_test PRIVATE cxx_std_26)
+        target_include_directories(cua_hyprland_plugin_v3_lifetime_test PRIVATE tests tests/mock-hyprland include src)
+        target_compile_definitions(cua_hyprland_plugin_v3_lifetime_test PRIVATE
+            CUA_HYPRLAND_PLUGIN_VERSION="${PROJECT_VERSION}" CUA_HYPRLAND_SOCKET1_API=0 CUA_HYPRLAND_INPUT=1)
+        target_compile_options(cua_hyprland_plugin_v3_lifetime_test PRIVATE
+            -Wall -Wextra -Wpedantic -Werror -Wno-return-type-c-linkage)
+        target_link_libraries(cua_hyprland_plugin_v3_lifetime_test PRIVATE cua_hyprland_transport)
+        add_test(NAME cua_hyprland_plugin_v3_lifetime_test COMMAND cua_hyprland_plugin_v3_lifetime_test)
+
         add_executable(cua_hyprland_transport_test tests/transport_test.cpp)
         target_compile_options(cua_hyprland_transport_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
         target_link_libraries(cua_hyprland_transport_test PRIVATE cua_hyprland_transport)
@@ -138,6 +206,35 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
     endif()
 
     add_library(cua_hyprland_plugin MODULE src/plugin.cpp)
+    if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
+        if(NOT HYPRLAND_VERSION STREQUAL "0.56.2")
+            message(FATAL_ERROR "Input is pinned to Hyprland 0.56.2")
+        endif()
+        target_sources(cua_hyprland_plugin PRIVATE src/input_experiment.cpp)
+    endif()
+    if(CUA_HYPRLAND_INPUT)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE CUA_HYPRLAND_INPUT=1)
+    endif()
+    if(CUA_HYPRLAND_INPUT_TRACE OR CUA_HYPRLAND_TEST_INPUT)
+        target_sources(cua_hyprland_plugin PRIVATE src/primary_trace.cpp)
+    endif()
+    if(CUA_HYPRLAND_INPUT_TRACE)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE CUA_HYPRLAND_INPUT_TRACE=1)
+    endif()
+    if(CUA_HYPRLAND_TEST_INPUT)
+        if(NOT CUA_HYPRLAND_TEST_OPERATOR_KEY MATCHES "^[0-9a-f]+$")
+            message(FATAL_ERROR "Test input requires a lowercase Ed25519 public key")
+        endif()
+        string(LENGTH "${CUA_HYPRLAND_TEST_OPERATOR_KEY}" key_length)
+        if(NOT key_length EQUAL 64)
+            message(FATAL_ERROR "Test operator public key must be 32 bytes")
+        endif()
+        find_package(OpenSSL REQUIRED)
+        target_compile_definitions(cua_hyprland_plugin PRIVATE
+            CUA_HYPRLAND_TEST_INPUT=1
+            CUA_HYPRLAND_TEST_OPERATOR_KEY="${CUA_HYPRLAND_TEST_OPERATOR_KEY}")
+        target_link_libraries(cua_hyprland_plugin PRIVATE OpenSSL::Crypto)
+    endif()
     target_compile_features(cua_hyprland_plugin PRIVATE cxx_std_26)
     target_compile_definitions(cua_hyprland_plugin PRIVATE
         CUA_HYPRLAND_PLUGIN_VERSION="${PROJECT_VERSION}"
@@ -158,6 +255,16 @@ if(CUA_HYPRLAND_BUILD_PLUGIN)
         CXX_VISIBILITY_PRESET hidden
         PREFIX ""
         OUTPUT_NAME "cua-hyprland-plugin")
+    if(CUA_HYPRLAND_TEST_INPUT OR CUA_HYPRLAND_INPUT)
+        # Hyprland exports inline manager globals. Hidden visibility would bind
+        # a private null copy instead of the running compositor's managers.
+        # GNU-unique definitions also pin a module in memory across dlclose.
+        set_target_properties(cua_hyprland_plugin PROPERTIES CXX_VISIBILITY_PRESET default)
+        target_compile_options(cua_hyprland_plugin PRIVATE -fno-gnu-unique)
+        # Retired seat resources must accept late client release requests after
+        # global removal. Keep their inert callbacks mapped until process exit.
+        target_link_options(cua_hyprland_plugin PRIVATE -Wl,-z,nodelete)
+    endif()
 
     if(NOT CMAKE_READELF)
         message(FATAL_ERROR "readelf is required to verify the plugin C++ runtime")

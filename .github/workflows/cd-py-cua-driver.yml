@@ -39,19 +39,22 @@ jobs:
         id: version
         env:
           GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ "${{ github.event_name }}" == "workflow_dispatch" ]; then
-            VERSION="${{ inputs.version }}"
+          if [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            VERSION="$INPUT_VERSION"
             if [ -z "$VERSION" ]; then
               VERSION=$(sed -n -E 's/^version = "([^"]+)"/\1/p' libs/cua-driver/rust/Cargo.toml | head -1)
             fi
-            SHOULD_PUBLISH="true"
+            TAG="cua-driver-rs-v$VERSION"
           else
             # Publish dispatches run from main, so workflow_run.head_sha is the
             # workflow revision rather than the immutable release tag. Resolve
             # those runs from the exact metadata artifact produced by the
             # successful release job.
-            RUN_ID="${{ github.event.workflow_run.id }}"
             if ! echo "$RUN_ID" | grep -qE '^[0-9]+$'; then
               echo "Invalid workflow run ID: $RUN_ID" >&2
               exit 1
@@ -63,7 +66,7 @@ jobs:
               > "$ARTIFACTS_FILE"
             mapfile -t RELEASE_VERSIONS < <(
               sed -nE \
-                's/^cua-driver-release-metadata-([0-9]+\.[0-9]+\.[0-9]+([+-][0-9A-Za-z.-]+)?)$/\1/p' \
+                's/^cua-driver-release-metadata-([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?)$/\1/p' \
                 "$ARTIFACTS_FILE" | sort -u
             )
 
@@ -78,7 +81,6 @@ jobs:
               # Tag-triggered candidate builds do not run the release job and
               # therefore have no release metadata artifact. Preserve the tag
               # SHA fallback so those runs continue to skip until publication.
-              HEAD_SHA="${{ github.event.workflow_run.head_sha }}"
               if ! echo "$HEAD_SHA" | grep -qE '^[0-9a-f]{40}$'; then
                 echo "Invalid SHA format: $HEAD_SHA" >&2
                 exit 1
@@ -88,15 +90,28 @@ jobs:
               VERSION="${TAG#cua-driver-rs-v}"
             fi
 
-            if [ -n "$TAG" ] && gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-              SHOULD_PUBLISH="true"
-            elif [ -n "$TAG" ]; then
-              echo "GitHub Release $TAG is not available; skipping SDK publish."
-              SHOULD_PUBLISH="false"
-            else
+            if [ -z "$TAG" ]; then
               VERSION="0.0.0"
-              SHOULD_PUBLISH="false"
             fi
+          fi
+
+          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?(\+[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid Cua Driver version: $VERSION" >&2
+            exit 1
+          fi
+          SHOULD_PUBLISH="false"
+          # Authenticated release reads also find drafts. Only the exact,
+          # published component release may feed either SDK publisher.
+          if [ -n "$TAG" ] && RELEASE_METADATA=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json tagName,isDraft) &&
+            jq -e -s --arg tag "$TAG" \
+              'length == 1 and (.[0] | type == "object" and .tagName == $tag and .isDraft == false)' \
+              <<< "$RELEASE_METADATA" >/dev/null 2>&1; then
+            SHOULD_PUBLISH="true"
+          elif [ "$EVENT_NAME" == "workflow_dispatch" ]; then
+            echo "GitHub Release $TAG must be published before SDK recovery." >&2
+            exit 1
+          else
+            echo "GitHub Release $TAG is not verified as published; skipping SDK publish."
           fi
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
           echo "tag=cua-driver-rs-v$VERSION" >> "$GITHUB_OUTPUT"

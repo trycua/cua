@@ -42,8 +42,11 @@ jobs:
         run: |
           python3 -c 'import ast; from pathlib import Path; [ast.parse(p.read_text()) for p in Path("tests").glob("*.py")]'
           bash -n packaging/arch/PKGBUILD
+          bash -n packaging/release/PKGBUILD.in
       - name: Check lifecycle runner cleanup
         run: python3 -m unittest discover -s tests -p '*_test.py' -v
+      - name: Check pinned source-release contracts
+        run: python3 -m unittest discover -s packaging/release -p 'test_*.py' -v
       # No real Hyprland headers, module load, or desktop certification in this job.
       - name: Configure unit and mock tests
         run: |

@@ -332,6 +332,11 @@
         const entry = { text: (element.textContent || '').trim() };
         if ('value' in element) entry.value = element.value;
         if ('checked' in element) entry.checked = element.checked;
+        if (element.dataset.cuaId === 'scroll-tall') {
+          // Scroll-event mirrors can lag the actual DOM offset.
+          entry.scrollTop = element.scrollTop;
+          entry.clientHeight = element.clientHeight;
+        }
         state[element.dataset.cuaId] = entry;
       });
       if (window.cuaE2E?.publishFixtureState) {

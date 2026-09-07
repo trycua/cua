@@ -113,6 +113,12 @@ impl ForegroundSentinel {
         let focus_deadline = Instant::now() + Duration::from_secs(10);
         if is_wayland_session() {
             wait_for_journal(&journal_path, focus_deadline, r#""kind":"ready""#, "ready");
+            #[cfg(target_os = "linux")]
+            if hyprland::is_session() {
+                target
+                    .wait_for_hyprland_sentinel_geometry()
+                    .map_err(|error| error.to_string())?;
+            }
             try_activate_native_foreground(driver, target)?;
             // Electron may already be focused before its preload listener is ready.
             // The compositor observation is the authoritative Wayland focus gate.
@@ -268,7 +274,7 @@ impl ForegroundSentinel {
         #[cfg(target_os = "linux")]
         focus_sway_target(driver, background_target)?;
         if is_wayland_session() {
-            wait_for_native_focus_lost(self.target)?;
+            wait_for_native_focus_lost(self.target, background_target)?;
         } else {
             wait_for_event(&self.journal_path, "blur", Duration::from_secs(3))?;
             let (_, focus_violations) = self.observe();
@@ -1012,8 +1018,15 @@ fn wait_for_native_focus_stable(target: TargetWindow) {
 }
 
 #[cfg(target_os = "linux")]
-fn wait_for_native_focus_lost(target: TargetWindow) -> Result<(), String> {
+fn wait_for_native_focus_lost(
+    target: TargetWindow,
+    background_target: TargetWindow,
+) -> Result<(), String> {
     use crate::observer::{ObserverBackend, TargetZ};
+
+    if hyprland::is_session() {
+        return hyprland::wait_for_focus_transfer(target, background_target);
+    }
 
     let backend = NativeObserver::new();
     let deadline = Instant::now() + Duration::from_secs(3);
@@ -1035,7 +1048,10 @@ fn wait_for_native_focus_lost(target: TargetWindow) -> Result<(), String> {
 }
 
 #[cfg(not(target_os = "linux"))]
-fn wait_for_native_focus_lost(_target: TargetWindow) -> Result<(), String> {
+fn wait_for_native_focus_lost(
+    _target: TargetWindow,
+    _background_target: TargetWindow,
+) -> Result<(), String> {
     Err("native Wayland focus observation is only available on Linux".to_owned())
 }
 

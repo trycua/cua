@@ -859,6 +859,17 @@ fn invoke_operation(
                 "GTK3 popover click failed: {}",
                 response.text()
             );
+            if mode == "foreground"
+                && platform_linux::wayland::wayland_input_enabled()
+                && platform_linux::wayland::hyprland::is_session()
+            {
+                assert_eq!(
+                    response.action_route(),
+                    Some("accessibility"),
+                    "GTK3 popover must use its semantic action: {}",
+                    response.raw
+                );
+            }
             wait_for_state(driver, pid, window_id, expected);
             assert_popover_marker(driver, pid, window_id);
             return false;

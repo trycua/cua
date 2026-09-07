@@ -135,6 +135,7 @@ class CBoolValue : public IValue {
     const std::type_info* underlying() const override { return &typeid(Config::BOOL); }
     void commence() override {}
     Config::BOOL value() const { return m_value; }
+    void set_mock_value(Config::BOOL value) { m_value = value; }
 
   private:
     Config::BOOL m_value;
@@ -235,12 +236,14 @@ inline std::string runtime_abi_hash = __hyprland_api_get_client_hash();
 inline SP<IPC::Socket1::SCommand> registered_command;
 inline SP<SHyprCtlCommand> registered_legacy_command;
 inline bool config_registration_succeeds = true;
+inline SP<Config::Values::CBoolValue> registered_bool;
 
 inline SVersionInfo getHyprlandVersion(HANDLE) {
     return runtime_version;
 }
 
-inline bool addConfigValueV2(HANDLE, SP<Config::Values::IValue>) {
+inline bool addConfigValueV2(HANDLE, SP<Config::Values::IValue> value) {
+    registered_bool = std::dynamic_pointer_cast<Config::Values::CBoolValue>(value);
     return config_registration_succeeds;
 }
 

@@ -10,7 +10,17 @@ function docs(description = 'Inspect the native tree.'): DumpDocsOutput {
     cli: { name: 'cua-driver', version: '1.0.0', abstract: 'Shared CLI.', commands: [] },
     mcp: {
       version: '1.0.0',
-      tools: [{ name: 'get_window_state', description, input_schema: { type: 'object' } }],
+      tools: [
+        {
+          name: 'get_window_state',
+          description,
+          input_schema: {
+            type: 'object',
+            required: ['pid'],
+            properties: { pid: { type: 'integer', description: 'Native process.' } },
+          },
+        },
+      ],
     },
   };
 }
@@ -42,6 +52,11 @@ for (const platform of ['linux', 'macos'] as const) {
     assert.equal(readFileSync(join(dir, 'mcp-tool-notes.mdx'), 'utf8'), 'Shared guidance.');
     assert.equal(readFileSync(join(dir, otherFile), 'utf8'), 'Other platform.');
     const before = readFileSync(join(dir, ownFile), 'utf8');
+    assert.ok(before.includes(`title: MCP Tools (${platform === 'linux' ? 'Linux' : 'macOS'})`));
+    assert.ok(before.includes(`/reference/cua-driver/${otherFile.replace('.mdx', '')}`));
+    assert.ok(before.includes('/reference/cua-driver/mcp-tool-notes'));
+    assert.ok(before.includes('### `get_window_state`'));
+    assert.ok(before.includes('- `pid` (integer, required): Native process.'));
     assert.deepEqual(
       syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, true),
       [ownFile]

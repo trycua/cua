@@ -26,11 +26,9 @@ jobs:
         include:
           - library: cua-driver
             platform: linux
-            mcp-file: mcp-tools-linux.mdx
             os: ubuntu-latest
           - library: cua-driver
             platform: macos
-            mcp-file: mcp-tools.mdx
             os: macos-latest
           - library: lume
             platform: macos
@@ -69,38 +67,11 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
-      - name: Generate native reference once
-        id: generate
+      - name: Check generated reference
         if: steps.scope.outputs.selected == 'true'
         env:
           LIBRARY: ${{ matrix.library }}
-        run: docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --library "$LIBRARY"
-      - name: Check committed reference matches
-        if: steps.scope.outputs.selected == 'true'
-        env:
-          LIBRARY: ${{ matrix.library }}
-          PLATFORM: ${{ matrix.platform }}
-          MCP_FILE: ${{ matrix.mcp-file }}
-        run: |
-          if [[ "$LIBRARY" == "cua-driver" ]]; then
-            FILES=("docs/content/docs/reference/cua-driver/cli-reference.mdx" "docs/content/docs/reference/cua-driver/$MCP_FILE")
-          else
-            FILES=("docs/content/docs/reference/lume/cli-reference.mdx" "docs/content/docs/reference/lume/http-api.mdx")
-          fi
-          git add --intent-to-add -- "${FILES[@]}"
-          if ! git diff --exit-code -- "${FILES[@]}"; then
-            echo "Regenerate with pnpm --dir docs docs:generate:$LIBRARY on $PLATFORM."
-            exit 1
-          fi
-      - name: Retain native output for review
-        if: always() && steps.generate.outcome == 'success' && matrix.library == 'cua-driver'
-        uses: actions/upload-artifact@v4
-        with:
-          name: cua-driver-reference-${{ matrix.platform }}
-          path: |
-            docs/content/docs/reference/cua-driver/cli-reference.mdx
-            docs/content/docs/reference/cua-driver/${{ matrix.mcp-file }}
-          if-no-files-found: error
+        run: docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --library "$LIBRARY" --check
 
   check-docs-sync:
     name: Check Documentation Sync

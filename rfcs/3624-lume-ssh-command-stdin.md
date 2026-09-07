@@ -6,7 +6,7 @@ created: 2026-09-07
 last_updated: 2026-09-07
 status: review
 discussion: https://github.com/trycua/cua/issues/3624
-rfc_pr:
+rfc_pr: https://github.com/trycua/cua/pull/3625
 implementation:
   - https://github.com/trycua/cua/issues/1514
 supersedes:
@@ -97,13 +97,13 @@ lume ssh my-vm 'bash -s' < script.sh
 lume ssh --no-stdin my-vm 'some-command'
 ```
 
-| Invocation | Input behavior |
-| --- | --- |
-| Command, default | Forward fd 0, including pipes, files, and a terminal; no PTY or raw-mode changes |
-| Command with `--no-stdin` | No reads from fd 0; send EOF |
-| No command | Existing interactive-shell behavior |
-| No command with `--no-stdin` | Argument validation error before connection |
-| Existing library/MCP execution | Explicit closed input; never read process stdin |
+| Invocation                     | Input behavior                                                                   |
+| ------------------------------ | -------------------------------------------------------------------------------- |
+| Command, default               | Forward fd 0, including pipes, files, and a terminal; no PTY or raw-mode changes |
+| Command with `--no-stdin`      | No reads from fd 0; send EOF                                                     |
+| No command                     | Existing interactive-shell behavior                                              |
+| No command with `--no-stdin`   | Argument validation error before connection                                      |
+| Existing library/MCP execution | Explicit closed input; never read process stdin                                  |
 
 Use the long option only in this slice. Test parsing so a remote command's own
 `--no-stdin` argument is not interpreted as a Lume flag after command parsing begins.
@@ -244,15 +244,15 @@ and coordinate there instead of incorporating an unattributed replacement.
 
 ## Test and acceptance plan
 
-| Layer | Cases and observable evidence |
-| --- | --- |
-| CLI/parser | Default descriptor selection, `--no-stdin`, invalid no-command combination, remote flags preserved, unchanged interactive branch |
-| Input/handler | NUL/invalid UTF-8 unchanged; ordered chunks; maximum outstanding input bounded; zero reads before acceptance; request rejection; EOF once after final write; output still received after EOF |
-| Ownership | Closed input leaves a shared pipe untouched; caller descriptor stays open with unchanged flags; library/MCP sentinel input is not consumed |
-| Lifecycle | Stalled open producer, nonreading consumer, request failure, early remote exit, read/write error, disconnect, timeout, cancellation; no orphan reader, leaked owned descriptor, or double promise completion |
-| Transport parity | Run identical script/file/pipe/empty-input cases through each backend; wrong password does not consume command data; forced pre-execution fallback preserves all input; no retry after execution may begin |
-| Full duplex | Guest emits more than a pipe buffer on each output stream before reading input; command completes without deadlock, retaining existing output semantics |
-| Real guest | Source-built CLI pipes a marker script with a chosen nonzero exit; empty input reaches EOF; deterministic 8 MiB binary payload yields matching guest-side length and SHA-256; repeat on macOS and Linux guests |
+| Layer            | Cases and observable evidence                                                                                                                                                                                  |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CLI/parser       | Default descriptor selection, `--no-stdin`, invalid no-command combination, remote flags preserved, unchanged interactive branch                                                                               |
+| Input/handler    | NUL/invalid UTF-8 unchanged; ordered chunks; maximum outstanding input bounded; zero reads before acceptance; request rejection; EOF once after final write; output still received after EOF                   |
+| Ownership        | Closed input leaves a shared pipe untouched; caller descriptor stays open with unchanged flags; library/MCP sentinel input is not consumed                                                                     |
+| Lifecycle        | Stalled open producer, nonreading consumer, request failure, early remote exit, read/write error, disconnect, timeout, cancellation; no orphan reader, leaked owned descriptor, or double promise completion   |
+| Transport parity | Run identical script/file/pipe/empty-input cases through each backend; wrong password does not consume command data; forced pre-execution fallback preserves all input; no retry after execution may begin     |
+| Full duplex      | Guest emits more than a pipe buffer on each output stream before reading input; command completes without deadlock, retaining existing output semantics                                                        |
+| Real guest       | Source-built CLI pipes a marker script with a chosen nonzero exit; empty input reaches EOF; deterministic 8 MiB binary payload yields matching guest-side length and SHA-256; repeat on macOS and Linux guests |
 
 Use a local controlled SSH fixture for deterministic transport tests; select the
 backend through internal test seams, not a new public backend flag. Exercise

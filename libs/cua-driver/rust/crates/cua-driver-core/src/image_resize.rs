@@ -120,15 +120,18 @@ mod tests {
     use super::*;
 
     #[test]
-    fn native_capture_by_another_client_does_not_clear_the_resize_ratio() {
+    fn native_capture_by_another_client_preserves_both_transforms() {
         let registry = ResizeRegistry::new();
         registry.set_ratio(Some("resize-client-a"), 10, Some(20), 7.35);
-        registry.clear_ratio(Some("resize-client-b"), 10, Some(20));
+        registry.set_ratio(Some("resize-client-b"), 10, Some(20), 1.0);
         assert_eq!(
             registry.ratio(Some("resize-client-a"), 10, Some(20)),
             Some(7.35)
         );
-        assert_eq!(registry.ratio(Some("resize-client-b"), 10, Some(20)), None);
+        assert_eq!(
+            registry.ratio(Some("resize-client-b"), 10, Some(20)),
+            Some(1.0)
+        );
     }
 
     #[test]
@@ -143,7 +146,7 @@ mod tests {
     }
 
     #[test]
-    fn same_client_native_capture_clears_only_its_exact_window() {
+    fn capture_invalidation_clears_only_its_exact_window() {
         let registry = ResizeRegistry::new();
         registry.set_ratio(Some("resize-owner"), 10, Some(20), 7.35);
         registry.set_ratio(Some("resize-owner"), 10, Some(21), 2.0);

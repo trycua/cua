@@ -958,8 +958,9 @@ fn harness_appkit_counter_px_background() {
                 .as_u64()
                 .expect("small screenshot width");
             assert!(small_width <= 200);
-            let mut observer = McpDriver::spawn_macos_daemon_proxy_named("appkit-resize-observer")
-                .expect("start independent capture client");
+            let mut observer = driver
+                .spawn_peer_unrecorded()
+                .expect("start independent capture client on the same daemon");
             let config = observer.call("set_config", serde_json::json!({"max_image_dimension": 0}));
             assert!(
                 !config.is_error(),

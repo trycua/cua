@@ -8690,7 +8690,11 @@ impl Tool for ZoomTool {
         let ratio = self
             .state
             .resize_registry
-            .ratio(raw_pid as u32)
+            .ratio(
+                args.opt_str("_session_id").as_deref(),
+                raw_pid as u32,
+                Some(hwnd),
+            )
             .unwrap_or(1.0);
         let (nx1, ny1, nx2, ny2) = (x1 * ratio, y1 * ratio, x2 * ratio, y2 * ratio);
 

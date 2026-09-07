@@ -657,9 +657,39 @@ fn harness_wpf_left_click_px_background() {
             .expect("main window");
         wait_for_fixture_file_text(&state_path, "lbl-click-count", "clicks=0");
 
+        let config = driver.call(
+            "set_config",
+            serde_json::json!({"max_image_dimension": 200}),
+        );
+        assert!(
+            !config.is_error(),
+            "small capture config: {}",
+            config.text()
+        );
         let bounds = window_bounds(&mut driver, pid, wid);
         let ready_state = snapshot(&mut driver, pid, wid);
         let (x, y) = pixel_center(&ready_state, "border-click-target", bounds);
+        let small_width = ready_state.structured()["screenshot_width"]
+            .as_u64()
+            .expect("small screenshot width");
+        assert!(small_width <= 200);
+        let mut observer = driver
+            .spawn_peer_unrecorded()
+            .expect("start independent capture client on the same daemon");
+        let config = observer.call("set_config", serde_json::json!({"max_image_dimension": 0}));
+        assert!(
+            !config.is_error(),
+            "native capture config: {}",
+            config.text()
+        );
+        let other = snapshot(&mut observer, pid, wid);
+        assert!(!other.is_error(), "other client capture: {}", other.text());
+        assert!(
+            other.structured()["screenshot_width"]
+                .as_u64()
+                .expect("native screenshot width")
+                > small_width
+        );
         let geometry_probe = driver.call(
             "click",
             serde_json::json!({

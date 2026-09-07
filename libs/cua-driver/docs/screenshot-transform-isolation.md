@@ -38,10 +38,13 @@ Metadata clarification remains tracked in
   clients and windows, explicit native transforms, missing-context refusal,
   ambiguous windowless lookup, concurrent capture, session cleanup, and late
   publication after cleanup.
-- The canonical AppKit `harness_appkit_counter_px_background` row captures a
-  small screenshot, obtains a differently sized capture through another MCP
-  connection, then requires the first client's pixel click to increment the
-  fixture counter. Its existing background desktop oracles remain in force.
+- The canonical AppKit `harness_appkit_counter_px_background`, WPF
+  `harness_wpf_left_click_px_background`, and supported GTK3 left-click pixel
+  rows capture a small screenshot, obtain a differently sized capture through
+  another MCP connection to the same daemon, then require the first client's
+  pixel click to change the expected fixture state. Their existing desktop
+  oracles remain in force. The second connection does not allocate an unrelated
+  behavior recording.
 - Ordinary Linux and Windows CI compile the adapter changes on their native
   targets. Host-only checks of those crates on macOS are not native coverage.
 
@@ -59,6 +62,11 @@ session still replaces its earlier transform. The caller must use its latest
 image. Window movement, resize, display transitions, zoom-context ownership,
 and recording rendered against a different image size require their own
 acceptance evidence; this change does not claim to solve them all.
+
+On a compositor that cannot produce a window image, the common missing-context
+precondition can precede the adapter's background-delivery refusal. The existing
+Wayland refusal rows require explicit reconciliation and native verification
+before readiness; supported X11 coverage is not a substitute for those rows.
 
 Before readiness, run the canonical desktop gates at the stable candidate SHA
 and retain the tested artifact identity. Do not replace those gates with the

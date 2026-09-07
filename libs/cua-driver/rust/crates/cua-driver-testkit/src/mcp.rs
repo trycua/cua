@@ -25,6 +25,7 @@ use crate::CALL_TIMEOUT;
 pub struct McpDriver {
     reaper: ChildReaper,
     _daemon: Option<TestDaemon>,
+    socket: String,
     stdin: ChildStdin,
     rx: Receiver<String>,
     next_id: u32,
@@ -95,6 +96,10 @@ impl McpDriver {
             return None;
         }
         Self::spawn_internal(&[], &["mcp", "--socket", socket], None, false, false)
+    }
+
+    pub fn spawn_peer_unrecorded(&self) -> Option<Self> {
+        Self::spawn_daemon_proxy_unrecorded(&self.socket)
     }
 
     /// Spawn the driver with extra environment variables set on the child.
@@ -188,9 +193,18 @@ impl McpDriver {
             }
         });
 
+        let socket = daemon
+            .as_ref()
+            .map(|daemon| daemon.socket.clone())
+            .or_else(|| {
+                args.windows(2)
+                    .find(|pair| pair[0] == "--socket")
+                    .map(|pair| pair[1].to_owned())
+            })?;
         let mut d = McpDriver {
             reaper,
             _daemon: daemon,
+            socket,
             stdin,
             rx,
             next_id: 2,

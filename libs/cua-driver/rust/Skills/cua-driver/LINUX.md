@@ -250,8 +250,11 @@ raw background PX possible on a standard compositor.
 
 ### Hyprland input v3 source candidate
 
-Draft PR #3572 adds an opt-in input v3 candidate, pending native certification,
-review, packaging, and release. The default plugin build remains discovery-only.
+[PR #3572](https://github.com/trycua/cua/pull/3572) records dated, exact-source
+validation results for the experimental opt-in input v3 candidate. Acceptance
+requires the unchanged complete Linux canonical runner on native Hyprland and
+separate bounded qualified-app proof. The default plugin build remains
+discovery-only.
 The candidate source reports Driver `0.23.2`; published Driver `0.23.2` does not
 include these branch changes. Switching Driver channels does not install or
 enable the plugin. Build and loading require the exact Hyprland ABI and compiler
@@ -278,7 +281,7 @@ desktop availability, primary-client and other-lane conflicts, and the compiled
 default `evdev`/`pc105`/`us` keymap. The candidate excludes variants, options,
 remaps, multiple layout groups, missing keyboards, Unicode, IME input,
 arbitrary held-key streams, and modified pointer gestures. Chromium, Electron,
-and XWayland raw input are outside this scope. Semantic AT-SPI routes retain
+and XWayland raw background input are outside this scope. AT-SPI routes retain
 their separate behavior.
 
 Two compositor seats, `Cua-Agent` and `Cua-Agent-2`, persist across configuration
@@ -294,19 +297,24 @@ The candidate also adds an explicitly requested foreground route, advertised
 by the plugin as `foreground_target:true`. It binds the exact native top-level
 surface on the compositor thread and intentionally changes primary focus and,
 for pointer actions, cursor position. It does not restore the previous focus or
-cursor. This route has no Calc/Inkscape background package gate, but native
-GTK3, Electron, and Tauri coverage remains pending certification. It refuses
+cursor. This route has no Calc/Inkscape background package gate. The canonical
+native harness covers defined GTK3, Electron, and Tauri foreground cases. It refuses
 held physical input, grabs, constraints, drag-and-drop, ambiguous primary seat
 bindings, and non-neutral keyboard modifiers. Background refusal never selects
 this route automatically. Driver expands bounded ASCII text under the exact
 US keymap; Unicode and IME remain outside its raw-input scope.
 
-Portable tests and historical experiment evidence do not certify v3 native
-delivery. Remaining gates include the exact-candidate native operation matrix
-for both lanes, independent primary-input and held-state evidence, lifecycle
-and refusal coverage, an uninstrumented package smoke, review and merge,
-compatible release artifacts, and final Fleet image validation. Physical Omarchy
-parity requires a separate acceptance run.
+The retained bounded app evidence at source
+`f180e8828b8f31cc153e3c44eaa89a9c13c5bc68` includes instrumented Calc/Inkscape
+proof on both seats and an uninstrumented smoke. The plugin tree and
+uninstrumented module hash are unchanged at
+`1133a06e4f205cf80188a7ac9e41102f37611fea`. The proof covers recorded actions
+and observation intervals, not every application operation or release package.
+Portable tests and historical experiments do not replace complete native
+harness acceptance. Compatible release artifacts and final Fleet image
+packaging and lifecycle validation require separate evidence. Physical Omarchy
+parity requires separate acceptance; it is not a gate for publishing a validated
+Fleet image.
 
 ## Quick triage
 
@@ -346,7 +354,7 @@ ask the user.
 |---|---|---|
 | X11/Openbox | AT-SPI trees and actions, foreground pointer and keyboard input, window and desktop capture, and video | Raw background delivery remains toolkit-specific; unsupported shapes refuse |
 | Sway/wlroots | AT-SPI, native discovery, full-display and cropped-window screencopy, foreground input, semantic background actions, and video | Raw background pointer and keyboard input remains focus-bound |
-| Hyprland/Omarchy | Separate discovery-foundation and source-candidate evidence | Default plugin is discovery-only; opt-in input v3 is limited to qualified native Calc/Inkscape packages and plain US input, pending native certification and release |
+| Hyprland/Omarchy | Experimental source candidate with separate discovery-foundation and bounded two-seat app evidence | Default plugin is discovery-only; raw background v3 qualification is limited to the exact native Calc/Inkscape packages and plain US keymap; complete native harness and release acceptance are separate gates |
 | GNOME/Mutter | AT-SPI, WinRects geometry and activation, capture, and portal/libei foreground input | Requires the helper and portal grant; portal video parity remains open |
 | KDE/KWin | AT-SPI and generic discovery where exposed | Target-specific activation and behavioral coverage remain experimental |
 | Nested `cua-compositor` | Versioned direct per-surface input, native GTK 31/31, capture/scope 5/5, and partial Electron coverage | The complete shared matrix remains experimental; do not infer standard-Wayland support |

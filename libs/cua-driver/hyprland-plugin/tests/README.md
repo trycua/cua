@@ -1,11 +1,17 @@
 # Hyprland plugin test plan
 
-The plugin is optional, disabled by default, and discovery-only until the
-second-seat design is proven and its RFC is accepted. Tests must fail closed;
-they must not enable mutation merely to exercise a path.
+The normal plugin build is optional, disabled by default, and discovery-only.
+Tests of that build must fail closed; they must not enable mutation merely to
+exercise a path. The separately selected, nonshipping
+[input experiment](../protocol/input-experiment.md) has an explicit build flag
+and external test-operator grant. Its
+[VM validation record](input-validation.md) is not production acceptance.
+The [concurrent real-app follow-up](realapp-validation.md) records two-lane
+Calc/Inkscape tasks, moving-primary measurement, a warp-and-return negative
+control, per-lane Cancel, and global Stop on its exact tested candidate.
 
 Neither stable Cua Driver `0.23.2` nor nightly provides isolated background
-input through this plugin. Discovery currently covers protocol negotiation,
+input through this plugin. Normal-build discovery covers protocol negotiation,
 status, and liveness only; application target discovery and input mutation are
 not enabled.
 
@@ -102,6 +108,228 @@ physical input isolation. It does not certify package installation, direct DRM
 startup, arbitrary ABI combinations, or the complete driver desktop matrix.
 Hosted CI tests the runner's cleanup/error paths with mocks; native results
 require running it in the Fleet guest or another declared Wayland environment.
+
+## Held-input lifecycle faults
+
+The session-lifetime candidate replaces hot-reload recovery with config-toggle
+recovery. For that candidate, use `--case toggle --toggle-file PATH`, where
+`PATH` is a test-owned Lua include sourced by the disposable compositor config
+and contains exactly `hl.config({plugin = {cua = {enabled = true}}})` followed
+by a newline. The runner verifies disable and re-enable through plugin status,
+requires a new admission epoch and approval, and keeps the same applications
+running. It refuses the historical `reload` case before input or unload when
+status requires a desktop restart. Separate unload/replacement-refusal and
+fresh-desktop tests remain required; a config toggle does not prove them.
+The one-way retirement runner below covers the first of those gates when run
+natively. Adding the runner and passing its helper tests is not native evidence.
+
+The portable suite covers seat-owner reuse across 20 toggles, failed transport
+recovery, restart-required lifetime markers, and inode-aware socket cleanup.
+These mock/unit checks do not establish native seat delivery, keymap refresh,
+brief desktop-transition revocation, or real multi-process lane behavior.
+
+The [native reliability record](lifecycle-validation.md) identifies the tested
+source, measured results, recordings, setup failures, and remaining limits.
+
+Run `input_lifecycle_live.py` only in a disposable Fleet guest with the
+experimental build explicitly loaded, a source-built Driver service started
+with `--permission-mode unrestricted --dangerously-bypass-approvals`, and two
+native GTK fixtures. The normal build does not support this test.
+
+First observe both fixture windows through Driver. Supply a reviewed JSON plan
+containing `background` and `foreground` PID/window pairs, their matching
+`background_bounds` and `foreground_bounds`, two window-image points (`from`
+and `to`), and a window-local `foreground_point` for the independent primary
+grab. The runner rejects changed geometry and takes fresh Driver snapshots
+before and after application actions.
+
+Pass the exact paths through `--plan`, `--evidence`, `--driver`,
+`--driver-socket`, `--input-directory`, `--primary-grab`,
+`--background-journal`, `--foreground-journal`, and `--foreground-wire`.
+The journals and wire log belong to the existing isolated-input fixtures.
+Use `--record-video` for supporting Driver video evidence.
+
+The runner writes `request-initial.json` and waits up to 35 seconds. Review the
+exact pending target on the host and sign its epoch/challenge/target with
+`input_operator.py`. Grant only capabilities `10` (drag and the recovery key
+probe), with a bounded lifetime. Transfer only the signed grant as
+`grant-initial.json`; keep the private key outside the guest. The runner has
+no signing or implicit approval path.
+
+Choose one fault per run:
+
+- `--case stop` revokes input through the separate operator connection.
+- `--case disconnect` terminates the exact agent MCP proxy while its drag is
+  held. The observer remains connected independently.
+- `--case expiry --compositor-pid PID` deliberately stalls the explicitly
+  selected Hyprland process past lease expiry. Use a short grant, such as
+  10 seconds. A separate PID-fd watchdog resumes that same process within
+  four seconds if the caller fails. When launching through systemd, use
+    `KillMode=process` so caller termination does not also kill the watchdog.
+- `--case toggle --toggle-file PATH` disables and re-enables admission while
+  preserving the seats and existing application processes.
+- Historical candidates only: `--case reload --reload-module PATH` tests
+  unload/reload recovery. The restart-required candidate refuses this case;
+  use the separate retirement runner instead.
+
+The application must receive a press before fault injection and a matching
+release within 750 ms. The fault lands early in a two-second drag, so natural
+completion cannot satisfy the Stop/disconnect/unload bound. For expiry, the
+bound starts at compositor resume, and a 500 ms drag must report
+`lease_expired`: the desktop is deliberately frozen during the stall. This
+case proves expiry cleanup after resumption, not uninterrupted
+foreground operation or cleanup while the compositor cannot run.
+
+The primary fixture must retain its grab, click count, and keyboard state.
+Its independent Wayland wire log must contain no pointer or keyboard input
+events during the fault window. Matching cursor endpoints alone cannot pass
+this check. Raw logs and grants remain private; publish only categorical
+results, timings, source and artifact digests, and stated limitations.
+
+Historical reload cleanup does not prove that surviving clients bind replacement
+seats or accept subsequent input. The session-lifetime candidate instead requires
+surviving-client recovery after config toggles and fresh-desktop recovery after
+replacement. Atomic key packets do not expose a held-key
+stream, so these cases make a held-pointer claim only. These focused tests
+supplement, rather than replace, the canonical desktop matrix and physical
+host validation.
+
+### Pending authority revocation
+
+`input_authority_live.py` tests Stop and Cancel before signed grants are
+redeemed. It does not dispatch input or establish application delivery.
+Run each command separately with `--command STOP` or `--command CANCEL`,
+`--input-directory`, `--plan`, `--evidence`, and `--disposable`.
+Both lanes must be idle and unclaimed. The plan is a JSON array of exactly
+two observed native disposable-fixture targets in separate processes, each
+with a positive `pid` and lowercase hexadecimal `address` without `0x`.
+
+The runner writes `request-before.json`. On the host, sign the named requests
+with `input_operator.py`, using only click capability `1`. Give `renewal-0`
+a later expiry than `active-0`, and transfer the public grants as
+`grants-before.json`, an object keyed by request name. The runner redeems
+`active-0`, but leaves the renewal and `pending-1` unused before revocation.
+Stop must reject both unused grants; per-lane Cancel must preserve the
+sibling's pending grant. Old grants must remain refused after target rebinding.
+
+Sign `request-after.json` into `grants-after.json` in the same format to prove
+fresh authorization still works. Lane 0's fresh grant must still be valid but
+expire before its revoked grant, as indicated by `expires_before_unix_ms`.
+This checks that an old target's replay high-water mark cannot reject a
+shorter grant for a new target binding. Allow time for both stages: for example,
+sign the initial grant for 50 seconds, its renewal for 60 seconds, and the
+fresh grant for 10 seconds, completing the second transfer before the initial
+deadline. Each transfer has a 40-second limit; grants
+must satisfy the protocol's 60-second ceiling and remain valid when submitted.
+The runner checks unchanged dispatch counters, no held/focused synthetic state,
+surviving operator connections, and final Stop cleanup. Keep grants and target
+identifiers in local evidence. `input_authority_test.py` tests the runner with
+scripted peers; those tests do not execute compositor code.
+
+### One-way seat retirement
+
+`input_retirement_live.py` unloads the plugin while a real Driver MCP drag is
+held, then checks that same-path and different-path replacement modules refuse
+until desktop restart. Use a fresh disposable session and a clean, committed
+candidate. Both native GTK fixtures must have Wayland wire logs from startup
+showing that they bound both synthetic seats. Start with both lanes idle.
+
+Supply the lifecycle runner's plan, journals, Driver and input socket paths,
+primary-grab binary, and evidence directory. Additionally supply both fixture
+wire logs, `--compositor-pid`, `--driver-service-pid`, `--source-sha`,
+`--module`, `--replacement-module`, their `--module-sha256` and
+`--replacement-module-sha256`, and `--driver-sha256`. The replacement must
+already be staged at a different canonical path and inode. A copy of the same
+build tests different-path refusal, not a different-build upgrade. The required
+`--disposable-session-restart-required` flag acknowledges the one-way transition.
+Use `--help` for exact argument names.
+
+The host signs `grant-request.json` into `grant.json` with capabilities `10`
+(drag and key probe), with 15–60 seconds remaining. The runner verifies a
+matching application press/release within the 750 ms cancellation bound,
+`plugin_shutdown`, closed old connections, removed sockets, both seat
+capabilities becoming zero, global removal, and unchanged primary input.
+Compositor and client identities, heartbeats, and fresh Driver snapshots must
+remain valid. Each replacement attempt must produce an explicit runtime
+restart refusal in enabled, ABI-matched plugin status; an absent plugin or
+failed ABI check cannot pass.
+
+The successful run leaves the plugin unloaded and its lifetime marker intact.
+Restart the disposable desktop before subsequent input tests. Fresh-desktop
+delivery and late-client cleanup still require separate native coverage.
+`retirement_evidence_test.py` checks the evidence oracles and preflight failures
+with synthetic data; it is not native retirement evidence.
+
+## Desktop-state fault controls
+
+The [native desktop-state validation record](desktop-state-validation.md)
+contains five matched fault/control pairs, artifact identities, measured
+cancellation and cleanup times, retained failures, and limits.
+
+`desktop_state_live.py` is a focused experimental safety test, not the canonical
+desktop matrix. It requires a disposable Fleet guest, the explicitly loaded
+input experiment, and a source-built Driver service with unrestricted
+permissions. Use native GTK raw-event fixtures and keep their journals and
+Wayland wire logs. The helper refuses an arbitrary process as its target.
+
+For each `--case destroy|move|resize|lock|dpms`, run `--mode control` before
+`--mode action --control PATH_TO_CONTROL_RESULT`. Use the same foreground
+fixture, geometry, source SHA, module digest, and selected fault in both runs.
+The identity also binds the Driver and adversary binaries and the harness files.
+The control measures the compositor effects of the fault without agent input.
+A lock can legitimately change focus; matching cursor endpoints alone does
+not prove that the agent added no interference. The comparison checks exact
+foreground state, ordered cursor movement, input events, and focus transitions.
+
+Use `--observer-driver-socket` to select a second Driver service built from the
+same source for observations and video. The action service must have no active
+recording. This separates input-response latency from synchronous post-action
+trajectory capture; both services still use real Driver MCP. A second MCP
+connection to the same service does not isolate that recording overhead.
+
+Pass the lifecycle runner's fixture paths, plus `--source-sha`, `--module`,
+`--compositor-pid`, `--compositor-exe`, `--instance`, and `--disposable`.
+Extend its plan with the exact `background_address` and a changed `move_to`
+or `resize_to` pair where applicable. Geometry faults require an already
+floating fixture. For destruction, capture `pre_target_resources` from both
+experimental lanes before launching the background fixture, after the other
+clients have settled. Resource counts must return to that baseline after
+destruction; expired weak focus references are not sufficient evidence.
+
+The action runner waits for the application's received button press before
+injecting the fault into a two-second drag. It requires a typed refusal and
+cleared authority, held input, and agent focus within 750 ms of fault dispatch,
+with enough time left that natural completion cannot satisfy the deadline.
+Surviving targets must receive a matching button release. A destroyed surface
+cannot acknowledge release, so that case uses disappearance and pruned
+resources instead. Unexpected keyboard or scroll input fails every drag case.
+
+The host operator reviews `request-initial.json` and `request-recovery.json`
+and supplies distinct signed grants with capabilities `10`. The runner waits
+35 seconds for each grant and never receives the signing key. After destruction,
+it also requests a separately launched replacement through `recovery-plan.json`.
+Recovery must refuse old authority, require a fresh grant, deliver exactly one
+Escape press/release pair, and preserve foreground input and compositor state.
+Before either approval, the foreground actor must already own primary focus.
+A newly launched target may take focus during setup; restore the foreground
+actor explicitly before measuring background delivery. Setup is not isolation
+evidence, and a grant revoked by a primary-target conflict is not a fault test.
+
+Build `session_lock_fixture.c` with the generated `ext-session-lock-v1`
+client protocol and pass it through `--lock-fixture`. It uses a real protocol
+lock, supplies opaque black surfaces on every advertised output, and waits for
+compositor acknowledgments. Without surfaces, Hyprland's missing-surface grace
+period delays acknowledgment. The fixture is not a production lock screen.
+Independent watchdogs restore DPMS or request graceful unlock. Never kill a
+lock client to unlock the session: a crashed client can leave it locked, in
+which case discard the disposable guest.
+
+Both modes require finalized Driver video. Preserve failed runs and cleanup
+results as well as passing evidence. Publish only sanitized outcomes, timings,
+versions, and digests. These cases test sustained lock or display-off states
+observed by the compositor loop; they do not prove that an off/on transition
+entirely between samples is latched. Atomic key packets provide recovery
+evidence, not an interrupted held-key-stream guarantee.
 
 ## Fleet packaging lane
 

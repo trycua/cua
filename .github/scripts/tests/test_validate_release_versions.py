@@ -11,6 +11,9 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 def copy_release_sources(destination: Path) -> None:
+    config = "scripts/docs-generators/config.json"
+    (destination / config).parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy(REPO_ROOT / config, destination / config)
     shutil.copy(REPO_ROOT / ".release-please-manifest.json", destination)
     release_state = ".github/release-state/cua-driver-rs-published-version"
     (destination / release_state).parent.mkdir(parents=True, exist_ok=True)

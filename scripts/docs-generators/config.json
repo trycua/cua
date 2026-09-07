@@ -20,11 +20,13 @@
         {
           "type": "mcp",
           "outputFile": "mcp-tools.mdx",
+          "platform": { "host": "darwin", "name": "macOS" },
           "extractCommand": "target/release/cua-driver dump-docs --type mcp"
         },
         {
           "type": "mcp",
           "outputFile": "mcp-tools-linux.mdx",
+          "platform": { "host": "linux", "name": "Linux" },
           "extractCommand": "target/release/cua-driver dump-docs --type mcp"
         },
         {

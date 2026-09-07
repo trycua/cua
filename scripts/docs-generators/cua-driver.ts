@@ -15,6 +15,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import config from './config.json';
 
 // ============================================================================
 // Types
@@ -268,7 +269,7 @@ export function syncReferences(
 ): string[] {
   const files = new Map([
     ['cli-reference.mdx', generateCLIReferenceMDX(docs.cli, version)],
-    [mcpReferenceFile(platform), generateMCPToolsMDX(docs.mcp, version, platform)],
+    [platform.outputFile, generateMCPToolsMDX(docs.mcp, version, platform)],
   ]);
   const drift: string[] = [];
   if (!checkOnly) fs.mkdirSync(outputDirectory, { recursive: true });
@@ -579,18 +580,22 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
 // MCP Tools Generator
 // ============================================================================
 
-export type ReferencePlatform = 'macos' | 'linux';
-
-export function referencePlatform(host: string): ReferencePlatform {
-  if (host === 'darwin') return 'macos';
-  if (host === 'linux') return 'linux';
-  throw new Error(
-    `Native MCP reference generation is not implemented for ${host} in this draft slice`
-  );
+export interface ReferencePlatform {
+  host: string;
+  name: string;
+  outputFile: string;
 }
 
-export function mcpReferenceFile(platform: ReferencePlatform): string {
-  return platform === 'macos' ? 'mcp-tools.mdx' : 'mcp-tools-linux.mdx';
+export const referencePlatforms: ReferencePlatform[] = config.generators[
+  'cua-driver'
+].outputs.flatMap((output) =>
+  output.platform ? [{ ...output.platform, outputFile: output.outputFile }] : []
+);
+
+export function referencePlatform(host: string): ReferencePlatform {
+  const platform = referencePlatforms.find((candidate) => candidate.host === host);
+  if (!platform) throw new Error(`Native MCP reference generation is not implemented for ${host}`);
+  return platform;
 }
 
 export function generateMCPToolsMDX(
@@ -602,7 +607,7 @@ export function generateMCPToolsMDX(
 
   // Frontmatter — must be at the very beginning of the file
   lines.push('---');
-  const platformName = platform === 'macos' ? 'macOS' : 'Linux';
+  const platformName = platform.name;
   lines.push(`title: MCP Tools (${platformName})`);
   lines.push(`description: Reference for MCP tools Cua Driver exposes on ${platformName}`);
   lines.push('---');
@@ -617,9 +622,15 @@ export function generateMCPToolsMDX(
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
   lines.push('');
 
-  lines.push(
-    `This reference describes the **${platformName}** native tool registry. See [${platform === 'macos' ? 'Linux' : 'macOS'} MCP tools](/reference/cua-driver/${platform === 'macos' ? 'mcp-tools-linux' : 'mcp-tools'}) for the other platform and [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.`
-  );
+  const otherPlatforms = referencePlatforms
+    .filter((candidate) => candidate.host !== platform.host)
+    .map(
+      (candidate) =>
+        `[${candidate.name} MCP tools](/reference/cua-driver/${candidate.outputFile.replace(/\.mdx$/, '')})`
+    );
+  lines.push(`This reference describes the **${platformName}** native tool registry.`);
+  if (otherPlatforms.length > 0) lines.push(`Other platforms: ${otherPlatforms.join(', ')}.`);
+  lines.push('See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.');
   lines.push('');
 
   // Introduction — mirror the existing hand-written header prose

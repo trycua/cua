@@ -9,6 +9,7 @@ on:
       - ".github/release-backfill/**"
       - ".github/releases/**"
       - ".github/workflows/cd-rust-cua-driver.yml"
+      - ".github/workflows/cd-py-cua-driver.yml"
       - ".github/workflows/ci-cua-driver-installer-compat.yml"
       - ".github/workflows/ci-release-metadata.yml"
       - ".github/workflows/cd-swift-lume.yml"

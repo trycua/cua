@@ -1257,6 +1257,7 @@ name = "cua-driver-testkit"
 version = "0.23.2"
 dependencies = [
  "core-foundation",
+ "image",
  "libc",
  "objc2-app-kit 0.2.2",
  "serde",

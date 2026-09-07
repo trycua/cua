@@ -1632,6 +1632,9 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
             }
             return;
         }
+        if let (Some(action), Some(manifest)) = (&action, &manifest) {
+            validate_click_source(turn, cell_id, action, manifest, errors);
+        }
         validate_capture_status(
             manifest.as_ref(),
             &["click"],
@@ -1651,6 +1654,71 @@ fn validate_one_turn(turn: &Path, cell_id: &str, errors: &mut Vec<String>) {
     }
 }
 
+// A tool may scroll an element into view after the original before image.
+// Its actual input point must be grounded in the supplemental pre-input frame.
+fn validate_click_source(
+    turn: &Path,
+    cell_id: &str,
+    action: &Value,
+    manifest: &Value,
+    errors: &mut Vec<String>,
+) {
+    let declared = action.get("click_point_image");
+    if declared.is_none() {
+        if manifest.get("click_source").is_some()
+            || manifest["click"]
+                .get("source_image")
+                .is_some_and(|source| source != "before.png")
+            || turn.join("click_source.png").exists()
+        {
+            errors.push(format!(
+                "undeclared supplemental click source for {cell_id}"
+            ));
+        }
+        return;
+    }
+    if declared.and_then(Value::as_str) != Some("click_source.png")
+        || manifest["click"]["source_image"] != "click_source.png"
+    {
+        errors.push(format!("invalid supplemental click source for {cell_id}"));
+        return;
+    }
+    validate_capture_status(
+        Some(manifest),
+        &["click_source"],
+        cell_id,
+        "click_source.png",
+        errors,
+    );
+    let decode = |name: &str| -> Option<image::DynamicImage> {
+        let mut reader = image::ImageReader::open(turn.join(name)).ok()?;
+        reader.set_format(image::ImageFormat::Png);
+        reader.decode().ok()
+    };
+    let (Some(source), Some(marker)) = (decode("click_source.png"), decode("click.png")) else {
+        errors.push(format!("invalid supplemental click PNG for {cell_id}"));
+        return;
+    };
+    let point = action["click_point"]["x"]
+        .as_f64()
+        .zip(action["click_point"]["y"].as_f64());
+    if source.width() == 0
+        || source.height() == 0
+        || source.width() != marker.width()
+        || source.height() != marker.height()
+        || !point.is_some_and(|(x, y)| {
+            x.is_finite()
+                && y.is_finite()
+                && x >= 0.0
+                && y >= 0.0
+                && x < f64::from(source.width())
+                && y < f64::from(source.height())
+        })
+    {
+        errors.push(format!("invalid supplemental click geometry for {cell_id}"));
+    }
+}
+
 // Semantic activation has no spatial marker only when the retained execution
 // record proves a single accessibility dispatch without escalation or replay.
 fn semantic_action_without_point(action: &Value) -> bool {
@@ -1659,6 +1727,7 @@ fn semantic_action_without_point(action: &Value) -> bool {
     action["tool"] == "click"
         && action["result_error"] == false
         && action.get("click_point").is_none()
+        && action.get("click_point_image").is_none()
         && (args["element_index"].as_u64().is_some()
             || args["element_token"]
                 .as_str()
@@ -1677,7 +1746,16 @@ fn semantic_action_without_point(action: &Value) -> bool {
             args.get(*key)
                 .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
         })
-        && truth["transport"] == "linux_at_spi_action"
+        && matches!(
+            truth["transport"].as_str(),
+            Some(
+                "linux_at_spi_action"
+                    | "windows_uia_invoke"
+                    | "windows_uia_toggle"
+                    | "windows_uia_selection"
+                    | "windows_uia_expand_collapse"
+            )
+        )
         && truth["route"] == "accessibility"
         && matches!(truth["effect"].as_str(), Some("confirmed" | "unverifiable"))
         && matches!(
@@ -1691,9 +1769,11 @@ fn semantic_action_without_point(action: &Value) -> bool {
             .get("delivered_count")
             .is_some_and(|value| value.is_null() || value.as_u64() == Some(1))
         && truth["attempts"].as_array().is_some_and(|attempts| {
+            // Legacy single-dispatch results carry transport/delivery above
+            // without a per-attempt journal. Any supplied attempt must match.
             attempts.len() <= 1
                 && attempts.iter().all(|attempt| {
-                    attempt["transport"] == "linux_at_spi_action"
+                    attempt["transport"] == truth["transport"]
                         && attempt["delivery"] == truth["actual_delivery"]
                 })
         })
@@ -1796,6 +1876,23 @@ mod tests {
         token["action_truth"]["actual_delivery"] = serde_json::json!("foreground");
         token["action_truth"]["effect"] = serde_json::json!("confirmed");
         assert!(semantic_action_without_point(&token));
+        for transport in [
+            "windows_uia_invoke",
+            "windows_uia_toggle",
+            "windows_uia_selection",
+            "windows_uia_expand_collapse",
+        ] {
+            let mut windows = original.clone();
+            windows["action_truth"]["transport"] = serde_json::json!(transport);
+            assert!(semantic_action_without_point(&windows));
+            windows["action_truth"]["attempts"] = serde_json::json!([{
+                "transport":transport, "delivery":"background"
+            }]);
+            assert!(semantic_action_without_point(&windows));
+            windows["action_truth"]["attempts"][0]["transport"] =
+                serde_json::json!("linux_at_spi_action");
+            assert!(!semantic_action_without_point(&windows));
+        }
         for (pointer, replacements) in [
             ("/result_error", serde_json::json!([true, null])),
             ("/tool", serde_json::json!(["double_click", "right_click"])),
@@ -1806,7 +1903,7 @@ mod tests {
             ),
             (
                 "/action_truth/transport",
-                serde_json::json!(["linux_x11_event", "unknown"]),
+                serde_json::json!(["linux_x11_event", "windows_send_input", "unknown"]),
             ),
             (
                 "/action_truth/route",
@@ -1858,6 +1955,9 @@ mod tests {
         let mut point = original.clone();
         point["click_point"] = serde_json::json!({"x":10,"y":20});
         assert!(!semantic_action_without_point(&point));
+        let mut supplemental = original.clone();
+        supplemental["click_point_image"] = serde_json::json!("click_source.png");
+        assert!(!semantic_action_without_point(&supplemental));
         for key in [
             "actual_delivery",
             "requested_delivery",
@@ -1876,6 +1976,83 @@ mod tests {
     }
 
     use tempfile::TempDir;
+
+    fn supplemental_click_fixture() -> (TempDir, Value, Value) {
+        let root = tempfile::tempdir().unwrap();
+        for name in ["click_source.png", "click.png"] {
+            image::RgbImage::new(20, 30)
+                .save(root.path().join(name))
+                .unwrap();
+        }
+        let action = serde_json::json!({
+            "click_point_image":"click_source.png", "click_point":{"x":10,"y":15}
+        });
+        let manifest = serde_json::json!({
+            "click":{"status":"captured","source_image":"click_source.png"},
+            "click_source":{"status":"captured"}
+        });
+        (root, action, manifest)
+    }
+
+    #[test]
+    fn supplemental_click_source_requires_decodable_matching_geometry() {
+        let (root, action, manifest) = supplemental_click_fixture();
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &manifest, &mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+        for point in [
+            serde_json::json!({"x":20,"y":15}),
+            serde_json::json!({"x":10,"y":30}),
+            serde_json::json!({"x":-1,"y":15}),
+            serde_json::json!({"x":10,"y":null}),
+        ] {
+            let mut invalid = action.clone();
+            invalid["click_point"] = point;
+            let mut errors = Vec::new();
+            validate_click_source(root.path(), "fixture", &invalid, &manifest, &mut errors);
+            assert!(!errors.is_empty());
+        }
+        image::RgbImage::new(10, 10)
+            .save(root.path().join("click.png"))
+            .unwrap();
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &manifest, &mut errors);
+        assert!(errors.iter().any(|error| error.contains("geometry")));
+        std::fs::write(root.path().join("click.png"), b"not a png").unwrap();
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &manifest, &mut errors);
+        assert!(errors.iter().any(|error| error.contains("PNG")));
+    }
+
+    #[test]
+    fn supplemental_click_source_rejects_inconsistent_or_failed_metadata() {
+        let (root, action, manifest) = supplemental_click_fixture();
+        for source in [
+            serde_json::json!("../outside.png"),
+            serde_json::json!("before.png"),
+            serde_json::Value::Null,
+        ] {
+            let mut invalid = action.clone();
+            invalid["click_point_image"] = source;
+            let mut errors = Vec::new();
+            validate_click_source(root.path(), "fixture", &invalid, &manifest, &mut errors);
+            assert!(!errors.is_empty());
+        }
+        let mut undeclared = action.clone();
+        undeclared
+            .as_object_mut()
+            .unwrap()
+            .remove("click_point_image");
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &undeclared, &manifest, &mut errors);
+        assert!(!errors.is_empty());
+        let mut failed = manifest.clone();
+        failed["click_source"] =
+            serde_json::json!({"status":"unavailable","classification":"capture_failed"});
+        let mut errors = Vec::new();
+        validate_click_source(root.path(), "fixture", &action, &failed, &mut errors);
+        assert!(!errors.is_empty());
+    }
 
     fn delivered_case(id: &str) -> CaseSpec {
         CaseSpec::delivered(

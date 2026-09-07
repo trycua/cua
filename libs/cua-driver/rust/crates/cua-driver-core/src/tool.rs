@@ -1535,7 +1535,11 @@ impl ToolRegistry {
             })
             .flatten();
 
-        let mut result = tool.invoke(args.clone()).await;
+        let mut result = crate::recording::scope_dispatch_click_capture(
+            pending_turn.as_ref(),
+            tool.invoke(args.clone()),
+        )
+        .await;
         drop(lifecycle_dispatch);
         // The platform worker has exited, so another text operation for this
         // pid may now start even while result projection and evidence capture

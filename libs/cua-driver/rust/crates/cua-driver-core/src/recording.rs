@@ -10,7 +10,7 @@
 //!     t_ms_from_session_start, t_start_ms_from_session_start }
 
 use std::path::{Path, PathBuf};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use std::time::Instant;
@@ -136,6 +136,75 @@ struct TurnCapture {
     screenshot_classification: Option<&'static str>,
 }
 
+#[derive(Default)]
+struct DispatchClickCapture {
+    image: Option<(Vec<u8>, f64, f64)>,
+    failure: Option<&'static str>,
+}
+
+struct DispatchClickScope {
+    window_id: u64,
+    pid: i64,
+    capture: Mutex<DispatchClickCapture>,
+}
+
+tokio::task_local! {
+    static DISPATCH_CLICK_SCOPE: Option<Arc<DispatchClickScope>>;
+}
+
+/// Capture the exact target after scrolling/focus preparation and before input.
+/// The closure is lazy: unrelated, private, and unrecorded calls never capture.
+/// Only the first matching capture is attempted, including capture failures.
+pub fn capture_dispatch_click_target(
+    window_id: u64,
+    pid: i64,
+    capture: impl FnOnce() -> Option<(Vec<u8>, f64, f64)>,
+) {
+    let _ = DISPATCH_CLICK_SCOPE.try_with(|scope| {
+        let Some(scope) = scope else { return };
+        if (scope.window_id, scope.pid) != (window_id, pid) {
+            return;
+        }
+        let mut retained = scope.capture.lock().unwrap();
+        if retained.image.is_some() || retained.failure.is_some() {
+            return;
+        }
+        match capture() {
+            Some((png, x, y)) if point_in_image(&png, x, y) => {
+                retained.image = Some((png, x, y));
+            }
+            Some(_) => retained.failure = Some("invalid_capture"),
+            None => retained.failure = Some("capture_failed"),
+        }
+    });
+}
+
+fn point_in_image(png: &[u8], x: f64, y: f64) -> bool {
+    image::load_from_memory_with_format(png, image::ImageFormat::Png).is_ok_and(|image| {
+        let (width, height) = (image.width(), image.height());
+        x.is_finite()
+            && y.is_finite()
+            && x >= 0.0
+            && y >= 0.0
+            && x < f64::from(width)
+            && y < f64::from(height)
+    })
+}
+
+/// Task-local state follows the invocation future and disappears on cancellation.
+/// An empty scope also masks any outer recording during a nested dispatch.
+pub(crate) async fn scope_dispatch_click_capture<F: std::future::Future>(
+    pending: Option<&PendingTurn>,
+    dispatch: F,
+) -> F::Output {
+    DISPATCH_CLICK_SCOPE
+        .scope(
+            pending.and_then(|turn| turn.dispatch_click.clone()),
+            dispatch,
+        )
+        .await
+}
+
 /// A reserved recording turn captured immediately before tool dispatch.
 /// `ToolRegistry` passes this token back after dispatch so both phases share
 /// one stable `turn-NNNNN` directory even when calls complete out of order.
@@ -151,6 +220,7 @@ pub struct PendingTurn {
     click_point: Option<(f64, f64)>,
     capture_visual_state: bool,
     before: TurnCapture,
+    dispatch_click: Option<Arc<DispatchClickScope>>,
 }
 
 /// Persistent recording session state owned by one tool registry.
@@ -592,6 +662,19 @@ impl RecordingSession {
             click_point,
             capture_visual_state,
             before,
+            dispatch_click: if capture_visual_state
+                && matches!(tool_name, "click" | "double_click" | "right_click")
+            {
+                window_id.zip(pid).map(|(window_id, pid)| {
+                    Arc::new(DispatchClickScope {
+                        window_id,
+                        pid,
+                        capture: Mutex::new(DispatchClickCapture::default()),
+                    })
+                })
+            } else {
+                None
+            },
         })
     }
 
@@ -734,9 +817,10 @@ fn write_evidence_manifest(
     state_expected: bool,
     click_expected: bool,
     click_captured: bool,
+    supplemental: &DispatchClickCapture,
     click_not_applicable_classification: &'static str,
 ) -> anyhow::Result<()> {
-    let manifest = serde_json::json!({
+    let mut manifest = serde_json::json!({
         "schema": "cua-turn-evidence/v1",
         "before": {
             "state": capture_status(before.state.is_some(), state_expected, None),
@@ -763,6 +847,20 @@ fn write_evidence_manifest(
             })
         },
     });
+    manifest["click"]["source_image"] = serde_json::json!(if supplemental.image.is_some()
+        || supplemental.failure.is_some()
+    {
+        "click_source.png"
+    } else {
+        "before.png"
+    });
+    if supplemental.image.is_some() || supplemental.failure.is_some() {
+        manifest["click_source"] =
+            capture_status(supplemental.image.is_some(), true, supplemental.failure);
+        if supplemental.image.is_some() {
+            manifest["click_source"]["source_image"] = serde_json::json!("click_source.png");
+        }
+    }
     write_json_atomic(&turn_dir.join("evidence.json"), &manifest)
 }
 
@@ -792,6 +890,7 @@ fn semantic_action_without_point(action: &Value) -> bool {
     action["tool"] == "click"
         && action["result_error"] == false
         && action.get("click_point").is_none()
+        && action.get("click_point_image").is_none()
         && (args["element_index"].as_u64().is_some()
             || args["element_token"]
                 .as_str()
@@ -810,7 +909,16 @@ fn semantic_action_without_point(action: &Value) -> bool {
             args.get(*key)
                 .is_none_or(|value| value.as_array().is_some_and(Vec::is_empty))
         })
-        && truth["transport"] == "linux_at_spi_action"
+        && matches!(
+            truth["transport"].as_str(),
+            Some(
+                "linux_at_spi_action"
+                    | "windows_uia_invoke"
+                    | "windows_uia_toggle"
+                    | "windows_uia_selection"
+                    | "windows_uia_expand_collapse"
+            )
+        )
         && truth["route"] == "accessibility"
         && matches!(truth["effect"].as_str(), Some("confirmed" | "unverifiable"))
         && matches!(
@@ -824,9 +932,11 @@ fn semantic_action_without_point(action: &Value) -> bool {
             .get("delivered_count")
             .is_some_and(|value| value.is_null() || value.as_u64() == Some(1))
         && truth["attempts"].as_array().is_some_and(|attempts| {
+            // Legacy single-dispatch results carry transport/delivery above
+            // without a per-attempt journal. Any supplied attempt must match.
             attempts.len() <= 1
                 && attempts.iter().all(|attempt| {
-                    attempt["transport"] == "linux_at_spi_action"
+                    attempt["transport"] == truth["transport"]
                         && attempt["delivery"] == truth["actual_delivery"]
                 })
         })
@@ -850,24 +960,41 @@ fn write_turn(
         click_point,
         capture_visual_state,
         before,
+        dispatch_click,
     } = pending;
+    let supplemental = dispatch_click
+        .map(|scope| std::mem::take(&mut *scope.capture.lock().unwrap()))
+        .unwrap_or_default();
+    let click_source = supplemental
+        .image
+        .as_ref()
+        .map(|(png, _, _)| png.as_slice());
+    let click_point = supplemental
+        .image
+        .as_ref()
+        .map(|(_, x, y)| (*x, *y))
+        .or_else(|| {
+            supplemental
+                .failure
+                .is_none()
+                .then_some(click_point)
+                .flatten()
+        });
+    let marker_source = click_source.or(before.screenshot.as_deref());
     // Offscreen accessibility bounds can be sentinel coordinates. Only a
     // point inside a readable pre-action image can ground a spatial marker.
-    let click_point = match before
-        .screenshot
-        .as_deref()
-        .and_then(|png| crate::image_utils::png_dimensions(png).ok())
-    {
-        Some((width, height)) => click_point.filter(|(x, y)| {
-            x.is_finite()
-                && y.is_finite()
-                && *x >= 0.0
-                && *y >= 0.0
-                && *x < f64::from(width)
-                && *y < f64::from(height)
-        }),
-        None => click_point,
-    };
+    let click_point =
+        match marker_source.and_then(|png| crate::image_utils::png_dimensions(png).ok()) {
+            Some((width, height)) => click_point.filter(|(x, y)| {
+                x.is_finite()
+                    && y.is_finite()
+                    && *x >= 0.0
+                    && *y >= 0.0
+                    && *x < f64::from(width)
+                    && *y < f64::from(height)
+            }),
+            None => click_point,
+        };
     std::fs::create_dir_all(&turn_dir)?;
     let now = now_ms();
     let after = if capture_visual_state {
@@ -903,16 +1030,23 @@ fn write_turn(
     if let Some((cx, cy)) = click_point {
         payload["click_point"] = serde_json::json!({"x": cx, "y": cy});
     }
+    if click_source.is_some() || supplemental.failure.is_some() {
+        payload["click_point_image"] = serde_json::json!("click_source.png");
+    }
     if let Some(action_record) = action_record {
         payload["action_truth"] = action_record.debug_json();
     }
-    let semantic_without_point = semantic_action_without_point(&payload);
+    let semantic_without_point =
+        supplemental.failure.is_none() && semantic_action_without_point(&payload);
     let click_expected = click_family
         && !refused_before_target_resolution
         && !refused_before_dispatch
         && !semantic_without_point;
     write_json_atomic(&turn_dir.join("action.json"), &payload)?;
     write_phase_artifacts(&turn_dir, "after", &after)?;
+    if let Some(source) = click_source {
+        std::fs::write(turn_dir.join("click_source.png"), source)?;
+    }
 
     // Preserve the original post-action names for existing trajectory readers.
     if let Some(state) = &after.state {
@@ -927,11 +1061,9 @@ fn write_turn(
     // after the modal HWND has closed.
     let mut click_captured = false;
     if click_expected {
-        if let (Some((cx, cy)), Some(screenshot), Some(marker)) = (
-            click_point,
-            before.screenshot.as_deref(),
-            CLICK_MARKER_FN.get(),
-        ) {
+        if let (Some((cx, cy)), Some(screenshot), Some(marker)) =
+            (click_point, marker_source, CLICK_MARKER_FN.get())
+        {
             if let Some(click_png) = marker(screenshot, cx, cy) {
                 std::fs::write(turn_dir.join("click.png"), click_png)?;
                 click_captured = true;
@@ -945,6 +1077,7 @@ fn write_turn(
         pid.is_some() && capture_visual_state,
         click_expected,
         click_captured,
+        &supplemental,
         if refused_before_target_resolution {
             "action_refused_before_target_resolution"
         } else if refused_before_dispatch {
@@ -1118,96 +1251,347 @@ mod tests {
         })
     }
 
-    #[test]
-    fn semantic_click_without_point_requires_exact_action_truth() {
-        let original = semantic_click_fixture();
-        assert!(semantic_action_without_point(&original));
-        let mut token = original.clone();
-        token["arguments"]
-            .as_object_mut()
-            .unwrap()
-            .remove("element_index");
-        token["arguments"]["element_token"] = serde_json::json!("e:fixture");
-        token["action_truth"]["requested_delivery"] = serde_json::json!("foreground");
-        token["action_truth"]["actual_delivery"] = serde_json::json!("foreground");
-        token["action_truth"]["effect"] = serde_json::json!("confirmed");
-        assert!(semantic_action_without_point(&token));
-        for (pointer, replacements) in [
-            ("/result_error", serde_json::json!([true, null])),
-            ("/tool", serde_json::json!(["double_click", "right_click"])),
-            ("/action_truth", serde_json::json!([null])),
-            (
-                "/action_truth/effect",
-                serde_json::json!(["unknown", "partial", "suspected_noop", "refused"]),
-            ),
-            (
-                "/action_truth/transport",
-                serde_json::json!(["linux_x11_event", "unknown"]),
-            ),
-            (
-                "/action_truth/route",
-                serde_json::json!(["unknown", "synthetic_events"]),
-            ),
-            (
-                "/action_truth/actual_delivery",
-                serde_json::json!(["unknown", null]),
-            ),
-            (
-                "/action_truth/requested_delivery",
-                serde_json::json!(["foreground"]),
-            ),
-            ("/action_truth/delivered_count", serde_json::json!([0, 2])),
-            (
-                "/action_truth/escalation",
-                serde_json::json!([{"kind":"retry_with_pixel_target"}]),
-            ),
-            ("/action_truth/fallbacks", serde_json::json!([[{}]])),
-            (
-                "/action_truth/attempts",
-                serde_json::json!([[{}], [{}, {}]]),
-            ),
-            ("/arguments/element_index", serde_json::json!([null, -1])),
+    fn dispatch_pending(root: &Path) -> PendingTurn {
+        PendingTurn {
+            generation: 0,
+            turn_dir: root.to_path_buf(),
+            tool_name: "click".into(),
+            args: serde_json::json!({"pid": 901, "window_id": 902, "element_index": 3}),
+            start_ms: 0,
+            session_start_ms: 0,
+            window_id: Some(902),
+            pid: Some(901),
+            click_point: Some((500.0, 500.0)),
+            capture_visual_state: true,
+            before: TurnCapture {
+                screenshot: Some(crate::image_utils::encode_rgba_to_png(&[0; 24], 3, 2).unwrap()),
+                state: Some(b"original state".to_vec()),
+                screenshot_classification: None,
+            },
+            dispatch_click: Some(Arc::new(DispatchClickScope {
+                window_id: 902,
+                pid: 901,
+                capture: Mutex::new(DispatchClickCapture::default()),
+            })),
+        }
+    }
+
+    #[tokio::test]
+    async fn dispatch_capture_is_lazy_exact_private_and_cancel_safe() {
+        let root = tempfile::tempdir().unwrap();
+        let pending = dispatch_pending(root.path());
+        let forbidden = || -> Option<(Vec<u8>, f64, f64)> { panic!("unexpected capture") };
+        capture_dispatch_click_target(902, 901, forbidden);
+        scope_dispatch_click_capture(None, async {
+            capture_dispatch_click_target(902, 901, forbidden);
+        })
+        .await;
+        scope_dispatch_click_capture(Some(&pending), async {
+            capture_dispatch_click_target(903, 901, forbidden);
+            capture_dispatch_click_target(902, 903, forbidden);
+            scope_dispatch_click_capture(None, async {
+                capture_dispatch_click_target(902, 901, forbidden);
+            })
+            .await;
+        })
+        .await;
+
+        let session = RecordingSession::new();
+        assert!(session.begin_turn("click", &pending.args, 0).is_none());
+        {
+            let mut inner = session.inner.lock().unwrap();
+            inner.enabled = true;
+            inner.output_dir = Some(root.path().to_path_buf());
+        }
+        let private = session
+            .begin_private_turn("click", &pending.args, 0)
+            .unwrap();
+        scope_dispatch_click_capture(Some(&private), async {
+            capture_dispatch_click_target(902, 901, forbidden);
+        })
+        .await;
+        assert!(private.dispatch_click.is_none());
+
+        let mut cancelled = Box::pin(scope_dispatch_click_capture(Some(&pending), async {
+            capture_dispatch_click_target(902, 901, || None);
+            std::future::pending::<()>().await;
+        }));
+        assert!(matches!(
+            std::future::poll_fn(|cx| {
+                std::task::Poll::Ready(std::future::Future::poll(cancelled.as_mut(), cx))
+            })
+            .await,
+            std::task::Poll::Pending
+        ));
+        drop(cancelled);
+        capture_dispatch_click_target(902, 901, forbidden);
+        assert_eq!(
+            pending
+                .dispatch_click
+                .as_ref()
+                .unwrap()
+                .capture
+                .lock()
+                .unwrap()
+                .failure,
+            Some("capture_failed")
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_dispatch_scopes_keep_their_own_images() {
+        let root = tempfile::tempdir().unwrap();
+        let first = dispatch_pending(root.path());
+        let second = dispatch_pending(root.path());
+        let capture = |pending: PendingTurn, byte: u8| async move {
+            scope_dispatch_click_capture(Some(&pending), async {
+                tokio::task::yield_now().await;
+                capture_dispatch_click_target(902, 901, || {
+                    Some((
+                        crate::image_utils::encode_rgba_to_png(&[byte; 16], 2, 2).unwrap(),
+                        f64::from(byte % 2),
+                        1.0,
+                    ))
+                });
+                tokio::task::yield_now().await;
+            })
+            .await;
+            let scope = pending.dispatch_click.unwrap();
+            let retained = scope.capture.lock().unwrap();
+            let (png, x, y) = retained.image.as_ref().unwrap();
+            assert_eq!(
+                *png,
+                crate::image_utils::encode_rgba_to_png(&[byte; 16], 2, 2).unwrap()
+            );
+            assert_eq!((*x, *y), (f64::from(byte % 2), 1.0));
+        };
+        let (first, second) = tokio::join!(
+            tokio::spawn(capture(first, 1)),
+            tokio::spawn(capture(second, 2))
+        );
+        first.unwrap();
+        second.unwrap();
+    }
+
+    #[tokio::test]
+    async fn stale_generation_discards_supplemental_capture() {
+        let root = tempfile::tempdir().unwrap();
+        let session = RecordingSession::new();
+        {
+            let mut inner = session.inner.lock().unwrap();
+            inner.enabled = true;
+            inner.output_dir = Some(root.path().to_path_buf());
+        }
+        let pending = session
+            .begin_turn(
+                "click",
+                &serde_json::json!({
+                    "pid":901, "window_id":902, "element_index":3,
+                }),
+                0,
+            )
+            .unwrap();
+        scope_dispatch_click_capture(Some(&pending), async {
+            capture_dispatch_click_target(902, 901, || {
+                Some((
+                    crate::image_utils::encode_rgba_to_png(&[255; 16], 2, 2).unwrap(),
+                    1.0,
+                    1.0,
+                ))
+            });
+        })
+        .await;
+        session.inner.lock().unwrap().generation += 1;
+        session.finish_turn(pending, "discard old generation");
+        assert!(!root.path().join("turn-00001/action.json").exists());
+        assert!(!root.path().join("turn-00001/click_source.png").exists());
+    }
+
+    #[tokio::test]
+    async fn supplemental_click_preserves_before_and_rejects_invalid_capture() {
+        setup_test_marker();
+        for point in [
+            Some((1.0, 0.5)),
+            None,
+            Some((-1.0, 0.0)),
+            Some((2.0, 0.0)),
+            Some((0.0, 2.0)),
+            Some((f64::NAN, 0.0)),
+            Some((0.0, f64::INFINITY)),
         ] {
-            for replacement in replacements.as_array().unwrap() {
-                let mut action = original.clone();
-                *action.pointer_mut(pointer).unwrap() = replacement.clone();
-                assert!(
-                    !semantic_action_without_point(&action),
-                    "{pointer}: {action}"
+            let root = tempfile::tempdir().unwrap();
+            let pending = dispatch_pending(root.path());
+            let original = pending.before.screenshot.clone().unwrap();
+            let source = crate::image_utils::encode_rgba_to_png(&[255; 16], 2, 2).unwrap();
+            write_phase_artifacts(root.path(), "before", &pending.before).unwrap();
+            scope_dispatch_click_capture(Some(&pending), async {
+                capture_dispatch_click_target(902, 901, || {
+                    point.map(|(x, y)| (source.clone(), x, y))
+                });
+                capture_dispatch_click_target(902, 901, || {
+                    panic!("second attempt must be ignored")
+                });
+            })
+            .await;
+            write_turn(pending, "clicked", None, false).unwrap();
+            let action: Value =
+                serde_json::from_slice(&std::fs::read(root.path().join("action.json")).unwrap())
+                    .unwrap();
+            let evidence: Value =
+                serde_json::from_slice(&std::fs::read(root.path().join("evidence.json")).unwrap())
+                    .unwrap();
+            assert_eq!(
+                std::fs::read(root.path().join("before.png")).unwrap(),
+                original
+            );
+            assert_eq!(
+                std::fs::read(root.path().join("before_state.json")).unwrap(),
+                b"original state"
+            );
+            assert_eq!(action["click_point_image"], "click_source.png");
+            assert_eq!(evidence["click"]["source_image"], "click_source.png");
+            if point == Some((1.0, 0.5)) {
+                assert_eq!(action["click_point"], serde_json::json!({"x":1.0,"y":0.5}));
+                assert_eq!(evidence["click_source"]["status"], "captured");
+                assert_eq!(
+                    std::fs::read(root.path().join("click_source.png")).unwrap(),
+                    source
                 );
+                assert_eq!(
+                    std::fs::read(root.path().join("click.png")).unwrap(),
+                    crate::image_utils::crosshair_png_bytes(&source, 1.0, 0.5).unwrap(),
+                );
+            } else {
+                assert!(action.get("click_point").is_none());
+                assert_eq!(evidence["click_source"]["status"], "unavailable");
+                assert_eq!(evidence["click"]["status"], "unavailable");
+                assert!(!root.path().join("click_source.png").exists());
+                assert!(!root.path().join("click.png").exists());
             }
         }
-        for (key, value) in [
-            ("x", serde_json::json!(10)),
-            ("y", serde_json::json!(20)),
-            ("raw", serde_json::json!(true)),
-            ("button", serde_json::json!("right")),
-            ("count", serde_json::json!(2)),
-            ("click_count", serde_json::json!(2)),
-            ("modifier", serde_json::json!(["shift"])),
-            ("modifiers", serde_json::json!(["ctrl"])),
-        ] {
-            let mut action = original.clone();
-            action["arguments"][key] = value;
-            assert!(!semantic_action_without_point(&action), "{key}");
+        assert!(!point_in_image(b"invalid PNG", 0.0, 0.0));
+    }
+
+    #[test]
+    fn windows_semantic_exception_requires_matching_uia_attempt() {
+        let mut action = semantic_click_fixture();
+        action["action_truth"]["transport"] = serde_json::json!("windows_uia_invoke");
+        action["action_truth"]["attempts"] =
+            serde_json::json!([{"transport":"windows_uia_invoke","delivery":"background"}]);
+        assert!(semantic_action_without_point(&action));
+        for transport in ["windows_send_input", "linux_at_spi_action", "unknown"] {
+            let mut rejected = action.clone();
+            rejected["action_truth"]["attempts"][0]["transport"] = serde_json::json!(transport);
+            assert!(!semantic_action_without_point(&rejected));
         }
-        let mut point = original.clone();
-        point["click_point"] = serde_json::json!({"x":10,"y":20});
-        assert!(!semantic_action_without_point(&point));
-        for key in [
-            "actual_delivery",
-            "requested_delivery",
-            "attempts",
-            "fallbacks",
-            "escalation",
-            "delivered_count",
-            "transport",
-            "route",
-            "effect",
+        action["click_point_image"] = serde_json::json!("click_source.png");
+        assert!(!semantic_action_without_point(&action));
+        action.as_object_mut().unwrap().remove("click_point_image");
+        action["action_truth"]["transport"] = serde_json::json!("windows_send_input");
+        action["action_truth"]["attempts"][0]["transport"] =
+            serde_json::json!("windows_send_input");
+        assert!(!semantic_action_without_point(&action));
+    }
+
+    #[test]
+    fn semantic_click_without_point_requires_exact_action_truth() {
+        for transport in [
+            "linux_at_spi_action",
+            "windows_uia_invoke",
+            "windows_uia_toggle",
+            "windows_uia_selection",
+            "windows_uia_expand_collapse",
         ] {
-            let mut action = original.clone();
-            action["action_truth"].as_object_mut().unwrap().remove(key);
-            assert!(!semantic_action_without_point(&action), "missing {key}");
+            let mut original = semantic_click_fixture();
+            original["action_truth"]["transport"] = serde_json::json!(transport);
+            assert!(semantic_action_without_point(&original));
+            let mut token = original.clone();
+            token["arguments"]
+                .as_object_mut()
+                .unwrap()
+                .remove("element_index");
+            token["arguments"]["element_token"] = serde_json::json!("e:fixture");
+            token["action_truth"]["requested_delivery"] = serde_json::json!("foreground");
+            token["action_truth"]["actual_delivery"] = serde_json::json!("foreground");
+            token["action_truth"]["effect"] = serde_json::json!("confirmed");
+            assert!(semantic_action_without_point(&token));
+            for (pointer, replacements) in [
+                ("/result_error", serde_json::json!([true, null])),
+                ("/tool", serde_json::json!(["double_click", "right_click"])),
+                ("/action_truth", serde_json::json!([null])),
+                (
+                    "/action_truth/effect",
+                    serde_json::json!(["unknown", "partial", "suspected_noop", "refused"]),
+                ),
+                (
+                    "/action_truth/transport",
+                    serde_json::json!(["linux_x11_event", "unknown"]),
+                ),
+                (
+                    "/action_truth/route",
+                    serde_json::json!(["unknown", "synthetic_events"]),
+                ),
+                (
+                    "/action_truth/actual_delivery",
+                    serde_json::json!(["unknown", null]),
+                ),
+                (
+                    "/action_truth/requested_delivery",
+                    serde_json::json!(["foreground"]),
+                ),
+                ("/action_truth/delivered_count", serde_json::json!([0, 2])),
+                (
+                    "/action_truth/escalation",
+                    serde_json::json!([{"kind":"retry_with_pixel_target"}]),
+                ),
+                ("/action_truth/fallbacks", serde_json::json!([[{}]])),
+                (
+                    "/action_truth/attempts",
+                    serde_json::json!([[{}], [{}, {}]]),
+                ),
+                ("/arguments/element_index", serde_json::json!([null, -1])),
+            ] {
+                for replacement in replacements.as_array().unwrap() {
+                    let mut action = original.clone();
+                    *action.pointer_mut(pointer).unwrap() = replacement.clone();
+                    assert!(
+                        !semantic_action_without_point(&action),
+                        "{pointer}: {action}"
+                    );
+                }
+            }
+            for (key, value) in [
+                ("x", serde_json::json!(10)),
+                ("y", serde_json::json!(20)),
+                ("raw", serde_json::json!(true)),
+                ("button", serde_json::json!("right")),
+                ("count", serde_json::json!(2)),
+                ("click_count", serde_json::json!(2)),
+                ("modifier", serde_json::json!(["shift"])),
+                ("modifiers", serde_json::json!(["ctrl"])),
+            ] {
+                let mut action = original.clone();
+                action["arguments"][key] = value;
+                assert!(!semantic_action_without_point(&action), "{key}");
+            }
+            let mut point = original.clone();
+            point["click_point"] = serde_json::json!({"x":10,"y":20});
+            assert!(!semantic_action_without_point(&point));
+            for key in [
+                "actual_delivery",
+                "requested_delivery",
+                "attempts",
+                "fallbacks",
+                "escalation",
+                "delivered_count",
+                "transport",
+                "route",
+                "effect",
+            ] {
+                let mut action = original.clone();
+                action["action_truth"].as_object_mut().unwrap().remove(key);
+                assert!(!semantic_action_without_point(&action), "missing {key}");
+            }
         }
     }
 
@@ -1265,6 +1649,7 @@ mod tests {
                 click_point: point,
                 capture_visual_state: false,
                 before: TurnCapture::default(),
+                dispatch_click: None,
             };
             write_turn(pending, "AT-SPI outcome", Some(&record), is_error).unwrap();
             let action: Value =
@@ -1332,6 +1717,7 @@ mod tests {
                             screenshot: Some(png.clone()),
                             ..Default::default()
                         },
+                        dispatch_click: None,
                     },
                     "AT-SPI outcome",
                     Some(&record),
@@ -1362,6 +1748,15 @@ mod tests {
 
     struct FailingVideo;
 
+    fn setup_test_marker() {
+        set_click_marker_fn(|png, x, y| {
+            Some(
+                crate::image_utils::crosshair_png_bytes(png, x, y)
+                    .unwrap_or_else(|_| b"click".to_vec()),
+            )
+        });
+    }
+
     impl VideoBackend for FailingVideo {
         fn stop(self: Box<Self>) -> anyhow::Result<VideoMetadata> {
             anyhow::bail!("recorder did not finalize")
@@ -1390,7 +1785,7 @@ mod tests {
             let phase = STATES.fetch_add(1, Ordering::SeqCst);
             Some(format!(r#"{{"phase":{phase}}}"#).into_bytes())
         });
-        set_click_marker_fn(|_, _, _| Some(b"click".to_vec()));
+        setup_test_marker();
         set_element_bounds_fn(|window_id, pid, element_index| {
             Some((window_id as f64 + element_index as f64, pid as f64))
         });

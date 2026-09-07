@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/cd-rust-cua-driver.yml"
       - ".github/workflows/ci-driver-linux-bootstrap.yml"
+      - ".github/scripts/tests/test_driver_linux_bootstrap.py"
 
 permissions:
   contents: read
@@ -24,6 +25,8 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Check snapshot and authentication contract
+        run: python3 .github/scripts/tests/test_driver_linux_bootstrap.py
       - name: Extract the exact release-workflow bootstrap
         run: |
           python3 -m venv "$RUNNER_TEMP/bootstrap-parser"
@@ -50,6 +53,7 @@ jobs:
             test "$(dpkg --print-architecture)" = "$EXPECTED_ARCH"
             uname -m
             sh -e -s
-            dpkg-query -W git python3 build-essential libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev
+            dpkg-query -W git ca-certificates curl python3 build-essential pkg-config libx11-dev libxi-dev libxtst-dev libxext-dev libwayland-dev libxkbcommon-dev
             ldd --version
+            test "$(getconf GNU_LIBC_VERSION)" = "glibc 2.31"
           ' < "$RUNNER_TEMP/driver-bootstrap.sh"

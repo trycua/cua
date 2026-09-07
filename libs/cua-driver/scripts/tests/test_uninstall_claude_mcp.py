@@ -41,6 +41,7 @@ def _run(
     with_claude_cli: bool = False,
     create_canonical_launcher: bool = True,
     custom_release_launchers: tuple[str, ...] = (),
+    cwd: str | None = None,
 ) -> tuple[dict, str]:
     """Run the real release uninstaller against a fake HOME."""
 
@@ -80,7 +81,7 @@ def _run(
     env.update({"HOME": str(home), "PATH": f"{fake_bin}:/usr/bin:/bin"})
     result = subprocess.run(
         ["/bin/bash", str(UNINSTALL)],
-        cwd=REPO_ROOT,
+        cwd=cwd.format(home=home, tmp=tmp_path) if cwd else REPO_ROOT,
         env=env,
         text=True,
         capture_output=True,
@@ -311,6 +312,34 @@ def test_foreign_dangling_canonical_launcher_is_preserved(tmp_path: Path) -> Non
     assert _user_servers(config) == {"cua-computer-use"}
     assert launcher.is_symlink()
     assert launcher.readlink() == foreign_target
+
+
+def test_relative_command_is_not_owned_by_the_uninstaller_cwd(tmp_path: Path) -> None:
+    """A relative command is resolved by Claude, not by the uninstaller.
+
+    Running from inside the release package tree must not turn an unrelated
+    project's ./cua-driver into release-owned evidence.
+    """
+
+    config, _ = _run(
+        tmp_path,
+        {
+            "projects": {
+                "/work/repo": {
+                    "mcpServers": {
+                        "cua-computer-use": {
+                            "command": "./cua-driver",
+                            "args": ["mcp"],
+                        }
+                    }
+                }
+            }
+        },
+        rust_marker=True,
+        cwd="{home}/.cua-driver/packages/current",
+    )
+
+    assert _project_servers(config) == {"cua-computer-use"}
 
 
 def test_scope_ownership_does_not_leak_to_same_name_in_project(tmp_path: Path) -> None:

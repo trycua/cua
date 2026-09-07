@@ -1,20 +1,208 @@
 ---
 title: OS and image catalog
-description: Sandbox operating systems, Linux distributions, desktop environments, window managers, and image registries.
+description: Hosted Fleet VM images, published candidates, and local Docker and Lume images, with selection and validation limits.
 ---
+
+For a hosted pool, start with [Hosted Fleet images](#hosted-fleet-images).
+[Published candidates](#published-candidates) have a separate validation status.
+[Local images](#local-images) target Docker or Lume on your own hardware, not the
+hosted Fleet VM path.
+
+This catalog describes specific artifacts and SDK mappings, not every image
+deployed in every Fleet pool. An image update does not upgrade existing pools.
+Registry and documentation checks below are dated September 7, 2026; mutable
+tags can resolve differently later.
+
+## Hosted Fleet images
+
+These VM image references use Fleet's `containerDisk` path, not an ordinary
+application-container runtime. Follow [Choose a Fleet
+image](/how-to-guides/sandbox/choose-an-image#choose-a-published-fleet-image) to
+select the guest OS, declare services, and claim a pool.
+
+| Image | Selection | Evidence and limits |
+| --- | --- | --- |
+| [Ubuntu 24.04](#ubuntu-2404) | Built-in `Image.linux()` in SDK 0.4.3; dashboard default differs | Published artifact and SDK mapping checked; no app-level certification established here |
+| [Omarchy / Hyprland](#omarchy-hyprland) | Explicit digest; amd64 guest | Fleet boot and bounded Driver background-selection evidence in the linked recipe |
+| [Windows Server 2022](#windows-server-2022) | Built-in `Image.windows()` in SDK 0.4.3 | Published artifact and EFI selection checked; no app-level certification established here |
+
+Use the exact references in the image details. Publication, boot, and operation
+checks establish different things; see [Evidence levels](#evidence-levels).
+
+### Ubuntu 24.04
+
+`Image.linux()` in `cua-sandbox` 0.4.3 selects this versioned Fleet VM tag:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34
+```
+
+The tag resolved to this digest at the dated registry check:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:eb68411ed8b4d7c39829cdfe854b9d0485b78ee064c3171fd8e3f7450f7ccee7
+```
+
+The Fleet dashboard's Ubuntu default uses
+`public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest`, which resolved to a different
+digest at that check:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57
+```
+
+The SDK pin and dashboard default are different selection paths; neither
+implies that an existing pool has changed. Inspect the image reference selected
+for your pool. Use an explicit digest when the same artifact must be selected
+from both paths. This catalog does not change the versioned SDK mapping.
+
+The [SDK mapping evidence](/reference/sandbox-sdk/runtime-support#evidence-and-limits)
+does not identify the guest desktop, guest architecture, or installed Driver and
+computer-server versions. OCI manifest architecture alone does not establish
+those guest details. The Sandbox SDK expects a compatible `server` on port
+`8000`; an MCP endpoint must be verified separately. Do not substitute the
+`docker-latest` application-container image for this VM image.
+
+### Omarchy / Hyprland [#omarchy-hyprland]
+
+Use the published amd64 Omarchy image from the [Fleet
+recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet):
+
+```text
+public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342
+```
+
+The guest runs Arch-based Omarchy with Hyprland / Wayland. The recipe documents
+Cua Driver and Hyprland plugin 0.24.0, the `mcp` service on port `3000` at `/mcp`,
+and the compatibility `computer-server` service on port `8000`. The recipe does
+not specify a computer-server package version.
+
+The recipe's recording shows two Driver sessions making background selections
+in LibreOffice Calc and Inkscape while a terminal stays in the foreground. It
+does not establish data edits or continuous foreground-isolation testing. The
+[0.24.0 release](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.24.0)
+and its [pinned plugin contract](https://github.com/trycua/cua/blob/4b3396d9fe4bd3cf723b0eb8db83c18a8764b520/libs/cua-driver/hyprland-plugin/packaging/release/USAGE.md)
+define the compositor, application-package, keyboard, and two-lane limits.
+Chromium, Electron, and XWayland raw background input are outside that contract.
+
+This reference replaces the older `d9b7be06...` recommendation. Existing pools
+using the older image are not automatically upgraded. The separate
+[ARM64 Omarchy guide](/how-to-guides/lume/run-omarchy-arm64) is for local Lume,
+not this Fleet artifact.
+
+### Windows Server 2022
+
+`Image.windows()` in `cua-sandbox` 0.4.3 selects this versioned Fleet VM tag:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3
+```
+
+At the dated registry check, this tag and `latest` resolved to:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-windows-2022@sha256:6d341afc26a37c4072d22ba403a89ecdad9a29aebab79570b5a38da6b8e16370
+```
+
+The guest uses the native Windows desktop. The
+[SDK contract](/reference/sandbox-sdk/runtime-support#windows-firmware) selects
+EFI for a Windows Fleet template. It does not establish guest architecture,
+installed Driver/server versions, service readiness, or desktop-operation
+certification for this artifact. The Sandbox SDK expects `server: 8000`; an MCP
+endpoint must be verified separately.
 
 Windows images do not include a Windows license. Bring your own valid licenses
 covering your intended use, including the applicable hosting and virtualization
 rights. An image being available or booting successfully does not establish
 licensing eligibility. Bundled applications have their own license terms.
 
-| OS      | Distribution / version / architecture                                   | Desktop / window manager                         | Image kind / runtime                       | Registry image or source                                                                                                | Evidence / limits                                                                                                                                                                                                                                                                                                                     |
-| ------- | ----------------------------------------------------------------------- | ------------------------------------------------ | ------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Linux   | Ubuntu 24.04; artifact architecture not established by SDK mapping      | Artifact-dependent; not specified by SDK mapping | Fleet containerDisk; local bare-metal QEMU | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34`                                                                | `Image.linux()` mapping in `cua-sandbox` 0.4.3; versioned tag, not a digest pin. [SDK checks](/reference/sandbox-sdk/runtime-support#evidence-and-limits) establish selection, not a live pull, boot, or guest-service check.                                                                                                         |
-| Linux   | Ubuntu 24.04                                                            | XFCE runtime mapping                             | Local Docker container                     | `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest`                                                                | Local container selector; mutable tag, not the Fleet VM disk                                                                                                                                                                                                                                                                          |
-| Linux   | Omarchy (Arch Linux-based), amd64                                       | Hyprland / Wayland                               | Fleet containerDisk                        | `public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab` | Digest-pinned explicit registry image. The [Fleet recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet) reports boot verification and defines `server: 8000` (computer-server) and `mcp: 3000` (Cua Driver); it does not certify every operation or Hyprland configuration.                                                      |
-| Linux   | NixOS; release and architecture not recorded in the publication summary | StumpWM                                          | Published candidate image                  | `public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9`                                | [Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping. |
-| Linux   | NixOS; release and architecture not recorded in the publication summary | Xfce / Xfwm4                                     | Published candidate image                  | `public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9`                                   | [Publication summary](https://github.com/trycua/cua/pull/3585) reports computer-server and Cua Driver included, guest tests and CI anonymous-pull checks passed. Component versions, service ports, and Fleet claim checks are not recorded there. Commit-named candidate tag, not a digest pin or `latest`; no built-in SDK mapping. |
-| Windows | Server 2022; artifact architecture not established by SDK mapping       | Native Windows desktop                           | Fleet containerDisk; local Hyper-V or QEMU | `public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3`                                                                | `Image.windows()` mapping in `cua-sandbox` 0.4.3; Fleet selects EFI. Versioned tag, not a digest pin. [SDK checks](/reference/sandbox-sdk/runtime-support#evidence-and-limits) establish selection and firmware, not a live pull, boot, or guest-service check.                                                                       |
-| macOS   | Sequoia 15                                                              | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-sequoia-cua:latest`                                                                               | Compatible Apple silicon host required; mutable tag; no built-in Fleet mapping                                                                                                                                                                                                                                                        |
-| macOS   | Tahoe 26                                                                | Native macOS desktop                             | Local Lume VM                              | `ghcr.io/trycua/macos-tahoe-cua:latest`                                                                                 | Default `Image.macos()` version; compatible Apple silicon host required; mutable tag; no built-in Fleet mapping                                                                                                                                                                                                                       |
+## Published candidates
+
+These NixOS artifacts are published candidates, not built-in SDK mappings or
+default Fleet selections. Anonymous registry checks resolved both tags on
+September 7, 2026. Publication does not establish a successful Fleet claim,
+guest-service readiness, or validated desktop operations.
+
+| Candidate | Desktop / window manager | Validation recorded here |
+| --- | --- | --- |
+| NixOS StumpWM | StumpWM | Published; original build and Fleet-operation evidence not established here |
+| NixOS XFCE | Xfce / Xfwm4 | Published; original build and Fleet-operation evidence not established here |
+
+The published tags are:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9
+public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9
+```
+
+Their resolved digests are:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm@sha256:3c5e87fae2486e8c7a1bc6546338c4183ff0bddbd40dd540981ab4d30e03e374
+public.ecr.aws/k5j5w0x5/cua-nixos-xfce@sha256:cd8075aff31f234bcd0573c424ab3f7d2aaf625798dee2352a76b1f58cff64dd
+```
+
+The public OCI configuration identifies Linux/amd64 artifact packaging, but
+does not identify the guest NixOS release, exact Driver/server versions, or
+service ports. Original public build and Fleet-operation results are not
+available in this catalog. Before adopting either candidate, verify its build
+provenance, Fleet admission, boot, services, and the operations your workload
+needs. A commit-named tag is not itself a build or test result. See [Prepare and
+reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
+for the artifact and readiness requirements.
+
+## Local images
+
+These references target local runtimes. They are not substitutes for Fleet
+`containerDisk` images and are not built-in hosted Fleet mappings in SDK 0.4.3.
+
+| Image | Local runtime | Selector or requirement |
+| --- | --- | --- |
+| Ubuntu 24.04 / XFCE | Docker application container | `Image.linux(kind='container')` |
+| macOS Sequoia 15 | Lume VM | `Image.macos('15')`; compatible Apple silicon host |
+| macOS Tahoe 26 | Lume VM | Default `Image.macos()`; compatible Apple silicon host |
+
+The local registry references are:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:docker-latest
+ghcr.io/trycua/macos-sequoia-cua:latest
+ghcr.io/trycua/macos-tahoe-cua:latest
+```
+
+These mutable tags resolved at the dated registry check; no new local boot or
+application tests are recorded here. Follow [Build a local sandbox
+image](/how-to-guides/sandbox/images) and the
+[runtime support matrix](/reference/sandbox-sdk/runtime-support#operating-systems-and-image-kinds).
+The Lume distinction concerns these artifacts and SDK mappings, not a claim
+about every macOS hosting service.
+
+## Evidence levels
+
+These labels describe different checks, not interchangeable guarantees:
+
+| Evidence | What it establishes | What it does not establish |
+| --- | --- | --- |
+| Published | A registry manifest resolves for the exact reference | Guest boot, installed service versions, or operation support |
+| Fleet boot observed | Dated evidence records a guest boot for the identified artifact | Every service is ready or every desktop operation works |
+| Operations validated | Linked results identify the tested artifact, environment, and operations | Untested applications, configurations, or later image versions |
+
+An SDK mapping establishes which image specification the client selects; it is
+not boot evidence. OCI platform metadata describes artifact packaging, not
+independent inspection of the guest disk. Missing evidence here is not proof
+that an image cannot boot.
+
+## Driver and compatibility-server connections
+
+Choose an image whose guest starts the service your client needs. Declaring a
+Fleet service port does not install or start that service.
+
+| Client path | Required guest service | Connection |
+| --- | --- | --- |
+| Cua Driver through MCP | A running Driver MCP endpoint | Use the image's documented service name, port, and MCP path through the authenticated Fleet claim |
+| Sandbox SDK desktop methods | A compatible computer-server endpoint | SDK 0.4.3 defaults to `server: 8000` and checks `/status` |
+
+The Omarchy recipe documents both paths. Do not infer another image's MCP port
+or Driver version from its OS name. See the
+[Fleet guest-service contract](/reference/sandbox-sdk/runtime-support#fleet-guest-service-contract)
+for connection and readiness limits.

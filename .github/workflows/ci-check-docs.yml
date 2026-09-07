@@ -68,6 +68,7 @@ jobs:
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Generate native reference once
+        id: generate
         if: steps.scope.outputs.selected == 'true'
         env:
           LIBRARY: ${{ matrix.library }}
@@ -89,7 +90,7 @@ jobs:
             exit 1
           fi
       - name: Retain native output for review
-        if: always() && steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        if: always() && steps.generate.outcome == 'success' && matrix.library == 'cua-driver'
         uses: actions/upload-artifact@v4
         with:
           name: cua-driver-reference-${{ matrix.platform }}

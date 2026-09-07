@@ -12,6 +12,18 @@ publish = false
 serde = { workspace = true }
 serde_json = { workspace = true }
 tempfile = "3"
+# Tool-call boundary fuzz target bodies (`boundary_fuzz`). The testkit is the
+# only in-workspace home that never ships, so the fuzz-only crates and the
+# core/contract path dependencies they exercise live here rather than behind a
+# feature in `cua-driver-core`.
+cua-driver-core = { path = "../cua-driver-core" }
+cua-driver-contract = { path = "../cua-driver-contract" }
+arbitrary = "1"
+async-trait = "0.1"
+tokio = { workspace = true }
+# Same version `cua-driver-core` already uses in its own tests, so the fuzz
+# schema-agreement check reuses that build.
+jsonschema = { version = "0.46", default-features = false }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

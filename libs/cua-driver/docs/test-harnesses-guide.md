@@ -127,10 +127,18 @@ These run without a repo-local GUI application and normally run without
 | `schema_*_test.rs`                     | Shared schema and backend consistency                         |
 | `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
 | `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
+| `tool_boundary_fuzz_smoke.rs`          | Tool-call boundary fuzz targets over seeds and random bytes   |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
 workers. They do not prove that a real click, key, scroll, or background input
 reached an application.
+
+The fuzz smoke test drives the target bodies in
+`cua_driver_testkit::boundary_fuzz` (JSON-RPC parsing, reserved-argument
+stripping, argument normalisation, authorization, typed contract inputs, and
+`ToolRegistry` dispatch against stubs). The same bodies run under libFuzzer
+from `rust/fuzz/`; see `rust/fuzz/README.md` and
+`docs/2026-09-04-tool-call-boundary-fuzzing-design.md`.
 
 ### Harness E2E Tests
 

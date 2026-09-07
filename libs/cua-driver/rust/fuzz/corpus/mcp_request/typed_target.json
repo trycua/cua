@@ -1,0 +1,1 @@
+{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"click","arguments":{"target":{"kind":"window","pid":42,"window_id":7},"element_index":3,"dispatch":"Foreground"}}}

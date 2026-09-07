@@ -163,6 +163,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "arbitrary"
+version = "1.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c3d036a3c4ab069c7b410a2ce876bd74808d2d0888a82667669f8e783a898bf1"
+
+[[package]]
 name = "arrayref"
 version = "0.3.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1256,12 +1262,18 @@ dependencies = [
 name = "cua-driver-testkit"
 version = "0.23.2"
 dependencies = [
+ "arbitrary",
+ "async-trait",
  "core-foundation",
+ "cua-driver-contract",
+ "cua-driver-core",
+ "jsonschema",
  "libc",
  "objc2-app-kit 0.2.2",
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "windows 0.61.3",
  "x11rb",
 ]

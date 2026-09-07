@@ -34,6 +34,7 @@
 //! tests only; they are never read by the shipped driver.
 
 pub mod ax;
+pub mod boundary_fuzz;
 mod browser_fixture;
 mod cli;
 mod daemon;

@@ -250,9 +250,25 @@ impl Client {
     }
 
     fn call(&mut self, name: &str, arguments: Value) {
+        let inventory = self.request("tools/list", json!({}));
+        let schema = inventory["result"]["tools"]
+            .as_array()
+            .expect("advertised tools")
+            .iter()
+            .find(|tool| tool["name"] == name)
+            .and_then(|tool| tool.get("outputSchema"));
+        if name == "get_session_state" {
+            assert!(schema.is_some(), "session state must advertise a schema");
+        }
         let response = self.request("tools/call", json!({"name":name,"arguments":arguments}));
         assert_ne!(response["result"]["isError"], true, "{response}");
         assert!(response["result"]["content"].is_array(), "{response}");
+        if let Some(schema) = schema {
+            let structured = response["result"]
+                .get("structuredContent")
+                .expect("schema-bearing success must contain structured output");
+            assert!(jsonschema::is_valid(schema, structured), "{response}");
+        }
     }
 
     fn eof(&self) {
@@ -378,6 +394,7 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
     session_absent(&daemon_endpoint, "peer-client").await;
     session_active(&daemon_endpoint, "idle-client").await;
     idle.call("get_config", json!({"session":"idle-client"}));
+    idle.call("get_session_state", json!({"session":"idle-client"}));
 
     let mut survivor = Client::spawn(&proxy_endpoint);
     let _survivor_control = tokio::time::timeout(BOUND, controls.recv())
@@ -408,6 +425,8 @@ async fn real_proxies_recover_from_control_loss_without_waiting_for_stdin() {
         .unwrap()
         .unwrap();
     fresh.call("get_config", json!({}));
+    fresh.call("start_session", json!({"session":"fresh-client"}));
+    fresh.call("get_session_state", json!({"session":"fresh-client"}));
     survivor.call("get_config", json!({"session":"survivor"}));
     relay_task.abort();
 }

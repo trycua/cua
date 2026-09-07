@@ -64,10 +64,15 @@ jobs:
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev \
-            imagemagick xvfb xauth x11-utils
+            imagemagick xvfb xauth x11-utils ffmpeg
       - name: Run Linux Rust tests
         working-directory: libs/cua-driver/rust
         run: cargo test -p cua-driver -p cua-driver-contract -p cua-driver-core -p cua-driver-testkit -p cursor-overlay -p cursor-theme-cli -p platform-linux --all-targets --locked
+      - name: Verify final-frame extraction without a desktop
+        working-directory: libs/cua-driver/rust
+        run: |
+          cargo test -p cua-driver --test e2e_environment_preflight_test --locked -- \
+            --ignored --exact last_frame_extraction_handles_long_final_duration_and_invalid_input --nocapture
       - name: Run X11 overlay click-through regression
         working-directory: libs/cua-driver/rust
         run: |

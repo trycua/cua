@@ -13,6 +13,7 @@ on:
       - "docs/pnpm-lock.yaml"
       - "scripts/docs-generators/**"
       - ".github/workflows/ci-check-docs.yml"
+      - ".gitattributes"
 
 permissions:
   contents: read
@@ -30,10 +31,16 @@ jobs:
           - library: cua-driver
             platform: macos
             os: macos-latest
+          - library: cua-driver
+            platform: windows
+            os: windows-latest
           - library: lume
             platform: macos
             os: macos-latest
     runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
       - uses: actions/checkout@v4
         with:
@@ -47,8 +54,8 @@ jobs:
         run: pnpm --dir docs install --frozen-lockfile
       - name: Test generator routing and ownership
         run: |
-          docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --test-routing
-          docs/node_modules/.bin/tsx --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
+          node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
       - name: Select affected generator
         id: scope
         env:
@@ -56,7 +63,7 @@ jobs:
           LIBRARY: ${{ matrix.library }}
         run: |
           git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
-          GENERATORS=$(docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
+          GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
           if [[ " $GENERATORS " == *" $LIBRARY "* ]]; then
             echo "selected=true" >> "$GITHUB_OUTPUT"
           fi
@@ -69,9 +76,8 @@ jobs:
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Check generated reference
         if: steps.scope.outputs.selected == 'true'
-        env:
-          LIBRARY: ${{ matrix.library }}
-        run: docs/node_modules/.bin/tsx scripts/docs-generators/runner.ts --library "$LIBRARY" --check
+        shell: ${{ runner.os == 'Windows' && 'pwsh' || 'bash' }}
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
 
   check-docs-sync:
     name: Check Documentation Sync

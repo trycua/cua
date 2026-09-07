@@ -5,6 +5,12 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { referencePlatform, syncReferences, type DumpDocsOutput } from './cua-driver';
 
+const platforms = [
+  { host: 'linux', name: 'Linux', outputFile: 'mcp-tools-linux.mdx' },
+  { host: 'darwin', name: 'macOS', outputFile: 'mcp-tools.mdx' },
+  { host: 'win32', name: 'Windows', outputFile: 'mcp-tools-windows.mdx' },
+];
+
 function docs(description = 'Inspect the native tree.'): DumpDocsOutput {
   return {
     cli: { name: 'cua-driver', version: '1.0.0', abstract: 'Shared CLI.', commands: [] },
@@ -26,60 +32,51 @@ function docs(description = 'Inspect the native tree.'): DumpDocsOutput {
 }
 
 test('maps native hosts and refuses unsupported hosts before generation', () => {
-  assert.deepEqual(referencePlatform('linux'), {
-    host: 'linux',
-    name: 'Linux',
-    outputFile: 'mcp-tools-linux.mdx',
-  });
-  assert.deepEqual(referencePlatform('darwin'), {
-    host: 'darwin',
-    name: 'macOS',
-    outputFile: 'mcp-tools.mdx',
-  });
-  for (const host of ['win32', 'freebsd']) {
-    assert.throws(() => referencePlatform(host), /not implemented/);
-  }
+  for (const platform of platforms) assert.deepEqual(referencePlatform(platform.host), platform);
+  assert.throws(() => referencePlatform('freebsd'), /not implemented/);
 });
 
-for (const host of ['linux', 'darwin']) {
-  const platform = referencePlatform(host);
-  test(`${host} generation and checking own only the native MCP and shared CLI files`, (t) => {
+for (const expected of platforms) {
+  test(`${expected.host} generation and checking own only the native MCP and shared CLI files`, (t) => {
     const dir = mkdtempSync(join(tmpdir(), 'cua-docs-test-'));
     t.after(() => rmSync(dir, { recursive: true, force: true }));
-    const ownFile = host === 'linux' ? 'mcp-tools-linux.mdx' : 'mcp-tools.mdx';
-    const otherFile = host === 'linux' ? 'mcp-tools.mdx' : 'mcp-tools-linux.mdx';
+    const platform = referencePlatform(expected.host);
+    const others = platforms.filter((other) => other.host !== expected.host);
     writeFileSync(join(dir, 'mcp-tool-notes.mdx'), 'Shared guidance.');
-    writeFileSync(join(dir, otherFile), 'Other platform.');
+    for (const other of others) writeFileSync(join(dir, other.outputFile), 'Other platform.');
     assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, true), [
       'cli-reference.mdx',
-      ownFile,
+      expected.outputFile,
     ]);
-    assert.equal(readdirSync(dir).length, 2);
+    assert.equal(readdirSync(dir).length, platforms.length);
     syncReferences(dir, docs(), '1.0.0', platform, false);
     assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, false), []);
     assert.deepEqual(syncReferences(dir, docs(), '1.0.0', platform, true), []);
     assert.equal(readFileSync(join(dir, 'mcp-tool-notes.mdx'), 'utf8'), 'Shared guidance.');
-    assert.equal(readFileSync(join(dir, otherFile), 'utf8'), 'Other platform.');
-    const before = readFileSync(join(dir, ownFile), 'utf8');
-    assert.ok(before.includes(`title: MCP Tools (${host === 'linux' ? 'Linux' : 'macOS'})`));
-    assert.ok(before.includes(`/reference/cua-driver/${otherFile.replace('.mdx', '')}`));
+    const before = readFileSync(join(dir, expected.outputFile), 'utf8');
+    assert.ok(before.includes(`title: MCP Tools (${expected.name})`));
+    for (const other of others) {
+      assert.ok(before.includes(`/reference/cua-driver/${other.outputFile.replace('.mdx', '')}`));
+    }
     assert.ok(before.includes('/reference/cua-driver/mcp-tool-notes'));
     assert.ok(before.includes('### `get_window_state`'));
     assert.ok(before.includes('- `pid` (integer, required): Native process.'));
     assert.deepEqual(
       syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, true),
-      [ownFile]
+      [expected.outputFile]
     );
-    assert.equal(readFileSync(join(dir, ownFile), 'utf8'), before);
+    assert.equal(readFileSync(join(dir, expected.outputFile), 'utf8'), before);
     syncReferences(dir, docs('Updated native description.'), '1.0.0', platform, false);
-    assert.match(readFileSync(join(dir, ownFile), 'utf8'), /Updated native description/);
-    assert.equal(readFileSync(join(dir, otherFile), 'utf8'), 'Other platform.');
-    assert.deepEqual(readdirSync(dir).sort(), [
-      'cli-reference.mdx',
-      'mcp-tool-notes.mdx',
-      'mcp-tools-linux.mdx',
-      'mcp-tools.mdx',
-    ]);
+    assert.match(
+      readFileSync(join(dir, expected.outputFile), 'utf8'),
+      /Updated native description/
+    );
+    for (const other of others)
+      assert.equal(readFileSync(join(dir, other.outputFile), 'utf8'), 'Other platform.');
+    assert.deepEqual(
+      readdirSync(dir).sort(),
+      ['cli-reference.mdx', 'mcp-tool-notes.mdx', ...platforms.map((p) => p.outputFile)].sort()
+    );
   });
 }
 
@@ -88,9 +85,11 @@ test('shared CLI rendering does not depend on native MCP definitions or platform
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   syncReferences(dir, docs('AT-SPI tree.'), '1.0.0', referencePlatform('linux'), false);
   const cli = readFileSync(join(dir, 'cli-reference.mdx'), 'utf8');
-  assert.deepEqual(
-    syncReferences(dir, docs('AX tree.'), '1.0.0', referencePlatform('darwin'), false),
-    ['mcp-tools.mdx']
-  );
-  assert.equal(readFileSync(join(dir, 'cli-reference.mdx'), 'utf8'), cli);
+  for (const platform of platforms.filter((p) => p.host !== 'linux')) {
+    assert.deepEqual(
+      syncReferences(dir, docs(platform.name), '1.0.0', referencePlatform(platform.host), false),
+      [platform.outputFile]
+    );
+    assert.equal(readFileSync(join(dir, 'cli-reference.mdx'), 'utf8'), cli);
+  }
 });

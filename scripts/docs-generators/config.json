@@ -30,13 +30,19 @@
           "extractCommand": "target/release/cua-driver dump-docs --type mcp"
         },
         {
+          "type": "mcp",
+          "outputFile": "mcp-tools-windows.mdx",
+          "platform": { "host": "win32", "name": "Windows" },
+          "extractCommand": "target/release/cua-driver.exe dump-docs --type mcp"
+        },
+        {
           "type": "cli",
           "outputFile": "cli-reference.mdx",
           "extractCommand": "target/release/cua-driver dump-docs --type cli"
         }
       ],
       "enabled": true,
-      "notes": "Generates shared cli-reference.mdx and the host-owned mcp-tools.mdx (macOS) or mcp-tools-linux.mdx from the Rust binary's `dump-docs`. MCP tool docs come straight from the live tool registry; CLI docs come from a hand-maintained `cli_docs_json()` literal in crates/cua-driver/src/cli.rs (the CLI is hand-parsed, not clap, so there is nothing to introspect yet — introspecting it is a tracked follow-up). Curated cross-cutting content lives in the sibling non-generated files mcp-tool-notes.mdx and macos-permissions.mdx."
+      "notes": "Generates shared cli-reference.mdx and the host-owned mcp-tools.mdx (macOS), mcp-tools-linux.mdx, or mcp-tools-windows.mdx from the Rust binary's `dump-docs`. MCP tool docs come straight from the live tool registry; CLI docs come from a hand-maintained `cli_docs_json()` literal in crates/cua-driver/src/cli.rs (the CLI is hand-parsed, not clap, so there is nothing to introspect yet — introspecting it is a tracked follow-up). Curated cross-cutting content lives in the sibling non-generated files mcp-tool-notes.mdx and macos-permissions.mdx."
     },
     "lume": {
       "name": "Lume VM Manager",

@@ -432,12 +432,20 @@ impl Client {
             challenge: String::new(),
             sequence: 0,
         };
-        client.attest()?;
-        if client.handshake(lane)? {
+        if client.attest_and_handshake(lane, Self::attest)? {
             Ok(Some(client))
         } else {
             Ok(None)
         }
+    }
+
+    fn attest_and_handshake(
+        &mut self,
+        lane: usize,
+        attest: impl FnOnce(&Self) -> Result<()>,
+    ) -> Result<bool> {
+        attest(self)?;
+        self.handshake(lane)
     }
 
     /// Only an explicit busy reservation permits another endpoint attempt.
@@ -575,7 +583,11 @@ impl Client {
             "input route is immutable"
         );
         self.delivery_route = Some(route);
-        self.attest()?;
+        // Foreground attests once per logical call in dispatch_in_slot, before
+        // any text keys. Each key still needs a fresh exact target grant below.
+        if route == DeliveryRoute::Background {
+            self.attest()?;
+        }
         let target = self.bind_target(&action, route)?;
         if target["ok"] == false {
             return Ok(target);
@@ -1071,16 +1083,25 @@ fn execute_actions_routed(
     slot.as_mut()
         .context("missing input connection")?
         .cancellation = cancellation;
-    dispatch_in_slot(&mut slot, |client| {
-        if !text {
-            return client.execute_routed(
-                actions.into_iter().next().context("missing input action")?,
-                started,
-                route,
-            );
-        }
-        execute_text_actions(actions, |action| client.execute_routed(action, None, route))
-    })
+    dispatch_in_slot(
+        &mut slot,
+        |client| {
+            if route == DeliveryRoute::Foreground {
+                client.attest()?;
+            }
+            Ok(())
+        },
+        |client| {
+            if !text {
+                return client.execute_routed(
+                    actions.into_iter().next().context("missing input action")?,
+                    started,
+                    route,
+                );
+            }
+            execute_text_actions(actions, |action| client.execute_routed(action, None, route))
+        },
+    )
 }
 
 fn execute_text_actions(
@@ -1122,13 +1143,18 @@ fn execute_text_actions(
 
 fn dispatch_in_slot(
     slot: &mut Option<Client>,
+    attest: impl FnOnce(&Client) -> Result<()>,
     dispatch: impl FnOnce(&mut Client) -> Result<Value>,
 ) -> Result<Value> {
     let lane = slot
         .as_ref()
         .and_then(|client| client.lane)
         .context("missing claimed input lane")?;
-    let mut result = dispatch(slot.as_mut().context("missing input connection")?);
+    let client = slot.as_mut().context("missing input connection")?;
+    // Revalidate live compositor identity on each logical foreground call,
+    // including reuse: the selected Wayland display can change while pooled.
+    // An attestation failure follows the same discard path as dispatch errors.
+    let mut result = attest(client).and_then(|()| dispatch(client));
     if result.as_ref().map_or(true, terminal_connection_result) {
         *slot = None;
     }
@@ -1142,16 +1168,17 @@ fn dispatch_in_slot(
 
 fn terminal_connection_result(value: &Value) -> bool {
     value["ok"] == false
-        && matches!(
-            value["code"].as_str(),
-            Some(
-                "desktop_changed"
-                    | "plugin_disabled"
-                    | "plugin_shutdown"
-                    | "generation_exhausted"
-                    | "text_interrupted"
-            )
-        )
+        && (value["effect"] == "partial"
+            || matches!(
+                value["code"].as_str(),
+                Some(
+                    "desktop_changed"
+                        | "plugin_disabled"
+                        | "plugin_shutdown"
+                        | "generation_exhausted"
+                        | "text_interrupted"
+                )
+            ))
 }
 
 #[cfg(test)]
@@ -1160,6 +1187,223 @@ mod tests {
     use std::os::fd::FromRawFd;
     const TOKEN: &str = "0123456789abcdef0123456789abcdef";
     static POOL_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn foreground_text_attests_each_logical_call_once_and_binds_every_key() {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "HELLO");
+            peer.send(
+                json!({"ok":true,"protocol":3,"epoch":TOKEN,"foreground_target":true})
+                    .to_string()
+                    .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(read_packet(&peer), "CLAIM");
+            peer.send(br#"{"ok":true,"lane":0}"#).unwrap();
+            for (sequence, keycode) in [(1, 30), (2, 48), (3, 46), (4, 32), (5, 18)] {
+                assert_eq!(read_packet(&peer), "FOREGROUND_TARGET 1 1 2");
+                let token = format!("{sequence:032x}");
+                peer.send(
+                    json!({"ok":true,"route":"primary_foreground","target":token,
+                        "revision":sequence,"width":100,"height":100})
+                    .to_string()
+                    .as_bytes(),
+                )
+                .unwrap();
+                assert_eq!(
+                    read_packet(&peer),
+                    format!("KEY {sequence} {token} {sequence} {keycode} 0")
+                );
+                peer.send(br#"{"ok":true,"effect":"unverifiable","route":"primary_foreground"}"#)
+                    .unwrap();
+            }
+        });
+        let mut attestations = 0;
+        assert!(client
+            .attest_and_handshake(0, |_| {
+                attestations += 1;
+                Ok(())
+            })
+            .unwrap());
+        assert_eq!(attestations, 1);
+        let mut slot = Some(client);
+        for (call, text) in ["abc", "de"].into_iter().enumerate() {
+            let result = dispatch_in_slot(
+                &mut slot,
+                |_| {
+                    attestations += 1;
+                    Ok(())
+                },
+                |client| {
+                    execute_text_actions(foreground_text_actions(text).unwrap(), |action| {
+                        client.execute_routed(action, None, DeliveryRoute::Foreground)
+                    })
+                },
+            )
+            .unwrap();
+            assert_eq!(result["delivery"]["delivered_count"], text.len());
+            assert_eq!(attestations, call + 2);
+            assert!(slot.is_some());
+        }
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn failed_call_attestation_discards_reused_slot_without_sending_packets() {
+        let (mut client, peer) = test_connection();
+        client.lane = Some(0);
+        client.delivery_route = Some(DeliveryRoute::Foreground);
+        let mut slot = Some(client);
+        let error = dispatch_in_slot(
+            &mut slot,
+            |_| bail!("compositor identity mismatch"),
+            |_| panic!("failed attestation must prevent the entire text call"),
+        )
+        .unwrap_err();
+        assert_eq!(error.to_string(), "compositor identity mismatch");
+        assert!(slot.is_none());
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0
+        );
+    }
+
+    #[test]
+    fn failed_initial_attestation_sends_no_handshake_or_action() {
+        let (mut client, peer) = test_connection();
+        assert!(client
+            .attest_and_handshake(0, |_| bail!("compositor identity mismatch"))
+            .is_err());
+        assert!(client.lane.is_none());
+        drop(client);
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0
+        );
+    }
+
+    #[test]
+    fn foreground_text_stops_at_revoked_target_without_replay() {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        client.foreground_supported = true;
+        client.lane = Some(0);
+        let server = std::thread::spawn(move || {
+            assert_eq!(read_packet(&peer), "FOREGROUND_TARGET 1 1 2");
+            peer.send(
+                json!({"ok":true,"route":"primary_foreground","target":TOKEN,
+                    "revision":1,"width":100,"height":100})
+                .to_string()
+                .as_bytes(),
+            )
+            .unwrap();
+            assert_eq!(read_packet(&peer), format!("KEY 1 {TOKEN} 1 30 0"));
+            peer.send(br#"{"ok":true,"effect":"unverifiable","route":"primary_foreground"}"#)
+                .unwrap();
+            assert_eq!(read_packet(&peer), "FOREGROUND_TARGET 1 1 2");
+            peer.send(br#"{"ok":false,"code":"desktop_changed","detail":"desktop_changed"}"#)
+                .unwrap();
+            let mut byte = [0u8];
+            assert_eq!(
+                unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                0
+            );
+        });
+        let mut slot = Some(client);
+        let result = dispatch_in_slot(
+            &mut slot,
+            |_| Ok(()),
+            |client| {
+                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
+                    client.execute_routed(action, None, DeliveryRoute::Foreground)
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(result["code"], "desktop_changed");
+        assert_eq!(result["effect"], "partial");
+        assert_eq!(result["delivery"]["delivered_count"], 1);
+        assert!(slot.is_none());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn foreground_text_later_key_refusal_discards_slot_without_replay() {
+        let (mut client, peer) = test_connection();
+        client.protocol = InputProtocol::Production;
+        client.foreground_supported = true;
+        client.lane = Some(0);
+        let server = std::thread::spawn(move || {
+            for (sequence, keycode) in [(1, 30), (2, 48)] {
+                assert_eq!(read_packet(&peer), "FOREGROUND_TARGET 1 1 2");
+                peer.send(
+                    json!({"ok":true,"route":"primary_foreground","target":TOKEN,
+                        "revision":1,"width":100,"height":100})
+                    .to_string()
+                    .as_bytes(),
+                )
+                .unwrap();
+                assert_eq!(
+                    read_packet(&peer),
+                    format!("KEY {sequence} {TOKEN} 1 {keycode} 0")
+                );
+                let reply = if sequence == 1 {
+                    json!({"ok":true,"effect":"unverifiable","route":"primary_foreground"})
+                } else {
+                    json!({"ok":false,"code":"target_changed","detail":"target_changed"})
+                };
+                peer.send(reply.to_string().as_bytes()).unwrap();
+            }
+            let mut byte = [0u8];
+            assert_eq!(
+                unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+                0
+            );
+        });
+        let mut slot = Some(client);
+        let result = dispatch_in_slot(
+            &mut slot,
+            |_| Ok(()),
+            |client| {
+                execute_text_actions(foreground_text_actions("abc").unwrap(), |action| {
+                    client.execute_routed(action, None, DeliveryRoute::Foreground)
+                })
+            },
+        )
+        .unwrap();
+        assert_eq!(result["code"], "target_changed");
+        assert_eq!(result["effect"], "partial");
+        assert_eq!(result["delivery"]["delivered_count"], 1);
+        assert!(slot.is_none());
+        server.join().unwrap();
+    }
+
+    #[test]
+    fn background_action_still_requires_live_compositor_attestation() {
+        let (mut client, peer) = test_connection();
+        client.lane = Some(0);
+        // This socket's peer is the test process, never the Wayland compositor.
+        assert!(client
+            .execute_routed(
+                Action::Key {
+                    key: "a".into(),
+                    modifiers: vec![]
+                },
+                None,
+                DeliveryRoute::Background,
+            )
+            .is_err());
+        drop(client);
+        let mut byte = [0u8];
+        assert_eq!(
+            unsafe { libc::recv(peer.as_raw_fd(), byte.as_mut_ptr().cast(), 1, 0) },
+            0
+        );
+    }
 
     #[test]
     fn foreground_requires_advertisement_and_production_without_sending_target() {
@@ -1402,9 +1646,7 @@ mod tests {
                 reply["delivery"],
                 json!({"mode":"foreground","delivered_count":1})
             );
-            if cancel {
-                assert!(terminal_connection_result(&reply));
-            }
+            assert!(terminal_connection_result(&reply));
         }
     }
 
@@ -1466,6 +1708,7 @@ mod tests {
             json!({"ok": true}),
             json!({"ok": false, "code": "pending_operator_approval"}),
             json!({"ok": false, "code": "primary_target_busy"}),
+            json!({"ok": false, "code": "target_changed", "effect": "none"}),
         ] {
             assert!(!terminal_connection_result(&value));
         }
@@ -1671,10 +1914,14 @@ mod tests {
             })
             .unwrap(),
         );
-        let reply = dispatch_in_slot(&mut slot, |client| {
-            client.request("TARGET synthetic")?;
-            client.dispatch("CLICK synthetic", false, None)
-        })
+        let reply = dispatch_in_slot(
+            &mut slot,
+            |_| Ok(()),
+            |client| {
+                client.request("TARGET synthetic")?;
+                client.dispatch("CLICK synthetic", false, None)
+            },
+        )
         .unwrap();
         assert_eq!(claims, 1);
         assert_eq!(reply["ok"], true);
@@ -1709,10 +1956,14 @@ mod tests {
                 );
             });
             let mut dispatches = 0;
-            let error = dispatch_in_slot(&mut slot, |client| {
-                dispatches += 1;
-                client.dispatch("CLICK synthetic", false, None)
-            })
+            let error = dispatch_in_slot(
+                &mut slot,
+                |_| Ok(()),
+                |client| {
+                    dispatches += 1;
+                    client.dispatch("CLICK synthetic", false, None)
+                },
+            )
             .unwrap_err();
             assert!(error.is::<DispatchUnknown>());
             assert_eq!(dispatches, 1);
@@ -2048,9 +2299,11 @@ mod tests {
             tokio::task::spawn_blocking(move || {
                 client.cancellation = cancellation;
                 let mut slot = Some(client);
-                let result = dispatch_in_slot(&mut slot, |client| {
-                    client.dispatch("DRAG synthetic", true, Some(started))
-                });
+                let result = dispatch_in_slot(
+                    &mut slot,
+                    |_| Ok(()),
+                    |client| client.dispatch("DRAG synthetic", true, Some(started)),
+                );
                 assert!(slot.is_none());
                 finished.send(result).unwrap();
             })

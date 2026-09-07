@@ -464,8 +464,20 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
     let pure_wayland = cfg!(target_os = "linux")
         && std::env::var_os("WAYLAND_DISPLAY").is_some()
         && std::env::var_os("DISPLAY").is_none();
+    #[cfg(target_os = "linux")]
+    let hyprland_foreground = pure_wayland && platform_linux::wayland::hyprland::is_session();
+    #[cfg(not(target_os = "linux"))]
+    let hyprland_foreground = false;
     let (case_action, case_route) = if pure_wayland {
-        ("left_click", DriverRoute::LinuxAtSpiAction)
+        (
+            "left_click",
+            if hyprland_foreground {
+                // AT-SPI resolves the element; the compositor delivers primary input.
+                DriverRoute::Composite
+            } else {
+                DriverRoute::LinuxAtSpiAction
+            },
+        )
     } else {
         ("computer_history_continuity", DriverRoute::WindowState)
     };
@@ -584,6 +596,19 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             "Wayland click did not produce a delivered effect: {}",
             clicked.raw
         );
+        let route = clicked
+            .action_route()
+            .expect("Wayland click emitted no action route");
+        assert_eq!(
+            route,
+            if hyprland_foreground {
+                "global_input"
+            } else {
+                "accessibility"
+            },
+            "Wayland foreground click used an unexpected route: {}",
+            clicked.raw
+        );
         let _settled_state = wait_for_window_text(&mut driver, pid, window_id, "counter=1");
         let capability = cua_driver_core::tool::default_capabilities_for("click")
             .into_iter()
@@ -593,7 +618,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
             capability, "input.pointer.click",
             "history must use click's primary closed-contract capability"
         );
-        (capability, effect.to_owned(), "accessibility")
+        (capability, effect.to_owned(), route.to_owned())
     } else {
         let requested_x = bounds["x"].as_f64().expect("fixture x") + 18.0;
         let requested_y = bounds["y"].as_f64().expect("fixture y") + 12.0;
@@ -620,7 +645,7 @@ fn encrypted_history_survives_restart_and_cryptographically_purges() {
         (
             "window.frame.set".to_owned(),
             "confirmed".to_owned(),
-            "system_api",
+            "system_api".to_owned(),
         )
     };
     let ended = driver.call("end_session", json!({"session": RAW_SESSION}));

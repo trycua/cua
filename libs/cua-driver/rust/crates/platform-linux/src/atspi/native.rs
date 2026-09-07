@@ -2142,7 +2142,7 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, 0, None)
                 .await
                 .unwrap_or((0, 0));
 
@@ -2243,7 +2243,7 @@ pub fn perform_action_at_screen_point(
                 Some(v) => v,
                 None => return Ok(None),
             };
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, xid, None)
                 .await
                 .unwrap_or((0, 0));
 
@@ -2439,7 +2439,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             let visited = collect_visited(conn, pid)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, None)
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, 0, None)
                 .await
                 .unwrap_or((0, 0));
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -2714,6 +2714,35 @@ fn combine_wayland_content_offsets(
     }
 }
 
+fn hyprland_document_top_inset(
+    target: (u64, u32),
+    window: Option<(u64, u32, u32, u32)>,
+    document: (i32, i32, i32, i32),
+) -> Option<i32> {
+    let (address, pid, window_width, window_height) = window?;
+    let (x, y, width, height) = document;
+    if target.0 == 0 || target != (address, pid) || x != 0 || y < 0 || width <= 0 || height <= 0 {
+        return None;
+    }
+    let top = i64::from(window_height) - i64::from(height);
+    // A full-width embedded document can omit GTK's CSD header from its
+    // WINDOW origin. Reject partial panes and gaps larger than a title bar.
+    if (i64::from(window_width) - i64::from(width)).abs() > 4 || !(1..=128).contains(&top) {
+        return None;
+    }
+    Some(y.max(top as i32))
+}
+
+fn select_web_document<T>(
+    candidates: impl Iterator<Item = (T, usize, bool)>,
+    require_web_process_bus: bool,
+) -> Option<T> {
+    candidates
+        .filter(|(_, _, on_web_process_bus)| !require_web_process_bus || *on_web_process_bus)
+        .min_by_key(|(_, depth, _)| *depth)
+        .map(|(document, _, _)| document)
+}
+
 /// Offset of embedded web content inside a captured Wayland toplevel.
 /// Compositor decorations and toolkit document offsets are independent and
 /// therefore additive: choosing one or the other leaves WebKit controls one
@@ -2721,6 +2750,7 @@ fn combine_wayland_content_offsets(
 async fn web_document_origin_for_visited(
     visited: &[Visited<'_>],
     pid: u32,
+    xid: u64,
     scoped_frame: Option<usize>,
 ) -> Option<(i32, i32)> {
     if !crate::wayland::is_wayland() {
@@ -2730,17 +2760,40 @@ async fn web_document_origin_for_visited(
     let compositor = sway_window
         .as_ref()
         .map(|window| (window.content_x, window.content_y));
-    let document = visited
-        .iter()
-        .filter(|node| scoped_frame.is_none_or(|scope| node.frame_ordinal == scope))
-        .filter(|node| node.has_component)
-        .filter(|node| is_document_role(&node.role) || node.in_web_doc)
-        .min_by_key(|node| node.depth);
+    let document_is_separate = visited.iter().any(|node| {
+        scoped_frame.is_none_or(|scope| node.frame_ordinal == scope) && node.on_web_process_bus
+    });
+    // Only a correlated AX frame proves these document dimensions belong to
+    // the named client; an application-wide walk could select a sibling.
+    let hyprland_window = if document_is_separate
+        && scoped_frame.is_some()
+        && xid != 0
+        && crate::wayland::hyprland::is_session()
+    {
+        crate::wayland::hyprland::accessibility_window(xid, pid)
+            .map(|window| (window.address, window.pid, window.width, window.height))
+    } else {
+        None
+    };
+    // Hyprland's inferred inset must use dimensions from the WebProcess whose
+    // descendants receive that inset, not a shallower application-bus document.
+    let document = select_web_document(
+        visited
+            .iter()
+            .filter(|node| scoped_frame.is_none_or(|scope| node.frame_ordinal == scope))
+            .filter(|node| node.has_component)
+            .filter(|node| is_document_role(&node.role) || node.in_web_doc)
+            .map(|node| (node, node.depth, node.on_web_process_bus)),
+        hyprland_window.is_some(),
+    );
     let document = if let Some(document) = document {
         match call(document.acc.proxies()).await {
             Some(Ok(proxies)) => match call(proxies.component()).await {
                 Some(Ok(component)) => match call(component.get_extents(CoordType::Window)).await {
                     Some(Ok((x, y, width, height))) if x >= 0 && y >= 0 => {
+                        dlog!(
+                            "Wayland web document extents: target={xid:#x} pid={pid} document=({x},{y},{width},{height}) hyprland={hyprland_window:?}"
+                        );
                         let inferred_top = match (compositor, sway_window.as_ref()) {
                             (Some((_, 0)), Some(window))
                                 if width > 0
@@ -2753,7 +2806,13 @@ async fn web_document_origin_for_visited(
                             }
                             _ => 0,
                         };
-                        Some((x, y.max(inferred_top)))
+                        let top = hyprland_document_top_inset(
+                            (xid, pid),
+                            hyprland_window,
+                            (x, y, width, height),
+                        )
+                        .unwrap_or(y.max(inferred_top));
+                        Some((x, top))
                     }
                     _ => None,
                 },
@@ -2764,9 +2823,6 @@ async fn web_document_origin_for_visited(
     } else {
         None
     };
-    let document_is_separate = visited.iter().any(|node| {
-        scoped_frame.is_none_or(|scope| node.frame_ordinal == scope) && node.on_web_process_bus
-    });
     let combined = combine_wayland_content_offsets(compositor, document, document_is_separate);
     dlog!(
         "Wayland web content offset: compositor={compositor:?} document={document:?} separate_process={document_is_separate} combined={combined:?}"
@@ -2931,7 +2987,7 @@ async fn element_bounds_for_visited(
     // descendants only. Electron commonly contributes zero for both; WebKitGTK
     // under Sway needs the sum.
     let web_document_origin = if offset.is_some() {
-        web_document_origin_for_visited(visited, pid, scoped_frame).await
+        web_document_origin_for_visited(visited, pid, xid, scoped_frame).await
     } else {
         None
     };
@@ -3115,9 +3171,10 @@ mod coord_tests {
     use super::parse_gtk_frame_extents;
     use super::{
         activation_index, before_snapshot_deadline, combine_wayland_content_offsets,
-        is_activation_action, is_enabled_state, is_indexable_capabilities, is_passive_role,
-        is_web_process_bus, prefer_authoritative_wayland_origin, rebase_renderer_window_offset,
-        screen_extent_rebase, select_click_target, ApplicationSelection,
+        hyprland_document_top_inset, is_activation_action, is_enabled_state,
+        is_indexable_capabilities, is_passive_role, is_web_process_bus,
+        prefer_authoritative_wayland_origin, rebase_renderer_window_offset, screen_extent_rebase,
+        select_click_target, select_web_document, ApplicationSelection,
     };
     use atspi::{State, StateSet};
     use std::time::Duration;
@@ -3360,6 +3417,79 @@ mod coord_tests {
             Some((0, 47))
         );
         assert_eq!(combine_wayland_content_offsets(None, None, true), None);
+    }
+
+    #[test]
+    fn hyprland_document_selection_requires_its_own_web_process_bus() {
+        let mixed_bus_documents = [("application", 1, false), ("web-process", 3, true)];
+        assert_eq!(
+            select_web_document(mixed_bus_documents.into_iter(), true),
+            Some("web-process")
+        );
+        // Sway retains its existing shallowest-document selection.
+        assert_eq!(
+            select_web_document(mixed_bus_documents.into_iter(), false),
+            Some("application")
+        );
+        assert_eq!(
+            select_web_document([("application", 1, false)].into_iter(), true),
+            None
+        );
+    }
+
+    #[test]
+    fn hyprland_document_infers_csd_without_double_counting() {
+        let target = (0x1234_5678_9abc, 42);
+        let window = Some((target.0, target.1, 940, 700));
+        for y in [0, 20, 47] {
+            assert_eq!(
+                hyprland_document_top_inset(target, window, (0, y, 940, 653)),
+                Some(47)
+            );
+        }
+        assert_eq!(
+            combine_wayland_content_offsets(None, Some((0, 47)), false),
+            None
+        );
+    }
+
+    #[test]
+    fn hyprland_document_rejects_invalid_or_partial_dimensions() {
+        let target = (0x1234_5678_9abc, 42);
+        let window = Some((target.0, target.1, 940, 700));
+        for document in [
+            (0, 0, 0, 653),
+            (0, 0, 940, 0),
+            (0, 0, -1, 653),
+            (0, 0, 940, -1),
+            (0, 0, 935, 653),
+            (0, 0, 945, 653),
+            (0, 0, 940, 700),
+            (0, 0, 940, 701),
+            (0, 0, 940, 500),
+            (1, 0, 940, 653),
+            (0, -1, 940, 653),
+        ] {
+            assert_eq!(hyprland_document_top_inset(target, window, document), None);
+        }
+    }
+
+    #[test]
+    fn hyprland_document_requires_full_address_and_pid() {
+        let target = (0x1234_5678_9abc, 42);
+        let document = (0, 0, 940, 653);
+        for window in [
+            None,
+            Some((0x5678_9abc, 42, 940, 700)),
+            Some((0x1234_5678_9abd, 42, 940, 700)),
+            Some((target.0, 43, 940, 700)),
+        ] {
+            assert_eq!(hyprland_document_top_inset(target, window, document), None);
+        }
+        assert_eq!(
+            hyprland_document_top_inset((0, 42), Some((0, 42, 940, 700)), document),
+            None
+        );
     }
 
     #[test]

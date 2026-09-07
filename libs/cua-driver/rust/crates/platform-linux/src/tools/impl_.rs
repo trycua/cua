@@ -3387,7 +3387,8 @@ impl Tool for ClickTool {
             if isolated_background {
                 if !modifiers.is_empty() {
                     return isolated_hyprland_refusal(
-                        "modified clicks are unsupported by isolated input",
+                        "modified element clicks are unavailable on native Wayland: \
+                         isolated input does not carry pointer modifier state",
                     );
                 }
                 let Some(exact_xid) = window_id_resolved else {
@@ -5897,6 +5898,17 @@ impl Tool for DoubleClickTool {
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
         }
+        if hyprland_foreground(delivery) {
+            // Share exact-target validation and the admitted native click lifecycle.
+            let mut args = args;
+            args["button"] = json!("left");
+            args["count"] = json!(2);
+            return ClickTool {
+                state: self.state.clone(),
+            }
+            .invoke(args)
+            .await;
+        }
         // Surface 6: element_token / element_index precedence.
         let resolved = match cua_driver_core::element_token::resolve_element_args_wide(
             pid as i32,
@@ -6124,6 +6136,17 @@ impl Tool for RightClickTool {
         }
         if let Some(refusal) = unavailable_wayland_focused_input_background(delivery, true) {
             return refusal;
+        }
+        if hyprland_foreground(delivery) {
+            // Share exact-target validation and the admitted native click lifecycle.
+            let mut args = args;
+            args["button"] = json!("right");
+            args["count"] = json!(1);
+            return ClickTool {
+                state: self.state.clone(),
+            }
+            .invoke(args)
+            .await;
         }
         // Surface 6: element_token / element_index precedence.
         let resolved = match cua_driver_core::element_token::resolve_element_args_wide(

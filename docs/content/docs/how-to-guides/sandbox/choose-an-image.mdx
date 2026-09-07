@@ -1,0 +1,24 @@
+---
+title: Choose a sandbox image
+description: Choose between a published Fleet image, local image customization, and preparing a Fleet boot artifact.
+---
+
+Choose an image workflow based on where the sandbox will run and whether a
+published artifact already contains the software you need.
+
+| Your task                                                  | Start here                                                                                        | What you get                                                              |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| Run a Fleet workload using an existing image               | [Choose a published Fleet image](/how-to-guides/sandbox/images#choose-a-published-fleet-image)    | A registry artifact reference for a pool.                                 |
+| Add packages, files, or setup commands for local execution | [Choose a local base image](/how-to-guides/sandbox/images#choose-a-base-image)                    | An image specification whose builder steps run locally.                   |
+| Run a Fleet workload that needs a custom guest             | [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) | A bootable guest disk packaged and published as a containerDisk artifact. |
+
+Before choosing an artifact, check the [OS and image catalog](/reference/sandbox-sdk/os-image-catalog)
+for architecture, guest services, and verification limits. A registry reference
+does not prove that the guest is accessible, bootable, or ready for your client.
+Declaring a service port does not install the service.
+
+In `cua-sandbox` 0.4.3, Fleet rejects SDK builder customization and
+snapshot-derived image inputs. Local builder methods do not publish an artifact
+or run during a Fleet claim. See [Sandbox runtime support](/reference/sandbox-sdk/runtime-support#image-customization)
+for the versioned contract and [How Fleet images work](/concepts/how-fleet-images-work)
+for the published-artifact model.

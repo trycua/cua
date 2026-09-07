@@ -1217,7 +1217,7 @@ fn native_hyprland_semantic_case(
         && matches!(
             (host, action, targeting),
             ("electron" | "tauri", "left_click", Targeting::Px)
-                | ("electron", "child_window", Targeting::Px)
+                | ("electron" | "tauri", "child_window", Targeting::Px)
                 | ("electron", "scroll", Targeting::Ax)
         )
 }
@@ -1449,7 +1449,7 @@ fn native_hyprland_semantic_expectations_are_limited_to_proven_cells() {
                 let expected = matches!(
                     (host, action, targeting),
                     ("electron" | "tauri", "left_click", Targeting::Px)
-                        | ("electron", "child_window", Targeting::Px)
+                        | ("electron" | "tauri", "child_window", Targeting::Px)
                         | ("electron", "scroll", Targeting::Ax)
                 );
                 assert_eq!(
@@ -1490,6 +1490,7 @@ fn native_hyprland_semantic_declarations_require_delivery_and_all_background_ora
         ("electron", "left_click", "px"),
         ("tauri", "left_click", "px"),
         ("electron", "child_window", "px"),
+        ("tauri", "child_window", "px"),
         ("electron", "scroll", "ax"),
     ] {
         let spec = HostSpec {

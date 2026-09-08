@@ -28,6 +28,7 @@ mod activity_observer;
 mod authorization_host;
 mod embedded;
 pub mod remote;
+pub mod remote_foreign;
 mod runtime;
 mod service_session;
 #[doc(hidden)]

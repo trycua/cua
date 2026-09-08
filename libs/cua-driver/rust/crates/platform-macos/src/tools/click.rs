@@ -51,9 +51,9 @@ static DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 enum PixelActivationPolicy {
     /// Standard background delivery: suppress activation of the target.
     SuppressTarget,
-    /// Left-click with a concrete window: intentionally make the target
-    /// AppKit-active without raising it, while suppressing every other app.
-    AllowTargetWithoutRaise,
+    /// Left-click with a concrete window: synthesize event-routing focus only
+    /// inside the target. The real foreground application remains active/key.
+    SyntheticTargetFocus,
     /// Explicit foreground rung owns its brief activation and restoration.
     ForegroundAssist,
 }
@@ -92,32 +92,9 @@ fn pixel_activation_policy(
     if effective_foreground {
         PixelActivationPolicy::ForegroundAssist
     } else if button == "left" && has_window {
-        PixelActivationPolicy::AllowTargetWithoutRaise
+        PixelActivationPolicy::SyntheticTargetFocus
     } else {
         PixelActivationPolicy::SuppressTarget
-    }
-}
-
-/// Return the prior foreground pid that should be restored after a raw
-/// background pixel click.
-///
-/// This decision deliberately depends on observed application state rather
-/// than the private focus recipe's return value. The recipe can be unavailable
-/// or partially fail while the raw click still makes the target AppKit-active;
-/// in that case the allow-target suppression lease will not restore it for us.
-fn background_pixel_restore_pid(
-    activation_policy: PixelActivationPolicy,
-    prior_front: Option<i32>,
-    target_pid: i32,
-    observed_front: Option<i32>,
-) -> Option<i32> {
-    if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
-        && prior_front != Some(target_pid)
-        && observed_front == Some(target_pid)
-    {
-        prior_front
-    } else {
-        None
     }
 }
 
@@ -981,37 +958,43 @@ impl Tool for ClickTool {
             // shape as the AX path, so we wrap identically.
             let prior_front = apps::frontmost_pid();
             let snapshot = match activation_policy {
-                PixelActivationPolicy::SuppressTarget => {
+                PixelActivationPolicy::SuppressTarget
+                | PixelActivationPolicy::SyntheticTargetFocus => {
                     WindowChangeDetector::snapshot(prior_front)
-                }
-                PixelActivationPolicy::AllowTargetWithoutRaise => {
-                    WindowChangeDetector::snapshot_allowing_activation(prior_front, pid)
                 }
                 PixelActivationPolicy::ForegroundAssist => {
                     WindowChangeDetector::snapshot_without_suppression(prior_front)
                 }
             };
 
-            // Restore the Swift background-click prologue that was left
-            // disconnected in the original Rust port. It makes an opaque
-            // target AppKit-active without raising/restacking its window, which
-            // is required by Chromium gates and remote-HID proxies such as
-            // iPhone Mirroring. Re-pin after the focus record because changing
-            // AppKit active state can disturb overlay ordering.
-            let focus_without_raise =
-                if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise {
+            // Chromium needs its internal event-routing state to appear active
+            // before it accepts a click for a fully covered window. Install that
+            // state only on the target. The old focus-without-raise prologue also
+            // sent `focused=false` to the real foreground app, which could fire
+            // resignActive/resignKey and steal the user's keyboard destination
+            // despite leaving window z-order unchanged.
+            let synthetic_focus_context =
+                if activation_policy == PixelActivationPolicy::SyntheticTargetFocus {
                     let wid = window_id.expect("activation policy requires window_id");
                     match tokio::task::spawn_blocking(move || {
                         crate::input::mouse::prepare_background_pixel_click(pid, wid)
                     })
                     .await
                     {
-                        Ok(activated) => {
+                        Ok(Ok(context)) => {
                             crate::cursor::overlay::send_command(
                                 cursor_key.clone(),
                                 cursor_overlay::OverlayCommand::PinAbove(wid as u64),
                             );
-                            activated
+                            context
+                        }
+                        Ok(Err(error)) => {
+                            return ToolResult::error(format!(
+                                "Background click target-only focus failed: {error}"
+                            ))
+                            .with_structured(serde_json::json!({
+                                "code": "background_unavailable"
+                            }));
                         }
                         Err(error) => {
                             return ToolResult::error(format!(
@@ -1020,8 +1003,9 @@ impl Tool for ClickTool {
                         }
                     }
                 } else {
-                    false
+                    None
                 };
+            let used_synthetic_target_focus = synthetic_focus_context.is_some();
 
             // Pulse only after the activation settle so it visually coincides
             // with the real target click rather than the private focus prelude.
@@ -1039,7 +1023,11 @@ impl Tool for ClickTool {
             // routed `click_at_xy_with_window_local` for back-compat.
             let button_kind = button_str.clone();
             let result = focus_guard::with_focus_suppressed(
-                if activation_policy == PixelActivationPolicy::SuppressTarget {
+                if matches!(
+                    activation_policy,
+                    PixelActivationPolicy::SuppressTarget
+                        | PixelActivationPolicy::SyntheticTargetFocus
+                ) {
                     Some(pid)
                 } else {
                     None
@@ -1094,7 +1082,7 @@ impl Tool for ClickTool {
                                         return crate::input::mouse::click_at_xy_chromium(
                                             pid, screen_x, screen_y,
                                             win_local_x, win_local_y,
-                                            wid, count, &m,
+                                            wid, count, &m, synthetic_focus_context,
                                         );
                                     }
                                     crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
@@ -1128,29 +1116,6 @@ impl Tool for ClickTool {
             )
             .await;
 
-            // The no-raise record can make NSWorkspace report the target as
-            // active even though its window never moved in z-order. Once the
-            // click has been queued, restore the prior app if the target is
-            // still reported frontmost. Base this on observed state, not
-            // `focus_without_raise`: the private recipe can report failure
-            // after partially activating the target, and the raw click can
-            // self-activate even when that recipe is unavailable. Do not
-            // overwrite a different app here; the wildcard suppression lease
-            // handles genuine side effects.
-            if activation_policy == PixelActivationPolicy::AllowTargetWithoutRaise
-                && prior_front != Some(pid)
-            {
-                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                if let Some(previous_pid) = background_pixel_restore_pid(
-                    activation_policy,
-                    prior_front,
-                    pid,
-                    apps::frontmost_pid(),
-                ) {
-                    let _ = apps::activate_pid(previous_pid);
-                }
-            }
-
             let changes = super::finish_window_observation(snapshot, &args).await;
 
             let button_label = match button_str.as_str() {
@@ -1177,7 +1142,8 @@ impl Tool for ClickTool {
                         "path": path,
                         "verified": false,
                         "effect": "unverifiable",
-                        "focus_without_raise": focus_without_raise
+                        "focus_without_raise": used_synthetic_target_focus,
+                        "synthetic_target_focus": used_synthetic_target_focus
                     }))
                 }
                 Ok(Err(e)) => ToolResult::error(format!("{button_label} failed: {e}")),
@@ -1563,15 +1529,14 @@ mod tests {
         }
     }
 
-    /// Regression for the Swift→Rust port gap: only a raw background left
-    /// click with an exact window may intentionally activate the target
-    /// without raising it. Other background buttons retain strict suppression,
-    /// and the explicit foreground rung owns its separate activation.
+    /// A raw background left click with an exact window may install target-only
+    /// synthetic routing focus. Other background buttons retain strict
+    /// suppression, and the explicit foreground rung owns real activation.
     #[test]
-    fn raw_background_left_click_restores_focus_without_raise_policy() {
+    fn raw_background_left_click_uses_target_only_synthetic_focus() {
         assert_eq!(
             pixel_activation_policy("left", false, true),
-            PixelActivationPolicy::AllowTargetWithoutRaise
+            PixelActivationPolicy::SyntheticTargetFocus
         );
         assert_eq!(
             pixel_activation_policy("left", false, false),
@@ -1588,44 +1553,6 @@ mod tests {
         assert_eq!(
             pixel_activation_policy("left", true, true),
             PixelActivationPolicy::ForegroundAssist
-        );
-    }
-
-    /// The no-foreground contract must not depend on the private activation
-    /// recipe reporting full success. If that recipe is unavailable or only
-    /// partially succeeds but the target is nevertheless observed frontmost,
-    /// restore the user's prior app.
-    #[test]
-    fn failed_private_activation_still_restores_observed_target_focus() {
-        assert_eq!(
-            background_pixel_restore_pid(
-                PixelActivationPolicy::AllowTargetWithoutRaise,
-                Some(7),
-                42,
-                Some(42),
-            ),
-            Some(7)
-        );
-
-        assert_eq!(
-            background_pixel_restore_pid(
-                PixelActivationPolicy::AllowTargetWithoutRaise,
-                Some(7),
-                42,
-                Some(99),
-            ),
-            None,
-            "do not overwrite an unrelated app that became frontmost"
-        );
-        assert_eq!(
-            background_pixel_restore_pid(
-                PixelActivationPolicy::SuppressTarget,
-                Some(7),
-                42,
-                Some(42),
-            ),
-            None,
-            "strict-suppression paths retain their existing ownership"
         );
     }
 }

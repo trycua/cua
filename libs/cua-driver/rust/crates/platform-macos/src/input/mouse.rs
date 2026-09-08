@@ -344,30 +344,36 @@ fn click_at_xy_inner(
     })
 }
 
-/// Prepare a raw background pixel click by making the target AppKit-active
-/// without raising or restacking its window.
+/// Prepare a raw background pixel click by making only the target window
+/// synthetically active for event routing. The user's real foreground process
+/// is never sent a defocus or restore record.
 ///
-/// The Swift implementation ran this immediately before the stamped event
-/// stream. The original Rust port retained the SkyLight primitive but omitted
-/// this call while cursor-overlay repinning was incomplete. Callers should
-/// re-pin their overlay after this returns, then post the click sequence.
-///
-/// Returns whether the private focus-without-raise recipe succeeded. Event
-/// posting remains best-effort when the private APIs are unavailable.
-pub fn prepare_background_pixel_click(pid: i32, wid: u32) -> bool {
-    let activated = crate::input::skylight::activate_without_raise(pid as libc::pid_t, wid);
-    // Match Swift's settle interval so AppKit updates its active/key-window
-    // routing before the mouseMoved + primer + target stream arrives.
-    std::thread::sleep(std::time::Duration::from_millis(50));
-    activated
+/// `Ok(None)` means the exact target is already the real front process and no
+/// synthetic session is needed. Otherwise the returned context must travel
+/// with the click and be ended after the target renderer consumes mouse-up.
+/// Missing/private SPI failures are fatal here: a background-only request must
+/// fail closed instead of silently escalating to real activation.
+pub fn prepare_background_pixel_click(
+    pid: i32,
+    wid: u32,
+) -> anyhow::Result<Option<crate::input::skylight::SyntheticTargetFocusContext>> {
+    if crate::input::skylight::front_process_matches(pid as libc::pid_t, wid) == Some(true) {
+        return Ok(None);
+    }
+
+    let context = crate::input::skylight::begin_synthetic_target_focus(pid as libc::pid_t, wid)?;
+    // Preserve the old 50 ms prologue budget. The SkyLight helper already
+    // waits 40 ms after posting the target-focus record.
+    std::thread::sleep(std::time::Duration::from_millis(10));
+    Ok(Some(context))
 }
 
 /// Post the stamped event half of the Chromium-compatible left-click recipe
 /// matching Swift's `clickViaAuthSignedPost`.
 ///
 /// The sequence stays PID/window-routed throughout. The caller must first run
-/// [`prepare_background_pixel_click`] for background delivery, then re-pin any
-/// cursor overlay before entering this event stream.
+/// [`prepare_background_pixel_click`] for background delivery, then pass its
+/// context here so cleanup is paired with the event stream.
 ///  1. Stamped `mouseMoved` at target coords (f0=2, cursor-state primer).
 ///  2. Off-screen primer down/up at (-1, -1) (f0=1/2) — satisfies Chromium's
 ///     user-activation gate without hitting any DOM element.
@@ -396,6 +402,7 @@ pub fn click_at_xy_chromium(
     wid: u32,
     count: usize,
     modifiers: &[&str],
+    focus_context: Option<crate::input::skylight::SyntheticTargetFocusContext>,
 ) -> anyhow::Result<()> {
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -515,6 +522,14 @@ pub fn click_at_xy_chromium(
             // clear of coalescing back into pair N.
             std::thread::sleep(std::time::Duration::from_millis(80));
         }
+    }
+
+    if let Some(context) = focus_context {
+        // SkyLight delivery is asynchronous. Keep only the target's synthetic
+        // active state alive long enough for Chromium's renderer hop to consume
+        // the final mouse-up, then deactivate only that target.
+        std::thread::sleep(std::time::Duration::from_millis(100));
+        crate::input::skylight::end_synthetic_target_focus(context)?;
     }
 
     Ok(())

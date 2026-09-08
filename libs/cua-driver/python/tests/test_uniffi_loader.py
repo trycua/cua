@@ -25,6 +25,21 @@ LIBRARY = Path(__file__).parents[1] / "src" / "cua_driver" / _library_name()
 
 @unittest.skipUnless(LIBRARY.exists(), "host-native UniFFI library is not staged")
 class GeneratedOptionsTests(unittest.TestCase):
+    def test_action_target_is_public_and_uses_the_generated_contract(self) -> None:
+        import cua_driver
+        from cua_driver import ActionTarget, ClickButton, ClickInput
+        from cua_driver._native_contract import ActionTarget as GeneratedActionTarget
+
+        self.assertIn("ActionTarget", cua_driver.__all__)
+        self.assertIs(ActionTarget, GeneratedActionTarget)
+        target = ActionTarget.DESKTOP(display_id="primary")
+        click = ClickInput(
+            x=10.0, y=20.0, target=target, scope=None, session=None,
+            button=ClickButton.LEFT, count=1,
+        )
+        self.assertIs(click.target, target)
+        self.assertTrue(ActionTarget.WINDOW(pid=1, window_id=2).is_WINDOW())
+
     def test_embedded_overlay_option_defaults_false_and_accepts_true(self) -> None:
         from cua_driver import EmbeddedDriverHostOptions
 

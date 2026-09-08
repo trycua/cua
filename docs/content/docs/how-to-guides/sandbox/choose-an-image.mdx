@@ -13,7 +13,7 @@ before creating the pool. For execution on your own hardware, use
 | Run a Fleet workload using an existing image               | [Choose a published Fleet image](#choose-a-published-fleet-image)    | A registry artifact reference for a pool.                                 |
 | Run a Fleet workload that needs a custom guest             | [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image) | A bootable guest disk packaged and published as a containerDisk artifact. |
 
-Before choosing an artifact, check the [OS and image catalog](/reference/sandbox-sdk/os-image-catalog)
+Before choosing an artifact, check the [hosted Fleet image catalog](/reference/sandbox-sdk/os-image-catalog#hosted-fleet-images)
 for architecture, guest services, and verification limits. A registry reference
 does not prove that the guest is accessible, bootable, or ready for your client.
 Declaring a service port does not install the service.
@@ -26,13 +26,14 @@ for the published-artifact model.
 
 ## Choose a published Fleet image
 
-1. Open the [OS and image catalog](/reference/sandbox-sdk/os-image-catalog) and
+1. Open the [hosted Fleet image catalog](/reference/sandbox-sdk/os-image-catalog#hosted-fleet-images) and
    choose a Fleet VM artifact that matches your guest OS and workload. Check its
-   architecture and evidence limits. Local Docker and Lume entries are separate
-   runtime choices, not built-in Fleet mappings.
-2. Check the artifact's guest services against your client. The Sandbox SDK's
-   default connection expects computer-server on port `8000`; an MCP client needs
-   an image that starts an MCP service. Declaring a port does not install either
+   architecture and evidence limits. Local Docker/Lume images have a separate
+   section and are not hosted Fleet VM selections.
+2. Check the artifact's guest services against your client. For direct Driver
+   access through MCP, choose an image that starts a Driver MCP service. The
+   Sandbox SDK's desktop methods instead expect computer-server on port `8000`.
+   Declaring a port does not install either
    service. See the [Fleet guest-service contract](/reference/sandbox-sdk/runtime-support#fleet-guest-service-contract).
 3. Use the built-in constructor for a mapped artifact, or copy the exact registry
    reference into `Image.from_registry()`. Set the guest OS and `kind='vm'`
@@ -40,6 +41,11 @@ for the published-artifact model.
 4. Follow [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python) to apply
    the image and claim a replica. Confirm registry access, guest readiness, and
    the operation your workload needs before reusing that pool.
+
+The Ubuntu SDK mapping and dashboard default select different tags. Check the
+[Ubuntu image details](/reference/sandbox-sdk/os-image-catalog#ubuntu-2404) and use
+an explicit digest when both paths must select the same artifact. Changing a
+catalog recommendation does not upgrade an existing pool.
 
 For an explicit registry reference, set `FLEET_IMAGE_REF` to the artifact you
 selected, then construct the image specification:

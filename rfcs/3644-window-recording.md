@@ -4,10 +4,11 @@ authors:
   - f-trycua
 created: 2026-09-08
 last_updated: 2026-09-08
-status: review
+status: accepted
 discussion: https://github.com/trycua/cua/issues/3644
-rfc_pr:
-implementation: []
+rfc_pr: https://github.com/trycua/cua/pull/3667
+implementation:
+  - https://github.com/trycua/cua/pull/3667
 supersedes:
 superseded_by:
 ---
@@ -119,6 +120,9 @@ are additive and do not reinterpret old recordings.
 
 The shared core owns target parsing, validation, mode selection, artifact
 policy, and status. The platform backend receives a typed capture request.
+Use a recording-specific target validator before authorization; do not route
+recording through the input-action target normalizer. Both the observation
+resource and backend request must retain the same validated PID/window pair.
 
 Window-video mode suppresses trajectory turn reservation and global cursor
 sampling from the start, including calls from the initiating session. It does
@@ -129,6 +133,9 @@ enabled during Driver actions, but is not included in this recording mode.
 Use a new output directory or refuse if recorder artifacts already exist in
 it. Do not overwrite an older recording or mix files from different modes.
 Validation and capability checks must precede output mutation and teardown.
+A failed window-video start is an error, not a successful trajectory-only
+recording. Reserve the destination against competing recording starts before
+creating encoder output; recheck the prepared target before stream start.
 
 Keep one recorder. Starting a window recording while any recording is active,
 or starting another mode while a window recording is active, returns
@@ -145,6 +152,10 @@ Resolve and validate the exact PID/window pair using the existing capture
 identity logic. Use `SCContentFilter::with_window`, not a display crop or an
 application-wide filter. Derive even-sized encoder dimensions from the
 filter's content rectangle and pixel scale without discarding edge content.
+The requested PID must match both WindowServer and ScreenCaptureKit ownership.
+The retained health fingerprint excludes position so ordinary movement is not
+mistaken for a replacement window; ownership, layer, dimensions, and scale
+remain checked.
 
 An ordinary position change does not change the target. Occluding windows,
 desktop, Dock, menu bar, and separate overlay windows are excluded. Content
@@ -256,6 +267,22 @@ not block evaluation of this video-only increment.
 
 ## Decision record
 
-The workstream is selected for scoped RFC review and macOS-first development.
-Contract review and the maintainer decision must be recorded on #3644 before
-implementation begins. This document does not mark #3644 complete.
+Accepted for the selected macOS-first implementation, not for release. The
+additive window-video contract preserves no-target behavior and intentionally
+defers concurrent recorders, owner-only manual stop, scoped trajectories, and
+cursor compositing. It does not mark #3644 complete.
+
+Independent contract and native-feasibility review identified four required
+implementation safeguards: recording-specific pre-authorization target
+validation, transactional startup without trajectory fallback, requested-PID
+checks against both native ownership sources, and callback-backed live status
+and finalization. These requirements are incorporated above. Ordinary window
+movement must not invalidate a geometry fingerprint merely because its origin
+changed. The selected resize policy is explicit termination, not a dynamic
+encoder-size change.
+
+Remaining risks are native shareability/permission behavior, finite health
+check latency, same-process window-ID reuse, and callback failure or timeout.
+They require synthetic native evidence and explicit limitations before the
+draft can be considered ready. The decision is recorded on the discussion
+issue; the draft PR remains the execution and evidence record.

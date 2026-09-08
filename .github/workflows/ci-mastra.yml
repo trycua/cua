@@ -1,0 +1,25 @@
+name: "CI: Mastra Fleet"
+
+on:
+  pull_request:
+    paths:
+      - "libs/typescript/mastra/**"
+      - ".github/workflows/ci-mastra.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  provider:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: libs/typescript/mastra/package-lock.json
+      - run: npm ci --ignore-scripts
+        working-directory: libs/typescript/mastra
+      - run: npm run typecheck && npm test && npm run build && npm run lint && npm pack --dry-run
+        working-directory: libs/typescript/mastra

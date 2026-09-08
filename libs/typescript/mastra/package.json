@@ -1,0 +1,46 @@
+{
+  "name": "@trycua/mastra",
+  "version": "0.1.0",
+  "description": "Cua Fleet Linux desktops for Mastra computer use",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/trycua/cua.git",
+    "directory": "libs/typescript/mastra"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "lint": "prettier --check src tests examples README.md package.json tsconfig*.json",
+    "example": "node --import tsx examples/agent.ts"
+  },
+  "dependencies": {
+    "@trycua/fleet": "0.1.1",
+    "pngjs": "7.0.0"
+  },
+  "peerDependencies": {
+    "@mastra/core": "~1.62.0"
+  },
+  "devDependencies": {
+    "@mastra/core": "1.62.0",
+    "@types/node": "22.20.1",
+    "@types/pngjs": "6.0.5",
+    "prettier": "3.6.2",
+    "tsx": "4.19.4",
+    "typescript": "5.9.3"
+  }
+}

@@ -23,7 +23,7 @@ select the guest OS, declare services, and claim a pool.
 | Image | Selection | Evidence and limits |
 | --- | --- | --- |
 | [Ubuntu 24.04](#ubuntu-2404) | Built-in `Image.linux()` in SDK 0.4.3; dashboard default differs | Published artifact and SDK mapping checked; no app-level certification established here |
-| [Omarchy / Hyprland](#omarchy-hyprland) | Explicit digest; amd64 guest | Fleet boot and bounded Driver background-selection evidence in the linked recipe |
+| [Omarchy / Hyprland](#omarchy-and-hyprland) | Explicit digest; amd64 guest | Fleet boot and bounded Driver background-selection evidence in the linked recipe |
 | [Windows Server 2022](#windows-server-2022) | Built-in `Image.windows()` in SDK 0.4.3 | Published artifact and EFI selection checked; no app-level certification established here |
 
 Use the exact references in the image details. Publication, boot, and operation
@@ -63,7 +63,7 @@ those guest details. The Sandbox SDK expects a compatible `server` on port
 `8000`; an MCP endpoint must be verified separately. Do not substitute the
 `docker-latest` application-container image for this VM image.
 
-### Omarchy / Hyprland [#omarchy-hyprland]
+### Omarchy and Hyprland
 
 Use the published amd64 Omarchy image from the [Fleet
 recipe](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet):

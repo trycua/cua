@@ -70,9 +70,10 @@ If a site presents a CAPTCHA or bot-verification challenge, Cua Driver reports
 a fixed classification rather than copying page text into the challenge report
 or acting on it. A later `get_browser_state` snapshot can report
 `challenge.required: true` with
-`handling: "explicit_resume_or_user_handoff"`. Pause actions to that origin and
-ask the user to take over, or resume only after an explicit caller decision and
-a fresh snapshot.
+`handling: "explicit_resume_or_user_handoff"`. Read-only snapshots remain
+available, but the driver refuses navigation and mutations to that origin.
+Ask the user to take over, or call `browser_resume` only after an explicit
+caller decision; another positive semantic snapshot pauses the origin again.
 
 ## Attach to an existing Chrome or Edge profile
 
@@ -112,6 +113,7 @@ allow:
     - end_session
     - get_browser_state
     - browser_prepare
+    - browser_resume
     - browser_navigate
     - browser_click
     - browser_type
@@ -431,7 +433,13 @@ browser_navigate({
 ```
 
 Navigation invalidates every prior ref for the tab. Wait for the destination,
-then call `get_browser_state` in snapshot mode again.
+then call `get_browser_state` in snapshot mode again. On driver-owned and
+embedded endpoints, a main-document HTTP 429 returns `page_blocked` separately
+from `input_delivered`, honors `Retry-After` when present, and otherwise starts
+a bounded per-origin backoff. The driver refuses more actions to that origin
+until the wait ends or the caller explicitly invokes `browser_resume`.
+Unrelated origins remain available. Existing-profile attachments do not enable
+CDP network observation and report response metadata as unavailable.
 
 ## End the session
 

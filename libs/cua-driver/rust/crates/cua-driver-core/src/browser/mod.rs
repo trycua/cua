@@ -1,7 +1,7 @@
 //! Platform-agnostic browser-tool v1 core.
 //!
-//! Typed browser inspection, preparation, navigation, input, dialog, upload,
-//! and download tools over an exact-or-refused binding model:
+//! Typed browser inspection, preparation, blocker resume, navigation, input,
+//! dialog, upload, and download tools over an exact-or-refused binding model:
 //!
 //! - The native entrypoint is `pid + window_id`. Browser target ids,
 //!   tab ids, and page refs (`p<snapshot>:<index>`) are opaque,

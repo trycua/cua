@@ -325,6 +325,13 @@ impl Tool for BrowserDownloadTool {
             Ok(validated) => validated,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if let Err(refusal) = self
+            .engine
+            .enforce_live_origin_not_blocked(&session, &validated)
+            .await
+        {
+            return refusal.to_tool_result();
+        }
         let entry = match self
             .engine
             .store

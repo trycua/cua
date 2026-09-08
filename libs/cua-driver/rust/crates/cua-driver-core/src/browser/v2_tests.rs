@@ -29,7 +29,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::BrowserRefusal;
 use super::tools::{
     browser_protected_resource_scope, BrowserClickTool, BrowserNavigateTool, BrowserPrepareTool,
-    BrowserTypeTool, GetBrowserStateTool,
+    BrowserResumeTool, BrowserTypeTool, GetBrowserStateTool,
 };
 use super::types::{
     BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
@@ -49,6 +49,9 @@ struct FixtureState {
     emit_rogue_attach: bool,
     main_url: String,
     main_loader: String,
+    navigation_status: u16,
+    navigation_retry_after: Option<String>,
+    emit_navigation_response: bool,
     iframe_loader: String,
     oopif_loader: String,
     tab_sessions: u64,
@@ -75,6 +78,9 @@ impl Default for FixtureState {
             emit_rogue_attach: false,
             main_url: "https://fixture.test/".into(),
             main_loader: "L_MAIN_1".into(),
+            navigation_status: 200,
+            navigation_retry_after: None,
+            emit_navigation_response: true,
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
             tab_sessions: 0,
@@ -429,7 +435,7 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "targetId": "T1",
                     "type": "page",
                     "title": "Fixture",
-                    "url": "https://fixture.test/",
+                    "url": st.main_url.clone(),
                     "attached": false,
                 }]
             })),
@@ -476,11 +482,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 } else if st.semantic_truncated_dom && depth == 8 {
                     MockReply::ok(truncated_semantic_document())
                 } else {
-                    MockReply::ok(if st.semantic_large_page {
+                    let mut document = if st.semantic_large_page {
                         large_semantic_document()
                     } else {
                         main_document()
-                    })
+                    };
+                    document["root"]["documentURL"] = Value::String(st.main_url.clone());
+                    MockReply::ok(document)
                 }
             }
             "DOM.describeNode" if is_tab && call.params["backendNodeId"] == 999 => {
@@ -550,10 +558,38 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "Page.captureScreenshot" if is_tab => {
                 MockReply::ok(json!({"data": st.screenshot_data.clone()}))
             }
-            "Page.navigate" if is_tab => MockReply::ok(json!({
-                "frameId": "F_MAIN",
-                "loaderId": "L_MAIN_NAVIGATED",
-            })),
+            "Network.enable" | "Network.disable" if is_tab => MockReply::ok(json!({})),
+            "Page.navigate" if is_tab => {
+                let url = call.params["url"].as_str().unwrap_or_default().to_owned();
+                let loader_id = format!("L_MAIN_NAVIGATED_{}", st.calls.len());
+                st.main_url = url.clone();
+                st.main_loader = loader_id.clone();
+                let mut headers = serde_json::Map::new();
+                if let Some(retry_after) = st.navigation_retry_after.clone() {
+                    headers.insert("Retry-After".into(), Value::String(retry_after));
+                }
+                let reply = MockReply::ok(json!({
+                    "frameId": "F_MAIN",
+                    "loaderId": loader_id,
+                }));
+                if !st.emit_navigation_response {
+                    return reply;
+                }
+                reply.with_events(vec![MockEvent {
+                    method: "Network.responseReceived".into(),
+                    session_id: Some(sess.clone()),
+                    params: json!({
+                        "type": "Document",
+                        "frameId": "F_MAIN",
+                        "loaderId": st.main_loader.clone(),
+                        "response": {
+                            "url": url,
+                            "status": st.navigation_status,
+                            "headers": headers,
+                        }
+                    }),
+                }])
+            }
             "Target.setAutoAttach" if is_tab => {
                 if call.params["autoAttach"].as_bool() == Some(false) {
                     return MockReply::ok(json!({}));
@@ -1156,6 +1192,11 @@ async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() 
         "{}",
         structured(&navigated)
     );
+    assert_eq!(
+        structured(&navigated)["response_observation"],
+        "unavailable",
+        "existing-profile navigation must not widen the reviewed CDP surface"
+    );
 
     let forbidden = [
         "Runtime.enable",
@@ -1386,7 +1427,11 @@ fn ref_of(snapshot: &Value, frame: &str, label_fragment: &str) -> String {
         .find(|r| {
             r["frame"] == frame
                 && (label_fragment.is_empty()
-                    || r["label"].as_str().unwrap_or("").contains(label_fragment))
+                    || r["label"]
+                        .as_str()
+                        .or_else(|| r["name"].as_str())
+                        .unwrap_or("")
+                        .contains(label_fragment))
         })
         .unwrap_or_else(|| panic!("no {frame} ref with label ~{label_fragment:?}: {snapshot}"))
         ["ref"]
@@ -1765,6 +1810,228 @@ async fn navigation_targets_an_inactive_tab_without_activating_it() {
     );
     assert!(recorded_calls(&f, "Page.bringToFront").is_empty());
     assert!(recorded_calls(&f, "Target.activateTarget").is_empty());
+}
+
+#[tokio::test]
+async fn navigation_429_pauses_only_the_response_origin_until_resume() {
+    let f = fixture_with(|state| {
+        state.navigation_status = 429;
+        state.navigation_retry_after = Some("30".into());
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let navigate = BrowserNavigateTool::new(f.engine.clone());
+    let blocked = navigate
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://rate.example/private-path?token=private-token",
+            "session": SESSION,
+        }))
+        .await;
+    let blocked = structured(&blocked);
+    assert_eq!(blocked["status"], "page_blocked", "{blocked}");
+    assert_eq!(blocked["input_delivered"], true, "{blocked}");
+    assert_eq!(blocked["page_blocked"], true, "{blocked}");
+    assert_eq!(blocked["http_status"], 429, "{blocked}");
+    assert_eq!(blocked["blocker"]["kind"], "rate_limited", "{blocked}");
+    assert_eq!(blocked["blocker"]["origin"], "https://rate.example");
+    assert_eq!(blocked["blocker"]["server_directed_retry"], true);
+    assert!(
+        blocked["blocker"]["retry_after_ms"]
+            .as_u64()
+            .is_some_and(|milliseconds| milliseconds <= 30_000),
+        "{blocked}"
+    );
+    assert!(
+        !blocked.to_string().contains("private-token"),
+        "blocker results must not retain URL details: {blocked}"
+    );
+
+    let refused = navigate
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://rate.example/second-attempt",
+            "session": SESSION,
+        }))
+        .await;
+    let refused = structured(&refused);
+    assert_eq!(refused["status"], "refused", "{refused}");
+    assert_eq!(
+        refused["refusal"]["code"], "browser_origin_blocked",
+        "{refused}"
+    );
+    assert_eq!(recorded_calls(&f, "Page.navigate").len(), 1);
+
+    let resumed = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&resumed)["cleared"],
+        true,
+        "{}",
+        structured(&resumed)
+    );
+    assert_eq!(structured(&resumed)["action_dispatched"], false);
+
+    f.state.lock().unwrap().navigation_status = 200;
+    let retried = navigate
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://rate.example/after-explicit-resume",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&retried)["status"],
+        "ok",
+        "{}",
+        structured(&retried)
+    );
+
+    {
+        let mut state = f.state.lock().unwrap();
+        state.navigation_status = 429;
+        state.navigation_retry_after = None;
+    }
+    let blocked_again = navigate
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://rate.example/blocked-again",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(structured(&blocked_again)["status"], "page_blocked");
+
+    f.state.lock().unwrap().navigation_status = 200;
+    let unrelated = navigate
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://unrelated.example/allowed",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&unrelated)["status"],
+        "ok",
+        "{}",
+        structured(&unrelated)
+    );
+    assert_eq!(recorded_calls(&f, "Page.navigate").len(), 4);
+}
+
+#[tokio::test]
+async fn semantic_challenge_pauses_actions_until_explicit_resume() {
+    let f = fixture_with(|state| {
+        state.main_url = "https://www.google.com/sorry/index?private=query".into();
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(snap["challenge"]["required"], true, "{snap}");
+    assert_eq!(snap["challenge"]["kind"], "anti_bot_challenge", "{snap}");
+    assert_eq!(snap["challenge"]["origin"], "https://www.google.com");
+    let button = ref_of(&snap, "main", "main-btn");
+
+    let refused = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": button,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_origin_blocked",
+        "{}",
+        structured(&refused)
+    );
+    assert!(recorded_calls(&f, "Input.dispatchMouseEvent").is_empty());
+    assert!(recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+
+    let resumed = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&resumed)["cleared"],
+        true,
+        "{}",
+        structured(&resumed)
+    );
+
+    let clicked = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": button,
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+
+    let repeated = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(repeated["challenge"]["required"], true, "{repeated}");
+    let refused_again = BrowserClickTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "ref": ref_of(&repeated, "main", "main-btn"),
+            "input_route": "dom_event",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused_again)["refusal"]["code"],
+        "browser_origin_blocked"
+    );
+}
+
+#[tokio::test]
+async fn cancelled_navigation_disables_temporary_network_observation() {
+    let f = fixture_with(|state| state.emit_navigation_response = false).await;
+    let (target, tab) = bind(&f).await;
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        BrowserNavigateTool::new(f.engine.clone()).invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/no-response-event",
+            "session": SESSION,
+        })),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "fixture must cancel while waiting for response metadata"
+    );
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Network.disable").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cancelling navigation must disable temporary network observation");
 }
 
 #[tokio::test]

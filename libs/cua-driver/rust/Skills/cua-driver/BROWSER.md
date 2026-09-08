@@ -24,6 +24,7 @@ browser_navigate / browser_click / browser_type / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # verify and refresh refs
+browser_resume(target_id, tab_id, session?)                # only after an explicit blocker decision
 end_session(session?)                                     # optional cleanup
 ```
 
@@ -263,14 +264,15 @@ viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`
 only to scope later reads. A content ref is not an action capability.
 
-`semantic_v2` snapshots include an advisory `challenge` object. When
+`semantic_v2` snapshots include a `challenge` object. When
 `challenge.required` is `true`, the page looks like a CAPTCHA or
-bot-verification challenge. The report does not halt the session or choose a
-policy. Pause actions to that origin and require either explicit caller resume
-or user handoff, then call `get_browser_state` again before continuing. Signals
-contain fixed source/reason classifications rather than copied URL paths,
-queries, or page text. Provider guesses such as reCAPTCHA, hCaptcha, Turnstile,
-or generic verification are heuristic evidence only.
+bot-verification challenge. The driver keeps read-only snapshots available but
+pauses navigation and mutations to that origin. Ask the user to take over, or
+call `browser_resume` only after an explicit caller decision; another positive
+semantic snapshot pauses the origin again. Signals contain fixed source/reason
+classifications rather than copied URL paths, queries, or page text. Provider
+guesses such as reCAPTCHA, hCaptcha, Turnstile, or generic verification are
+heuristic evidence only.
 
 The snapshot ranks active dialogs and visible controls before near-viewport
 and offscreen content. It excludes CSS-hidden retained state before applying
@@ -322,7 +324,14 @@ cua-driver browser_navigate \
 ```
 
 Only `http:`, `https:`, and `about:` URLs are accepted. Navigation invalidates
-the tab's refs; snapshot again before the next ref-targeted action.
+the tab's refs; snapshot again before the next ref-targeted action. On
+driver-owned and embedded browser endpoints, a main-document HTTP 429 returns
+`status: "page_blocked"`, `input_delivered: true`, and a `rate_limited`
+blocker. The blocker contains only the response origin and retry metadata. The
+driver refuses another mutation to that origin until `retry_after_ms` elapses
+or the caller explicitly invokes `browser_resume`; unrelated origins remain
+available. Existing-profile attachments preserve their narrower CDP privacy
+surface and report response observation as unavailable.
 
 ### Click
 

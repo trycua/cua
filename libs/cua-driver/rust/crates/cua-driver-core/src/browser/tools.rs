@@ -6,16 +6,21 @@
 //! `{"status": "ok" | "refused", ...}`.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use time::OffsetDateTime;
 
 use crate::protocol::{Content, ToolResult};
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
-use super::cdp_ws::CdpConnection;
-use super::challenge::browser_challenge_value;
+use super::cdp_ws::{CdpConnection, CdpEvent};
+use super::challenge::{
+    browser_origin, detect_browser_challenge, navigation_response_observation,
+    no_browser_challenge, NavigationResponseObservation,
+};
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
 use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
@@ -23,7 +28,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
-use super::types::BindingQuality;
+use super::types::{BindingQuality, EndpointAccessClass};
 
 /// Register the complete browser surface against one shared engine. Platform
 /// crates call this from their `register_all` after constructing the
@@ -31,6 +36,7 @@ use super::types::BindingQuality;
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
+    registry.register(Box::new(BrowserResumeTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
@@ -163,6 +169,7 @@ pub(crate) async fn browser_protected_resource_scope(
     let action_class = match tool_name {
         "get_browser_state" => "page_observation",
         "browser_navigate" => "navigation",
+        "browser_resume" => "blocker_resume",
         "browser_dialog" => "page_dialog_resolution",
         _ => "page_input",
     };
@@ -233,6 +240,113 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
     result
 }
 
+async fn wait_for_navigation_response(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<CdpEvent>,
+    cdp_session: &str,
+    loader_id: Option<&str>,
+    frame_id: Option<&str>,
+) -> Option<NavigationResponseObservation> {
+    let loader_id = loader_id?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .ok()??;
+        if event.method != "Network.responseReceived"
+            || event.session_id.as_deref() != Some(cdp_session)
+        {
+            continue;
+        }
+        if let Some(observation) = navigation_response_observation(
+            &event.params,
+            Some(loader_id),
+            frame_id,
+            OffsetDateTime::now_utc(),
+        ) {
+            return Some(observation);
+        }
+    }
+}
+
+struct NavigationObservationGuard {
+    conn: Arc<CdpConnection>,
+    cdp_session: String,
+    active: bool,
+}
+
+impl NavigationObservationGuard {
+    async fn enable(conn: Arc<CdpConnection>, cdp_session: &str) -> Option<Self> {
+        conn.call(
+            Some(cdp_session),
+            "Network.enable",
+            json!({
+                "maxTotalBufferSize": 0,
+                "maxResourceBufferSize": 0,
+                "maxPostDataSize": 0,
+            }),
+        )
+        .await
+        .ok()?;
+        Some(Self {
+            conn,
+            cdp_session: cdp_session.to_owned(),
+            active: true,
+        })
+    }
+
+    async fn disable(&mut self) {
+        if self.active {
+            let _ = self
+                .conn
+                .call(Some(&self.cdp_session), "Network.disable", json!({}))
+                .await;
+            self.active = false;
+        }
+    }
+}
+
+impl Drop for NavigationObservationGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let conn = self.conn.clone();
+        let cdp_session = self.cdp_session.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                let _ = conn
+                    .call(Some(&cdp_session), "Network.disable", json!({}))
+                    .await;
+            });
+        }
+    }
+}
+
+fn blocker_navigation_result(
+    target_id: &str,
+    tab_id: &str,
+    blocker: super::store::OriginBlocker,
+) -> ToolResult {
+    let blocker = blocker.to_value(Instant::now());
+    ToolResult::text(format!(
+        "navigation reached a rate limit at {} and paused that origin",
+        blocker["origin"]
+            .as_str()
+            .unwrap_or("the destination origin")
+    ))
+    .with_structured(json!({
+        "status": "page_blocked",
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "input_delivered": true,
+        "page_blocked": true,
+        "http_status": 429,
+        "response_observation": "observed",
+        "refs_invalidated": true,
+        "blocker": blocker,
+    }))
+}
+
 // ── get_browser_state ────────────────────────────────────────────────────────
 
 pub struct GetBrowserStateTool {
@@ -252,8 +366,9 @@ impl GetBrowserStateTool {
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
                 semantic outline, typed action refs, content refs, scoped reads, an \
-                opaque continuation, and an advisory challenge report when page state \
-                conservatively indicates CAPTCHA or bot verification. Never performs setup — \
+                opaque continuation, and a challenge report when page state \
+                conservatively indicates CAPTCHA or bot verification. A positive report pauses \
+                mutations to that origin until explicit resume. Never performs setup — \
                 a missing endpoint is a structured browser_requires_setup refusal \
                 pointing at browser_prepare."
                 .into(),
@@ -411,8 +526,21 @@ impl Tool for GetBrowserStateTool {
                                     ]
                                 }),
                         );
-                        let challenge =
-                            browser_challenge_value(&outcome.url, &outcome.title, challenge_texts);
+                        let challenge = match detect_browser_challenge(
+                            &outcome.url,
+                            &outcome.title,
+                            challenge_texts,
+                        ) {
+                            Some(observation) => {
+                                if !observation.origin().is_empty() {
+                                    self.engine
+                                        .store
+                                        .block_origin_for_challenge(&session, observation.origin());
+                                }
+                                observation.to_value()
+                            }
+                            None => no_browser_challenge(&browser_origin(&outcome.url)),
+                        };
                         ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
                             outcome.snapshot_id,
@@ -748,6 +876,116 @@ impl Tool for BrowserPrepareTool {
     }
 }
 
+// ── browser_resume ───────────────────────────────────────────────────────────
+
+pub struct BrowserResumeTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl BrowserResumeTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        let def = ToolDef {
+            name: "browser_resume".into(),
+            description: "Explicitly clear the session-local CAPTCHA or rate-limit pause for the exact live origin in one bound tab after the caller decides it is safe to continue. This records that decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_id": schema_target_id(),
+                    "tab_id": schema_tab_id(),
+                    "session": schema_session(),
+                },
+                "required": ["target_id", "tab_id"],
+                "additionalProperties": true,
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: true,
+            open_world: false,
+        };
+        Self { def, engine }
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserResumeTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_resume").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let (target_id, tab_id) = match (args.require_str("target_id"), args.require_str("tab_id"))
+        {
+            (Ok(target_id), Ok(tab_id)) => (target_id, tab_id),
+            (Err(error), _) | (_, Err(error)) => return error,
+        };
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(error) => return error,
+        };
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let validated = match self
+            .engine
+            .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
+            .await
+        {
+            Ok(validated) => validated,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        match self
+            .engine
+            .clear_live_origin_blocker(&session, &validated)
+            .await
+        {
+            Ok((origin, cleared)) => ToolResult::text(if cleared {
+                format!("resumed browser actions to {origin}")
+            } else {
+                format!("no active browser pause existed for {origin}")
+            })
+            .with_structured(json!({
+                "status": "ok",
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "origin": origin,
+                "cleared": cleared,
+                "action_dispatched": false,
+            })),
+            Err(refusal) => refusal.to_tool_result(),
+        }
+    }
+}
+
 // ── browser_navigate ─────────────────────────────────────────────────────────
 
 pub struct BrowserNavigateTool {
@@ -760,8 +998,11 @@ impl BrowserNavigateTool {
         let def = ToolDef {
             name: "browser_navigate".into(),
             description: "Navigate one tab of an exactly-bound browser target to a \
-                new URL (http/https/about only). Refused for heuristic bindings. \
-                Navigation invalidates all p<snapshot>:<index> refs for the tab."
+                new URL (http/https/about only). Refused for heuristic bindings or a \
+                destination origin with an active challenge/rate-limit pause. Navigation \
+                invalidates all p<snapshot>:<index> refs for the tab. Driver-owned and \
+                embedded endpoints report a main-document HTTP 429 as page_blocked; the \
+                reviewed existing-profile surface does not observe response metadata."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -852,33 +1093,90 @@ impl Tool for BrowserNavigateTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        let destination_origin = browser_origin(&url);
+        if lower.starts_with("http") && destination_origin.is_empty() {
+            return ToolResult::error("browser_navigate destination URL is invalid");
+        }
+        if let Err(refusal) = self
+            .engine
+            .enforce_origin_not_blocked(&session, &destination_origin)
+        {
+            return refusal.to_tool_result();
+        }
 
-        match validated
+        let mut network_events = validated.conn.subscribe();
+        // The reviewed existing-profile CDP surface intentionally excludes the
+        // Network domain. Keep that privacy boundary intact; exact response
+        // metadata is available for driver-owned and embedded endpoints only.
+        let mut network_observation = if validated.record.endpoint_access_class
+            == EndpointAccessClass::ExistingProfileApproved
+        {
+            None
+        } else {
+            NavigationObservationGuard::enable(validated.conn.clone(), &validated.cdp_session).await
+        };
+        let navigation = validated
             .conn
             .call(
                 Some(&validated.cdp_session),
                 "Page.navigate",
                 json!({ "url": url }),
             )
-            .await
-        {
+            .await;
+        match navigation {
             Ok(result) => {
                 if let Some(err_text) = result.get("errorText").and_then(Value::as_str) {
+                    if let Some(observation) = network_observation.as_mut() {
+                        observation.disable().await;
+                    }
                     return ToolResult::error(format!("navigation failed: {err_text}"));
                 }
+                let response = if network_observation.is_some() {
+                    let response = wait_for_navigation_response(
+                        &mut network_events,
+                        &validated.cdp_session,
+                        result.get("loaderId").and_then(Value::as_str),
+                        result.get("frameId").and_then(Value::as_str),
+                    )
+                    .await;
+                    if let Some(observation) = network_observation.as_mut() {
+                        observation.disable().await;
+                    }
+                    response
+                } else {
+                    None
+                };
                 // Refs die with the old document.
                 self.engine
                     .store
                     .invalidate_tab_snapshots(&session, &target_id, &tab_id);
+                if let Some(response) = response.as_ref().filter(|response| response.status == 429)
+                {
+                    let blocker = self.engine.store.block_origin_for_rate_limit(
+                        &session,
+                        &response.origin,
+                        response.retry_after,
+                    );
+                    return blocker_navigation_result(&target_id, &tab_id, blocker);
+                }
                 ToolResult::text(format!("navigated {tab_id} to {url}")).with_structured(json!({
                     "status": "ok",
                     "target_id": target_id,
                     "tab_id": tab_id,
                     "url": url,
                     "refs_invalidated": true,
+                    "input_delivered": true,
+                    "page_blocked": false,
+                    "http_status": response.as_ref().map(|response| response.status),
+                    "response_observation": if response.is_some() { "observed" } else { "unavailable" },
                 }))
             }
-            Err(e) => ToolResult::error(format!("Page.navigate failed: {e}")),
+            Err(e) => {
+                if let Some(observation) = network_observation.as_mut() {
+                    observation.disable().await;
+                }
+                ToolResult::error(format!("Page.navigate failed: {e}"))
+            }
         }
     }
 }
@@ -1015,6 +1313,13 @@ impl Tool for BrowserClickTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if let Err(refusal) = self
+            .engine
+            .enforce_live_origin_not_blocked(&session, &validated)
+            .await
+        {
+            return refusal.to_tool_result();
+        }
         if route == "trusted" && validated.record.cdp_window_id.is_some() {
             if let Some(limitation) = self
                 .engine
@@ -1614,6 +1919,13 @@ impl Tool for BrowserTypeTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if let Err(refusal) = self
+            .engine
+            .enforce_live_origin_not_blocked(&session, &validated)
+            .await
+        {
+            return refusal.to_tool_result();
+        }
 
         let ext_ref = match args.require_str("ref") {
             Ok(value) => value,
@@ -2191,6 +2503,15 @@ impl Tool for BrowserDialogTool {
             Ok(validated) => validated,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if action != "inspect" {
+            if let Err(refusal) = self
+                .engine
+                .enforce_live_origin_not_blocked(&session, &validated)
+                .await
+            {
+                return refusal.to_tool_result();
+            }
+        }
         if cfg!(target_os = "linux") && action != "inspect" && delivery_mode == "background" {
             return BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputTrustUnavailable,
@@ -2401,6 +2722,13 @@ impl Tool for BrowserSetInputFilesTool {
             Ok(validated) => validated,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if let Err(refusal) = self
+            .engine
+            .enforce_live_origin_not_blocked(&session, &validated)
+            .await
+        {
+            return refusal.to_tool_result();
+        }
         let entry = match self
             .engine
             .store
@@ -2653,6 +2981,10 @@ mod tests {
                 "browser_prepare",
             ),
             (
+                BrowserResumeTool::new(e.clone()).def().clone(),
+                "browser_resume",
+            ),
+            (
                 BrowserNavigateTool::new(e.clone()).def().clone(),
                 "browser_navigate",
             ),
@@ -2713,6 +3045,7 @@ mod tests {
             vec![
                 "get_browser_state",
                 "browser_prepare",
+                "browser_resume",
                 "browser_navigate",
                 "browser_click",
                 "browser_type",

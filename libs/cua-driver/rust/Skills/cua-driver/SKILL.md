@@ -260,7 +260,8 @@ the browser capability loop: use one lifecycle session, bind `(pid, window_id)` 
 `get_browser_state`, snapshot the returned tab, then use `browser_click`,
 `browser_type`, or `browser_navigate`. Read `BROWSER.md` before using this
 route. Browser target ids, tab ids, and refs are session-scoped and stale refs
-must be replaced by a fresh snapshot.
+must be replaced by a fresh snapshot. A challenge or rate-limit pause is
+origin-local; use `browser_resume` only after an explicit caller decision.
 
 ## Agent cursor overlay
 

@@ -573,6 +573,7 @@ impl AgentSessionState {
             tool_name,
             "get_browser_state"
                 | "browser_prepare"
+                | "browser_resume"
                 | "browser_navigate"
                 | "browser_click"
                 | "browser_type"
@@ -3571,16 +3572,19 @@ mod tests {
             ToolErrorClass, ToolOperation, ToolRefusalCode,
         };
 
-        for (tool_name, operation) in [
-            ("browser_dialog", ToolOperation::BrowserDialogAccept),
+        for (tool_name, operation, computer_action) in [
+            ("browser_resume", ToolOperation::NotApplicable, false),
+            ("browser_dialog", ToolOperation::BrowserDialogAccept, true),
             (
                 "browser_set_input_files",
                 ToolOperation::BrowserSetInputFiles,
+                true,
             ),
-            ("browser_download", ToolOperation::BrowserDownload),
+            ("browser_download", ToolOperation::BrowserDownload, true),
             (
                 "browser_pointer",
                 ToolOperation::BrowserPointerDoubleClickDomEvent,
+                true,
             ),
         ] {
             let mut state = AgentSessionState::new(
@@ -3590,13 +3594,13 @@ mod tests {
             );
             state.observe(
                 Transport::McpStdio,
-                true,
+                computer_action,
                 None,
                 None,
                 &ToolCompletionObservation {
                     tool_name: tool_name.into(),
                     operation,
-                    computer_action: true,
+                    computer_action,
                     success: true,
                     error_class: ToolErrorClass::None,
                     refusal_code: ToolRefusalCode::None,
@@ -3609,7 +3613,7 @@ mod tests {
                 state.ended_properties(cua_driver_core::session::SessionEndReason::Explicit, None);
             assert_eq!(properties["used_browser"], true, "tool={tool_name}");
             assert_eq!(
-                properties["had_successful_computer_action"], true,
+                properties["had_successful_computer_action"], computer_action,
                 "tool={tool_name}"
             );
             let serialized = serde_json::to_string(&properties).unwrap();

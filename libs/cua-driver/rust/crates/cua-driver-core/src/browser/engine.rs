@@ -38,6 +38,7 @@ use super::binding::{
     CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool};
+use super::challenge::browser_origin;
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -585,7 +586,7 @@ pub(crate) enum AttachError {
 impl BrowserEngine {
     /// Create the engine and wire session-end cleanup for the
     /// capability store. Platform crates call this once and register
-    /// the five tools via `register_browser_tools`.
+    /// the browser tools via `register_browser_tools`.
     pub fn new(platform: Arc<dyn BrowserPlatform>) -> Arc<Self> {
         Self::new_with_runtime_services(
             platform,
@@ -1610,7 +1611,7 @@ impl BrowserEngine {
         })
     }
 
-    async fn live_top_level_url(
+    pub(crate) async fn live_top_level_url(
         &self,
         conn: &CdpConnection,
         cdp_session: &str,
@@ -1632,6 +1633,52 @@ impl BrowserEngine {
                     "the live top-level browser origin could not be proven",
                 )
             })
+    }
+
+    pub(crate) fn enforce_origin_not_blocked(
+        &self,
+        session: &str,
+        origin: &str,
+    ) -> Result<(), BrowserRefusal> {
+        if origin.is_empty() {
+            return Ok(());
+        }
+        let Some(blocker) = self.store.active_origin_blocker(session, origin) else {
+            return Ok(());
+        };
+        Err(refuse(
+            BrowserRefusalCode::BrowserOriginBlocked,
+            format!(
+                "browser actions to {origin} are paused after a detected blocker; wait for the reported retry window or call browser_resume after an explicit caller decision"
+            ),
+        )
+        .with_detail(json!({
+            "blocker": blocker.to_value(std::time::Instant::now()),
+        })))
+    }
+
+    pub(crate) async fn enforce_live_origin_not_blocked(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+    ) -> Result<(), BrowserRefusal> {
+        let live_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        self.enforce_origin_not_blocked(session, &browser_origin(&live_url))
+    }
+
+    pub(crate) async fn clear_live_origin_blocker(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+    ) -> Result<(String, bool), BrowserRefusal> {
+        let live_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        let origin = browser_origin(&live_url);
+        let cleared = !origin.is_empty() && self.store.clear_origin_blocker(session, &origin);
+        Ok((origin, cleared))
     }
 
     pub(crate) async fn attest_protected_tab(

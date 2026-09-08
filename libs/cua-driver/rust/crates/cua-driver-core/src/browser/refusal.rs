@@ -64,6 +64,9 @@ pub enum BrowserRefusalCode {
     /// The live top-level document left the origin set approved in the
     /// capability manifest. Further browser input is paused.
     BrowserOriginOutsideScope,
+    /// A detected CAPTCHA or rate-limit response paused mutations to this
+    /// origin until its retry window passes or the caller explicitly resumes.
+    BrowserOriginBlocked,
 }
 
 impl BrowserRefusalCode {
@@ -86,6 +89,7 @@ impl BrowserRefusalCode {
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
+            Self::BrowserOriginBlocked => "browser_origin_blocked",
         }
     }
 }
@@ -193,6 +197,10 @@ mod tests {
             (
                 BrowserRefusalCode::BrowserOriginOutsideScope,
                 "browser_origin_outside_scope",
+            ),
+            (
+                BrowserRefusalCode::BrowserOriginBlocked,
+                "browser_origin_blocked",
             ),
         ];
         for (code, wire) in all {

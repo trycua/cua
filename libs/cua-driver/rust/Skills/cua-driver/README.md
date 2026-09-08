@@ -76,6 +76,11 @@ other app. `get_browser_state` binds that exact window to a session-scoped
 target and tab, then returns short-lived page refs for `browser_click`,
 `browser_type`, and `browser_navigate`.
 
+A semantic snapshot that detects a CAPTCHA pauses mutations to that origin;
+HTTP 429 responses do the same on endpoints where response observation is
+available. `browser_resume` clears only the exact live origin after an explicit
+caller decision. It does not solve the challenge or bypass the site's control.
+
 Setup is never a hidden read side effect. `browser_prepare` requires explicit
 approval before launching a driver-managed profile or attaching to an existing
 authenticated profile. Trusted pointer input and synthetic DOM clicks are

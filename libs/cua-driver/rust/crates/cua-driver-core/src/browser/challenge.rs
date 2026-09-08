@@ -8,6 +8,8 @@
 use serde::Serialize;
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::time::Duration;
+use time::{format_description::well_known::Rfc2822, OffsetDateTime};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct BrowserChallengeSignal {
@@ -25,6 +27,10 @@ pub(crate) struct BrowserChallengeObservation {
 }
 
 impl BrowserChallengeObservation {
+    pub(crate) fn origin(&self) -> &str {
+        &self.origin
+    }
+
     pub(crate) fn to_value(&self) -> Value {
         json!({
             "required": true,
@@ -54,6 +60,7 @@ pub(crate) fn no_browser_challenge(origin: &str) -> Value {
     })
 }
 
+#[cfg(test)]
 pub(crate) fn browser_challenge_value<'a>(
     url: &str,
     title: &str,
@@ -211,7 +218,7 @@ pub(crate) fn detect_browser_challenge<'a>(
     })
 }
 
-fn browser_origin(url: &str) -> String {
+pub(crate) fn browser_origin(url: &str) -> String {
     let Ok(parsed) = url::Url::parse(url) else {
         return String::new();
     };
@@ -219,6 +226,77 @@ fn browser_origin(url: &str) -> String {
         url::Origin::Tuple(_, _, _) => parsed.origin().ascii_serialization(),
         url::Origin::Opaque(_) => String::new(),
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct NavigationResponseObservation {
+    pub(crate) status: u16,
+    pub(crate) origin: String,
+    pub(crate) retry_after: Option<Duration>,
+}
+
+pub(crate) fn navigation_response_observation(
+    params: &Value,
+    expected_loader_id: Option<&str>,
+    expected_frame_id: Option<&str>,
+    now: OffsetDateTime,
+) -> Option<NavigationResponseObservation> {
+    if params.get("type").and_then(Value::as_str) != Some("Document") {
+        return None;
+    }
+    if expected_loader_id.is_some()
+        && params.get("loaderId").and_then(Value::as_str) != expected_loader_id
+    {
+        return None;
+    }
+    if expected_frame_id.is_some()
+        && params.get("frameId").and_then(Value::as_str) != expected_frame_id
+    {
+        return None;
+    }
+
+    let response = params.get("response")?.as_object()?;
+    let status = response.get("status")?.as_f64()?;
+    if !(0.0..=u16::MAX as f64).contains(&status) || status.fract() != 0.0 {
+        return None;
+    }
+    let origin = browser_origin(response.get("url")?.as_str()?);
+    if origin.is_empty() {
+        return None;
+    }
+    let retry_after = response
+        .get("headers")
+        .and_then(Value::as_object)
+        .and_then(|headers| {
+            headers
+                .iter()
+                .find(|(name, _)| name.eq_ignore_ascii_case("retry-after"))
+                .and_then(|(_, value)| match value {
+                    Value::String(value) => Some(value.clone()),
+                    Value::Number(value) => Some(value.to_string()),
+                    _ => None,
+                })
+        })
+        .and_then(|value| parse_retry_after(&value, now));
+
+    Some(NavigationResponseObservation {
+        status: status as u16,
+        origin,
+        retry_after,
+    })
+}
+
+fn parse_retry_after(value: &str, now: OffsetDateTime) -> Option<Duration> {
+    let value = value.trim();
+    if !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit()) {
+        return value.parse::<u64>().ok().map(Duration::from_secs);
+    }
+
+    let retry_at = OffsetDateTime::parse(value, &Rfc2822).ok()?;
+    let milliseconds = (retry_at - now).whole_milliseconds().max(0);
+    Some(Duration::from_millis(
+        u64::try_from(milliseconds).unwrap_or(u64::MAX),
+    ))
 }
 
 fn normalize_text(text: &str) -> String {
@@ -349,5 +427,76 @@ mod tests {
             .iter()
             .all(|signal| signal.get("evidence").is_none()));
         assert_eq!(value["origin"], "https://example.test");
+    }
+
+    #[test]
+    fn observes_429_and_numeric_retry_after_without_retaining_url_details() {
+        let observation = navigation_response_observation(
+            &json!({
+                "type": "Document",
+                "frameId": "frame-1",
+                "loaderId": "loader-1",
+                "response": {
+                    "url": "https://example.test/private?q=secret",
+                    "status": 429,
+                    "headers": {"Retry-After": "12"},
+                }
+            }),
+            Some("loader-1"),
+            Some("frame-1"),
+            OffsetDateTime::UNIX_EPOCH,
+        )
+        .expect("main-document response");
+
+        assert_eq!(observation.status, 429);
+        assert_eq!(observation.origin, "https://example.test");
+        assert_eq!(observation.retry_after, Some(Duration::from_secs(12)));
+    }
+
+    #[test]
+    fn parses_http_date_retry_after_and_ignores_other_loaders() {
+        let now = OffsetDateTime::parse("Sun, 06 Nov 1994 08:49:30 GMT", &Rfc2822).unwrap();
+        let params = json!({
+            "type": "Document",
+            "frameId": "frame-1",
+            "loaderId": "loader-1",
+            "response": {
+                "url": "https://example.test/",
+                "status": 429,
+                "headers": {"retry-after": "Sun, 06 Nov 1994 08:49:37 GMT"},
+            }
+        });
+
+        let observation =
+            navigation_response_observation(&params, Some("loader-1"), Some("frame-1"), now)
+                .expect("main-document response");
+        assert_eq!(observation.retry_after, Some(Duration::from_secs(7)));
+        assert!(navigation_response_observation(
+            &params,
+            Some("different-loader"),
+            Some("frame-1"),
+            now,
+        )
+        .is_none());
+    }
+
+    #[test]
+    fn ignores_subresource_response_events() {
+        assert!(navigation_response_observation(
+            &json!({
+                "type": "Image",
+                "frameId": "frame-1",
+                "loaderId": "loader-1",
+                "response": {
+                    "url": "https://example.test/tracker.png",
+                    "status": 429,
+                    "headers": {"Retry-After": "120"},
+                }
+            }),
+            Some("loader-1"),
+            Some("frame-1"),
+            OffsetDateTime::UNIX_EPOCH,
+        )
+        .is_none());
     }
 }

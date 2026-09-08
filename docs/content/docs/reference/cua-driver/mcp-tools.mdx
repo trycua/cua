@@ -16,7 +16,7 @@ This reference describes the **macOS** native tool registry.
 Other platforms: [Linux MCP tools](/reference/cua-driver/mcp-tools-linux), [Windows MCP tools](/reference/cua-driver/mcp-tools-windows).
 See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.
 
-`cua-driver` exposes 56 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 57 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -870,7 +870,7 @@ Select an already-installed cursor theme for a session.
 
 ### `get_browser_state`
 
-Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, an opaque continuation, and an advisory challenge report when page state conservatively indicates CAPTCHA or bot verification. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, an opaque continuation, and a challenge report when page state conservatively indicates CAPTCHA or bot verification. A positive report pauses mutations to that origin until explicit resume. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
 
 **Arguments:**
 
@@ -898,9 +898,23 @@ Explicitly prepare an owned DevTools endpoint for a browser. pid is required for
 - `strategy` (object, optional)
 - `window_id` (integer, optional): Exact native window approval anchor; required for strategy.kind=existing_profile.
 
+### `browser_resume`
+
+Explicitly clear the session-local CAPTCHA or rate-limit pause for the exact live origin in one bound tab after the caller decides it is safe to continue. This records that decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot.
+
+**Arguments:**
+
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+
+```json
+{"tab_id":"example","target_id":"example"}
+```
+
 ### `browser_navigate`
 
-Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). Refused for heuristic bindings. Navigation invalidates all p&lt;snapshot&gt;:&lt;index&gt; refs for the tab.
+Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). Refused for heuristic bindings or a destination origin with an active challenge/rate-limit pause. Navigation invalidates all p&lt;snapshot&gt;:&lt;index&gt; refs for the tab. Driver-owned and embedded endpoints report a main-document HTTP 429 as page_blocked; the reviewed existing-profile surface does not observe response metadata.
 
 **Arguments:**
 

@@ -1959,6 +1959,37 @@ fn run_challenge_positive(spec: &BrowserSpec) {
                 snapshot.raw
             );
 
+            let refused = fixture.driver.call(
+                "browser_navigate",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "url": fixture.server.page_url(),
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"],
+                "browser_origin_blocked",
+                "{}",
+                refused.raw
+            );
+            let resumed = fixture.driver.call(
+                "browser_resume",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "session": session,
+                }),
+            );
+            assert_eq!(resumed.structured()["cleared"], true, "{}", resumed.raw);
+            assert_eq!(
+                resumed.structured()["action_dispatched"],
+                false,
+                "{}",
+                resumed.raw
+            );
+
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
     );

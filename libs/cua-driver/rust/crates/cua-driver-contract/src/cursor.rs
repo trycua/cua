@@ -245,8 +245,8 @@ pub fn classify_cursor_semantics(name: &str, args: &Value) -> Option<CursorSeman
 
         "start_session" | "escalate_session" | "get_session_state" | "end_session"
         | "check_permissions" | "get_config" | "set_config" | "health_report"
-        | "browser_prepare" | "browser_close" | "browser_release" | "browser_activate"
-        | "install_ffmpeg" | "check_update" | "update" => CursorAction::System,
+        | "browser_prepare" | "browser_resume" | "browser_close" | "browser_release"
+        | "browser_activate" | "install_ffmpeg" | "check_update" | "update" => CursorAction::System,
 
         "set_agent_cursor_enabled"
         | "set_agent_cursor_motion"

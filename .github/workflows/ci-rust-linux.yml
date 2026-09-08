@@ -15,6 +15,7 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/**"
+      - "scripts/ci/linux/test-pacman-updates.sh"
       - "nix/**"
       - "flake.nix"
       - "flake.lock"
@@ -34,6 +35,7 @@ on:
       - "libs/cua-driver/rust/crates/platform-linux/**"
       - "libs/cua-driver/wayland-helper/**"
       - "libs/cua-driver/tests/fixtures/**"
+      - "scripts/ci/linux/test-pacman-updates.sh"
       - "nix/**"
       - "flake.nix"
       - "flake.lock"
@@ -48,6 +50,57 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  pacman:
+    name: Arch native pacman updates
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Install Arch build and test dependencies
+        run: |
+          pacman -Syu --noconfirm --needed git rust clang pkgconf jq \
+            dbus libx11 libxi libxtst libxext libxkbcommon wayland \
+            xorg-server-xvfb xorg-xauth at-spi2-core
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: arch-pacman
+      - name: Build exact candidate and native package tests
+        working-directory: libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          cargo test -p cua-driver --test release_channel_cli_test --no-run \
+            --locked --features portal-input --message-format=json > pacman-build.jsonl
+          test_binary=$(jq -r 'select(.reason == "compiler-artifact" and .target.name == "release_channel_cli_test" and .executable != null) | .executable' pacman-build.jsonl)
+          test -x "$test_binary"
+          echo "PACMAN_TEST_BINARY=$test_binary" >> "$GITHUB_ENV"
+      - name: Verify real pacman ownership through CLI and MCP
+        env:
+          CUA_E2E_UNRESTRICTED_GUI: "1"
+        run: |
+          set -euo pipefail
+          export CUA_E2E_SOURCE_SHA=$(git rev-parse HEAD)
+          xvfb-run -a dbus-run-session -- env CUA_PACMAN_TEST_DISPOSABLE=1 \
+            bash scripts/ci/linux/test-pacman-updates.sh \
+              libs/cua-driver/rust/target/debug/cua-driver "$PACMAN_TEST_BINARY" \
+              pacman-update-evidence
+      - name: Upload native package evidence
+        if: always()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: pacman-update-evidence
+          if-no-files-found: error
+          path: |
+            pacman-update-evidence/*.log
+            pacman-update-evidence/*.txt
+            libs/cua-driver/rust/pacman-build.jsonl
+
   unit:
     name: Rust Linux unit and compile
     runs-on: ubuntu-latest

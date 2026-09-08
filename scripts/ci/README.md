@@ -80,6 +80,33 @@ For the test layout and the distinction between unit tests, shared harnesses,
 and native harnesses, see
 `libs/cua-driver/docs/test-harnesses-guide.md`.
 
+## Native pacman update test
+
+The `Arch native pacman updates` job in `ci-rust-linux.yml` checks package
+ownership with real pacman in a disposable Arch container. It packages the
+candidate under `/usr/lib/cua-driver-pacman-test`, verifies CLI and MCP update
+guidance through the installed binary and a symlink, and checks that an
+unmanaged copy retains vendor updates and channel selection. A fake `pacman`
+on `PATH` must not change either result. The job removes only its fixture
+package and retains source, binary, toolchain, and test evidence.
+
+To reproduce it, build `cua-driver` and `release_channel_cli_test` with
+`--locked --features portal-input` in a disposable Arch guest/container. Run
+as root with Xvfb and a session bus:
+
+```bash
+CUA_E2E_SOURCE_SHA=FULL_COMMIT_SHA CUA_E2E_UNRESTRICTED_GUI=1 \
+  xvfb-run -a dbus-run-session -- env CUA_PACMAN_TEST_DISPOSABLE=1 \
+  bash scripts/ci/linux/test-pacman-updates.sh \
+    CANDIDATE_BINARY INTEGRATION_TEST_BINARY NEW_EVIDENCE_DIRECTORY
+```
+
+The runner rejects existing fixture packages and payload paths. Do not run it
+on a user's host. This is package-update validation, not a Hyprland or Omarchy
+desktop certification, and it does not replace the desktop matrix.
+
+## Desktop runners
+
 | Runner                          | Session                                                            | Canonical command |
 | ------------------------------- | ------------------------------------------------------------------ | ----------------- |
 | `linux/run-rust-e2e.sh`         | Existing Linux X11 or Wayland desktop                              | no selector       |

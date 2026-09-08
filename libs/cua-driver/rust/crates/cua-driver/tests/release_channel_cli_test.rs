@@ -64,34 +64,49 @@ mod pacman {
     use cua_driver_testkit::Driver;
     use std::os::unix::fs::PermissionsExt;
 
-    fn fixture(owned: bool) -> tempfile::TempDir {
+    fn fixture() -> tempfile::TempDir {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("pacman");
-        let script = if owned {
-            "#!/bin/sh\n[ \"$1\" = -Qoq ] && [ \"$2\" = -- ] && [ \"$3\" = \"$PACMAN_TEST_EXECUTABLE\" ]\n"
-        } else {
-            "#!/bin/sh\nexit 1\n"
-        };
-        std::fs::write(&path, script).unwrap();
+        // A successful imposter on PATH must never establish package ownership.
+        std::fs::write(
+            &path,
+            "#!/bin/sh\n: > \"$HOME/fake-pacman-called\"\nexit 0\n",
+        )
+        .unwrap();
         std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
         std::fs::write(root.path().join("release-channel"), "nightly\n").unwrap();
         std::fs::create_dir(root.path().join(".cua-driver")).unwrap();
         root
     }
 
-    fn command(root: &std::path::Path, args: &[&str]) -> std::process::Output {
-        Command::new(env!("CARGO_BIN_EXE_cua-driver"))
+    fn command(
+        executable: &std::path::Path,
+        root: &std::path::Path,
+        args: &[&str],
+    ) -> std::process::Output {
+        Command::new(executable)
             .args(args)
             .env("PATH", root)
-            .env(
-                "PACMAN_TEST_EXECUTABLE",
-                std::fs::canonicalize(env!("CARGO_BIN_EXE_cua-driver")).unwrap(),
-            )
             .env("CUA_DRIVER_RS_HOME", root)
             .env("HOME", root)
             .env("CUA_DRIVER_RS_TELEMETRY_ENABLED", "0")
             .output()
             .unwrap()
+    }
+
+    fn managed_executable() -> std::path::PathBuf {
+        let executable = std::path::PathBuf::from(
+            std::env::var_os("PACMAN_TEST_MANAGED_EXECUTABLE")
+                .expect("native test requires PACMAN_TEST_MANAGED_EXECUTABLE"),
+        );
+        let owned = Command::new("/usr/bin/pacman")
+            .args(["-Qoq", "--"])
+            .arg(std::fs::canonicalize(&executable).expect("resolve native candidate"))
+            .output()
+            .expect("native test requires real /usr/bin/pacman");
+        assert!(owned.status.success(), "candidate must be pacman-owned");
+        assert!(!owned.stdout.is_empty(), "pacman must identify its owner");
+        executable
     }
 
     fn assert_unavailable(state: &serde_json::Value) {
@@ -112,8 +127,10 @@ mod pacman {
     }
 
     #[test]
+    #[ignore = "requires a real pacman-owned PACMAN_TEST_MANAGED_EXECUTABLE in a disposable Linux guest"]
     fn managed_cli_checks_and_apply_return_package_guidance() {
-        let root = fixture(true);
+        let executable = managed_executable();
+        let root = fixture();
         // A tempting cached upstream nightly must never be advertised.
         let cache = r#"{"latest_version":"999.0.0-nightly.20260907.1","channel":"nightly","last_checked_unix":9999999999}"#;
         let cache_path = root.path().join(".cua-driver/version_check.json");
@@ -124,30 +141,72 @@ mod pacman {
             vec!["update", "--json"],
             vec!["update", "--apply", "--json"],
         ] {
-            let output = command(root.path(), &args);
+            let output = command(&executable, root.path(), &args);
             assert!(!output.status.success());
             let state = serde_json::from_slice(&output.stdout).unwrap();
             assert_unavailable(&state);
         }
-        let text = command(root.path(), &["update", "--apply"]);
+        let text = command(&executable, root.path(), &["update", "--apply"]);
         assert!(!text.status.success());
         assert!(String::from_utf8_lossy(&text.stdout).contains("sudo pacman -Syu"));
-        assert_eq!(std::fs::read_to_string(cache_path).unwrap(), cache);
-        for channel in ["stable", "nightly"] {
-            let output = command(root.path(), &["channel", "set", channel]);
-            assert!(!output.status.success());
-            assert!(String::from_utf8_lossy(&output.stderr).contains("sudo pacman -Syu"));
+        assert_eq!(std::fs::read_to_string(&cache_path).unwrap(), cache);
+        let preference = root.path().join("release-channel");
+        for saved in [None, Some("nightly\n"), Some("broken\n")] {
+            match saved {
+                Some(value) => std::fs::write(&preference, value).unwrap(),
+                None => std::fs::remove_file(&preference).unwrap(),
+            }
+            for args in [
+                vec!["channel", "status"],
+                vec!["channel", "set", "stable"],
+                vec!["channel", "set", "nightly"],
+            ] {
+                let text = command(&executable, root.path(), &args);
+                assert!(!text.status.success());
+                assert!(text.stdout.is_empty());
+                assert!(String::from_utf8_lossy(&text.stderr).contains("sudo pacman -Syu"));
+                let mut json_args = args;
+                json_args.push("--json");
+                let json = command(&executable, root.path(), &json_args);
+                assert!(!json.status.success());
+                let state: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
+                assert_eq!(
+                    state.get("selected_channel"),
+                    Some(&serde_json::Value::Null)
+                );
+                for field in ["current_version", "current_channel"] {
+                    assert!(!state[field].as_str().unwrap().is_empty(), "{state}");
+                }
+                assert!(state["error"]
+                    .as_str()
+                    .unwrap()
+                    .contains("sudo pacman -Syu"));
+                assert_eq!(std::fs::read_to_string(&preference).ok().as_deref(), saved);
+                assert_eq!(std::fs::read_to_string(&cache_path).unwrap(), cache);
+            }
         }
-        assert_eq!(
-            std::fs::read_to_string(root.path().join("release-channel")).unwrap(),
-            "nightly\n"
+        std::fs::remove_file(&cache_path).unwrap();
+        let uncached = command(&executable, root.path(), &["check-update", "--json"]);
+        assert!(!uncached.status.success());
+        assert_unavailable(&serde_json::from_slice(&uncached.stdout).unwrap());
+        assert!(
+            !cache_path.exists(),
+            "managed checks must not create an upstream cache"
         );
+        assert!(!root.path().join("fake-pacman-called").exists());
     }
 
     #[test]
-    fn pacman_presence_without_ownership_keeps_channel_switching() {
-        let root = fixture(false);
-        let output = command(root.path(), &["channel", "set", "stable", "--json"]);
+    fn fake_path_pacman_cannot_disable_unmanaged_channel_switching() {
+        let executable = std::env::var_os("PACMAN_TEST_UNMANAGED_EXECUTABLE")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|| env!("CARGO_BIN_EXE_cua-driver").into());
+        let root = fixture();
+        let output = command(
+            &executable,
+            root.path(),
+            &["channel", "set", "stable", "--json"],
+        );
         assert!(
             output.status.success(),
             "{}",
@@ -160,22 +219,30 @@ mod pacman {
             r#"{"latest_version":"999.0.0","channel":"stable","last_checked_unix":9999999999}"#,
         )
         .unwrap();
-        let output = command(root.path(), &["check-update", "--json"]);
+        let output = command(&executable, root.path(), &["check-update", "--json"]);
         assert!(output.status.success());
         let state: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
         assert_eq!(state["update_available"], true);
         assert_eq!(state["cache_hit"], true);
         assert_eq!(state["latest_version"], "999.0.0");
         assert!(state["error"].is_null());
+        assert!(!root.path().join("fake-pacman-called").exists());
     }
 
     #[test]
+    #[ignore = "requires a real pacman-owned candidate and CUA_TEST_DRIVER_BIN in a disposable Linux guest"]
     fn managed_mcp_check_returns_same_unavailable_state() {
-        let root = fixture(true);
-        let executable = std::fs::canonicalize(env!("CARGO_BIN_EXE_cua-driver")).unwrap();
+        let executable = managed_executable();
+        assert_eq!(
+            std::path::PathBuf::from(
+                std::env::var_os("CUA_TEST_DRIVER_BIN").expect("set testkit binary override")
+            ),
+            executable,
+            "testkit must start the exact packaged candidate (including symlink entry points)"
+        );
+        let root = fixture();
         let mut driver = cua_driver_testkit::McpDriver::spawn_with_env(&[
             ("PATH", root.path().to_str().unwrap()),
-            ("PACMAN_TEST_EXECUTABLE", executable.to_str().unwrap()),
             ("CUA_DRIVER_RS_HOME", root.path().to_str().unwrap()),
             ("HOME", root.path().to_str().unwrap()),
         ])
@@ -188,5 +255,6 @@ mod pacman {
         );
         assert_unavailable(&result.raw["result"]["structuredContent"]);
         assert!(!root.path().join(".cua-driver/version_check.json").exists());
+        assert!(!root.path().join("fake-pacman-called").exists());
     }
 }

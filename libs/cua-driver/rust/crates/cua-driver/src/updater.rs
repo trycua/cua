@@ -33,7 +33,7 @@ pub(crate) fn is_pacman_managed() -> bool {
     #[cfg(target_os = "linux")]
     {
         std::env::current_exe()
-            .map(|path| pacman_owns_executable(&path, std::path::Path::new("pacman")))
+            .map(|path| pacman_owns_executable(&path, std::path::Path::new("/usr/bin/pacman")))
             .unwrap_or(false)
     }
     #[cfg(not(target_os = "linux"))]

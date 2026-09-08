@@ -3777,6 +3777,24 @@ fn print_check_update_state(state: crate::version_check::UpdateState, json: bool
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        if json {
+            let current =
+                crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "selected_channel": null,
+                    "current_channel": current.map(|channel| channel.as_str()),
+                    "current_version": env!("CARGO_PKG_VERSION"),
+                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                })
+            );
+        } else {
+            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+        }
+        process::exit(1);
+    }
     let result = match subcommand {
         "status" => crate::release_channel::selected(),
         "set" => {

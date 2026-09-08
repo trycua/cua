@@ -24,7 +24,8 @@ Driver does not run this command for you. It skips the upstream update banner
 and refuses its vendor installer and stable/nightly channel changes. The package
 repository controls which version is available, including its release-age policy.
 Having pacman installed alone does not change an independently installed Driver's
-update behavior.
+update behavior. Driver queries `/usr/bin/pacman` directly, so shell aliases and
+executables earlier in `PATH` do not override ownership detection.
 
 For a pacman-owned executable, `check-update`, `update`, and `update --apply`
 return an unavailable-check result with pacman guidance and a nonzero exit code.
@@ -34,6 +35,10 @@ The CLI JSON and MCP `check_for_update` payload keep `latest_version`,
 This does not mean that the package is up to date: Driver does not query pacman's
 repository databases or reuse a cached GitHub release. The `source` field remains
 `github_releases`, identifying the upstream check that was not performed.
+
+`channel status` and `channel set` also return pacman guidance and a nonzero exit
+code. Their JSON output sets `selected_channel` to `null` and explains the reason
+in `error`. A saved stable/nightly preference is ignored and left unchanged.
 
 The vendor update and channel instructions that follow apply to installations
 not managed by pacman.

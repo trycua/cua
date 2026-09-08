@@ -236,6 +236,41 @@ print('FIXTURE_STARTED')
         const observed = JSON.parse(await shell(guest, 'cat /tmp/mastra-fleet-fixture-state.json'));
         assert.equal(observed.value, marker);
         await writeFile(new URL('after.png', output), (await sandbox.computer.screenshot()).data);
+        stage = 'session isolation';
+        console.log('Checking a second concurrent session has a separate desktop...');
+        const other = new CuaFleetSandbox({
+          id: sandbox.id,
+          poolName: record.name,
+          clientId,
+          clientSecret,
+        });
+        try {
+          await other.start();
+          const active = await client.listClaims(record.name);
+          assert.equal(active.length, 2);
+          const otherClaim = active.find((item) => item.metadata.name !== claims[0]!.metadata.name);
+          assert.ok(otherClaim);
+          const otherGuest = await client.waitClaim(otherClaim);
+          assert.notEqual(otherGuest.name, guest.name);
+          assert.equal(
+            (
+              await shell(
+                otherGuest,
+                'test ! -e /tmp/mastra-fleet-fixture-state.json && printf isolated'
+              )
+            ).trim(),
+            'isolated'
+          );
+          assert.equal(
+            JSON.parse(await shell(guest, 'cat /tmp/mastra-fleet-fixture-state.json')).value,
+            marker
+          );
+          console.log(
+            'PASS: simultaneous sessions have distinct guests and isolated fixture state'
+          );
+        } finally {
+          await other.destroy();
+        }
         await writeFile(
           new URL('result.json', output),
           JSON.stringify(
@@ -247,6 +282,7 @@ print('FIXTURE_STARTED')
               mastraVersion: '1.62.0',
               fleetVersion: '0.1.1',
               fixtureVerified: true,
+              isolationVerified: true,
               steps: result.steps.length,
               image,
             },

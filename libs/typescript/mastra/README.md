@@ -112,6 +112,9 @@ The example creates a temporary Linux pool, starts the provider, installs a
 synthetic guest-local webpage, and invokes an agent to enter a unique value and
 click its submit button. A separate authenticated guest command reads the
 fixture's recorded value; the agent's final text is not the success oracle.
+It then starts a second concurrent provider, checks that the two claims use
+different guests, and verifies that the second guest cannot see the first
+guest's fixture state. Both claims are released before pool cleanup.
 
 ```bash
 # Set CUA_CLIENT_ID and CUA_CLIENT_SECRET securely first.
@@ -131,7 +134,8 @@ loop and real desktop tools. It does not prove autonomous model reasoning.
 The fixture uses fixed geometry in a kiosk browser; model mode locates controls
 from screenshots. Screenshots and a small result record go to ignored `output/`.
 
-The live example incurs Fleet usage, creates temporary warm capacity, and uses
+The live example incurs Fleet usage, briefly holds two concurrent desktops,
+creates temporary warm capacity, and uses
 one-hour pool and claim TTLs. Its `finally` blocks destroy the provider and
 delete only its exclusively reserved namespace. A successful namespace listing
 without that namespace is cleanup proof at the account API level, not an

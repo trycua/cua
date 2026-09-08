@@ -367,11 +367,11 @@ to pixel clicks and desktop actions too.
 ### Read action facts without confusing them with task success
 
 A successful action returns `effect` and `route`, with optional typed
-`delivery`, `evidence`, and `escalation`. These fields describe the actuator;
-they do not declare the user's task complete.
+`delivery`, `evidence`, `window_change`, and `escalation`. Action effect
+accounts for the actuator; topology does not declare the action or task
+successful.
 
-- `confirmed` means the driver has publishable value readback or window-change
-  evidence for that action.
+- `confirmed` means the driver has publishable value readback for that action.
 - `partial` means only `delivery.delivered_count` was delivered.
 - `unverifiable` means the driver cannot prove the effect.
 - `suspected_noop` means available evidence suggests no useful change.
@@ -388,11 +388,14 @@ An optional escalation is a harness instruction, never an automatic retry:
   stack admits the tool and exact target;
 - `page`: bind the native window to a supported browser page route;
 - `session`: a legacy compatibility signal from an older capture-scope daemon;
-  current callers choose a desktop target on the specific action instead.
+  current callers choose a desktop target on the specific action instead;
+- `rebind`: refresh the exact `escalation.window` target without activating it.
+  If the target is absent, correlate `window_change.new_windows` with one fresh
+  `list_windows` call before choosing a window.
 
 Branch on the closed reason vocabulary:
 `route_unavailable`, `delivery_failed`, `effect_unconfirmed`,
-`suspected_noop`, and `permission_required`.
+`suspected_noop`, `permission_required`, and `surface_changed`.
 
 After any action, keep using `verify_state` or a fresh state snapshot for the
 actual task postcondition. The multimodal harness owns visual reading and the

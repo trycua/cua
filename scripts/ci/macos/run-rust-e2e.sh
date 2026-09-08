@@ -390,6 +390,9 @@ EOF
     run_test installed-app-textedit cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
       --ignored --exact background_type_on_native_cocoa_is_ax_verified \
       --nocapture --test-threads=1
+    run_test installed-app-textedit-rebind cargo test -p cua-driver --test installed_app_textedit_macos_test -- \
+      --ignored --exact background_open_panel_returns_a_typed_rebind \
+      --nocapture --test-threads=1
   fi
 fi
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then

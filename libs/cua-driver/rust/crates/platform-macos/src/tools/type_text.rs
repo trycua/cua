@@ -36,7 +36,6 @@ use crate::ax::bindings::{
     copy_string_attr, focused_element_of_pid, kAXErrorSuccess, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
-use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 use cua_driver_core::background_input::BackgroundRefusal;
 
@@ -356,13 +355,7 @@ impl Tool for TypeTextTool {
         let text_clone = text.clone();
         let char_count = text.chars().count();
 
-        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // Typing into a field can trigger autocomplete popovers or
-        // Chrome/Safari's "Save Password?" prompt, both of which open
-        // helper windows. Wrap so callers see them in the result suffix
-        // and the wildcard suppressor catches reflex activations.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         // Terminal-emulator short-circuit: when the target pid belongs
         // to a known terminal (Ghostty / Terminal.app / iTerm2 / …), the
@@ -393,8 +386,6 @@ impl Tool for TypeTextTool {
             },
         )
         .await;
-
-        let changes = super::finish_window_observation(snapshot, &args).await;
 
         // Unwrap the delivery envelope: a structured refusal means no
         // actuator ran and the caller gets the exact reason.
@@ -492,33 +483,32 @@ impl Tool for TypeTextTool {
                             .to_string(),
                     )
                 };
-                ToolResult::text(format!(
-                    "{mark} {char_count} char(s){detail}.{note}{}",
-                    changes.result_suffix()
-                ))
-                .with_structured({
-                    // `effect` mirrors `verified`'s read-back tri-state: a TRUSTED
-                    // positive read-back is "confirmed"; an unreadable/unchanged
-                    // AXValue, a dropped CGEvent rung, or an Electron AX echo we
-                    // refuse to trust is "unverifiable".
-                    let mut s = serde_json::json!({
-                        "path": path,
-                        "characters": char_count,
-                        "requested_chars": char_count,
-                        "verified": verified,
-                        "effect": if verified { "confirmed" } else { "unverifiable" },
-                    });
-                    if let Some(delivered_chars) = delivered_chars {
-                        s["delivered_chars"] = serde_json::json!(delivered_chars);
-                    }
-                    if untrusted_web_readback {
-                        // Web-content AXValue read-back. A real browser TAB → the
-                        // `page` tool (drives the DOM via CDP) is the reliable rung;
-                        // an embedded web view (Electron, no CDP) → the element px
-                        // action. It's a renderer/DOM-focus problem, never a
-                        // foreground one.
-                        let escalation =
-                            match web_readback_next_rung(electron_web_content, used_pixel_focus) {
+                ToolResult::text(format!("{mark} {char_count} char(s){detail}.{note}"))
+                    .with_structured({
+                        // `effect` mirrors `verified`'s read-back tri-state: a TRUSTED
+                        // positive read-back is "confirmed"; an unreadable/unchanged
+                        // AXValue, a dropped CGEvent rung, or an Electron AX echo we
+                        // refuse to trust is "unverifiable".
+                        let mut s = serde_json::json!({
+                            "path": path,
+                            "characters": char_count,
+                            "requested_chars": char_count,
+                            "verified": verified,
+                            "effect": if verified { "confirmed" } else { "unverifiable" },
+                        });
+                        if let Some(delivered_chars) = delivered_chars {
+                            s["delivered_chars"] = serde_json::json!(delivered_chars);
+                        }
+                        if untrusted_web_readback {
+                            // Web-content AXValue read-back. A real browser TAB → the
+                            // `page` tool (drives the DOM via CDP) is the reliable rung;
+                            // an embedded web view (Electron, no CDP) → the element px
+                            // action. It's a renderer/DOM-focus problem, never a
+                            // foreground one.
+                            let escalation = match web_readback_next_rung(
+                                electron_web_content,
+                                used_pixel_focus,
+                            ) {
                                 Some("px") => Some((
                                     "px",
                                     "Electron web view — AXValue read-back cannot prove \
@@ -542,22 +532,22 @@ impl Tool for TypeTextTool {
                                 )),
                                 _ => None,
                             };
-                        if let Some((recommended, reason)) = escalation {
+                            if let Some((recommended, reason)) = escalation {
+                                s["escalation"] = serde_json::json!({
+                                    "recommended": recommended,
+                                    "reason": reason,
+                                });
+                            }
+                        } else if !verified && path != PATH_KEY_EVENTS_FG {
                             s["escalation"] = serde_json::json!({
-                                "recommended": recommended,
-                                "reason": reason,
+                                "recommended": "foreground",
+                                "reason": "background insert could not be confirmed — \
+                                           re-call with delivery_mode:\"foreground\" if a \
+                                           screenshot shows the text didn't land."
                             });
                         }
-                    } else if !verified && path != PATH_KEY_EVENTS_FG {
-                        s["escalation"] = serde_json::json!({
-                            "recommended": "foreground",
-                            "reason": "background insert could not be confirmed — \
-                                       re-call with delivery_mode:\"foreground\" if a \
-                                       screenshot shows the text didn't land."
-                        });
-                    }
-                    s
-                })
+                        s
+                    })
             }
             Ok(Err(e)) => ToolResult::error(format!("type_text failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),

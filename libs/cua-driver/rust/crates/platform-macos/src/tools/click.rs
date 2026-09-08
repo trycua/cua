@@ -29,7 +29,6 @@ use crate::ax::bindings::{
     element_screen_rect, kAXErrorSuccess, AXUIElementPerformAction, AXUIElementRef,
 };
 use crate::focus_guard;
-use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::{CFRelease, TCFType};
 
 use super::ToolState;
@@ -601,19 +600,8 @@ impl Tool for ClickTool {
                 selection_pixel = None;
             }
 
-            // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-            // Capture prior frontmost, arm the wildcard suppressor in the
-            // snapshot, then arm a targeted suppressor across the AX action
-            // itself via FocusGuard. After the action returns, detect any
-            // new-window / foreground side-effects and append a one-liner
-            // suffix matching Swift's wording.
             let prior_front = apps::frontmost_pid();
             let foreground = delivery_mode.is_foreground();
-            let snapshot = if foreground {
-                WindowChangeDetector::snapshot_without_suppression(prior_front)
-            } else {
-                WindowChangeDetector::snapshot(prior_front)
-            };
 
             // Run AX work on a blocking thread (can't block async executor).
             // Use `effective_action` so button=right rewrites press → show_menu.
@@ -686,13 +674,10 @@ impl Tool for ClickTool {
             )
             .await;
 
-            // Drop the wildcard lease + detect window/foreground side-effects.
-            let changes = super::finish_window_observation(snapshot, &args).await;
-
             match result {
                 Ok(Ok((
                     (
-                        mut msg,
+                        msg,
                         needs_webkit_delay,
                         suspected_noop,
                         selection_verified,
@@ -705,7 +690,6 @@ impl Tool for ClickTool {
                     if needs_webkit_delay {
                         tokio::time::sleep(std::time::Duration::from_millis(800)).await;
                     }
-                    msg.push_str(&changes.result_suffix());
                     // AX dispatch went through, but AXPerformAction returning
                     // success does not confirm the on-screen effect (many elements
                     // no-op silently). A click is never driver-verifiable (no
@@ -975,22 +959,7 @@ impl Tool for ClickTool {
                 .cursor_registry
                 .update_position(&cursor_key, screen_x, screen_y);
 
-            // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-            // A pixel click can land on a "Sign In" button that opens a sheet
-            // or a Safari link that activates a new tab — same side-effect
-            // shape as the AX path, so we wrap identically.
             let prior_front = apps::frontmost_pid();
-            let snapshot = match activation_policy {
-                PixelActivationPolicy::SuppressTarget => {
-                    WindowChangeDetector::snapshot(prior_front)
-                }
-                PixelActivationPolicy::AllowTargetWithoutRaise => {
-                    WindowChangeDetector::snapshot_allowing_activation(prior_front, pid)
-                }
-                PixelActivationPolicy::ForegroundAssist => {
-                    WindowChangeDetector::snapshot_without_suppression(prior_front)
-                }
-            };
 
             // Restore the Swift background-click prologue that was left
             // disconnected in the original Rust port. It makes an opaque
@@ -1151,8 +1120,6 @@ impl Tool for ClickTool {
                 }
             }
 
-            let changes = super::finish_window_observation(snapshot, &args).await;
-
             let button_label = match button_str.as_str() {
                 "right" => "right-click",
                 "middle" => "middle-click",
@@ -1170,8 +1137,7 @@ impl Tool for ClickTool {
                     };
                     ToolResult::text(format!(
                         "✅ Posted {button_label} to pid {pid} ({mode_label}; \
-                         not driver-verified — confirm via screenshot).{}",
-                        changes.result_suffix()
+                         not driver-verified — confirm via screenshot)."
                     ))
                     .with_structured(serde_json::json!({
                         "path": path,

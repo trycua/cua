@@ -2182,7 +2182,6 @@ fn evidence_name(value: ProjectedEvidenceKind) -> &'static str {
         ProjectedEvidenceKind::AccessibilityReadback => "accessibility_readback",
         ProjectedEvidenceKind::BrowserReadback => "browser_readback",
         ProjectedEvidenceKind::ValueReadback => "value_readback",
-        ProjectedEvidenceKind::WindowChange => "window_change",
     }
 }
 

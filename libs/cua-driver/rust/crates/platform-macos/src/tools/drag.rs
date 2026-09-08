@@ -21,7 +21,6 @@ use super::ToolState;
 use crate::apps;
 use crate::focus_guard;
 use crate::input::mouse::DragButton;
-use crate::window_change_detector::WindowChangeDetector;
 
 pub struct DragTool {
     pub state: Arc<ToolState>,
@@ -287,13 +286,7 @@ impl Tool for DragTool {
         }
         crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), from_sx, from_sy).await;
 
-        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // Drags can trigger drag-and-drop side-effects that spawn helper
-        // windows (drop on Dock, drop on background app icon) and the
-        // mouseDown half-event alone can activate the target app on some
-        // Chromium builds. Wrap to catch + report both.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         // Dispatch blocking drag synthesis.
         let mods_owned = modifiers.clone();
@@ -395,8 +388,6 @@ impl Tool for DragTool {
                 .update_position(&cursor_key, to_sx, to_sy);
         }
 
-        let changes = super::finish_window_observation(snapshot, &args).await;
-
         if let Some(wid) = window_id {
             crate::cursor::overlay::send_command(
                 cursor_key.clone(),
@@ -426,12 +417,11 @@ impl Tool for DragTool {
                  from window-pixel ({}, {}) → ({}, {}), \
                  screen ({}, {}) → ({}, {}) \
                  in {duration_ms}ms / {steps} steps{mode_label} \
-                 (background CGEvent; not driver-verified — confirm via screenshot).{}",
+                 (background CGEvent; not driver-verified — confirm via screenshot).",
                 from_x as i64, from_y as i64,
                 to_x   as i64, to_y   as i64,
                 from_sx as i64, from_sy as i64,
                 to_sx   as i64, to_sy   as i64,
-                changes.result_suffix(),
             ))
             .with_structured(serde_json::json!({
                 "path": if fg { "cgevent_fg" } else { "cgevent" }, "verified": false, "effect": "unverifiable"

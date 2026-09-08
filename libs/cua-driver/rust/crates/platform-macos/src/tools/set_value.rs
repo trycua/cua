@@ -25,7 +25,6 @@ use crate::ax::bindings::{
     set_number_attr, set_string_attr, AXUIElementRef,
 };
 use crate::focus_guard;
-use crate::window_change_detector::WindowChangeDetector;
 use core_foundation::base::CFRelease;
 
 use super::ToolState;
@@ -204,12 +203,7 @@ impl Tool for SetValueTool {
             Some(window_id),
         );
 
-        // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
-        // AXValue writes on popups / sliders can cause reflex activations
-        // in Chromium-based apps; the AXPopUpButton path also AXPresses a
-        // child option which can trigger app activation in some setups.
         let prior_front = apps::frontmost_pid();
-        let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         let result = focus_guard::with_focus_suppressed(
             Some(pid),
@@ -224,14 +218,11 @@ impl Tool for SetValueTool {
         )
         .await;
 
-        let changes = snapshot.detect_async().await;
-
         match result {
             Ok(Ok(mut outcome)) => {
                 apply_surface_trust(&mut outcome, ax_echo_surface);
                 apply_verification_label(&mut outcome);
-                let mut msg = outcome.detail;
-                msg.push_str(&changes.result_suffix());
+                let msg = outcome.detail;
                 let verified = outcome.verified.unwrap_or(false);
                 let mut structured = serde_json::json!({
                     "path": "ax",

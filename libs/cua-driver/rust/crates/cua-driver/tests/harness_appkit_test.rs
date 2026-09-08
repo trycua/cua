@@ -228,6 +228,7 @@ fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
     let (wid, _) = driver
         .find_window(harness.pid as i64, "CuaTestHarness AppKit")
         .expect("find native receiver window");
+    driver.start_behavior_recording();
     let read_events = || -> Vec<serde_json::Value> {
         std::fs::read_to_string(&journal)
             .expect("read native pointer journal")

@@ -19,7 +19,8 @@ superseded_by:
 > [Python and Fleet first delivery slice](2512-python-fleet-first-slice.md)
 > updates the source baseline and proposes a narrower stacked delivery. The
 > Rust remote backend now exists; production carriers and Python composition
-> remain work. This RFC is still in review, not an accepted implementation gate.
+> remain work. The supplement records the accepted narrow implementation slice;
+> this broader RFC remains in review for the additional migrations and parity.
 
 ## Summary
 

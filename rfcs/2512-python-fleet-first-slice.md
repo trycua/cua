@@ -1,14 +1,14 @@
 ---
 title: 'RFC 2512: Python and Fleet first delivery slice'
 created: 2026-09-07
-status: review
+status: accepted
 discussion: https://github.com/trycua/cua/issues/2512
 parent_rfc: 2512-cua-driver-environment-convergence.md
 ---
 
 # RFC 2512: Python and Fleet first delivery slice
 
-## Decision requested
+## Accepted delivery direction
 
 Adopt a narrow first delivery of [RFC 2512](2512-cua-driver-environment-convergence.md):
 one typed Driver desktop contract, first composed with Python Sandbox on one
@@ -16,10 +16,11 @@ Linux Fleet image, followed by one independently qualified local Linux guest.
 Keep MCP alongside the typed SDK for agent harnesses. Keep shell, files, PTYs,
 and machine lifecycle outside Driver.
 
-This supplement updates the implementation baseline and proposes stacked review
-boundaries. It does not mark RFC 2512 accepted, advertise a released remote
-Python API, or authorize a merge or image rollout. The RFC issue remains the
-decision record; this is not a second competing architecture RFC.
+This supplement records the maintainer-approved narrow implementation direction
+and stacked review boundaries. It does not accept every broader migration in
+RFC 2512, advertise a released remote Python API, or authorize a merge or image
+rollout. The RFC issue remains the decision record; this is not a second
+competing architecture RFC.
 
 ## Source baseline and work already available
 
@@ -131,17 +132,27 @@ WebSocket, or stdio forwarding. Keep any new streaming support outside this
 first slice. Existing MCP integrations remain separate, with their own tested
 transport limits.
 
-The receiver must sit behind an authenticated, claim-scoped guest route. A
-loopback bind alone neither makes a service reachable from Fleet nor provides
-authentication. The review must select and test either verified proxy-injected
-service identity or a separately scoped guest credential, including revocation
-and refresh. Do not assume the current proxy provides an unverified identity
-assertion or send a broad control-plane bearer into the guest.
+Use the same authenticated Fleet named-service route and private guest-network
+boundary as computer-server. Fleet authenticates the caller, authorizes access
+to the namespace, and strips control-plane credentials before forwarding. The
+normal route is namespace-authorized, not a separate claim credential verified
+by the guest. Do not add pairing, a new credential issuer, or a guest-specific
+authentication redesign merely to introduce an alternative desktop service.
+
+The endpoint is not a standalone unauthenticated remote-control listener. The
+carrier/packaging must preserve the existing private service exposure; any new
+direct/public ingress is outside this slice. Verify that deployment property
+before live tests. Reuse existing access-denied behavior and credentials rather
+than adding a competing identity system.
 
 The bound Fleet record exposes claim, namespace, sandbox name, and services.
-Those names are not by themselves proof of an immutable boot/binding generation.
-Establish how the adapter obtains and verifies a generation that changes when a
-guest is replaced; an old handle must never attach to a replacement by name.
+Those names are not by themselves proof of a runtime generation. Bind each
+Driver connection to a receiver instance and its owned session; after restart
+or replacement, old handles must fail instead of silently reattaching by name.
+This is lifecycle correctness, not a stronger per-claim authorization policy.
+Test disconnect, replacement, and explicit reacquisition. Do not describe a
+session/generation marker as a credential or fabricate an authenticated guest
+principal that the existing proxy does not provide.
 
 ## Stacked PR sequence
 
@@ -152,7 +163,7 @@ main after the RFC decision; do not build products from the historical RFC base.
 
 | Phase | Review boundary                                              | Required evidence                                                                                                                    |
 | ----- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| A     | This contract supplement, stacked on the existing RFC PR     | Current-source audit, typed examples, acceptance table, and recorded maintainer decision before B                                    |
+| A     | This contract supplement, stacked on the existing RFC PR     | Current-source audit, typed examples, acceptance table, and recorded narrow maintainer decision                                      |
 | B1    | Guest envelope receiver and canonical dispatcher             | Auth/session boundary, operation allowlist, deadlines, cancellation, duplicate handling, close isolation, version and payload limits |
 | B2    | Environment carrier and generated Python construction bridge | Reuse the ordinary `CuaDriver`; claim/generation binding; typed results; no uncertain-action replay; generated binding drift checks  |
 | C     | Additive Sandbox accessor                                    | Claim-owned connection invalidation; close ordering; old screenshot/input/shell/files/PTY behavior remains independent               |
@@ -162,7 +173,7 @@ main after the RFC decision; do not build products from the historical RFC base.
 | G     | Exact-release Diataxis docs                                  | Tested commands, supported combinations, honest limitations, links and render checks; no unreleased API presented as available       |
 
 B1 and B2 may each need separate Driver and integration-package commits. Split
-the review instead of hiding a server, new credentials, bindings, and SDK API
+the review instead of hiding a server, carrier, bindings, and SDK API
 inside one transport PR. Image packaging belongs in its owning image repository
 with explicit cross-repository dependencies; Git cannot directly stack branches
 from different repositories.
@@ -221,19 +232,30 @@ Account, target image, spend, test actions, and cleanup require the applicable
 live-test authorization. A mock, published image, or successful MCP tool call
 is not typed Fleet SDK end-to-end proof.
 
-## Decisions still required before implementation
+## Decision record and remaining verification
 
-Record the decision on the existing RFC issue, without presenting the absence
-of review as acceptance:
+The maintainer approved proceeding with the narrow alternative-service model:
+reuse Fleet authorization, preserve the canonical typed SDK, keep
+computer-server compatibility, and treat stale-runtime handling as adapter
+correctness. A new claim-authentication architecture is not a prerequisite.
+The earlier proposal of a separate guest credential or injected claim identity
+was rejected as unnecessary scope expansion for this first slice.
 
-1. Accept this Python/Fleet-first scope under RFC 2512 while retaining its
-   generated typed contract and leaving broader parity work outstanding.
-2. Select the guest receiver's authenticated ingress and immutable generation
-   proof, including revocation and caller-to-session binding.
-3. Confirm the owning package and generated Python construction mechanism, the
-   bounded remote operation set, and unsupported host/path operations.
-4. Confirm the local candidate and exact Fleet image qualification/packaging
-   scope. Existing MCP-only artifacts do not expose the proposed receiver.
+Implementation can proceed as unmerged stacked PRs. The following are evidence
+requirements, not a request for another product approval:
+
+1. Prove private guest service exposure and existing Fleet access checks are
+   preserved; no new public endpoint or authorization bypass.
+2. Reuse the Rust envelope/backend and generate the Python construction bridge;
+   keep ownership and dependencies explicit without mirrored desktop methods.
+3. Define and test the bounded remote operation set, cancellation, restart,
+   close behavior, and unsupported host/path operations.
+4. Qualify the selected Fleet image and local runtime before advertising either
+   path. Existing MCP-only artifacts do not expose the proposed receiver.
+
+If evidence requires changing Fleet's authorization or introducing a new public
+ingress, report that concrete gap as a separately scoped change. Do not make
+such a redesign the default assumption or weaken existing protections.
 
 Rollback remains additive: keep the previous package/image pinned and use the
 unchanged Sandbox/server route. Close only task-owned Driver resources. Do not

@@ -1,0 +1,53 @@
+name: Check Customer Impact
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize]
+
+jobs:
+  check-customer-impact:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check for Customer Impact section
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const body = context.payload.pull_request.body || '';
+
+            // Find the Customer Impact section
+            const impactMatch = body.match(/## Customer Impact\s*\n([\s\S]*?)(?=\n## |\n*$)/);
+            const impactContent = impactMatch ? impactMatch[1].trim() : '';
+
+            // Strip HTML comments
+            const stripped = impactContent.replace(/<!--[\s\S]*?-->/g, '').trim();
+
+            // Check that at least one visibility checkbox is checked
+            const externalChecked = /- \[x\] External/i.test(impactContent);
+            const internalChecked = /- \[x\] Internal/i.test(impactContent);
+            const hasVisibility = externalChecked || internalChecked;
+
+            const errors = [];
+
+            if (!stripped) {
+              errors.push(
+                '❌ Missing customer impact.\n' +
+                'Please fill out the "Customer Impact" section in your PR description.\n' +
+                'Explain how this change affects end users. If there is no direct impact, say why.'
+              );
+            }
+
+            if (!hasVisibility) {
+              errors.push(
+                '❌ Missing visibility label.\n' +
+                'Check one of the boxes in the Visibility section:\n' +
+                '- [x] External — visible to customers\n' +
+                '- [x] Internal — not customer-facing'
+              );
+            }
+
+            if (errors.length > 0) {
+              core.setFailed(errors.join('\n\n'));
+            } else {
+              const visibility = externalChecked ? 'External' : 'Internal';
+              core.info(`✅ Customer impact found (${visibility}): "${stripped.substring(0, 100)}..."`);
+            }

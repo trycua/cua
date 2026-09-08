@@ -50,6 +50,7 @@ from .base import AsyncCallbackHandler
 logger = logging.getLogger(__name__)
 
 _MAX_RESPONSE_BYTES = 1024 * 1024
+_MAX_CONSECUTIVE_TRANSPORT_FAILURES = 2
 _SCREENSHOT_NAMES = {"screenshot", "screenshot_before", "screenshot_after"}
 
 
@@ -128,9 +129,9 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
     2. If JSON comes back with captcha=true but no usable answer, ask a
        targeted solve-only follow-up. Reject a follow-up that contradicts a
        specific challenge type reported by the first pass.
-    3. If JSON fails or says no captcha, try a simple YES/NO detection
-       prompt that catches reCAPTCHA checkboxes on busy pages, then
-       solve if positive.
+    3. If JSON is malformed, try a simple YES/NO detection prompt, then
+       solve if positive. A valid negative is final so ordinary pages consume
+       only one request from the per-run budget.
     4. For image-selection challenges, return control to the main model with
        an automated computer-use instruction. Discard unreadable or unsafe
        output instead of forwarding it or requiring a user.
@@ -139,7 +140,8 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         api_base: LM Studio / OpenAI-compatible API base URL.
         model: Vision model ID served by the local API.
         max_tokens: Max tokens for the vision model response.
-        timeout: HTTP request timeout in seconds.
+        timeout: HTTP request timeout in seconds. Two consecutive request
+            failures disable the helper for the rest of the current run.
         cooldown: Minimum seconds between screenshot scans in one run. The
             default is zero; digest deduplication and the request cap bound
             repeated work without skipping a newly observed challenge.
@@ -199,6 +201,9 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._attempt_transport_failed = contextvars.ContextVar[bool](
             f"captcha_attempt_transport_failed_{suffix}", default=False
         )
+        self._consecutive_transport_failures = contextvars.ContextVar[int](
+            f"captcha_consecutive_transport_failures_{suffix}", default=0
+        )
         self._run_usage = contextvars.ContextVar[Optional[Dict[str, Union[int, float]]]](
             f"captcha_run_usage_{suffix}", default=None
         )
@@ -213,6 +218,7 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._latest_screenshot_digest.set(None)
         self._seen_screenshot_digests.set(frozenset())
         self._attempt_transport_failed.set(False)
+        self._consecutive_transport_failures.set(0)
         self._run_usage.set(self._empty_run_usage())
 
     async def on_run_end(
@@ -228,6 +234,7 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._latest_screenshot_digest.set(None)
         self._seen_screenshot_digests.set(frozenset())
         self._attempt_transport_failed.set(False)
+        self._consecutive_transport_failures.set(0)
 
     def get_run_usage(self) -> Dict[str, Union[int, float]]:
         """Return helper-model usage observed in the current or just-finished run.
@@ -271,10 +278,22 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             return
         if self._request_count.get() >= self.max_requests_per_run:
             return
+        if self._consecutive_transport_failures.get() >= _MAX_CONSECUTIVE_TRANSPORT_FAILURES:
+            return
 
-        self._last_attempt_time.set(now)
         self._attempt_transport_failed.set(False)
         result = await self._detect_and_solve(screenshot_b64)
+        self._last_attempt_time.set(time.monotonic())
+        if self._attempt_transport_failed.get():
+            failures = self._consecutive_transport_failures.get() + 1
+            self._consecutive_transport_failures.set(failures)
+            if failures == _MAX_CONSECUTIVE_TRANSPORT_FAILURES:
+                logger.warning(
+                    "CAPTCHA solver disabled for the current run after %d consecutive request failures",
+                    failures,
+                )
+        else:
+            self._consecutive_transport_failures.set(0)
         # A completed negative is safe to deduplicate. A transport failure is
         # not a model decision, so allow the same still-visible challenge to
         # retry on a later hook while the per-run request cap stays decisive.
@@ -451,12 +470,6 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
                     )
         return None, None
 
-    @classmethod
-    def _latest_message_image_digest(cls, messages: List[Dict[str, Any]]) -> Optional[str]:
-        """Compatibility helper for callers that only need image freshness."""
-
-        return cls._latest_message_image_identity(messages)[0]
-
     async def _budgeted_call_vision(self, image_b64: str, prompt: str) -> Optional[str]:
         requests = self._request_count.get()
         if requests >= self.max_requests_per_run:
@@ -479,18 +492,19 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             parsed = self._parse_json_response(json_reply)
             if parsed:
                 if not parsed.get("captcha"):
-                    return await self._fallback_detect_solve(image_b64)
+                    return None
                 answer = parsed.get("answer", "")
                 ctype = parsed.get("type", "")
                 if not isinstance(ctype, str):
                     ctype = ""
+                normalized_type = self._normalize_type_hint(ctype) or ""
                 if not isinstance(answer, str):
-                    return await self._solve_phase(image_b64, ctype)
+                    return await self._solve_phase(image_b64, normalized_type)
                 if answer and answer != "<the text to enter>":
-                    classified = self._classify_answer(answer, ctype)
+                    classified = self._classify_answer(answer, normalized_type)
                     if classified is not None:
                         return classified
-                return await self._solve_phase(image_b64, ctype)
+                return await self._solve_phase(image_b64, normalized_type)
 
         return await self._fallback_detect_solve(image_b64)
 
@@ -586,10 +600,25 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         "below",
         "above",
     }
+    _NON_ANSWER_TOKENS = {
+        "ERROR",
+        "FALSE",
+        "N/A",
+        "NO",
+        "NONE",
+        "NULL",
+        "TRUE",
+        "UNKNOWN",
+        "UNREADABLE",
+        "YES",
+    }
 
     @classmethod
     def _classify_answer(cls, raw: str, type_hint: str = "") -> Optional[Dict[str, Any]]:
         upper = raw.strip().upper()
+
+        if upper in cls._NON_ANSWER_TOKENS:
+            return None
 
         if upper in {
             "CLICK_CHECKBOX",
@@ -614,7 +643,7 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
 
         cleaned = re.sub(r"^[`\"']+|[`\"']+$", "", raw).strip()
 
-        if not cleaned:
+        if not cleaned or cleaned.upper() in cls._NON_ANSWER_TOKENS:
             return None
 
         if cls._looks_like_page_text(cleaned):

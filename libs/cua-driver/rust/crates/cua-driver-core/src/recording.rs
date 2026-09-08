@@ -905,7 +905,8 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && matches!(
             truth["transport"].as_str(),
             Some(
-                "linux_at_spi_action"
+                "macos_ax_action"
+                    | "linux_at_spi_action"
                     | "windows_uia_invoke"
                     | "windows_uia_toggle"
                     | "windows_uia_selection"
@@ -1489,6 +1490,7 @@ mod tests {
     #[test]
     fn semantic_click_without_point_requires_exact_action_truth() {
         for transport in [
+            "macos_ax_action",
             "linux_at_spi_action",
             "windows_uia_invoke",
             "windows_uia_toggle",

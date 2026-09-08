@@ -25,7 +25,32 @@
 ## Choose your path
 
 <div align="center">
-  <img src="img/card-cua-products.gif" alt="Cua Fleets: isolated cloud desktops; Cua Driver: desktop automation; Lume: local VMs on Apple Silicon; Cua Bench: tasks and evaluation. Blue and mint cursors move between the four cards." width="100%">
+  <table width="100%">
+    <tr>
+      <td colspan="3" align="center">
+        <a href="#cua-fleets">
+          <img src="img/card-cua-fleets.gif" alt="Cua Fleets: isolated cloud desktops for your agents" width="100%">
+        </a>
+      </td>
+    </tr>
+    <tr>
+      <td align="center" width="33%">
+        <a href="#cua-driver">
+          <img src="img/card-cua-driver.gif" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="100%">
+        </a>
+      </td>
+      <td align="center" width="33%">
+        <a href="#lume">
+          <img src="img/card-cua-lume.gif" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="100%">
+        </a>
+      </td>
+      <td align="center" width="33%">
+        <a href="#cua-bench">
+          <img src="img/card-cua-bench.gif" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="100%">
+        </a>
+      </td>
+    </tr>
+  </table>
 </div>
 
 - **Cua Fleets:** [Provision a Linux desktop, run a command, and save a screenshot](https://cua.ai/docs/tutorials/your-first-cloud-fleet).

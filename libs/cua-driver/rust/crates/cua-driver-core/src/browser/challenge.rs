@@ -233,6 +233,7 @@ pub(crate) struct NavigationResponseObservation {
     pub(crate) status: u16,
     pub(crate) origin: String,
     pub(crate) retry_after: Option<Duration>,
+    pub(crate) is_redirect: bool,
 }
 
 pub(crate) fn navigation_response_observation(
@@ -264,9 +265,8 @@ pub(crate) fn navigation_response_observation(
     if origin.is_empty() {
         return None;
     }
-    let retry_after = response
-        .get("headers")
-        .and_then(Value::as_object)
+    let headers = response.get("headers").and_then(Value::as_object);
+    let retry_after = headers
         .and_then(|headers| {
             headers
                 .iter()
@@ -278,11 +278,19 @@ pub(crate) fn navigation_response_observation(
                 })
         })
         .and_then(|value| parse_retry_after(&value, now));
+    let is_redirect = matches!(status as u16, 301 | 302 | 303 | 307 | 308)
+        && headers.is_some_and(|headers| {
+            headers.iter().any(|(name, value)| {
+                name.eq_ignore_ascii_case("location")
+                    && value.as_str().is_some_and(|value| !value.is_empty())
+            })
+        });
 
     Some(NavigationResponseObservation {
         status: status as u16,
         origin,
         retry_after,
+        is_redirect,
     })
 }
 
@@ -451,6 +459,44 @@ mod tests {
         assert_eq!(observation.status, 429);
         assert_eq!(observation.origin, "https://example.test");
         assert_eq!(observation.retry_after, Some(Duration::from_secs(12)));
+        assert!(!observation.is_redirect);
+    }
+
+    #[test]
+    fn marks_redirect_only_when_status_and_location_agree() {
+        let redirect = json!({
+            "type": "Document",
+            "frameId": "frame-1",
+            "loaderId": "loader-1",
+            "response": {
+                "url": "https://example.test/start",
+                "status": 302,
+                "headers": {"location": "https://example.test/final"},
+            }
+        });
+        assert!(
+            navigation_response_observation(
+                &redirect,
+                Some("loader-1"),
+                Some("frame-1"),
+                OffsetDateTime::UNIX_EPOCH,
+            )
+            .unwrap()
+            .is_redirect
+        );
+
+        let mut terminal = redirect;
+        terminal["response"]["headers"] = json!({});
+        assert!(
+            !navigation_response_observation(
+                &terminal,
+                Some("loader-1"),
+                Some("frame-1"),
+                OffsetDateTime::UNIX_EPOCH,
+            )
+            .unwrap()
+            .is_redirect
+        );
     }
 
     #[test]

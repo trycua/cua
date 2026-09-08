@@ -263,6 +263,12 @@ async fn wait_for_navigation_response(
             frame_id,
             OffsetDateTime::now_utc(),
         ) {
+            // Chromium can report each main-document redirect under the same
+            // loader. Only the terminal response describes the page reached
+            // by this navigation.
+            if observation.is_redirect {
+                continue;
+            }
             return Some(observation);
         }
     }
@@ -325,22 +331,27 @@ impl Drop for NavigationObservationGuard {
 fn blocker_navigation_result(
     target_id: &str,
     tab_id: &str,
+    http_status: u16,
     blocker: super::store::OriginBlocker,
 ) -> ToolResult {
     let blocker = blocker.to_value(Instant::now());
-    ToolResult::text(format!(
-        "navigation reached a rate limit at {} and paused that origin",
-        blocker["origin"]
-            .as_str()
-            .unwrap_or("the destination origin")
-    ))
-    .with_structured(json!({
-        "status": "page_blocked",
+    let origin = blocker["origin"]
+        .as_str()
+        .unwrap_or("the destination origin");
+    let message = if blocker["kind"] == "anti_bot_challenge" {
+        format!("navigation reached an already-detected challenge at {origin}; that origin remains paused")
+    } else if http_status == 429 {
+        format!("navigation reached a rate limit at {origin} and paused that origin")
+    } else {
+        format!("navigation reached {origin}, which already has an active rate-limit pause")
+    };
+    ToolResult::text(message).with_structured(json!({
+        "status": "ok",
         "target_id": target_id,
         "tab_id": tab_id,
         "input_delivered": true,
         "page_blocked": true,
-        "http_status": 429,
+        "http_status": http_status,
         "response_observation": "observed",
         "refs_invalidated": true,
         "blocker": blocker,
@@ -1001,7 +1012,8 @@ impl BrowserNavigateTool {
                 new URL (http/https/about only). Refused for heuristic bindings or a \
                 destination origin with an active challenge/rate-limit pause. Navigation \
                 invalidates all p<snapshot>:<index> refs for the tab. Driver-owned and \
-                embedded endpoints report a main-document HTTP 429 as page_blocked; the \
+                embedded endpoints report a main-document HTTP 429 with status ok, \
+                input_delivered true, and page_blocked true; the \
                 reviewed existing-profile surface does not observe response metadata."
                 .into(),
             input_schema: json!({
@@ -1068,10 +1080,8 @@ impl Tool for BrowserNavigateTool {
             Err(e) => return e,
         };
         let lower = url.to_ascii_lowercase();
-        if !(lower.starts_with("http://")
-            || lower.starts_with("https://")
-            || lower.starts_with("about:"))
-        {
+        let is_http_navigation = lower.starts_with("http://") || lower.starts_with("https://");
+        if !(is_http_navigation || lower.starts_with("about:")) {
             return ToolResult::error(format!(
                 "browser_navigate only accepts http/https/about URLs, got: {url}"
             ));
@@ -1094,7 +1104,7 @@ impl Tool for BrowserNavigateTool {
             Err(refusal) => return refusal.to_tool_result(),
         };
         let destination_origin = browser_origin(&url);
-        if lower.starts_with("http") && destination_origin.is_empty() {
+        if is_http_navigation && destination_origin.is_empty() {
             return ToolResult::error("browser_navigate destination URL is invalid");
         }
         if let Err(refusal) = self
@@ -1104,17 +1114,20 @@ impl Tool for BrowserNavigateTool {
             return refusal.to_tool_result();
         }
 
-        let mut network_events = validated.conn.subscribe();
         // The reviewed existing-profile CDP surface intentionally excludes the
         // Network domain. Keep that privacy boundary intact; exact response
         // metadata is available for driver-owned and embedded endpoints only.
-        let mut network_observation = if validated.record.endpoint_access_class
-            == EndpointAccessClass::ExistingProfileApproved
+        let mut network_observation = if is_http_navigation
+            && validated.record.endpoint_access_class
+                != EndpointAccessClass::ExistingProfileApproved
         {
-            None
-        } else {
             NavigationObservationGuard::enable(validated.conn.clone(), &validated.cdp_session).await
+        } else {
+            None
         };
+        let mut network_events = network_observation
+            .as_ref()
+            .map(|_| validated.conn.subscribe());
         let navigation = validated
             .conn
             .call(
@@ -1131,33 +1144,64 @@ impl Tool for BrowserNavigateTool {
                     }
                     return ToolResult::error(format!("navigation failed: {err_text}"));
                 }
-                let response = if network_observation.is_some() {
+                // Page.navigate has accepted the navigation. Invalidate refs
+                // before any optional response observation so cancellation
+                // cannot leave capabilities for the old document usable.
+                self.engine
+                    .store
+                    .invalidate_tab_snapshots(&session, &target_id, &tab_id);
+                let (response, observed_blocker) = if network_observation.is_some() {
                     let response = wait_for_navigation_response(
-                        &mut network_events,
+                        network_events
+                            .as_mut()
+                            .expect("an enabled observation has an event receiver"),
                         &validated.cdp_session,
                         result.get("loaderId").and_then(Value::as_str),
                         result.get("frameId").and_then(Value::as_str),
                     )
                     .await;
+                    // Commit observed containment state before cleanup, which
+                    // remains cancellable and must not create an action gap.
+                    let blocker = response
+                        .as_ref()
+                        .filter(|response| response.status == 429)
+                        .map(|response| {
+                            self.engine.store.block_origin_for_rate_limit(
+                                &session,
+                                &response.origin,
+                                response.retry_after,
+                            )
+                        });
                     if let Some(observation) = network_observation.as_mut() {
                         observation.disable().await;
                     }
-                    response
+                    (response, blocker)
                 } else {
-                    None
+                    (None, None)
                 };
-                // Refs die with the old document.
-                self.engine
-                    .store
-                    .invalidate_tab_snapshots(&session, &target_id, &tab_id);
-                if let Some(response) = response.as_ref().filter(|response| response.status == 429)
-                {
-                    let blocker = self.engine.store.block_origin_for_rate_limit(
-                        &session,
-                        &response.origin,
-                        response.retry_after,
+                if let Some(blocker) = observed_blocker {
+                    return blocker_navigation_result(&target_id, &tab_id, 429, blocker);
+                }
+                if let Some((response, blocker)) = response.as_ref().and_then(|response| {
+                    self.engine
+                        .store
+                        .active_origin_blocker(&session, &response.origin)
+                        .map(|blocker| (response, blocker))
+                }) {
+                    return blocker_navigation_result(
+                        &target_id,
+                        &tab_id,
+                        response.status,
+                        blocker,
                     );
-                    return blocker_navigation_result(&target_id, &tab_id, blocker);
+                }
+                if let Some(response) = response
+                    .as_ref()
+                    .filter(|response| (200..400).contains(&response.status))
+                {
+                    self.engine
+                        .store
+                        .clear_elapsed_rate_limit_after_success(&session, &response.origin);
                 }
                 ToolResult::text(format!("navigated {tab_id} to {url}")).with_structured(json!({
                     "status": "ok",

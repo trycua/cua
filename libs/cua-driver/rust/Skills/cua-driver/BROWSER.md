@@ -326,12 +326,18 @@ cua-driver browser_navigate \
 Only `http:`, `https:`, and `about:` URLs are accepted. Navigation invalidates
 the tab's refs; snapshot again before the next ref-targeted action. On
 driver-owned and embedded browser endpoints, a main-document HTTP 429 returns
-`status: "page_blocked"`, `input_delivered: true`, and a `rate_limited`
-blocker. The blocker contains only the response origin and retry metadata. The
-driver refuses another mutation to that origin until `retry_after_ms` elapses
-or the caller explicitly invokes `browser_resume`; unrelated origins remain
-available. Existing-profile attachments preserve their narrower CDP privacy
-surface and report response observation as unavailable.
+`status: "ok"`, `input_delivered: true`, `page_blocked: true`, and a
+`rate_limited` blocker. `status` remains `ok` because the navigation was
+delivered; `page_blocked` reports the state reached afterward. The blocker
+contains only the response origin and retry metadata. The driver refuses
+another mutation to that origin until `retry_after_ms` elapses or the caller
+explicitly invokes `browser_resume`; unrelated origins remain available. A
+redirect that reaches an origin with a known active blocker also reports
+`page_blocked: true`. A server-directed retry window is capped at 24 hours so
+malformed input cannot create an indefinite pause.
+`server_retry_after_capped: true` reports when that cap was applied.
+Existing-profile attachments preserve their narrower CDP privacy surface and
+report response observation as unavailable.
 
 ### Click
 

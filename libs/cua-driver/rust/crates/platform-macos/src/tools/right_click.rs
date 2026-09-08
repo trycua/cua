@@ -97,9 +97,9 @@ impl Tool for RightClickTool {
 
         // Surface 6: element_token / element_index precedence resolution.
         let element_token_arg = args.opt_str("element_token");
-        let window_id_arg = args.opt_u64("window_id").map(|v| v as u32);
+        let window_id_arg = args.opt_u64("window_id");
         let element_index_arg = args.opt_u64("element_index").map(|v| v as usize);
-        let resolved = match cua_driver_core::element_token::resolve_element_args(
+        let resolved = match self.state.element_cache.resolve_element_args(
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
@@ -110,13 +110,10 @@ impl Tool for RightClickTool {
             Ok(r) => r,
             Err(e) => return e,
         };
-        let (element_index, window_id) = match resolved {
-            cua_driver_core::element_token::ResolvedElement::None => (None, window_id_arg),
-            cua_driver_core::element_token::ResolvedElement::Element {
-                window_id: wid,
-                element_index: idx,
-                via_token: _,
-            } => (Some(idx), wid),
+        let (element_index, window_id, element_guard) = resolved.into_parts(window_id_arg);
+        let window_id = match super::native_window_id(window_id) {
+            Ok(window_id) => window_id,
+            Err(error) => return error,
         };
         let x = args.opt_f64("x");
         let y = args.opt_f64("y");
@@ -140,17 +137,9 @@ impl Tool for RightClickTool {
         }
 
         // ── AX element path ──────────────────────────────────────────────────
-        if let (Some(idx), Some(wid)) = (element_index, window_id) {
-            // Retain out of the cache so a concurrent get_window_state can't
-            // free the element mid-action (use-after-free → daemon crash).
-            let element_guard = match self.state.element_cache.get_element_retained(pid, wid, idx) {
-                Some(e) => e,
-                None => {
-                    return ToolResult::error(format!(
-                        "Element index {idx} not found. Call get_window_state first."
-                    ))
-                }
-            };
+        if let (Some(idx), Some(wid), Some(element_guard)) =
+            (element_index, window_id, element_guard)
+        {
             let element_ptr = element_guard.as_ptr();
 
             let _mutation_lease = match super::gate_background_window_action(
@@ -165,8 +154,10 @@ impl Tool for RightClickTool {
                 Err(refusal_result) => return refusal_result,
             };
 
-            let result =
-                tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
+            let result = tokio::task::spawn_blocking(move || {
+                ax_show_menu(element_guard.as_ptr(), idx, pid, wid)
+            })
+            .await;
 
             return match result {
                 Ok(Ok(msg)) => ToolResult::text(msg),

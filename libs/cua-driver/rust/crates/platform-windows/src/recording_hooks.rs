@@ -7,10 +7,13 @@
 //!    on UIA/MSAA-indexed clicks (not just pixel-addressed ones).
 
 #[cfg(target_os = "windows")]
-use std::{
-    collections::HashMap,
-    sync::{Arc, Mutex, OnceLock, Weak},
-};
+use std::sync::Arc;
+
+#[cfg(target_os = "windows")]
+use cua_driver_core::element_cache::{current_runtime_cache, register_runtime_cache};
+
+#[cfg(target_os = "windows")]
+use crate::uia::cache::{CachedSnapshot, SnapshotKind};
 
 #[cfg(target_os = "windows")]
 use crate::uia::ElementCache;
@@ -29,18 +32,8 @@ use windows::Win32::UI::WindowsAndMessaging::{
 };
 
 #[cfg(target_os = "windows")]
-static ELEMENT_CACHES: OnceLock<Mutex<HashMap<String, Weak<ElementCache>>>> = OnceLock::new();
-
-#[cfg(target_os = "windows")]
 pub fn set_element_cache(cache: Arc<ElementCache>) {
-    let runtime_scope =
-        cua_driver_core::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
-    let mut caches = ELEMENT_CACHES
-        .get_or_init(|| Mutex::new(HashMap::new()))
-        .lock()
-        .unwrap();
-    caches.retain(|_, cache| cache.strong_count() > 0);
-    caches.insert(runtime_scope, Arc::downgrade(&cache));
+    register_runtime_cache(&cache);
 }
 
 /// Resolve the window whose application evidence should be captured. Keep a
@@ -98,6 +91,12 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
     let pid = u32::try_from(pid?).ok()?;
     let hwnd = resolve_window_for_recording(window_id, Some(pid.into()))?;
     let result = crate::uia::walk_tree(hwnd, None);
+    let kind = if result.nodes.iter().any(|node| node.msaa_role.is_some()) {
+        SnapshotKind::Msaa
+    } else {
+        SnapshotKind::Uia
+    };
+    let _native_payload = CachedSnapshot::from_nodes(&result.nodes, kind);
     let element_count = result
         .nodes
         .iter()
@@ -113,23 +112,47 @@ pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Ve
 }
 
 #[cfg(target_os = "windows")]
-pub fn element_window_local_xy(window_id: u64, pid: i64, element_index: u32) -> Option<(f64, f64)> {
-    let runtime_scope =
-        cua_driver_core::tool::current_dispatch_runtime_scope().unwrap_or_else(|| "legacy".into());
-    let cache = ELEMENT_CACHES
-        .get()?
-        .lock()
-        .unwrap()
-        .get(&runtime_scope)?
-        .upgrade()?;
+pub fn element_window_local_xy(
+    pid: i64,
+    args: &serde_json::Value,
+    capture_point: bool,
+) -> Option<(u64, Option<(f64, f64)>)> {
+    let cache = current_runtime_cache::<CachedSnapshot>()?;
     let pid_u32 = u32::try_from(pid).ok()?;
-    let (sx, sy) = cache.get_element_center(pid_u32, window_id, element_index as usize)?;
+    let resolved = cache
+        .resolve_element_args(
+            pid_u32 as i32,
+            args.get("element_index")
+                .and_then(|value| value.as_u64())
+                .map(|value| value as usize),
+            args.get("element_token").and_then(|value| value.as_str()),
+            args.get("snapshot_id").and_then(|value| value.as_str()),
+            args.get("window_id").and_then(|value| value.as_u64()),
+            "recording",
+        )
+        .ok()?;
+    let cua_driver_core::element_token::ResolvedElement::Element {
+        window_id: Some(window_id),
+        element,
+        ..
+    } = resolved
+    else {
+        return None;
+    };
+    if !capture_point {
+        return Some((window_id, None));
+    }
+    let (sx, sy) = element.center;
     // The cached center is in SCREEN coords. Convert to window-local pixel
     // coords by subtracting the window's screen origin (GetWindowRect-equivalent
     // in WindowInfo). Windows captures at logical pixels so no scale factor.
     let wins = crate::win32::list_windows(Some(pid_u32));
-    let win = wins.iter().find(|w| w.hwnd == window_id)?;
-    Some(((sx - win.x) as f64, (sy - win.y) as f64))
+    let point = wins
+        .iter()
+        .find(|w| w.hwnd == window_id)
+        .filter(|_| element.rect.is_some())
+        .map(|win| ((sx - win.x) as f64, (sy - win.y) as f64));
+    Some((window_id, point))
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -146,9 +169,9 @@ pub fn screenshot_for_recording(_window_id: Option<u64>, _pid: Option<i64>) -> S
 }
 #[cfg(not(target_os = "windows"))]
 pub fn element_window_local_xy(
-    _window_id: u64,
     _pid: i64,
-    _element_index: u32,
-) -> Option<(f64, f64)> {
+    _args: &serde_json::Value,
+    _capture_point: bool,
+) -> Option<(u64, Option<(f64, f64)>)> {
     None
 }

@@ -37,6 +37,9 @@ use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
+#[path = "support/appkit_snapshot_publication.rs"]
+mod snapshot_publication;
+
 // ── paths ────────────────────────────────────────────────────────────────────
 
 fn harness_app() -> PathBuf {
@@ -339,7 +342,11 @@ fn harness_appkit_stale_element_token_fails_closed() {
             let token = element_token_by_id(&first, "btn-increment");
             let index = element_index_by_id(first.tree_text(), "btn-increment").unwrap();
             let newer = snapshot_elements(driver, pid, wid);
-            assert!(!newer.is_error(), "replacement read failed: {}", newer.text());
+            assert!(
+                !newer.is_error(),
+                "replacement read failed: {}",
+                newer.text()
+            );
             assert_ne!(first.snapshot_id(), newer.snapshot_id());
             let refused = driver.call(
                 "click",
@@ -363,7 +370,10 @@ fn harness_appkit_stale_element_token_fails_closed() {
                     "element_index": index
                 }),
             );
-            assert!(refused_index.is_error(), "stale snapshot/index was accepted");
+            assert!(
+                refused_index.is_error(),
+                "stale snapshot/index was accepted"
+            );
             assert_eq!(
                 refused_index.structured()["refusal"]["code"].as_str(),
                 Some("stale_element_token")
@@ -378,7 +388,11 @@ fn harness_appkit_stale_element_token_fails_closed() {
                 "click",
                 serde_json::json!({"pid": pid as i64, "element_token": fresh_token}),
             );
-            assert!(!delivered.is_error(), "fresh recovery failed: {}", delivered.text());
+            assert!(
+                !delivered.is_error(),
+                "fresh recovery failed: {}",
+                delivered.text()
+            );
             let deadline = std::time::Instant::now() + Duration::from_secs(5);
             loop {
                 let recovered = snapshot_elements(driver, pid, wid);

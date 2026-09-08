@@ -2,20 +2,26 @@
 
 Decision record: [RFC 3473](https://github.com/trycua/cua/issues/3473).
 Execution: [draft PR #3616](https://github.com/trycua/cua/pull/3616).
-Design: [tests-first invariant specification](rfc-3473-slice-a-spec.md).
+Design: [desktop vertical-slice technical specification](rfc-3473-slice-a-spec.md).
 
 ## Current selection
 
-The maintainer selected tests against existing code, including failing desired
-invariants, followed by canonical Lume E2E and evidence review. No production
-refactor is selected. The initial owner/record/lease proposal was replaced with
-a test-first plan; it must not be treated as accepted implementation guidance.
-The RFC itself still awaits a maintainer decision.
+The maintainer subsequently selected implementation of the simplified desktop
+slice, recorded in the [scope reply](https://github.com/trycua/cua/issues/3473#issuecomment-5573495529).
+The implementation evolves the runtime-owned cache, removes independent token
+validity, and reuses native guards rather than introducing whole-record leases.
+Acceptance requires reduced production cyclomatic complexity, net non-test code
+deletion, regression evidence, and measured latency (prefer improvement).
+Browser and typed-action migration, and general cancelled-blocking-worker draining,
+remain outside this selection. The complete parent RFC is not thereby accepted.
 
 Branch: `test/rfc-3473-snapshot-invariants`, canonical repository head.
 Test candidate: `d923193a906707a425f4ec158d966c8d34709d48`.
 Base: `ed289df50257bd6a65f9ee7964bb842777a1a10a`.
-Subsequent documentation changes do not change the tested executable sources.
+Later implementation/test evidence was collected from a working-tree overlay
+identified by source hashes in its artifact directories. The draft PR records
+the immutable implementation revision when that overlay is published. The native baseline was the installed version
+0.23.2 binary identified below, not a source-certified build of this test commit.
 
 ## Actionable items
 
@@ -26,10 +32,12 @@ Subsequent documentation changes do not change the tested executable sources.
 | T2 | Add admitted macOS native lifetime coverage | Complete | New CF test and two existing cache tests pass |
 | T3 | Extend canonical AppKit stale-ref row with both target forms and fresh recovery | Written; execution blocked | Test binary compiles; external counter oracle implemented |
 | T4 | Run one exact-SHA canonical Lume matrix | Blocked | No verified prepared seed in configured host inventory |
-| T5 | Review red tests at the actual dispatch/lifecycle boundaries | Pending | Determine reachability and smallest deletion-oriented changes; do not patch synthetic composition alone |
-| T6 | Add missing SDK shutdown/cancellation, native runtime isolation, Windows geometry and sparse Linux membership cases | Pending | Deterministic tests against actual owning paths |
-| T7 | Freeze performance baselines before any production edits | Pending | Exact SHA, environment and benchmark manifest |
-| A | Select a minimal desktop simplification from evidence | Unselected | Maintainer review; explicit deletion inventory; RFC decision |
+| T5 | Review red tests at the actual dispatch/lifecycle boundaries | Controlled and native baseline reproductions reviewed | Both modeled dispatch and the installed built-in capture/click path exhibit identity/payload mismatch; see T6a |
+| T6 | Add missing SDK shutdown/cancellation, native runtime isolation, Windows geometry and sparse Linux membership cases | Shared and native platform coverage added; Windows SDK probes policy-blocked | Baseline and current evidence below; cancelled-worker draining remains red and excluded |
+| T6a | Reproduce through built-in AppKit capture/click with independent fixture state | Native failure reproduced on approved installed baseline | Old token activates replacement once; fresh token increments it again; video finalized. Binary hash recorded, source_sha null |
+| T7 | Freeze performance baselines before any production edits | Pre-edit macOS cache measurements recorded; full task evidence pending | Final repeatability, formatting-normalized complexity/deletion counts and end-to-end latency remain gates |
+| S1 | Specify unified desktop ownership and end-to-end flows | Local review draft complete | Scope, entry ownership, publication/resolution/retirement, diagrams, deletion audit, platform migration and acceptance gates |
+| A | Implement the selected desktop simplification | Local implementation and validation in progress | All platform consumers migrated locally; Windows native tests pass; compatibility audit and certification pending |
 | B | Migrate typed action families across supported backends | Unselected | Family fixtures, direct records, legacy branches deleted |
 | C | Consolidate browser snapshot ownership if accepted | Unselected | Binding/lifecycle/continuation parity, nested ownership deleted |
 | D | Certify affected production candidate and release path | Unselected | Canonical platform matrix, compatibility/performance gates, release metadata and post-merge smoke |
@@ -104,6 +112,319 @@ or authorize preparing a new seed and its human signing/TCC consent stages. Run
 from Terminal in a disposable guest's logged-in desktop using the canonical
 wrapper; never bypass preflight or run host tests as a substitute.
 
+### 2026-09-07 — Local review after maintainer workflow correction
+
+The draft PR is parked for eventual passing implementation; this investigation
+stays local before scoping that work. No new commits, pushes or GitHub updates.
+
+Reran seven new invariants (3 pass, 4 fail), existing token tests (20 pass), and
+native cache tests (3 pass). Also ran the existing SDK shutdown drain and desktop
+coordinator checks (1 pass each). Logs are under
+`artifacts/cua-driver/rfc-3473/local-review/`.
+
+[Local failure analysis](rfc-3473-local-review.md) traces each failure to code and
+separates direct errors from incomplete component probes. Main corrections to
+the plan: reuse native retain guards and SDK lifecycle admission; do not assume
+whole-record leases or another shutdown state machine are needed. The current
+retirement test does not exercise actual SDK shutdown and must be replaced or
+supplemented at that boundary before guiding implementation. The macOS state
+producer updates its cache before awaiting optional capture and registering the
+new token identity; this is a stronger integration target than the stand-in race.
+
+### 2026-09-07 — Higher-fidelity local probes
+
+Added nine uncommitted tests through actual ToolRegistry dispatch and the real
+embedded SDK/ABI. No production behavior, API visibility, dependency, commit,
+push, or GitHub change. Final runs: dispatcher 2 pass/1 fail; SDK 3 pass/3 fail.
+The original shared probes remain 3 pass/4 fail; native cache controls remain
+3 pass. New files are rustfmt-clean; diff whitespace checks pass.
+
+The real dispatcher permits the modeled cache-update/capture/token-registration
+interleaving. SDK shutdown drains ordinary publication and retires its token;
+caller cancellation prevents late publication but does not keep shutdown waiting
+for the already-running blocking probe. Real CF retain counts in SDK-owned host
+fixtures confirm native payload retention beyond token eviction and shutdown,
+with balanced release at handle destruction. Two-runtime native ownership and
+reference isolation pass.
+
+Tests substitute controlled capture/input probes and a host-owned real ToolState;
+they do not invoke the private built-in capture tool or send native input. This
+is stronger integration evidence, not Lume E2E or a native action cancellation
+reproduction. Preserve that distinction when scoping eventual changes.
+
+Evidence and local-source hashes:
+`artifacts/cua-driver/rfc-3473/high-fidelity/`. Detailed analysis and commands are
+in [the higher-fidelity review](rfc-3473-local-review.md#higher-fidelity-follow-up--2026-09-07).
+Keep publication, retention policy and cancelled-worker cleanup separate; no
+whole-record lease or new authoritative wrapper is selected by these results.
+
+### 2026-09-07 — Built-in AppKit scenario, native permissions blocker
+
+Added a fixture-only mode that replaces one NSButton and journals original versus
+replacement activations. The native case uses actual get_window_state/click tools
+and FIFO backpressure on screenshot_out_file to pause real publication without a
+product hook. It asserts the same AX index, a genuinely pending PNG writer, no
+replacement activation from the old token, and positive fresh-token recovery.
+Wired the case into the existing macOS harness runner and documented its unproven
+status in the test matrix.
+
+The fixture and Rust integration test compile. Both FIFO release/cleanup controls
+pass. Native diagnostics remain blocked: the first unrecorded diagnostic reached
+get_window_state and received permissions_pending; after correcting an explicit
+recording-environment requirement, the configured diagnostic fails at behavioral
+recording start with the same driver permission gate (exit code 75). This is not
+a pass or failure of native snapshot consistency. No TCC changes or daemon/VM
+replacement were performed, and test-owned fixture processes were cleaned up.
+
+All attempts, setup failures, typed result and source hashes are preserved under
+`artifacts/cua-driver/rfc-3473/native-publication/`. See the built-in reproduction
+section of [the local review](rfc-3473-local-review.md) for details and commands.
+No production driver behavior, commits, pushes or GitHub records changed.
+
+### 2026-09-07 — Base app approved; native failure reproduced
+
+After maintainer approval of the base app, read-only permission status reports
+both Accessibility and Screen Recording grants. Reran the native case through
+the existing daemon, leaving standard mode and its process unchanged. No broader
+authorization was needed.
+
+The old token performed AXPress on the replacement button while the real capture
+writer was still pending. External fixture state: original_clicks=0 and
+replacement_clicks=1; fresh-token recovery then produced replacement_clicks=2.
+The exact-index and pending-writer preconditions passed and the MP4 finalized.
+This is an observed native targeting failure, not the prior modeled interleaving.
+
+The installed version is 0.23.2 with source_sha=null. Evidence therefore identifies
+the installed binary by SHA-256, not the local checkout:
+`67ccfc99e69ebb5881fdfc3787d85abcd8cc2beb7423f255549557623cab6907`.
+Artifacts: `artifacts/cua-driver/rfc-3473/native-publication/base-approved/`.
+The native test remains red locally. No source changes were committed or pushed.
+
+### 2026-09-07 — Vertical-slice technical specification
+
+Replaced the historical tests-first outline with a full local design-review spec
+for unified desktop snapshot ownership. It maps the before/after architecture,
+state request, action resolution and replacement/cleanup sequences. It defines
+atomic commit/retention points, backend responsibilities, error behavior, resource
+retirement, exact deletions, migration, release impact and performance/native gates.
+
+The proposal has one snapshot authority, not an owner above surviving maps. Existing
+native retain guards, authorization and scheduling remain. Whole-record leases,
+browser migration, typed action migration and general cancelled-worker draining
+are excluded. Physical collection placement, legacy constructor lifetime and
+shutdown cleanup integration are explicit review decisions, not hidden assumptions.
+No production implementation, commit, push or GitHub change accompanied this spec.
+
+### 2026-09-07 — Native Linux compilation and unit validation
+
+Validated the transferred uncommitted implementation on `linux-2`, Ubuntu
+24.04.4 x86_64, with Rust 1.97.1. This guest is detached at investigation base
+`ed289df50257bd6a65f9ee7964bb842777a1a10a`; the inherited implementation is a
+dirty working-tree overlay, not an exact committed candidate. Source hashes and
+logs are under `artifacts/cua-driver/rfc-3473/linux-validation/`.
+
+Prepared a private dependency sysroot because pkg-config/development packages and
+passwordless sudo were unavailable. No system packages, daemon settings, or GUI
+permissions were changed. Used debug-free, non-incremental builds; cleaned only
+this validation's generated Cargo target before the release-feature build to fit
+the 9.2 GiB disk.
+
+| Check | Result |
+| --- | --- |
+| Core library | 592 passed |
+| Shared snapshot invariants | 7 passed |
+| Dispatch snapshot invariants | 3 passed |
+| Linux library, default features | 309 passed, 5 ignored |
+| Linux library, release-shipped `portal-input` | 313 passed, 5 ignored |
+| SDK library | 52 passed, 1 failed |
+
+The four Linux cache cases cover sparse membership, empty snapshots,
+duplicate/unindexed nodes, and replacement with fresh-reference recovery. The
+last two were added during this validation. No Linux production correction was
+needed to compile or pass these suites.
+
+The sole SDK failure is the previously established
+`sdk_shutdown_waits_for_native_capture_after_caller_cancellation`; no assertion
+was weakened or masked. The five ignored Linux tests require live X11 servers,
+Secret Service mutation, or writable uinput. `DISPLAY` and `WAYLAND_DISPLAY` are
+unset. These are native Linux build/unit results, not live desktop certification.
+The complete matrix, source-identified native wrong-target reproduction, optional
+`portal-capture`/Nix lanes, and end-to-end latency remain unverified.
+
+## Windows continuation and corrected production comparison
+
+Recovered the Windows continuation from its saved workspace and integrated its
+four Windows files. The continuation patch and source hashes are preserved under
+`artifacts/cua-driver/rfc-3473/windows-validation/`. No other workstream's checkout
+was modified. This evidence was collected from an uncommitted overlay on the
+investigation base, not a certified candidate SHA.
+
+Windows state preparation owns the native payload inside its blocking worker
+before screenshot work. Actions, focus, scroll, value verification and recording
+resolve the same snapshot entry and carry the acquired native guard and matching
+metadata. There are no remaining executable references to `TokenRegistry`,
+`element_token::global`, identity-only resolution or late cache accessors in the
+measured crates. Removed obsolete helper arguments and redundant native retains;
+null pointers are refused, MSAA targets are not cast through UIA value interfaces,
+and the SetValue worker owns its no-activate guard. The existing native guards
+remain the lifetime mechanism; no whole-record lease was added.
+
+Added Windows tests for null-pointer refusal and native target lifetime after
+caller cancellation. Existing forced-interleave, replacement/geometry, eviction,
+retirement and unpublished-payload tests pass. The MSAA metadata case also checks
+that UIA focus operations refuse the MSAA guard.
+
+| Check | Result |
+| --- | --- |
+| Windows library, final focused candidate | 209 passed, 3 intentionally ignored crash demonstrations |
+| Shared snapshot invariants | 7 passed |
+| Dispatch snapshot invariants | 3 passed |
+| Core library, candidate | 574 passed, 13 failed |
+| Core library, isolated pre-refactor baseline | 574 passed, same 13 failures |
+| SDK validation | Blocked by inherited policy and cascading test-lock poisoning |
+| Metrics analyzer tests | 2 passed |
+
+The SDK probe returns `permission_denied`: this guest inherits
+`CUA_DRIVER_POLICY_FILE=C:/ProgramData/Cua/hermes-cua-policy.yaml`, which denies
+`health_report` before native work starts. Its timeout is not evidence of the
+known cancelled-worker drain failure. The pre-refactor SDK suite also fails under
+this policy. Broader SDK failure counts are not a reliable comparison because
+one panic poisons the shared test mutex. The policy and daemon permissions were
+not changed. Windows SDK lifecycle evidence still needs an approved test setup.
+
+Baseline builds use a separate native Cargo target directory. A first comparison
+using a shared target mixed cached crate APIs and is superseded by the isolated
+run. An initial MSVC object timestamp failure was avoided by using a native
+per-user target directory, two jobs and no debug/incremental output.
+
+### Corrected non-test measurements before the window-width audit
+
+Scope: changed production Rust files in core, SDK and the three platform crates.
+Both sources use rustfmt 1.97.1, with test-only items/modules, comments and blank
+lines excluded. Tree-sitter 0.25.2 / tree-sitter-rust 0.24.2 parse all measured
+files without errors. The earlier Lizard complexity and line figures are
+superseded because that parser missed substantial Rust function bodies.
+
+| Metric | Before | Current | Change |
+| --- | ---: | ---: | ---: |
+| Non-test source lines in changed files | 23,215 | 23,125 | -90 |
+| Structural cyclomatic complexity | 3,430 | 3,370 | -60 |
+| Decision surplus | 2,878 | 2,824 | -54 |
+
+Normalized production diff: **1,331 added, 1,421 deleted**. Complexity counts
+function entry plus if/let-else/loops/try, short-circuit operators, match arms and
+guards. Closure decisions belong to their enclosing function; nested functions
+are separate; macros are not expanded. This is a disclosed source-level metric,
+not a claim about the compiler-expanded control-flow graph.
+
+The review-only `non-test-production.diff`, per-file JSON reports, analyzer and
+source manifest make the comparison inspectable. The projection is not a patch
+to apply to original source. Native window-width and legacy multi-binding
+compatibility review, repeatable end-to-end latency and exact-SHA desktop
+certification remain gates. Internal cache microbenchmarks are not E2E evidence.
+
+## Window-width and ownership audit follow-up
+
+The audit found that the unified cache had inherited the old token registry's
+32-bit window projection as its storage key. Windows/Linux native interfaces use
+64-bit identities; two windows differing only in their high bits must not share
+replacement, validation or retirement state.
+
+The shared cache, parsed reference and resolved target now carry `u64` window IDs.
+Windows and Linux producers, actions and recording no longer narrow them. The
+macOS adapter performs checked conversion to its native `u32` boundary and refuses
+out-of-range values instead of silently truncating. Token formatting remains
+unchanged: snapshot IDs are still 32-bit identities independent of window IDs.
+
+New coverage proves that windows with equal low bits remain distinct, both target
+argument forms reject a mismatched full-width ID, and retirement removes only the
+specified window. Windows fake-COM and recording tests now use a window ID above
+32 bits. Added Linux compositor-ID coverage and a macOS conversion-boundary test;
+those two platform-native suites still need rerunning after this correction.
+
+Ownership tests also prove that bindings sharing a scope keep independently owned
+payloads and that weak recording discovery does not extend payload lifetime.
+Legacy discovery still selects the last registered binding within a scope, as the
+previous hook maps did; it does not own those bindings or create token validity.
+
+Current Windows evidence: eight shared cache tests pass, all ten integration
+invariants pass, and the Windows library remains 209 passed / 3 intentionally
+ignored. Core library: 577 passed / the same 13 baseline failures. SDK production
+and test code type-check. No host policy or daemon permission change was made.
+
+Updated normalized production comparison: **1,375 added / 1,442 deleted**, net
+**67 lines removed**. Changed-file structural complexity is **3,430 -> 3,381**
+(-49); decision surplus is **2,878 -> 2,834** (-44). All measured files parse
+without errors. These supersede the pre-audit comparison above.
+
+The prior Linux/macOS execution evidence predates this width correction. Rerun
+the affected native build/unit coverage, then reproduce the original AppKit case
+against a source-identified implementation and perform stable-candidate desktop
+and latency certification. This is not another policy-infrastructure workstream.
+
+## Linux revalidation after the window-width correction
+
+Revalidated on the replacement linux-1 guest with Rust 1.97.1. The guest needed
+private apt indexes and an extracted per-user native dependency sysroot; no
+system packages or policy settings were changed. Logs, dependency hashes and the
+uncommitted source manifest are in
+`artifacts/cua-driver/rfc-3473/linux-width-validation/`.
+
+| Check | Result |
+| --- | --- |
+| Core library | 595 passed |
+| Shared snapshot invariants | 7 passed |
+| Dispatch snapshot invariants | 3 passed |
+| Linux library | 310 passed, 5 ignored |
+| Linux library with portal-input | 314 passed, 5 ignored |
+| SDK library | 52 passed, 1 known excluded drain failure |
+
+The compositor-ID collision/retirement test passes in both Linux configurations.
+No Linux production correction was needed. In-scope SDK shutdown retirement and
+cancelled-publication tests pass; the remaining failure is the previously
+established cancelled-blocking-worker drain diagnostic, not a policy refusal on
+this guest. Its assertion remains unchanged.
+
+There is no active X11 or Wayland display. This completes the affected Linux
+build/unit revalidation, not desktop E2E or latency certification. macOS native
+coverage and the original source-identified AppKit regression are next.
+
+## macOS revalidation and repeated cache latency
+
+After the full-width identity correction, mac-studio passes 362 platform library
+tests (2 ignored), 594 core library tests and all 10 shared/dispatch invariants.
+The SDK library has 56 passes and the same one excluded cancelled-worker drain
+failure. The in-scope SDK lifecycle and native CF ownership cases pass. No test
+assertion was weakened or hidden.
+
+Repeated the release-mode cache comparison against the pre-refactor source in a
+separate baseline target directory. Three paired executions alternate order;
+each workload keeps 40 samples of one million operations after five warmups.
+All three per-run medians improved for every workload.
+
+| Internal workload | Baseline median ns | Candidate median ns | Reduction |
+| --- | ---: | ---: | ---: |
+| Exact target acquisition | 58.62 | 36.68 | 37.4% |
+| Same-window publication, 64 members | 62.37 | 29.99 | 51.9% |
+| Publication/acquisition/eviction, 64 members | 200.80 | 148.36 | 26.1% |
+
+These measurements use integer payloads, not native AX/COM retention, screenshots,
+IPC or complete desktop actions. They do not establish end-to-end latency. The
+baseline adapter and reproduction commands are checked in under
+`tests/metrics/`; logs and binary hashes are under
+`artifacts/cua-driver/rfc-3473/macos-width-validation/`.
+
+Rechecked Lume inventory: it contains stopped workers, but no identifiable
+prepared seed with the required provenance. The host reports no valid signing
+identity. Other workstreams' workers were not booted or reused, and TCC was not
+modified. The original native AppKit candidate regression and canonical desktop
+certification remain blocked on an eligible prepared test environment.
+
+The existing tests-first commits are retained when publishing the implementation
+on #3616. Publication is for review and an immutable candidate identity, not a
+readiness or merge claim. The intentionally failing excluded SDK drain diagnostic
+remains visible in the source and suite results.
+
 ## Coordination
 
 Revalidate [#2075](https://github.com/trycua/cua/pull/2075) before touching Windows
@@ -115,8 +436,10 @@ planning; refresh their actual state/diffs before any production change.
 
 Update status, exact tested SHA, evidence, gaps and next action after each
 substantive step, and keep the PR description aligned. Record decisions in #3473,
-not only locally. No performance improvement, native E2E pass, cross-platform
-certification or architecture acceptance is claimed.
+not only locally. No end-to-end latency improvement, native candidate E2E pass,
+or cross-platform certification is claimed.
 
-Next action: unblock the Lume seed, run the stable test candidate once, and review
-its evidence alongside the red component tests before selecting simplifications.
+Next action: obtain an eligible prepared macOS test environment, run the original
+native regression against the source-identified implementation, then measure
+end-to-end latency and certify the stable candidate with the canonical harnesses. Keep the excluded cancelled-worker drain failure visible; this draft
+is not ready. Do not silently expand the slice to make that test green.

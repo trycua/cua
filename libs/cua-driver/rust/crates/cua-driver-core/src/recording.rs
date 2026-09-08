@@ -116,12 +116,12 @@ pub fn set_ax_snapshot_fn(
 // `CLICK_MARKER_FN`). Used so click.png is also written on element-indexed
 // clicks, not just pixel-addressed ones.
 
-type ElementBoundsFnBox = Box<dyn Fn(u64, i64, u32) -> Option<(f64, f64)> + Send + Sync>;
+type ElementBoundsFnBox =
+    Box<dyn Fn(i64, &Value, bool) -> Option<(u64, Option<(f64, f64)>)> + Send + Sync>;
 static ELEMENT_BOUNDS_FN: OnceLock<ElementBoundsFnBox> = OnceLock::new();
 
-/// Register the platform-specific element-bounds resolver. Args: (window_id, pid, element_index).
 pub fn set_element_bounds_fn(
-    f: impl Fn(u64, i64, u32) -> Option<(f64, f64)> + Send + Sync + 'static,
+    f: impl Fn(i64, &Value, bool) -> Option<(u64, Option<(f64, f64)>)> + Send + Sync + 'static,
 ) {
     let _ = ELEMENT_BOUNDS_FN.set(Box::new(f));
 }
@@ -522,21 +522,19 @@ impl RecordingSession {
         // those internal keys must not leak into the persisted trajectory.
         let args = strip_internal_keys(args).into_owned();
         use crate::tool_args::ArgsExt;
-        let mut window_id = args.opt_u64("window_id");
         let pid = args.opt_i64("pid");
-        let mut element_index = args.opt_u64("element_index");
-        if let (Some(pid), Some(token)) = (
-            pid.and_then(|pid| i32::try_from(pid).ok()),
-            args.get("element_token").and_then(Value::as_str),
-        ) {
-            if let Ok((resolved_window, resolved_index)) =
-                crate::element_token::global().resolve(pid, token)
-            {
-                window_id = Some(u64::from(resolved_window));
-                element_index = u64::try_from(resolved_index).ok();
-            }
-        }
-        let click_point = resolve_click_point(tool_name, &args, window_id, pid, element_index);
+        let element = pid.and_then(|pid| {
+            ELEMENT_BOUNDS_FN.get()?(
+                pid,
+                &args,
+                matches!(tool_name, "click" | "double_click" | "right_click"),
+            )
+        });
+        let window_id = element
+            .map(|(window, _)| window)
+            .or_else(|| args.opt_u64("window_id"));
+        let click_point =
+            resolve_click_point(tool_name, &args, element.and_then(|(_, point)| point));
         let before = if capture_visual_state {
             capture_turn(window_id, pid)
         } else {
@@ -649,9 +647,7 @@ fn capture_turn(window_id: Option<u64>, pid: Option<i64>) -> TurnCapture {
 fn resolve_click_point(
     tool_name: &str,
     args: &Value,
-    window_id: Option<u64>,
-    pid: Option<i64>,
-    element_index: Option<u64>,
+    element_point: Option<(f64, f64)>,
 ) -> Option<(f64, f64)> {
     use crate::tool_args::ArgsExt;
     if !matches!(tool_name, "click" | "double_click" | "right_click") {
@@ -659,12 +655,7 @@ fn resolve_click_point(
     }
     match (args.opt_f64("x"), args.opt_f64("y")) {
         (Some(x), Some(y)) => Some((x, y)),
-        _ => match (window_id, pid, element_index, ELEMENT_BOUNDS_FN.get()) {
-            (Some(wid), Some(pid), Some(index), Some(resolve)) => u32::try_from(index)
-                .ok()
-                .and_then(|index| resolve(wid, pid, index)),
-            _ => None,
-        },
+        _ => element_point,
     }
 }
 
@@ -974,9 +965,29 @@ mod tests {
             Some(format!(r#"{{"phase":{phase}}}"#).into_bytes())
         });
         set_click_marker_fn(|_, _, _| Some(b"click".to_vec()));
-        set_element_bounds_fn(|window_id, pid, element_index| {
-            Some((window_id as f64 + element_index as f64, pid as f64))
+        set_element_bounds_fn(|pid, args, capture_point| {
+            use crate::tool_args::ArgsExt;
+            let cache = crate::element_cache::current_runtime_cache::<
+                crate::snapshot_test_support::Payload,
+            >()?;
+            let target = cache
+                .resolve_element_args(
+                    pid as i32,
+                    args.opt_u64("element_index").map(|index| index as usize),
+                    args.get("element_token").and_then(Value::as_str),
+                    args.get("snapshot_id").and_then(Value::as_str),
+                    args.opt_u64("window_id"),
+                    "recording",
+                )
+                .ok()?;
+            let (index, window, _) = target.into_parts(None);
+            let window = window?;
+            Some((
+                window,
+                capture_point.then_some((window as f64 + index? as f64, pid as f64)),
+            ))
         });
+        let cache = crate::snapshot_test_support::cache();
 
         let output_dir = std::env::temp_dir().join(format!(
             "cua-recording-turn-evidence-{}-{}",
@@ -1028,7 +1039,7 @@ mod tests {
         assert_eq!(action["action_truth"]["route"], "synthetic_events");
         assert_eq!(action["action_truth"]["requested_delivery"], "background");
 
-        let snapshot_id = crate::element_token::global().register_snapshot(1, 77, 1);
+        let snapshot_id = cache.publish(1, 77, crate::snapshot_test_support::Payload(vec![0]));
         let token = crate::element_token::token_for(snapshot_id, 0);
         let pending = session
             .begin_turn(
@@ -1047,9 +1058,9 @@ mod tests {
         assert_eq!(token_action["click_point"]["y"], 1.0);
         assert!(token_turn.join("click.png").exists());
 
-        let stale_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
+        let stale_snapshot = cache.publish(1, 88, crate::snapshot_test_support::Payload(vec![0]));
         let stale_token = crate::element_token::token_for(stale_snapshot, 0);
-        let _newer_snapshot = crate::element_token::global().register_snapshot(1, 88, 1);
+        let _newer_snapshot = cache.publish(1, 88, crate::snapshot_test_support::Payload(vec![0]));
         let pending = session
             .begin_turn(
                 "click",

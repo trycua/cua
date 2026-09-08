@@ -234,23 +234,25 @@ impl Tool for GetWindowStateTool {
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
         // Always walk the AX tree (perception returns both tree + screenshot).
-        let tree_result = {
+        let (tree_result, prepared_snapshot) = {
             let q = query.clone();
             // Keep the product deadline below the public client's 25-second
             // deadline so callers receive a structured driver error. The AX
             // walker also applies a native per-element messaging timeout because
             // dropping a spawn_blocking JoinHandle cannot cancel a blocked AX call.
             let walk_future = tokio::task::spawn_blocking(move || {
-                crate::ax::tree::walk_tree_bounded(
+                let tree = crate::ax::tree::walk_tree_bounded(
                     pid,
                     Some(window_id),
                     q.as_deref(),
                     max_elements,
                     max_depth,
-                )
+                );
+                let payload = crate::ax::cache::CachedSnapshot::from_nodes(&tree.nodes);
+                (tree, payload)
             });
             match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
-                Ok(Ok(r)) => Some(r),
+                Ok(Ok((tree, payload))) => (Some(tree), payload),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
                 Err(_elapsed) => {
                     return ToolResult::error(format!(
@@ -278,20 +280,8 @@ impl Tool for GetWindowStateTool {
         // this tool never does — so treat that as resolved.
         let scope_matched = window_scope.as_ref().is_none_or(|s| s.is_matched());
 
-        // Update element cache — ONLY for a resolved window scope. Caching an
-        // unresolved scope's nodes under (pid, window_id) is what turned a
-        // wrong-surface snapshot into a wrong-surface *action*: a follow-up
-        // click(element_index=N) picked whatever the walk happened to return.
-        // For an unresolved scope, replace any prior entry with an empty
-        // snapshot so a stale index map cannot be clicked through either.
-        if !observation_only {
-            if let Some(ref r) = tree_result {
-                if scope_matched {
-                    self.state.element_cache.update(pid, window_id, &r.nodes);
-                } else {
-                    self.state.element_cache.update(pid, window_id, &[]);
-                }
-            }
+        if !scope_matched && !observation_only {
+            self.state.element_cache.remove(pid, u64::from(window_id));
         }
 
         // Capture the screenshot and deliver it alongside the tree — the
@@ -472,27 +462,12 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        // Surface 6: register a snapshot in the global token registry so
-        // every actionable element gets an opaque `element_token` keyed
-        // to (pid, this snapshot id). The integer `element_index` stays
-        // alongside unchanged — the token is additive. Snapshot id is
-        // generated even when the walk returned no elements so consumers
-        // calling `get_window_state` and then immediately re-snapshotting
-        // get a clean LRU step every time.
-        //
-        // Skipped entirely for an unresolved window scope: an element_token is
-        // a promise that index N addresses a row of THIS window, and there is
-        // no such row to promise (issue #2237).
-        let elem_count_for_snapshot = tree_result
-            .as_ref()
-            .map(|r| r.nodes.iter().filter(|n| n.element_index.is_some()).count())
-            .unwrap_or(0);
         let snapshot_id = if scope_matched && !observation_only {
-            Some(cua_driver_core::element_token::global().register_snapshot(
-                pid,
-                window_id,
-                elem_count_for_snapshot,
-            ))
+            Some(
+                self.state
+                    .element_cache
+                    .publish(pid, u64::from(window_id), prepared_snapshot),
+            )
         } else {
             None
         };
@@ -1330,14 +1305,14 @@ mod tests {
     /// `element_token` alongside its numeric `element_index`.
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
-        let reg = cua_driver_core::element_token::global();
+        let cache = crate::ax::cache::ElementCache::new();
         let pid = 0x6abc_0001_i32;
-        let sid = reg.register_snapshot(pid, /* window_id = */ 9, 3);
         let nodes = vec![
             node(Some(0), "AXButton", Some("A"), 1, None, None),
             node(Some(1), "AXButton", Some("B"), 1, None, None),
             node(Some(2), "AXButton", Some("C"), 1, None, None),
         ];
+        let sid = cache.publish(pid, 9, crate::ax::cache::CachedSnapshot::from_nodes(&nodes));
         let entries = build_elements_array_with_token(&nodes, sid);
         assert_eq!(entries.len(), 3);
         // Every entry must have BOTH fields (additive contract).
@@ -1353,14 +1328,15 @@ mod tests {
             assert!(tok.starts_with('s'), "token must use the 's' prefix: {tok}");
             assert!(tok.contains(':'), "token must be `s{{hex}}:{{idx}}`: {tok}");
         }
-        // Each token must resolve through the registry to the same
-        // (window_id, element_index) the integer field reports.
         for e in &entries {
             let idx = e["element_index"].as_u64().unwrap() as usize;
             let tok = e["element_token"].as_str().unwrap();
-            let (wid, resolved_idx) = reg.resolve(pid, tok).expect("token must resolve");
-            assert_eq!(wid, 9);
-            assert_eq!(resolved_idx, idx);
+            let (resolved_idx, wid, _) = cache
+                .resolve_element_args(pid, None, Some(tok), None, None, "click")
+                .expect("token must resolve")
+                .into_parts(None);
+            assert_eq!(wid, Some(9));
+            assert_eq!(resolved_idx, Some(idx));
         }
     }
 

@@ -459,8 +459,7 @@ impl Tool for ListWindowsTool {
                 w.xid, w.pid, w.title, w.width, w.height, w.x, w.y
             ));
         }
-        let structured =
-            json!({ "windows": windows.iter().map(window_record_json).collect::<Vec<_>>() });
+        let structured = structured_content(&windows);
         ToolResult::text(lines.join("\n")).with_structured(structured)
     }
 }
@@ -474,6 +473,12 @@ impl Tool for ListWindowsTool {
 /// existing Linux callers don't break. Fully additive; no field removed,
 /// no schema_version bump.
 ///
+fn structured_content(windows: &[crate::x11::WindowInfo]) -> Value {
+    json!({
+        "windows": windows.iter().map(window_record_json).collect::<Vec<_>>()
+    })
+}
+
 fn window_record_json(w: &crate::x11::WindowInfo) -> Value {
     json!({
         "window_id": w.xid,
@@ -531,6 +536,13 @@ mod list_windows_tests {
         assert_eq!(rec["z_index"], json!(3));
         assert_eq!(rec["window_id"], json!(42));
         assert_eq!(rec["title"], json!("Example"));
+        assert_eq!(
+            cua_driver_contract::validate_success_output(
+                "list_windows",
+                structured_content(std::slice::from_ref(&w)),
+            ),
+            Ok(true)
+        );
     }
 
     #[test]
@@ -548,7 +560,24 @@ mod list_windows_tests {
             height: 400,
         };
 
-        assert_eq!(window_record_json(&w)["z_index"], Value::Null);
+        let output = structured_content(std::slice::from_ref(&w));
+        assert_eq!(output["windows"][0]["z_index"], Value::Null);
+        assert_eq!(
+            cua_driver_contract::validate_success_output("list_windows", output),
+            Ok(true)
+        );
+    }
+
+    #[test]
+    fn empty_and_pid_filtered_miss_outputs_satisfy_public_contract() {
+        // The X11/Wayland enumerators apply the pid before returning. Their
+        // empty result flows through this same production envelope builder.
+        let empty = structured_content(&[]);
+        assert_eq!(empty["windows"], json!([]));
+        assert_eq!(
+            cua_driver_contract::validate_success_output("list_windows", empty),
+            Ok(true)
+        );
     }
 
     #[test]

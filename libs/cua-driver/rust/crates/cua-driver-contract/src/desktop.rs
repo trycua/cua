@@ -39,31 +39,51 @@ pub fn contracts() -> Vec<ToolContract> {
 
 const Z_INDEX_DESCRIPTION: &str = "Higher values are closer to the front. Null means the provider cannot observe stacking order; callers must not infer an order from array position or treat null as zero.";
 
-// Keep this schema deliberately narrow: platform window records have additive
-// fields and are still converging, while z_index has one portable meaning that
-// consumers need in order to sort safely. This runtime schema intentionally
+// The required fields are the cross-platform record shape emitted by macOS,
+// Windows, X11, and Wayland. Platform-only fields remain additive, while
+// z_index retains its portable nullable ordering semantics. This runtime schema
 // stays outside the typed SDK manifest until that broader shape converges.
 pub(crate) fn list_windows_success_output_schema() -> serde_json::Value {
     serde_json::json!({
-            "type": "object",
-            "properties": {
-                "windows": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "z_index": {
-                                "type": ["integer", "null"],
-                                "description": Z_INDEX_DESCRIPTION
-                            }
+        "type": "object",
+        "required": ["windows"],
+        "properties": {
+            "windows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "required": [
+                        "window_id", "pid", "app_name", "title", "bounds",
+                        "z_index", "is_on_screen"
+                    ],
+                    "properties": {
+                        "window_id": { "type": "integer" },
+                        "pid": { "type": ["integer", "null"] },
+                        "app_name": { "type": "string" },
+                        "title": { "type": "string" },
+                        "bounds": {
+                            "type": "object",
+                            "required": ["x", "y", "width", "height"],
+                            "properties": {
+                                "x": { "type": "number" },
+                                "y": { "type": "number" },
+                                "width": { "type": "number" },
+                                "height": { "type": "number" }
+                            },
+                            "additionalProperties": false
                         },
-                        "required": ["z_index"],
-                        "additionalProperties": true
-                    }
+                        "z_index": {
+                            "type": ["integer", "null"],
+                            "description": Z_INDEX_DESCRIPTION
+                        },
+                        "is_on_screen": { "type": "boolean" }
+                    },
+                    "additionalProperties": true
                 }
             },
-            "required": ["windows"],
-            "additionalProperties": true
+            "current_space_id": { "type": ["integer", "null"] }
+        },
+        "additionalProperties": true
     })
 }
 
@@ -72,14 +92,57 @@ pub(crate) fn validate_list_windows_output(value: serde_json::Value) -> Result<(
         .get("windows")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| "windows must be an array".to_owned())?;
+    if let Some(current_space_id) = value.get("current_space_id") {
+        if !(current_space_id.is_null() || current_space_id.is_u64() || current_space_id.is_i64()) {
+            return Err("current_space_id must be an integer or null".to_owned());
+        }
+    }
     for (index, window) in windows.iter().enumerate() {
-        let z_index = window
-            .get("z_index")
-            .ok_or_else(|| format!("windows[{index}].z_index is required"))?;
+        let record = window
+            .as_object()
+            .ok_or_else(|| format!("windows[{index}] must be an object"))?;
+        for field in [
+            "window_id",
+            "pid",
+            "app_name",
+            "title",
+            "bounds",
+            "z_index",
+            "is_on_screen",
+        ] {
+            if !record.contains_key(field) {
+                return Err(format!("windows[{index}].{field} is required"));
+            }
+        }
+        let window_id = &record["window_id"];
+        if !(window_id.is_u64() || window_id.is_i64()) {
+            return Err(format!("windows[{index}].window_id must be an integer"));
+        }
+        let pid = &record["pid"];
+        if !(pid.is_null() || pid.is_u64() || pid.is_i64()) {
+            return Err(format!("windows[{index}].pid must be an integer or null"));
+        }
+        for field in ["app_name", "title"] {
+            if !record[field].is_string() {
+                return Err(format!("windows[{index}].{field} must be a string"));
+            }
+        }
+        let bounds = record["bounds"]
+            .as_object()
+            .ok_or_else(|| format!("windows[{index}].bounds must be an object"))?;
+        for field in ["x", "y", "width", "height"] {
+            if !bounds.get(field).is_some_and(serde_json::Value::is_number) {
+                return Err(format!("windows[{index}].bounds.{field} must be a number"));
+            }
+        }
+        let z_index = &record["z_index"];
         if !(z_index.is_null() || z_index.is_u64() || z_index.is_i64()) {
             return Err(format!(
                 "windows[{index}].z_index must be an integer or null"
             ));
+        }
+        if !record["is_on_screen"].is_boolean() {
+            return Err(format!("windows[{index}].is_on_screen must be a boolean"));
         }
     }
     Ok(())

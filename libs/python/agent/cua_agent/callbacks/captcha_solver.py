@@ -58,6 +58,7 @@ class _PendingAnswer:
     result: Dict[str, Any]
     screenshot_digest: str
     screenshot_sequence: int
+    call_id: Optional[str] = None
 
 
 _JSON_PROMPT = (
@@ -198,6 +199,9 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._attempt_transport_failed = contextvars.ContextVar[bool](
             f"captcha_attempt_transport_failed_{suffix}", default=False
         )
+        self._run_usage = contextvars.ContextVar[Optional[Dict[str, Union[int, float]]]](
+            f"captcha_run_usage_{suffix}", default=None
+        )
 
     async def on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:
         # A result is meaningful only for the run that produced its screenshot.
@@ -209,6 +213,7 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._latest_screenshot_digest.set(None)
         self._seen_screenshot_digests.set(frozenset())
         self._attempt_transport_failed.set(False)
+        self._run_usage.set(self._empty_run_usage())
 
     async def on_run_end(
         self,
@@ -223,6 +228,17 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._latest_screenshot_digest.set(None)
         self._seen_screenshot_digests.set(frozenset())
         self._attempt_transport_failed.set(False)
+
+    def get_run_usage(self) -> Dict[str, Union[int, float]]:
+        """Return helper-model usage observed in the current or just-finished run.
+
+        Token counts and cost are reported only when the configured
+        OpenAI-compatible endpoint includes them in its response. The result is
+        context-local, so callers running one callback concurrently should read
+        it from the task that ran the agent.
+        """
+
+        return dict(self._run_usage.get() or self._empty_run_usage())
 
     async def on_screenshot(self, screenshot: Union[str, bytes], name: str = "screenshot") -> None:
         # Derived/annotated screenshots may replay historical images and are
@@ -281,6 +297,50 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
                 result.get("type", "unknown"),
             )
 
+    async def on_computer_call_end(
+        self, item: Dict[str, Any], result: List[Dict[str, Any]]
+    ) -> None:
+        """Bind a pending answer to the exact screenshot-producing call.
+
+        A digest alone cannot distinguish identical pixels captured by two
+        different browser actions or tabs. Computer call ids already pair an
+        action with its output, so retain that association when the matching
+        screenshot result becomes available.
+        """
+
+        pending = self._pending_answer.get()
+        if pending is None or pending.call_id is not None:
+            return
+
+        item_call_id = item.get("call_id")
+        if not isinstance(item_call_id, str) or not item_call_id:
+            self._pending_answer.set(None)
+            return
+
+        for message in reversed(result):
+            if message.get("type") != "computer_call_output":
+                continue
+            output = message.get("output")
+            image_url = output.get("image_url") if isinstance(output, dict) else None
+            if not isinstance(image_url, str):
+                continue
+            if self._image_digest(image_url) != pending.screenshot_digest:
+                continue
+            if message.get("call_id") != item_call_id:
+                self._pending_answer.set(None)
+                return
+            self._pending_answer.set(
+                _PendingAnswer(
+                    result=pending.result,
+                    screenshot_digest=pending.screenshot_digest,
+                    screenshot_sequence=pending.screenshot_sequence,
+                    call_id=item_call_id,
+                )
+            )
+            return
+
+        self._pending_answer.set(None)
+
     async def on_llm_start(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         pending = self._pending_answer.get()
         if pending is None:
@@ -289,7 +349,10 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._pending_answer.set(None)
         if pending.screenshot_sequence != self._screenshot_sequence.get():
             return messages
-        if self._latest_message_image_digest(messages) != pending.screenshot_digest:
+        latest_digest, latest_call_id = self._latest_message_image_identity(messages)
+        if latest_digest != pending.screenshot_digest or (
+            pending.call_id is not None and latest_call_id != pending.call_id
+        ):
             logger.debug("Discarded CAPTCHA result because the visible screenshot changed")
             return messages
 
@@ -310,6 +373,23 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         return messages + [{"role": "user", "content": hint}]
 
     # ── internal ─────────────────────────────────────────────────
+
+    @staticmethod
+    def _empty_run_usage() -> Dict[str, Union[int, float]]:
+        return {
+            "requests": 0,
+            "responses": 0,
+            "prompt_tokens": 0,
+            "completion_tokens": 0,
+            "total_tokens": 0,
+            "provider_reported_cost": 0.0,
+        }
+
+    def _update_run_usage(self, **updates: Union[int, float]) -> None:
+        usage = dict(self._run_usage.get() or self._empty_run_usage())
+        for key, value in updates.items():
+            usage[key] = usage.get(key, 0) + value
+        self._run_usage.set(usage)
 
     @staticmethod
     def _validate_api_base(api_base: str, allow_remote: bool, api_key: Optional[str]) -> str:
@@ -347,7 +427,9 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         return hashlib.sha256(payload).hexdigest()
 
     @classmethod
-    def _latest_message_image_digest(cls, messages: List[Dict[str, Any]]) -> Optional[str]:
+    def _latest_message_image_identity(
+        cls, messages: List[Dict[str, Any]]
+    ) -> tuple[Optional[str], Optional[str]]:
         for message in reversed(messages):
             candidates: List[Any] = []
             output = message.get("output")
@@ -363,8 +445,17 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
                 if isinstance(candidate, dict):
                     candidate = candidate.get("url")
                 if isinstance(candidate, str) and candidate:
-                    return cls._image_digest(candidate)
-        return None
+                    call_id = message.get("call_id")
+                    return cls._image_digest(candidate), (
+                        call_id if isinstance(call_id, str) else None
+                    )
+        return None, None
+
+    @classmethod
+    def _latest_message_image_digest(cls, messages: List[Dict[str, Any]]) -> Optional[str]:
+        """Compatibility helper for callers that only need image freshness."""
+
+        return cls._latest_message_image_identity(messages)[0]
 
     async def _budgeted_call_vision(self, image_b64: str, prompt: str) -> Optional[str]:
         requests = self._request_count.get()
@@ -372,6 +463,7 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             logger.debug("CAPTCHA solver request budget exhausted")
             return None
         self._request_count.set(requests + 1)
+        self._update_run_usage(requests=1)
         return await self._call_vision(image_b64, prompt)
 
     async def _detect_and_solve(self, image_b64: str) -> Optional[Dict[str, Any]]:
@@ -625,6 +717,29 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             self._attempt_transport_failed.set(True)
             logger.warning("CAPTCHA solver: request failed: %s", exc)
             return None
+
+        self._update_run_usage(responses=1)
+        response_usage = data.get("usage") if isinstance(data, dict) else None
+        if isinstance(response_usage, dict):
+            numeric_usage: Dict[str, Union[int, float]] = {}
+            for source, destination in [
+                ("prompt_tokens", "prompt_tokens"),
+                ("input_tokens", "prompt_tokens"),
+                ("completion_tokens", "completion_tokens"),
+                ("output_tokens", "completion_tokens"),
+                ("total_tokens", "total_tokens"),
+                ("response_cost", "provider_reported_cost"),
+                ("cost", "provider_reported_cost"),
+            ]:
+                value = response_usage.get(source)
+                if (
+                    isinstance(value, (int, float))
+                    and not isinstance(value, bool)
+                    and value >= 0
+                    and destination not in numeric_usage
+                ):
+                    numeric_usage[destination] = value
+            self._update_run_usage(**numeric_usage)
 
         try:
             content = data["choices"][0]["message"]["content"]

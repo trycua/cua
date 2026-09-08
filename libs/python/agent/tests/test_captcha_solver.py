@@ -21,6 +21,12 @@ def image_message(image: bytes) -> dict[str, Any]:
     }
 
 
+def image_call_message(image: bytes, call_id: str) -> dict[str, Any]:
+    message = image_message(image)
+    message["call_id"] = call_id
+    return message
+
+
 def test_callback_is_exported() -> None:
     assert CaptchaSolverCallback.__name__ == "CaptchaSolverCallback"
 
@@ -215,6 +221,44 @@ async def test_computer_agent_callback_chain_injects_current_screenshot_result(
     assert injected[:-1] == original
     assert "aB12z" in injected[-1]["content"]
     await agent._on_run_end({}, [], injected)
+
+
+@pytest.mark.asyncio
+async def test_pending_answer_is_bound_to_exact_computer_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaSolverCallback(cooldown=0)
+
+    async def detect(image: str) -> dict[str, str]:
+        return {"type": "text", "answer": "aB12z"}
+
+    monkeypatch.setattr(callback, "_detect_and_solve", detect)
+    await callback.on_screenshot(b"same-pixels")
+    await callback.on_computer_call_end(
+        {"type": "computer_call", "call_id": "call-one"},
+        [image_call_message(b"same-pixels", "call-one")],
+    )
+
+    other_tab = [image_call_message(b"same-pixels", "call-two")]
+    assert await callback.on_llm_start(other_tab) == other_tab
+
+
+@pytest.mark.asyncio
+async def test_matching_computer_call_can_inject_pending_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaSolverCallback(cooldown=0)
+
+    async def detect(image: str) -> dict[str, str]:
+        return {"type": "text", "answer": "aB12z"}
+
+    monkeypatch.setattr(callback, "_detect_and_solve", detect)
+    output = image_call_message(b"same-pixels", "call-one")
+    await callback.on_screenshot(b"same-pixels")
+    await callback.on_computer_call_end({"type": "computer_call", "call_id": "call-one"}, [output])
+
+    injected = await callback.on_llm_start([output])
+    assert "aB12z" in injected[-1]["content"]
 
 
 @pytest.mark.asyncio
@@ -440,7 +484,15 @@ async def test_local_endpoint_receives_bounded_openai_request(
         request["headers"] = header_text
         request["body"] = json.loads((await reader.readexactly(content_length)).decode("utf-8"))
         response_body = json.dumps(
-            {"choices": [{"message": {"content": '{"captcha": false}'}}]}
+            {
+                "choices": [{"message": {"content": '{"captcha": false}'}}],
+                "usage": {
+                    "prompt_tokens": 11,
+                    "completion_tokens": 3,
+                    "total_tokens": 14,
+                    "response_cost": 0.0025,
+                },
+            }
         ).encode("utf-8")
         writer.write(
             b"HTTP/1.1 200 OK\r\n"
@@ -469,6 +521,60 @@ async def test_local_endpoint_receives_bounded_openai_request(
     assert "authorization: bearer local-test-token" in request["headers"].lower()
     assert request["body"]["model"] == "bionic-vision-light"
     assert request["body"]["messages"][0]["content"][1]["text"] == "prompt"
+    assert callback.get_run_usage() == {
+        "requests": 0,
+        "responses": 1,
+        "prompt_tokens": 11,
+        "completion_tokens": 3,
+        "total_tokens": 14,
+        "provider_reported_cost": 0.0025,
+    }
+
+
+@pytest.mark.asyncio
+async def test_run_usage_counts_budgeted_requests_and_survives_run_end(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaSolverCallback()
+
+    async def call_vision(image: str, prompt: str) -> str:
+        return '{"captcha": false}'
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+    await callback.on_run_start({}, [])
+    await callback.on_screenshot(b"ordinary-page")
+    await callback.on_run_end({}, [], [])
+
+    assert callback.get_run_usage()["requests"] == 2
+    await callback.on_run_start({}, [])
+    assert callback.get_run_usage()["requests"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_usage_is_isolated_between_concurrent_runs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaSolverCallback()
+    ready = asyncio.Barrier(2)
+
+    async def call_vision(image: str, prompt: str) -> str:
+        await asyncio.sleep(0)
+        return '{"captcha": false}'
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+
+    async def collect_usage(requests: int) -> dict[str, int | float]:
+        await callback.on_run_start({}, [])
+        await ready.wait()
+        for _ in range(requests):
+            await callback._budgeted_call_vision("image", "prompt")
+        await callback.on_run_end({}, [], [])
+        return callback.get_run_usage()
+
+    first, second = await asyncio.gather(collect_usage(1), collect_usage(3))
+
+    assert first["requests"] == 1
+    assert second["requests"] == 3
 
 
 @pytest.mark.asyncio

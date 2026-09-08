@@ -1,35 +1,39 @@
 """
-CAPTCHA solver callback that routes screenshots to a local vision model.
+Opt-in callback that asks a loopback vision endpoint for CAPTCHA hints.
 
-When the local model detects a CAPTCHA in a screenshot, it reads the
-challenge and injects a bounded instruction into the agent's message
-stream so the main model can act on it. The callback never pauses for a
-human: unreadable or unsafe model output is discarded and a later
-screenshot can retry.
+When the endpoint reports a possible challenge in a screenshot, the callback
+can inject a bounded, explicitly unverified hint into the agent's message
+stream. Unreadable, unsafe, or unbound output is discarded and a later
+screenshot can retry. The endpoint's process and any forwarding or retention
+it performs are outside this callback's trust boundary.
 
 The injected instruction is an ordinary user message. Logging and trajectory
 callbacks later in the chain may therefore record the bounded answer or action.
-Detection runs when an agent loop emits a screenshot callback and can affect
-the next model call that carries those exact image bytes; it does not interrupt
-an already-running model call.
+Analysis runs when an agent loop emits a screenshot callback. A hint is eligible
+for injection only after an identity-bearing computer-call hook binds the image
+digest and call ID in the callback's preprocessed message list. That does not
+prove the live page is unchanged or that a loop's final model payload preserves
+the image bytes. Model loops that capture screenshots entirely inside prediction
+and do not emit the binding hook are not supported.
 
 Usage:
 
-    from cua_agent.callbacks import CaptchaSolverCallback
+    from cua_agent.callbacks import CaptchaHintCallback
 
-    solver = CaptchaSolverCallback(
+    helper = CaptchaHintCallback(
         api_base="http://127.0.0.1:1234/v1",
         model="bionic-vision-light",
     )
     agent = ComputerAgent(
         model="claude-sonnet-4-5-20250929",
-        callbacks=[solver],
+        callbacks=[helper],
     )
 
 """
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import contextvars
@@ -37,6 +41,7 @@ import hashlib
 import ipaddress
 import json
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -52,10 +57,14 @@ logger = logging.getLogger(__name__)
 _MAX_RESPONSE_BYTES = 1024 * 1024
 _MAX_CONSECUTIVE_TRANSPORT_FAILURES = 2
 _SCREENSHOT_NAMES = {"screenshot", "screenshot_before", "screenshot_after"}
+_ANALYSIS_HINT = "hint"
+_ANALYSIS_NOT_DETECTED = "not_detected"
+_ANALYSIS_DETECTED_UNSOLVED = "detected_unsolved"
+_ANALYSIS_UNKNOWN = "unknown"
 
 
 @dataclass(frozen=True)
-class _PendingAnswer:
+class _PendingMessage:
     result: Dict[str, Any]
     screenshot_digest: str
     screenshot_sequence: int
@@ -101,30 +110,40 @@ _SOLVE_PROMPT = (
 )
 
 _INJECT_TEMPLATE = (
-    "CAPTCHA DETECTED — the local vision model read the challenge and "
-    'determined the answer is: "{answer}". '
-    "Type this answer into the CAPTCHA input field to proceed."
+    "UNVERIFIED VISION HINT — a helper found a possible CAPTCHA text "
+    'answer: "{answer}". Confirm that the current screenshot shows a matching '
+    "challenge and follow the task's normal site-policy or user-handoff rules "
+    "before using it; otherwise ignore this hint."
 )
 
 _CHECKBOX_INJECT = (
-    "CAPTCHA DETECTED — the local vision model sees a reCAPTCHA "
-    "'I am not a robot' checkbox. Click the checkbox to proceed."
+    "UNVERIFIED VISION HINT — a helper found a possible verification checkbox. "
+    "Confirm that it is present in the current screenshot and follow the task's "
+    "normal site-policy or user-handoff rules before acting; otherwise ignore "
+    "this hint."
 )
 
 _IMAGE_SELECT_INJECT = (
-    "CAPTCHA DETECTED — the local vision model found an image-selection "
-    "challenge. Inspect the visible challenge, select the requested images "
-    "with the computer controls, and continue. Do not ask the user to solve it."
+    "UNVERIFIED VISION HINT — a helper found a possible image-selection "
+    "challenge. Inspect the current screenshot and follow the task's normal "
+    "site-policy or user-handoff rules if that challenge is actually present."
+)
+
+_UNSOLVED_INJECT = (
+    "UNVERIFIED VISION OBSERVATION — a helper found a possible "
+    "verification challenge but no bounded answer. Confirm that the current "
+    "screenshot shows that challenge. If it does, stop ordinary retries and "
+    "follow the task's normal site-policy or user-handoff rules."
 )
 
 
-class CaptchaSolverCallback(AsyncCallbackHandler):
+class CaptchaHintCallback(AsyncCallbackHandler):
     """
-    Intercepts agent screenshots, sends them to a local vision model
-    to detect and solve CAPTCHAs, and injects the answer into the
-    message stream for the main model to act on.
+    Sends agent screenshots to a loopback vision endpoint and injects only
+    bounded, unverified challenge hints into an exactly bound computer-call
+    result. Screenshot-only model loops are not supported.
 
-    Strategy (optimized for small 2B vision models):
+    Strategy:
     1. Try a single-shot JSON prompt — fast path for text CAPTCHAs.
     2. If JSON comes back with captcha=true but no usable answer, ask a
        targeted solve-only follow-up. Reject a follow-up that contradicts a
@@ -132,59 +151,88 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
     3. If JSON is malformed, try a simple YES/NO detection prompt, then
        solve if positive. A valid negative is final so ordinary pages consume
        only one request from the per-run budget.
-    4. For image-selection challenges, return control to the main model with
-       an automated computer-use instruction. Discard unreadable or unsafe
-       output instead of forwarding it or requiring a user.
+    4. For possible image-selection challenges, preserve the main agent's
+       normal site-policy and user-handoff behavior. Discard unreadable or
+       unsafe output instead of forwarding it.
 
     Args:
-        api_base: LM Studio / OpenAI-compatible API base URL.
-        model: Vision model ID served by the local API.
+        model: Vision model ID served by the loopback endpoint.
+        api_base: Loopback-only LM Studio / OpenAI-compatible API base URL.
         max_tokens: Max tokens for the vision model response.
-        timeout: HTTP request timeout in seconds. Two consecutive request
-            failures disable the helper for the rest of the current run.
+        timeout: Wall-clock limit for one screenshot analysis attempt and for
+            each underlying HTTP request. Two consecutive request failures
+            disable the helper for the rest of the current run.
+        max_analysis_seconds_per_run: Aggregate wall-clock budget for helper
+            analysis during one run. This includes successful and failed
+            attempts, so slow negative responses cannot stall every screen.
         cooldown: Minimum seconds between screenshot scans in one run. The
             default is zero; digest deduplication and the request cap bound
             repeated work without skipping a newly observed challenge.
         max_requests_per_run: Hard cap on vision HTTP requests in one run.
-        api_key: Optional bearer token for the vision endpoint.
-        allow_remote: Permit a non-loopback HTTPS endpoint. Remote endpoints
-            also require api_key because they receive the full screenshot.
+        api_key: Optional bearer token for the loopback vision endpoint.
     """
 
     def __init__(
         self,
+        model: str,
         api_base: str = "http://127.0.0.1:1234/v1",
-        model: str = "bionic-vision-light",
         max_tokens: int = 200,
         timeout: float = 30.0,
+        max_analysis_seconds_per_run: float = 60.0,
         cooldown: float = 0.0,
         max_requests_per_run: int = 12,
         api_key: Optional[str] = None,
-        allow_remote: bool = False,
     ) -> None:
-        self.api_base = self._validate_api_base(api_base, allow_remote, api_key)
+        self.api_base = self._validate_api_base(api_base)
+        if not isinstance(model, str) or not model.strip():
+            raise ValueError("model must be a non-empty string")
         self.model = model
         self.max_tokens = max_tokens
         self.timeout = timeout
+        self.max_analysis_seconds_per_run = max_analysis_seconds_per_run
         self.cooldown = cooldown
         self.max_requests_per_run = max_requests_per_run
         self.api_key = api_key
 
-        if max_tokens <= 0:
-            raise ValueError("max_tokens must be positive")
-        if timeout <= 0:
-            raise ValueError("timeout must be positive")
-        if cooldown < 0:
-            raise ValueError("cooldown cannot be negative")
-        if max_requests_per_run <= 0:
-            raise ValueError("max_requests_per_run must be positive")
+        if isinstance(max_tokens, bool) or not isinstance(max_tokens, int) or max_tokens <= 0:
+            raise ValueError("max_tokens must be a positive integer")
+        if (
+            isinstance(timeout, bool)
+            or not isinstance(timeout, (int, float))
+            or not math.isfinite(timeout)
+            or timeout <= 0
+        ):
+            raise ValueError("timeout must be finite and positive")
+        if (
+            isinstance(max_analysis_seconds_per_run, bool)
+            or not isinstance(max_analysis_seconds_per_run, (int, float))
+            or not math.isfinite(max_analysis_seconds_per_run)
+            or max_analysis_seconds_per_run <= 0
+        ):
+            raise ValueError("max_analysis_seconds_per_run must be finite and positive")
+        if (
+            isinstance(cooldown, bool)
+            or not isinstance(cooldown, (int, float))
+            or not math.isfinite(cooldown)
+            or cooldown < 0
+        ):
+            raise ValueError("cooldown must be finite and non-negative")
+        if (
+            isinstance(max_requests_per_run, bool)
+            or not isinstance(max_requests_per_run, int)
+            or max_requests_per_run <= 0
+        ):
+            raise ValueError("max_requests_per_run must be a positive integer")
 
         suffix = id(self)
-        self._pending_answer = contextvars.ContextVar[Optional[_PendingAnswer]](
-            f"captcha_pending_answer_{suffix}", default=None
+        self._pending_message = contextvars.ContextVar[Optional[_PendingMessage]](
+            f"captcha_pending_message_{suffix}", default=None
         )
         self._last_attempt_time = contextvars.ContextVar[float](
             f"captcha_last_attempt_time_{suffix}", default=0.0
+        )
+        self._analysis_seconds = contextvars.ContextVar[float](
+            f"captcha_analysis_seconds_{suffix}", default=0.0
         )
         self._request_count = contextvars.ContextVar[int](
             f"captcha_request_count_{suffix}", default=0
@@ -201,6 +249,9 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         self._attempt_transport_failed = contextvars.ContextVar[bool](
             f"captcha_attempt_transport_failed_{suffix}", default=False
         )
+        self._analysis_status = contextvars.ContextVar[str](
+            f"captcha_analysis_status_{suffix}", default=_ANALYSIS_UNKNOWN
+        )
         self._consecutive_transport_failures = contextvars.ContextVar[int](
             f"captcha_consecutive_transport_failures_{suffix}", default=0
         )
@@ -210,14 +261,16 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
 
     async def on_run_start(self, kwargs: Dict[str, Any], old_items: List[Dict[str, Any]]) -> None:
         # A result is meaningful only for the run that produced its screenshot.
-        # Do not carry a pending answer or cooldown into an unrelated run.
-        self._pending_answer.set(None)
+        # Do not carry a pending message or cooldown into an unrelated run.
+        self._pending_message.set(None)
         self._last_attempt_time.set(0.0)
+        self._analysis_seconds.set(0.0)
         self._request_count.set(0)
         self._screenshot_sequence.set(0)
         self._latest_screenshot_digest.set(None)
         self._seen_screenshot_digests.set(frozenset())
         self._attempt_transport_failed.set(False)
+        self._analysis_status.set(_ANALYSIS_UNKNOWN)
         self._consecutive_transport_failures.set(0)
         self._run_usage.set(self._empty_run_usage())
 
@@ -227,22 +280,27 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         old_items: List[Dict[str, Any]],
         new_items: List[Dict[str, Any]],
     ) -> None:
-        self._pending_answer.set(None)
+        if self._pending_message.get() is not None:
+            self._update_run_usage(hints_discarded=1)
+        self._pending_message.set(None)
         self._last_attempt_time.set(0.0)
+        self._analysis_seconds.set(0.0)
         self._request_count.set(0)
         self._screenshot_sequence.set(0)
         self._latest_screenshot_digest.set(None)
         self._seen_screenshot_digests.set(frozenset())
         self._attempt_transport_failed.set(False)
+        self._analysis_status.set(_ANALYSIS_UNKNOWN)
         self._consecutive_transport_failures.set(0)
 
     def get_run_usage(self) -> Dict[str, Union[int, float]]:
         """Return helper-model usage observed in the current or just-finished run.
 
-        Token counts and cost are reported only when the configured
-        OpenAI-compatible endpoint includes them in its response. The result is
-        context-local, so callers running one callback concurrently should read
-        it from the task that ran the agent.
+        Token and cost totals include only responses whose endpoint usage data
+        was valid. The corresponding complete/partial/missing response counters
+        let a caller distinguish a complete total from incomplete evidence.
+        The result is context-local, so callers running one callback concurrently
+        should read it from the task that ran the agent.
         """
 
         return dict(self._run_usage.get() or self._empty_run_usage())
@@ -267,10 +325,15 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             # A newer distinct screenshot invalidates any answer from an older
             # page state, even when this image was scanned earlier in the run
             # or is throttled below.
-            self._pending_answer.set(None)
+            if self._pending_message.get() is not None:
+                self._update_run_usage(hints_discarded=1)
+            self._pending_message.set(None)
 
         seen = self._seen_screenshot_digests.get()
         if digest in seen:
+            return
+        pending = self._pending_message.get()
+        if pending is not None and pending.screenshot_digest == digest:
             return
 
         now = time.monotonic()
@@ -280,46 +343,86 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             return
         if self._consecutive_transport_failures.get() >= _MAX_CONSECUTIVE_TRANSPORT_FAILURES:
             return
+        remaining_analysis_seconds = (
+            self.max_analysis_seconds_per_run - self._analysis_seconds.get()
+        )
+        if remaining_analysis_seconds <= 0:
+            return
 
         self._attempt_transport_failed.set(False)
-        result = await self._detect_and_solve(screenshot_b64)
+        self._analysis_status.set(_ANALYSIS_UNKNOWN)
+        attempt_started = time.monotonic()
+        attempt_timeout = min(self.timeout, remaining_analysis_seconds)
+        try:
+            async with asyncio.timeout(attempt_timeout):
+                result = await self._detect_and_solve(screenshot_b64)
+        except TimeoutError:
+            self._attempt_transport_failed.set(True)
+            logger.warning(
+                "CAPTCHA helper: screenshot analysis exceeded %.3f seconds",
+                attempt_timeout,
+            )
+            result = None
+        finally:
+            attempt_seconds = time.monotonic() - attempt_started
+            self._analysis_seconds.set(self._analysis_seconds.get() + attempt_seconds)
+            self._update_run_usage(analysis_seconds=attempt_seconds)
         self._last_attempt_time.set(time.monotonic())
+        analysis_status = _ANALYSIS_HINT if result is not None else self._analysis_status.get()
+        self._analysis_status.set(analysis_status)
+        self._update_run_usage(
+            **{
+                {
+                    _ANALYSIS_HINT: "analysis_hint_candidates",
+                    _ANALYSIS_NOT_DETECTED: "analysis_negative_results",
+                    _ANALYSIS_DETECTED_UNSOLVED: "analysis_positive_without_hint",
+                    _ANALYSIS_UNKNOWN: "analysis_inconclusive_results",
+                }[analysis_status]: 1
+            }
+        )
         if self._attempt_transport_failed.get():
             failures = self._consecutive_transport_failures.get() + 1
             self._consecutive_transport_failures.set(failures)
             if failures == _MAX_CONSECUTIVE_TRANSPORT_FAILURES:
                 logger.warning(
-                    "CAPTCHA solver disabled for the current run after %d consecutive request failures",
+                    "CAPTCHA helper disabled for the current run after %d consecutive request failures",
                     failures,
                 )
         else:
             self._consecutive_transport_failures.set(0)
-        # A completed negative is safe to deduplicate. A transport failure is
-        # not a model decision, so allow the same still-visible challenge to
-        # retry on a later hook while the per-run request cap stays decisive.
-        if result is not None or not self._attempt_transport_failed.get():
+        # A valid negative-shaped model response is safe to deduplicate now. A hint is not marked
+        # seen until it is bound to and injected with the matching screenshot;
+        # otherwise a binding mismatch must leave the same pixels retryable.
+        if analysis_status == _ANALYSIS_NOT_DETECTED:
             self._seen_screenshot_digests.set(seen | {digest})
+        pending_result = result
+        if pending_result is None and analysis_status == _ANALYSIS_DETECTED_UNSOLVED:
+            pending_result = {"type": "detected_unsolved"}
         if (
-            result
+            pending_result
             and self._screenshot_sequence.get() == sequence
             and self._latest_screenshot_digest.get() == digest
         ):
-            self._pending_answer.set(
-                _PendingAnswer(
-                    result=result,
+            self._pending_message.set(
+                _PendingMessage(
+                    result=pending_result,
                     screenshot_digest=digest,
                     screenshot_sequence=sequence,
                 )
             )
             logger.info(
-                "CAPTCHA result: type=%s",
-                result.get("type", "unknown"),
+                "CAPTCHA helper produced an unverified hint: type=%s",
+                pending_result.get("type", "unknown"),
+            )
+        elif analysis_status == _ANALYSIS_UNKNOWN:
+            logger.debug(
+                "CAPTCHA helper produced no conclusive observation; screenshot remains eligible for retry"
             )
 
     async def on_computer_call_end(
         self, item: Dict[str, Any], result: List[Dict[str, Any]]
     ) -> None:
-        """Bind a pending answer to the exact screenshot-producing call.
+        """Bind a pending message to the exact screenshot-producing call.
 
         A digest alone cannot distinguish identical pixels captured by two
         different browser actions or tabs. Computer call ids already pair an
@@ -327,13 +430,19 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         screenshot result becomes available.
         """
 
-        pending = self._pending_answer.get()
-        if pending is None or pending.call_id is not None:
+        pending = self._pending_message.get()
+        if pending is None:
             return
 
         item_call_id = item.get("call_id")
+        if pending.call_id is not None:
+            if item_call_id != pending.call_id:
+                self._update_run_usage(hints_discarded=1)
+                self._pending_message.set(None)
+            return
         if not isinstance(item_call_id, str) or not item_call_id:
-            self._pending_answer.set(None)
+            self._update_run_usage(hints_discarded=1)
+            self._pending_message.set(None)
             return
 
         for message in reversed(result):
@@ -346,10 +455,11 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             if self._image_digest(image_url) != pending.screenshot_digest:
                 continue
             if message.get("call_id") != item_call_id:
-                self._pending_answer.set(None)
+                self._update_run_usage(hints_discarded=1)
+                self._pending_message.set(None)
                 return
-            self._pending_answer.set(
-                _PendingAnswer(
+            self._pending_message.set(
+                _PendingMessage(
                     result=pending.result,
                     screenshot_digest=pending.screenshot_digest,
                     screenshot_sequence=pending.screenshot_sequence,
@@ -358,21 +468,40 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             )
             return
 
-        self._pending_answer.set(None)
+        self._update_run_usage(hints_discarded=1)
+        self._pending_message.set(None)
+
+    async def on_computer_call_start(self, item: Dict[str, Any]) -> None:
+        """Invalidate an older hint before any later computer action."""
+
+        if self._pending_message.get() is not None:
+            self._update_run_usage(hints_discarded=1)
+            self._pending_message.set(None)
+
+    async def on_function_call_start(self, item: Dict[str, Any]) -> None:
+        """A function call can change page state without producing an image."""
+
+        if self._pending_message.get() is not None:
+            self._update_run_usage(hints_discarded=1)
+            self._pending_message.set(None)
 
     async def on_llm_start(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        pending = self._pending_answer.get()
+        pending = self._pending_message.get()
         if pending is None:
             return messages
 
-        self._pending_answer.set(None)
+        self._pending_message.set(None)
         if pending.screenshot_sequence != self._screenshot_sequence.get():
+            self._update_run_usage(hints_discarded=1)
             return messages
         latest_digest, latest_call_id = self._latest_message_image_identity(messages)
-        if latest_digest != pending.screenshot_digest or (
-            pending.call_id is not None and latest_call_id != pending.call_id
+        if (
+            pending.call_id is None
+            or latest_digest != pending.screenshot_digest
+            or latest_call_id != pending.call_id
         ):
-            logger.debug("Discarded CAPTCHA result because the visible screenshot changed")
+            self._update_run_usage(hints_discarded=1)
+            logger.debug("Discarded CAPTCHA hint because the visible screenshot changed")
             return messages
 
         answer_info = pending.result
@@ -383,12 +512,19 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             hint = _CHECKBOX_INJECT
         elif captcha_type == "image_select":
             hint = _IMAGE_SELECT_INJECT
+        elif captcha_type == "detected_unsolved":
+            hint = _UNSOLVED_INJECT
         elif answer:
             hint = _INJECT_TEMPLATE.format(answer=answer)
         else:
+            self._update_run_usage(hints_discarded=1)
             return messages
 
-        logger.info("Injecting CAPTCHA hint into agent messages")
+        self._seen_screenshot_digests.set(
+            self._seen_screenshot_digests.get() | {pending.screenshot_digest}
+        )
+        self._update_run_usage(messages_injected=1)
+        logger.info("Injecting an unverified CAPTCHA helper message into agent messages")
         return messages + [{"role": "user", "content": hint}]
 
     # ── internal ─────────────────────────────────────────────────
@@ -402,6 +538,18 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             "completion_tokens": 0,
             "total_tokens": 0,
             "provider_reported_cost": 0.0,
+            "token_usage_complete_responses": 0,
+            "token_usage_partial_responses": 0,
+            "token_usage_missing_responses": 0,
+            "cost_reported_responses": 0,
+            "cost_missing_responses": 0,
+            "analysis_seconds": 0.0,
+            "analysis_hint_candidates": 0,
+            "analysis_negative_results": 0,
+            "analysis_positive_without_hint": 0,
+            "analysis_inconclusive_results": 0,
+            "messages_injected": 0,
+            "hints_discarded": 0,
         }
 
     def _update_run_usage(self, **updates: Union[int, float]) -> None:
@@ -410,25 +558,78 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             usage[key] = usage.get(key, 0) + value
         self._run_usage.set(usage)
 
+    def _record_response_usage(self, data: Any) -> None:
+        response_usage = data.get("usage") if isinstance(data, dict) else None
+        numeric_usage: Dict[str, Union[int, float]] = {}
+        if isinstance(response_usage, dict):
+            for source, destination in [
+                ("prompt_tokens", "prompt_tokens"),
+                ("input_tokens", "prompt_tokens"),
+                ("completion_tokens", "completion_tokens"),
+                ("output_tokens", "completion_tokens"),
+                ("total_tokens", "total_tokens"),
+                ("response_cost", "provider_reported_cost"),
+                ("cost", "provider_reported_cost"),
+            ]:
+                value = response_usage.get(source)
+                if destination == "provider_reported_cost":
+                    valid = (
+                        isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                        and math.isfinite(value)
+                        and value >= 0
+                    )
+                else:
+                    valid = isinstance(value, int) and not isinstance(value, bool) and value >= 0
+                if valid and destination not in numeric_usage:
+                    numeric_usage[destination] = value
+        token_fields = {"prompt_tokens", "completion_tokens", "total_tokens"}
+        reported_token_fields = token_fields.intersection(numeric_usage)
+        if reported_token_fields == token_fields:
+            token_usage_status = "complete"
+        elif reported_token_fields:
+            token_usage_status = "partial"
+        else:
+            token_usage_status = "missing"
+        cost_reported = "provider_reported_cost" in numeric_usage
+        self._update_run_usage(
+            **numeric_usage,
+            **{
+                f"token_usage_{token_usage_status}_responses": 1,
+                "cost_reported_responses" if cost_reported else "cost_missing_responses": 1,
+            },
+        )
+
+    def _finish_analysis(
+        self,
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        self._analysis_status.set(status)
+        return result
+
     @staticmethod
-    def _validate_api_base(api_base: str, allow_remote: bool, api_key: Optional[str]) -> str:
+    def _validate_api_base(api_base: str) -> str:
         normalized = api_base.rstrip("/")
         parsed = urlparse(normalized)
         if parsed.scheme not in {"http", "https"} or not parsed.hostname:
             raise ValueError("api_base must be an absolute HTTP(S) URL")
+        if parsed.username is not None or parsed.password is not None:
+            raise ValueError("api_base must not contain embedded credentials")
+        if "?" in normalized or "#" in normalized:
+            raise ValueError("api_base must not contain a query or fragment")
+        try:
+            _ = parsed.port
+        except ValueError as exc:
+            raise ValueError("api_base must contain a valid port") from exc
         try:
             is_loopback = ipaddress.ip_address(parsed.hostname).is_loopback
         except ValueError:
-            is_loopback = parsed.hostname.lower() == "localhost"
+            is_loopback = False
         if not is_loopback:
-            if not allow_remote:
-                raise ValueError(
-                    "remote CAPTCHA endpoints require allow_remote=True because they receive the full screenshot"
-                )
-            if parsed.scheme != "https":
-                raise ValueError("remote CAPTCHA endpoints must use HTTPS")
-            if not api_key:
-                raise ValueError("remote CAPTCHA endpoints require api_key")
+            raise ValueError(
+                "api_base must use a numeric loopback address because it receives full screenshots"
+            )
         return normalized
 
     @staticmethod
@@ -468,12 +669,14 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
                     return cls._image_digest(candidate), (
                         call_id if isinstance(call_id, str) else None
                     )
+            if message.get("type") in {"computer_call_output", "function_call_output"}:
+                return None, None
         return None, None
 
     async def _budgeted_call_vision(self, image_b64: str, prompt: str) -> Optional[str]:
         requests = self._request_count.get()
         if requests >= self.max_requests_per_run:
-            logger.debug("CAPTCHA solver request budget exhausted")
+            logger.debug("CAPTCHA helper request budget exhausted")
             return None
         self._request_count.set(requests + 1)
         self._update_run_usage(requests=1)
@@ -482,17 +685,22 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
     async def _detect_and_solve(self, image_b64: str) -> Optional[Dict[str, Any]]:
         """Try single-shot JSON, fall back to YES/NO + solve."""
 
+        self._analysis_status.set(_ANALYSIS_UNKNOWN)
         json_reply = await self._budgeted_call_vision(image_b64, _JSON_PROMPT)
         if json_reply is None and self._attempt_transport_failed.get():
             # One unavailable endpoint should consume one timeout, not cascade
             # into the fallback detector and solver timeouts. A later
             # screenshot hook may retry within the per-run request budget.
-            return None
+            return self._finish_analysis(_ANALYSIS_UNKNOWN)
         if json_reply:
             parsed = self._parse_json_response(json_reply)
             if parsed:
                 if not parsed.get("captcha"):
-                    return None
+                    return self._finish_analysis(_ANALYSIS_NOT_DETECTED)
+                # Preserve positive evidence if the bounded solve phase times
+                # out. The screenshot remains retryable, but it is not counted
+                # as an entirely unknown analysis.
+                self._analysis_status.set(_ANALYSIS_DETECTED_UNSOLVED)
                 answer = parsed.get("answer", "")
                 ctype = parsed.get("type", "")
                 if not isinstance(ctype, str):
@@ -502,17 +710,28 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
                     return await self._solve_phase(image_b64, normalized_type)
                 if answer and answer != "<the text to enter>":
                     classified = self._classify_answer(answer, normalized_type)
+                    if classified is not None and (
+                        not normalized_type or classified["type"] == normalized_type
+                    ):
+                        return self._finish_analysis(_ANALYSIS_HINT, classified)
                     if classified is not None:
-                        return classified
+                        logger.debug("Discarded CAPTCHA answer that contradicted the detected type")
+                        return self._finish_analysis(_ANALYSIS_DETECTED_UNSOLVED)
                 return await self._solve_phase(image_b64, normalized_type)
 
         return await self._fallback_detect_solve(image_b64)
 
     async def _fallback_detect_solve(self, image_b64: str) -> Optional[Dict[str, Any]]:
         detect_reply = await self._budgeted_call_vision(image_b64, _DETECT_PROMPT)
-        if not detect_reply or detect_reply.strip().upper() != "YES":
-            return None
-        logger.info("CAPTCHA detected (fallback), asking model to solve...")
+        if not detect_reply:
+            return self._finish_analysis(_ANALYSIS_UNKNOWN)
+        decision = detect_reply.strip().upper()
+        if decision == "NO":
+            return self._finish_analysis(_ANALYSIS_NOT_DETECTED)
+        if decision != "YES":
+            return self._finish_analysis(_ANALYSIS_UNKNOWN)
+        self._analysis_status.set(_ANALYSIS_DETECTED_UNSOLVED)
+        logger.info("CAPTCHA helper found a possible challenge; requesting a bounded hint")
         return await self._solve_phase(image_b64)
 
     async def _solve_phase(
@@ -520,7 +739,7 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
     ) -> Optional[Dict[str, Any]]:
         solve_reply = await self._budgeted_call_vision(image_b64, _SOLVE_PROMPT)
         if not solve_reply:
-            return None
+            return self._finish_analysis(_ANALYSIS_DETECTED_UNSOLVED)
         classified = self._classify_answer(solve_reply.strip())
         normalized_expected = self._normalize_type_hint(expected_type)
         if (
@@ -529,8 +748,10 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             and classified["type"] != normalized_expected
         ):
             logger.debug("Discarded CAPTCHA answer that contradicted the detected type")
-            return None
-        return classified or None
+            return self._finish_analysis(_ANALYSIS_DETECTED_UNSOLVED)
+        if classified is None:
+            return self._finish_analysis(_ANALYSIS_DETECTED_UNSOLVED)
+        return self._finish_analysis(_ANALYSIS_HINT, classified)
 
     @staticmethod
     def _normalize_type_hint(type_hint: str) -> Optional[str]:
@@ -724,59 +945,47 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
             headers["Authorization"] = f"Bearer {self.api_key}"
 
         try:
-            timeout = httpx.Timeout(self.timeout)
-            # Screenshot routing is controlled solely by api_base. Never let
-            # ambient HTTP(S)_PROXY variables redirect full-screen content.
-            async with httpx.AsyncClient(timeout=timeout, trust_env=False) as client:
-                async with client.stream("POST", url, json=payload, headers=headers) as response:
-                    response.raise_for_status()
-                    response_bytes = bytearray()
-                    async for chunk in response.aiter_bytes():
-                        response_bytes.extend(chunk)
-                        if len(response_bytes) > _MAX_RESPONSE_BYTES:
-                            logger.warning("CAPTCHA solver: response exceeded size limit")
-                            return None
+            async with asyncio.timeout(self.timeout):
+                timeout = httpx.Timeout(self.timeout)
+                # Screenshot routing is controlled solely by api_base. Never let
+                # ambient HTTP(S)_PROXY variables redirect full-screen content.
+                async with httpx.AsyncClient(
+                    timeout=timeout,
+                    trust_env=False,
+                    follow_redirects=False,
+                ) as client:
+                    async with client.stream(
+                        "POST", url, json=payload, headers=headers
+                    ) as response:
+                        response.raise_for_status()
+                        response_bytes = bytearray()
+                        async for chunk in response.aiter_bytes():
+                            response_bytes.extend(chunk)
+                            if len(response_bytes) > _MAX_RESPONSE_BYTES:
+                                logger.warning("CAPTCHA helper: response exceeded size limit")
+                                return None
             data = json.loads(response_bytes.decode("utf-8"))
         except (
+            TimeoutError,
             httpx.HTTPError,
             UnicodeDecodeError,
             ValueError,
             json.JSONDecodeError,
         ) as exc:
             self._attempt_transport_failed.set(True)
-            logger.warning("CAPTCHA solver: request failed: %s", exc)
+            logger.warning("CAPTCHA helper: request failed: %s", exc)
             return None
 
         self._update_run_usage(responses=1)
-        response_usage = data.get("usage") if isinstance(data, dict) else None
-        if isinstance(response_usage, dict):
-            numeric_usage: Dict[str, Union[int, float]] = {}
-            for source, destination in [
-                ("prompt_tokens", "prompt_tokens"),
-                ("input_tokens", "prompt_tokens"),
-                ("completion_tokens", "completion_tokens"),
-                ("output_tokens", "completion_tokens"),
-                ("total_tokens", "total_tokens"),
-                ("response_cost", "provider_reported_cost"),
-                ("cost", "provider_reported_cost"),
-            ]:
-                value = response_usage.get(source)
-                if (
-                    isinstance(value, (int, float))
-                    and not isinstance(value, bool)
-                    and value >= 0
-                    and destination not in numeric_usage
-                ):
-                    numeric_usage[destination] = value
-            self._update_run_usage(**numeric_usage)
+        self._record_response_usage(data)
 
         try:
             content = data["choices"][0]["message"]["content"]
         except (KeyError, IndexError, TypeError):
-            logger.warning("CAPTCHA solver: response did not contain message content")
+            logger.warning("CAPTCHA helper: response did not contain message content")
             return None
 
         if not isinstance(content, str):
-            logger.warning("CAPTCHA solver: message content was not text")
+            logger.warning("CAPTCHA helper: message content was not text")
             return None
         return content.strip()

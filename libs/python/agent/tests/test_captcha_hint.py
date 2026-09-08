@@ -1,4 +1,4 @@
-"""Unit tests for the opt-in local CAPTCHA solver callback."""
+"""Unit tests for the opt-in CAPTCHA hint callback."""
 
 import asyncio
 import base64
@@ -7,7 +7,7 @@ from typing import Any
 
 import pytest
 from cua_agent import ComputerAgent
-from cua_agent.callbacks import CaptchaSolverCallback
+from cua_agent.callbacks import CaptchaHintCallback
 
 
 def image_message(image: bytes) -> dict[str, Any]:
@@ -27,8 +27,19 @@ def image_call_message(image: bytes, call_id: str) -> dict[str, Any]:
     return message
 
 
+async def bind_screenshot(
+    callback: CaptchaHintCallback, image: bytes, call_id: str
+) -> dict[str, Any]:
+    output = image_call_message(image, call_id)
+    await callback.on_computer_call_end(
+        {"type": "computer_call", "call_id": call_id},
+        [output],
+    )
+    return output
+
+
 def test_callback_is_exported() -> None:
-    assert CaptchaSolverCallback.__name__ == "CaptchaSolverCallback"
+    assert CaptchaHintCallback.__name__ == "CaptchaHintCallback"
 
 
 @pytest.mark.parametrize(
@@ -60,20 +71,22 @@ def test_callback_is_exported() -> None:
     ],
 )
 def test_classify_answer_only_promotes_bounded_answers(raw: str, expected: object) -> None:
-    assert CaptchaSolverCallback._classify_answer(raw) == expected
+    assert CaptchaHintCallback._classify_answer(raw) == expected
 
 
 def test_parse_json_response_requires_boolean_captcha_field() -> None:
-    assert CaptchaSolverCallback._parse_json_response('{"captcha": false}') == {"captcha": False}
-    assert CaptchaSolverCallback._parse_json_response('{"captcha": "false"}') is None
-    assert CaptchaSolverCallback._parse_json_response(
+    assert CaptchaHintCallback._parse_json_response('{"captcha": false}') == {"captcha": False}
+    assert CaptchaHintCallback._parse_json_response('{"captcha": "false"}') is None
+    assert CaptchaHintCallback._parse_json_response(
         'prefix ```json\n{"captcha": true, "answer": "aB12z"}\n``` suffix'
     ) == {"captcha": True, "answer": "aB12z"}
 
 
 @pytest.mark.asyncio
 async def test_detect_and_solve_uses_json_fast_path(monkeypatch: pytest.MonkeyPatch) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(['{"captcha": true, "answer": "aB12z", "type": "text"}'])
 
     async def call_vision(image: str, prompt: str) -> str:
@@ -86,7 +99,9 @@ async def test_detect_and_solve_uses_json_fast_path(monkeypatch: pytest.MonkeyPa
 
 @pytest.mark.asyncio
 async def test_valid_json_negative_is_final(monkeypatch: pytest.MonkeyPatch) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     calls = 0
 
     async def call_vision(image: str, prompt: str) -> str:
@@ -104,7 +119,9 @@ async def test_valid_json_negative_is_final(monkeypatch: pytest.MonkeyPatch) -> 
 async def test_detect_and_solve_handles_non_string_json_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(
         [
             '{"captcha": true, "answer": 12345, "type": "text"}',
@@ -124,7 +141,9 @@ async def test_detect_and_solve_handles_non_string_json_answer(
 async def test_detect_and_solve_normalizes_fast_path_type(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(
         [
             '{"captcha": true, "answer": "aB12z", "type": "checkbox challenge"}',
@@ -147,7 +166,9 @@ async def test_detect_and_solve_normalizes_fast_path_type(
 async def test_detect_and_solve_rejects_cross_type_hallucination(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(
         [
             '{"captcha": true, "answer": "", "type": "text"}',
@@ -164,10 +185,36 @@ async def test_detect_and_solve_rejects_cross_type_hallucination(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "reply",
+    [
+        '{"captcha": true, "answer": "CLICK_CHECKBOX", "type": "text"}',
+        '{"captcha": true, "answer": "IMAGE_SELECT", "type": "checkbox"}',
+    ],
+)
+async def test_fast_path_rejects_cross_type_hallucination(
+    monkeypatch: pytest.MonkeyPatch,
+    reply: str,
+) -> None:
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
+
+    async def call_vision(image: str, prompt: str) -> str:
+        return reply
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+
+    assert await callback._detect_and_solve("image") is None
+
+
+@pytest.mark.asyncio
 async def test_detect_and_solve_retries_an_unusable_json_answer(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(
         [
             '{"captcha": true, "answer": "verify", "type": "button"}',
@@ -190,7 +237,9 @@ async def test_detect_and_solve_retries_an_unusable_json_answer(
 async def test_detect_and_solve_discards_unsafe_model_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(
         [
             "not json",
@@ -209,7 +258,9 @@ async def test_detect_and_solve_discards_unsafe_model_text(
 
 @pytest.mark.asyncio
 async def test_fallback_detection_requires_exact_yes(monkeypatch: pytest.MonkeyPatch) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     replies = iter(["not json", "YES, click the button"])
 
     async def call_vision(image: str, prompt: str) -> str:
@@ -222,7 +273,7 @@ async def test_fallback_detection_requires_exact_yes(monkeypatch: pytest.MonkeyP
 
 @pytest.mark.asyncio
 async def test_screenshot_result_is_injected_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
     observed_images: list[str] = []
 
     async def detect(image: str) -> dict[str, str]:
@@ -234,18 +285,21 @@ async def test_screenshot_result_is_injected_once(monkeypatch: pytest.MonkeyPatc
     await callback.on_screenshot(b"png")
 
     assert observed_images == [base64.b64encode(b"png").decode("ascii")]
-    original = [image_message(b"png"), {"role": "user", "content": "continue"}]
+    output = await bind_screenshot(callback, b"png", "call-one")
+    original = [output, {"role": "user", "content": "continue"}]
     injected = await callback.on_llm_start(original)
     assert injected[:-1] == original
     assert "aB12z" in injected[-1]["content"]
     assert await callback.on_llm_start(original) == original
+    await callback.on_screenshot(b"png")
+    assert observed_images == [base64.b64encode(b"png").decode("ascii")]
 
 
 @pytest.mark.asyncio
 async def test_computer_agent_callback_chain_injects_current_screenshot_result(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
 
     async def detect(image: str) -> dict[str, str]:
         return {"type": "text", "answer": "aB12z"}
@@ -259,7 +313,11 @@ async def test_computer_agent_callback_chain_injects_current_screenshot_result(
     await agent._on_run_start({}, [])
     await agent._on_screenshot(b"agent-chain")
 
-    original = [image_message(b"agent-chain")]
+    original = [image_call_message(b"agent-chain", "call-one")]
+    await agent._on_computer_call_end(
+        {"type": "computer_call", "call_id": "call-one"},
+        original,
+    )
     injected = await agent._on_llm_start(original)
 
     assert injected[:-1] == original
@@ -268,12 +326,15 @@ async def test_computer_agent_callback_chain_injects_current_screenshot_result(
 
 
 @pytest.mark.asyncio
-async def test_pending_answer_is_bound_to_exact_computer_call(
+async def test_pending_message_is_bound_to_exact_computer_call(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
+    attempts = 0
 
     async def detect(image: str) -> dict[str, str]:
+        nonlocal attempts
+        attempts += 1
         return {"type": "text", "answer": "aB12z"}
 
     monkeypatch.setattr(callback, "_detect_and_solve", detect)
@@ -286,12 +347,27 @@ async def test_pending_answer_is_bound_to_exact_computer_call(
     other_tab = [image_call_message(b"same-pixels", "call-two")]
     assert await callback.on_llm_start(other_tab) == other_tab
 
+    # A rejected call binding must not permanently suppress the unchanged
+    # screenshot. A later observation can bind and inject it correctly.
+    await callback.on_screenshot(b"same-pixels")
+    await callback.on_computer_call_end(
+        {"type": "computer_call", "call_id": "call-two"},
+        other_tab,
+    )
+    injected = await callback.on_llm_start(other_tab)
+    usage = callback.get_run_usage()
+    assert attempts == 2
+    assert usage["analysis_hint_candidates"] == 2
+    assert usage["hints_discarded"] == 1
+    assert usage["messages_injected"] == 1
+    assert "aB12z" in injected[-1]["content"]
+
 
 @pytest.mark.asyncio
-async def test_matching_computer_call_can_inject_pending_answer(
+async def test_matching_computer_call_can_inject_pending_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
 
     async def detect(image: str) -> dict[str, str]:
         return {"type": "text", "answer": "aB12z"}
@@ -306,59 +382,111 @@ async def test_matching_computer_call_can_inject_pending_answer(
 
 
 @pytest.mark.asyncio
-async def test_image_selection_stays_in_the_automated_agent_loop(
+async def test_unbound_screenshot_hint_is_not_injected(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
+
+    async def detect(image: str) -> dict[str, str]:
+        return {"type": "text", "answer": "aB12z"}
+
+    monkeypatch.setattr(callback, "_detect_and_solve", detect)
+    await callback.on_screenshot(b"unbound")
+    messages = [image_message(b"unbound")]
+
+    assert await callback.on_llm_start(messages) == messages
+    assert callback.get_run_usage()["hints_discarded"] == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("later_hook", ["computer", "function"])
+async def test_later_state_changing_call_invalidates_bound_hint(
+    monkeypatch: pytest.MonkeyPatch,
+    later_hook: str,
+) -> None:
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
+
+    async def detect(image: str) -> dict[str, str]:
+        return {"type": "text", "answer": "aB12z"}
+
+    monkeypatch.setattr(callback, "_detect_and_solve", detect)
+    await callback.on_screenshot(b"before-call")
+    output = await bind_screenshot(callback, b"before-call", "call-one")
+    if later_hook == "computer":
+        await callback.on_computer_call_start({"type": "computer_call", "call_id": "call-two"})
+        later_output = {
+            "type": "computer_call_output",
+            "call_id": "call-two",
+            "output": {"terminated": True},
+        }
+    else:
+        await callback.on_function_call_start({"type": "function_call", "call_id": "call-two"})
+        later_output = {
+            "type": "function_call_output",
+            "call_id": "call-two",
+            "output": "done",
+        }
+
+    messages = [output, later_output]
+    assert await callback.on_llm_start(messages) == messages
+    assert callback.get_run_usage()["hints_discarded"] == 1
+
+
+@pytest.mark.asyncio
+async def test_image_selection_hint_preserves_user_handoff(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
 
     async def detect(image: str) -> dict[str, str]:
         return {"type": "image_select", "answer": "select_images"}
 
     monkeypatch.setattr(callback, "_detect_and_solve", detect)
     await callback.on_screenshot(b"image-select")
+    output = await bind_screenshot(callback, b"image-select", "call-one")
 
-    messages = await callback.on_llm_start([image_message(b"image-select")])
+    messages = await callback.on_llm_start([output])
 
     assert len(messages) == 2
-    assert "select the requested images" in messages[-1]["content"].lower()
-    assert "do not ask the user" in messages[-1]["content"].lower()
+    assert "unverified vision hint" in messages[-1]["content"].lower()
+    assert "user-handoff" in messages[-1]["content"].lower()
 
 
 def test_json_image_selection_classification_is_supported() -> None:
-    assert CaptchaSolverCallback._classify_answer("select_images", "image_select") == {
+    assert CaptchaHintCallback._classify_answer("select_images", "image_select") == {
         "type": "image_select",
         "answer": "select_images",
     }
 
 
 @pytest.mark.asyncio
-async def test_pending_answer_does_not_cross_run_boundary(
+async def test_pending_message_does_not_cross_run_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
 
     async def detect(image: str) -> dict[str, str]:
         return {"type": "text", "answer": "aB12z"}
 
     monkeypatch.setattr(callback, "_detect_and_solve", detect)
     await callback.on_screenshot(b"run-one")
-    assert callback._pending_answer.get() is not None
+    assert callback._pending_message.get() is not None
 
     await callback.on_run_start({}, [])
 
-    assert callback._pending_answer.get() is None
+    assert callback._pending_message.get() is None
     assert callback._last_attempt_time.get() == 0.0
 
     await callback.on_screenshot(b"run-two")
     await callback.on_run_end({}, [], [])
-    assert callback._pending_answer.get() is None
+    assert callback._pending_message.get() is None
 
 
 @pytest.mark.asyncio
-async def test_pending_answers_are_isolated_between_concurrent_runs(
+async def test_pending_messages_are_isolated_between_concurrent_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
     ready = asyncio.Barrier(2)
 
     async def detect(image: str) -> dict[str, str]:
@@ -372,7 +500,8 @@ async def test_pending_answers_are_isolated_between_concurrent_runs(
         await callback.on_run_start({}, [])
         image = answer.encode("ascii")
         await callback.on_screenshot(image)
-        messages = await callback.on_llm_start([image_message(image)])
+        output = await bind_screenshot(callback, image, f"call-{answer}")
+        messages = await callback.on_llm_start([output])
         content = messages[-1]["content"]
         assert isinstance(content, str)
         return content
@@ -387,10 +516,10 @@ async def test_pending_answers_are_isolated_between_concurrent_runs(
 
 
 @pytest.mark.asyncio
-async def test_newer_negative_screenshot_invalidates_pending_answer(
+async def test_newer_negative_screenshot_invalidates_pending_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
 
     async def detect(image: str) -> dict[str, str] | None:
         if base64.b64decode(image) == b"captcha":
@@ -406,10 +535,10 @@ async def test_newer_negative_screenshot_invalidates_pending_answer(
 
 
 @pytest.mark.asyncio
-async def test_revisited_screenshot_invalidates_a_newer_pending_answer(
+async def test_revisited_screenshot_invalidates_a_newer_pending_message(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0)
 
     async def detect(image: str) -> dict[str, str] | None:
         if base64.b64decode(image) == b"captcha":
@@ -427,7 +556,7 @@ async def test_revisited_screenshot_invalidates_a_newer_pending_answer(
 
 @pytest.mark.asyncio
 async def test_screenshot_deduplication_and_request_budget(monkeypatch: pytest.MonkeyPatch) -> None:
-    callback = CaptchaSolverCallback(cooldown=0, max_requests_per_run=2)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0, max_requests_per_run=2)
     calls = 0
 
     async def call_vision(image: str, prompt: str) -> str:
@@ -448,7 +577,7 @@ async def test_screenshot_deduplication_and_request_budget(monkeypatch: pytest.M
 async def test_ordinary_screens_do_not_exhaust_budget_before_a_challenge(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(cooldown=0, max_requests_per_run=12)
+    callback = CaptchaHintCallback(model="test-model", cooldown=0, max_requests_per_run=12)
     calls = 0
 
     async def call_vision(image: str, prompt: str) -> str:
@@ -462,8 +591,9 @@ async def test_ordinary_screens_do_not_exhaust_budget_before_a_challenge(
     for index in range(7):
         await callback.on_screenshot(f"ordinary-{index}".encode())
     await callback.on_screenshot(b"captcha-page")
+    output = await bind_screenshot(callback, b"captcha-page", "call-one")
 
-    messages = await callback.on_llm_start([image_message(b"captcha-page")])
+    messages = await callback.on_llm_start([output])
     assert calls == 8
     assert "aB12z" in messages[-1]["content"]
 
@@ -472,7 +602,7 @@ async def test_ordinary_screens_do_not_exhaust_budget_before_a_challenge(
 async def test_transport_failure_allows_same_screenshot_to_retry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(max_requests_per_run=3)
+    callback = CaptchaHintCallback(model="test-model", max_requests_per_run=3)
     attempts = 0
 
     async def detect(image: str) -> dict[str, str] | None:
@@ -486,17 +616,45 @@ async def test_transport_failure_allows_same_screenshot_to_retry(
     monkeypatch.setattr(callback, "_detect_and_solve", detect)
     await callback.on_screenshot(b"same-captcha")
     await callback.on_screenshot(b"same-captcha")
+    output = await bind_screenshot(callback, b"same-captcha", "call-one")
 
-    messages = await callback.on_llm_start([image_message(b"same-captcha")])
+    messages = await callback.on_llm_start([output])
     assert attempts == 2
     assert "aB12z" in messages[-1]["content"]
+
+
+@pytest.mark.asyncio
+async def test_detected_but_unsolved_screenshot_injects_handoff_observation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaHintCallback(model="test-model", max_requests_per_run=3)
+    attempts = 0
+
+    async def detect(image: str) -> dict[str, str] | None:
+        nonlocal attempts
+        attempts += 1
+        callback._analysis_status.set("detected_unsolved")
+        return None
+
+    monkeypatch.setattr(callback, "_detect_and_solve", detect)
+    await callback.on_screenshot(b"same-captcha")
+    await callback.on_screenshot(b"same-captcha")
+    output = await bind_screenshot(callback, b"same-captcha", "call-one")
+
+    messages = await callback.on_llm_start([output])
+    usage = callback.get_run_usage()
+    assert attempts == 1
+    assert usage["analysis_positive_without_hint"] == 1
+    assert usage["analysis_hint_candidates"] == 0
+    assert usage["messages_injected"] == 1
+    assert "stop ordinary retries" in messages[-1]["content"]
 
 
 @pytest.mark.asyncio
 async def test_transport_failure_stops_fallback_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(max_requests_per_run=3)
+    callback = CaptchaHintCallback(model="test-model", max_requests_per_run=3)
     calls = 0
 
     async def call_vision(image: str, prompt: str) -> None:
@@ -516,7 +674,7 @@ async def test_transport_failure_stops_fallback_calls(
 async def test_transport_failure_circuit_stops_repeated_run_stalls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(max_requests_per_run=12)
+    callback = CaptchaHintCallback(model="test-model", max_requests_per_run=12)
     calls = 0
 
     async def call_vision(image: str, prompt: str) -> None:
@@ -537,7 +695,7 @@ async def test_transport_failure_circuit_stops_repeated_run_stalls(
 async def test_transport_failure_circuit_resets_at_run_boundaries(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(max_requests_per_run=12)
+    callback = CaptchaHintCallback(model="test-model", max_requests_per_run=12)
     calls = 0
 
     async def call_vision(image: str, prompt: str) -> None:
@@ -565,7 +723,7 @@ async def test_transport_failure_circuit_resets_at_run_boundaries(
 async def test_transport_failure_circuit_is_isolated_between_concurrent_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback(max_requests_per_run=12)
+    callback = CaptchaHintCallback(model="test-model", max_requests_per_run=12)
     ready = asyncio.Barrier(2)
     calls = 0
 
@@ -600,24 +758,85 @@ async def test_transport_failure_circuit_is_isolated_between_concurrent_runs(
     assert calls == 5
 
 
-def test_remote_endpoint_requires_explicit_https_and_auth() -> None:
-    with pytest.raises(ValueError, match="allow_remote"):
-        CaptchaSolverCallback(api_base="https://vision.example/v1")
-    with pytest.raises(ValueError, match="HTTPS"):
-        CaptchaSolverCallback(
-            api_base="http://vision.example/v1",
-            allow_remote=True,
-            api_key="secret",
-        )
-    with pytest.raises(ValueError, match="api_key"):
-        CaptchaSolverCallback(api_base="https://vision.example/v1", allow_remote=True)
+@pytest.mark.parametrize(
+    "api_base",
+    [
+        "https://vision.example/v1",
+        "http://localhost:1234/v1",
+        "http://local-user@127.0.0.1:1234/v1",
+        "http://@127.0.0.1:1234/v1",
+        "http://127.0.0.1:1234/v1?tenant=test",
+        "http://127.0.0.1:1234/v1?",
+        "http://127.0.0.1:1234/v1#fragment",
+        "http://127.0.0.1:1234/v1#",
+        "http://127.0.0.1:invalid/v1",
+    ],
+)
+def test_vision_endpoint_requires_an_unambiguous_numeric_loopback_url(api_base: str) -> None:
+    with pytest.raises(ValueError):
+        CaptchaHintCallback(model="test-model", api_base=api_base)
 
-    callback = CaptchaSolverCallback(
-        api_base="https://vision.example/v1",
-        allow_remote=True,
-        api_key="secret",
+
+def test_numeric_loopback_endpoint_accepts_optional_local_auth() -> None:
+    callback = CaptchaHintCallback(
+        model="test-model",
+        api_base="http://127.0.0.1:1234/v1/",
+        api_key="local-token",
     )
-    assert callback.api_base == "https://vision.example/v1"
+
+    assert callback.api_base == "http://127.0.0.1:1234/v1"
+    assert callback.api_key == "local-token"
+
+
+@pytest.mark.parametrize(
+    ("argument", "value"),
+    [
+        ("max_tokens", True),
+        ("max_tokens", 0),
+        ("timeout", float("nan")),
+        ("timeout", float("inf")),
+        ("max_analysis_seconds_per_run", float("nan")),
+        ("max_analysis_seconds_per_run", float("inf")),
+        ("max_analysis_seconds_per_run", 0),
+        ("cooldown", float("nan")),
+        ("cooldown", float("inf")),
+        ("cooldown", -1),
+        ("max_requests_per_run", True),
+        ("max_requests_per_run", 1.5),
+        ("max_requests_per_run", 0),
+    ],
+)
+def test_numeric_limits_are_finite_and_bounded(argument: str, value: object) -> None:
+    with pytest.raises(ValueError):
+        CaptchaHintCallback(model="test-model", **{argument: value})
+
+
+@pytest.mark.parametrize("model", [None, "", "   "])
+def test_model_must_be_explicit_and_nonempty(model: object) -> None:
+    with pytest.raises(ValueError, match="model"):
+        CaptchaHintCallback(model=model)  # type: ignore[arg-type]
+
+
+def test_usage_counters_distinguish_missing_token_and_cost_data() -> None:
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
+
+    callback._record_response_usage({"usage": {"prompt_tokens": 3}})
+    callback._record_response_usage({"usage": {"cost": float("inf")}})
+    callback._record_response_usage(
+        {"usage": {"prompt_tokens": 1.5, "completion_tokens": 2.5, "total_tokens": 4.0}}
+    )
+    callback._record_response_usage({})
+
+    usage = callback.get_run_usage()
+    assert usage["prompt_tokens"] == 3
+    assert usage["provider_reported_cost"] == 0.0
+    assert usage["token_usage_complete_responses"] == 0
+    assert usage["token_usage_partial_responses"] == 1
+    assert usage["token_usage_missing_responses"] == 3
+    assert usage["cost_reported_responses"] == 0
+    assert usage["cost_missing_responses"] == 4
 
 
 @pytest.mark.asyncio
@@ -663,7 +882,8 @@ async def test_local_endpoint_receives_bounded_openai_request(
     server = await asyncio.start_server(handle, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
     try:
-        callback = CaptchaSolverCallback(
+        callback = CaptchaHintCallback(
+            model="test-model",
             api_base=f"http://127.0.0.1:{port}/v1",
             api_key="local-test-token",
         )
@@ -675,7 +895,7 @@ async def test_local_endpoint_receives_bounded_openai_request(
     assert reply == '{"captcha": false}'
     assert "POST /v1/chat/completions HTTP/1.1" in request["headers"]
     assert "authorization: bearer local-test-token" in request["headers"].lower()
-    assert request["body"]["model"] == "bionic-vision-light"
+    assert request["body"]["model"] == "test-model"
     assert request["body"]["messages"][0]["content"][1]["text"] == "prompt"
     assert callback.get_run_usage() == {
         "requests": 0,
@@ -684,6 +904,18 @@ async def test_local_endpoint_receives_bounded_openai_request(
         "completion_tokens": 3,
         "total_tokens": 14,
         "provider_reported_cost": 0.0025,
+        "token_usage_complete_responses": 1,
+        "token_usage_partial_responses": 0,
+        "token_usage_missing_responses": 0,
+        "cost_reported_responses": 1,
+        "cost_missing_responses": 0,
+        "analysis_seconds": 0.0,
+        "analysis_hint_candidates": 0,
+        "analysis_negative_results": 0,
+        "analysis_positive_without_hint": 0,
+        "analysis_inconclusive_results": 0,
+        "messages_injected": 0,
+        "hints_discarded": 0,
     }
 
 
@@ -691,7 +923,9 @@ async def test_local_endpoint_receives_bounded_openai_request(
 async def test_run_usage_counts_budgeted_requests_and_survives_run_end(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
 
     async def call_vision(image: str, prompt: str) -> str:
         return '{"captcha": false}'
@@ -710,7 +944,9 @@ async def test_run_usage_counts_budgeted_requests_and_survives_run_end(
 async def test_run_usage_is_isolated_between_concurrent_runs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    callback = CaptchaSolverCallback()
+    callback = CaptchaHintCallback(
+        model="test-model",
+    )
     ready = asyncio.Barrier(2)
 
     async def call_vision(image: str, prompt: str) -> str:
@@ -750,7 +986,7 @@ async def test_local_vision_request_cancellation_propagates_and_closes_connectio
 
     server = await asyncio.start_server(handle, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    callback = CaptchaSolverCallback(api_base=f"http://127.0.0.1:{port}/v1")
+    callback = CaptchaHintCallback(model="test-model", api_base=f"http://127.0.0.1:{port}/v1")
     task = asyncio.create_task(callback._call_vision("cG5n", "prompt"))
     try:
         await asyncio.wait_for(request_started.wait(), timeout=1)
@@ -765,3 +1001,120 @@ async def test_local_vision_request_cancellation_propagates_and_closes_connectio
         await server.wait_closed()
 
     assert callback._attempt_transport_failed.get() is False
+
+
+@pytest.mark.asyncio
+async def test_local_vision_request_has_a_wall_clock_deadline() -> None:
+    request_started = asyncio.Event()
+    connection_closed = asyncio.Event()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            request_started.set()
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            connection_closed.set()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    callback = CaptchaHintCallback(
+        model="test-model",
+        api_base=f"http://127.0.0.1:{port}/v1",
+        timeout=0.05,
+    )
+    started = asyncio.get_running_loop().time()
+    try:
+        assert await callback._call_vision("cG5n", "prompt") is None
+        elapsed = asyncio.get_running_loop().time() - started
+        await asyncio.wait_for(request_started.wait(), timeout=1)
+        await asyncio.wait_for(connection_closed.wait(), timeout=1)
+    finally:
+        server.close()
+        await server.wait_closed()
+
+    assert elapsed < 0.5
+    assert callback._attempt_transport_failed.get() is True
+
+
+@pytest.mark.asyncio
+async def test_screenshot_analysis_deadline_bounds_all_fallback_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaHintCallback(model="test-model", cooldown=0, timeout=0.05)
+    calls = 0
+
+    async def call_vision(image: str, prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.04)
+        return "not json"
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+    started = asyncio.get_running_loop().time()
+
+    await callback.on_screenshot(b"ordinary-page")
+
+    elapsed = asyncio.get_running_loop().time() - started
+    assert elapsed < 0.5
+    assert calls == 2
+    assert callback._attempt_transport_failed.get() is True
+
+
+@pytest.mark.asyncio
+async def test_run_analysis_time_budget_bounds_slow_successes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaHintCallback(
+        model="test-model",
+        cooldown=0,
+        timeout=0.2,
+        max_analysis_seconds_per_run=0.05,
+    )
+    calls = 0
+
+    async def detect(image: str) -> None:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(0.03)
+        callback._analysis_status.set("not_detected")
+        return None
+
+    monkeypatch.setattr(callback, "_detect_and_solve", detect)
+
+    await callback.on_screenshot(b"first")
+    await callback.on_screenshot(b"second")
+    await callback.on_screenshot(b"third")
+
+    usage = callback.get_run_usage()
+    assert calls == 2
+    assert usage["analysis_seconds"] >= 0.04
+    assert usage["analysis_negative_results"] == 1
+
+
+@pytest.mark.asyncio
+async def test_solve_timeout_preserves_positive_analysis_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaHintCallback(model="test-model", cooldown=0, timeout=0.05)
+    calls = 0
+
+    async def call_vision(image: str, prompt: str) -> str:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return '{"captcha": true, "type": "text"}'
+        await asyncio.sleep(1)
+        return "aB12z"
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+
+    await callback.on_screenshot(b"possible-challenge")
+
+    usage = callback.get_run_usage()
+    assert calls == 2
+    assert usage["analysis_positive_without_hint"] == 1
+    assert usage["analysis_inconclusive_results"] == 0
+    assert callback._attempt_transport_failed.get() is True

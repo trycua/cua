@@ -186,6 +186,27 @@ impl SemanticDocument {
         };
     }
 
+    /// Text values available to page-level classification. Hidden and fully
+    /// occluded retained state is excluded so it cannot describe the page the
+    /// caller is actually observing.
+    pub(crate) fn challenge_texts(&self) -> impl Iterator<Item = &str> {
+        self.nodes
+            .iter()
+            .filter(|node| {
+                !matches!(
+                    node.visibility,
+                    BrowserVisibility::CssHidden | BrowserVisibility::PageOccluded
+                )
+            })
+            .flat_map(|node| {
+                [
+                    node.role.as_str(),
+                    node.name.as_deref().unwrap_or_default(),
+                    node.value.as_deref().unwrap_or_default(),
+                ]
+            })
+    }
+
     pub(crate) fn page(
         &self,
         offset: usize,

@@ -15,7 +15,6 @@ use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
-use super::challenge::browser_challenge_value;
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
 use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
@@ -398,21 +397,6 @@ impl Tool for GetBrowserStateTool {
                             .iter()
                             .map(semantic_ref_value)
                             .collect::<Vec<_>>();
-                        let challenge_texts = std::iter::once(outcome.outline.as_str()).chain(
-                            outcome
-                                .refs
-                                .iter()
-                                .chain(outcome.content_refs.iter())
-                                .flat_map(|listed| {
-                                    [
-                                        listed.node.role.as_str(),
-                                        listed.node.name.as_deref().unwrap_or_default(),
-                                        listed.node.value.as_deref().unwrap_or_default(),
-                                    ]
-                                }),
-                        );
-                        let challenge =
-                            browser_challenge_value(&outcome.url, &outcome.title, challenge_texts);
                         ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
                             outcome.snapshot_id,
@@ -451,7 +435,7 @@ impl Tool for GetBrowserStateTool {
                             "outline": outcome.outline,
                             "refs": refs,
                             "content_refs": content_refs,
-                            "challenge": challenge,
+                            "challenge": outcome.challenge,
                             "oopif": {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),

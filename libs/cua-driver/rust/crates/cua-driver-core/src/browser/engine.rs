@@ -38,6 +38,7 @@ use super::binding::{
     CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool};
+use super::challenge::browser_challenge_value;
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -388,6 +389,7 @@ pub(crate) struct SemanticSnapshotOutcome {
     pub snapshot_id: u64,
     pub url: String,
     pub title: String,
+    pub challenge: Value,
     pub outline: String,
     pub refs: Vec<SemanticListedRef>,
     pub content_refs: Vec<SemanticListedRef>,
@@ -2434,6 +2436,7 @@ impl BrowserEngine {
         snapshot_id: u64,
         url: String,
         title: String,
+        challenge: Value,
         page: super::semantic::SemanticPage,
         document_complete: bool,
         scope: &'static str,
@@ -2466,6 +2469,7 @@ impl BrowserEngine {
                 snapshot_id,
                 url,
                 title,
+                challenge,
                 outline: page.outline,
                 refs,
                 content_refs,
@@ -2537,6 +2541,11 @@ impl BrowserEngine {
                     "the continuation no longer has semantic snapshot state",
                 )
             })?;
+            let challenge = browser_challenge_value(
+                &snapshot.url,
+                document.challenge_texts(),
+                document.complete && continuation.oopif_supported,
+            );
             let page = document.page(
                 continuation.offset,
                 DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2559,6 +2568,7 @@ impl BrowserEngine {
                 snapshot.id,
                 snapshot.url.clone(),
                 tab.title,
+                challenge,
                 page,
                 document.complete,
                 "continuation",
@@ -2704,6 +2714,11 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
+        let challenge = browser_challenge_value(
+            &url,
+            semantic.challenge_texts(),
+            semantic.complete && matches!(oopif, OopifStatus::Attached(_)),
+        );
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2723,6 +2738,7 @@ impl BrowserEngine {
             snapshot_id,
             url.clone(),
             tab.title.clone(),
+            challenge,
             page,
             semantic.complete,
             scope,

@@ -217,8 +217,9 @@ allow { input.facts.user.age >= 21 }
 	}
 }
 
-func TestPolicyMiddlewareFactProviderErrorFailsClosed(t *testing.T) {
-	provider := &testFactProvider{cacheKey: "broken", err: errors.New("database unavailable")}
+func TestPolicyMiddlewareFactProviderErrorFailsClosedWithoutRenderingCause(t *testing.T) {
+	const secret = "database-password=secret-provider-detail"
+	provider := &testFactProvider{cacheKey: "broken", err: errors.New(secret)}
 	expression := Policy(
 		Inline("facts.rego", `package facts
 allow { input.facts.user.age >= 21 }
@@ -226,6 +227,11 @@ allow { input.facts.user.age >= 21 }
 		Query("data.facts.allow"),
 		WithFacts("user", provider),
 	)
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
 
 	called := false
 	handler := PolicyMiddleware(expression)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -240,6 +246,15 @@ allow { input.facts.user.age >= 21 }
 	}
 	if called {
 		t.Fatal("provider error reached downstream handler")
+	}
+	if strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("response leaked provider cause: %q", response.Body.String())
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatalf("policy log leaked provider cause:\n%s", logged.String())
+	}
+	if !strings.Contains(logged.String(), `"class":"policy_evaluation_failed"`) {
+		t.Fatalf("policy log omitted safe classification:\n%s", logged.String())
 	}
 }
 
@@ -515,16 +530,11 @@ allow = false {
 }
 `
 
-// TestPolicyMiddlewareLogsTheEvaluationError pins the one thing the 500 does
-// not carry. The response body is the fixed string "policy evaluation failed",
-// so unless the middleware logs verdict.err an undecidable policy is an error
-// with its cause recorded nowhere, at no level — which is what this code did
-// until the test existed.
-//
-// slog.Default is swapped rather than injected because PolicyMiddleware has no
-// logger seam, and this package forbids t.Parallel (see policy_optimize.go),
-// which is what makes swapping a global safe here.
-func TestPolicyMiddlewareLogsTheEvaluationError(t *testing.T) {
+// TestPolicyMiddlewareClassifiesEvaluationError pins the safe diagnostic that
+// accompanies the fixed 500 response. OPA's raw evaluation error can contain
+// request-derived values, so the ordinary log records a stable class rather
+// than rendering verdict.err.
+func TestPolicyMiddlewareClassifiesEvaluationError(t *testing.T) {
 	var logged bytes.Buffer
 	restore := slog.Default()
 	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
@@ -547,11 +557,11 @@ func TestPolicyMiddlewareLogsTheEvaluationError(t *testing.T) {
 	if called {
 		t.Fatal("an evaluation error reached the downstream handler")
 	}
-	// The specific OPA error code, not merely that something was logged: a
-	// record naming only the route would satisfy a laxer check while still
-	// losing the cause.
-	if !strings.Contains(logged.String(), "eval_conflict_error") {
-		t.Fatalf("the evaluation error was not logged; got:\n%s", logged.String())
+	if !strings.Contains(logged.String(), `"class":"policy_evaluation_failed"`) {
+		t.Fatalf("the evaluation error classification was not logged; got:\n%s", logged.String())
+	}
+	if strings.Contains(logged.String(), "eval_conflict_error") {
+		t.Fatalf("the raw evaluation error reached the ordinary log; got:\n%s", logged.String())
 	}
 }
 
@@ -803,6 +813,255 @@ allow { input.body == "12345" }
 	}
 }
 
+func TestPolicyMiddlewareFeatureFlagErrorsUseAdminAPIEnvelope(t *testing.T) {
+	cases := []struct {
+		name       string
+		expression Node
+		body       string
+		wantStatus int
+		wantCode   string
+	}{
+		{name: "denied", expression: Policy(Inline("admin-envelope-deny.rego", "package admin_envelope_deny\ndefault allow = false\n"), Query("data.admin_envelope_deny.allow")), wantStatus: http.StatusForbidden, wantCode: "not_admin"},
+		{name: "invalid request", expression: Policy(Inline("admin-envelope-body.rego", `package admin_envelope_body
+allow { input.body == "ok" }
+`), Query("data.admin_envelope_body.allow"), WithRawBody(2)), body: "oversized", wantStatus: http.StatusBadRequest, wantCode: "invalid_request"},
+		{name: "authorization unavailable", expression: Policy(Inline("admin-envelope-facts.rego", `package admin_envelope_facts
+allow { input.facts.user.allowed }
+`), Query("data.admin_envelope_facts.allow"), WithFacts("user", &testFactProvider{cacheKey: "admin-envelope-unavailable", err: &FactUnavailableError{Namespace: "user", Err: errors.New("database unavailable")}})), wantStatus: http.StatusBadGateway, wantCode: "authorization_unavailable"},
+		{name: "policy error", expression: Policy(Inline("admin-envelope-error.rego", undecidablePolicy), Query("data.undecidable.allow")), wantStatus: http.StatusInternalServerError, wantCode: "policy_error"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			handler := PolicyMiddleware(testCase.expression, WithDeniedAudit("feature_flag_admin", 64<<10), WithAdminAPIErrorResponses())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("failed policy request reached handler")
+			}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/admin/feature-flags", strings.NewReader(testCase.body)))
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+			var body map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
+				t.Fatal(err)
+			}
+			if body["code"] != testCase.wantCode || body["message"] == "" || body["error"] != nil {
+				t.Fatalf("body = %#v", body)
+			}
+		})
+	}
+}
+
+func TestPolicyMiddlewareUnrelatedRouteKeepsLegacyErrorEnvelope(t *testing.T) {
+	denied := Policy(Inline("legacy-envelope.rego", "package legacy_envelope\ndefault allow = false\n"), Query("data.legacy_envelope.allow"))
+	handler := PolicyMiddleware(denied)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodPost, "/api/keys", nil))
+	if got, want := response.Body.String(), `{"error":"forbidden"}`+"\n"; got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}
+
+func TestPolicyMiddlewareDeniedAuditCapturesBoundedMutationSummary(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	denied := Policy(Inline("deny.rego", "package denied\ndefault allow = false\n"), Query("data.denied.allow"))
+	handler := PolicyMiddleware(denied, WithDeniedAudit("feature_flag_admin", 64<<10))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("denied request reached handler")
+	}))
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/feature-flags/enabled", strings.NewReader(`{"value_type":"boolean","value":true,"expected_version":7}`))
+	request.SetPathValue("key", "enabled")
+	request = request.WithContext(context.WithValue(request.Context(), UserKey, &User{ID: "admin-1", Email: "admin@example.com", PrincipalType: PrincipalTypeUser}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+	line := logs.String()
+	for _, want := range []string{`"event":"feature_flag_admin"`, `"actor":"admin-1"`, `"operation":"put"`, `"key":"enabled"`, `"attempted_value":true`, `"expected_version":7`, `"result":"rejected"`, `"reason":"not_admin"`} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("audit log missing %s: %s", want, line)
+		}
+	}
+}
+
+func TestPolicyMiddlewareDeniedAuditBoundsInvalidURLIdentifiers(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	denied := Policy(Inline("deny-invalid-key.rego", "package deny_invalid_key\ndefault allow = false\n"), Query("data.deny_invalid_key.allow"))
+	handler := PolicyMiddleware(denied, WithDeniedAudit("feature_flag_admin", 64<<10))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("denied request reached handler")
+	}))
+	invalidKey := strings.Repeat("Sensitive/", 40)
+	request := httptest.NewRequest(http.MethodPut, "/api/admin/feature-flags/"+invalidKey, strings.NewReader(`{"value_type":"boolean","value":true,"expected_version":7}`))
+	request.SetPathValue("key", invalidKey)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", response.Code)
+	}
+	var event map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(logs.Bytes()))
+	for decoder.More() {
+		var record map[string]any
+		if err := decoder.Decode(&record); err != nil {
+			t.Fatalf("decode audit: %v; logs=%s", err, logs.String())
+		}
+		if record["event"] == "feature_flag_admin" {
+			event = record
+			break
+		}
+	}
+	if event == nil {
+		t.Fatalf("feature flag audit missing: %s", logs.String())
+	}
+	for _, field := range []string{"key", "path"} {
+		value, _ := event[field].(string)
+		if !strings.HasPrefix(value, "sha256:") || len(value) > 80 {
+			t.Errorf("%s = %q, want bounded SHA-256 identifier", field, value)
+		}
+	}
+	if strings.Contains(logs.String(), invalidKey) || strings.Contains(logs.String(), request.URL.Path) {
+		t.Fatalf("audit leaked invalid URL identifier: %s", logs.String())
+	}
+}
+
+func TestPolicyMiddlewareDeniedCreateAuditUsesOnlySafeBodyKey(t *testing.T) {
+	denied := Policy(Inline("deny-create-key.rego", "package deny_create_key\ndefault allow = false\n"), Query("data.deny_create_key.allow"))
+	for _, testCase := range []struct {
+		name    string
+		body    string
+		wantKey string
+	}{
+		{name: "safe decoded key", body: `{"key":"enabled","value_type":"boolean","value":true}`, wantKey: "enabled"},
+		{name: "invalid decoded key", body: `{"key":"Sensitive/key","value_type":"boolean","value":true}`},
+		{name: "non-string decoded key", body: `{"key":7,"value_type":"boolean","value":true}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+			handler := PolicyMiddleware(denied, WithDeniedAudit("feature_flag_admin", 64<<10))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("denied request reached handler")
+			}))
+			handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/admin/feature-flags", strings.NewReader(testCase.body)))
+			var event map[string]any
+			if err := json.Unmarshal(logs.Bytes(), &event); err != nil {
+				t.Fatalf("decode audit: %v; logs=%s", err, logs.String())
+			}
+			if got, present := event["key"]; testCase.wantKey == "" {
+				if present {
+					t.Fatalf("key = %#v, want omitted; logs=%s", got, logs.String())
+				}
+			} else if got != testCase.wantKey {
+				t.Fatalf("key = %#v, want %q; logs=%s", got, testCase.wantKey, logs.String())
+			}
+			if got, _ := event["key"].(string); got == "/api/admin/feature-flags" {
+				t.Fatalf("collection URL used as key: %s", logs.String())
+			}
+		})
+	}
+}
+
+func TestPolicyMiddlewareDeniedAuditBoundsOversizedBodyAndSkipsGET(t *testing.T) {
+	var logs bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	denied := Policy(Inline("deny-large.rego", "package denied_large\ndefault allow = false\n"), Query("data.denied_large.allow"))
+	handler := PolicyMiddleware(denied, WithDeniedAudit("feature_flag_admin", 8))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodPost, "/api/admin/feature-flags", strings.NewReader(`{"value":"this is deliberately too large"}`)))
+	if !strings.Contains(logs.String(), `"parse_failure":"body_too_large"`) || strings.Contains(logs.String(), "deliberately too large") {
+		t.Fatalf("oversized audit = %s", logs.String())
+	}
+	logs.Reset()
+	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodGet, "/api/admin/feature-flags", nil))
+	if logs.Len() != 0 {
+		t.Fatalf("GET denial unexpectedly audited: %s", logs.String())
+	}
+}
+
+func TestDeniedAuditRestoresEntireOversizedBody(t *testing.T) {
+	original := []byte("0123456789abcdefghijklmnopqrstuvwxyz")
+	request := httptest.NewRequest(http.MethodPost, "/api/admin/feature-flags", bytes.NewReader(original))
+	logDeniedMutation(request, deniedAuditConfig{event: "feature_flag_admin", maxBytes: 8})
+	restored, err := io.ReadAll(request.Body)
+	if err != nil {
+		t.Fatalf("read restored body: %v", err)
+	}
+	if !bytes.Equal(restored, original) {
+		t.Fatalf("restored body = %q, want %q", restored, original)
+	}
+}
+
+func TestPolicyMiddlewareAuditsEveryMutationEvaluationErrorExactlyOnce(t *testing.T) {
+	cases := []struct {
+		name       string
+		expression Node
+		body       string
+		wantStatus int
+		wantReason string
+	}{
+		{
+			name: "invalid request body",
+			expression: Policy(Inline("audit-body.rego", `package audit_body
+allow { input.body == "ok" }
+`), Query("data.audit_body.allow"), WithRawBody(2)),
+			body:       "oversized",
+			wantStatus: http.StatusBadRequest,
+			wantReason: "invalid_request",
+		},
+		{
+			name: "authorization dependency unavailable",
+			expression: Policy(Inline("audit-facts.rego", `package audit_facts
+allow { input.facts.user.allowed }
+`), Query("data.audit_facts.allow"), WithFacts("user", &testFactProvider{cacheKey: "audit-unavailable", err: &FactUnavailableError{Namespace: "user", Err: errors.New("database unavailable")}})),
+			wantStatus: http.StatusBadGateway,
+			wantReason: "authorization_unavailable",
+		},
+		{
+			name:       "policy evaluation error",
+			expression: Policy(Inline("audit-undecidable.rego", undecidablePolicy), Query("data.undecidable.allow")),
+			wantStatus: http.StatusInternalServerError,
+			wantReason: "policy_error",
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			var logs bytes.Buffer
+			previous := slog.Default()
+			slog.SetDefault(slog.New(slog.NewJSONHandler(&logs, nil)))
+			t.Cleanup(func() { slog.SetDefault(previous) })
+
+			handler := PolicyMiddleware(testCase.expression, WithDeniedAudit("feature_flag_admin", 64<<10))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("failed policy request reached handler")
+			}))
+			request := httptest.NewRequest(http.MethodPut, "/api/admin/feature-flags/enabled", strings.NewReader(testCase.body))
+			request.SetPathValue("key", "enabled")
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != testCase.wantStatus {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, testCase.wantStatus, response.Body.String())
+			}
+			if count := strings.Count(logs.String(), `"event":"feature_flag_admin"`); count != 1 {
+				t.Fatalf("audit count = %d, want 1; logs=%s", count, logs.String())
+			}
+			if !strings.Contains(logs.String(), `"reason":"`+testCase.wantReason+`"`) {
+				t.Fatalf("audit reason missing %q: %s", testCase.wantReason, logs.String())
+			}
+		})
+	}
+}
+
 func TestPolicyMiddlewareMergesFactsFromSeparateProvidersInOneNamespace(t *testing.T) {
 	year := &testFactProvider{cacheKey: "current-year", facts: FactSet{"current_year": 2026}}
 	month := &testFactProvider{cacheKey: "current-month", facts: FactSet{"current_month": 8}}
@@ -942,5 +1201,78 @@ allow { input.facts.user.allowed }
 				}
 			}
 		})
+	}
+}
+
+func TestPolicyMiddlewareFactUnavailableDoesNotRenderCause(t *testing.T) {
+	const secret = "secret-provider-detail"
+	provider := &testFactProvider{
+		cacheKey: "unavailable-safe-boundary",
+		err:      NewFactUnavailableError("account", errors.New(secret)),
+	}
+	expression := Policy(
+		Inline("fact-unavailable.rego", `package fact_unavailable
+allow { input.facts.account.available }
+`),
+		Query("data.fact_unavailable.allow"),
+		WithFacts("account", provider),
+	)
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	handler := PolicyMiddleware(expression)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Fatal("fact-unavailable request reached downstream handler")
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if response.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusBadGateway, response.Body.String())
+	}
+	if !strings.Contains(response.Body.String(), "authorization check unavailable") {
+		t.Fatalf("body = %q, want fixed unavailable message", response.Body.String())
+	}
+	if strings.Contains(response.Body.String(), secret) {
+		t.Fatalf("response leaked fact provider cause: %q", response.Body.String())
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatalf("policy log leaked fact provider cause:\n%s", logged.String())
+	}
+}
+
+type fixedCompiledNode struct{ result verdict }
+
+func (node fixedCompiledNode) eval(context.Context, *requestPolicyInput) verdict { return node.result }
+func (fixedCompiledNode) bodyBudget() int64                                      { return 0 }
+
+func TestPolicyPlanDiscardedFactErrorDoesNotRenderCause(t *testing.T) {
+	const secret = "discarded-provider-secret"
+	children := []compiledNode{
+		fixedCompiledNode{result: verdict{
+			truth: truthError,
+			err:   NewFactUnavailableError("account", errors.New(secret)),
+		}},
+		fixedCompiledNode{result: verdict{truth: truthTrue}},
+	}
+
+	var logged bytes.Buffer
+	restore := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(restore) })
+
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	result := fold(request.Context(), newRequestPolicyInput(request, 0), children, disjunction)
+
+	if result.truth != truthTrue {
+		t.Fatalf("truth = %v, want truthTrue", result.truth)
+	}
+	if strings.Contains(logged.String(), secret) {
+		t.Fatalf("discarded policy error log leaked cause:\n%s", logged.String())
+	}
+	if !strings.Contains(logged.String(), `"class":"discarded_dependency_unavailable"`) {
+		t.Fatalf("discarded policy error log omitted safe classification:\n%s", logged.String())
 	}
 }

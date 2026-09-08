@@ -10,6 +10,7 @@ allowed_image_repositories := {
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/cua-gymdriver-dev",
 	"public.ecr.aws/k5j5w0x5/cua-windows-2022",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace",
+	"296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace",
 	"public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace",
 	"296062593712.dkr.ecr.us-west-2.amazonaws.com/osworld-golden-workspace",

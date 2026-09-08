@@ -1,11 +1,13 @@
 ---
-title: Run sandboxes in parallel
-description: Run many sandbox jobs at once, limit concurrency, and handle failures.
+title: Run local sandboxes in parallel
+description: Run many local sandbox jobs at once, limit concurrency, and handle failures.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Because `Sandbox.ephemeral` and `Sandbox.create` are async, you can **run many sandboxes at the same time** using `asyncio`.
+This guide runs local sandboxes with `local=True`. Because `Sandbox.ephemeral` and `Sandbox.create` are async, you can **run many local sandboxes at the same time** using `asyncio`.
+
+For hosted Fleet capacity, follow [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python) to create a pool and claim sandboxes for your tasks.
 
 <Callout type="info">
   Every local sandbox consumes host CPU, memory, and disk. Start with low concurrency and increase it only after observing host resource use.

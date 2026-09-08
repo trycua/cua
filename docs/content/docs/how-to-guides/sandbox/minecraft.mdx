@@ -7,9 +7,14 @@ import { Callout } from 'fumadocs-ui/components/callout';
 
 Minecraft exercises almost everything a Windows sandbox can do: it needs internet access, a Java runtime, working OpenGL, and a GUI that only clicks can drive. This guide boots a Windows sandbox, installs Minecraft Java Edition, and hands it to an agent that talks to **cua-driver's MCP server inside the sandbox** — the same loop against a local sandbox and against Fleet.
 
+The timings, guest hardware, graphics behavior, and deployment errors below are
+observations from this recipe's environment. They are not a certification of every
+Fleet deployment or local host. The [runtime support reference](/reference/sandbox-sdk/runtime-support)
+separates those observations from the released 0.4.3 image and transport contracts.
+
 ## Before you start
 
-- **cua-sandbox 0.3.3 or newer.** Windows on Fleet needs 0.3.0, `Image.expose()` on the local QEMU runtime landed in 0.3.1, the `sb.exposed_ports` this guide reads the forwarded port from landed in 0.3.2, and 0.3.3 brought both `Image.from_registry(..., os_type=...)` and the pull-secret fix that lets Fleet boot an image from a registry outside its own allowlist — which the containerDisk section below needs.
+- **cua-sandbox 0.4.3** for the examples below, including the explicit Fleet pool and claim workflow. The local recipe was originally developed against 0.3.3; its recorded timings and guest behavior are observations from that environment, not a new end-to-end test of 0.4.3.
 - **A host with hardware virtualisation** for the local path — a Linux x86_64 machine with `/dev/kvm`, or an Intel Mac. This guide passes `-cpu host`, which QEMU only accepts with KVM or HVF. An x86_64 guest on Apple Silicon runs under TCG emulation, where `-cpu host` is rejected outright. The Fleet path runs there instead, including the game, with the one extra environment variable described in the Fleet section below.
 - **A Microsoft account that owns Minecraft Java Edition.** Signing in uses Microsoft device authorization, so one step in the middle is manual: a code appears inside the sandbox and you approve it in your own browser.
 - **A vision-capable LLM endpoint** for the agent loop.
@@ -56,7 +61,12 @@ asyncio.run(main())
 A warm boot takes about 30 seconds. `exposed_ports` maps each exposed guest port to the host port it landed on, and `GET /healthz` on that port answers `ok` once cua-driver is up.
 
 <Callout type="warn">
-  **Read the port from `sb.exposed_ports`, not from a tunnel.** `sb.tunnel.forward(3000)` — the usual way to get a forwarded port, and the one the Fleet section below uses — raises `NotImplementedError: HTTPTransport does not support port forwarding` on the local transport. `exposed_ports` is the local equivalent: the runtime picks a free host port at boot, so the mapping is only knowable at runtime, and it is saved with the sandbox state so a later `Sandbox.connect()` can read it back. On Fleet the property is empty, because Fleet publishes services instead — use `tunnel.forward()` there.
+  **Read the port from `sb.exposed_ports` on this bare-metal QEMU path.**
+  `sb.tunnel.forward(3000)` raises `NotImplementedError: HTTPTransport does not support port forwarding`
+  on the local HTTP transport in 0.4.3. This runtime picks a host port at boot and
+  saves the mapping with the sandbox state so a later `Sandbox.connect()` can read
+  it back. The property is backend-specific. Fleet publishes services instead;
+  use an authenticated named-service request or the service URL as shown below.
 </Callout>
 
 <Callout type="warn">
@@ -169,7 +179,7 @@ The sandbox already runs **cua-driver**, which serves an MCP endpoint on guest p
 
 Three things about cua-driver's tools shape the loop:
 
-- **A YAML policy governs which tools may actually run, and `list_tools()` does not reflect it.** Every cua-driver release to date advertises the full surface and refuses out-of-policy calls only when you make them, with `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. So the listing is a menu of what exists, not of what you can call. Here that surface was 55 tools, identically over the local and Fleet transports: `get_desktop_state`, `list_apps`, `list_windows`, `get_window_state`, `click`, `double_click`, `type_text`, `press_key`, `hotkey`, `launch_app`, `bring_to_front`, `scroll` and `drag` ran, while `get_screen_size`, `get_accessibility_tree`, `get_config`, `check_permissions`, `get_cursor_position` and `zoom` were refused. Treat that split as something to probe on your own image rather than a fixed list — a denial arrives before the tool executes, so probing is cheap. Later drivers filter the listing through the policy, at which point the two finally agree.
+- **A tool listing is not permission to execute a tool.** In the guest used for this recipe, `list_tools()` advertised 55 tools over both the local and Fleet transports, including tools the guest's YAML policy refused. A denied call returned `Permission denied: user policy: tool 'X' is not allowed by the YAML policy`. Check the policy and handle permission errors on the image you use; this observed tool list is not a contract for other Driver versions. See [Restrict tool access](/how-to-guides/driver/restrict-tool-access).
 - **Clicks are addressed to an application, not the screen.** `click(pid=..., x=..., y=...)` targets a window belonging to that pid, which you find with `list_windows`. Add `delivery_mode='foreground'` when a background-delivered click does not land.
 - **There is no wait tool.** The loop waits by calling `get_desktop_state` again, so say that in the system prompt or the model will invent something worse.
 
@@ -309,7 +319,10 @@ Everything above is a one-time cost, and none of it has to be repeated — least
 
 Despite the name, `/disk/disk.img` is a **qcow2**, not a raw image. The puller looks for exactly `disk/disk.img` or `./disk/disk.img` inside the layer tarball and caches whatever it finds under `~/.cua/cua-sandbox/images/container-disks/`. Nothing reads the extension — it is a KubeVirt convention.
 
-`Sandbox.snapshot()` is a different feature and not a substitute: it forks a *cloud* sandbox in place, raises `NotImplementedError: Snapshots are only supported for cloud sandboxes` on the local runtime, and returns an `Image` you cannot push or pull.
+`Sandbox.snapshot()` is not a substitute for publishing a containerDisk. In
+`cua-sandbox` 0.4.3, it is not implemented for local sandboxes or the current Fleet
+creation paths. The package's legacy cloud snapshot code does not enable this
+workflow. See [image customization support](/reference/sandbox-sdk/runtime-support#image-customization).
 
 <Callout type="error">
   **Build the image before you sign in, never after.** A disk that has ever held a signed-in Minecraft account cannot be reliably cleaned, and a containerDisk you publish is a disk anyone can pull.
@@ -417,7 +430,7 @@ IMAGE = Image.from_registry(REF, os_type='windows', kind='vm').expose(3000)
 `IMAGE` is then a drop-in replacement for `Image.windows().expose(3000)` in both snippets earlier in this guide — the local `Sandbox.create(..., local=True, runtime=QEMURuntime(...))` call and the Fleet one. Nothing else changes: the same `EXTRA_ARGS` locally, the same agent loop, and on Fleet the same `GALLIUM_DRIVER=softpipe`.
 
 <Callout type="warn">
-  `sb.tunnel.forward(3000)` is not available on every Fleet path. A sandbox handed back by a pool claim carries the base `FleetTransport`, which does not implement port forwarding, and the error names the transport rather than the cause: `FleetTransport does not support port forwarding`. A sandbox created directly carries `FleetCloudTransport`, which does. If you hit it, reach the service through Fleet's proxy at `/api/svc/<namespace>/<sandbox>-port-3000/` instead.
+  A Fleet pool claim carries `FleetTransport`, which does not implement `sb.tunnel.forward(3000)` in 0.4.3. Image-based `Sandbox.ephemeral()` uses a pool claim too, and `Sandbox.create(image)` requires an explicitly named pool. For HTTP requests, use `sb.services.request('port-3000', method='GET', path='/healthz')`. A streaming MCP client instead needs the service URL and authentication shown below.
 </Callout>
 
 Booted locally, that image printed `Image(windows/registry:latest, kind=vm, ...)`, came up on the first try, and had everything in it: `instances\1.20.1`, `java\java-runtime-gamma`, Mesa's `opengl32.dll` beside `javaw.exe`, `minecraft-1.20.1-client.jar`, `MaxMemAlloc=2048` — and `Test-Path C:\mc\prismw\accounts.json` returning `False`. Opening Prism shows the Quick Setup account page and *No accounts added!*, which is what a correctly-built image looks like.
@@ -438,30 +451,56 @@ The reader's remaining work is the part that has to be theirs: open Prism, *Acco
 
 The image and the agent loop are identical on Fleet. Two things change: there is no `local=True` and no `runtime=`, and the MCP endpoint is reached through Fleet's service proxy rather than a forwarded localhost port.
 
-`.expose(3000)` becomes a Fleet **service** named `port-3000`, and `sb.tunnel.forward()` hands you its URL — the same call documented in [Forward a port from a sandbox](/how-to-guides/sandbox/tunneling), so there is nothing Fleet-specific to hand-assemble.
+`.expose(3000)` becomes a Fleet **service** named `port-3000`. Configure
+[Fleet pool credentials](/reference/cua-cli/authentication#fleet-pools-need-their-own-credentials)
+before running this `cua-sandbox` 0.4.3 example. It creates a dedicated pool with a
+unique name and claims a sandbox. The proxy URL uses the returned namespace and
+bound sandbox name, not the claim name. The MCP client sends a bearer token;
+the URL alone does not grant access.
 
 ```python
 import httpx
-from cua import Image, Pool, Sandbox
+import os
+import uuid
+from urllib.parse import quote
+from cua import Image, Sandbox
+from cua_sandbox import Pool
 
-pool = await Pool.apply(Image.windows().expose(3000), name='mc-fleet')
-sb = await Sandbox.create(pool=pool, name='mc-fleet', time_to_start=900)
+pool = await Pool.apply(
+    Image.windows().expose(3000), name=f'minecraft-{uuid.uuid4().hex[:12]}'
+)
+try:
+    async with Sandbox.ephemeral(pool=pool, name='mc-fleet', time_to_start=900) as sb:
+        health = await sb.services.request('port-3000', method='GET', path='/healthz')
+        health.raise_for_status()
 
-tunnel = await sb.tunnel.forward(3000)
-# https://run.cua.ai/api/svc/<namespace>/<sandbox>-port-3000/
+        reference = sb.to_dict()
+        namespace = quote(reference['namespace'], safe='')
+        sandbox_name = quote(sb.name, safe='')
+        service_url = f'https://run.cua.ai/api/svc/{namespace}/{sandbox_name}-port-3000/'
 
-token = httpx.post(
-    'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
-    data={'grant_type': 'client_credentials',
-          'client_id': os.environ['CUA_CLIENT_ID'],
-          'client_secret': os.environ['CUA_CLIENT_SECRET']},
-).json()['access_token']
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                'https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token',
+                data={'grant_type': 'client_credentials',
+                      'client_id': os.environ['CUA_CLIENT_ID'],
+                      'client_secret': os.environ['CUA_CLIENT_SECRET']},
+            )
+            response.raise_for_status()
+            token = response.json()['access_token']
 
-await run(tunnel.url + 'mcp', TASK, 'your-model',
-          headers={'Authorization': f'Bearer {token}'})
+        await run(service_url + 'mcp', TASK, 'your-model',
+                  headers={'Authorization': f'Bearer {token}'})
+finally:
+    await pool.delete()
 ```
 
-That is the same `run()` as above, with only the URL and an auth header changed. A Fleet Windows sandbox takes about three minutes to become ready, against about thirty seconds for a warm local one, and `GET healthz` on that service URL answers `ok` when cua-driver is up.
+That is the same `run()` as above, with only the URL and an auth header changed.
+The context releases the claim, and `finally` deletes this example's dedicated
+pool. For interrupted runs, follow the [Fleet cleanup guidance](/tutorials/your-first-cloud-fleet).
+In this recipe's environment, a Fleet Windows sandbox took about three minutes
+to become ready, against about thirty seconds for a warm local one. `GET healthz`
+on that service URL answers `ok` when cua-driver is up.
 
 Notice there is no `-cpu host` here. That flag exists on the local path because the bare-metal runtime defaults to the thin `qemu64` model; a Fleet sandbox is provisioned for you and already reports a full host CPU — `Intel Xeon Processor (SapphireRapids)`, with AVX, AVX2 and AVX-512 all present — so there is nothing to override, and no QEMU arguments to pass.
 
@@ -496,7 +535,7 @@ What that crash is *not*, since each obvious explanation was tested and eliminat
 | `GLFW error 65542: WGL: The driver does not appear to support OpenGL` | Mesa DLLs missing beside the `javaw.exe` actually in use, or the MSVC Mesa build failed to load | copy the MinGW Mesa DLLs into every `javaw.exe` directory |
 | Game exits during resource loading with no Java exception, **local** | default `qemu64` CPU model | append `-cpu host` to `extra_args` |
 | Game exits during resource loading with `exitcode -2147024809`, **Fleet** | Mesa's default llvmpipe renderer | set `GALLIUM_DRIVER=softpipe` in the process that starts the launcher, and restart the launcher if it is already running |
-| `Permission denied: user policy: tool 'X' is not allowed` | cua-driver's YAML policy refuses that tool, which `list_tools()` advertises anyway on every driver released so far | use an allowed tool — `get_desktop_state` instead of `get_screen_size`, `list_windows` instead of `get_accessibility_tree` |
+| `Permission denied: user policy: tool 'X' is not allowed` | The guest's YAML policy refuses that tool; the recipe's guest advertised some denied tools in `list_tools()` | Check the policy and use an allowed tool; do not infer permission from the listing alone |
 | Model replies with empty output on the first call | endpoint is streaming-only | issue `stream=True` and rebuild with `litellm.stream_chunk_builder` |
 | Sandbox from `Image.from_registry()` never becomes ready | `os_type` defaults to `"linux"`, so a Windows disk gets BIOS instead of UEFI | pass `os_type="windows", kind="vm"` (needs cua-sandbox 0.3.3; before that, `dataclasses.replace()` on the result) |
 | `SSLError(1, '[SSL: WRONG_VERSION_NUMBER] wrong version number')` while pulling | the registry speaks plain HTTP; `oras` only speaks HTTPS | give the registry a certificate, and set `REQUESTS_CA_BUNDLE` for a self-signed one |

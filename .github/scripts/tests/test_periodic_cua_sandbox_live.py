@@ -142,7 +142,7 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             "Write controlled failure diagnostics",
             "persistent reconciled resources",
             "claim-only cleanup",
-            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
+            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}",
             "periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.suite }}",
             "cua-live-pool-warm-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
             "cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
@@ -211,9 +211,10 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
         )
         self.assertEqual(live["env"]["CUA_LIVE_E2E_EVENT"], "${{ github.event_name }}")
         self.assertEqual(live["env"]["CUA_LIVE_E2E_SUITE"], "${{ matrix.suite }}")
+        self.assertEqual(live["env"]["CUA_LIVE_E2E_SIGNED_URLS"], "true")
         self.assertEqual(
             live["env"]["CUA_LIVE_E2E_NAMESPACE"],
-            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
+            "cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}",
         )
         self.assertEqual(
             live["env"]["CUA_LIVE_E2E_POOL_WARM_NAMESPACE"],
@@ -223,12 +224,17 @@ class TestPeriodicCuaSandboxLive(unittest.TestCase):
             live["env"]["CUA_LIVE_E2E_POOL_COLD_NAMESPACE"],
             "cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}",
         )
+        self.assertIn("github.run_id", live["env"]["CUA_LIVE_E2E_NAMESPACE"])
+        for namespace_env in (
+            "CUA_LIVE_E2E_POOL_WARM_NAMESPACE",
+            "CUA_LIVE_E2E_POOL_COLD_NAMESPACE",
+        ):
+            self.assertNotIn("github.run_id", live["env"][namespace_env])
         for namespace_env in (
             "CUA_LIVE_E2E_NAMESPACE",
             "CUA_LIVE_E2E_POOL_WARM_NAMESPACE",
             "CUA_LIVE_E2E_POOL_COLD_NAMESPACE",
         ):
-            self.assertNotIn("github.run_id", live["env"][namespace_env])
             self.assertNotIn("github.run_attempt", live["env"][namespace_env])
 
         step_names = [step["name"] for step in live["steps"]]

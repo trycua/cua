@@ -93,6 +93,15 @@ pub fn screenshot_for_recording(window_id: Option<u64>, pid: Option<i64>) -> Scr
     }
 }
 
+/// Called on the dispatch task after scrolling has resolved the final point.
+/// Keep capture inside the lazy callback so private/unrecorded turns do no work.
+#[cfg(target_os = "windows")]
+pub(crate) fn capture_dispatch_click_target(window_id: u64, pid: u32, x: i32, y: i32) {
+    cua_driver_core::recording::capture_dispatch_click_target(window_id, i64::from(pid), || {
+        crate::capture::screenshot_window_click_target(window_id, x, y)
+    });
+}
+
 #[cfg(target_os = "windows")]
 pub fn app_state_json_for(window_id: Option<u64>, pid: Option<i64>) -> Option<Vec<u8>> {
     let pid = u32::try_from(pid?).ok()?;

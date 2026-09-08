@@ -37,6 +37,108 @@ use windows::Win32::Graphics::Gdi::{GetWindowDC, ReleaseDC};
 use windows::Win32::Storage::Xps::{PrintWindow, PRINT_WINDOW_FLAGS};
 const PW_RENDERFULLCONTENT: PRINT_WINDOW_FLAGS = PRINT_WINDOW_FLAGS(2u32);
 
+mod frame_geometry {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub(super) struct FrameGeometry {
+        pub left: i32,
+        pub top: i32,
+        pub width: i32,
+        pub height: i32,
+    }
+
+    impl FrameGeometry {
+        pub fn from_bounds((left, top, right, bottom): (i32, i32, i32, i32)) -> Option<Self> {
+            let width = right.checked_sub(left)?;
+            let height = bottom.checked_sub(top)?;
+            (width > 0 && height > 0).then_some(Self {
+                left,
+                top,
+                width,
+                height,
+            })
+        }
+
+        pub fn cropped(self, bounds: Option<(i32, i32, i32, i32)>) -> Self {
+            let crop = bounds.and_then(|(left, top, right, bottom)| {
+                Self::from_bounds((
+                    left.checked_add(1)?,
+                    top.checked_add(1)?,
+                    right.checked_sub(1)?,
+                    bottom.checked_sub(1)?,
+                ))
+            });
+            crop.filter(|crop| {
+                let x = i64::from(crop.left) - i64::from(self.left);
+                let y = i64::from(crop.top) - i64::from(self.top);
+                x >= 0
+                    && y >= 0
+                    && x + i64::from(crop.width) <= i64::from(self.width)
+                    && y + i64::from(crop.height) <= i64::from(self.height)
+            })
+            .unwrap_or(self)
+        }
+
+        pub fn local_point(self, x: i32, y: i32) -> Option<(f64, f64)> {
+            let x = i64::from(x) - i64::from(self.left);
+            let y = i64::from(y) - i64::from(self.top);
+            (x >= 0 && y >= 0 && x < i64::from(self.width) && y < i64::from(self.height))
+                .then_some((x as f64, y as f64))
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::FrameGeometry;
+
+        #[test]
+        fn dwm_crop_maps_screen_point_to_actual_frame() {
+            let frame = FrameGeometry::from_bounds((-100, 20, 300, 320)).unwrap();
+            let crop = frame.cropped(Some((-92, 20, 292, 312)));
+            assert_eq!(
+                crop,
+                FrameGeometry {
+                    left: -91,
+                    top: 21,
+                    width: 382,
+                    height: 290
+                }
+            );
+            assert_eq!(crop.local_point(-90, 22), Some((1.0, 1.0)));
+            assert_eq!(crop.local_point(291, 22), None);
+            assert_eq!(crop.local_point(-92, 22), None);
+            assert_eq!(crop.local_point(-90, 311), None);
+            assert_eq!(crop.local_point(-90, 20), None);
+        }
+
+        #[test]
+        fn failed_or_outside_crop_keeps_window_rect_origin() {
+            let frame = FrameGeometry::from_bounds((100, -200, 500, 100)).unwrap();
+            for bounds in [
+                None,
+                Some((0, 0, 100, 100)),
+                Some((100, -200, 600, 100)),
+                Some((100, -200, 101, -199)),
+            ] {
+                assert_eq!(frame.cropped(bounds), frame);
+            }
+            assert_eq!(frame.local_point(100, -200), Some((0.0, 0.0)));
+            assert_eq!(frame.local_point(499, 99), Some((399.0, 299.0)));
+        }
+
+        #[test]
+        fn extreme_bounds_and_points_do_not_overflow() {
+            assert_eq!(FrameGeometry::from_bounds((i32::MIN, 0, i32::MAX, 1)), None);
+            assert_eq!(FrameGeometry::from_bounds((0, 0, 1, 0)), None);
+            let frame = FrameGeometry::from_bounds((0, 0, 100, 100)).unwrap();
+            assert_eq!(frame.cropped(Some((i32::MAX, 0, i32::MIN, 100))), frame);
+            assert_eq!(frame.cropped(Some((i32::MIN, 0, i32::MAX, 100))), frame);
+            assert_eq!(frame.local_point(i32::MIN, i32::MAX), None);
+        }
+    }
+}
+
+use frame_geometry::FrameGeometry;
+
 /// After GetDIBits we have BGRA bytes from PrintWindow. If essentially every
 /// pixel is fully-transparent black or fully-opaque black, treat the capture
 /// as "PrintWindow didn't render this surface" and let the caller fall back
@@ -131,7 +233,7 @@ unsafe fn target_is_obscured(target: HWND) -> bool {
 /// by `hwnd`'s on-screen bounds. Works for UWP / WinUI3 / DirectComposition
 /// surfaces that PrintWindow can't reach, as long as the window is on-screen
 /// (the daemon's typical case — see module docs).
-unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)> {
+unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32, FrameGeometry)> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::GetWindowRect;
 
@@ -146,11 +248,10 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)
     let physical_left = rect.left;
     let physical_top = rect.top;
 
-    let w = rect.right - rect.left;
-    let h = rect.bottom - rect.top;
-    if w <= 0 || h <= 0 {
-        bail!("screen-region fallback: window has zero/negative bounds: {w}x{h}");
-    }
+    let geometry = FrameGeometry::from_bounds((rect.left, rect.top, rect.right, rect.bottom))
+        .ok_or_else(|| anyhow::anyhow!("screen-region fallback: invalid window bounds"))?;
+    let w = geometry.width;
+    let h = geometry.height;
 
     let screen_dc = GetDC(HWND(std::ptr::null_mut())); // NULL HWND → desktop DC
     let mem_dc = CreateCompatibleDC(screen_dc);
@@ -206,7 +307,7 @@ unsafe fn screenshot_via_screen_region(hwnd: HWND) -> Result<(Vec<u8>, i32, i32)
     if ok == 0 {
         bail!("screen-region fallback: GetDIBits returned 0");
     }
-    Ok((pixels, w, h))
+    Ok((pixels, w, h, geometry))
 }
 
 /// Capture a window by HWND, returning raw PNG bytes.
@@ -222,6 +323,25 @@ pub fn screenshot_window_bytes(hwnd: u64) -> Result<Vec<u8>> {
 /// user / LLM should attach an explicit warning. See `target_is_obscured`
 /// for the sampling heuristic.
 pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, bool)> {
+    screenshot_window_mapped(hwnd).map(|(png, occluded, _)| (png, occluded))
+}
+
+/// Capture the final input point against the exact source frame. WGC supplies
+/// no proven screen origin, so it cannot produce mapped click evidence yet.
+pub(crate) fn screenshot_window_click_target(
+    hwnd: u64,
+    screen_x: i32,
+    screen_y: i32,
+) -> Option<(Vec<u8>, f64, f64)> {
+    let (png, occluded, geometry) = screenshot_window_mapped(hwnd).ok()?;
+    if occluded {
+        return None;
+    }
+    let (x, y) = geometry?.local_point(screen_x, screen_y)?;
+    Some((png, x, y))
+}
+
+fn screenshot_window_mapped(hwnd: u64) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
     crate::dpi::check_owned_thread().map_err(anyhow::Error::msg)?;
     match unsafe { screenshot_window_bytes_with_occlusion_unsafe(hwnd) } {
         Ok(capture) => Ok(capture),
@@ -237,6 +357,7 @@ pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, boo
                 Ok((pixels, width, height)) => Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&pixels, width, height)?,
                     false,
+                    None,
                 )),
                 Err(wgc_error) => {
                     // Headless/virtualized Windows sessions can expose DWM but
@@ -246,13 +367,14 @@ pub fn screenshot_window_bytes_with_occlusion(hwnd: u64) -> Result<(Vec<u8>, boo
                     let target = HWND(hwnd as *mut _);
                     let occluded = unsafe { target_is_obscured(target) };
                     match unsafe { screenshot_via_screen_region(target) } {
-                        Ok((pixels, width, height)) => Ok((
+                        Ok((pixels, width, height, geometry)) => Ok((
                             cua_driver_core::image_utils::encode_bgra_to_png(
                                 &pixels,
                                 width as u32,
                                 height as u32,
                             )?,
                             occluded,
+                            Some(geometry),
                         )),
                         Err(screen_error) => Err(primary_error.context(format!(
                             "Windows.Graphics.Capture fallback failed: {wgc_error}; \
@@ -279,7 +401,9 @@ pub fn screenshot_window(hwnd: u64) -> Result<(String, u32, u32)> {
     Ok((BASE64.encode(&png_bytes), w, h))
 }
 
-unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Vec<u8>, bool)> {
+unsafe fn screenshot_window_bytes_with_occlusion_unsafe(
+    hwnd: u64,
+) -> Result<(Vec<u8>, bool, Option<FrameGeometry>)> {
     use windows::Win32::Foundation::RECT;
     use windows::Win32::UI::WindowsAndMessaging::{GetWindowRect, IsIconic};
 
@@ -325,6 +449,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
                 return Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w, h)?,
                     false, // WGC reads target's own pixels — never occluded by definition
+                    None,
                 ));
             }
             Err(e) => {
@@ -337,10 +462,11 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         }
         let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
-            Ok((pixels, w, h)) => {
+            Ok((pixels, w, h, geometry)) => {
                 return Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
                     occluded,
+                    Some(geometry),
                 ));
             }
             Err(e) => {
@@ -375,11 +501,11 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // matching the bitmap.
     let mut win_rect = RECT::default();
     GetWindowRect(hwnd, &mut win_rect)?;
-    let w = win_rect.right - win_rect.left;
-    let h = win_rect.bottom - win_rect.top;
-    if w <= 0 || h <= 0 {
-        bail!("Window has zero/negative size: {}x{}", w, h);
-    }
+    let geometry =
+        FrameGeometry::from_bounds((win_rect.left, win_rect.top, win_rect.right, win_rect.bottom))
+            .ok_or_else(|| anyhow::anyhow!("Window has invalid bounds"))?;
+    let w = geometry.width;
+    let h = geometry.height;
 
     let screen_dc = GetWindowDC(hwnd);
     let mem_dc = CreateCompatibleDC(screen_dc);
@@ -463,32 +589,23 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     // captured bitmap. A 1-px inset on each side removes the hairline
     // without losing actual UI content — anything that close to the
     // edge is window-frame chrome, not content.
-    const DWM_CROP_INSET_PX: i32 = 1;
-    let (pixels, w, h) = if let Some(dwm) = dwm_rect {
-        let off_x = (dwm.left - win_rect.left) as i32 + DWM_CROP_INSET_PX;
-        let off_y = (dwm.top - win_rect.top) as i32 + DWM_CROP_INSET_PX;
-        let crop_w = (dwm.right - dwm.left) as i32 - 2 * DWM_CROP_INSET_PX;
-        let crop_h = (dwm.bottom - dwm.top) as i32 - 2 * DWM_CROP_INSET_PX;
-        if off_x >= 0
-            && off_y >= 0
-            && crop_w > 0
-            && crop_h > 0
-            && off_x + crop_w <= w
-            && off_y + crop_h <= h
-        {
-            let stride_full = (w * 4) as usize;
-            let stride_crop = (crop_w * 4) as usize;
-            let mut cropped = vec![0u8; (crop_w * crop_h * 4) as usize];
-            for row in 0..crop_h as usize {
-                let src_row = (off_y as usize + row) * stride_full + (off_x as usize) * 4;
-                let dst_row = row * stride_crop;
-                cropped[dst_row..dst_row + stride_crop]
-                    .copy_from_slice(&pixels[src_row..src_row + stride_crop]);
-            }
-            (cropped, crop_w, crop_h)
-        } else {
-            (pixels, w, h)
+    let cropped_geometry =
+        geometry.cropped(dwm_rect.map(|dwm| (dwm.left, dwm.top, dwm.right, dwm.bottom)));
+    let (pixels, w, h) = if cropped_geometry != geometry {
+        let off_x = cropped_geometry.left - geometry.left;
+        let off_y = cropped_geometry.top - geometry.top;
+        let crop_w = cropped_geometry.width;
+        let crop_h = cropped_geometry.height;
+        let stride_full = (w * 4) as usize;
+        let stride_crop = (crop_w * 4) as usize;
+        let mut cropped = vec![0u8; (crop_w * crop_h * 4) as usize];
+        for row in 0..crop_h as usize {
+            let src_row = (off_y as usize + row) * stride_full + (off_x as usize) * 4;
+            let dst_row = row * stride_crop;
+            cropped[dst_row..dst_row + stride_crop]
+                .copy_from_slice(&pixels[src_row..src_row + stride_crop]);
         }
+        (cropped, crop_w, crop_h)
     } else {
         (pixels, w, h)
     };
@@ -500,12 +617,14 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     //      not covered).
     // The WGC-first ordering covers backgrounded UWP targets the
     // screen-region path mishandles (returns covering window's pixels).
-    if is_mostly_black_bgra(&pixels) {
+    let mostly_black = is_mostly_black_bgra(&pixels);
+    if mostly_black {
         match crate::wgc::screenshot_window_via_wgc(hwnd_raw) {
             Ok((alt_pixels, w, h)) => {
                 return Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(&alt_pixels, w, h)?,
                     false,
+                    None,
                 ));
             }
             Err(e) => {
@@ -518,7 +637,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
         }
         let occluded = target_is_obscured(hwnd);
         match screenshot_via_screen_region(hwnd) {
-            Ok((alt_pixels, alt_w, alt_h)) => {
+            Ok((alt_pixels, alt_w, alt_h, geometry)) => {
                 return Ok((
                     cua_driver_core::image_utils::encode_bgra_to_png(
                         &alt_pixels,
@@ -526,6 +645,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
                         alt_h as u32,
                     )?,
                     occluded,
+                    Some(geometry),
                 ));
             }
             Err(e) => {
@@ -553,6 +673,7 @@ unsafe fn screenshot_window_bytes_with_occlusion_unsafe(hwnd: u64) -> Result<(Ve
     Ok((
         cua_driver_core::image_utils::encode_bgra_to_png(&pixels, w as u32, h as u32)?,
         false,
+        (!mostly_black).then_some(cropped_geometry),
     ))
 }
 
@@ -660,4 +781,32 @@ pub fn crosshair_png_bytes(png_bytes: &[u8], cx: f64, cy: f64) -> Result<Vec<u8>
 /// the `_pub` export; the public alias is what callers use today.
 pub fn png_dimensions_pub(data: &[u8]) -> Result<(u32, u32)> {
     cua_driver_core::image_utils::png_dimensions(data)
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod dpi_admission_tests {
+    use super::*;
+    use std::sync::Arc;
+
+    #[test]
+    fn mapped_capture_and_click_evidence_refuse_failed_dpi_owner() {
+        // Isolate the injected terminal failure from other test workers.
+        std::thread::spawn(|| {
+            let owner = Arc::new(crate::dpi::OwnedThreadDpi::new(Arc::new(|| {
+                Err("mapped capture DPI rejection".into())
+            })));
+            owner.initialize_current_thread();
+            // An invalid HWND must never reach native capture or fallback:
+            // both public window capture and click evidence share this gate.
+            let mapped = screenshot_window_mapped(0).unwrap_err().to_string();
+            let window = screenshot_window_bytes_with_occlusion(0)
+                .unwrap_err()
+                .to_string();
+            assert!(mapped.contains("mapped capture DPI rejection"));
+            assert!(window.contains("mapped capture DPI rejection"));
+            assert!(screenshot_window_click_target(0, 0, 0).is_none());
+        })
+        .join()
+        .unwrap();
+    }
 }

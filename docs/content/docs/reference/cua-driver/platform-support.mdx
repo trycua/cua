@@ -42,14 +42,14 @@ Browser mutation always starts from an exact native `(pid, window_id)` binding.
 The table records the strongest browser route currently proven by the Rust
 harnesses; an unlisted trust class or host shape is not implied.
 
-| Surface | Proven page routes | Explicit limit |
-| --- | --- | --- |
-| Standalone Chrome and Edge on Windows | Snapshot, navigation, ref-bound typing, trusted background click, explicit DOM click and pointer actions, JavaScript dialogs, file assignment, approved downloads, frames, multi-tab, and exact ambiguity refusal | Elevated-integrity and unsupported native-host relationships still refuse |
-| Standalone Chrome on macOS | Snapshot, navigation, ref-bound typing, explicit DOM click and pointer actions, JavaScript dialogs, file assignment, approved downloads, frames, multi-tab, and exact ambiguity refusal | Trusted CDP pointer input returns `browser_input_trust_unavailable` before dispatch |
-| Standalone Chrome and Edge on Linux X11 | Snapshot, navigation, ref-bound typing, explicit DOM click and pointer actions, foreground JavaScript-dialog resolution, file assignment, approved downloads, frames, multi-tab, and exact ambiguity refusal | Trusted CDP pointer input and background JavaScript-dialog resolution return `browser_input_trust_unavailable` before dispatch |
-| Electron on Windows, macOS, X11, and validated Sway | Typed mutation while one proven native window maps to one CDP page | A second page or native window invalidates the bounded exact route |
-| Tauri, WKWebView, WebKitGTK, and common split-process WebView2 | Browser identity plus a side-effect-free structured refusal | No exact native-host-to-engine relationship is currently proven |
-| Safari and Firefox | Native discovery and native AX/PX fallbacks | No typed browser mutation engine is currently advertised |
+| Surface                                                        | Proven page routes                                                                                                                                                                                                | Explicit limit                                                                                                                 |
+| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| Standalone Chrome and Edge on Windows                          | Snapshot, navigation, ref-bound typing, trusted background click, explicit DOM click and pointer actions, JavaScript dialogs, file assignment, approved downloads, frames, multi-tab, and exact ambiguity refusal | Elevated-integrity and unsupported native-host relationships still refuse                                                      |
+| Standalone Chrome on macOS                                     | Snapshot, navigation, ref-bound typing, explicit DOM click and pointer actions, JavaScript dialogs, file assignment, approved downloads, frames, multi-tab, and exact ambiguity refusal                           | Trusted CDP pointer input returns `browser_input_trust_unavailable` before dispatch                                            |
+| Standalone Chrome and Edge on Linux X11                        | Snapshot, navigation, ref-bound typing, explicit DOM click and pointer actions, foreground JavaScript-dialog resolution, file assignment, approved downloads, frames, multi-tab, and exact ambiguity refusal      | Trusted CDP pointer input and background JavaScript-dialog resolution return `browser_input_trust_unavailable` before dispatch |
+| Electron on Windows, macOS, X11, and validated Sway            | Typed mutation while one proven native window maps to one CDP page                                                                                                                                                | A second page or native window invalidates the bounded exact route                                                             |
+| Tauri, WKWebView, WebKitGTK, and common split-process WebView2 | Browser identity plus a side-effect-free structured refusal                                                                                                                                                       | No exact native-host-to-engine relationship is currently proven                                                                |
+| Safari and Firefox                                             | Native discovery and native AX/PX fallbacks                                                                                                                                                                       | No typed browser mutation engine is currently advertised                                                                       |
 
 `browser_prepare` may launch a separate driver-owned Chromium profile after an
 approved destructive call. `isolated_new` processes and their complete child
@@ -72,14 +72,83 @@ Linux support is recorded per window system and Wayland compositor. "Wayland"
 is not one uniform automation API: compositors expose different discovery,
 capture, activation, and input protocols.
 
-| Environment                     | State                 | What is proven                                                                                                                                                                                    | Main limits                                                                                                                                                                                                                                                |
-| ------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| X11/Xorg                        | Supported             | Window discovery and capture, AT-SPI trees and actions, foreground pointer and keyboard input, semantic background delivery, desktop scope, and structured refusals                               | Raw background delivery depends on the target toolkit. X11 accepting an event does not prove the application handled it.                                                                                                                                   |
-| Sway (wlroots reference lane)   | Supported with limits | The complete typed Electron, Tauri, GTK, capture, and desktop-scope catalog, including foreground/background and AX/PX outcomes                                                                    | Focus-bound and raw background input shapes without a target-addressed protocol return structured refusals. Other wlroots compositors are expected to share protocol support but are not yet proven.                                                       |
-| GNOME/Mutter                    | Supported with limits | AT-SPI actions, GTK controls, compositor-backed window geometry and capture, verified foreground activation, and portal/libei foreground input                                                    | The bundled WinRects Shell helper and one Shell-session restart are prerequisites for authoritative geometry and activation. Portal video recording remains incomplete.                                                                                    |
-| KDE/KWin                        | Experimental          | Plasma 6 session startup, GTK AT-SPI discovery, generic discovery where exposed, and portal interface availability                                                                                | cua-driver does not yet have a target-addressable KWin activation adapter, and no complete behavioral matrix is accepted. Focus-bound input refuses rather than risking delivery to the wrong application.                                                  |
-| `cua-compositor` nested session | Experimental          | Native GTK behavior, capture and scope, private route metadata, independent observation, and per-cell video                                                                                       | The complete shared renderer matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability.                                                                              |
-| XWayland                        | Supported with limits | X11 routes are used when the application exposes a real X11 window; native Wayland and AT-SPI fallbacks cover mixed sessions                                                                      | Capabilities depend on whether the application is actually using X11 or native Wayland.                                                                                                                                                                    |
+For the relationship between distributions, desktops, and compositors, read
+[Linux desktops and computer use](/concepts/linux-desktops-and-computer-use).
+
+| Environment                     | State                 | What is proven                                                                                                                                                      | Main limits                                                                                                                                                                                                               |
+| ------------------------------- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| X11/Xorg                        | Supported             | Window discovery and capture, AT-SPI trees and actions, foreground pointer and keyboard input, semantic background delivery, desktop scope, and structured refusals | Raw background delivery depends on the target toolkit. X11 accepting an event does not prove the application handled it.                                                                                                  |
+| Sway (wlroots reference lane)   | Supported with limits | The complete typed Electron, Tauri, GTK, capture, and desktop-scope catalog, including foreground/background and AX/PX outcomes                                     | Focus-bound and raw background input shapes without a target-addressed protocol return structured refusals. Other wlroots compositors are expected to share protocol support but are not yet proven.                      |
+| Hyprland / Omarchy              | Experimental          | [Qualified isolated input released in 0.24.0](#hyprland-and-omarchy), with separate native-harness and bounded app evidence; not general Hyprland support | Do not inherit Sway coverage. The default plugin build is discovery-only. The separate opt-in input v3 plugin is limited to the qualified applications and exact compositor ABI/toolchain. |
+| GNOME/Mutter                    | Supported with limits | AT-SPI actions, GTK controls, compositor-backed window geometry and capture, verified foreground activation, and portal/libei foreground input                      | The bundled WinRects Shell helper and one Shell-session restart are prerequisites for authoritative geometry and activation. Portal video recording remains incomplete.                                                   |
+| KDE/KWin                        | Experimental          | Plasma 6 session startup, GTK AT-SPI discovery, generic discovery where exposed, and portal interface availability                                                  | The optional KWin helper exposes read-only window identity and state, not activation or input. Raw target-addressed input refuses until a target-bound KWin input path exists; no complete behavioral matrix is accepted. |
+| `cua-compositor` nested session | Experimental          | Native GTK behavior, capture and scope, private route metadata, independent observation, and per-cell video                                                         | The complete shared renderer matrix is not accepted. Unicode text and a canonical parallel-drag row remain unproven; this route does not establish a stock-Wayland capability.                                            |
+| XWayland                        | Supported with limits | X11 routes are used when the application exposes a real X11 window; native Wayland and AT-SPI fallbacks cover mixed sessions                                        | Capabilities depend on whether the application is actually using X11 or native Wayland.                                                                                                                                   |
+
+### Hyprland and Omarchy
+
+Omarchy uses Hyprland; it is not a separate display protocol. Modern Hyprland
+is not based on wlroots, so its support must be recorded separately from Sway.
+
+The following records source-work history and release status as of September 7,
+2026. It is not certification of every installer, image, or host configuration:
+
+| Work                           | Evidence and boundary                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Driver capture and observation | [Merged PR #3557](https://github.com/trycua/cua/pull/3557) reports scale-1 GTK3 capture, semantic actions, and independent focus/cursor checks at source `b50a4f78f277d05700200e84c5d0f0ea72f10c47`. That candidate's canonical native suite stopped at the foreground-key preflight; no matrix cells ran. This is historical focused evidence, not desktop certification or released support. |
+| Optional Hyprland plugin       | [Merged PR #3547](https://github.com/trycua/cua/pull/3547) adds discovery and liveness only. Its [validation report](https://github.com/trycua/cua/blob/7c58a4d5b078b81f657d8e7e906712f8e3a96148/libs/cua-driver/hyprland-plugin/tests/validation.md) records native build and live lifecycle evidence on Hyprland `0.56.2`. All six input message types return `background_unavailable`; the foundation creates no synthetic seat and changes no Driver delivery route. |
+| Isolated raw background input  | [Merged PR #3572](https://github.com/trycua/cua/pull/3572) records dated, exact-source validation results for the experimental input v3 candidate, using Driver's shared per-action policy and two independent compositor seats. Complete native harness acceptance and bounded qualified-app proof are separate requirements. Earlier [desktop-transition evidence](https://github.com/trycua/cua/blob/e8542dece6c8195a8db50ba79aba9615a78340b1/libs/cua-driver/hyprland-plugin/tests/desktop-state-validation.md) belongs to the separate signed experiment. The qualified feature shipped in [Cua Driver 0.24.0](https://github.com/trycua/cua/releases/tag/cua-driver-rs-v0.24.0); its separate plugin assets retain the stated application and ABI/toolchain limits. |
+
+The plugin is disabled by default and outside the portable driver installation
+path. Switching driver channels alone does not install or enable it. Its
+Hyprland ABI and compiler toolchain must match the compositor that loads it.
+
+The v3 input plugin adds no Omarchy-specific approval panel or external signer.
+Driver applies its normal permission, resource, and lifecycle checks on every
+action. Same-user local sockets and application qualification do not sandbox
+native code running as the desktop user. The two seats, `Cua-Agent` and
+`Cua-Agent-2`, persist across configuration disable/re-enable; replacing the
+plugin requires a desktop restart.
+
+The initial native application qualification scope is Calc from
+`libreoffice-fresh 26.2.5-3` and Inkscape `1.4.4-6`. Driver checks the running
+executable against the expected package path and exact local package metadata
+before each action. Those checks establish eligibility for isolated input, not
+proof that every application operation works. The plugin requires a live native
+surface and the exact compiled default `evdev`/`pc105`/`us` keymap. Variants,
+options, remaps, multiple layout groups, Unicode, IME input, arbitrary held-key
+streams, and modified pointer gestures are outside the qualified contract. Chromium,
+Electron, and XWayland raw background input are also outside this scope.
+Semantic AT-SPI actions retain their separate behavior.
+
+The explicitly requested foreground route binds an exact native top-level
+surface and intentionally changes primary focus and, for pointer actions,
+cursor position. It does not restore either. The canonical native harness
+covers defined GTK3, Electron, and Tauri foreground cases; background refusals
+never select this route automatically.
+
+Bounded instrumented two-seat app proof and an uninstrumented smoke are retained
+from source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`, with an unchanged
+plugin tree and uninstrumented module hash at
+`1133a06e4f205cf80188a7ac9e41102f37611fea`. This evidence covers only the
+recorded actions and observation intervals. It does not replace acceptance of
+the unchanged complete Linux canonical runner on native Hyprland.
+
+Unsupported targets and desktop states refuse. The plugin does not silently
+switch to foreground input, wake a display, or unlock a session. A dispatch
+acknowledgement does not prove an application effect; canceled, partial, or
+unknown actions must not be replayed automatically.
+
+The recorded plugin Fleet environment used Omarchy `4.0.1-1` and Cua Driver
+`0.22.2`. It does not certify the separate physical-host acceptance target of
+Omarchy `4.0.2-1` with Cua Driver `0.23.2`. The candidate source also reports
+`0.23.2`, but published Driver `0.23.2` does not contain these branch changes.
+Source evidence, compatible release artifacts, and final Fleet image packaging
+and lifecycle validation are separate gates. Physical-host parity requires a
+separate acceptance run; it is not a gate for publishing a validated Fleet
+image. See the
+[Hyprland roadmap](/reference/cua-driver/platform-roadmap#hyprland-and-omarchy)
+for the remaining design and validation gates.
 
 ### Wayland background AX and PX
 

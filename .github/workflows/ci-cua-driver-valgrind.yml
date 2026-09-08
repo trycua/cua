@@ -1,0 +1,70 @@
+name: "CI: cua-driver Valgrind"
+
+on:
+  pull_request:
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "scripts/ci/linux/run-valgrind-e2e.py"
+      - "scripts/ci/linux/test_run_valgrind_e2e.py"
+      - ".github/workflows/ci-cua-driver-valgrind.yml"
+  push:
+    branches: [main]
+    paths:
+      - "libs/cua-driver/rust/**"
+      - "scripts/ci/linux/run-valgrind-e2e.py"
+      - "scripts/ci/linux/test_run_valgrind_e2e.py"
+      - ".github/workflows/ci-cua-driver-valgrind.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-cua-driver-valgrind-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  memcheck:
+    name: Driver server E2E Memcheck
+    # Memcheck results depend on the image's valgrind/glibc pairing, so pin
+    # the runner instead of tracking ubuntu-latest migrations.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e # v6
+      # Keep in sync with libs/cua-driver/rust/rust-toolchain.toml; the action
+      # exports RUSTUP_TOOLCHAIN, which outranks the toolchain file.
+      - uses: dtolnay/rust-toolchain@1.97.1
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+      - name: Test Valgrind runner shutdown
+        run: python3 -m unittest -v scripts/ci/linux/test_run_valgrind_e2e.py
+      - name: Install Linux build and Memcheck dependencies
+        run: |
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
+            valgrind xvfb xauth dbus-x11 clang pkg-config libdbus-1-dev \
+            libpipewire-0.3-dev libspa-0.2-dev libei-dev libxkbcommon-dev \
+            libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Build cua-driver
+        working-directory: libs/cua-driver/rust
+        run: cargo build --locked -p cua-driver --features cua-driver/portal-input
+      - name: Run server E2E under Memcheck
+        env:
+          CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"
+          CUA_DRIVER_RS_UPDATE_CHECK: "false"
+          NO_AT_BRIDGE: "1"
+          CUA_VALGRIND_ARTIFACT_DIR: ${{ runner.temp }}/cua-driver-valgrind
+        run: dbus-run-session -- xvfb-run -a uv run --script scripts/ci/linux/run-valgrind-e2e.py libs/cua-driver/rust/target/debug/cua-driver
+      - name: Upload Memcheck diagnostics
+        if: failure()
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: cua-driver-valgrind-${{ github.run_id }}
+          path: ${{ runner.temp }}/cua-driver-valgrind
+          if-no-files-found: warn

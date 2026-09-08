@@ -71,18 +71,19 @@ pub const STALE_TOKEN_ERROR: &str =
     "element_token is stale; call get_window_state again to refresh";
 
 /// One valid snapshot retained in the per-pid LRU.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 struct SnapshotEntry {
     /// Monotonic, process-global id assigned by [`mint_snapshot_id`].
     snapshot_id: u32,
     /// The window the snapshot was taken against. Resolution returns
     /// this so tools can verify the caller's `window_id` arg matches —
     /// a token-only call doesn't have to pass window_id at all.
-    window_id: u32,
+    window_id: u64,
     /// Maximum element_index that was assigned in this snapshot. The
     /// resolver rejects out-of-range tokens up-front instead of waiting
     /// for the per-platform cache to NPE.
     max_element_index: usize,
+    indices: Option<std::collections::HashSet<usize>>,
 }
 
 /// Process-global token registry. Thread-safe; tools resolve from any
@@ -115,6 +116,36 @@ impl TokenRegistry {
     /// in its lane, the oldest is evicted and any token that referenced
     /// it becomes stale — that's the contract.
     pub fn register_snapshot(&self, pid: i32, window_id: u32, element_count: usize) -> u32 {
+        self.register_snapshot_wide(pid, u64::from(window_id), element_count)
+    }
+
+    /// Preserve full native identities on platforms with 64-bit window IDs.
+    /// The token format is unchanged; only the server-side binding is wider.
+    pub fn register_snapshot_wide(&self, pid: i32, window_id: u64, element_count: usize) -> u32 {
+        self.register_snapshot_entry(pid, window_id, element_count, None)
+    }
+
+    /// Window-scoped AT-SPI snapshots retain application-wide (sparse) indices.
+    /// Bind exactly the emitted indices instead of treating the count as a range.
+    pub fn register_snapshot_indices(&self, pid: i32, window_id: u64, indices: &[usize]) -> u32 {
+        self.register_snapshot_entry(
+            pid,
+            window_id,
+            indices
+                .iter()
+                .max()
+                .map_or(0, |index| index.saturating_add(1)),
+            Some(indices.iter().copied().collect()),
+        )
+    }
+
+    fn register_snapshot_entry(
+        &self,
+        pid: i32,
+        window_id: u64,
+        element_count: usize,
+        indices: Option<std::collections::HashSet<usize>>,
+    ) -> u32 {
         // Keep the full 32-bit counter. Truncating to 16 bits repeats an id
         // every 65,536 process-global snapshots. A long-lived daemon can then
         // mint an id that still exists in another runtime/pid lane, allowing a
@@ -132,6 +163,7 @@ impl TokenRegistry {
             snapshot_id: id,
             window_id,
             max_element_index: element_count.saturating_sub(1),
+            indices,
         });
         // Evict oldest. The loop guards against pre-existing over-cap
         // state from a previous version of the binary; in steady state
@@ -154,6 +186,14 @@ impl TokenRegistry {
     /// - `"element_token element_index out of range"` — the index in
     ///   the token is past the max recorded for the snapshot.
     pub fn resolve(&self, pid: i32, token: &str) -> Result<(u32, usize), String> {
+        let (window, index) = self.resolve_wide(pid, token)?;
+        let window = u32::try_from(window).map_err(|_| {
+            "element_token window does not fit this platform's native ID".to_owned()
+        })?;
+        Ok((window, index))
+    }
+
+    pub fn resolve_wide(&self, pid: i32, token: &str) -> Result<(u64, usize), String> {
         let (sid, idx) =
             parse_token(token).ok_or_else(|| "element_token has invalid format".to_string())?;
         let runtime_scope = current_runtime_scope();
@@ -179,7 +219,12 @@ impl TokenRegistry {
                 STALE_TOKEN_ERROR.to_owned()
             }
         })?;
-        if idx > entry.max_element_index {
+        if idx > entry.max_element_index
+            || entry
+                .indices
+                .as_ref()
+                .is_some_and(|indices| !indices.contains(&idx))
+        {
             return Err(format!(
                 "element_token element_index {idx} out of range (snapshot had {} elements)",
                 entry.max_element_index + 1
@@ -193,6 +238,17 @@ impl TokenRegistry {
         let before = entries.len();
         entries.retain(|(scope, _), _| scope != runtime_scope);
         before - entries.len()
+    }
+
+    pub fn invalidate_window(&self, pid: i32, window_id: u64) {
+        if let Some(lane) = self
+            .by_runtime_and_pid
+            .lock()
+            .unwrap()
+            .get_mut(&(current_runtime_scope(), pid))
+        {
+            lane.retain(|entry| entry.window_id != window_id);
+        }
     }
 
     /// Build the canonical token string for `snapshot_id` / `element_index`.
@@ -311,7 +367,7 @@ pub fn token_for(snapshot_id: u32, element_index: usize) -> String {
 /// Result of validating an `element_token` or snapshot-bound `element_index`
 /// on a tool call's args. Returned by [`resolve_element_args`].
 #[derive(Debug, Clone)]
-pub enum ResolvedElement {
+pub enum ResolvedElement<WindowId = u32> {
     /// Neither `element_token` nor `element_index` was supplied — the
     /// tool should fall through to its non-element addressing mode
     /// (typically pixel `x, y`) or error.
@@ -320,7 +376,7 @@ pub enum ResolvedElement {
     /// through the snapshot registry, so `window_id` is always present. The
     /// optional shape remains temporarily to avoid duplicating tool plumbing.
     Element {
-        window_id: Option<u32>,
+        window_id: Option<WindowId>,
         element_index: usize,
         /// True when the caller supplied a token and we resolved
         /// through the registry — informational, used by tools that
@@ -357,6 +413,43 @@ pub fn resolve_element_args(
     args_window_id: Option<u32>,
     tool_name: &str,
 ) -> Result<ResolvedElement, crate::protocol::ToolResult> {
+    match resolve_element_args_wide(
+        pid,
+        args_element_index,
+        args_element_token,
+        args_snapshot_id,
+        args_window_id.map(u64::from),
+        tool_name,
+    )? {
+        ResolvedElement::None => Ok(ResolvedElement::None),
+        ResolvedElement::Element {
+            window_id,
+            element_index,
+            via_token,
+        } => {
+            let window_id = window_id.map(u32::try_from).transpose().map_err(|_| {
+                crate::protocol::ToolResult::error(
+                    "element_token window does not fit this platform's native ID",
+                )
+            })?;
+            Ok(ResolvedElement::Element {
+                window_id,
+                element_index,
+                via_token,
+            })
+        }
+    }
+}
+
+/// The same target validation without narrowing a platform's native ID.
+pub fn resolve_element_args_wide(
+    pid: i32,
+    args_element_index: Option<usize>,
+    args_element_token: Option<&str>,
+    args_snapshot_id: Option<&str>,
+    args_window_id: Option<u64>,
+    tool_name: &str,
+) -> Result<ResolvedElement<u64>, crate::protocol::ToolResult> {
     let refusal = |code: &str, message: String| {
         crate::protocol::ToolResult::error(message.clone()).with_structured(serde_json::json!({
             "status": "refused",
@@ -364,7 +457,7 @@ pub fn resolve_element_args(
         }))
     };
     let resolve_token = |tok: &str| {
-        let (wid, idx) = global().resolve(pid, tok).map_err(|message| {
+        let (wid, idx) = global().resolve_wide(pid, tok).map_err(|message| {
             let code = if message.contains("another runtime generation") {
                 "generation_mismatch"
             } else if message == STALE_TOKEN_ERROR {
@@ -549,6 +642,55 @@ mod tests {
         let s2 = reg.register_snapshot(pid, 2, 5);
         assert_eq!(reg.resolve(pid, &format_token(s1, 0)).unwrap().0, 1);
         assert_eq!(reg.resolve(pid, &format_token(s2, 0)).unwrap().0, 2);
+    }
+
+    #[test]
+    fn wide_window_ids_with_equal_low_words_remain_distinct() {
+        let reg = fresh_registry();
+        let a = 0x100000010;
+        let b = 0x200000010;
+        let sa = reg.register_snapshot_wide(42, a, 3);
+        let sb = reg.register_snapshot_wide(42, b, 3);
+        assert_eq!(reg.resolve_wide(42, &format_token(sa, 1)).unwrap(), (a, 1));
+        assert_eq!(reg.resolve_wide(42, &format_token(sb, 1)).unwrap(), (b, 1));
+        assert!(reg.resolve(42, &format_token(sa, 1)).is_err());
+    }
+
+    #[test]
+    fn sparse_window_indices_are_not_replaced_by_a_count_range() {
+        let reg = fresh_registry();
+        let sid = reg.register_snapshot_indices(42, 0x100000010, &[10, 13]);
+        assert!(reg.resolve_wide(42, &format_token(sid, 10)).is_ok());
+        assert!(reg.resolve_wide(42, &format_token(sid, 13)).is_ok());
+        assert!(reg.resolve_wide(42, &format_token(sid, 0)).is_err());
+        assert!(reg.resolve_wide(42, &format_token(sid, 11)).is_err());
+        reg.invalidate_window(42, 0x100000010);
+        assert!(reg.resolve_wide(42, &format_token(sid, 10)).is_err());
+    }
+
+    #[test]
+    fn wide_token_rejects_same_low_word_explicit_window() {
+        let pid = 0x7fff_0010;
+        let sid = global().register_snapshot_wide(pid, 0x100000010, 3);
+        let token = format_token(sid, 1);
+        let resolved =
+            resolve_element_args_wide(pid, None, Some(&token), None, None, "click").unwrap();
+        assert!(matches!(
+            resolved,
+            ResolvedElement::Element {
+                window_id: Some(0x100000010),
+                ..
+            }
+        ));
+        assert!(resolve_element_args_wide(
+            pid,
+            None,
+            Some(&token),
+            None,
+            Some(0x200000010),
+            "click"
+        )
+        .is_err());
     }
 
     #[test]

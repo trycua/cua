@@ -74,10 +74,14 @@ func ChatRoutePolicy() Node {
 }
 
 // BillingRoutePolicy guards the Stripe-hosted billing browser routes. Its module
-// matches a prefix rather than three literals, so a billing route added to
+// matches a prefix rather than individual literals, so a billing route added to
 // main.go and bound here is covered without a policy change.
 func BillingRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-billing", "data.authz_billing.allow"))
+}
+
+func UsageRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-usage", "data.authz_usage.allow"))
 }
 
 // NamespaceOwnershipPolicy is the tenancy boundary for routes that name a
@@ -157,24 +161,43 @@ func SvcRoutePolicy() Node {
 	)
 }
 
+func SignedServiceURLsRoutePolicy() Node {
+	return All(
+		BasePolicy(),
+		surfaceLeaf("authz-signed-service-urls", "data.authz_signed_service_urls.allow"),
+		NamespaceOwnershipPolicy(),
+	)
+}
+
 // StateQueryRoutePolicy guards /api/state/query.
 func StateQueryRoutePolicy() Node {
 	return All(BasePolicy(), surfaceLeaf("authz-state-query", "data.authz_state_query.allow"))
 }
 
-const billingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+const BillingSetupRequiredMessage = "A payment method is required to create this resource. Add one in Billing and try again."
+
+// FeatureFlagsRoutePolicy guards the admin-only feature-flag management API.
+func FeatureFlagsRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-feature-flags", "data.authz_feature_flags.allow"))
+}
+
+func AccountLookupRoutePolicy() Node {
+	return All(BasePolicy(), surfaceLeaf("authz-account-lookup", "data.authz_account_lookup.allow"))
+}
 
 // K8sRoutePolicy guards /api/k8s/{path...}. It is the same base + surface shape
-// as every other route, with two admission conjuncts: card-or-admin admission
-// for custom-resource creation, and pool admission over the request body.
+// as every other route, with three admission conjuncts: card-or-admin admission
+// for custom-resource creation, pool admission over the request body, and
+// sandbox-services admission over the body of the one Sandbox write the
+// allowlist admits.
 //
-// Every conjunct must pass. The pool-admission leaf reads the raw body (bounded at 1 MiB)
-// to inspect the object being created or patched, which is why it names
-// pool_admission.rego alongside authz.rego — pool_admission imports
-// data.authz.is_admin. It stays a separate leaf rather than rules inside
-// authz_k8s.rego because it is the only thing on this surface that needs the
-// body, and folding it in would put every k8s request's verdict behind a body
-// read.
+// Every conjunct must pass. The two body-reading leaves read the raw body
+// (bounded at 1 MiB) to inspect the object being created or patched, which is
+// why pool admission names pool_admission.rego alongside authz.rego —
+// pool_admission imports data.authz.is_admin. They stay separate leaves rather
+// than rules inside authz_k8s.rego because they are the only things on this
+// surface that need the body, and folding them in would put every k8s
+// request's verdict behind a body read.
 func CustomResourceCreationAdmissionPolicy() Node {
 	leaf := func(query string, options ...PolicyOption) Node {
 		return Policy(
@@ -196,11 +219,30 @@ func CustomResourceCreationAdmissionPolicy() Node {
 	)
 }
 
+// ServiceWriteNotSupportedMessage is the 403 body for a direct write to core
+// Services through /api/k8s — the obvious but unsupported way to expose a new
+// port on a sandbox. The allowlist denies these writes either way; this
+// message exists so the denial names the supported alternative instead of
+// reading as an unexplained policy defect.
+const ServiceWriteNotSupportedMessage = "creating or modifying Kubernetes Services directly is not supported. Declare the port under spec.vmTemplate.services on the pool template, or PATCH spec.vmTemplate.services on your bound OSGymSandbox to expose it on a running sandbox; the matching Service is created for you."
+
+// SandboxPatchRestrictedMessage is the 403 body when a Sandbox PATCH body
+// strays outside the one field clients may write.
+const SandboxPatchRestrictedMessage = "a sandbox PATCH may only modify spec.vmTemplate.services (an optional metadata.resourceVersion precondition is also accepted)"
+
 func K8sRoutePolicy() Node {
 	return All(
 		BasePolicy(),
+		// Before the allow leaf on purpose: All's fold short-circuits on the
+		// first denying child and keeps ITS reason, so this Because only
+		// reaches the response when it is the first conjunct to deny — which,
+		// placed here, is every direct core-Services write and nothing else.
+		Because(
+			surfaceLeaf("authz-k8s", "data.authz_k8s.not_direct_service_write"),
+			ServiceWriteNotSupportedMessage,
+		),
 		surfaceLeaf("authz-k8s", "data.authz_k8s.allow"),
-		Because(CustomResourceCreationAdmissionPolicy(), billingSetupRequiredMessage),
+		Because(CustomResourceCreationAdmissionPolicy(), BillingSetupRequiredMessage),
 		Policy(
 			Modules(
 				Registered("authz"),
@@ -208,6 +250,14 @@ func K8sRoutePolicy() Node {
 			),
 			Query("data.pool_admission.allow"),
 			WithRawBody(1<<20),
+		),
+		Because(
+			Policy(
+				Registered("sandbox-services-admission"),
+				Query("data.sandbox_services_admission.allow"),
+				WithRawBody(1<<20),
+			),
+			SandboxPatchRestrictedMessage,
 		),
 	)
 }
@@ -237,18 +287,24 @@ type surfacePolicy struct {
 	options []MiddlewareOption
 }
 
+const featureFlagAuditBodyLimit = 64 << 10
+
 // surfacePolicies is every surface, by name. A surface owning no route fails
 // TestEveryPolicySurfaceOwnsARoute; a route naming no surface cannot start.
 var surfacePolicies = map[string]surfacePolicy{
-	"keys":         {tree: KeysRoutePolicy},
-	"config":       {tree: ConfigRoutePolicy},
-	"chat":         {tree: ChatRoutePolicy},
-	"billing":      {tree: BillingRoutePolicy},
-	"namespaces":   {tree: NamespacesRoutePolicy},
-	"github-trust": {tree: GitHubTrustRoutePolicy},
-	"user-keys":    {tree: UserKeysRoutePolicy},
-	"svc":          {tree: SvcRoutePolicy},
-	"state-query":  {tree: StateQueryRoutePolicy},
+	"account-lookup":      {tree: AccountLookupRoutePolicy, options: []MiddlewareOption{WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
+	"keys":                {tree: KeysRoutePolicy},
+	"config":              {tree: ConfigRoutePolicy},
+	"chat":                {tree: ChatRoutePolicy},
+	"billing":             {tree: BillingRoutePolicy},
+	"usage":               {tree: UsageRoutePolicy},
+	"namespaces":          {tree: NamespacesRoutePolicy},
+	"github-trust":        {tree: GitHubTrustRoutePolicy},
+	"user-keys":           {tree: UserKeysRoutePolicy},
+	"svc":                 {tree: SvcRoutePolicy},
+	"signed-service-urls": {tree: SignedServiceURLsRoutePolicy},
+	"state-query":         {tree: StateQueryRoutePolicy},
+	"feature-flags":       {tree: FeatureFlagsRoutePolicy, options: []MiddlewareOption{WithDeniedAudit("feature_flag_admin", featureFlagAuditBodyLimit), WithAdminAPIErrorResponses(), WithFreshAdminAuthorization()}},
 	"k8s": {
 		tree:    K8sRoutePolicy,
 		options: []MiddlewareOption{WithDeniedMessage("k8s request is not allowed")},
@@ -263,16 +319,24 @@ var surfacePolicies = map[string]surfacePolicy{
 // memoized per surface: the three billing routes share one module, one tree,
 // and one compiled plan.
 var routeSurfaces = map[string]string{
-	"/api/config":      "config",
-	"/api/state/query": "state-query",
+	"/api/config":                 "config",
+	"/api/analytics/session":      "config",
+	"/api/analytics/attribution":  "config",
+	"/api/analytics/payment-gate": "config",
+	"/api/state/query":            "state-query",
+	"/api/usage/overview":         "usage",
+	"/api/usage/pool":             "usage",
+	"/api/usage/browser-timings":  "usage",
 
 	"/api/chat/conversations":            "chat",
 	"/api/chat/conversations/{id}":       "chat",
 	"/api/chat/conversations/{id}/turns": "chat",
 
-	"/api/billing/summary":        "billing",
-	"/api/billing/setup-session":  "billing",
-	"/api/billing/portal-session": "billing",
+	"/api/billing/summary":                "billing",
+	"/api/billing/usage":                  "billing",
+	"/api/billing/setup-session":          "billing",
+	"/api/billing/setup-session/complete": "billing",
+	"/api/billing/portal-session":         "billing",
 
 	"/api/keys":      "keys",
 	"/api/keys/{id}": "keys",
@@ -289,7 +353,13 @@ var routeSurfaces = map[string]string{
 	"/api/svc/{namespace}/{service}":           "svc",
 	"/api/svc/{namespace}/{service}/{path...}": "svc",
 
-	"/api/k8s/{path...}": "k8s",
+	"/api/signed-service-urls/{namespace}":      "signed-service-urls",
+	"/api/signed-service-urls/{namespace}/{id}": "signed-service-urls",
+
+	"/api/k8s/{path...}":             "k8s",
+	"/api/admin/feature-flags":       "feature-flags",
+	"/api/admin/account-lookup":      "account-lookup",
+	"/api/admin/feature-flags/{key}": "feature-flags",
 }
 
 // AuthenticatedRoutes returns every route the policy layer covers, sorted.

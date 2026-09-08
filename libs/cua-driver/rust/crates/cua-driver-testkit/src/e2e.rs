@@ -1753,7 +1753,8 @@ fn semantic_action_without_point(action: &Value) -> bool {
         && matches!(
             truth["transport"].as_str(),
             Some(
-                "linux_at_spi_action"
+                "macos_ax_action"
+                    | "linux_at_spi_action"
                     | "windows_uia_invoke"
                     | "windows_uia_toggle"
                     | "windows_uia_selection"
@@ -2094,9 +2095,15 @@ mod tests {
 
     #[test]
     fn validator_semantic_click_requires_classification_and_retained_evidence() {
-        for token_target in [false, true] {
+        for (transport, token_target) in [
+            ("linux_at_spi_action", false),
+            ("linux_at_spi_action", true),
+            ("macos_ax_action", false),
+            ("macos_ax_action", true),
+        ] {
             let (root, case, result, turn) = complete_turn_fixture();
             let mut action = semantic_click_fixture();
+            action["action_truth"]["transport"] = serde_json::json!(transport);
             if token_target {
                 action["arguments"]
                     .as_object_mut()

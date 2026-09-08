@@ -1981,12 +1981,56 @@ def _uniffi_trait_interface_call_async_with_error(make_call, uniffi_out_dropped_
     handle = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert((eventloop, task))
     uniffi_out_dropped_callback[0] = _UniffiForeignFutureDroppedCallbackStruct(handle, _uniffi_future_dropped_callback)
 
+_UNIFFI_REMOTE_CHANNEL_LOOP_LOCK = threading.Lock()
+
+def _uniffi_remote_channel_call_async(eventloop, make_call, uniffi_out_dropped_callback, handle_success, handle_error, error_type, lower_error):
+    async def make_call_and_call_callback():
+        # See the note in _uniffi_trait_interface_call_async for details on `handle_success` and
+        # `handle_error`.
+        try:
+            try:
+                call_result = await make_call()
+            except error_type as e:
+                handle_error(
+                    _UniffiRustCallStatus.CALL_ERROR,
+                    lower_error(e),
+                )
+            else:
+                handle_success(call_result)
+        except Exception as e:
+            print("UniFFI: Unhandled exception in trait interface call", file=sys.stderr)
+            traceback.print_exc(file=sys.stderr)
+            handle_error(
+                _UniffiRustCallStatus.CALL_UNEXPECTED_ERROR,
+                _UniffiFfiConverterString.lower(repr(e)),
+            )
+    coroutine = make_call_and_call_callback()
+    try:
+        task = asyncio.run_coroutine_threadsafe(coroutine, eventloop)
+    except RuntimeError:
+        coroutine.close()
+        handle = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert((None, None))
+        uniffi_out_dropped_callback[0] = _UniffiForeignFutureDroppedCallbackStruct(handle, _uniffi_future_dropped_callback)
+        handle_error(
+            _UniffiRustCallStatus.CALL_ERROR,
+            lower_error(error_type.Failed("remote Driver channel asyncio event loop is closed")),
+        )
+        return
+    handle = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert((eventloop, task))
+    uniffi_out_dropped_callback[0] = _UniffiForeignFutureDroppedCallbackStruct(handle, _uniffi_future_dropped_callback)
+
 _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP = _UniffiHandleMap()
 
 @_UNIFFI_FOREIGN_FUTURE_DROPPED_CALLBACK
 def _uniffi_future_dropped_callback(handle):
     (eventloop, task) = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.remove(handle)
-    eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)
+    if eventloop is None:
+        return
+    try:
+        eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)
+    except RuntimeError:
+        # The loop owner may have closed it after the callback completed.
+        pass
 
 def _uniffi_cancel_task(task):
     if not task.done():
@@ -3753,7 +3797,8 @@ class _UniffiTraitImplForeignDriverEnvelopeChannelImpl:
                     _UniffiRustCallStatus(status_code, rust_buffer),
                 )
             )
-        _uniffi_trait_interface_call_async_with_error(
+        _uniffi_remote_channel_call_async(
+            uniffi_obj._uniffi_foreign_driver_event_loop,
             make_call,
             uniffi_out_dropped_callback,
             handle_success,
@@ -3792,7 +3837,8 @@ class _UniffiTraitImplForeignDriverEnvelopeChannelImpl:
                     _UniffiRustCallStatus(status_code, rust_buffer),
                 )
             )
-        _uniffi_trait_interface_call_async_with_error(
+        _uniffi_remote_channel_call_async(
+            uniffi_obj._uniffi_foreign_driver_event_loop,
             make_call,
             uniffi_out_dropped_callback,
             handle_success,
@@ -3831,7 +3877,8 @@ class _UniffiTraitImplForeignDriverEnvelopeChannelImpl:
                     _UniffiRustCallStatus(status_code, rust_buffer),
                 )
             )
-        _uniffi_trait_interface_call_async_with_error(
+        _uniffi_remote_channel_call_async(
+            uniffi_obj._uniffi_foreign_driver_event_loop,
             make_call,
             uniffi_out_dropped_callback,
             handle_success,
@@ -3868,7 +3915,8 @@ class _UniffiTraitImplForeignDriverEnvelopeChannelImpl:
                     _UniffiRustCallStatus(status_code, rust_buffer),
                 )
             )
-        _uniffi_trait_interface_call_async_with_error(
+        _uniffi_remote_channel_call_async(
+            uniffi_obj._uniffi_foreign_driver_event_loop,
             make_call,
             uniffi_out_dropped_callback,
             handle_success,
@@ -3904,7 +3952,8 @@ class _UniffiTraitImplForeignDriverEnvelopeChannelImpl:
                     _UniffiRustCallStatus(status_code, rust_buffer),
                 )
             )
-        _uniffi_trait_interface_call_async_with_error(
+        _uniffi_remote_channel_call_async(
+            uniffi_obj._uniffi_foreign_driver_event_loop,
             make_call,
             uniffi_out_dropped_callback,
             handle_success,
@@ -3961,6 +4010,12 @@ class _UniffiFfiConverterTypeForeignDriverEnvelopeChannel:
             return value._uniffi_clone_handle()
          else:
             # Python-implementated object, generate a new vtable handle and return that.
+            eventloop = asyncio.get_running_loop()
+            with _UNIFFI_REMOTE_CHANNEL_LOOP_LOCK:
+                owner = getattr(value, "_uniffi_foreign_driver_event_loop", eventloop)
+                if owner is not eventloop:
+                    raise RuntimeError("remote Driver channel belongs to a different asyncio event loop")
+                value._uniffi_foreign_driver_event_loop = eventloop
             return _UniffiFfiConverterTypeForeignDriverEnvelopeChannel._handle_map.insert(value)
 
     @classmethod

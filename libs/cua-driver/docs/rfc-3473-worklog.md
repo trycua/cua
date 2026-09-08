@@ -71,6 +71,23 @@ latency results are historical until repeated against the updated baseline.
 Native AppKit regression, desktop latency and exact-SHA canonical certification
 remain required before readiness.
 
+## Weak discovery cleanup after integration
+
+The unchanged Memcheck job on `f933999dd` reported one 180-byte possibly-lost
+allocation from the weak runtime-cache directory. It reported no definitely- or
+indirectly-lost blocks. Cache destruction now removes its matching discovery
+entry and releases the directory allocation when empty. Pointer identity keeps
+an older binding's destruction from unregistering a newer binding in the same
+scope. Payload destruction remains outside the directory lock.
+
+Extended the existing weak-discovery test to check entry removal and empty-table
+capacity. Cache tests pass **8/8**; macOS core/platform/SDK suites remain
+**604 / 368 / 57 passed**, with the same two platform ignores; shared/dispatch
+invariants pass **7 + 3**. No worker-drain behavior, permissions, Memcheck flags
+or suppressions changed. CI must verify the shutdown result on Linux before this
+finding is considered resolved. The final production comparison needs to include
+this additional cleanup.
+
 ## Actionable items
 
 | ID | Action | Status | Exit evidence |

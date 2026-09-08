@@ -143,6 +143,21 @@ impl<S: SnapshotPayload> ElementCacheCore<S> {
     }
 }
 
+impl<S: SnapshotPayload> Drop for ElementCacheCore<S> {
+    fn drop(&mut self) {
+        let mut caches = runtime_caches().lock().unwrap();
+        if caches
+            .get(&self.runtime_scope)
+            .is_some_and(|cache| std::ptr::addr_eq(cache.as_ptr(), self as *const Self))
+        {
+            caches.remove(&self.runtime_scope);
+        }
+        if caches.is_empty() {
+            caches.shrink_to_fit();
+        }
+    }
+}
+
 impl<S: SnapshotPayload> Default for ElementCacheCore<S> {
     fn default() -> Self {
         Self::new()
@@ -382,6 +397,13 @@ mod tests {
             drop(cache);
             assert_eq!(drops.load(Ordering::SeqCst), 1);
             assert!(current_runtime_cache::<DropCounter>().is_none());
+            {
+                let caches = runtime_caches().lock().unwrap();
+                assert!(!caches.contains_key("snapshot-weak-discovery"));
+                if caches.is_empty() {
+                    assert_eq!(caches.capacity(), 0);
+                }
+            }
             assert_eq!(retire_runtime_scope("snapshot-weak-discovery"), 0);
         });
     }

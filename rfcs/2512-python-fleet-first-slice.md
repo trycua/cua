@@ -25,7 +25,7 @@ decision record; this is not a second competing architecture RFC.
 
 Read-only audit baseline: Cua main
 `ddc7a632a9bc02af400ac052503bd9f6c8503b9f` on September 7, 2026.
-The parent RFC branch predates this code. Its historical statement that no
+The original parent RFC proposal predates this code. Its historical statement that no
 remote backend exists is no longer accurate for Rust.
 
 - The Rust SDK already implements `CuaDriver::connect_remote` using
@@ -147,8 +147,8 @@ guest is replaced; an old handle must never attach to a replacement by name.
 
 Use one workstream under RFC 2512. Each implementation PR is based on its
 immediate dependency, with a description listing the full stack, incremental
-diff, tests, and unresolved gates. Rebase onto current main after the RFC
-decision; do not build products from the historical RFC branch.
+diff, tests, and unresolved gates. Keep implementation branches current with
+main after the RFC decision; do not build products from the historical RFC base.
 
 | Phase | Review boundary                                              | Required evidence                                                                                                                    |
 | ----- | ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |

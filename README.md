@@ -24,9 +24,9 @@
 
 ## See Cua Driver in action
 
-Claude Code builds a Windows desktop app, runs it, patches the code, and checks the app again using Cua Driver. Watch the Cua team's recording:
+Two Cua Driver sessions select cells in LibreOffice Calc and objects in Inkscape on an Omarchy desktop while a terminal stays in the foreground. Watch the 50-second demo, then explore [Omarchy on Fleet](https://cua.ai/docs/how-to-guides/sandbox/run-omarchy-on-cloud-fleet).
 
-[![Watch Claude Code build and check a Windows desktop app with Cua Driver](https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026)](https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b)
+https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2
 
 ## Choose your path
 

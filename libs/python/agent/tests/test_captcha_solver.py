@@ -94,6 +94,49 @@ async def test_detect_and_solve_handles_non_string_json_answer(
 
 
 @pytest.mark.asyncio
+async def test_detect_and_solve_rejects_cross_type_hallucination(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaSolverCallback()
+    replies = iter(
+        [
+            '{"captcha": true, "answer": "", "type": "text"}',
+            "CLICK_CHECKBOX",
+        ]
+    )
+
+    async def call_vision(image: str, prompt: str) -> str:
+        return next(replies)
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+
+    assert await callback._detect_and_solve("image") is None
+
+
+@pytest.mark.asyncio
+async def test_detect_and_solve_retries_an_unusable_json_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    callback = CaptchaSolverCallback()
+    replies = iter(
+        [
+            '{"captcha": true, "answer": "verify", "type": "button"}',
+            "IMAGE_SELECT",
+        ]
+    )
+
+    async def call_vision(image: str, prompt: str) -> str:
+        return next(replies)
+
+    monkeypatch.setattr(callback, "_call_vision", call_vision)
+
+    assert await callback._detect_and_solve("image") == {
+        "type": "image_select",
+        "answer": "select_images",
+    }
+
+
+@pytest.mark.asyncio
 async def test_detect_and_solve_discards_unsafe_model_text(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -426,3 +469,37 @@ async def test_local_endpoint_receives_bounded_openai_request(
     assert "authorization: bearer local-test-token" in request["headers"].lower()
     assert request["body"]["model"] == "bionic-vision-light"
     assert request["body"]["messages"][0]["content"][1]["text"] == "prompt"
+
+
+@pytest.mark.asyncio
+async def test_local_vision_request_cancellation_propagates_and_closes_connection() -> None:
+    request_started = asyncio.Event()
+    connection_closed = asyncio.Event()
+
+    async def handle(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+        try:
+            await reader.readuntil(b"\r\n\r\n")
+            request_started.set()
+            await reader.read()
+        finally:
+            writer.close()
+            await writer.wait_closed()
+            connection_closed.set()
+
+    server = await asyncio.start_server(handle, "127.0.0.1", 0)
+    port = server.sockets[0].getsockname()[1]
+    callback = CaptchaSolverCallback(api_base=f"http://127.0.0.1:{port}/v1")
+    task = asyncio.create_task(callback._call_vision("cG5n", "prompt"))
+    try:
+        await asyncio.wait_for(request_started.wait(), timeout=1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(connection_closed.wait(), timeout=1)
+    finally:
+        if not task.done():
+            task.cancel()
+        server.close()
+        await server.wait_closed()
+
+    assert callback._attempt_transport_failed.get() is False

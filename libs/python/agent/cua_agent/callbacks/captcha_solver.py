@@ -124,8 +124,9 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
 
     Strategy (optimized for small 2B vision models):
     1. Try a single-shot JSON prompt — fast path for text CAPTCHAs.
-    2. If JSON comes back with captcha=true but no answer, ask a
-       targeted solve-only follow-up.
+    2. If JSON comes back with captcha=true but no usable answer, ask a
+       targeted solve-only follow-up. Reject a follow-up that contradicts a
+       specific challenge type reported by the first pass.
     3. If JSON fails or says no captcha, try a simple YES/NO detection
        prompt that catches reCAPTCHA checkboxes on busy pages, then
        solve if positive.
@@ -389,16 +390,15 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
                     return await self._fallback_detect_solve(image_b64)
                 answer = parsed.get("answer", "")
                 ctype = parsed.get("type", "")
-                if not isinstance(answer, str):
-                    return await self._solve_phase(image_b64)
                 if not isinstance(ctype, str):
                     ctype = ""
+                if not isinstance(answer, str):
+                    return await self._solve_phase(image_b64, ctype)
                 if answer and answer != "<the text to enter>":
                     classified = self._classify_answer(answer, ctype)
                     if classified is not None:
                         return classified
-                    return None
-                return await self._solve_phase(image_b64)
+                return await self._solve_phase(image_b64, ctype)
 
         return await self._fallback_detect_solve(image_b64)
 
@@ -409,11 +409,35 @@ class CaptchaSolverCallback(AsyncCallbackHandler):
         logger.info("CAPTCHA detected (fallback), asking model to solve...")
         return await self._solve_phase(image_b64)
 
-    async def _solve_phase(self, image_b64: str) -> Optional[Dict[str, Any]]:
+    async def _solve_phase(
+        self, image_b64: str, expected_type: str = ""
+    ) -> Optional[Dict[str, Any]]:
         solve_reply = await self._budgeted_call_vision(image_b64, _SOLVE_PROMPT)
         if not solve_reply:
             return None
-        return self._classify_answer(solve_reply.strip()) or None
+        classified = self._classify_answer(solve_reply.strip())
+        normalized_expected = self._normalize_type_hint(expected_type)
+        if (
+            classified is not None
+            and normalized_expected is not None
+            and classified["type"] != normalized_expected
+        ):
+            logger.debug("Discarded CAPTCHA answer that contradicted the detected type")
+            return None
+        return classified or None
+
+    @staticmethod
+    def _normalize_type_hint(type_hint: str) -> Optional[str]:
+        normalized = re.sub(r"[^a-z0-9]+", "_", type_hint.strip().lower()).strip("_")
+        # Provider names such as reCAPTCHA are deliberately left ambiguous:
+        # the same provider can show a checkbox, text, or image-grid step.
+        if "checkbox" in normalized:
+            return "checkbox"
+        if any(marker in normalized for marker in ("image_select", "image_grid", "image")):
+            return "image_select"
+        if any(marker in normalized for marker in ("distorted", "text")):
+            return "text"
+        return None
 
     _FALSE_POSITIVE_WORDS = {
         "allow",

@@ -59,10 +59,11 @@ export async function loginViaBrowser(): Promise<string> {
     const result = await Promise.race([tokenPromise, timeout]);
     if (timeoutId) clearTimeout(timeoutId);
     return result;
-  } finally {
+  } catch (err) {
     try {
       server.stop();
     } catch {}
+    throw err;
   }
 }
 

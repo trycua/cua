@@ -109,7 +109,9 @@ async function main() {
     try {
       await writeFile(recordFile, JSON.stringify(record, null, 2));
       stage = 'pool provisioning';
-      console.log('Provisioning a temporary Linux Fleet pool (4 CPU / 4 GiB; one-hour TTL)...');
+      console.log(
+        'Provisioning a temporary Linux Fleet pool (two slots, each 4 CPU / 4 GiB; one-hour TTL)...'
+      );
       const templateName = `${record.name}-template`;
       await client.createTemplate({
         namespace: record.name,
@@ -126,7 +128,7 @@ async function main() {
       await client.createPool({
         namespace: record.name,
         spec: {
-          replicas: 1,
+          replicas: 2,
           sandboxTemplateRef: { name: templateName },
           ttlSecondsAfterCreated: 3600,
         },

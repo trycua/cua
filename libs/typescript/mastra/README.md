@@ -134,8 +134,8 @@ loop and real desktop tools. It does not prove autonomous model reasoning.
 The fixture uses fixed geometry in a kiosk browser; model mode locates controls
 from screenshots. Screenshots and a small result record go to ignored `output/`.
 
-The live example incurs Fleet usage, briefly holds two concurrent desktops,
-creates temporary warm capacity, and uses
+The live example incurs Fleet usage, provisions two pool slots with 4 CPU cores
+and 4 GiB RAM each, briefly holds two concurrent desktops, and uses
 one-hour pool and claim TTLs. Its `finally` blocks destroy the provider and
 delete only its exclusively reserved namespace. A successful namespace listing
 without that namespace is cleanup proof at the account API level, not an

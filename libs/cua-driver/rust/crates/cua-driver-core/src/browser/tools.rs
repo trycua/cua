@@ -18,8 +18,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::{CdpConnection, CdpEvent};
 use super::challenge::{
-    browser_origin, detect_browser_challenge, navigation_response_observation,
-    no_browser_challenge, NavigationResponseObservation,
+    browser_origin, navigation_response_observation, NavigationResponseObservation,
 };
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot};
@@ -524,34 +523,16 @@ impl Tool for GetBrowserStateTool {
                             .iter()
                             .map(semantic_ref_value)
                             .collect::<Vec<_>>();
-                        let challenge_texts = std::iter::once(outcome.outline.as_str()).chain(
-                            outcome
-                                .refs
-                                .iter()
-                                .chain(outcome.content_refs.iter())
-                                .flat_map(|listed| {
-                                    [
-                                        listed.node.role.as_str(),
-                                        listed.node.name.as_deref().unwrap_or_default(),
-                                        listed.node.value.as_deref().unwrap_or_default(),
-                                    ]
-                                }),
-                        );
-                        let challenge = match detect_browser_challenge(
-                            &outcome.url,
-                            &outcome.title,
-                            challenge_texts,
-                        ) {
-                            Some(observation) => {
-                                if !observation.origin().is_empty() {
-                                    self.engine
-                                        .store
-                                        .block_origin_for_challenge(&session, observation.origin());
-                                }
-                                observation.to_value()
+                        if outcome.challenge["required"].as_bool() == Some(true) {
+                            if let Some(origin) = outcome.challenge["origin"]
+                                .as_str()
+                                .filter(|origin| !origin.is_empty())
+                            {
+                                self.engine
+                                    .store
+                                    .block_origin_for_challenge(&session, origin);
                             }
-                            None => no_browser_challenge(&browser_origin(&outcome.url)),
-                        };
+                        }
                         ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
                             outcome.snapshot_id,
@@ -590,7 +571,7 @@ impl Tool for GetBrowserStateTool {
                             "outline": outcome.outline,
                             "refs": refs,
                             "content_refs": content_refs,
-                            "challenge": challenge,
+                            "challenge": outcome.challenge,
                             "oopif": {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),

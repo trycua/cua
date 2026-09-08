@@ -34,6 +34,7 @@ impl BrowserChallengeObservation {
     pub(crate) fn to_value(&self) -> Value {
         json!({
             "required": true,
+            "detection_status": "detected",
             "kind": "anti_bot_challenge",
             "origin": self.origin,
             "provider": self.provider,
@@ -46,16 +47,24 @@ impl BrowserChallengeObservation {
     }
 }
 
-pub(crate) fn no_browser_challenge(origin: &str) -> Value {
+pub(crate) fn no_browser_challenge(origin: &str, observation_complete: bool) -> Value {
     json!({
         "required": false,
+        "detection_status": if observation_complete { "not_detected" } else { "unknown" },
         "kind": Value::Null,
         "origin": origin,
         "provider": Value::Null,
         "confidence": Value::Null,
         "requires_user": false,
         "handling": "none",
-        "message": Value::Null,
+        "message": if observation_complete {
+            Value::Null
+        } else {
+            Value::String(
+                "The available page state was incomplete, so the absence of a challenge could not be proven."
+                    .to_owned(),
+            )
+        },
         "signals": [],
     })
 }
@@ -63,18 +72,17 @@ pub(crate) fn no_browser_challenge(origin: &str) -> Value {
 #[cfg(test)]
 pub(crate) fn browser_challenge_value<'a>(
     url: &str,
-    title: &str,
     texts: impl IntoIterator<Item = &'a str>,
+    observation_complete: bool,
 ) -> Value {
     let origin = browser_origin(url);
-    detect_browser_challenge(url, title, texts)
+    detect_browser_challenge(url, texts)
         .map(|observation| observation.to_value())
-        .unwrap_or_else(|| no_browser_challenge(&origin))
+        .unwrap_or_else(|| no_browser_challenge(&origin, observation_complete))
 }
 
 pub(crate) fn detect_browser_challenge<'a>(
     url: &str,
-    title: &str,
     texts: impl IntoIterator<Item = &'a str>,
 ) -> Option<BrowserChallengeObservation> {
     let origin = browser_origin(url);
@@ -108,11 +116,14 @@ pub(crate) fn detect_browser_challenge<'a>(
 
     if let Ok(parsed) = url::Url::parse(url) {
         let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
-        let path_and_query = parsed[url::Position::BeforePath..].to_ascii_lowercase();
+        let path = parsed.path().to_ascii_lowercase();
+        let cloudflare_challenge_parameter = parsed.query_pairs().any(|(name, _)| {
+            let name = name.to_ascii_lowercase();
+            name.starts_with("cf_chl_") || name.starts_with("cf-chl-")
+        });
         if host == "challenges.cloudflare.com"
-            || path_and_query.contains("/cdn-cgi/challenge-platform/")
-            || path_and_query.contains("cf_chl_")
-            || path_and_query.contains("cf-chl-")
+            || path.starts_with("/cdn-cgi/challenge-platform/")
+            || cloudflare_challenge_parameter
         {
             consider(
                 "url",
@@ -130,31 +141,21 @@ pub(crate) fn detect_browser_challenge<'a>(
         if host == "www.google.com" && parsed.path().starts_with("/sorry/") {
             consider("url", "generic", 60, "challenge_infrastructure", true);
         }
-        if host == "hcaptcha.com" || host.ends_with(".hcaptcha.com") {
+        if (host == "hcaptcha.com" || host.ends_with(".hcaptcha.com"))
+            && (path.starts_with("/captcha/")
+                || path.starts_with("/checksiteconfig")
+                || path.starts_with("/getcaptcha/"))
+        {
             consider("url", "hcaptcha", 60, "challenge_infrastructure", true);
         }
-        if host == "funcaptcha.com"
+        if (host == "funcaptcha.com"
             || host.ends_with(".funcaptcha.com")
             || host == "arkoselabs.com"
-            || host.ends_with(".arkoselabs.com")
+            || host.ends_with(".arkoselabs.com"))
+            && path.starts_with("/fc/")
         {
             consider("url", "arkose", 60, "challenge_infrastructure", true);
         }
-    }
-
-    let title = normalize_text(title);
-    for phrase in [
-        "checking your browser",
-        "checking if the site connection is secure",
-        "verify you are human",
-    ] {
-        consider(
-            "title",
-            "generic",
-            45,
-            "challenge_copy",
-            title.contains(phrase),
-        );
     }
 
     let texts = texts
@@ -162,7 +163,6 @@ pub(crate) fn detect_browser_challenge<'a>(
         .map(normalize_text)
         .filter(|text| !text.is_empty())
         .collect::<Vec<_>>();
-    let combined_text = texts.join(" ");
     let challenge_copy_present = [
         "i'm not a robot",
         "i’m not a robot",
@@ -176,7 +176,7 @@ pub(crate) fn detect_browser_challenge<'a>(
         "review the security of your connection",
     ]
     .iter()
-    .any(|phrase| combined_text.contains(phrase));
+    .any(|phrase| texts.iter().any(|text| text.contains(phrase)));
 
     if challenge_copy_present {
         consider("page_text", "generic", 45, "challenge_copy", true);
@@ -191,7 +191,7 @@ pub(crate) fn detect_browser_challenge<'a>(
                 provider,
                 50,
                 reason,
-                combined_text.contains(marker),
+                texts.iter().any(|text| text.contains(marker)),
             );
         }
     }
@@ -322,7 +322,6 @@ mod tests {
     fn detects_cloudflare_turnstile_from_infrastructure_and_copy() {
         let observation = detect_browser_challenge(
             "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/orchestrate/turnstile",
-            "Just a moment...",
             ["Cloudflare Turnstile: Verify you are human before continuing"],
         )
         .expect("challenge observation");
@@ -337,14 +336,30 @@ mod tests {
     }
 
     #[test]
+    fn detects_known_hcaptcha_and_arkose_challenge_paths() {
+        for (url, provider) in [
+            (
+                "https://newassets.hcaptcha.com/captcha/v1/example/static/hcaptcha.html",
+                "hcaptcha",
+            ),
+            ("https://client-api.arkoselabs.com/fc/gc/", "arkose"),
+        ] {
+            let observation = detect_browser_challenge(url, std::iter::empty())
+                .expect("known challenge endpoint");
+            assert_eq!(observation.provider, provider, "{url}");
+        }
+    }
+
+    #[test]
     fn detects_generic_human_verification_copy() {
         let value = browser_challenge_value(
             "https://example.test/login",
-            "Account login",
             ["Please verify you are human before continuing."],
+            true,
         );
 
         assert_eq!(value["required"], true);
+        assert_eq!(value["detection_status"], "detected");
         assert_eq!(value["origin"], "https://example.test");
         assert_eq!(value["provider"], "generic");
         assert_eq!(value["requires_user"], true);
@@ -355,8 +370,8 @@ mod tests {
     fn detects_google_unusual_traffic_interstitial_without_a_checkbox() {
         let value = browser_challenge_value(
             "https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch",
-            "",
             ["Our systems have detected unusual traffic. Please try your request again later."],
+            true,
         );
 
         assert_eq!(value["required"], true);
@@ -377,8 +392,8 @@ mod tests {
     fn does_not_treat_other_sites_sorry_pages_as_google_challenges() {
         let value = browser_challenge_value(
             "https://example.test/sorry/index",
-            "Sorry about that",
-            ["The requested article moved."],
+            ["Sorry about that", "The requested article moved."],
+            true,
         );
 
         assert_eq!(value["required"], false);
@@ -388,11 +403,12 @@ mod tests {
     fn ordinary_article_about_captcha_and_turnstile_is_not_marked() {
         let value = browser_challenge_value(
             "https://news.example/articles/turnstile-history",
-            "How CAPTCHA systems changed the web",
             [
+                "How CAPTCHA systems changed the web",
                 "This article explains CAPTCHA accessibility tradeoffs.",
                 "Cloudflare Turnstile and hCaptcha are two products discussed by researchers.",
             ],
+            true,
         );
 
         assert_eq!(value["required"], false);
@@ -400,31 +416,84 @@ mod tests {
     }
 
     #[test]
-    fn challenge_schema_has_a_stable_key_set() {
-        let present = browser_challenge_value(
-            "https://example.test/login",
-            "Verify you are human",
-            std::iter::empty(),
+    fn challenge_markers_in_query_values_do_not_block_an_ordinary_page() {
+        let value = browser_challenge_value(
+            "https://docs.example/search?q=%2Fcdn-cgi%2Fchallenge-platform%2F+cf_chl_token",
+            ["Search results", "Documentation search results"],
+            true,
         );
+
+        assert_eq!(value["required"], false);
+        assert_eq!(value["origin"], "https://docs.example");
+    }
+
+    #[test]
+    fn challenge_path_fragments_outside_the_reserved_prefix_are_not_marked() {
+        let value = browser_challenge_value(
+            "https://docs.example/reference/cdn-cgi/challenge-platform/",
+            ["Cloud service documentation"],
+            true,
+        );
+
+        assert_eq!(value["detection_status"], "not_detected");
+    }
+
+    #[test]
+    fn challenge_copy_must_be_present_in_one_semantic_text_value() {
+        let value = browser_challenge_value(
+            "https://example.test/ordinary",
+            ["Please verify you are", "human resources policy"],
+            true,
+        );
+
+        assert_eq!(value["detection_status"], "not_detected");
+    }
+
+    #[test]
+    fn provider_homepages_and_docs_are_not_challenge_infrastructure() {
+        for url in [
+            "https://www.hcaptcha.com/",
+            "https://docs.hcaptcha.com/configuration/",
+            "https://www.arkoselabs.com/resources/",
+            "https://developer.funcaptcha.com/docs/",
+        ] {
+            let value =
+                browser_challenge_value(url, ["Documentation", "Product documentation"], true);
+            assert_eq!(value["required"], false, "{url}: {value}");
+        }
+    }
+
+    #[test]
+    fn challenge_schema_has_a_stable_key_set() {
+        let present =
+            browser_challenge_value("https://example.test/login", ["Verify you are human"], true);
         let absent = browser_challenge_value(
             "https://example.test/",
-            "Example Domain",
-            ["Illustrative examples live here."],
+            ["Example Domain", "Illustrative examples live here."],
+            true,
         );
+        let unknown = browser_challenge_value("https://example.test/", ["Example Domain"], false);
 
         let mut present_keys = present.as_object().unwrap().keys().collect::<Vec<_>>();
         let mut absent_keys = absent.as_object().unwrap().keys().collect::<Vec<_>>();
+        let mut unknown_keys = unknown.as_object().unwrap().keys().collect::<Vec<_>>();
         present_keys.sort();
         absent_keys.sort();
+        unknown_keys.sort();
         assert_eq!(present_keys, absent_keys);
+        assert_eq!(present_keys, unknown_keys);
+        assert_eq!(absent["detection_status"], "not_detected");
+        assert_eq!(unknown["detection_status"], "unknown");
+        assert_eq!(unknown["required"], false);
+        assert!(unknown["message"].as_str().is_some());
     }
 
     #[test]
     fn signals_do_not_echo_page_content_or_url_details() {
         let value = browser_challenge_value(
             "https://example.test/login?secret=do-not-copy",
-            "Account login",
             ["Private account name: Alice. Please verify you are human."],
+            true,
         );
         let signals = value["signals"].as_array().unwrap();
         let serialized = serde_json::to_string(signals).unwrap();

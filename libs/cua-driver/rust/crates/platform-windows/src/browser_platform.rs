@@ -754,7 +754,11 @@ fn overlay_window_and_scale(window_id: u64) -> Option<(u64, f64)> {
     Some((overlay_window, scale))
 }
 
-fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+fn parse_netstat_loopback_listeners_with_scope(
+    text: &str,
+    allowed_pids: &[u32],
+    ipv4_only: bool,
+) -> Vec<(u16, u32)> {
     let mut listeners = text
         .lines()
         .filter_map(|line| {
@@ -772,14 +776,20 @@ fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u1
             let local = fields[1];
             let (host, port) = local.rsplit_once(':')?;
             let host = host.trim_matches(['[', ']']);
-            matches!(host, "127.0.0.1" | "::1" | "localhost")
-                .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
-                .flatten()
+            ((ipv4_only && host == "127.0.0.1")
+                || (!ipv4_only && matches!(host, "127.0.0.1" | "::1" | "localhost")))
+            .then(|| port.parse::<u16>().ok().map(|port| (port, owner_pid)))
+            .flatten()
         })
         .collect::<Vec<_>>();
     listeners.sort_unstable();
     listeners.dedup();
     listeners
+}
+
+#[cfg(test)]
+fn parse_netstat_loopback_listeners(text: &str, allowed_pids: &[u32]) -> Vec<(u16, u32)> {
+    parse_netstat_loopback_listeners_with_scope(text, allowed_pids, false)
 }
 
 #[cfg(test)]
@@ -811,6 +821,7 @@ fn system_netstat_path() -> Result<PathBuf, BrowserRefusal> {
 
 async fn netstat_loopback_listeners(
     allowed_pids: &[u32],
+    ipv4_only: bool,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let netstat = system_netstat_path()?;
     let output = tokio::process::Command::new(netstat)
@@ -825,9 +836,10 @@ async fn netstat_loopback_listeners(
                 format!("could not inspect browser listeners: {error}"),
             )
         })?;
-    Ok(parse_netstat_loopback_listeners(
+    Ok(parse_netstat_loopback_listeners_with_scope(
         &String::from_utf8_lossy(&output.stdout),
         allowed_pids,
+        ipv4_only,
     ))
 }
 
@@ -843,7 +855,7 @@ async fn raw_loopback_listeners_for_process_tree(
                     format!("could not inspect browser process tree: {error}"),
                 )
             })?;
-    let observed = netstat_loopback_listeners(&allowed_pids).await?;
+    let observed = netstat_loopback_listeners(&allowed_pids, false).await?;
     tokio::task::spawn_blocking(move || {
         observed
             .into_iter()
@@ -859,8 +871,9 @@ async fn raw_loopback_listeners_for_process_tree(
     })
 }
 
-async fn loopback_listeners_for_process_tree(
+async fn loopback_listeners_for_process_tree_with_scope(
     root_pid: u32,
+    ipv4_only: bool,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let tree = tokio::task::spawn_blocking(move || {
         let processes = crate::win32::list_processes();
@@ -882,7 +895,7 @@ async fn loopback_listeners_for_process_tree(
         )
     })?;
 
-    let observed = netstat_loopback_listeners(&tree.pids).await?;
+    let observed = netstat_loopback_listeners(&tree.pids, ipv4_only).await?;
     let expected_starts = tree.started_at;
     tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(observed, &expected_starts, |pid| {
@@ -898,6 +911,18 @@ async fn loopback_listeners_for_process_tree(
     })
 }
 
+async fn loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    loopback_listeners_for_process_tree_with_scope(root_pid, false).await
+}
+
+async fn ipv4_loopback_listeners_for_process_tree(
+    root_pid: u32,
+) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
+    loopback_listeners_for_process_tree_with_scope(root_pid, true).await
+}
+
 async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let expected_started =
         tokio::task::spawn_blocking(move || process_identity(pid).map(|identity| identity.0))
@@ -908,7 +933,7 @@ async fn loopback_listeners_for_exact_pid(pid: u32) -> Result<Vec<(u16, u32)>, B
                     format!("could not inspect browser process identity: {error}"),
                 )
             })??;
-    let observed = netstat_loopback_listeners(&[pid]).await?;
+    let observed = netstat_loopback_listeners(&[pid], false).await?;
     tokio::task::spawn_blocking(move || {
         retain_identity_matched_listeners(
             observed,
@@ -941,7 +966,7 @@ async fn loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefus
 }
 
 async fn unfiltered_loopback_ports_for_exact_pid(pid: u32) -> Result<Vec<u16>, BrowserRefusal> {
-    let mut ports = netstat_loopback_listeners(&[pid])
+    let mut ports = netstat_loopback_listeners(&[pid], false)
         .await?
         .into_iter()
         .map(|(port, _owner_pid)| port)
@@ -1203,7 +1228,7 @@ async fn fixed_port_spawned_browser_endpoints_once(
     expected_port: u16,
 ) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
     let mut endpoints = Vec::new();
-    for (port, listener_pid) in loopback_listeners_for_process_tree(root_pid)
+    for (port, listener_pid) in ipv4_loopback_listeners_for_process_tree(root_pid)
         .await?
         .into_iter()
         .filter(|(port, _listener_pid)| *port == expected_port)
@@ -1214,24 +1239,12 @@ async fn fixed_port_spawned_browser_endpoints_once(
         // Unlike the DevToolsActivePort route, the endpoint URL came from the
         // listener itself. Reprove it only against the live launcher tree;
         // never use the stale-parent handoff fallback here.
-        let reproved = loopback_listeners_for_process_tree(root_pid).await?;
+        let reproved = ipv4_loopback_listeners_for_process_tree(root_pid).await?;
         if reproved.contains(&(port, listener_pid)) {
             endpoints.push((port, ws_url, listener_pid));
         }
     }
     Ok(endpoints)
-}
-
-async fn fixed_port_spawned_browser_endpoints(
-    root_pid: u32,
-    expected_port: u16,
-) -> Result<Vec<(u16, String, u32)>, BrowserRefusal> {
-    retry_empty_endpoint_discovery(
-        ENDPOINT_DISCOVERY_ATTEMPTS,
-        ENDPOINT_DISCOVERY_RETRY_DELAY,
-        || fixed_port_spawned_browser_endpoints_once(root_pid, expected_port),
-    )
-    .await
 }
 
 fn owned_endpoint_from_listener(
@@ -1291,6 +1304,18 @@ fn select_unique_owned_endpoint(
                 .collect::<Vec<_>>(),
         }))),
     }
+}
+
+fn select_fixed_port_spawned_endpoint(
+    root_pid: i64,
+    discovered: Vec<(u16, String, u32)>,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+    select_unique_owned_endpoint(
+        root_pid,
+        discovered,
+        "driver-selected fixed port owned by the live driver-spawned browser tree",
+        EndpointTransport::SpawnedExact,
+    )
 }
 
 async fn loopback_port_is_owned_with_retry(
@@ -1640,22 +1665,13 @@ impl BrowserPlatform for WindowsBrowserPlatform {
                 format!("pid {pid} is outside the Windows process-id range"),
             )
         })?;
-        select_unique_owned_endpoint(
+        // An empty ownership snapshot is an ordinary startup state. Preserve
+        // Ok(None) so core's single bounded discovery deadline remains the
+        // owner of readiness polling.
+        select_fixed_port_spawned_endpoint(
             pid,
-            fixed_port_spawned_browser_endpoints(pid_u32, port).await?,
-            "driver-selected fixed port owned by the live driver-spawned browser tree",
-            EndpointTransport::SpawnedExact,
+            fixed_port_spawned_browser_endpoints_once(pid_u32, port).await?,
         )
-        .and_then(|endpoint| {
-            endpoint
-                .ok_or_else(|| {
-                    refusal(
-                        BrowserRefusalCode::BrowserEndpointOwnerMismatch,
-                        "the driver-selected DevTools port is not owned by the spawned browser",
-                    )
-                })
-                .map(Some)
-        })
     }
 
     async fn discover_existing_profile_endpoint(
@@ -2266,6 +2282,10 @@ mod tests {
             parse_netstat_loopback_ports(input, &[42, 43]),
             vec![9222, 9444]
         );
+        assert_eq!(
+            parse_netstat_loopback_listeners_with_scope(input, &[42, 43], true),
+            vec![(9222, 42)]
+        );
     }
 
     #[test]
@@ -2364,6 +2384,13 @@ mod tests {
         assert_eq!(candidates[0]["listener_pid"], 43);
         assert_eq!(candidates[1]["port"], 9333);
         assert_eq!(candidates[1]["listener_pid"], 44);
+    }
+
+    #[test]
+    fn fixed_port_empty_discovery_remains_retryable() {
+        assert!(select_fixed_port_spawned_endpoint(42, Vec::new())
+            .expect("an ordinary not-ready snapshot is not an ownership mismatch")
+            .is_none());
     }
 
     #[test]

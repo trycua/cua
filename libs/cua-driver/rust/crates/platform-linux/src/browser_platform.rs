@@ -187,6 +187,17 @@ fn loopback_websocket_port(url: &str) -> Option<u16> {
         })
 }
 
+fn canonical_ipv4_websocket_url(url: &str, expected_port: u16) -> Option<String> {
+    ["ws://127.0.0.1:", "ws://localhost:", "ws://[::1]:"]
+        .iter()
+        .find_map(|prefix| {
+            let remainder = url.strip_prefix(prefix)?;
+            let (port, path) = remainder.split_once('/')?;
+            (port.parse::<u16>().ok()? == expected_port && !path.is_empty())
+                .then(|| format!("ws://127.0.0.1:{expected_port}/{path}"))
+        })
+}
+
 fn parse_proc_net_loopback_listeners(text: &str) -> Vec<(u16, u64)> {
     text.lines()
         .skip(1)
@@ -273,14 +284,17 @@ fn socket_inodes_for_process_tree(pid: i64) -> Result<HashSet<u64>, BrowserRefus
     Ok(inodes)
 }
 
-fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+fn loopback_ports_for_pid_in_tables(
+    pid: i64,
+    table_paths: &[&str],
+) -> Result<Vec<u16>, BrowserRefusal> {
     // Chromium may delegate its DevTools listener to a utility child. Core's
     // ownership contract explicitly accepts the approved browser PID or one
     // of its children, so inspect the bounded descendant tree as well as the
     // root process while still attributing the result to the approved root.
     let owned = socket_inodes_for_process_tree(pid)?;
     let mut listeners = Vec::new();
-    for path in ["/proc/net/tcp", "/proc/net/tcp6"] {
+    for &path in table_paths {
         if let Ok(text) = std::fs::read_to_string(path) {
             listeners.extend(
                 parse_proc_net_loopback_listeners(&text)
@@ -293,6 +307,25 @@ fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
     listeners.sort_unstable();
     listeners.dedup();
     Ok(listeners)
+}
+
+fn loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    loopback_ports_for_pid_in_tables(pid, &["/proc/net/tcp", "/proc/net/tcp6"])
+}
+
+fn ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    loopback_ports_for_pid_in_tables(pid, &["/proc/net/tcp"])
+}
+
+async fn inspect_ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
+    tokio::task::spawn_blocking(move || ipv4_loopback_ports_for_pid(pid))
+        .await
+        .map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("listener inspection task failed: {error}"),
+            )
+        })?
 }
 
 fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
@@ -851,19 +884,38 @@ impl BrowserPlatform for LinuxBrowserPlatform {
         pid: i64,
         port: u16,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
-        let Some(expected_ws_url) = browser_websocket_url(port).await else {
+        if !inspect_ipv4_loopback_ports_for_pid(pid)
+            .await?
+            .contains(&port)
+        {
+            return Ok(None);
+        }
+        let Some(ws_url) = browser_websocket_url(port)
+            .await
+            .and_then(|url| canonical_ipv4_websocket_url(&url, port))
+        else {
             return Ok(None);
         };
-        let endpoint = self
-            .discover_spawned_endpoint(pid, &expected_ws_url)
+        if !inspect_ipv4_loopback_ports_for_pid(pid)
             .await?
-            .ok_or_else(|| {
-                refusal(
-                    BrowserRefusalCode::BrowserEndpointOwnerMismatch,
-                    "the driver-selected DevTools port is not owned by the spawned browser",
-                )
-            })?;
-        Ok(Some(endpoint))
+            .contains(&port)
+        {
+            return Ok(None);
+        }
+        Ok(Some(OwnedEndpoint {
+            ws_url,
+            http_port: Some(port),
+            transport: EndpointTransport::SpawnedExact,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: pid,
+                listener_pid: None,
+                detail: Some(
+                    "exact /proc process-tree socket owner before and after /json/version"
+                        .to_owned(),
+                ),
+            },
+        }))
     }
 
     async fn discover_existing_profile_endpoint(
@@ -1300,6 +1352,34 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn driver_selected_port_does_not_query_a_foreign_listener() {
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .expect("bind foreign listener");
+        let port = listener.local_addr().expect("listener address").port();
+        let mut unrelated = tokio::process::Command::new("sleep")
+            .arg("60")
+            .kill_on_drop(true)
+            .spawn()
+            .expect("spawn unrelated process");
+        let unrelated_pid = i64::from(unrelated.id().expect("unrelated process pid"));
+
+        let endpoint = LinuxBrowserPlatform
+            .discover_spawned_endpoint_on_port(unrelated_pid, port)
+            .await
+            .expect("foreign listener should remain an ordinary not-ready result");
+
+        assert!(endpoint.is_none());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), listener.accept())
+                .await
+                .is_err()
+        );
+        unrelated.start_kill().expect("stop unrelated process");
+        unrelated.wait().await.expect("reap unrelated process");
+    }
+
     #[test]
     fn hyprland_browser_identity_requires_exact_pid_and_full_native_address() {
         let address = 0x1234_0000_0042;
@@ -1437,6 +1517,22 @@ mod tests {
             Some(9222)
         );
         assert_eq!(loopback_websocket_port("ws://0.0.0.0:9222/devtools"), None);
+    }
+
+    #[test]
+    fn fixed_port_websocket_route_is_canonicalized_to_the_proven_ipv4_listener() {
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://[::1]:9222/devtools/browser/id", 9222),
+            Some("ws://127.0.0.1:9222/devtools/browser/id".to_owned())
+        );
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://127.0.0.1:9333/devtools/browser/id", 9222),
+            None
+        );
+        assert_eq!(
+            canonical_ipv4_websocket_url("ws://192.0.2.1:9222/devtools/browser/id", 9222),
+            None
+        );
     }
 
     #[test]

@@ -87,7 +87,9 @@ class Transport(FleetTransport):
         )
         self.status = 200
 
-    async def request_service(self, name, *, method, path, json_body=None, headers=None):
+    async def request_service(
+        self, name, *, method, path, json_body=None, headers=None, timeout=None
+    ):
         assert self._connected
         self.events.append((name, method, path, json_body, headers))
         data = self.open_data if path == "/v1/connections" else self.response_data
@@ -235,7 +237,7 @@ async def test_exchange_errors_are_sanitized_and_never_replayed(sandbox, status,
         with pytest.raises(ChannelError, match=reason) as error:
             await driver.channel.exchange(envelope())
         assert "secret" not in str(error.value)
-        assert len(sandbox._transport.events) == 3
+        assert len(sandbox._transport.events) == (3 if status in (404, 409) else 4)
         assert sandbox._transport.events[-1][1] == "DELETE"
         assert driver.channel.closed
         before = len(sandbox._transport.events)
@@ -481,3 +483,154 @@ async def test_cancelled_exchange_invalidates_and_deletes(sandbox, monkeypatch):
         assert driver.channel.closed
         assert driver.channel.cleanup_confirmed
         assert sandbox._transport.events[-1][1] == "DELETE"
+
+
+@pytest.mark.parametrize("close_claim", [False, True])
+async def test_pending_open_does_not_block_disconnect(sandbox, monkeypatch, close_claim):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver._CLEANUP_TIMEOUT", 0.01)
+    started = asyncio.Event()
+    original = sandbox._transport.request_service
+
+    async def pending(*args, **kwargs):
+        if kwargs["path"] == "/v1/connections":
+            started.set()
+            await asyncio.Event().wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox._transport, "request_service", pending)
+    if close_claim:
+
+        async def release():
+            sandbox._transport.events.append("release")
+
+        sandbox._claim_handle = SimpleNamespace(release=release, name=None)
+    opening = asyncio.create_task(sandbox.driver.connect().__aenter__())
+    await started.wait()
+    await asyncio.wait_for(sandbox.close() if close_claim else sandbox.disconnect(), 0.5)
+    with pytest.raises(asyncio.CancelledError):
+        await opening
+    assert not sandbox.driver._connections
+    assert sandbox._transport.events[-1] == "disconnect"
+    if close_claim:
+        assert sandbox._transport.events[-2] == "release"
+
+
+@pytest.mark.parametrize("cancel_context", [False, True])
+async def test_late_open_is_cleaned_without_resurrecting(sandbox, monkeypatch, cancel_context):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver._CLEANUP_TIMEOUT", 0.01)
+    started, cancelled, finish, deleted = (asyncio.Event() for _ in range(4))
+    original = sandbox._transport.request_service
+
+    async def resistant(*args, **kwargs):
+        if kwargs["path"] == "/v1/connections":
+            started.set()
+            try:
+                await finish.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await finish.wait()
+        response = await original(*args, **kwargs)
+        if kwargs["method"] == "DELETE":
+            deleted.set()
+        return response
+
+    monkeypatch.setattr(sandbox._transport, "request_service", resistant)
+    opening = asyncio.create_task(sandbox.driver.connect().__aenter__())
+    await started.wait()
+    if cancel_context:
+        opening.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await asyncio.wait_for(opening, 0.5)
+    else:
+        await asyncio.wait_for(sandbox.driver.close(), 0.5)
+    await cancelled.wait()
+    assert not sandbox.driver._connections
+    finish.set()
+    await asyncio.wait_for(deleted.wait(), 0.5)
+    if not cancel_context:
+        with pytest.raises(DriverConnectionError, match="disconnected"):
+            await opening
+    assert [e[1] for e in sandbox._transport.events] == ["POST", "DELETE"]
+
+
+@pytest.mark.parametrize("deadline", [1120000, 10**1000])
+async def test_driver_deadline_overrides_short_transport_timeout(sandbox, monkeypatch, deadline):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver.time.time", lambda: 1000)
+    original = sandbox._transport.request_service
+    timeouts = []
+
+    async def record(*args, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox._transport, "request_service", record)
+    async with sandbox.driver.connect() as driver:
+        await driver.channel.exchange(envelope(deadline_unix_ms=deadline))
+    assert timeouts == [None, 120, None]
+    assert sandbox._transport._timeout == 30
+
+
+@pytest.mark.parametrize("deadline", [0, 999999, 1000000, -1])
+async def test_expired_or_invalid_deadline_never_dispatches(sandbox, monkeypatch, deadline):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver.time.time", lambda: 1000)
+    async with sandbox.driver.connect() as driver:
+        with pytest.raises(ChannelError, match="expired|malformed"):
+            await driver.channel.exchange(envelope(deadline_unix_ms=deadline))
+        assert len(sandbox._transport.events) == 1
+
+
+async def test_local_deadline_cancels_then_deletes_without_replay(sandbox, monkeypatch):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver.time.time", lambda: 1000)
+    original = sandbox._transport.request_service
+    dispatched = []
+
+    async def pending(*args, **kwargs):
+        dispatched.append((kwargs["method"], kwargs["path"]))
+        if kwargs["path"].endswith("/exchange"):
+            await asyncio.Event().wait()
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox._transport, "request_service", pending)
+    async with sandbox.driver.connect() as driver:
+        with pytest.raises(TimeoutError):
+            await driver.channel.exchange(envelope(deadline_unix_ms=1000010))
+        assert driver.channel.closed
+        assert driver.channel.cleanup_confirmed
+    assert dispatched == [
+        ("POST", "/v1/connections"),
+        ("POST", "/v1/connections/connection-1/exchange"),
+        ("POST", "/v1/connections/connection-1/cancel"),
+        ("DELETE", "/v1/connections/connection-1"),
+    ]
+    assert not sandbox.driver._closing
+
+
+async def test_deadline_bounds_cancellation_resistant_exchange(sandbox, monkeypatch):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver.time.time", lambda: 1000)
+    cancelled, finish, returned = (asyncio.Event() for _ in range(3))
+    original = sandbox._transport.request_service
+
+    async def resistant(*args, **kwargs):
+        if kwargs["path"].endswith("/exchange"):
+            try:
+                await finish.wait()
+            except asyncio.CancelledError:
+                cancelled.set()
+                await finish.wait()
+            result = await original(*args, **kwargs)
+            returned.set()
+            return result
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(sandbox._transport, "request_service", resistant)
+    async with sandbox.driver.connect() as driver:
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(driver.channel.exchange(envelope(deadline_unix_ms=1000010)), 0.5)
+        await cancelled.wait()
+        assert driver.channel.closed
+        assert driver.channel.cleanup_confirmed
+        finish.set()
+        await asyncio.wait_for(returned.wait(), 0.5)
+        with pytest.raises(ChannelError, match="closed"):
+            await driver.channel.exchange(envelope(request_id="next"))
+    assert [event[1] for event in sandbox._transport.events] == ["POST", "POST", "DELETE", "POST"]

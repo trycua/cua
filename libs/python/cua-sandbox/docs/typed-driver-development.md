@@ -62,12 +62,28 @@ waits; an unconfirmed cleanup logs a warning and does not block claim release.
 The carrier's independent session expiry remains the fallback for unreachable
 cleanup. A successful local close is not proof that a remote guest was deleted.
 
+Opening handshakes do not hold the accessor's lifecycle lock. Closing the
+accessor invalidates pending opens and bounds the wait for them, so a stalled
+handshake cannot indefinitely delay claim release. If a cancelled open later
+returns a connection ID, the accessor attempts to delete it without yielding a
+Driver. Deletion can remain unconfirmed if the owning transport has already
+disconnected or the handshake never returns its connection ID.
+
+Each Driver exchange uses the envelope's remaining deadline, capped at 120
+seconds, for its per-request Fleet timeout and local wait. This does not change
+the transport's default timeout for computer-server or other callers. Expired
+requests fail before dispatch. A locally timed-out or cancelled exchange
+invalidates the connection and attempts bounded cancellation and deletion; it
+does not replay the desktop action.
+
 ## Verification and remaining proof
 
 The focused tests cover named-service routing, canonical method dispatch,
 response validation, cancellation, and lifecycle ordering. CI requires the
 native bridge integration test through `CUA_SANDBOX_REQUIRE_NATIVE_DRIVER=1`;
 it fails instead of skipping when the matching native package is absent.
+Regression tests also cover pending-open cleanup, late-open invalidation,
+per-request deadlines, and preservation of ordinary transport timeouts.
 
 These synthetic tests do not prove a real guest desktop effect. Before a
 released tutorial or supported-image claim, qualify the exact candidate on a

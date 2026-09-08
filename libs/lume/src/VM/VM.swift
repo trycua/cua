@@ -272,6 +272,10 @@ class VM {
             flock(fileHandle.fileDescriptor, LOCK_UN)
             try? fileHandle.close()
         }
+        let processOwner = try VMProcessOwnerRegistry.register(vmDirectory: vmDirContext.dir)
+        defer {
+            VMProcessOwnerRegistry.unregister(processOwner, vmDirectory: vmDirContext.dir)
+        }
         sessionCleanedUp = false
         activeVNCPolicy = vncPolicy
         activeNoVNCSession = nil
@@ -763,44 +767,21 @@ class VM {
             }
         }
 
-        // Try to open config file to get file descriptor
-        Logger.info(
-            "Attempting to access config file lock",
-            metadata: [
-                "path": vmDirContext.dir.configPath.path,
-                "name": vmDirContext.name,
-            ])
-        let fileHandle = try? FileHandle(forReadingFrom: vmDirContext.dir.configPath.url)
-        guard let fileHandle = fileHandle else {
-            Logger.info(
-                "Failed to open config file - VM may not be running",
-                metadata: ["name": vmDirContext.name])
-
-            // Even though we couldn't open the file, try to force unlock anyway
-            unlockConfigFile()
-
-            throw VMError.notRunning(vmDirContext.name)
-        }
-
-        // Get the PID of the process holding the lock
-        Logger.info(
-            "Finding process holding lock on config file", metadata: ["name": vmDirContext.name])
-        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path)
+        guard
+            let owner = VMProcessOwnerRegistry.validatedLockOwner(
+                for: vmDirContext.dir, using: runLockProbe)
         else {
-            try? fileHandle.close()
-            Logger.info(
-                "Failed to find process holding lock - VM may not be running",
-                metadata: ["name": vmDirContext.name])
-
-            // Even though we couldn't find the process, try to force unlock
-            unlockConfigFile()
-
-            throw VMError.notRunning(vmDirContext.name)
+            let reason = VMProcessOwnerRegistry.ownerRecordExists(for: vmDirContext.dir)
+                ? "an unverified VM owner process"
+                : "a legacy VM without a verified owner record"
+            Logger.error(
+                "Refusing to signal \(reason)", metadata: ["name": vmDirContext.name])
+            throw VMError.unverifiedProcessOwner(vmDirContext.name)
         }
+        let pid = owner.processIdentifier
 
         Logger.info(
-            "Found process \(pid) holding lock on config file",
-            metadata: ["name": vmDirContext.name])
+            "Found verified VM owner process \(pid)", metadata: ["name": vmDirContext.name])
 
         // First try graceful shutdown with SIGINT
         if kill(pid, SIGINT) == 0 {
@@ -821,8 +802,6 @@ class VM {
                 Logger.info("Process \(pid) has terminated", metadata: ["name": vmDirContext.name])
                 virtualizationService = nil
                 vncService.stop()
-                try? fileHandle.close()
-
                 // Force unlock the config file
                 unlockConfigFile()
 
@@ -834,7 +813,21 @@ class VM {
             attempts += 1
         }
 
-        // If graceful shutdown failed, force kill the process
+        // The PID may have been recycled while graceful shutdown was pending.
+        // Revalidate both its process instance and lock ownership before SIGKILL.
+        guard
+            VMProcessOwnerRegistry.validatedLockOwner(
+                for: vmDirContext.dir, using: runLockProbe) == owner
+        else {
+            Logger.info(
+                "VM owner exited before forced termination",
+                metadata: ["name": vmDirContext.name])
+            virtualizationService = nil
+            vncService.stop()
+            unlockConfigFile()
+            return
+        }
+
         Logger.info(
             "Graceful shutdown failed, forcing termination of process \(pid)",
             metadata: ["name": vmDirContext.name])
@@ -847,8 +840,6 @@ class VM {
             // Do final cleanup
             virtualizationService = nil
             vncService.stop()
-            try? fileHandle.close()
-
             // Force unlock the config file
             unlockConfigFile()
 
@@ -857,7 +848,6 @@ class VM {
         }
 
         // If we get here, something went very wrong
-        try? fileHandle.close()
         Logger.error(
             "Failed to stop VM - could not terminate process \(pid)",
             metadata: ["name": vmDirContext.name])

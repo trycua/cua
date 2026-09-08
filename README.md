@@ -22,22 +22,61 @@
 
 </div>
 
+## Choose your path
+
+<div align="center">
+  <table>
+    <tr>
+      <td colspan="3" align="center">
+        <a href="#cua-fleets">
+          <img src="img/card-cua-fleets.gif" alt="Cua Fleets: isolated cloud desktops for your agents" width="790">
+        </a>
+      </td>
+    </tr>
+    <tr>
+      <td align="center">
+        <a href="#cua-driver">
+          <img src="img/card-cua-driver.gif" alt="Cua Driver: inspect and operate apps on macOS, Windows, and Linux" width="246">
+        </a>
+      </td>
+      <td align="center">
+        <a href="#lume">
+          <img src="img/card-cua-lume.gif" alt="Lume: local macOS and Linux VMs on Apple Silicon" width="246">
+        </a>
+      </td>
+      <td align="center">
+        <a href="#cua-bench">
+          <img src="img/card-cua-bench.gif" alt="Cua Bench: create tasks, evaluate agents, and export trajectories" width="246">
+        </a>
+      </td>
+    </tr>
+  </table>
+</div>
+
+- **Cua Fleets:** [Provision a Linux desktop, run a command, and save a screenshot](https://cua.ai/docs/tutorials/your-first-cloud-fleet).
+- **Cua Driver:** [Operate Calculator and verify its result](https://cua.ai/docs/tutorials/drive-your-first-app).
+- **Lume:** [Create a Tahoe VM and connect over SSH](https://cua.ai/docs/tutorials/create-your-first-lume-vm).
+- **Cua Bench:** [Create and verify a simulated task](https://cua.ai/docs/tutorials/your-first-cua-bench-task).
+
+You bring the agent and model. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/concepts/what-is-computer-use) describes an agent moving between code, APIs, and graphical interfaces within the same task.
+
 ## See Cua Driver in action
 
 Two Cua Driver sessions select cells in LibreOffice Calc and objects in Inkscape on an Omarchy desktop while a terminal stays in the foreground. Watch the 50-second demo, then explore [Omarchy on Fleet](https://cua.ai/docs/how-to-guides/sandbox/run-omarchy-on-cloud-fleet).
 
 https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2
 
-## Choose your path
+---
 
-| You want to                                         | Start with                    | Your first result                                                                                                       |
-| --------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
-| Give an agent access to apps on an existing machine | [Cua Driver](#cua-driver)     | [Operate Calculator and verify its result](https://cua.ai/docs/tutorials/drive-your-first-app)                          |
-| Run work in isolated cloud desktops                 | [Cloud Fleets](#cloud-fleets) | [Provision a Linux desktop, run a command, and save a screenshot](https://cua.ai/docs/tutorials/your-first-cloud-fleet) |
-| Create local macOS VMs on Apple Silicon             | [Lume](#lume)                 | [Create a Tahoe VM and connect over SSH](https://cua.ai/docs/tutorials/create-your-first-lume-vm)                       |
-| Build tasks and evaluate computer-use agents        | [Cua-Bench](#cua-bench)       | [Create and verify a simulated task](https://cua.ai/docs/tutorials/your-first-cua-bench-task)                           |
+## Cua Fleets
 
-You bring the agent and model. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/concepts/what-is-computer-use) describes an agent moving between code, APIs, and graphical interfaces within the same task.
+Provision isolated cloud desktops at [run.cua.ai](https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme). A Fleet maintains sandbox capacity; your code claims a desktop from a pool and uses the Sandbox SDK to run commands, capture screenshots, and interact with apps inside it.
+
+**Your first result:** provision a Linux desktop, run `uname -a`, save a screenshot, and delete the cloud resources. The tutorial covers Fleet credentials, dependencies, and cleanup. Pools can retain paid capacity after a claim ends, so follow its cleanup steps.
+
+Local sandboxes and Fleets share the Sandbox SDK, but credentials, images, operations, and runtime requirements differ. Use the [runtime support reference](https://cua.ai/docs/reference/sandbox-sdk/runtime-support) to choose an environment. For your own hardware, see [Manage local sandbox lifecycle](https://cua.ai/docs/how-to-guides/sandbox/manage-local-lifecycle).
+
+**[Your first Cloud Fleet](https://cua.ai/docs/tutorials/your-first-cloud-fleet)** | **[Fleet overview](https://cua.ai/docs/cloud-fleets)** | **[Sandbox SDK reference](https://cua.ai/docs/reference/sandbox-sdk)**
 
 ---
 
@@ -65,18 +104,6 @@ Using Claude Code, Codex, Cursor, OpenClaw, or another agent? [Find your integra
 
 ---
 
-## Cloud Fleets
-
-Provision isolated cloud desktops at [run.cua.ai](https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme). A Fleet maintains sandbox capacity; your code claims a desktop from a pool and uses the Sandbox SDK to run commands, capture screenshots, and interact with apps inside it.
-
-**Your first result:** provision a Linux desktop, run `uname -a`, save a screenshot, and delete the cloud resources. The tutorial covers Fleet credentials, dependencies, and cleanup. Pools can retain paid capacity after a claim ends, so follow its cleanup steps.
-
-Local sandboxes and Fleets share the Sandbox SDK, but credentials, images, operations, and runtime requirements differ. Use the [runtime support reference](https://cua.ai/docs/reference/sandbox-sdk/runtime-support) to choose an environment. For your own hardware, see [Manage local sandbox lifecycle](https://cua.ai/docs/how-to-guides/sandbox/manage-local-lifecycle).
-
-**[Your first Cloud Fleet](https://cua.ai/docs/tutorials/your-first-cloud-fleet)** | **[Fleet overview](https://cua.ai/docs/cloud-fleets)** | **[Sandbox SDK reference](https://cua.ai/docs/reference/sandbox-sdk)**
-
----
-
 ## Lume
 
 Create and manage local macOS and Linux VMs on Apple Silicon using Apple's Virtualization.Framework.
@@ -91,7 +118,7 @@ Create and manage local macOS and Linux VMs on Apple Silicon using Apple's Virtu
 
 ---
 
-## Cua-Bench
+## Cua Bench
 
 Build computer-use tasks, evaluate agents, and export trajectories for training. Start with a simulated task that requires no VM, Docker, or model API key.
 

@@ -38,7 +38,7 @@ use super::binding::{
     CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool};
-use super::challenge::browser_challenge_value;
+use super::challenge::{browser_challenge_report, BrowserChallengeReport};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -389,7 +389,7 @@ pub(crate) struct SemanticSnapshotOutcome {
     pub snapshot_id: u64,
     pub url: String,
     pub title: String,
-    pub challenge: Value,
+    pub challenge: BrowserChallengeReport,
     pub outline: String,
     pub refs: Vec<SemanticListedRef>,
     pub content_refs: Vec<SemanticListedRef>,
@@ -2436,7 +2436,7 @@ impl BrowserEngine {
         snapshot_id: u64,
         url: String,
         title: String,
-        challenge: Value,
+        challenge: BrowserChallengeReport,
         page: super::semantic::SemanticPage,
         document_complete: bool,
         scope: &'static str,
@@ -2514,24 +2514,27 @@ impl BrowserEngine {
             if let Some(identity) = &snapshot.semantic_root_identity {
                 let conn = self.connection_for_record(session, &record).await?;
                 let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-                let tree = self.local_frame_tree(&conn, &cdp_session).await.map_err(|error| {
-                    match error {
+                let tree = self
+                    .local_frame_tree(&conn, &cdp_session)
+                    .await
+                    .map_err(|error| match error {
                         FrameTreeError::Unsupported => refuse(
                             BrowserRefusalCode::BrowserRouteUnavailable,
-                            "the browser no longer reports its frame tree, so the semantic \n+                             continuation's document identity cannot be re-proven",
+                            "the browser no longer reports its frame tree, so the semantic \
+                             continuation's document identity cannot be re-proven",
                         ),
                         FrameTreeError::Failed(error) => route_err(
                             "Page.getFrameTree failed during semantic continuation revalidation",
                             error,
                         ),
-                    }
-                })?;
+                    })?;
                 if !tree.proves(identity) {
                     self.store
                         .invalidate_tab_snapshots(session, target_id, tab_id);
                     return Err(refuse(
                         BrowserRefusalCode::BrowserRefStale,
-                        "the page navigated since this semantic continuation was minted; \n+                         re-run get_browser_state to start a fresh snapshot",
+                        "the page navigated since this semantic continuation was minted; \
+                         re-run get_browser_state to start a fresh snapshot",
                     ));
                 }
             }
@@ -2541,9 +2544,9 @@ impl BrowserEngine {
                     "the continuation no longer has semantic snapshot state",
                 )
             })?;
-            let challenge = browser_challenge_value(
+            let challenge = browser_challenge_report(
                 &snapshot.url,
-                document.challenge_texts(),
+                document.visible_challenge_labels(),
                 document.complete && continuation.oopif_supported,
             );
             let page = document.page(
@@ -2714,9 +2717,9 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
-        let challenge = browser_challenge_value(
+        let challenge = browser_challenge_report(
             &url,
-            semantic.challenge_texts(),
+            semantic.visible_challenge_labels(),
             semantic.complete && matches!(oopif, OopifStatus::Attached(_)),
         );
         let page = semantic.page(

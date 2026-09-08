@@ -1,223 +1,240 @@
 //! Conservative CAPTCHA / bot-challenge detection for semantic browser snapshots.
 //!
-//! The detector reports fixed challenge classifications for explicit caller
-//! resume or user handoff. It does not copy page text into the classification,
-//! act on the challenge, or treat a lone word such as "captcha" or "turnstile"
-//! in ordinary page content as a blocker.
+//! The detector reports a bounded classification from known challenge URLs or
+//! corroborating visible semantic labels. It does not copy page text into the
+//! report, act on a challenge, or treat a lone stock phrase as proof.
 
-use serde::Serialize;
-use serde_json::{json, Value};
 use std::collections::HashSet;
 
+use serde::Serialize;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserChallengeStatus {
+    Detected,
+    NotDetected,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserChallengeKind {
+    AntiBotChallenge,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserChallengeSource {
+    Url,
+    Semantic,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum BrowserChallengeConfidence {
+    Medium,
+    High,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BrowserChallengeLabel<'a> {
+    role: &'a str,
+    name: &'a str,
+}
+
+impl<'a> BrowserChallengeLabel<'a> {
+    pub(crate) fn new(role: &'a str, name: &'a str) -> Self {
+        Self { role, name }
+    }
+}
+
+/// Bounded public classification attached to `semantic_v2` snapshots.
+///
+/// Optional fields remain present as `null` so callers can handle one stable
+/// object shape. `origin` is absent for opaque URLs such as `about:blank`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
-pub(crate) struct BrowserChallengeSignal {
-    source: &'static str,
-    provider: &'static str,
-    reason: &'static str,
+pub(crate) struct BrowserChallengeReport {
+    pub(crate) status: BrowserChallengeStatus,
+    pub(crate) kind: Option<BrowserChallengeKind>,
+    pub(crate) origin: Option<String>,
+    pub(crate) source: Option<BrowserChallengeSource>,
+    pub(crate) confidence: Option<BrowserChallengeConfidence>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct BrowserChallengeObservation {
-    origin: String,
-    provider: &'static str,
-    confidence: &'static str,
-    signals: Vec<BrowserChallengeSignal>,
-}
+impl BrowserChallengeReport {
+    fn detected(
+        origin: Option<String>,
+        source: BrowserChallengeSource,
+        confidence: BrowserChallengeConfidence,
+    ) -> Self {
+        Self {
+            status: BrowserChallengeStatus::Detected,
+            kind: Some(BrowserChallengeKind::AntiBotChallenge),
+            origin,
+            source: Some(source),
+            confidence: Some(confidence),
+        }
+    }
 
-impl BrowserChallengeObservation {
-    pub(crate) fn to_value(&self) -> Value {
-        json!({
-            "required": true,
-            "detection_status": "detected",
-            "kind": "anti_bot_challenge",
-            "origin": self.origin,
-            "provider": self.provider,
-            "confidence": self.confidence,
-            "requires_user": true,
-            "handling": "explicit_resume_or_user_handoff",
-            "message": "A CAPTCHA or bot-verification challenge appears to be present. Do not issue another action to this origin until the caller explicitly resumes or a user takes over.",
-            "signals": self.signals,
-        })
+    fn absent(origin: Option<String>, observation_complete: bool) -> Self {
+        Self {
+            status: if observation_complete {
+                BrowserChallengeStatus::NotDetected
+            } else {
+                BrowserChallengeStatus::Unknown
+            },
+            kind: None,
+            origin,
+            source: None,
+            confidence: None,
+        }
     }
 }
 
-pub(crate) fn no_browser_challenge(origin: &str, observation_complete: bool) -> Value {
-    json!({
-        "required": false,
-        "detection_status": if observation_complete { "not_detected" } else { "unknown" },
-        "kind": Value::Null,
-        "origin": origin,
-        "provider": Value::Null,
-        "confidence": Value::Null,
-        "requires_user": false,
-        "handling": "none",
-        "message": if observation_complete {
-            Value::Null
-        } else {
-            Value::String(
-                "The available page state was incomplete, so the absence of a challenge could not be proven."
-                    .to_owned(),
-            )
-        },
-        "signals": [],
-    })
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum ChallengeCopyKind {
+    RobotPrompt,
+    HumanVerification,
+    SecurityCheck,
+    BrowserCheck,
 }
 
-pub(crate) fn browser_challenge_value<'a>(
+pub(crate) fn browser_challenge_report<'a>(
     url: &str,
-    texts: impl IntoIterator<Item = &'a str>,
+    labels: impl IntoIterator<Item = BrowserChallengeLabel<'a>>,
     observation_complete: bool,
-) -> Value {
+) -> BrowserChallengeReport {
     let origin = browser_origin(url);
-    detect_browser_challenge(url, texts)
-        .map(|observation| observation.to_value())
-        .unwrap_or_else(|| no_browser_challenge(&origin, observation_complete))
+    if url_indicates_challenge(url) {
+        return BrowserChallengeReport::detected(
+            origin,
+            BrowserChallengeSource::Url,
+            BrowserChallengeConfidence::High,
+        );
+    }
+    if visible_labels_indicate_challenge(labels) {
+        return BrowserChallengeReport::detected(
+            origin,
+            BrowserChallengeSource::Semantic,
+            BrowserChallengeConfidence::Medium,
+        );
+    }
+    BrowserChallengeReport::absent(origin, observation_complete)
 }
 
-pub(crate) fn detect_browser_challenge<'a>(
-    url: &str,
-    texts: impl IntoIterator<Item = &'a str>,
-) -> Option<BrowserChallengeObservation> {
-    let origin = browser_origin(url);
-    let mut signals = Vec::new();
-    let mut seen_signals = HashSet::new();
-    let mut provider_rank: Option<(&'static str, u8)> = None;
-    let mut strongest_signal = 0_u8;
-
-    let mut consider = |source: &'static str,
-                        provider: &'static str,
-                        rank: u8,
-                        reason: &'static str,
-                        matched: bool| {
-        if !matched || !seen_signals.insert((source, provider, reason)) {
-            return;
-        }
-        signals.push(BrowserChallengeSignal {
-            source,
-            provider,
-            reason,
-        });
-        strongest_signal = strongest_signal.max(rank);
-        if provider != "generic"
-            && provider_rank
-                .map(|(_, current_rank)| rank > current_rank)
-                .unwrap_or(true)
-        {
-            provider_rank = Some((provider, rank));
-        }
-    };
-
-    if let Ok(parsed) = url::Url::parse(url) {
-        let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
-        let path = parsed.path().to_ascii_lowercase();
-        let cloudflare_challenge_parameter = parsed.query_pairs().any(|(name, _)| {
-            let name = name.to_ascii_lowercase();
-            name.starts_with("cf_chl_") || name.starts_with("cf-chl-")
-        });
-        if host == "challenges.cloudflare.com"
-            || path.starts_with("/cdn-cgi/challenge-platform/")
-            || cloudflare_challenge_parameter
-        {
-            consider(
-                "url",
-                "cloudflare_turnstile",
-                60,
-                "challenge_infrastructure",
-                true,
-            );
-        }
-        if host == "www.google.com" && parsed.path().starts_with("/recaptcha/")
-            || host == "www.recaptcha.net" && parsed.path().starts_with("/recaptcha/")
-        {
-            consider("url", "recaptcha", 60, "challenge_infrastructure", true);
-        }
-        if host == "www.google.com" && parsed.path().starts_with("/sorry/") {
-            consider("url", "generic", 60, "challenge_infrastructure", true);
-        }
-        if (host == "hcaptcha.com" || host.ends_with(".hcaptcha.com"))
-            && (path.starts_with("/captcha/")
-                || path.starts_with("/checksiteconfig")
-                || path.starts_with("/getcaptcha/"))
-        {
-            consider("url", "hcaptcha", 60, "challenge_infrastructure", true);
-        }
-        if (host == "funcaptcha.com"
-            || host.ends_with(".funcaptcha.com")
-            || host == "arkoselabs.com"
-            || host.ends_with(".arkoselabs.com"))
-            && path.starts_with("/fc/")
-        {
-            consider("url", "arkose", 60, "challenge_infrastructure", true);
-        }
-    }
-
-    let texts = texts
-        .into_iter()
-        .map(normalize_text)
-        .filter(|text| !text.is_empty())
-        .collect::<Vec<_>>();
-    let challenge_copy_present = [
-        "i'm not a robot",
-        "i’m not a robot",
-        "verify you are human",
-        "verify that you are human",
-        "prove you are human",
-        "complete the security check",
-        "complete this security check",
-        "checking your browser",
-        "checking if the site connection is secure",
-        "review the security of your connection",
-    ]
-    .iter()
-    .any(|phrase| texts.iter().any(|text| text.contains(phrase)));
-
-    if challenge_copy_present {
-        consider("page_text", "generic", 45, "challenge_copy", true);
-        for (provider, marker, reason) in [
-            ("recaptcha", "recaptcha", "provider_marker"),
-            ("hcaptcha", "hcaptcha", "provider_marker"),
-            ("cloudflare_turnstile", "turnstile", "provider_marker"),
-            ("arkose", "funcaptcha", "provider_marker"),
-        ] {
-            consider(
-                "page_text",
-                provider,
-                50,
-                reason,
-                texts.iter().any(|text| text.contains(marker)),
-            );
-        }
-    }
-
-    if signals.is_empty() {
-        return None;
-    }
-
-    signals.truncate(8);
-    let provider = provider_rank
-        .map(|(provider, _)| provider)
-        .unwrap_or("generic");
-    let confidence = if strongest_signal >= 50 {
-        "high"
-    } else {
-        "medium"
-    };
-
-    Some(BrowserChallengeObservation {
-        origin,
-        provider,
-        confidence,
-        signals,
-    })
-}
-
-fn browser_origin(url: &str) -> String {
+fn url_indicates_challenge(url: &str) -> bool {
     let Ok(parsed) = url::Url::parse(url) else {
-        return String::new();
+        return false;
     };
+    let host = parsed.host_str().unwrap_or_default().to_ascii_lowercase();
+    let path = parsed.path().to_ascii_lowercase();
+
+    if host == "challenges.cloudflare.com" || path.starts_with("/cdn-cgi/challenge-platform/") {
+        return true;
+    }
+    if (host == "www.google.com" || host == "www.recaptcha.net")
+        && is_recaptcha_challenge_path(&path)
+    {
+        return true;
+    }
+    if host == "www.google.com" && path.starts_with("/sorry/") {
+        return true;
+    }
+    if (host == "hcaptcha.com" || host.ends_with(".hcaptcha.com"))
+        && (path.starts_with("/captcha/")
+            || path.starts_with("/checksiteconfig")
+            || path.starts_with("/getcaptcha/"))
+    {
+        return true;
+    }
+    (host == "funcaptcha.com"
+        || host.ends_with(".funcaptcha.com")
+        || host == "arkoselabs.com"
+        || host.ends_with(".arkoselabs.com"))
+        && path.starts_with("/fc/")
+}
+
+fn is_recaptcha_challenge_path(path: &str) -> bool {
+    matches!(
+        path.trim_end_matches('/'),
+        "/recaptcha/api/fallback"
+            | "/recaptcha/api2/anchor"
+            | "/recaptcha/api2/bframe"
+            | "/recaptcha/enterprise/anchor"
+            | "/recaptcha/enterprise/bframe"
+    )
+}
+
+fn visible_labels_indicate_challenge<'a>(
+    labels: impl IntoIterator<Item = BrowserChallengeLabel<'a>>,
+) -> bool {
+    let mut copy_kinds = HashSet::new();
+    let mut matching_labels = 0_usize;
+    let mut seen_labels = HashSet::new();
+
+    for label in labels {
+        let role = normalize_text(label.role);
+        let name = normalize_text(label.name);
+        if name.is_empty() {
+            continue;
+        }
+
+        let mut label_kinds = HashSet::new();
+        for (kind, phrases) in [
+            (
+                ChallengeCopyKind::RobotPrompt,
+                &["i'm not a robot", "i’m not a robot"][..],
+            ),
+            (
+                ChallengeCopyKind::HumanVerification,
+                &[
+                    "verify you are human",
+                    "verify that you are human",
+                    "prove you are human",
+                ][..],
+            ),
+            (
+                ChallengeCopyKind::SecurityCheck,
+                &[
+                    "complete the security check",
+                    "complete this security check",
+                ][..],
+            ),
+            (
+                ChallengeCopyKind::BrowserCheck,
+                &[
+                    "checking your browser",
+                    "checking if the site connection is secure",
+                    "review the security of your connection",
+                ][..],
+            ),
+        ] {
+            if phrases.iter().any(|phrase| name.contains(phrase)) {
+                label_kinds.insert(kind);
+            }
+        }
+        if role == "checkbox"
+            && (label_kinds.contains(&ChallengeCopyKind::RobotPrompt)
+                || label_kinds.contains(&ChallengeCopyKind::HumanVerification))
+        {
+            return true;
+        }
+        if !label_kinds.is_empty() && seen_labels.insert(name) {
+            matching_labels += 1;
+            copy_kinds.extend(label_kinds);
+        }
+    }
+
+    // One quoted stock phrase is common in articles, messages, and control
+    // values. Require distinct labels that corroborate distinct copy classes.
+    copy_kinds.len() >= 2 && matching_labels >= 2
+}
+
+fn browser_origin(url: &str) -> Option<String> {
+    let parsed = url::Url::parse(url).ok()?;
     match parsed.origin() {
-        url::Origin::Tuple(_, _, _) => parsed.origin().ascii_serialization(),
-        url::Origin::Opaque(_) => String::new(),
+        url::Origin::Tuple(_, _, _) => Some(parsed.origin().ascii_serialization()),
+        url::Origin::Opaque(_) => None,
     }
 }
 
@@ -230,137 +247,186 @@ fn normalize_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use serde_json::{json, to_value};
+
     use super::*;
 
-    #[test]
-    fn detects_cloudflare_turnstile_from_infrastructure_and_copy() {
-        let observation = detect_browser_challenge(
-            "https://challenges.cloudflare.com/cdn-cgi/challenge-platform/h/b/orchestrate/turnstile",
-            ["Cloudflare Turnstile: Verify you are human before continuing"],
-        )
-        .expect("challenge observation");
-
-        assert_eq!(observation.origin, "https://challenges.cloudflare.com");
-        assert_eq!(observation.provider, "cloudflare_turnstile");
-        assert_eq!(observation.confidence, "high");
-        assert!(observation
-            .signals
-            .iter()
-            .any(|signal| signal.source == "url"));
+    fn value(url: &str, labels: &[&str], complete: bool) -> serde_json::Value {
+        to_value(browser_challenge_report(
+            url,
+            labels
+                .iter()
+                .map(|label| BrowserChallengeLabel::new("statictext", label)),
+            complete,
+        ))
+        .unwrap()
     }
 
     #[test]
-    fn detects_known_hcaptcha_and_arkose_challenge_paths() {
-        for (url, provider) in [
-            (
-                "https://newassets.hcaptcha.com/captcha/v1/example/static/hcaptcha.html",
-                "hcaptcha",
-            ),
-            ("https://client-api.arkoselabs.com/fc/gc/", "arkose"),
+    fn detects_cloudflare_challenge_infrastructure_without_guessing_a_provider() {
+        let value = value(
+            "https://example.test/cdn-cgi/challenge-platform/h/b/orchestrate/managed/v1",
+            &[],
+            true,
+        );
+
+        assert_eq!(
+            value,
+            json!({
+                "status": "detected",
+                "kind": "anti_bot_challenge",
+                "origin": "https://example.test",
+                "source": "url",
+                "confidence": "high",
+            })
+        );
+    }
+
+    #[test]
+    fn detects_known_recaptcha_hcaptcha_and_arkose_challenge_paths() {
+        for url in [
+            "https://www.google.com/recaptcha/api2/anchor?k=site-key",
+            "https://www.recaptcha.net/recaptcha/enterprise/bframe?k=site-key",
+            "https://www.google.com/recaptcha/api/fallback?k=site-key",
+            "https://newassets.hcaptcha.com/captcha/v1/example/static/hcaptcha.html",
+            "https://client-api.arkoselabs.com/fc/gc/",
         ] {
-            let observation = detect_browser_challenge(url, std::iter::empty())
-                .expect("known challenge endpoint");
-            assert_eq!(observation.provider, provider, "{url}");
+            let report = browser_challenge_report(url, std::iter::empty(), true);
+            assert_eq!(report.status, BrowserChallengeStatus::Detected, "{url}");
+            assert_eq!(report.source, Some(BrowserChallengeSource::Url), "{url}");
         }
     }
 
     #[test]
-    fn detects_generic_human_verification_copy() {
-        let value = browser_challenge_value(
+    fn recaptcha_product_and_administration_paths_are_not_challenge_pages() {
+        for url in [
+            "https://www.google.com/recaptcha/admin",
+            "https://www.google.com/recaptcha/api.js",
+            "https://www.google.com/recaptcha/about/",
+            "https://www.recaptcha.net/recaptcha/docs/",
+            "https://www.google.com/recaptcha/api2/reload?k=site-key",
+        ] {
+            let report = browser_challenge_report(url, std::iter::empty(), true);
+            assert_eq!(report.status, BrowserChallengeStatus::NotDetected, "{url}");
+        }
+    }
+
+    #[test]
+    fn detects_correlated_visible_challenge_copy() {
+        let value = value(
             "https://example.test/login",
-            ["Please verify you are human before continuing."],
-            true,
-        );
-
-        assert_eq!(value["required"], true);
-        assert_eq!(value["detection_status"], "detected");
-        assert_eq!(value["origin"], "https://example.test");
-        assert_eq!(value["provider"], "generic");
-        assert_eq!(value["requires_user"], true);
-        assert_eq!(value["handling"], "explicit_resume_or_user_handoff");
-    }
-
-    #[test]
-    fn detects_google_unusual_traffic_interstitial_without_a_checkbox() {
-        let value = browser_challenge_value(
-            "https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch",
-            ["Our systems have detected unusual traffic. Please try your request again later."],
-            true,
-        );
-
-        assert_eq!(value["required"], true);
-        assert_eq!(value["origin"], "https://www.google.com");
-        assert_eq!(value["provider"], "generic");
-        assert_eq!(value["confidence"], "high");
-        assert_eq!(
-            value["signals"],
-            json!([{
-                "source": "url",
-                "provider": "generic",
-                "reason": "challenge_infrastructure",
-            }])
-        );
-    }
-
-    #[test]
-    fn does_not_treat_other_sites_sorry_pages_as_google_challenges() {
-        let value = browser_challenge_value(
-            "https://example.test/sorry/index",
-            ["Sorry about that", "The requested article moved."],
-            true,
-        );
-
-        assert_eq!(value["required"], false);
-    }
-
-    #[test]
-    fn ordinary_article_about_captcha_and_turnstile_is_not_marked() {
-        let value = browser_challenge_value(
-            "https://news.example/articles/turnstile-history",
-            [
-                "How CAPTCHA systems changed the web",
-                "This article explains CAPTCHA accessibility tradeoffs.",
-                "Cloudflare Turnstile and hCaptcha are two products discussed by researchers.",
+            &[
+                "Complete the security check",
+                "Please verify you are human before continuing.",
             ],
             true,
         );
 
-        assert_eq!(value["required"], false);
-        assert_eq!(value["origin"], "https://news.example");
+        assert_eq!(value["status"], "detected");
+        assert_eq!(value["kind"], "anti_bot_challenge");
+        assert_eq!(value["origin"], "https://example.test");
+        assert_eq!(value["source"], "semantic");
+        assert_eq!(value["confidence"], "medium");
     }
 
     #[test]
-    fn challenge_markers_in_query_values_do_not_block_an_ordinary_page() {
-        let value = browser_challenge_value(
-            "https://docs.example/search?q=%2Fcdn-cgi%2Fchallenge-platform%2F+cf_chl_token",
-            ["Search results", "Documentation search results"],
+    fn detects_a_challenge_phrase_bound_to_an_interactive_control() {
+        let value = to_value(browser_challenge_report(
+            "https://example.test/login",
+            [
+                BrowserChallengeLabel::new("statictext", "I'm not a robot"),
+                BrowserChallengeLabel::new("checkbox", "I'm not a robot"),
+            ],
+            true,
+        ))
+        .unwrap();
+
+        assert_eq!(value["status"], "detected");
+        assert_eq!(value["source"], "semantic");
+        assert_eq!(value["confidence"], "medium");
+    }
+
+    #[test]
+    fn ordinary_button_or_dialog_copy_does_not_classify_as_a_challenge() {
+        for role in ["button", "dialog", "alert", "alertdialog"] {
+            let value = to_value(browser_challenge_report(
+                "https://example.test/account",
+                [BrowserChallengeLabel::new(role, "Verify you are human")],
+                true,
+            ))
+            .unwrap();
+
+            assert_eq!(value["status"], "not_detected", "{role}");
+        }
+    }
+
+    #[test]
+    fn detects_google_unusual_traffic_interstitial_without_page_copy() {
+        let value = value(
+            "https://www.google.com/sorry/index?continue=https%3A%2F%2Fwww.google.com%2Fsearch",
+            &[],
             true,
         );
 
-        assert_eq!(value["required"], false);
-        assert_eq!(value["origin"], "https://docs.example");
+        assert_eq!(value["status"], "detected");
+        assert_eq!(value["origin"], "https://www.google.com");
+        assert_eq!(value["source"], "url");
+        assert_eq!(value["confidence"], "high");
     }
 
     #[test]
-    fn challenge_path_fragments_outside_the_reserved_prefix_are_not_marked() {
-        let value = browser_challenge_value(
-            "https://docs.example/reference/cdn-cgi/challenge-platform/",
-            ["Cloud service documentation"],
-            true,
-        );
-
-        assert_eq!(value["detection_status"], "not_detected");
+    fn one_stock_phrase_is_not_a_challenge() {
+        for label in [
+            "An article quotes the phrase: I'm not a robot.",
+            "A chat message says: please verify you are human.",
+        ] {
+            let value = value("https://example.test/ordinary", &[label], true);
+            assert_eq!(value["status"], "not_detected", "{label}");
+        }
     }
 
     #[test]
-    fn challenge_copy_must_be_present_in_one_semantic_text_value() {
-        let value = browser_challenge_value(
+    fn challenge_copy_must_span_distinct_semantic_labels() {
+        let value = value(
             "https://example.test/ordinary",
-            ["Please verify you are", "human resources policy"],
+            &["This article quotes 'verify you are human' and 'I'm not a robot'."],
             true,
         );
 
-        assert_eq!(value["detection_status"], "not_detected");
+        assert_eq!(value["status"], "not_detected");
+    }
+
+    #[test]
+    fn arbitrary_challenge_query_names_do_not_classify_a_page() {
+        for url in [
+            "https://example.test/?cf_chl_token=documentation",
+            "https://example.test/?cf-chl-example=true",
+        ] {
+            let value = value(url, &["Documentation"], true);
+            assert_eq!(value["status"], "not_detected", "{url}");
+        }
+    }
+
+    #[test]
+    fn challenge_markers_in_query_values_do_not_classify_a_page() {
+        let value = value(
+            "https://docs.example/search?q=%2Fcdn-cgi%2Fchallenge-platform%2F+cf_chl_token",
+            &["Search results", "Documentation search results"],
+            true,
+        );
+
+        assert_eq!(value["status"], "not_detected");
+    }
+
+    #[test]
+    fn challenge_path_fragments_outside_the_reserved_prefix_are_not_classified() {
+        let value = value(
+            "https://docs.example/reference/cdn-cgi/challenge-platform/",
+            &["Cloud service documentation"],
+            true,
+        );
+
+        assert_eq!(value["status"], "not_detected");
     }
 
     #[test]
@@ -371,22 +437,20 @@ mod tests {
             "https://www.arkoselabs.com/resources/",
             "https://developer.funcaptcha.com/docs/",
         ] {
-            let value =
-                browser_challenge_value(url, ["Documentation", "Product documentation"], true);
-            assert_eq!(value["required"], false, "{url}: {value}");
+            let value = value(url, &["Documentation", "Product documentation"], true);
+            assert_eq!(value["status"], "not_detected", "{url}: {value}");
         }
     }
 
     #[test]
-    fn challenge_schema_has_a_stable_key_set() {
-        let present =
-            browser_challenge_value("https://example.test/login", ["Verify you are human"], true);
-        let absent = browser_challenge_value(
-            "https://example.test/",
-            ["Example Domain", "Illustrative examples live here."],
+    fn report_has_a_stable_closed_shape() {
+        let present = value(
+            "https://example.test/login",
+            &["Complete the security check", "Verify you are human"],
             true,
         );
-        let unknown = browser_challenge_value("https://example.test/", ["Example Domain"], false);
+        let absent = value("https://example.test/", &["Example Domain"], true);
+        let unknown = value("https://example.test/", &["Example Domain"], false);
 
         let mut present_keys = present.as_object().unwrap().keys().collect::<Vec<_>>();
         let mut absent_keys = absent.as_object().unwrap().keys().collect::<Vec<_>>();
@@ -396,27 +460,42 @@ mod tests {
         unknown_keys.sort();
         assert_eq!(present_keys, absent_keys);
         assert_eq!(present_keys, unknown_keys);
-        assert_eq!(absent["detection_status"], "not_detected");
-        assert_eq!(unknown["detection_status"], "unknown");
-        assert_eq!(unknown["required"], false);
-        assert!(unknown["message"].as_str().is_some());
+        assert_eq!(
+            present_keys,
+            vec!["confidence", "kind", "origin", "source", "status"]
+        );
+        assert_eq!(absent["status"], "not_detected");
+        assert_eq!(unknown["status"], "unknown");
+        assert!(unknown["kind"].is_null());
+        assert!(unknown["source"].is_null());
     }
 
     #[test]
-    fn signals_do_not_echo_page_content_or_url_details() {
-        let value = browser_challenge_value(
-            "https://example.test/login?secret=do-not-copy",
-            ["Private account name: Alice. Please verify you are human."],
+    fn opaque_urls_report_an_unknown_origin() {
+        let value = value(
+            "about:blank",
+            &["Complete the security check", "Verify you are human"],
             true,
         );
-        let signals = value["signals"].as_array().unwrap();
-        let serialized = serde_json::to_string(signals).unwrap();
+
+        assert_eq!(value["status"], "detected");
+        assert!(value["origin"].is_null());
+    }
+
+    #[test]
+    fn report_does_not_echo_page_content_or_url_details() {
+        let value = value(
+            "https://example.test/login?secret=do-not-copy",
+            &[
+                "Private account name: Alice. Complete the security check.",
+                "Verify you are human.",
+            ],
+            true,
+        );
+        let serialized = serde_json::to_string(&value).unwrap();
 
         assert!(!serialized.contains("Alice"));
         assert!(!serialized.contains("secret"));
-        assert!(signals
-            .iter()
-            .all(|signal| signal.get("evidence").is_none()));
         assert_eq!(value["origin"], "https://example.test");
     }
 }

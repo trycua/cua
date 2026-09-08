@@ -1457,9 +1457,8 @@ async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
 
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["format"], "semantic_v2", "{snap}");
-    assert_eq!(snap["challenge"]["required"], false, "{snap}");
     assert_eq!(
-        snap["challenge"]["detection_status"], "not_detected",
+        snap["challenge"]["status"], "not_detected",
         "challenge detection examines the complete semantic document, not only the paginated output: {snap}"
     );
     assert_eq!(
@@ -1708,7 +1707,7 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
         semantic_snapshot_with(&f, &target, &tab, json!({"query": "Archive item 304"})).await;
     assert_eq!(queried["snapshot"]["scope"], "query", "{queried}");
     assert_eq!(
-        queried["challenge"]["detection_status"], "not_detected",
+        queried["challenge"]["status"], "not_detected",
         "querying the returned nodes must not narrow challenge observation: {queried}"
     );
     assert_eq!(queried["refs"].as_array().unwrap().len(), 1, "{queried}");
@@ -1737,7 +1736,7 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
     let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": heading_ref})).await;
     assert_eq!(scoped["snapshot"]["scope"], "subtree", "{scoped}");
     assert_eq!(
-        scoped["challenge"]["detection_status"], "not_detected",
+        scoped["challenge"]["status"], "not_detected",
         "scoping the returned nodes must not narrow challenge observation: {scoped}"
     );
     assert_eq!(scoped["refs"].as_array().unwrap().len(), 0, "{scoped}");
@@ -1890,7 +1889,7 @@ async fn semantic_snapshot_uses_bounded_dom_fallback_only_for_known_size_failure
     let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
-    assert_eq!(snap["challenge"]["detection_status"], "unknown", "{snap}");
+    assert_eq!(snap["challenge"]["status"], "unknown", "{snap}");
     let document_calls = recorded_calls(&f, "DOM.getDocument");
     assert!(document_calls
         .iter()
@@ -1914,7 +1913,7 @@ async fn semantic_snapshot_uses_bounded_dom_fallback_for_full_tree_timeout() {
     let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
-    assert_eq!(snap["challenge"]["detection_status"], "unknown", "{snap}");
+    assert_eq!(snap["challenge"]["status"], "unknown", "{snap}");
     let document_calls = recorded_calls(&f, "DOM.getDocument");
     assert!(document_calls
         .iter()

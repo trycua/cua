@@ -22,48 +22,28 @@
 
 </div>
 
-## Choose Your Path
+## See Cua Driver in action
 
-<div align="center">
-  <table>
-    <tr>
-      <td colspan="3" align="center">
-        <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">
-          <img src="img/card-cua-driver.gif" alt="Cua Drivers — background computer-use for any agent" width="790">
-        </a>
-      </td>
-    </tr>
-    <tr>
-      <td align="center">
-        <a href="#cua---agent-ready-sandboxes-for-any-os">
-          <img src="img/card-cua-sandbox.gif" alt="Cua &amp; Cua Sandbox" width="246">
-        </a>
-      </td>
-      <td align="center">
-        <a href="#cua-bench---benchmarks--rl-environments">
-          <img src="img/card-cua-bench.gif" alt="Cua Bench" width="246">
-        </a>
-      </td>
-      <td align="center">
-        <a href="#lume---macos-virtualization">
-          <img src="img/card-cua-lume.gif" alt="Lume" width="246">
-        </a>
-      </td>
-    </tr>
-  </table>
-  <p>
-    <strong>Building your own agent?</strong> Start with <a href="#cua---agent-ready-sandboxes-for-any-os">Cua</a> ·
-    <strong>Giving a coding agent a computer?</strong> <a href="#cua-drivers---background-computer-use-on-macos-and-windows-with-linux-pre-release">Cua Drivers</a> ·
-    <strong>Evaluating or training models?</strong> <a href="#cua-bench---benchmarks--rl-environments">Cua Bench</a> ·
-    <strong>Need macOS VMs?</strong> <a href="#lume---macos-virtualization">Lume</a>
-  </p>
-</div>
+Claude Code builds a Windows desktop app, runs it, patches the code, and checks the app again using Cua Driver. Watch the Cua team's recording:
+
+[![Watch Claude Code build and check a Windows desktop app with Cua Driver](https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026)](https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b)
+
+## Choose your path
+
+| You want to                                         | Start with                    | Your first result                                                                                                       |
+| --------------------------------------------------- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| Give an agent access to apps on an existing machine | [Cua Driver](#cua-driver)     | [Operate Calculator and verify its result](https://cua.ai/docs/tutorials/drive-your-first-app)                          |
+| Run work in isolated cloud desktops                 | [Cloud Fleets](#cloud-fleets) | [Provision a Linux desktop, run a command, and save a screenshot](https://cua.ai/docs/tutorials/your-first-cloud-fleet) |
+| Create local macOS VMs on Apple Silicon             | [Lume](#lume)                 | [Create a Tahoe VM and connect over SSH](https://cua.ai/docs/tutorials/create-your-first-lume-vm)                       |
+| Build tasks and evaluate computer-use agents        | [Cua-Bench](#cua-bench)       | [Create and verify a simulated task](https://cua.ai/docs/tutorials/your-first-cua-bench-task)                           |
+
+You bring the agent and model. Cua provides the computer and automation tools. [Computer-Use 2.0](https://cua.ai/docs/concepts/what-is-computer-use) describes an agent moving between code, APIs, and graphical interfaces within the same task.
 
 ---
 
-## Cua Drivers - Background computer-use on macOS, Windows, and Linux
+## Cua Driver
 
-Drive native desktop apps **in the background**. Agents click, type, and verify without stealing the cursor or focus. Use the same CLI and MCP server on macOS, Windows, and Linux from Claude Code, Cursor, Codex, OpenClaw, and custom clients. Linux supports X11 and compositor-specific Wayland routes with explicit limits for raw background input.
+Give your agent tools to inspect and operate native desktop apps and browsers on macOS, Windows, and Linux. Connect through the CLI, MCP, or typed SDKs. Background delivery lets agents work without moving your pointer or taking focus when the app and platform support it; see [platform support](https://cua.ai/docs/reference/cua-driver/platform-support) for the boundaries.
 
 **macOS / Linux**
 
@@ -77,98 +57,69 @@ Drive native desktop apps **in the background**. Agents click, type, and verify 
 irm https://cua.ai/driver/install.ps1 | iex
 ```
 
-Then follow the post-install instructions.
+**Your first result:** connect your agent, ask it to compute 6 × 7 in Calculator, and have it verify that the app displays 42. The tutorial covers platform setup, permissions, and agent connection.
 
 **[Drive your first app](https://cua.ai/docs/tutorials/drive-your-first-app)** | **[Installation](https://cua.ai/docs/how-to-guides/driver/install)** | **[CLI Reference](https://cua.ai/docs/reference/cua-driver/cli-reference)**
 
-Source documentation, architecture notes, and the optional agent skill pack live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
+Using Claude Code, Codex, Cursor, OpenClaw, or another agent? [Find your integration](https://cua.ai/docs/how-to-guides/driver/connect-your-agent). Source documentation and architecture notes live in [`libs/cua-driver/README.md`](libs/cua-driver/README.md).
 
 ---
 
-## Cua - Agent-Ready Sandboxes for Any OS
+## Cloud Fleets
 
-Build agents that see screens, click buttons, and complete tasks autonomously. One API for any VM or container image — cloud or local.
+Provision isolated cloud desktops at [run.cua.ai](https://run.cua.ai/?utm_source=github&utm_medium=referral&utm_campaign=fleet_activation&content_id=repo_readme). A Fleet maintains sandbox capacity; your code claims a desktop from a pool and uses the Sandbox SDK to run commands, capture screenshots, and interact with apps inside it.
 
-```sh
-pip install cua
-```
+**Your first result:** provision a Linux desktop, run `uname -a`, save a screenshot, and delete the cloud resources. The tutorial covers Fleet credentials, dependencies, and cleanup. Pools can retain paid capacity after a claim ends, so follow its cleanup steps.
 
-```python
-# Requires Python 3.11 or later
-from cua import Sandbox, Image
+Local sandboxes and Fleets share the Sandbox SDK, but credentials, images, operations, and runtime requirements differ. Use the [runtime support reference](https://cua.ai/docs/reference/sandbox-sdk/runtime-support) to choose an environment. For your own hardware, see [Manage local sandbox lifecycle](https://cua.ai/docs/how-to-guides/sandbox/manage-local-lifecycle).
 
-# Same API regardless of OS or runtime
-async with Sandbox.ephemeral(Image.linux()) as sb:   # or .macos() .windows() .android()
-    result = await sb.shell.run("echo hello")
-    screenshot = await sb.screenshot()
-    await sb.mouse.click(100, 200)
-    await sb.keyboard.type("Hello from Cua!")
-    await sb.mobile.gesture((100, 500), (100, 200))  # multi-touch gestures
-```
-
-|                    | Linux container | Linux VM | macOS | Windows | Android | BYOI (.qcow2, .iso) |
-| ------------------ | --------------- | -------- | ----- | ------- | ------- | ------------------- |
-| **Cloud (cua.ai)** | ✅              | ✅       | ✅    | ✅      | ✅      | 🔜 soon             |
-| **Local (QEMU)**   | ✅              | ✅       | ✅    | ✅      | ✅      | ✅                  |
-
-**[Get Started](https://cua.ai/docs/cua/guide/get-started/set-up-sandbox)** | **[Examples](https://cua.ai/docs/cua/examples)** | **[API Reference](https://cua.ai/docs/cua/reference/agent-sdk)**
+**[Your first Cloud Fleet](https://cua.ai/docs/tutorials/your-first-cloud-fleet)** | **[Fleet overview](https://cua.ai/docs/cloud-fleets)** | **[Sandbox SDK reference](https://cua.ai/docs/reference/sandbox-sdk)**
 
 ---
 
-## Cua-Bench - Benchmarks & RL Environments
+## Lume
 
-Evaluate computer-use agents on OSWorld, ScreenSpot, Windows Arena, and custom tasks. Export trajectories for training.
+Create and manage local macOS and Linux VMs on Apple Silicon using Apple's Virtualization.Framework.
 
 ```bash
-# Clone, install, and create base image
-git clone https://github.com/trycua/cua && cd cua/cua-bench
-uv tool install -e . && cb image create linux-docker
-
-# Run benchmark with agent
-cb run dataset datasets/cua-bench-basic --agent cua-agent --max-parallel 4
-```
-
-**[Get Started](https://cua.ai/docs/cuabench/guide/getting-started/first-steps)** | **[Partner With Us](https://cuabench.ai/)** | **[Registry](https://cuabench.ai/registry)** | **[CLI Reference](https://cua.ai/docs/cuabench/reference/cli-reference)**
-
----
-
-## Lume - macOS Virtualization
-
-Create and manage macOS/Linux VMs with near-native performance on Apple Silicon using Apple's Virtualization.Framework.
-
-```bash
-# Install Lume
 /bin/bash -c "$(curl -fsSL https://cua.ai/lume/install.sh)"
-
-# Create and start a vanilla macOS VM from an Apple restore image
-curl -L "$(lume ipsw | tail -n 1)" -o ~/Downloads/macos-tahoe.ipsw
-lume create macos-tahoe --ipsw ~/Downloads/macos-tahoe.ipsw --unattended tahoe
-lume run macos-tahoe
 ```
 
-The `--unattended` option prepares the installed guest offline. The built-in
-`sequoia` and `tahoe` presets create the `lume` user, enable SSH, configure
-autologin, and disable sleep and screen locking. The default credentials are
-`lume` / `lume`.
+**Your first result:** create a vanilla macOS Tahoe VM from an Apple restore image, start it, and connect over SSH. The tutorial uses the Lume CLI directly and explains the unattended setup defaults.
 
-The Tahoe flow is E2E verified. Sequoia may still open the Accessibility step
-of Setup Assistant on its first display boot; see [issue #2155](https://github.com/trycua/cua/issues/2155).
+**[Create your first Lume VM](https://cua.ai/docs/tutorials/create-your-first-lume-vm)** | **[Installation](https://cua.ai/docs/how-to-guides/lume/install-lume)** | **[CLI reference](https://cua.ai/docs/reference/lume/cli-reference)**
 
-**[Get Started](https://cua.ai/docs/lume)** | **[FAQ](https://cua.ai/docs/lume/guide/getting-started/faq)** | **[CLI Reference](https://cua.ai/docs/lume/reference/cli-reference)**
+---
+
+## Cua-Bench
+
+Build computer-use tasks, evaluate agents, and export trajectories for training. Start with a simulated task that requires no VM, Docker, or model API key.
+
+With Python 3.12 or 3.13 and [uv](https://docs.astral.sh/uv/) installed:
+
+```bash
+uv tool install 'cua-bench[browser]'
+uv tool run --from 'cua-bench[browser]' playwright install chromium
+```
+
+**Your first result:** create a small task, run its reference solution, and verify that its evaluator reports a reward of `1.0`. Then try the same task yourself.
+
+**[Build your first task](https://cua.ai/docs/tutorials/your-first-cua-bench-task)** | **[What is Cua-Bench?](https://cua.ai/docs/concepts/what-is-cua-bench)** | **[CLI reference](https://cua.ai/docs/reference/cua-bench/cli-reference)** | **[Partner with us](https://cuabench.ai/)**
 
 ---
 
 ## Packages
 
-| Package                                                              | Description                                                 |
-| -------------------------------------------------------------------- | ----------------------------------------------------------- |
-| [cua-driver](libs/cua-driver/README.md)                              | Background computer-use agent for macOS, Windows, and Linux |
-| [cua-agent](https://cua.ai/docs/cua/reference/agent-sdk)             | AI agent framework for computer-use tasks                   |
-| [cua-sandbox](https://cua.ai/docs/cua/reference/sandbox-sdk)         | SDK for creating and controlling sandboxes                  |
-| [cua-computer-server](https://cua.ai/docs/cua/reference/sandbox-sdk) | Driver for UI interactions and code execution in sandboxes  |
-| [cua-bench](https://cua.ai/docs/cuabench)                            | Benchmarks and RL environments for computer-use             |
-| [lume](https://cua.ai/docs/lume)                                     | macOS/Linux VM management on Apple Silicon                  |
-| [lumier](https://cua.ai/docs/lume/guide/advanced/lumier)             | Docker-compatible interface for Lume VMs                    |
+| Package                                                  | Description                                                       |
+| -------------------------------------------------------- | ----------------------------------------------------------------- |
+| [cua-driver](libs/cua-driver/README.md)                  | Desktop automation tools for macOS, Windows, and Linux            |
+| [cua-agent](libs/python/agent)                           | AI agent framework for computer-use tasks                         |
+| [cua-sandbox](https://cua.ai/docs/reference/sandbox-sdk) | SDK for creating and controlling local and cloud sandboxes        |
+| [cua-fleet](libs/python/cua-fleet/README.md)             | Python SDK for Fleet infrastructure and sandbox pools             |
+| [cua-computer-server](libs/python/computer-server)       | Guest service for UI interactions and code execution in sandboxes |
+| [cua-bench](libs/cua-bench/README.md)                    | Benchmarks and RL environments for computer-use                   |
+| [lume](https://cua.ai/docs/reference/lume/cli-reference) | macOS/Linux VM management on Apple Silicon                        |
+| [lumier](libs/lumier/README.md)                          | Docker-compatible interface for Lume VMs                          |
 
 ## Resources
 

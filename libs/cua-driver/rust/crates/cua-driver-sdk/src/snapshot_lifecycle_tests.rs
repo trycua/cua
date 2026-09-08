@@ -7,7 +7,6 @@ use cua_driver_core::tool::{
 };
 use serde_json::{json, Value};
 use std::cell::RefCell;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -52,7 +51,6 @@ struct CaptureProbe {
     started: Notify,
     invocation_dropped: Notify,
     native_finished: Notify,
-    native_done: AtomicBool,
     release: Mutex<Option<mpsc::Receiver<()>>>,
     published: Mutex<Option<(String, String)>>,
     cache: Mutex<Option<Arc<ElementCacheCore<ProbePayload>>>>,
@@ -99,7 +97,6 @@ impl Tool for CaptureTool {
         tokio::task::spawn_blocking(move || {
             native.started.notify_one();
             let released = receiver.recv_timeout(WAIT);
-            native.native_done.store(true, Ordering::SeqCst);
             native.native_finished.notify_one();
             released.expect("test did not release native capture");
         })
@@ -156,7 +153,6 @@ fn capture_driver() -> (Arc<CuaDriver>, Arc<CaptureProbe>, ReleaseNative) {
         started: Notify::new(),
         invocation_dropped: Notify::new(),
         native_finished: Notify::new(),
-        native_done: AtomicBool::new(false),
         release: Mutex::new(Some(receiver)),
         published: Mutex::new(None),
         cache: Mutex::new(None),
@@ -269,46 +265,6 @@ async fn sdk_cancelled_capture_does_not_publish_after_shutdown() {
     assert!(
         published.is_none(),
         "cancelled capture published after its invocation ended"
-    );
-}
-
-#[tokio::test]
-async fn sdk_shutdown_waits_for_native_capture_after_caller_cancellation() {
-    let serial = crate::runtime::TEST_RUNTIME_LOCK.lock().unwrap();
-    let (driver, probe, release) = capture_driver();
-    let caller = driver.clone();
-    let action =
-        tokio::spawn(async move { caller.call_tool("health_report".into(), "{}".into()).await });
-    tokio::time::timeout(WAIT, probe.started.notified())
-        .await
-        .unwrap();
-    action.abort();
-    assert!(action.await.unwrap_err().is_cancelled());
-    tokio::time::timeout(WAIT, probe.invocation_dropped.notified())
-        .await
-        .unwrap();
-    let closer = driver.clone();
-    let mut shutdown = tokio::spawn(async move { closer.shutdown().await });
-    wait_for_closed_admission(&driver).await;
-    let early = tokio::time::timeout(Duration::from_millis(250), &mut shutdown).await;
-    let returned_while_native_active = early.is_ok() && !probe.native_done.load(Ordering::SeqCst);
-    drop(release);
-    tokio::time::timeout(WAIT, probe.native_finished.notified())
-        .await
-        .unwrap();
-    match early {
-        Ok(result) => result.unwrap().unwrap(),
-        Err(_) => tokio::time::timeout(WAIT, shutdown)
-            .await
-            .unwrap()
-            .unwrap()
-            .unwrap(),
-    }
-    drop(driver);
-    drop(serial);
-    assert!(
-        !returned_while_native_active,
-        "SDK shutdown returned while cancelled capture's blocking work was still running"
     );
 }
 

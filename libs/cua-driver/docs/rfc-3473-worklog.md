@@ -23,6 +23,23 @@ identified by source hashes in its artifact directories. The draft PR records
 the immutable implementation revision when that overlay is published. The native baseline was the installed version
 0.23.2 binary identified below, not a source-certified build of this test commit.
 
+## Deferred drain diagnostic
+
+At the maintainer's request, removed the newly added
+`sdk_shutdown_waits_for_native_capture_after_caller_cancellation` test and its
+otherwise-unused completion flag from this slice. This was our investigation
+probe, not a test inherited from main. The finding remains documented: shutdown
+can return while a cancelled caller's native worker is still running, including
+on the tested pre-refactor source. This change does not fix that behavior.
+
+The diagnostic remains recoverable from
+[the earlier implementation commit](https://github.com/trycua/cua/blob/b1a74850e7ebbc08769b78d81b8de26333c67a80/libs/cua-driver/rust/crates/cua-driver-sdk/src/snapshot_lifecycle_tests.rs#L275-L317)
+for a future, explicitly selected drain workstream. In-scope admitted-call
+shutdown, cancelled-publication and native ownership tests remain unchanged.
+After removal, the macOS SDK library passes **56 tests, 0 failed, 0 ignored**;
+formatting and diff checks pass. No production code changed. Earlier failure
+counts below are historical evidence, not the current suite status.
+
 ## Actionable items
 
 | ID | Action | Status | Exit evidence |

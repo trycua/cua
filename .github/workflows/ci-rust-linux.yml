@@ -83,9 +83,12 @@ jobs:
       - name: Verify real pacman ownership through CLI and MCP
         env:
           CUA_E2E_UNRESTRICTED_GUI: "1"
+          EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
-          export CUA_E2E_SOURCE_SHA=$(git rev-parse HEAD)
+          CUA_E2E_SOURCE_SHA=$(git -c safe.directory="$GITHUB_WORKSPACE" rev-parse HEAD)
+          test "$CUA_E2E_SOURCE_SHA" = "$EXPECTED_SOURCE_SHA"
+          export CUA_E2E_SOURCE_SHA
           xvfb-run -a dbus-run-session -- env CUA_PACMAN_TEST_DISPOSABLE=1 \
             bash scripts/ci/linux/test-pacman-updates.sh \
               libs/cua-driver/rust/target/debug/cua-driver "$PACMAN_TEST_BINARY" \

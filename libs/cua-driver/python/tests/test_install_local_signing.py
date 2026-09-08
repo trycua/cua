@@ -47,6 +47,134 @@ def test_strict_local_signing_fails_before_ad_hoc_fallback() -> None:
     assert "unexpected ad-hoc signing" not in result.stderr
 
 
+def test_strict_signing_does_not_implicitly_use_login_keychain(tmp_path: Path) -> None:
+    login_keychain = tmp_path / "Library" / "Keychains" / "login.keychain-db"
+    login_keychain.parent.mkdir(parents=True)
+    login_keychain.touch()
+    result = run_signing_policy(
+        rf"""
+        HOME={tmp_path!s}
+        OS=Darwin
+        CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
+        unset CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN
+        codesign() {{ :; }}
+        security() {{ echo "unexpected security access" >&2; return 99; }}
+        printf 'identity=%s\n' "$(ensure_local_signing_identity)"
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "identity=-\n"
+    assert "will not use the login Keychain implicitly" in result.stderr
+    assert "password dialog" in result.stderr
+    assert "unexpected security access" not in result.stderr
+
+
+def test_strict_signing_uses_default_dedicated_keychain(tmp_path: Path) -> None:
+    signing_keychain = (
+        tmp_path / "Library" / "Keychains" / "cua-driver-signing.keychain-db"
+    )
+    signing_keychain.parent.mkdir(parents=True)
+    signing_keychain.touch()
+    result = run_signing_policy(
+        rf"""
+        HOME={tmp_path!s}
+        OS=Darwin
+        CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
+        unset CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN
+        codesign() {{ :; }}
+        security() {{
+            echo '  1) ABCDEF "CuaDriver Local Signing (cua-driver-rs)"'
+        }}
+        printf 'identity=%s\n' "$(ensure_local_signing_identity)"
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "identity=ABCDEF\n"
+    assert "login Keychain implicitly" not in result.stderr
+
+
+def test_explicit_login_keychain_warns_before_codesign() -> None:
+    result = run_signing_policy(
+        r"""
+        HOME=/tmp/test-home
+        OS=Darwin
+        RED= GREEN= YELLOW= NORMAL=
+        CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
+        CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN=/tmp/test-home/Library/Keychains/login.keychain-db
+        ensure_local_signing_identity() { printf '%s' ABCDEF; }
+        codesign_bounded() { return 0; }
+        codesign() {
+            if [ "$1" = "-d" ]; then
+                echo 'designated => anchor trusted and certificate leaf[subject.CN] = "Cua Local Dev"' >&2
+            fi
+            return 0
+        }
+        sign_staged_local_app /staged.app /missing-live.app
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "key in the login Keychain" in result.stderr
+    assert "not browser content" in result.stderr
+    assert "Always Allow only for a dedicated local-development key" in result.stderr
+
+
+def test_signing_timeout_explains_stale_password_dialog() -> None:
+    result = run_signing_policy(
+        r"""
+        HOME=/tmp/test-home
+        OS=Darwin
+        RED= GREEN= YELLOW= NORMAL=
+        CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
+        CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN=/tmp/dedicated.keychain-db
+        ensure_local_signing_identity() { printf '%s' ABCDEF; }
+        codesign_bounded() { return 142; }
+        clean_partial_bundle_signature() { :; }
+        if sign_staged_local_app /staged.app /missing-live.app; then exit 90; fi
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "timed out while waiting for keychain authorization" in result.stderr
+    assert "Deny or close any password dialog that remains" in result.stderr
+    assert "live installation was not changed" in result.stderr
+
+
+def test_non_strict_signing_timeout_falls_back_without_claiming_install_is_unchanged() -> None:
+    result = run_signing_policy(
+        r"""
+        HOME=/tmp/test-home
+        OS=Darwin
+        RED= GREEN= YELLOW= NORMAL=
+        CUA_DRIVER_REQUIRE_STABLE_SIGNING=0
+        CUA_DRIVER_LOCAL_SIGNING_KEYCHAIN=/tmp/dedicated.keychain-db
+        ensure_local_signing_identity() { printf '%s' ABCDEF; }
+        attempts=0
+        codesign_bounded() {
+            attempts=$((attempts + 1))
+            if [ "$attempts" -eq 1 ]; then return 142; fi
+            return 0
+        }
+        clean_partial_bundle_signature() { :; }
+        codesign() {
+            if [ "$1" = "-d" ]; then
+                echo '# designated => cdhash H"0123456789ABCDEF"'
+            fi
+            return 0
+        }
+        sign_staged_local_app /staged.app /missing-live.app
+        """
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "timed out while waiting for keychain authorization" in result.stderr
+    assert "staged signing attempt was canceled" in result.stderr
+    assert "live installation was not changed" not in result.stderr
+    assert "WARNING: CuaDriverLocal.app was signed ad-hoc" in result.stderr
+
+
 def test_ad_hoc_fallback_is_prominent_and_reports_cdhash() -> None:
     result = run_signing_policy(
         r"""

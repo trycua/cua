@@ -135,19 +135,6 @@ uv tool run --from 'cua-bench[browser]' playwright install chromium
 
 ---
 
-## Packages
-
-| Package                                                  | Description                                                       |
-| -------------------------------------------------------- | ----------------------------------------------------------------- |
-| [cua-driver](libs/cua-driver/README.md)                  | Desktop automation tools for macOS, Windows, and Linux            |
-| [cua-agent](libs/python/agent)                           | AI agent framework for computer-use tasks                         |
-| [cua-sandbox](https://cua.ai/docs/reference/sandbox-sdk) | SDK for creating and controlling local and cloud sandboxes        |
-| [cua-fleet](libs/python/cua-fleet/README.md)             | Python SDK for Fleet infrastructure and sandbox pools             |
-| [cua-computer-server](libs/python/computer-server)       | Guest service for UI interactions and code execution in sandboxes |
-| [cua-bench](libs/cua-bench/README.md)                    | Benchmarks and RL environments for computer-use                   |
-| [lume](https://cua.ai/docs/reference/lume/cli-reference) | macOS/Linux VM management on Apple Silicon                        |
-| [lumier](libs/lumier/README.md)                          | Docker-compatible interface for Lume VMs                          |
-
 ## Resources
 
 - [Documentation](https://cua.ai/docs) — Guides, examples, and API reference
@@ -192,10 +179,14 @@ Apple, macOS, Ubuntu, Canonical, and Microsoft are trademarks of their respectiv
 
 ---
 
+## Sponsors
+
 <div align="center">
 
 Thank you to all our [GitHub Sponsors](https://github.com/sponsors/trycua)!
 
-<img width="300" alt="coderabbit-cli" src="https://github.com/user-attachments/assets/23a98e38-7897-4043-8ef7-eb990520dccc" />
+|                                                       [Adam Cohen Hillel](https://github.com/adamcohenhillel)                                                        |                                                         [CodeRabbit](https://github.com/coderabbitai)                                                         |                                                         [Zephyr Cloud IO](https://github.com/ZephyrCloudIO)                                                         |
+| :------------------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------: | :-----------------------------------------------------------------------------------------------------------------------------------------------------------------: |
+| <a href="https://github.com/adamcohenhillel"><img src="https://avatars.githubusercontent.com/u/633840?s=128&v=4" alt="Adam Cohen Hillel" width="64" height="64"></a> | <a href="https://github.com/coderabbitai"><img src="https://avatars.githubusercontent.com/u/132028505?s=128&v=4" alt="CodeRabbit" width="64" height="64"></a> | <a href="https://github.com/ZephyrCloudIO"><img src="https://avatars.githubusercontent.com/u/144168943?s=128&v=4" alt="Zephyr Cloud IO" width="64" height="64"></a> |
 
 </div>

@@ -248,6 +248,7 @@ mod pacman {
         ])
         .expect("start test daemon and MCP proxy");
         let result = driver.call("check_for_update", serde_json::json!({}));
+        assert!(result.text().starts_with("Update check unavailable:"));
         assert!(
             result.text().contains("sudo pacman -Syu"),
             "{:?}",

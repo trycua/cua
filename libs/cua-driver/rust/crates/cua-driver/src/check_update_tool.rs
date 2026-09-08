@@ -70,7 +70,7 @@ impl Tool for CheckForUpdateTool {
         );
 
         let summary = if let Some(err) = &state.error {
-            format!("Update check failed: {err}")
+            format!("Update check unavailable: {err}")
         } else if state.update_available {
             let latest = state.latest_version.as_deref().unwrap_or("?");
             format!(

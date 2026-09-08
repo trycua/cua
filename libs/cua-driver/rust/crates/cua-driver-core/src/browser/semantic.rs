@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use serde_json::Value;
 
 use super::challenge::BrowserChallengeLabel;
-use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry};
+use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry, SemanticScope};
 
 pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
     "display",
@@ -189,8 +189,9 @@ impl SemanticDocument {
 
     /// Visible accessible labels available to page-level classification.
     ///
-    /// Roles and mutable control values are not page copy. Offscreen retained
-    /// state is also excluded so a stale message cannot classify the viewport.
+    /// Only accessible names contribute page content. Roles establish whether
+    /// a matching name belongs to a challenge surface; mutable control values
+    /// and offscreen retained state are excluded.
     pub(crate) fn visible_challenge_labels(
         &self,
     ) -> impl Iterator<Item = BrowserChallengeLabel<'_>> {
@@ -209,9 +210,9 @@ impl SemanticDocument {
         offset: usize,
         budget: usize,
         query: Option<&str>,
-        scope_backend_node_id: Option<i64>,
+        scope: Option<&SemanticScope>,
     ) -> SemanticPage {
-        let mut candidates = scoped_indices(&self.nodes, query, scope_backend_node_id);
+        let mut candidates = scoped_indices(&self.nodes, query, scope);
         candidates.retain(|idx| {
             !matches!(
                 self.nodes[*idx].visibility,
@@ -1010,7 +1011,7 @@ fn rank(node: &SemanticNode) -> u8 {
 fn scoped_indices(
     nodes: &[SemanticNode],
     query: Option<&str>,
-    scope_backend_node_id: Option<i64>,
+    scope: Option<&SemanticScope>,
 ) -> Vec<usize> {
     let by_ax_id: HashMap<&str, usize> = nodes
         .iter()
@@ -1018,12 +1019,11 @@ fn scoped_indices(
         .map(|(idx, node)| (node.ax_id.as_str(), idx))
         .collect();
     let mut allowed = HashSet::new();
-    if let Some(scope_backend) = scope_backend_node_id {
-        if let Some(scope) = nodes
-            .iter()
-            .find(|node| node.backend_node_id == Some(scope_backend))
-        {
-            let mut stack = vec![scope.ax_id.as_str()];
+    if let Some(scope) = scope {
+        if let Some(scope_root) = nodes.iter().find(|node| {
+            node.backend_node_id == Some(scope.backend_node_id) && node.frame == scope.frame
+        }) {
+            let mut stack = vec![scope_root.ax_id.as_str()];
             while let Some(ax_id) = stack.pop() {
                 if !allowed.insert(ax_id.to_owned()) {
                     continue;
@@ -1035,8 +1035,7 @@ fn scoped_indices(
         }
     }
     let query = query.map(|value| value.trim().to_ascii_lowercase());
-    let in_scope =
-        |node: &SemanticNode| scope_backend_node_id.is_none() || allowed.contains(&node.ax_id);
+    let in_scope = |node: &SemanticNode| scope.is_none() || allowed.contains(&node.ax_id);
     let exact_match_exists = query.as_ref().is_some_and(|query| {
         !query.is_empty()
             && nodes

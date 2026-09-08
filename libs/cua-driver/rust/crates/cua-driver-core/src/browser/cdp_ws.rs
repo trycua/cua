@@ -126,6 +126,17 @@ enum CallOutcome {
     Error { code: Option<i64>, message: String },
 }
 
+struct PendingCallGuard {
+    demux: Arc<Demux>,
+    id: u64,
+}
+
+impl Drop for PendingCallGuard {
+    fn drop(&mut self) {
+        self.demux.pending.lock().unwrap().remove(&self.id);
+    }
+}
+
 /// State shared between the caller side and the reader task.
 struct Demux {
     pending: StdMutex<HashMap<u64, oneshot::Sender<CallOutcome>>>,
@@ -246,19 +257,6 @@ pub struct CdpConnection {
     reader: tokio::task::JoinHandle<()>,
 }
 
-/// Removes an unanswered command from the demultiplexer when its caller is
-/// cancelled at any await point.
-struct PendingCallCleanup {
-    demux: Arc<Demux>,
-    id: u64,
-}
-
-impl Drop for PendingCallCleanup {
-    fn drop(&mut self) {
-        self.demux.pending.lock().unwrap().remove(&self.id);
-    }
-}
-
 impl Drop for CdpConnection {
     fn drop(&mut self) {
         self.reader.abort();
@@ -319,7 +317,9 @@ impl CdpConnection {
     /// deterministically (the Target.setAutoAttach pattern).
     pub fn subscribe(&self) -> mpsc::UnboundedReceiver<CdpEvent> {
         let (tx, rx) = mpsc::unbounded_channel();
-        self.demux.subscribers.lock().unwrap().push(tx);
+        let mut subscribers = self.demux.subscribers.lock().unwrap();
+        subscribers.retain(|sender| !sender.is_closed());
+        subscribers.push(tx);
         rx
     }
 
@@ -401,7 +401,9 @@ impl CdpConnection {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.demux.pending.lock().unwrap().insert(id, tx);
-        let _pending_cleanup = PendingCallCleanup {
+        // A caller may cancel this future before the command-level timeout.
+        // Keep the pending map bounded in that path too.
+        let _pending_call = PendingCallGuard {
             demux: self.demux.clone(),
             id,
         };
@@ -723,6 +725,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cancelling_a_call_removes_its_pending_response_slot() {
+        let server = MockCdpServer::start(StdArc::new(|_| {
+            MockReply::ok(json!({})).with_delay(Duration::from_secs(1))
+        }))
+        .await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+
+        let cancelled = tokio::time::timeout(
+            Duration::from_millis(20),
+            conn.call(None, "Slow.command", json!({})),
+        )
+        .await;
+        assert!(cancelled.is_err(), "fixture must cancel the CDP call");
+        assert!(
+            conn.demux.pending.lock().unwrap().is_empty(),
+            "cancelled calls must not retain a pending response sender"
+        );
+    }
+
+    #[tokio::test]
     async fn dispatch_marker_is_not_set_while_waiting_for_the_shared_writer() {
         let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;
         let conn = Arc::new(CdpConnection::connect(&server.ws_url()).await.unwrap());
@@ -925,6 +947,19 @@ mod tests {
         assert_eq!(second.session_id.as_deref(), Some("child-sess"));
         assert_eq!(second.params["n"], 2);
         assert!(events.try_recv().is_err(), "no phantom events");
+    }
+
+    #[tokio::test]
+    async fn subscribing_prunes_closed_receivers_without_waiting_for_an_event() {
+        let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;
+        let conn = CdpConnection::connect(&server.ws_url()).await.unwrap();
+
+        for _ in 0..100 {
+            drop(conn.subscribe());
+        }
+        let _live = conn.subscribe();
+
+        assert_eq!(conn.demux.subscribers.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

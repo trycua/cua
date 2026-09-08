@@ -1956,10 +1956,11 @@ fn run_challenge_positive(spec: &BrowserSpec) {
                 .as_str()
                 .expect("challenge origin")
                 .to_owned();
-            assert_eq!(
-                challenge.as_object().map(serde_json::Map::len),
-                Some(5),
-                "{}",
+            assert!(
+                challenge
+                    .as_object()
+                    .is_some_and(|report| report.len() == 5),
+                "challenge report must retain its closed shape: {}",
                 snapshot.raw
             );
             let blocker = &snapshot.structured()["blocker"];

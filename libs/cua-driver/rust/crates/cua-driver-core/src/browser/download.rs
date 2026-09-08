@@ -388,7 +388,7 @@ impl Tool for BrowserDownloadTool {
         let resolved = match validated
             .conn
             .call(
-                Some(&ref_session),
+                Some(ref_session.as_str()),
                 "DOM.resolveNode",
                 json!({ "backendNodeId": entry.backend_node_id }),
             )
@@ -444,7 +444,7 @@ impl Tool for BrowserDownloadTool {
         let trigger = validated
             .conn
             .call(
-                Some(&ref_session),
+                Some(ref_session.as_str()),
                 "Runtime.callFunctionOn",
                 json!({
                     "objectId": object_id,

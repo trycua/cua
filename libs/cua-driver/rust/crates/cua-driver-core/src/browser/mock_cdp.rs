@@ -10,6 +10,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
+use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{json, Value};
@@ -35,6 +36,7 @@ pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub result: Result<Value, (i64, String)>,
     reply_gate: Option<Arc<tokio::sync::Notify>>,
+    pub delay: Option<Duration>,
 }
 
 impl MockReply {
@@ -43,6 +45,7 @@ impl MockReply {
             events: Vec::new(),
             result: Ok(result),
             reply_gate: None,
+            delay: None,
         }
     }
 
@@ -51,6 +54,7 @@ impl MockReply {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
             reply_gate: None,
+            delay: None,
         }
     }
 
@@ -67,6 +71,11 @@ impl MockReply {
     /// Hold the command response until the test releases this gate.
     pub fn with_reply_gate(mut self, gate: Arc<tokio::sync::Notify>) -> Self {
         self.reply_gate = Some(gate);
+        self
+    }
+
+    pub fn with_delay(mut self, delay: Duration) -> Self {
+        self.delay = Some(delay);
         self
     }
 }
@@ -128,6 +137,9 @@ impl MockCdpServer {
                         }
                         if let Some(gate) = reply.reply_gate {
                             gate.notified().await;
+                        }
+                        if let Some(delay) = reply.delay {
+                            tokio::time::sleep(delay).await;
                         }
                         let mut response = match reply.result {
                             Ok(result) => json!({ "id": id, "result": result }),

@@ -121,7 +121,7 @@ pub struct FrameIdentity {
 /// - `kind != Main` ⇒ `identity` is `Some` (unprovable frames are
 ///   omitted from snapshots, never guessed).
 /// - `kind == Oopif` ⇔ `oopif_target_id` is `Some`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrameRef {
     pub kind: FrameKind,
     /// CDP target id of the OOPIF child target (contained beneath the
@@ -184,10 +184,25 @@ pub struct SnapshotRecord {
 }
 
 #[derive(Debug, Clone)]
+pub struct SemanticScope {
+    pub backend_node_id: i64,
+    pub frame: FrameRef,
+}
+
+impl From<&RefEntry> for SemanticScope {
+    fn from(entry: &RefEntry) -> Self {
+        Self {
+            backend_node_id: entry.backend_node_id,
+            frame: entry.frame.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct SemanticContinuation {
     pub offset: usize,
     pub query: Option<String>,
-    pub scope_backend_node_id: Option<i64>,
+    pub scope: Option<SemanticScope>,
     pub oopif_supported: bool,
     pub oopif_frames: usize,
 }
@@ -675,6 +690,101 @@ impl BrowserStore {
                     "the semantic continuation is stale or does not belong to this session and tab",
                 )
             })
+    }
+
+    /// Publish a completed semantic snapshot, refusing rather than reporting
+    /// success if its target, tab, or connection generation changed while CDP
+    /// collection was in flight.
+    pub(crate) fn publish_semantic_snapshot(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        snapshot: SnapshotRecord,
+    ) -> Result<(), BrowserRefusal> {
+        let mut inner = self.inner.lock().unwrap();
+        let target = inner
+            .get_mut(session)
+            .and_then(|session| session.targets.get_mut(target_id))
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    format!(
+                        "target {target_id} is not a live binding in this session — \
+                         re-run get_browser_state with pid + window_id"
+                    ),
+                )
+            })?;
+        if target.generation != snapshot.generation {
+            return Err(BrowserRefusal::new(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the browser connection changed while the semantic snapshot was being collected",
+            ));
+        }
+        let tab = target.tabs.get_mut(tab_id).ok_or_else(|| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        tab.snapshots.clear();
+        tab.snapshots.insert(snapshot.id, snapshot);
+        Ok(())
+    }
+
+    /// Commit one continuation page and consume its token in the same store
+    /// critical section. A racing caller can do collection work, but cannot
+    /// consume the same capability or publish a second result.
+    pub(crate) fn commit_semantic_continuation(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        snapshot_id: u64,
+        token: &str,
+        refs: HashMap<u32, RefEntry>,
+        next: Option<(String, SemanticContinuation)>,
+    ) -> Result<(), BrowserRefusal> {
+        let mut inner = self.inner.lock().unwrap();
+        let target = inner
+            .get_mut(session)
+            .and_then(|session| session.targets.get_mut(target_id))
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    format!(
+                        "target {target_id} is not a live binding in this session — \
+                         re-run get_browser_state with pid + window_id"
+                    ),
+                )
+            })?;
+        let generation = target.generation;
+        let tab = target.tabs.get_mut(tab_id).ok_or_else(|| {
+            BrowserRefusal::new(
+                BrowserRefusalCode::BrowserTabNotFound,
+                format!("tab {tab_id} is not known for target {target_id}"),
+            )
+        })?;
+        let snapshot = tab
+            .snapshots
+            .get_mut(&snapshot_id)
+            .filter(|snapshot| {
+                snapshot.generation == generation
+                    && snapshot.semantic.is_some()
+                    && snapshot.continuations.contains_key(token)
+            })
+            .ok_or_else(|| {
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the semantic continuation is stale or does not belong to this session and tab",
+                )
+            })?;
+        snapshot.continuations.remove(token);
+        snapshot.refs.extend(refs);
+        if let Some((token, continuation)) = next {
+            snapshot.continuations.insert(token, continuation);
+        }
+        Ok(())
     }
 
     /// Drop every snapshot of one tab (navigation invalidates refs).

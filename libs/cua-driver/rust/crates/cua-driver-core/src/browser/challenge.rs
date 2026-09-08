@@ -3,14 +3,12 @@
 //! The detector reports a bounded classification from known challenge URLs or
 //! corroborating visible semantic labels. It does not copy page text into the
 //! report, act on a challenge, or treat a lone stock phrase as proof.
-
 use std::collections::HashSet;
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::Value;
 use time::{format_description::well_known::Rfc2822, OffsetDateTime};
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BrowserChallengeStatus {
@@ -40,7 +38,6 @@ impl BrowserChallengeSource {
         }
     }
 }
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub(crate) enum BrowserChallengeConfidence {
@@ -63,7 +60,7 @@ impl<'a> BrowserChallengeLabel<'a> {
 /// Bounded public classification attached to `semantic_v2` snapshots.
 ///
 /// Optional fields remain present as `null` so callers can handle one stable
-/// object shape. `origin` is absent for opaque URLs such as `about:blank`.
+/// object shape. `origin` is `null` for opaque URLs such as `about:blank`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct BrowserChallengeReport {
     pub(crate) status: BrowserChallengeStatus,
@@ -455,7 +452,7 @@ mod tests {
     }
 
     #[test]
-    fn ordinary_button_or_dialog_copy_does_not_become_a_blocker_signal() {
+    fn ordinary_button_or_dialog_copy_does_not_classify_as_a_challenge() {
         for role in ["button", "dialog", "alert", "alertdialog"] {
             let value = to_value(browser_challenge_report(
                 "https://example.test/account",

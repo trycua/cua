@@ -255,9 +255,11 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
                     "request_id": request.request_id,
                     "operation": request.operation,
                     "name": request.name,
-                    "arguments": json.loads(request.arguments_json)
-                    if request.arguments_json is not None
-                    else None,
+                    "arguments": (
+                        json.loads(request.arguments_json)
+                        if request.arguments_json is not None
+                        else None
+                    ),
                     "deadline_unix_ms": request.deadline_unix_ms,
                 }
                 if len(json.dumps(body, allow_nan=False).encode()) > _REQUEST_LIMIT:
@@ -300,9 +302,9 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
                     envelope_version=data["envelope_version"],
                     request_id=data["request_id"],
                     ok=data["ok"],
-                    result_json=json.dumps(data["result"], allow_nan=False)
-                    if "result" in data
-                    else None,
+                    result_json=(
+                        json.dumps(data["result"], allow_nan=False) if "result" in data else None
+                    ),
                     error="Driver operation failed" if data.get("error") is not None else None,
                     error_code=data.get("error_code"),
                     completion_known=data["completion_known"],

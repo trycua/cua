@@ -158,6 +158,7 @@ async def test_claim_close_orders_driver_release_transport(sandbox):
 
 async def test_pool_claim_context_closes_driver_before_claim_and_client(native, monkeypatch):
     from cua_sandbox import Pool
+
     from .test_pool import FakeFleetClient, fleet_pool
 
     events = []

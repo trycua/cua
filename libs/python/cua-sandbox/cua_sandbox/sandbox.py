@@ -63,7 +63,6 @@ except ImportError:
 
 from cua_sandbox._config import has_fleet_auth
 from cua_sandbox.image import Image
-from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.interfaces import (
     Apps,
     Clipboard,
@@ -78,6 +77,7 @@ from cua_sandbox.interfaces import (
     Tunnel,
     Window,
 )
+from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport

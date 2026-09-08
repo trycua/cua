@@ -562,8 +562,7 @@ impl RecordingSession {
     }
 
     /// Reserve a turn and capture its target immediately before tool dispatch.
-    /// No-op when recording is disabled or when `caller` is outside the live
-    /// recording's session scope (see `begin_turn_with_capture`).
+    /// No-op when disabled or when `caller` is outside the recording's scope.
     pub fn begin_turn(
         &self,
         tool_name: &str,
@@ -588,22 +587,7 @@ impl RecordingSession {
         self.begin_turn_with_capture(tool_name, args, start_ms, caller, false)
     }
 
-    /// `caller` is the runtime session id of the call being dispatched (the
-    /// same trusted `_session_id` that `start()` stamps as `owner`), or `None`
-    /// for a call that carries no session identity.
-    ///
-    /// A recording started by a session records only that session's calls. The
-    /// daemon-global recorder observes every transport, so without this gate a
-    /// one-shot CLI invocation — including the `end_session` teardown each such
-    /// process emits as it exits — lands in an unrelated MCP session's
-    /// trajectory and shifts its turn numbering (#3445). The scope test is the
-    /// ownership rule `stop_owner()` already uses, and lives inside the same
-    /// lock as the turn reservation so a concurrent `start()` cannot hand a
-    /// foreign call a turn in the new owner's recording.
-    ///
-    /// An anonymously started recording (`owner == None`: the CLI
-    /// `recording start` one-shot and the legacy `configure()` shim) has no
-    /// session to scope to and stays daemon-wide.
+    /// Scope-check and reserve under one lock; ownerless recordings accept all callers.
     fn begin_turn_with_capture(
         &self,
         tool_name: &str,
@@ -2172,11 +2156,6 @@ mod tests {
 
     #[test]
     fn owned_recording_reserves_turns_only_for_its_owning_session() {
-        //! A recording started by a session belongs to that session. The
-        //! daemon-global recorder sees every transport, so calls from other
-        //! sessions — a concurrent one-shot CLI process, another MCP
-        //! connection — must neither write turn folders nor consume turn
-        //! numbers in it (#3445).
         let root = tempfile::tempdir().expect("temp dir");
         let output_dir = root.path().join("owned");
         let session = RecordingSession::new();
@@ -2206,8 +2185,6 @@ mod tests {
         session.finish_turn(pending, "clicked");
         session.stop_owner(None).expect("stop owned recording");
 
-        // Turn numbering is the observable part: the owner's first action is
-        // turn-00001 regardless of what other sessions did meanwhile.
         let action: Value = serde_json::from_slice(
             &std::fs::read(output_dir.join("turn-00001").join("action.json"))
                 .expect("read the owner's turn"),
@@ -2222,10 +2199,6 @@ mod tests {
 
     #[test]
     fn anonymous_recording_stays_daemon_wide() {
-        //! `recording start` from the CLI (and the legacy `configure()` shim)
-        //! has no session to scope to. Ownership is `None` there, and every
-        //! call keeps being recorded — the same asymmetry `stop_owner()`
-        //! already encodes.
         let root = tempfile::tempdir().expect("temp dir");
         let output_dir = root.path().join("anonymous");
         let session = RecordingSession::new();

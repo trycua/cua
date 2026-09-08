@@ -1499,11 +1499,7 @@ impl ToolRegistry {
 
         // Reserve and capture the turn before dispatch so recorded evidence
         // shows the application immediately before the action changed it.
-        // Session lifecycle is transport bookkeeping, not workflow: a
-        // trajectory records what a session did, and `start_session` /
-        // `end_session` are outside the recorded set `RECORDING.md` documents.
-        // The teardown a one-shot CLI process emits as it exits used to land in
-        // whichever recording happened to be live (#3445).
+        // Exclude session lifecycle calls, including one-shot CLI teardown.
         let should_record = !tool.def().read_only
             && !matches!(
                 resolved_name,
@@ -1535,10 +1531,7 @@ impl ToolRegistry {
         };
         let pending_turn = should_record
             .then(|| {
-                // `runtime_session` is the trusted ownership key minted by
-                // `namespace_runtime_args` — the same identity `start_recording`
-                // stamps as the recording's owner, so an owned recording keeps
-                // only its own session's turns.
+                // Use the same trusted session identity as the recording owner.
                 let caller = runtime_session.as_deref();
                 if private_consent_turn {
                     self.recording.begin_private_turn(
@@ -3186,8 +3179,6 @@ mod runtime_isolation_tests {
         registry
     }
 
-    /// Registry wired like the daemon: a probe action tool that accepts a
-    /// session label, plus the recording and session-lifecycle tools.
     fn recording_scope_registry(hits: Arc<AtomicUsize>) -> Arc<super::ToolRegistry> {
         let mut registry = super::ToolRegistry::new();
         registry.register(Box::new(ReplayProbe {
@@ -3214,11 +3205,6 @@ mod runtime_isolation_tests {
 
     #[tokio::test]
     async fn recording_keeps_only_the_owning_session_and_never_lifecycle_calls() {
-        //! The recorder is daemon-global, so before #3445 it wrote a turn for
-        //! every non-read-only call on the box — including the `end_session`
-        //! teardown each one-shot CLI process emits as it exits. That made a
-        //! recording's turn numbering depend on unrelated activity and left
-        //! `replay_trajectory` re-executing foreign lifecycle calls.
         let registry = recording_scope_registry(Arc::new(AtomicUsize::new(0)));
         let context = unrestricted_context();
         let output = tempfile::tempdir().expect("temp dir");
@@ -3236,8 +3222,6 @@ mod runtime_isolation_tests {
             .await;
         assert_ne!(started.is_error, Some(true), "{started:?}");
 
-        // Another session's action, its teardown, and the owner's own
-        // lifecycle call: none of the three belongs in this trajectory.
         for (tool, session) in [
             ("probe", "other"),
             ("end_session", "other"),

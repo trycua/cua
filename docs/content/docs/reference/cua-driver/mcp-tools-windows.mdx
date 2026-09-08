@@ -651,7 +651,9 @@ accepts it. Omit it to use the authenticated transport's implicit lifecycle sess
 
 ### `start_recording`
 
-Start trajectory recording. Every subsequent action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) writes a turn folder under `output_dir`:
+Start trajectory recording for the calling session. Each action-tool invocation (click, right_click, scroll, type_text, press_key, hotkey, set_value) from that session writes a turn folder under `output_dir`. Other sessions and session lifecycle calls (`start_session` / `end_session`) are not recorded. CLI recordings started with `cua-driver recording start` are daemon-wide.
+
+Each turn folder holds:
 
 - `before_state.json` / `after_state.json` — application AX/UIA/AT-SPI state immediately before and after the action.
 - `before.png` / `after.png` — target-window screenshots immediately before and after the action.

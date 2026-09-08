@@ -61,6 +61,7 @@ fn channel_cli_fails_closed_on_invalid_saved_state() {
 #[cfg(target_os = "linux")]
 mod pacman {
     use super::*;
+    use cua_driver_testkit::Driver;
     use std::os::unix::fs::PermissionsExt;
 
     fn fixture(owned: bool) -> tempfile::TempDir {

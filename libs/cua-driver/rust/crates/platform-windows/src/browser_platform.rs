@@ -41,6 +41,8 @@ use windows::Win32::UI::Shell::{
 };
 use windows::Win32::UI::WindowsAndMessaging::{GetAncestor, GetWindowRect, GA_ROOT};
 
+const LISTENER_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
+
 #[derive(Clone)]
 pub struct WindowsBrowserPlatform {
     cursor_registry: Arc<cursor_overlay::CursorRegistry>,
@@ -824,18 +826,29 @@ async fn netstat_loopback_listeners(
     ipv4_only: bool,
 ) -> Result<Vec<(u16, u32)>, BrowserRefusal> {
     let netstat = system_netstat_path()?;
-    let output = tokio::process::Command::new(netstat)
+    let mut command = tokio::process::Command::new(netstat);
+    command
         .args(["-ano", "-p", "tcp"])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
-            )
-        })?;
+        .kill_on_drop(true);
+    let output = if ipv4_only {
+        match tokio::time::timeout(LISTENER_INSPECTION_TIMEOUT, command.output()).await {
+            Ok(output) => output,
+            // Endpoint readiness owns the total deadline. A slow netstat
+            // sample means "not observed yet"; spawn and parse failures remain
+            // terminal below.
+            Err(_) => return Ok(Vec::new()),
+        }
+    } else {
+        command.output().await
+    }
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser listeners: {error}"),
+        )
+    })?;
     Ok(parse_netstat_loopback_listeners_with_scope(
         &String::from_utf8_lossy(&output.stdout),
         allowed_pids,

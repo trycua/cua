@@ -26,6 +26,21 @@ use super::BrowserEngine;
 
 const PROFILE_MARKER: &str = ".cua-driver-owned-profile.json";
 const PROFILE_SCHEMA: &str = "cua-driver-browser-profile-v1";
+const SPAWNED_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(20);
+const SELECTED_PORT_FIRST_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(8);
+
+fn selected_port_launch_attempts() -> usize {
+    // A retry may reuse a named profile or delete and recreate a temporary
+    // one. Only the Windows fixed-port launch is placed in a Job Object that
+    // can prove every descendant has stopped before that happens. Unix
+    // process groups remain sufficient for ordinary best-effort teardown, but
+    // they cannot prove that a descendant did not create a new session.
+    if cfg!(target_os = "windows") {
+        2
+    } else {
+        1
+    }
+}
 
 fn validate_profile(profile: &PrepareProfile) -> Result<(), BrowserRefusal> {
     match profile.mode {
@@ -276,6 +291,50 @@ impl PendingIsolatedBrowserLaunch {
         error
     }
 
+    #[cfg(not(target_os = "windows"))]
+    fn stop_for_retry(self) -> Result<(), BrowserRefusal> {
+        Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "selected-port relaunch requires exact process-tree cleanup, which is unavailable on this platform",
+        ))
+    }
+
+    #[cfg(target_os = "windows")]
+    fn stop_for_retry(mut self) -> Result<(), BrowserRefusal> {
+        if self.process_job.is_none() {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "could not prove ownership of the first selected-port process tree before retry",
+            ));
+        }
+        let Some(mut child) = self.child.take() else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "could not prove cleanup of the first selected-port launch before retry",
+            ));
+        };
+        let process_tree_stopped =
+            terminate_browser_process_tree(&mut child, self.owned_pid, &mut self.process_job);
+        if !process_tree_stopped {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "could not prove process-tree cleanup of the first selected-port launch before retry",
+            ));
+        }
+        let profile = self
+            .profile
+            .as_ref()
+            .expect("pending isolated browser always owns its profile");
+        if cleanup_created_profile(profile) {
+            Ok(())
+        } else {
+            Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "could not prove profile cleanup of the first selected-port launch before retry",
+            ))
+        }
+    }
+
     fn into_managed(mut self, owned_pid: i64, owner_sessions: Vec<String>) -> ManagedBrowser {
         let profile = self
             .profile
@@ -308,7 +367,7 @@ impl Drop for PendingIsolatedBrowserLaunch {
                 || pending_launch_profile_cleanup_is_safe(self.launch_posture))
         {
             if let Some(profile) = self.profile.as_ref() {
-                cleanup_created_profile(profile);
+                let _ = cleanup_created_profile(profile);
             }
         }
     }
@@ -577,9 +636,48 @@ fn profile_matches_marker(path: &Path, expected: &ProfileMarker) -> bool {
     read_profile_marker(path).is_some_and(|marker| marker == *expected)
 }
 
-fn cleanup_created_profile(profile: &PreparedProfile) {
-    if profile.delete_on_cleanup && profile_matches_marker(&profile.path, &profile.marker) {
-        let _ = fs::remove_dir_all(&profile.path);
+fn cleanup_created_profile(profile: &PreparedProfile) -> bool {
+    if !profile.delete_on_cleanup {
+        return true;
+    }
+    if !profile_matches_marker(&profile.path, &profile.marker) {
+        return false;
+    }
+    fs::remove_dir_all(&profile.path).is_ok() && !profile.path.exists()
+}
+
+fn terminate_child_and_wait(child: &mut Child) -> bool {
+    let _ = child.kill();
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => return true,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            Ok(None) | Err(_) => return false,
+        }
+    }
+}
+
+#[cfg(unix)]
+fn terminate_unix_process_group(child: &mut Child) -> bool {
+    let process_group = child.id() as i32;
+    let signal_ok = unsafe { libc::kill(-process_group, libc::SIGKILL) } == 0
+        || std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH);
+    if !signal_ok || !terminate_child_and_wait(child) {
+        return false;
+    }
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let group_exists = unsafe { libc::kill(-process_group, 0) } == 0;
+        if !group_exists && std::io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) {
+            return true;
+        }
+        if Instant::now() >= deadline {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -590,13 +688,6 @@ fn terminate_browser_process_tree(
 ) -> bool {
     #[cfg(not(target_os = "windows"))]
     let _ = (owned_pid, process_job);
-    #[cfg(unix)]
-    unsafe {
-        // The isolated browser is spawned as its own process group. Chrome
-        // fans out into renderer/utility descendants, so killing only the
-        // root Child can leave profile writers alive after cleanup.
-        libc::kill(-(child.id() as i32), libc::SIGKILL);
-    }
     #[cfg(target_os = "windows")]
     {
         let had_job = process_job.is_some();
@@ -617,8 +708,7 @@ fn terminate_browser_process_tree(
                     .status();
             }
         }
-        let _ = child.kill();
-        let child_reaped = child.wait().is_ok();
+        let child_reaped = terminate_child_and_wait(child);
         if job_drained == Some(true) {
             let _ = process_job.take();
         }
@@ -626,9 +716,10 @@ fn terminate_browser_process_tree(
     }
     #[cfg(not(target_os = "windows"))]
     {
-        let _ = child.kill();
-        let child_reaped = child.wait().is_ok();
-        child_reaped
+        // The isolated browser is spawned as its own process group. This
+        // covers ordinary Chromium renderer/utility descendants and verifies
+        // that group is empty before reporting cleanup success.
+        terminate_unix_process_group(child)
     }
 }
 
@@ -647,7 +738,7 @@ fn spawn_isolated_browser_process(
         PrepareLaunchPosture::DriverSelectedPort => match WindowsBrowserJob::new() {
             Ok(job) => Some(job),
             Err(error) => {
-                cleanup_created_profile(prepared_profile);
+                let _ = cleanup_created_profile(prepared_profile);
                 return Err(error);
             }
         },
@@ -660,7 +751,7 @@ fn spawn_isolated_browser_process(
 
     #[allow(unused_mut)] // mutable only on Windows assignment/resume failures
     let mut child = command.spawn().map_err(|error| {
-        cleanup_created_profile(prepared_profile);
+        let _ = cleanup_created_profile(prepared_profile);
         refusal(
             BrowserRefusalCode::BrowserRouteUnavailable,
             format!("could not launch an isolated browser process: {error}"),
@@ -677,10 +768,9 @@ fn spawn_isolated_browser_process(
             // its only primary thread is resumed, so no handoff descendant can
             // escape this failure path.
             let process_tree_stopped = job.terminate_and_wait();
-            let _ = child.kill();
-            let child_reaped = child.wait().is_ok();
+            let child_reaped = terminate_child_and_wait(&mut child);
             if process_tree_stopped && child_reaped {
-                cleanup_created_profile(prepared_profile);
+                let _ = cleanup_created_profile(prepared_profile);
             }
             return Err(error);
         }
@@ -734,6 +824,104 @@ fn select_driver_debugging_port() -> Result<u16, BrowserRefusal> {
 enum SpawnedEndpointHint {
     ProfilePortFile,
     FixedLoopbackPort(u16),
+}
+
+enum SpawnedEndpointWaitFailure {
+    Terminal(BrowserRefusal),
+    SelectedPortTimeout(BrowserRefusal),
+}
+
+impl SpawnedEndpointWaitFailure {
+    fn terminal(refusal: BrowserRefusal) -> Self {
+        Self::Terminal(refusal)
+    }
+
+    fn into_refusal(self) -> BrowserRefusal {
+        match self {
+            Self::Terminal(refusal) | Self::SelectedPortTimeout(refusal) => refusal,
+        }
+    }
+}
+
+enum IsolatedLaunchAttemptFailure<P> {
+    BeforePending(BrowserRefusal),
+    WithPending(P, SpawnedEndpointWaitFailure),
+}
+
+async fn run_isolated_launch_attempts<P, T, Attempt, AttemptFuture, Stop, Abort>(
+    max_attempts: usize,
+    mut attempt: Attempt,
+    mut stop_for_retry: Stop,
+    mut abort: Abort,
+) -> Result<(P, T), BrowserRefusal>
+where
+    Attempt: FnMut(usize, usize) -> AttemptFuture,
+    AttemptFuture: Future<Output = Result<(P, T), IsolatedLaunchAttemptFailure<P>>>,
+    Stop: FnMut(P) -> Result<(), BrowserRefusal>,
+    Abort: FnMut(P, BrowserRefusal) -> BrowserRefusal,
+{
+    debug_assert!(max_attempts > 0);
+    for attempt_index in 0..max_attempts {
+        match attempt(attempt_index, max_attempts).await {
+            Ok(launched) => return Ok(launched),
+            Err(IsolatedLaunchAttemptFailure::BeforePending(error)) => return Err(error),
+            Err(IsolatedLaunchAttemptFailure::WithPending(pending, failure)) => {
+                let may_retry =
+                    matches!(&failure, SpawnedEndpointWaitFailure::SelectedPortTimeout(_))
+                        && attempt_index + 1 < max_attempts;
+                let refusal = failure.into_refusal();
+                if may_retry {
+                    // `stop_for_retry` consumes the previous attempt. The next
+                    // launch is never constructed until exact cleanup returns.
+                    stop_for_retry(pending)?;
+                    continue;
+                }
+                return Err(abort(pending, refusal));
+            }
+        }
+    }
+    unreachable!("a nonzero launch-attempt budget always returns from the loop")
+}
+
+fn spawned_endpoint_timeout_failure(
+    endpoint_hint: SpawnedEndpointHint,
+    observed_clean_launcher_exit: bool,
+) -> SpawnedEndpointWaitFailure {
+    let refusal = refusal(
+        BrowserRefusalCode::BrowserRouteUnavailable,
+        if observed_clean_launcher_exit {
+            "isolated browser launcher exited cleanly, but its process tree did not expose a loopback DevTools endpoint before timeout"
+        } else {
+            "isolated browser did not expose a loopback DevTools endpoint before timeout"
+        },
+    );
+    if matches!(endpoint_hint, SpawnedEndpointHint::FixedLoopbackPort(_)) {
+        SpawnedEndpointWaitFailure::SelectedPortTimeout(refusal)
+    } else {
+        SpawnedEndpointWaitFailure::Terminal(refusal)
+    }
+}
+
+async fn bounded_spawned_endpoint_discovery<F>(
+    deadline: Instant,
+    endpoint_hint: SpawnedEndpointHint,
+    observed_clean_launcher_exit: bool,
+    discovery: F,
+) -> Result<Option<OwnedEndpoint>, SpawnedEndpointWaitFailure>
+where
+    F: Future<Output = Result<Option<OwnedEndpoint>, BrowserRefusal>>,
+{
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(spawned_endpoint_timeout_failure(
+            endpoint_hint,
+            observed_clean_launcher_exit,
+        ));
+    }
+    tokio::time::timeout(remaining, discovery)
+        .await
+        .map_err(|_| spawned_endpoint_timeout_failure(endpoint_hint, observed_clean_launcher_exit))?
+        .map_err(SpawnedEndpointWaitFailure::terminal)
 }
 
 struct IsolatedBrowserCommand {
@@ -954,16 +1142,17 @@ async fn wait_for_spawned_endpoint(
     child: &mut Child,
     profile: &Path,
     endpoint_hint: SpawnedEndpointHint,
-) -> Result<OwnedEndpoint, BrowserRefusal> {
-    let deadline = Instant::now() + Duration::from_secs(20);
+    timeout: Duration,
+) -> Result<OwnedEndpoint, SpawnedEndpointWaitFailure> {
+    let deadline = Instant::now() + timeout;
     let port_file = profile.join("DevToolsActivePort");
     let mut observed_clean_launcher_exit = false;
     loop {
         if let Some(status) = child.try_wait().map_err(|error| {
-            refusal(
+            SpawnedEndpointWaitFailure::terminal(refusal(
                 BrowserRefusalCode::BrowserRouteUnavailable,
                 format!("could not inspect the isolated browser process: {error}"),
-            )
+            ))
         })? {
             if clean_spawn_exit_can_be_launcher_handoff(&status) {
                 // Edge on Windows ARM can transfer the browser role to a
@@ -972,10 +1161,10 @@ async fn wait_for_spawned_endpoint(
                 // listener and its descendant ownership are attested below.
                 observed_clean_launcher_exit = true;
             } else {
-                return Err(refusal(
+                return Err(SpawnedEndpointWaitFailure::terminal(refusal(
                     BrowserRefusalCode::BrowserRouteUnavailable,
                     format!("isolated browser exited before exposing DevTools ({status})"),
-                ));
+                )));
             }
         }
         match endpoint_hint {
@@ -1009,23 +1198,24 @@ async fn wait_for_spawned_endpoint(
                 }
             }
             SpawnedEndpointHint::FixedLoopbackPort(port) => {
-                if let Some(endpoint) = engine
-                    .platform
-                    .discover_spawned_endpoint_on_port(i64::from(child.id()), port)
-                    .await?
-                {
+                let discovery = bounded_spawned_endpoint_discovery(
+                    deadline,
+                    endpoint_hint,
+                    observed_clean_launcher_exit,
+                    engine
+                        .platform
+                        .discover_spawned_endpoint_on_port(i64::from(child.id()), port),
+                )
+                .await?;
+                if let Some(endpoint) = discovery {
                     return Ok(endpoint);
                 }
             }
         }
         if Instant::now() >= deadline {
-            return Err(refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                if observed_clean_launcher_exit {
-                    "isolated browser launcher exited cleanly, but its process tree did not expose a loopback DevTools endpoint before timeout"
-                } else {
-                    "isolated browser did not expose a loopback DevTools endpoint before timeout"
-                },
+            return Err(spawned_endpoint_timeout_failure(
+                endpoint_hint,
+                observed_clean_launcher_exit,
             ));
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
@@ -1197,57 +1387,107 @@ impl BrowserEngine {
         } else {
             self.platform.isolated_browser_executable()?
         };
-        let prepared_profile = prepare_profile(profile_request)?;
-        let profile_created = prepared_profile.created;
-        let mut launch = match isolated_browser_command(
-            &executable,
-            &prepared_profile.path,
-            request.launch_posture,
-        ) {
-            Ok(launch) => launch,
-            Err(error) => {
-                cleanup_created_profile(&prepared_profile);
-                return Err(error);
-            }
-        };
-        let (child, process_job) = match spawn_isolated_browser_process(
-            &mut launch.command,
-            request.launch_posture,
-            &prepared_profile,
-        ) {
-            Ok(spawned) => spawned,
-            Err(error) => return Err(error),
-        };
-        // Endpoint discovery and identity checks await platform work before
-        // the browser can enter the managed registry. Keep the platform's
-        // available process and profile cleanup active across those awaits.
-        let mut pending_browser = PendingIsolatedBrowserLaunch::new(
-            child,
-            process_job,
-            prepared_profile,
-            request.launch_posture,
-        );
-        let profile_path = pending_browser.profile().path.clone();
-        let endpoint = match wait_for_spawned_endpoint(
-            self,
-            pending_browser.child_mut(),
-            &profile_path,
-            launch.endpoint_hint,
-        )
-        .await
+        let launch_attempts = if request.launch_posture == PrepareLaunchPosture::DriverSelectedPort
         {
-            Ok(endpoint) => {
-                let endpoint_owner = spawned_runtime_pid(&endpoint.ownership);
-                pending_browser.record_owned_pid(endpoint_owner);
-                let child_pid = i64::from(pending_browser.child_mut().id());
-                match attest_spawned_endpoint(self, child_pid, endpoint, launch.endpoint_hint).await
-                {
-                    Ok(endpoint) => endpoint,
-                    Err(error) => return Err(pending_browser.abort(error)),
-                }
-            }
-            Err(error) => return Err(pending_browser.abort(error)),
+            selected_port_launch_attempts()
+        } else {
+            1
         };
+        let profile_created = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let attempted_profile_created = profile_created.clone();
+        let launch_executable = executable.clone();
+        let launch_profile = profile_request.clone();
+        let launch_posture = request.launch_posture;
+        let engine = self;
+        let (mut pending_browser, endpoint) = run_isolated_launch_attempts(
+            launch_attempts,
+            move |attempt, max_attempts| {
+                let executable = launch_executable.clone();
+                let profile_request = launch_profile.clone();
+                let profile_created = attempted_profile_created.clone();
+                async move {
+                    let prepared_profile = prepare_profile(&profile_request)
+                        .map_err(IsolatedLaunchAttemptFailure::BeforePending)?;
+                    profile_created.fetch_or(
+                        prepared_profile.created,
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                    let mut launch = match isolated_browser_command(
+                        &executable,
+                        &prepared_profile.path,
+                        launch_posture,
+                    ) {
+                        Ok(launch) => launch,
+                        Err(error) => {
+                            let _ = cleanup_created_profile(&prepared_profile);
+                            return Err(IsolatedLaunchAttemptFailure::BeforePending(error));
+                        }
+                    };
+                    let (child, process_job) = spawn_isolated_browser_process(
+                        &mut launch.command,
+                        launch_posture,
+                        &prepared_profile,
+                    )
+                    .map_err(IsolatedLaunchAttemptFailure::BeforePending)?;
+                    // Endpoint discovery and identity checks await platform work before
+                    // the browser can enter the managed registry. Keep the platform's
+                    // available process and profile cleanup active across those awaits.
+                    let mut pending_browser = PendingIsolatedBrowserLaunch::new(
+                        child,
+                        process_job,
+                        prepared_profile,
+                        launch_posture,
+                    );
+                    let profile_path = pending_browser.profile().path.clone();
+                    let timeout = if attempt + 1 < max_attempts {
+                        SELECTED_PORT_FIRST_ATTEMPT_TIMEOUT
+                    } else {
+                        SPAWNED_ENDPOINT_TIMEOUT
+                    };
+                    let endpoint = match wait_for_spawned_endpoint(
+                        engine,
+                        pending_browser.child_mut(),
+                        &profile_path,
+                        launch.endpoint_hint,
+                        timeout,
+                    )
+                    .await
+                    {
+                        Ok(endpoint) => endpoint,
+                        Err(failure) => {
+                            return Err(IsolatedLaunchAttemptFailure::WithPending(
+                                pending_browser,
+                                failure,
+                            ))
+                        }
+                    };
+                    let endpoint_owner = spawned_runtime_pid(&endpoint.ownership);
+                    pending_browser.record_owned_pid(endpoint_owner);
+                    let child_pid = i64::from(pending_browser.child_mut().id());
+                    let endpoint = match attest_spawned_endpoint(
+                        engine,
+                        child_pid,
+                        endpoint,
+                        launch.endpoint_hint,
+                    )
+                    .await
+                    {
+                        Ok(endpoint) => endpoint,
+                        Err(error) => {
+                            return Err(IsolatedLaunchAttemptFailure::WithPending(
+                                pending_browser,
+                                SpawnedEndpointWaitFailure::Terminal(error),
+                            ))
+                        }
+                    };
+                    Ok((pending_browser, endpoint))
+                }
+            },
+            PendingIsolatedBrowserLaunch::stop_for_retry,
+            PendingIsolatedBrowserLaunch::abort,
+        )
+        .await?;
+        let profile_created = profile_created.load(std::sync::atomic::Ordering::Relaxed);
         let prepared_pid = endpoint.ownership.owner_pid;
         pending_browser.record_owned_pid(prepared_pid);
         let mut owner_sessions = vec![request.session];
@@ -1721,8 +1961,40 @@ impl BrowserEngine {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    const UNIX_RETRY_ESCAPE_HELPER_ENV: &str = "CUA_TEST_UNIX_RETRY_ESCAPE_HELPER";
+
     #[cfg(target_os = "windows")]
     const WINDOWS_JOB_HANDOFF_HELPER_ENV: &str = "CUA_TEST_WINDOWS_JOB_HANDOFF_HELPER";
+
+    #[cfg(unix)]
+    #[test]
+    fn unix_retry_escape_helper() {
+        use std::os::unix::process::CommandExt;
+
+        let Some(pid_path) = std::env::var_os(UNIX_RETRY_ESCAPE_HELPER_ENV) else {
+            return;
+        };
+        let mut command = Command::new("/bin/sleep");
+        command
+            .arg("60")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        let child = command
+            .spawn()
+            .expect("spawn descendant outside the launch process group");
+        fs::write(pid_path, child.id().to_string()).expect("record escaped descendant pid");
+        std::thread::sleep(Duration::from_secs(60));
+    }
 
     #[cfg(target_os = "windows")]
     #[test]
@@ -1991,6 +2263,295 @@ mod tests {
             pending_launch_profile_cleanup_is_safe(PrepareLaunchPosture::Standard),
             !cfg!(target_os = "windows")
         );
+    }
+
+    #[test]
+    fn retry_cleanup_requires_the_exact_owned_profile_marker() {
+        let root = tempfile::tempdir().expect("temporary profile root");
+        let path = root.path().join("isolated");
+        fs::create_dir(&path).expect("create isolated profile");
+        let marker = ProfileMarker {
+            schema: PROFILE_SCHEMA.to_owned(),
+            mode: PrepareProfileMode::IsolatedNew,
+            name: None,
+        };
+        let profile = PreparedProfile {
+            path: path.clone(),
+            created: true,
+            delete_on_cleanup: true,
+            marker: marker.clone(),
+        };
+
+        assert!(!cleanup_created_profile(&profile));
+        assert!(path.exists(), "unproven profile must not be deleted");
+
+        write_profile_marker(&path, &marker).expect("write profile marker");
+        assert!(cleanup_created_profile(&profile));
+        assert!(!path.exists(), "owned profile cleanup must be confirmed");
+    }
+
+    #[tokio::test]
+    async fn selected_port_discovery_deadline_cancels_a_stalled_probe() {
+        struct DropMarker(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marker = dropped.clone();
+        let stalled = async move {
+            let _marker = DropMarker(marker);
+            std::future::pending::<Result<Option<OwnedEndpoint>, BrowserRefusal>>().await
+        };
+
+        let failure = bounded_spawned_endpoint_discovery(
+            Instant::now() + Duration::from_millis(20),
+            SpawnedEndpointHint::FixedLoopbackPort(9222),
+            false,
+            stalled,
+        )
+        .await
+        .expect_err("stalled selected-port discovery must time out");
+
+        assert!(matches!(
+            failure,
+            SpawnedEndpointWaitFailure::SelectedPortTimeout(_)
+        ));
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[test]
+    fn selected_port_relaunch_requires_a_windows_process_job() {
+        assert_eq!(
+            selected_port_launch_attempts(),
+            if cfg!(windows) { 2 } else { 1 }
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn selected_port_retry_refuses_when_a_descendant_can_escape_the_process_group() {
+        use std::os::unix::process::CommandExt;
+
+        let root = tempfile::tempdir().expect("temporary retry fixture");
+        let pid_path = root.path().join("escaped.pid");
+        let profile_path = root.path().join("profile");
+        fs::create_dir(&profile_path).expect("create isolated profile");
+        let marker = ProfileMarker {
+            schema: PROFILE_SCHEMA.to_owned(),
+            mode: PrepareProfileMode::IsolatedNamed,
+            name: Some("retry-fixture".to_owned()),
+        };
+        write_profile_marker(&profile_path, &marker).expect("write profile marker");
+        let profile = PreparedProfile {
+            path: profile_path,
+            created: true,
+            delete_on_cleanup: false,
+            marker,
+        };
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
+        command
+            .arg("unix_retry_escape_helper")
+            .arg("--nocapture")
+            .env(UNIX_RETRY_ESCAPE_HELPER_ENV, &pid_path)
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let child = command.spawn().expect("spawn first launch fixture");
+        let pending = PendingIsolatedBrowserLaunch::new(
+            child,
+            (),
+            profile,
+            PrepareLaunchPosture::DriverSelectedPort,
+        );
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !pid_path.is_file() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let escaped_pid = fs::read_to_string(&pid_path)
+            .expect("escaped descendant pid")
+            .trim()
+            .parse::<i32>()
+            .expect("numeric escaped descendant pid");
+
+        let error = pending
+            .stop_for_retry()
+            .expect_err("Unix cannot prove exact cleanup for relaunch");
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert_eq!(unsafe { libc::kill(escaped_pid, 0) }, 0);
+
+        assert_eq!(unsafe { libc::kill(escaped_pid, libc::SIGKILL) }, 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while unsafe { libc::kill(escaped_pid, 0) } == 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[tokio::test]
+    async fn selected_port_timeout_cleans_before_one_successful_retry() {
+        #[derive(Debug)]
+        struct PendingAttempt {
+            active: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cleanups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let aborted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let launched = run_isolated_launch_attempts(
+            2,
+            {
+                let active = active.clone();
+                let attempts = attempts.clone();
+                move |attempt, _| {
+                    let active = active.clone();
+                    let attempts = attempts.clone();
+                    async move {
+                        assert_eq!(active.swap(1, std::sync::atomic::Ordering::SeqCst), 0);
+                        attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let pending = PendingAttempt { active };
+                        if attempt == 0 {
+                            Err(IsolatedLaunchAttemptFailure::WithPending(
+                                pending,
+                                spawned_endpoint_timeout_failure(
+                                    SpawnedEndpointHint::FixedLoopbackPort(9222),
+                                    false,
+                                ),
+                            ))
+                        } else {
+                            Ok((pending, "ready"))
+                        }
+                    }
+                }
+            },
+            {
+                let cleanups = cleanups.clone();
+                move |pending: PendingAttempt| {
+                    assert_eq!(
+                        pending.active.swap(0, std::sync::atomic::Ordering::SeqCst),
+                        1
+                    );
+                    cleanups.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+            {
+                let aborted = aborted.clone();
+                move |pending: PendingAttempt, error| {
+                    pending.active.store(0, std::sync::atomic::Ordering::SeqCst);
+                    aborted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    error
+                }
+            },
+        )
+        .await
+        .expect("the bounded retry must succeed");
+
+        assert_eq!(launched.1, "ready");
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(cleanups.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(aborted.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(active.load(std::sync::atomic::Ordering::SeqCst), 1);
+        launched
+            .0
+            .active
+            .store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    #[tokio::test]
+    async fn terminal_launch_failure_does_not_retry() {
+        #[derive(Debug)]
+        struct PendingAttempt;
+
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cleanups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let aborted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let error = run_isolated_launch_attempts(
+            2,
+            {
+                let attempts = attempts.clone();
+                move |_, _| {
+                    let attempts = attempts.clone();
+                    async move {
+                        attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Err::<(PendingAttempt, ()), _>(IsolatedLaunchAttemptFailure::WithPending(
+                            PendingAttempt,
+                            SpawnedEndpointWaitFailure::Terminal(refusal(
+                                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                                "fixture terminal failure",
+                            )),
+                        ))
+                    }
+                }
+            },
+            {
+                let cleanups = cleanups.clone();
+                move |_: PendingAttempt| {
+                    cleanups.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+            {
+                let aborted = aborted.clone();
+                move |_: PendingAttempt, error| {
+                    aborted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    error
+                }
+            },
+        )
+        .await
+        .expect_err("a terminal failure must be returned");
+
+        assert_eq!(error.code, BrowserRefusalCode::BrowserEndpointOwnerMismatch);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(cleanups.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert_eq!(aborted.load(std::sync::atomic::Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn repeated_selected_port_timeout_stops_after_two_attempts() {
+        #[derive(Debug)]
+        struct PendingAttempt;
+
+        let attempts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let cleanups = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let error = run_isolated_launch_attempts(
+            2,
+            {
+                let attempts = attempts.clone();
+                move |_, _| {
+                    let attempts = attempts.clone();
+                    async move {
+                        attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        Err::<(PendingAttempt, ()), _>(IsolatedLaunchAttemptFailure::WithPending(
+                            PendingAttempt,
+                            spawned_endpoint_timeout_failure(
+                                SpawnedEndpointHint::FixedLoopbackPort(9222),
+                                false,
+                            ),
+                        ))
+                    }
+                }
+            },
+            {
+                let cleanups = cleanups.clone();
+                move |_: PendingAttempt| {
+                    cleanups.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    Ok(())
+                }
+            },
+            |_: PendingAttempt, error| error,
+        )
+        .await
+        .expect_err("the second timeout must be terminal");
+
+        assert_eq!(error.code, BrowserRefusalCode::BrowserRouteUnavailable);
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+        assert_eq!(cleanups.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 
     #[cfg(unix)]

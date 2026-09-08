@@ -24,6 +24,7 @@ use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 const CONSENT_CLEANUP_PASSES: usize = 20;
+const LISTENER_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Serialize)]
 struct ConsentSurfaceEvidence {
@@ -639,7 +640,8 @@ async fn loopback_ports_for_pid_with_scope(
     pid: i64,
     ipv4_only: bool,
 ) -> Result<Vec<u16>, BrowserRefusal> {
-    let output = tokio::process::Command::new("lsof")
+    let mut command = tokio::process::Command::new("lsof");
+    command
         .args([
             "-a",
             "-p",
@@ -652,14 +654,24 @@ async fn loopback_ports_for_pid_with_scope(
         ])
         .stdin(Stdio::null())
         .stderr(Stdio::null())
-        .output()
-        .await
-        .map_err(|error| {
-            refusal(
-                BrowserRefusalCode::BrowserRouteUnavailable,
-                format!("could not inspect browser listeners: {error}"),
-            )
-        })?;
+        .kill_on_drop(true);
+    let output = if ipv4_only {
+        match tokio::time::timeout(LISTENER_INSPECTION_TIMEOUT, command.output()).await {
+            Ok(output) => output,
+            // The surrounding endpoint-readiness loop owns the total
+            // deadline. One slow lsof sample is the same as seeing no listener
+            // yet, while command and parse failures below remain terminal.
+            Err(_) => return Ok(Vec::new()),
+        }
+    } else {
+        command.output().await
+    }
+    .map_err(|error| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            format!("could not inspect browser listeners: {error}"),
+        )
+    })?;
     Ok(parse_loopback_lsof_ports_with_scope(
         &String::from_utf8_lossy(&output.stdout),
         ipv4_only,

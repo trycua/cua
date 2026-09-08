@@ -19,6 +19,10 @@ use cua_driver_core::browser::types::{
     NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::sync::Semaphore;
+
+const LISTENER_INSPECTION_TIMEOUT: Duration = Duration::from_secs(2);
+static SELECTED_PORT_LISTENER_PROBE: Semaphore = Semaphore::const_new(1);
 
 #[derive(Debug, Default)]
 pub struct LinuxBrowserPlatform;
@@ -318,7 +322,37 @@ fn ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
 }
 
 async fn inspect_ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, BrowserRefusal> {
-    tokio::task::spawn_blocking(move || ipv4_loopback_ports_for_pid(pid))
+    run_bounded_listener_probe(
+        &SELECTED_PORT_LISTENER_PROBE,
+        LISTENER_INSPECTION_TIMEOUT,
+        move || ipv4_loopback_ports_for_pid(pid),
+    )
+    .await
+}
+
+async fn run_bounded_listener_probe<T, Probe>(
+    gate: &'static Semaphore,
+    timeout: Duration,
+    probe: Probe,
+) -> Result<T, BrowserRefusal>
+where
+    T: Default + Send + 'static,
+    Probe: FnOnce() -> Result<T, BrowserRefusal> + Send + 'static,
+{
+    let operation = async {
+        // The permit moves into the blocking worker. If a procfs read outlives
+        // the caller's deadline, later polls wait for that one worker instead
+        // of accumulating detached blocking tasks.
+        let permit = gate.acquire().await.map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("browser listener inspection gate closed: {error}"),
+            )
+        })?;
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            probe()
+        })
         .await
         .map_err(|error| {
             refusal(
@@ -326,6 +360,14 @@ async fn inspect_ipv4_loopback_ports_for_pid(pid: i64) -> Result<Vec<u16>, Brows
                 format!("listener inspection task failed: {error}"),
             )
         })?
+    };
+    match tokio::time::timeout(timeout, operation).await {
+        Ok(result) => result,
+        // Readiness polling owns the outer deadline. A slow individual sample
+        // is equivalent to observing no listener in that sample; command,
+        // parsing, and identity failures remain terminal errors.
+        Err(_) => Ok(T::default()),
+    }
 }
 
 fn parse_devtools_active_port(text: &str) -> Option<(u16, &str)> {
@@ -1378,6 +1420,43 @@ mod tests {
         );
         unrelated.start_kill().expect("stop unrelated process");
         unrelated.wait().await.expect("reap unrelated process");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn timed_out_listener_probe_does_not_accumulate_blocking_workers() {
+        static GATE: Semaphore = Semaphore::const_new(1);
+
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let first = run_bounded_listener_probe(&GATE, Duration::from_millis(50), move || {
+            started_tx.send(()).expect("signal first probe start");
+            release_rx.recv().expect("release first probe");
+            Ok(Vec::<u16>::new())
+        })
+        .await
+        .expect("a slow sample is a nonterminal empty observation");
+        assert!(first.is_empty());
+        started_rx
+            .recv_timeout(Duration::from_secs(1))
+            .expect("the first worker started");
+
+        let second_started = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let second_marker = second_started.clone();
+        let second = run_bounded_listener_probe(&GATE, Duration::from_millis(50), move || {
+            second_marker.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(vec![2_u16])
+        })
+        .await
+        .expect("a queued sample is also a nonterminal empty observation");
+        assert!(second.is_empty());
+        assert!(!second_started.load(std::sync::atomic::Ordering::SeqCst));
+
+        release_tx.send(()).expect("finish first probe");
+        let third = run_bounded_listener_probe(&GATE, Duration::from_secs(1), || Ok(vec![3_u16]))
+            .await
+            .expect("a later probe runs after the owned worker exits");
+        assert_eq!(third, vec![3]);
+        assert!(!second_started.load(std::sync::atomic::Ordering::SeqCst));
     }
 
     #[test]

@@ -517,7 +517,11 @@ fn try_activate_native_foreground(
         }),
     );
     if response.is_error() {
-        return Err(response.text().to_owned());
+        return Err(format!(
+            "{}; activation_observation={}",
+            response.text(),
+            response.structured()
+        ));
     }
     #[cfg(target_os = "linux")]
     focus_sway_target(driver, target).map_err(|error| {

@@ -9,25 +9,23 @@ import Pagination from "@cloudscape-design/components/pagination"
 import PropertyFilter from "@cloudscape-design/components/property-filter"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
-import { deletePool, getPool, listPools } from "../sdk/pools"
+import { deletePool, getPool, listPools } from "../fleet/pools"
 import { localVisualPreviewPath } from "../local-visual-preview"
-import {
-  derivePoolStatus,
-  reconcileTombstones,
-  tombstonePool,
-} from "../sdk/status"
+import { tombstonePool } from "../fleet/status"
 import { PoolStatusPill } from "../components/PoolStatus"
 import { useFlash } from "../components/FlashContext"
 import { CuaButton } from "../components/CuaButton"
 import { PageEmpty } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
+import type { PoolSummary } from "../fleet/models"
+import { formatTtl } from "../fleet/ttl"
 
 interface PoolRow {
   name: string
   namespace: string
   replicas: number
-  phase: string
-  availableCount: number
+  ttlSecondsAfterCreated?: number
+  status: PoolSummary["status"]
   statusText: string
 }
 
@@ -59,11 +57,10 @@ export function PoolsList() {
     setLoading(true)
     try {
       const poolList = await listPools()
-      reconcileTombstones(poolList.map(p => p.name))
       setRows(
         poolList.map(p => ({
           ...p,
-          statusText: derivePoolStatus(p).kind,
+          statusText: p.status.label,
         })),
       )
     } catch (e) {
@@ -104,7 +101,7 @@ export function PoolsList() {
     }
   }
 
-  // A list row only carries summary fields (name/replicas/phase/available),
+  // A list row only carries summary fields,
   // so fetch the full pool spec (cpu/ram/image/services) before navigating —
   // otherwise the New pool form falls back to defaults. Mirrors the Duplicate
   // action on the pool detail page, which passes the full getPool result.
@@ -263,8 +260,7 @@ export function PoolsList() {
         columnDisplay={[
           { id: "name", visible: true },
           { id: "replicas", visible: !compactTable },
-          { id: "available", visible: !compactTable },
-          { id: "capacity", visible: compactTable },
+          { id: "ttl", visible: !compactTable },
           { id: "status", visible: true },
         ]}
         columnDefinitions={[
@@ -298,26 +294,18 @@ export function PoolsList() {
             minWidth: 96,
           },
           {
-            id: "available",
-            header: "Available",
-            cell: p => p.availableCount,
-            sortingField: "availableCount",
+            id: "ttl",
+            header: "TTL",
+            cell: p => formatTtl(p.ttlSecondsAfterCreated),
+            sortingField: "ttlSecondsAfterCreated",
             minWidth: 96,
-          },
-          {
-            id: "capacity",
-            header: "Available",
-            cell: p => `${p.availableCount}/${p.replicas}`,
-            minWidth: 72,
-            width: 72,
-            maxWidth: 72,
           },
           {
             id: "status",
             header: "Status",
             cell: p => (
               <PoolStatusPill
-                status={derivePoolStatus(p)}
+                status={p.status}
                 compact={compactTable}
               />
             ),

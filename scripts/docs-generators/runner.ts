@@ -53,16 +53,14 @@ interface Config {
 
 const ROOT_DIR = path.resolve(__dirname, '../..');
 const CONFIG_PATH = path.join(__dirname, 'config.json');
-const DOCS_TSX_PATH = path.join(
-  ROOT_DIR,
-  'docs',
-  'node_modules',
-  '.bin',
-  process.platform === 'win32' ? 'tsx.cmd' : 'tsx'
-);
+const DOCS_TSX_PATH = path.join(ROOT_DIR, 'docs', 'node_modules', 'tsx', 'dist', 'cli.mjs');
 const SHARED_GENERATOR_FILES = new Set([
   'scripts/docs-generators/runner.ts',
   'scripts/docs-generators/config.json',
+  '.github/workflows/ci-check-docs.yml',
+  '.gitattributes',
+  'docs/package.json',
+  'docs/pnpm-lock.yaml',
 ]);
 
 // ============================================================================
@@ -204,7 +202,7 @@ async function runGenerator(
     // Use the docs app's lockfile-installed tsx; never fall back to npx downloads.
     requireDocsTsx();
     const args = checkOnly ? ['--check'] : [];
-    const result = spawnSync(DOCS_TSX_PATH, [generatorPath, ...args], {
+    const result = spawnSync(process.execPath, [DOCS_TSX_PATH, generatorPath, ...args], {
       cwd: ROOT_DIR,
       stdio: 'inherit',
       encoding: 'utf-8',
@@ -312,6 +310,7 @@ function testGeneratorRouting(config: Config): void {
     [
       'docs/content/docs/use-cua-with/hermes.mdx',
       'docs/content/docs/reference/cua-driver/macos-permissions.mdx',
+      'docs/content/docs/reference/cua-driver/mcp-tool-notes.mdx',
     ],
     []
   );
@@ -333,6 +332,9 @@ function testGeneratorRouting(config: Config): void {
     ],
     ['lume']
   );
+  for (const file of ['mcp-tools.mdx', 'mcp-tools-linux.mdx', 'mcp-tools-windows.mdx']) {
+    assertSelection(config, [`docs/content/docs/reference/cua-driver/${file}`], ['cua-driver']);
+  }
   assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
   assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
 

@@ -18,28 +18,17 @@ const (
 	liteLLMResponseMaxBytes = 128 << 10
 	cyclopsSystemPrompt     = `You are the Cyclops CS assistant. Treat unqualified product terms as Cyclops concepts: pools are Cyclops sandbox warm pools, claims are allocated sandboxes, and namespaces scope those resources.
 
-Use browser Bash when it helps. Ordinary Bash has an isolated in-memory filesystem with no network access and no host filesystem access. These authenticated Cyclops SDK methods are available as first-class Bash commands:
-listNamespaces []
-listPools []
-getPool [namespace, name]
-createPool [name, poolTemplateConfig]
-updatePoolServices [namespace, name, services]
-deletePool [namespace, name]
-listClaims [namespace]
-createClaim [namespace, poolName]
-getClaim [namespace, name]
-deleteClaim [namespace, name]
-listUserKeys []
-createUserKey [name, scopes?]
-deleteUserKey [id]
+Use browser Bash when it helps. Ordinary Bash has an isolated in-memory filesystem with no network access and no host filesystem access. Registered commands are the only bridges to authenticated Cyclops APIs and the read-only CUA documentation and code service.
 
-These read-only CUA documentation and versioned code MCP tools are also available as first-class Bash commands:
-query_docs_db {"sql": string}
-query_docs_vectors {"query": string, "limit"?: number, "where"?: string, "select"?: string[]}
-query_code_db {"sql": string}
-query_code_vectors {"query": string, "limit"?: number, "where"?: string, "select"?: string[], "component"?: string}
+Authenticated Cyclops SDK commands:
+listNamespaces, listPools, getPool, createPool, updatePoolServices, deletePool, listClaims, createClaim, getClaim, deleteClaim, listUserKeys, createUserKey, deleteUserKey
 
-Pass Cyclops SDK method arguments as one JSON array argument. Pass MCP tool arguments as one JSON object argument. Either form can instead be piped to the command through stdin. Commands write JSON results to stdout, write errors to stderr, and compose with jq, pipes, redirects, files, conditionals, and loops. Use the SDK commands for live Cyclops state instead of guessing. Use the MCP commands for CUA documentation and versioned source questions, and cite returned documentation URLs or code sources as component@version:path. Do not claim that ordinary Bash can reach APIs; only the registered commands bridge to their services. Before a mutating command, state the intended change and use the exact arguments supplied by the user; ask only for missing required values. Be concise and action-oriented; ask a clarifying question only when the Cyclops interpretation is genuinely ambiguous.`
+Read-only CUA documentation and versioned code commands:
+query_docs_db, query_docs_vectors, query_code_db, query_code_vectors
+
+You must, before first use of any registered command in a conversation, run exactly <command> -h in a separate Bash tool call and read its full help. The help is that command's skill: follow its Usage, Arguments, Output, Present to the user, Safety, and Examples guidance. After learning a command, do not repeat its help in the same conversation unless you need a refresher. Never guess a command's arguments, behavior, safety, or output presentation instead of reading its help.
+
+Commands write JSON results to stdout, write errors to stderr, and compose with jq, pipes, redirects, files, conditionals, and loops. Use SDK commands for live Cyclops state rather than guessing. Use documentation and code commands for CUA reference questions. Do not claim ordinary Bash can reach APIs or arbitrary network services. Before a mutating command, state the intended change and use the exact values supplied by the user; ask only for missing required values. Be concise and action-oriented; ask a clarifying question only when the Cyclops interpretation is genuinely ambiguous.`
 )
 
 // ModelClient produces one assistant response while streaming content deltas.
@@ -152,8 +141,8 @@ func (client *LiteLLMClient) Complete(ctx context.Context, messages []Message, o
 	}
 	response, err := httpClient.Do(request)
 	if err != nil {
-		if ctx.Err() != nil {
-			return Message{}, ctx.Err()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Message{}, errors.Join(ctxErr, err)
 		}
 		return Message{}, fmt.Errorf("send LiteLLM request: %w", err)
 	}
@@ -166,17 +155,19 @@ func (client *LiteLLMClient) Complete(ctx context.Context, messages []Message, o
 	var content strings.Builder
 	toolCalls := make(map[int]ToolCall)
 	done := false
+	var streamErrors error
 	reader := bufio.NewReader(response.Body)
 	for {
 		data, err := readSSEData(reader)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
+				streamErrors = errors.Join(streamErrors, err)
 				break
 			}
-			if ctx.Err() != nil {
-				return Message{}, ctx.Err()
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return Message{}, errors.Join(ctxErr, err, streamErrors)
 			}
-			return Message{}, fmt.Errorf("read LiteLLM stream: %w", err)
+			return Message{}, errors.Join(fmt.Errorf("read LiteLLM stream: %w", err), streamErrors)
 		}
 		if err := ctx.Err(); err != nil {
 			return Message{}, err
@@ -234,12 +225,14 @@ func (client *LiteLLMClient) Complete(ctx context.Context, messages []Message, o
 		}
 	}
 	if !done {
-		return Message{}, errors.New("LiteLLM stream ended without [DONE]")
+		return Message{}, errors.Join(errors.New("LiteLLM stream ended without [DONE]"), streamErrors)
+
 	}
 
 	id, err := newUUID()
 	if err != nil {
-		return Message{}, fmt.Errorf("generate assistant message ID: %w", err)
+		return Message{}, errors.Join(fmt.Errorf("generate assistant message ID: %w", err), streamErrors)
+
 	}
 	return Message{
 		ID:        id,
@@ -345,24 +338,33 @@ func liteLLMResponseError(response *http.Response) error {
 	}
 
 	message := strings.TrimSpace(string(body))
+	var parseErrors error
 	var payload struct {
 		Error json.RawMessage `json:"error"`
 	}
-	if json.Unmarshal(body, &payload) == nil && len(payload.Error) > 0 {
+	payloadErr := json.Unmarshal(body, &payload)
+	if payloadErr == nil && len(payload.Error) > 0 {
 		var detail struct {
 			Message string `json:"message"`
 		}
-		if json.Unmarshal(payload.Error, &detail) == nil && detail.Message != "" {
+		detailErr := json.Unmarshal(payload.Error, &detail)
+		if detailErr == nil && detail.Message != "" {
 			message = detail.Message
 		} else {
+			parseErrors = errors.Join(parseErrors, detailErr)
 			var errorString string
-			if json.Unmarshal(payload.Error, &errorString) == nil && errorString != "" {
+			stringErr := json.Unmarshal(payload.Error, &errorString)
+			if stringErr == nil && errorString != "" {
 				message = errorString
+			} else {
+				parseErrors = errors.Join(parseErrors, stringErr)
 			}
 		}
+	} else {
+		parseErrors = errors.Join(parseErrors, payloadErr)
 	}
 	if message == "" {
 		message = response.Status
 	}
-	return fmt.Errorf("LiteLLM request failed: status %d: %s", response.StatusCode, message)
+	return errors.Join(fmt.Errorf("LiteLLM request failed: status %d: %s", response.StatusCode, message), parseErrors)
 }

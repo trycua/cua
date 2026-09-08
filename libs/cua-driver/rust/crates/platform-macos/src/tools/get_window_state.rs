@@ -33,7 +33,8 @@ fn def() -> &'static ToolDef {
             PREFERRED CONSUMERS read `structuredContent.elements` (one entry per \
             indexed row with `element_index`, `role`, `label`, `value` (the \
             element's text/AXValue when present — use it to verify what a field \
-            holds), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
+            holds), `actions` (names of AX actions exposed by the element, \
+            omitted when empty), `frame: {x,y,w,h}`, `parent_index`, `depth`). The markdown \
             `tree_markdown` stays available \
             and unchanged in shape for existing text-parsing callers — but new \
             fields will only be added to the structured side.\n\n\
@@ -47,6 +48,16 @@ fn def() -> &'static ToolDef {
             and ignored. Pass `include_screenshot:false` to skip the grab and get \
             the tree only — the cheap path when you're just re-indexing before an \
             element ax action.\n\n\
+            The mirror image: pass `include_accessibility_tree:false` to SKIP the \
+            AX walk entirely (the expensive part, up to 20 s) and return just the \
+            screenshot plus window metadata — `window_bounds`, `screenshot_scale`, \
+            `screenshot_width`/`screenshot_height`, `app_name`, and `window_title` \
+            — the capture-only path for rendering a live window preview / \
+            picture-in-picture without paying for perception. Setting BOTH \
+            `include_accessibility_tree:false` and `include_screenshot:false` is an \
+            error (nothing to return). Optional `max_dimension` caps the returned \
+            screenshot's long edge in pixels (aspect preserved) for a cheap \
+            thumbnail.\n\n\
             The snapshot is SCOPED to `window_id`: a window_id that no longer exists is \
             refused with `window_id_not_found`, and one owned by another process is \
             refused with `window_owner_pid_mismatch` naming the real `owner_pid` to retry \
@@ -79,6 +90,10 @@ fn def() -> &'static ToolDef {
                 "window_id": { "type": "integer", "description": "Target window ID from list_windows." },
                 "query": { "type": "string", "description": "Case-insensitive filter for tree_markdown and structured elements. Returns matching actionable rows plus their actionable ancestors without renumbering element_index values." },
                 "capture_mode": cua_driver_core::capture_mode::capture_mode_schema(),
+                "include_accessibility_tree": {
+                    "type": "boolean",
+                    "description": "Default true — walk the AX tree and return `elements` + `tree_markdown` alongside the screenshot. Set false to SKIP the AX walk entirely (the expensive part, up to 20 s) and return just the screenshot plus window metadata (bounds, scale, app_name, window_title) — the capture-only path for rendering a live window preview / picture-in-picture. Mirrors include_screenshot. Setting BOTH include_accessibility_tree:false AND include_screenshot:false is an error (nothing to return)."
+                },
                 "include_screenshot": {
                     "type": "boolean",
                     "description": "Default true — returns a grounding screenshot alongside the tree. Set false to skip the grab and return the tree only (the cheap path when you're just re-indexing before an element ax action; saves the image tokens + screen-grab latency). screenshot_out_file still forces a capture to disk."
@@ -96,6 +111,11 @@ fn def() -> &'static ToolDef {
                     "type": "integer",
                     "minimum": 1,
                     "description": "Cap on the AX-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower this for deep menu/Electron trees."
+                },
+                "max_dimension": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "description": "Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview / thumbnail. Applied on top of the session/global max_image_dimension ceiling; the tighter of the two wins. Omit for the configured default."
                 }
             },
             "additionalProperties": false
@@ -105,6 +125,19 @@ fn def() -> &'static ToolDef {
         idempotent: false,
         open_world: false,
     })
+}
+
+/// Fold a per-call `max_dimension` cap with the session/global
+/// `max_image_dimension` ceiling. `resize_png_if_needed` treats `0` as "no
+/// limit", so when the ceiling is unlimited the per-call cap stands alone;
+/// otherwise the tighter (smaller, non-zero) of the two wins. Returns `0` only
+/// when neither imposes a limit.
+fn fold_max_dimension(ceiling: u32, per_call: Option<u32>) -> u32 {
+    match per_call {
+        Some(md) if ceiling == 0 => md,
+        Some(md) => ceiling.min(md),
+        None => ceiling,
+    }
 }
 
 fn chromium_browser_window(pid: i32) -> bool {
@@ -211,6 +244,29 @@ impl Tool for GetWindowStateTool {
         // still forces a capture (an explicit "write the frame to disk").
         let include_screenshot = args.get("include_screenshot").and_then(|v| v.as_bool());
         let should_capture = include_screenshot != Some(false) || screenshot_out_file.is_some();
+        // `include_accessibility_tree` (default true) is the mirror image of
+        // `include_screenshot`: set false to SKIP the AX walk (the expensive
+        // part) and return just the screenshot + window metadata — the
+        // capture-only / preview path. With BOTH the tree and the screenshot
+        // opted out there is nothing to return, so refuse rather than emit an
+        // empty payload.
+        let want_tree = args
+            .get("include_accessibility_tree")
+            .and_then(|v| v.as_bool())
+            != Some(false);
+        if !want_tree && !should_capture {
+            return ToolResult::error(
+                "Nothing to return: both include_accessibility_tree:false and \
+                 include_screenshot:false. Set at least one to true, or pass \
+                 screenshot_out_file to force a capture.",
+            );
+        }
+        // Optional per-call cap on the returned screenshot's long edge, folded
+        // with the session/global ceiling below (the tighter wins).
+        let max_dimension = args
+            .get("max_dimension")
+            .and_then(|v| v.as_u64())
+            .map(|v| v.max(1) as u32);
         // Internal direct-tool mode used by verify_state. Registry ingress
         // strips underscore-prefixed arguments before public dispatch; only
         // a trusted direct in-process invocation can enable this mode.
@@ -233,8 +289,7 @@ impl Tool for GetWindowStateTool {
             .map(|v| v.max(1) as usize)
             .unwrap_or(crate::ax::tree::DEFAULT_MAX_DEPTH);
 
-        // Always walk the AX tree (perception returns both tree + screenshot).
-        let (tree_result, prepared_snapshot) = {
+        let (tree_result, prepared_snapshot) = if want_tree {
             let q = query.clone();
             // Keep the product deadline below the public client's 25-second
             // deadline so callers receive a structured driver error. The AX
@@ -252,7 +307,7 @@ impl Tool for GetWindowStateTool {
                 (tree, payload)
             });
             match tokio::time::timeout(std::time::Duration::from_secs(20), walk_future).await {
-                Ok(Ok((tree, payload))) => (Some(tree), payload),
+                Ok(Ok((tree, payload))) => (Some(tree), Some(payload)),
                 Ok(Err(e)) => return ToolResult::error(format!("AX tree walk failed: {e}")),
                 Err(_elapsed) => {
                     return ToolResult::error(format!(
@@ -265,6 +320,8 @@ impl Tool for GetWindowStateTool {
                     ));
                 }
             }
+        } else {
+            (None, None)
         };
 
         // The window can close, or its CGWindow can be re-parented onto another
@@ -289,7 +346,9 @@ impl Tool for GetWindowStateTool {
         // against. Skipped only when `include_screenshot:false` (and no
         // screenshot_out_file). With `screenshot_out_file` set, write to disk and
         // surface the path instead of embedding base64; otherwise embed base64.
-        let max_dim = effective_max_dim;
+        // Fold the per-call `max_dimension` with the session/global ceiling
+        // (the tighter of the two wins).
+        let max_dim = fold_max_dimension(effective_max_dim, max_dimension);
         // Returns the encoded/file capture, delivered dimensions, optional
         // downscale source width, the WindowServer bounds it was validated
         // against, and the raw capture's backing scale.
@@ -462,15 +521,13 @@ impl Tool for GetWindowStateTool {
             .map(|r| r.tree_markdown.clone())
             .unwrap_or_default();
 
-        let snapshot_id = if scope_matched && !observation_only {
-            Some(
+        let snapshot_id = prepared_snapshot
+            .filter(|_| scope_matched && !observation_only)
+            .map(|payload| {
                 self.state
                     .element_cache
-                    .publish(pid, u64::from(window_id), prepared_snapshot),
-            )
-        } else {
-            None
-        };
+                    .publish(pid, u64::from(window_id), payload)
+            });
 
         // Build the structured `elements` array — one entry per actionable
         // node, matching the order (and indices) of the markdown rendering.
@@ -479,8 +536,8 @@ impl Tool for GetWindowStateTool {
         // (Hermes' regex parser, Codex, Claude Code) and is signalled as
         // preferred-for-back-compat-only via the `_note` field below.
         let elements_json: Vec<serde_json::Value> = match (snapshot_id, tree_result.as_ref()) {
-            (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, sid),
-            (None, Some(r)) if scope_matched => build_elements_array(&r.nodes),
+            (Some(sid), Some(r)) => build_elements_array_with_token(&r.nodes, Some(sid)),
+            (None, Some(r)) if scope_matched => build_elements_array_with_token(&r.nodes, None),
             _ => Vec::new(),
         };
         let elements_json = cua_driver_core::element_query::project_elements_for_query(
@@ -616,6 +673,19 @@ impl Tool for GetWindowStateTool {
         if let Some(ref fp) = screenshot_file_path {
             structured["screenshot_file_path"] = serde_json::json!(fp);
         }
+        // Window identity metadata (additive): the owning app and the window's
+        // title for the requested window_id. A cheap WindowServer lookup that
+        // names the surface even on the capture-only path, where no AX tree is
+        // present to identify it. Omitted per-field when WindowServer reports an
+        // empty string.
+        if let Some(info) = crate::windows::window_info_by_id(window_id) {
+            if !info.app_name.is_empty() {
+                structured["app_name"] = serde_json::json!(info.app_name);
+            }
+            if !info.title.is_empty() {
+                structured["window_title"] = serde_json::json!(info.title);
+            }
+        }
         cua_driver_core::window_inspection::mark_browser_chrome_capture_coverage(
             &mut structured,
             chromium_browser_window(pid).then_some(
@@ -742,7 +812,7 @@ fn degradation_for(
 /// omitted to match the contract on the tool description.
 pub(crate) fn build_elements_array_with_token(
     nodes: &[crate::ax::tree::AXNode],
-    snapshot_id: u32,
+    snapshot_id: Option<u32>,
 ) -> Vec<serde_json::Value> {
     nodes
         .iter()
@@ -762,15 +832,18 @@ pub(crate) fn build_elements_array_with_token(
                 .map(|[x, y, w, h]| serde_json::json!({ "x": x, "y": y, "w": w, "h": h }));
             let mut entry = serde_json::json!({
                 "element_index": idx,
-                // Surface 6: opaque token paired to the integer index.
-                // Tools accept either; the token has explicit validity
-                // (invalidated when the next snapshot supersedes this
-                // one in the per-pid LRU). See cua-driver-core's
-                // `element_token` module.
-                "element_token": cua_driver_core::element_token::token_for(snapshot_id, idx),
                 "role": node.role,
                 "depth": node.depth,
             });
+            // Surface 6: opaque token paired to the integer index.
+            // Tools accept either; the token has explicit validity
+            // (invalidated when the next snapshot supersedes this
+            // one in the per-pid LRU). See cua-driver-core's
+            // `element_token` module.
+            if let Some(sid) = snapshot_id {
+                entry["element_token"] =
+                    serde_json::json!(cua_driver_core::element_token::token_for(sid, idx));
+            }
             if let Some(label) = label {
                 entry["label"] = serde_json::Value::String(label);
             }
@@ -825,6 +898,9 @@ pub(crate) fn build_elements_array_with_token(
             if let Some(selected) = selected {
                 entry["selected"] = serde_json::Value::Bool(selected);
             }
+            if !node.actions.is_empty() {
+                entry["actions"] = serde_json::json!(node.actions);
+            }
             if node.in_web_content {
                 entry["in_web_content"] = serde_json::Value::Bool(true);
             }
@@ -837,26 +913,6 @@ pub(crate) fn build_elements_array_with_token(
             Some(entry)
         })
         .collect()
-}
-
-/// Back-compat wrapper for callers that don't yet have a snapshot id
-/// to pass through. Emits the same fields as the token-aware builder
-/// minus `element_token`. New call sites should prefer
-/// `build_elements_array_with_token`.
-#[allow(dead_code)]
-pub(crate) fn build_elements_array(nodes: &[crate::ax::tree::AXNode]) -> Vec<serde_json::Value> {
-    // Use a snapshot_id of 0 only to satisfy the signature; tokens
-    // built from id=0 are not registered and would fail the registry's
-    // stale check — but since this entry point is only kept for
-    // pre-existing callers (none in production after Surface 6), it
-    // strips the token field after rendering.
-    let mut out = build_elements_array_with_token(nodes, 0);
-    for entry in &mut out {
-        if let Some(obj) = entry.as_object_mut() {
-            obj.remove("element_token");
-        }
-    }
-    out
 }
 
 /// Keep the structured response aligned with a query-filtered markdown tree.
@@ -981,6 +1037,55 @@ mod window_scope_contract_tests {
             );
         }
     }
+
+    /// The capture-only fold-in: get_window_state advertises the new
+    /// `include_accessibility_tree` / `max_dimension` controls, keeps pid +
+    /// window_id required (schema not loosened), and documents the degenerate
+    /// both-false case in its description.
+    #[test]
+    fn schema_advertises_capture_only_controls() {
+        let d = def();
+        let props = &d.input_schema["properties"];
+        assert!(
+            props.get("include_accessibility_tree").is_some(),
+            "schema must advertise include_accessibility_tree"
+        );
+        assert!(
+            props.get("max_dimension").is_some(),
+            "schema must advertise max_dimension"
+        );
+        let required: Vec<&str> = d.input_schema["required"]
+            .as_array()
+            .expect("required array")
+            .iter()
+            .map(|v| v.as_str().unwrap())
+            .collect();
+        assert!(
+            required.contains(&"pid") && required.contains(&"window_id"),
+            "pid and window_id must stay required: {required:?}"
+        );
+        assert!(
+            d.description.contains("include_accessibility_tree:false")
+                && d.description.contains("include_screenshot:false"),
+            "description must document the both-false error"
+        );
+    }
+
+    /// The per-call `max_dimension` folds with the session/global ceiling: the
+    /// tighter non-zero cap wins, an unlimited (0) ceiling defers to the
+    /// per-call cap, and absent inputs pass the ceiling through unchanged.
+    #[test]
+    fn max_dimension_folds_tighter_cap() {
+        // Ceiling wins when it is tighter than the per-call cap.
+        assert_eq!(fold_max_dimension(1024, Some(2048)), 1024);
+        // Per-call wins when it is tighter than the ceiling.
+        assert_eq!(fold_max_dimension(4096, Some(512)), 512);
+        // Unlimited ceiling (0) defers entirely to the per-call cap.
+        assert_eq!(fold_max_dimension(0, Some(768)), 768);
+        // No per-call cap → the ceiling passes through (0 stays unlimited).
+        assert_eq!(fold_max_dimension(1600, None), 1600);
+        assert_eq!(fold_max_dimension(0, None), 0);
+    }
 }
 
 #[cfg(test)]
@@ -988,6 +1093,7 @@ mod tests {
     use super::*;
     use crate::ax::tree::AXNode;
     use cua_driver_core::element_query::project_elements_for_query;
+    use serde_json::json;
 
     fn node(
         idx: Option<usize>,
@@ -996,6 +1102,7 @@ mod tests {
         depth: usize,
         parent: Option<usize>,
         frame: Option<[f64; 4]>,
+        actions: Vec<String>,
     ) -> AXNode {
         AXNode {
             element_index: idx,
@@ -1005,7 +1112,7 @@ mod tests {
             description: None,
             identifier: None,
             help: None,
-            actions: vec![],
+            actions,
             element_ptr: 0,
             depth,
             parent_element_index: parent,
@@ -1031,8 +1138,9 @@ mod tests {
                 0,
                 None,
                 Some([0.0, 0.0, 800.0, 600.0]),
+                vec![],
             ),
-            node(None, "AXStaticText", Some("hint"), 1, Some(0), None),
+            node(None, "AXStaticText", Some("hint"), 1, Some(0), None, vec![]),
             node(
                 Some(1),
                 "AXButton",
@@ -1040,6 +1148,7 @@ mod tests {
                 1,
                 Some(0),
                 Some([10.0, 20.0, 60.0, 24.0]),
+                vec![],
             ),
             node(
                 Some(2),
@@ -1048,9 +1157,10 @@ mod tests {
                 1,
                 Some(0),
                 Some([80.0, 20.0, 60.0, 24.0]),
+                vec![],
             ),
         ];
-        let elements = build_elements_array(&nodes);
+        let elements = build_elements_array_with_token(&nodes, None);
         assert_eq!(
             elements.len(),
             3,
@@ -1070,8 +1180,16 @@ mod tests {
     #[test]
     fn query_projection_keeps_only_rendered_actionable_rows() {
         let nodes = vec![
-            node(Some(0), "AXWindow", Some("Document"), 0, None, None),
-            node(Some(1), "AXMenuItem", Some("Window"), 1, Some(0), None),
+            node(Some(0), "AXWindow", Some("Document"), 0, None, None, vec![]),
+            node(
+                Some(1),
+                "AXMenuItem",
+                Some("Window"),
+                1,
+                Some(0),
+                None,
+                vec![],
+            ),
             node(
                 Some(2),
                 "AXMenuItem",
@@ -1079,11 +1197,28 @@ mod tests {
                 2,
                 Some(1),
                 None,
+                vec![],
             ),
-            node(Some(3), "AXMenuItem", Some("Left"), 3, Some(2), None),
-            node(Some(4), "AXButton", Some("Unrelated"), 1, Some(0), None),
+            node(
+                Some(3),
+                "AXMenuItem",
+                Some("Left"),
+                3,
+                Some(2),
+                None,
+                vec![],
+            ),
+            node(
+                Some(4),
+                "AXButton",
+                Some("Unrelated"),
+                1,
+                Some(0),
+                None,
+                vec![],
+            ),
         ];
-        let elements = build_elements_array(&nodes);
+        let elements = build_elements_array_with_token(&nodes, None);
         let filtered_markdown = concat!(
             "- [0] AXWindow \"Document\"\n",
             "  - [1] AXMenuItem \"Window\"\n",
@@ -1102,8 +1237,16 @@ mod tests {
 
     #[test]
     fn query_projection_returns_no_elements_when_markdown_has_no_match() {
-        let nodes = vec![node(Some(0), "AXButton", Some("Unrelated"), 0, None, None)];
-        let elements = build_elements_array(&nodes);
+        let nodes = vec![node(
+            Some(0),
+            "AXButton",
+            Some("Unrelated"),
+            0,
+            None,
+            None,
+            vec![],
+        )];
+        let elements = build_elements_array_with_token(&nodes, None);
 
         let projected = project_elements_for_query(elements, Some("zoomLeft"), "");
 
@@ -1113,10 +1256,10 @@ mod tests {
     #[test]
     fn unfiltered_projection_preserves_every_element() {
         let nodes = vec![
-            node(Some(0), "AXButton", Some("One"), 0, None, None),
-            node(Some(1), "AXButton", Some("Two"), 0, None, None),
+            node(Some(0), "AXButton", Some("One"), 0, None, None, vec![]),
+            node(Some(1), "AXButton", Some("Two"), 0, None, None, vec![]),
         ];
-        let elements = build_elements_array(&nodes);
+        let elements = build_elements_array_with_token(&nodes, None);
 
         let projected = project_elements_for_query(elements, None, "");
 
@@ -1132,8 +1275,9 @@ mod tests {
             3,
             Some(2),
             Some([1.5, 2.5, 33.0, 44.0]),
+            vec![],
         )];
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(entry["element_index"], 7);
         assert_eq!(entry["role"], "AXButton");
         assert_eq!(entry["label"], "Go");
@@ -1158,9 +1302,10 @@ mod tests {
             1,
             None,
             None,
+            vec![],
         )];
         nodes[0].value = Some("i love u".into());
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(entry["label"], "Compose message", "label stays the title");
         assert_eq!(
             entry["value"], "i love u",
@@ -1180,6 +1325,7 @@ mod tests {
             1,
             None,
             None,
+            vec![],
         )];
         nodes[0].value_state = Some("8".into());
         nodes[0].value_description = Some("8 dB".into());
@@ -1187,7 +1333,7 @@ mod tests {
         nodes[0].max_value = Some(8.0);
         nodes[0].enabled = Some(true);
         nodes[0].selected = Some(false);
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(
             entry["value"], "8",
             "numeric AXValue surfaces via value_state"
@@ -1208,25 +1354,34 @@ mod tests {
             2,
             None,
             None,
+            vec![],
         )];
         nodes[0].in_web_content = true;
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(entry["in_web_content"], true);
     }
 
     #[test]
     fn checkbox_value_state_normalizes_to_selected() {
-        let mut nodes = vec![node(Some(0), "AXCheckBox", Some("I agree"), 0, None, None)];
+        let mut nodes = vec![node(
+            Some(0),
+            "AXCheckBox",
+            Some("I agree"),
+            0,
+            None,
+            None,
+            vec![],
+        )];
         nodes[0].value_state = Some("0".into());
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(entry["selected"], false);
     }
 
     #[test]
     fn elements_control_state_fields_omitted_when_absent() {
         // Stock behaviour is unchanged for elements without control state.
-        let nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None)];
-        let entry = &build_elements_array(&nodes)[0];
+        let nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         for key in ["value_description", "min", "max", "enabled", "selected"] {
             assert!(entry.get(key).is_none(), "{key} must be omitted");
         }
@@ -1236,10 +1391,18 @@ mod tests {
     fn elements_omit_degenerate_min_max_range() {
         // WebKit reports AXMinValue/AXMaxValue as 0.0/0.0 on non-range
         // controls (checkboxes, radios) — a degenerate range is omitted.
-        let mut nodes = vec![node(Some(0), "AXCheckBox", Some("On"), 0, None, None)];
+        let mut nodes = vec![node(
+            Some(0),
+            "AXCheckBox",
+            Some("On"),
+            0,
+            None,
+            None,
+            vec![],
+        )];
         nodes[0].min_value = Some(0.0);
         nodes[0].max_value = Some(0.0);
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert!(entry.get("min").is_none(), "degenerate min must be omitted");
         assert!(entry.get("max").is_none(), "degenerate max must be omitted");
     }
@@ -1247,9 +1410,9 @@ mod tests {
     #[test]
     fn elements_value_state_falls_back_to_string_value() {
         // String-valued elements keep their `value` even with no value_state.
-        let mut nodes = vec![node(Some(0), "AXComboBox", None, 0, None, None)];
+        let mut nodes = vec![node(Some(0), "AXComboBox", None, 0, None, None, vec![])];
         nodes[0].value = Some("Search".into());
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert_eq!(entry["value"], "Search");
     }
 
@@ -1257,16 +1420,16 @@ mod tests {
     fn elements_omit_empty_value() {
         // An empty AXValue must not emit a `value` field (matches the other
         // optional fields' omit-when-absent contract).
-        let mut nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None)];
+        let mut nodes = vec![node(Some(0), "AXButton", Some("OK"), 0, None, None, vec![])];
         nodes[0].value = Some(String::new());
-        let entry = &build_elements_array(&nodes)[0];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert!(entry.get("value").is_none(), "empty value must be omitted");
     }
 
     #[test]
     fn elements_omit_optional_fields_when_missing() {
-        let nodes = vec![node(Some(0), "AXUnknown", None, 0, None, None)];
-        let entry = &build_elements_array(&nodes)[0];
+        let nodes = vec![node(Some(0), "AXUnknown", None, 0, None, None, vec![])];
+        let entry = &build_elements_array_with_token(&nodes, None)[0];
         assert!(
             entry.get("label").is_none(),
             "label must be omitted when title/value/desc/id are all empty"
@@ -1287,33 +1450,53 @@ mod tests {
     fn elements_label_fallback_chain() {
         // title missing → description → value → identifier
         let nodes = vec![
-            node(Some(0), "AXButton", None, 0, None, None),
-            node(Some(1), "AXButton", None, 0, None, None),
-            node(Some(2), "AXButton", None, 0, None, None),
+            node(Some(0), "AXButton", None, 0, None, None, vec![]),
+            node(Some(1), "AXButton", None, 0, None, None, vec![]),
+            node(Some(2), "AXButton", None, 0, None, None, vec![]),
         ];
         let mut nodes = nodes;
         nodes[0].description = Some("from-desc".into());
         nodes[1].value = Some("from-val".into());
         nodes[2].identifier = Some("from-id".into());
-        let elements = build_elements_array(&nodes);
+        let elements = build_elements_array_with_token(&nodes, None);
         assert_eq!(elements[0]["label"], "from-desc");
         assert_eq!(elements[1]["label"], "from-val");
         assert_eq!(elements[2]["label"], "from-id");
     }
 
-    /// Every element entry carries a non-empty snapshot-bound
-    /// `element_token` alongside its numeric `element_index`.
+    #[test]
+    fn build_elements_array_with_token_emits_actions_when_present() {
+        let nodes = vec![node(
+            Some(0),
+            "AXButton",
+            Some("OK"),
+            1,
+            None,
+            None,
+            vec!["AXPress".to_owned(), "AXShowMenu".to_owned()],
+        )];
+        let entries = build_elements_array_with_token(&nodes, None);
+        assert_eq!(entries[0]["actions"], json!(["AXPress", "AXShowMenu"]));
+    }
+
+    #[test]
+    fn build_elements_array_with_token_omits_actions_when_empty() {
+        let nodes = vec![node(Some(0), "AXButton", Some("OK"), 1, None, None, vec![])];
+        let entries = build_elements_array_with_token(&nodes, None);
+        assert!(entries[0].get("actions").is_none());
+    }
+
     #[test]
     fn build_elements_array_with_token_emits_element_token_per_row() {
         let cache = crate::ax::cache::ElementCache::new();
         let pid = 0x6abc_0001_i32;
         let nodes = vec![
-            node(Some(0), "AXButton", Some("A"), 1, None, None),
-            node(Some(1), "AXButton", Some("B"), 1, None, None),
-            node(Some(2), "AXButton", Some("C"), 1, None, None),
+            node(Some(0), "AXButton", Some("A"), 1, None, None, vec![]),
+            node(Some(1), "AXButton", Some("B"), 1, None, None, vec![]),
+            node(Some(2), "AXButton", Some("C"), 1, None, None, vec![]),
         ];
         let sid = cache.publish(pid, 9, crate::ax::cache::CachedSnapshot::from_nodes(&nodes));
-        let entries = build_elements_array_with_token(&nodes, sid);
+        let entries = build_elements_array_with_token(&nodes, Some(sid));
         assert_eq!(entries.len(), 3);
         // Every entry must have BOTH fields (additive contract).
         for e in &entries {
@@ -1340,17 +1523,23 @@ mod tests {
         }
     }
 
-    /// Back-compat: `build_elements_array` (the old shim) must NOT emit
-    /// `element_token` — older callers that never plumb a snapshot id
-    /// through get a clean shape.
     #[test]
-    fn build_elements_array_shim_skips_element_token() {
-        let nodes = vec![node(Some(0), "AXButton", Some("A"), 1, None, None)];
-        let entries = build_elements_array(&nodes);
+    fn build_elements_array_with_token_observation_only_has_actions_no_token() {
+        let nodes = vec![node(
+            Some(0),
+            "AXButton",
+            Some("OK"),
+            1,
+            None,
+            None,
+            vec!["AXPress".to_owned(), "AXShowMenu".to_owned()],
+        )];
+        let entries = build_elements_array_with_token(&nodes, None);
         assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["actions"], json!(["AXPress", "AXShowMenu"]));
         assert!(
             entries[0].get("element_token").is_none(),
-            "back-compat shim must NOT emit element_token; got: {}",
+            "observation-only entries must not emit unregistered element_token: {}",
             entries[0]
         );
     }

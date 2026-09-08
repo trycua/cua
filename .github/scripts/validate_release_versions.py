@@ -15,6 +15,8 @@ except ModuleNotFoundError:  # Python 3.10 and earlier
     import tomli as tomllib
 from typing import Sequence
 
+from sync_driver_release_docs import driver_reference_paths
+
 
 class VersionError(RuntimeError):
     """Checked-in version sources do not describe one release."""
@@ -84,16 +86,14 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
             base / "rust/Skills/cua-driver/SKILL.md",
             r"^version:\s*([^\s#]+)",
         ),
-        "docs/cli-reference.mdx:metadata": read_match(
-            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
-        ),
         "docs/cli-reference.mdx:body": read_match(
             docs / "cli-reference.mdx", r"Documented against Cua Driver \*\*(\S+)\*\*\."
         ),
-        "docs/mcp-tools.mdx:metadata": read_match(
-            docs / "mcp-tools.mdx", r"^  Version: (\S+)$"
-        ),
     }
+    for relative in driver_reference_paths(root):
+        values[f"docs/{Path(relative).name}:metadata"] = read_match(
+            root / relative, r"^  Version: (\S+)$"
+        )
 
     members = [base / "rust" / member for member in cargo["workspace"]["members"]]
     local_names = {

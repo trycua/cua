@@ -52,7 +52,9 @@ windows = [
     "pywin32>=310"
 ]
 vnc = [
-    "vncdotool>=1.2.0"
+    # 1.3.0 is the first release that supports Python 3.12 and that releases
+    # force_caps keys in reverse order, so Shift outlives the key it modifies.
+    "vncdotool>=1.3.0"
 ]
 driver = [
     "cua-driver>=0.22.2,<0.23.0"

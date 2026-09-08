@@ -1,8 +1,8 @@
 use cyclops_sdk::{
-    CreateClaimRequestBuilder, CreatePoolRequest, CreatePoolRequestBuilder, CreateTemplateRequest,
-    CreateTemplateRequestBuilder, CreateUserApiKeyRequestBuilder,
-    CyclopsTokenProviderConfigurationBuilder, Pool, ResourceMetadata, SdkBuildError,
-    TemplateBuilder,
+    CreateClaimRequestBuilder, CreatePoolRequest, CreatePoolRequestBuilder,
+    CreateSignedServiceUrlRequestBuilder, CreateTemplateRequest, CreateTemplateRequestBuilder,
+    CreateUserApiKeyRequestBuilder, CyclopsTokenProviderConfigurationBuilder, Pool,
+    ResourceMetadata, Sandbox, SdkBuildError, TemplateBuilder,
 };
 use cyclops_sdk_schema::{
     OSGymSandboxTemplateSpecBuilder, OSGymSandboxWarmPoolSpecBuilder, SandboxTemplateRefBuilder,
@@ -158,4 +158,74 @@ fn remaining_sdk_builders_use_stable_required_field_errors() {
             } if actual_record == record_type && actual_field == field
         ));
     }
+}
+
+#[test]
+fn signed_service_url_request_builder_constructs_request() {
+    let sandbox = Sandbox {
+        namespace: "tenant-a".into(),
+        claim: "claim-a".into(),
+        name: "sandbox-a".into(),
+        services: vec!["mcp".into()],
+    };
+
+    let request = CreateSignedServiceUrlRequestBuilder::new()
+        .sandbox(sandbox.clone())
+        .service("mcp".into())
+        .label("Customer demo".into())
+        .expires_in_seconds(3600)
+        .build()
+        .unwrap();
+
+    assert_eq!(request.sandbox, sandbox);
+    assert_eq!(request.service, "mcp");
+    assert_eq!(request.label.as_deref(), Some("Customer demo"));
+    assert_eq!(request.expires_in_seconds, 3600);
+}
+
+#[test]
+fn signed_service_url_request_builder_requires_sandbox_service_and_expiration() {
+    let missing_sandbox = CreateSignedServiceUrlRequestBuilder::new()
+        .service("mcp".into())
+        .expires_in_seconds(3600)
+        .build()
+        .unwrap_err();
+    assert!(matches!(
+        missing_sandbox,
+        SdkBuildError::MissingRequiredField { record_type, field }
+            if record_type == "CreateSignedServiceUrlRequest" && field == "sandbox"
+    ));
+
+    let sandbox = Sandbox {
+        namespace: "tenant-a".into(),
+        claim: "claim-a".into(),
+        name: "sandbox-a".into(),
+        services: vec!["mcp".into()],
+    };
+    let missing_service = CreateSignedServiceUrlRequestBuilder::new()
+        .sandbox(sandbox)
+        .expires_in_seconds(3600)
+        .build()
+        .unwrap_err();
+    assert!(matches!(
+        missing_service,
+        SdkBuildError::MissingRequiredField { record_type, field }
+            if record_type == "CreateSignedServiceUrlRequest" && field == "service"
+    ));
+
+    let missing_expiration = CreateSignedServiceUrlRequestBuilder::new()
+        .sandbox(Sandbox {
+            namespace: "tenant-a".into(),
+            claim: "claim-a".into(),
+            name: "sandbox-a".into(),
+            services: vec!["mcp".into()],
+        })
+        .service("mcp".into())
+        .build()
+        .unwrap_err();
+    assert!(matches!(
+        missing_expiration,
+        SdkBuildError::MissingRequiredField { record_type, field }
+            if record_type == "CreateSignedServiceUrlRequest" && field == "expires_in_seconds"
+    ));
 }

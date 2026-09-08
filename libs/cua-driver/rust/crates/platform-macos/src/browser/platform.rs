@@ -16,10 +16,9 @@ use cua_driver_core::browser::platform::{
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
-    BrowserClassification, BrowserEngineFamily, BrowserInputAction, BrowserProcessRole,
-    BrowserProduct, EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport,
-    NativeOwnershipMethod, NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint,
-    ProcessFingerprint, Rect,
+    BrowserClassification, BrowserEngineFamily, BrowserProcessRole, BrowserProduct,
+    EndpointOwnershipMethod, EndpointOwnershipProof, EndpointTransport, NativeOwnershipMethod,
+    NativeOwnershipProof, NativeWindowInfo, OwnedEndpoint, ProcessFingerprint, Rect,
 };
 use serde::Serialize;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -756,15 +755,8 @@ impl BrowserPlatform for MacOsBrowserPlatform {
         ))
     }
 
-    fn standalone_trusted_input_background_limitation(
-        &self,
-        product: BrowserProduct,
-        action: BrowserInputAction,
-    ) -> Option<&'static str> {
-        (product != BrowserProduct::GoogleChrome || action != BrowserInputAction::Click)
-            .then_some(
-                "trusted CDP Input background delivery is validated only for clicks in Google Chrome on macOS",
-            )
+    fn standalone_trusted_input_background_limitation(&self) -> Option<&'static str> {
+        Some("Chromium's trusted CDP Input route activates its standalone browser window on macOS")
     }
 
     async fn visualize_browser_action(&self, action: BrowserVisualAction) {
@@ -1681,38 +1673,6 @@ mod tests {
         assert!(!is_chromium("Safari", "com.apple.Safari"));
         assert!(!is_chromium("Search", "com.example.Search"));
         assert!(!is_chromium("Operator", "com.example.Operator"));
-    }
-
-    #[test]
-    fn trusted_background_input_is_enabled_only_for_validated_chrome_clicks() {
-        let platform = MacOsBrowserPlatform::default();
-        assert_eq!(
-            platform.standalone_trusted_input_background_limitation(
-                BrowserProduct::GoogleChrome,
-                BrowserInputAction::Click,
-            ),
-            None
-        );
-        for action in [
-            BrowserInputAction::Hover,
-            BrowserInputAction::RightClick,
-            BrowserInputAction::DoubleClick,
-            BrowserInputAction::Scroll,
-            BrowserInputAction::Drag,
-        ] {
-            assert!(platform
-                .standalone_trusted_input_background_limitation(
-                    BrowserProduct::GoogleChrome,
-                    action,
-                )
-                .is_some());
-        }
-        assert!(platform
-            .standalone_trusted_input_background_limitation(
-                BrowserProduct::MicrosoftEdge,
-                BrowserInputAction::Click,
-            )
-            .is_some());
     }
 
     #[test]

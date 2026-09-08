@@ -23,7 +23,7 @@ From the repository root, use a fresh evidence directory:
 ```bash
 EVIDENCE="$PWD/artifacts/cua-driver/rfc-3473/cache-comparison"
 mkdir -p "$EVIDENCE/baseline"
-git archive ed289df50257bd6a65f9ee7964bb842777a1a10a libs/cua-driver | tar -x -C "$EVIDENCE/baseline"
+git archive 84340731fc38d6571881db27e3cf9f884d8f0e88 libs/cua-driver | tar -x -C "$EVIDENCE/baseline"
 cp libs/cua-driver/tests/metrics/snapshot_latency_baseline.rs "$EVIDENCE/baseline/libs/cua-driver/rust/crates/cua-driver-core/tests/snapshot_latency.rs"
 CARGO_TARGET_DIR="$EVIDENCE/baseline-target" cargo +1.97.1 test --release --locked --manifest-path "$EVIDENCE/baseline/libs/cua-driver/rust/Cargo.toml" -p cua-driver-core --test snapshot_latency --no-run --message-format=json > "$EVIDENCE/baseline-build.jsonl"
 CARGO_TARGET_DIR="$EVIDENCE/candidate-target" cargo +1.97.1 test --release --locked --manifest-path libs/cua-driver/rust/Cargo.toml -p cua-driver-core --test snapshot_latency --no-run --message-format=json > "$EVIDENCE/candidate-build.jsonl"

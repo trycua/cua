@@ -40,6 +40,37 @@ After removal, the macOS SDK library passes **56 tests, 0 failed, 0 ignored**;
 formatting and diff checks pass. No production code changed. Earlier failure
 counts below are historical evidence, not the current suite status.
 
+## Current-main integration
+
+Integrated main `84340731fc38d6571881db27e3cf9f884d8f0e88` in an isolated
+worktree, preserving the existing branch history and unrelated local changes.
+Resolutions retain upstream recording coordinate projection/recentering, Windows
+transport reporting, SDK lifecycle maintenance, macOS capture-only behavior and
+Linux Hyprland window-scope refusal. All desktop token resolution still acquires
+from the runtime-owned cache; the independent registry is not restored.
+
+The starting base also contained unmerged browser commits `884c04123` and
+`ed289df50`. Their 19 browser/documentation paths were restored to current main
+so that this PR does not ship those unrelated capabilities. Their commits remain
+in history; no replacement browser implementation was added.
+
+After this scope cleanup, macOS validation passes: core **604**, platform **368**
+(**2 existing ignored**), SDK **57**, and shared/dispatch invariants **7 + 3**.
+The AppKit integration test binary compiles; GUI execution remains unverified.
+
+Refreshed the normalized production comparison against the integrated main,
+using Python 3.12.11 and the pinned parsers. Analyzer tests pass and all measured
+sources parse without errors. Changed production files have **1,376 additions /
+1,527 deletions**, net **-151 lines**. Structural complexity is **4,510 -> 4,446
+(-64)**; decision surplus **3,759 -> 3,706 (-53)**. These supersede the old-base
+-67/-49 comparison. Evidence is under `artifacts/rfc3473-integration/` in the
+integration worktree; reproduction tools remain checked in.
+
+Windows/Linux validation must cover the integrated source. The earlier cache
+latency results are historical until repeated against the updated baseline.
+Native AppKit regression, desktop latency and exact-SHA canonical certification
+remain required before readiness.
+
 ## Actionable items
 
 | ID | Action | Status | Exit evidence |

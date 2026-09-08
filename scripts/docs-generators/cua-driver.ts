@@ -920,6 +920,8 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
     case 'string':
       if (name === 'text') return 'hello';
       if (name === 'key') return 'return';
+      if (name === 'origin') return 'https://example.com';
+      if (name === 'blocker_id') return 'blocker-example';
       if (name === 'direction') return 'down';
       if (name === 'action') return 'get_text';
       if (name === 'bundle_id') return 'com.apple.finder';

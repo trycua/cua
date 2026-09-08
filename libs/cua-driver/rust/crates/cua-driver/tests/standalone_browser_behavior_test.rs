@@ -1879,22 +1879,35 @@ fn run_challenge_article_false_positive(spec: &BrowserSpec) {
             assert!(
                 snapshot.structured()["outline"]
                     .as_str()
-                    .is_some_and(|outline| outline.contains("ARTICLE_ABOUT_CAPTCHA_MARKER_v1")),
-                "article fixture marker missing from semantic outline: {}",
+                    .is_some_and(
+                        |outline| outline.contains("ARTICLE_ABOUT_CAPTCHA_MARKER_v1")
+                            && outline.contains("I'm not a robot")
+                            && outline
+                                .contains("Complete the security check. Verify you are human.")
+                    ),
+                "article and control-value negative controls are missing from the outline: {}",
+                snapshot.raw
+            );
+            assert!(
+                snapshot.structured()["snapshot"]["omitted"]["offscreen"]
+                    .as_u64()
+                    .is_some_and(|count| count > 0),
+                "offscreen challenge-copy negative control was not classified as offscreen: {}",
                 snapshot.raw
             );
             assert_eq!(
-                snapshot.structured()["challenge"]["required"],
-                false,
+                snapshot.structured()["challenge"]["status"],
+                "not_detected",
                 "ordinary editorial coverage must not be reported as a live challenge: {}",
                 snapshot.raw
             );
             assert_eq!(
-                snapshot.structured()["challenge"]["signals"],
-                serde_json::json!([]),
-                "a false challenge signal leaves callers unable to distinguish editorial copy: {}",
+                snapshot.structured()["challenge"]["source"],
+                serde_json::Value::Null,
+                "a false detection source leaves callers unable to distinguish editorial copy: {}",
                 snapshot.raw
             );
+            assert_eq!(snapshot.structured()["blocker"], serde_json::Value::Null);
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
@@ -1935,30 +1948,37 @@ fn run_challenge_positive(spec: &BrowserSpec) {
                 snapshot.raw
             );
             let challenge = &snapshot.structured()["challenge"];
-            assert_eq!(challenge["required"], true, "{}", snapshot.raw);
+            assert_eq!(challenge["status"], "detected", "{}", snapshot.raw);
             assert_eq!(challenge["kind"], "anti_bot_challenge", "{}", snapshot.raw);
-            assert_eq!(challenge["requires_user"], true, "{}", snapshot.raw);
+            assert_eq!(challenge["source"], "semantic", "{}", snapshot.raw);
+            assert_eq!(challenge["confidence"], "medium", "{}", snapshot.raw);
+            let challenge_origin = challenge["origin"]
+                .as_str()
+                .expect("challenge origin")
+                .to_owned();
             assert_eq!(
-                challenge["handling"], "explicit_resume_or_user_handoff",
+                challenge.as_object().map(serde_json::Map::len),
+                Some(5),
                 "{}",
                 snapshot.raw
             );
+            let blocker = &snapshot.structured()["blocker"];
+            let blocker_id = blocker["blocker_id"]
+                .as_str()
+                .expect("challenge blocker id")
+                .to_owned();
+            assert_eq!(
+                blocker["handling"], "explicit_resume_or_user_handoff",
+                "{}",
+                snapshot.raw
+            );
+            assert_eq!(blocker["detection_source"], "semantic", "{}", snapshot.raw);
             let expected_origin = fixture
                 .server
                 .page_url()
                 .strip_suffix("/fixture")
                 .expect("fixture page URL suffix");
-            assert_eq!(challenge["origin"], expected_origin, "{}", snapshot.raw);
-            let signals = challenge["signals"].as_array().expect("challenge signals");
-            assert!(!signals.is_empty(), "{}", snapshot.raw);
-            assert!(
-                signals
-                    .iter()
-                    .all(|signal| signal.get("evidence").is_none()),
-                "challenge signals must not echo page content: {}",
-                snapshot.raw
-            );
-
+            assert_eq!(challenge_origin, expected_origin, "{}", snapshot.raw);
             let refused = fixture.driver.call(
                 "browser_navigate",
                 serde_json::json!({
@@ -1979,6 +1999,8 @@ fn run_challenge_positive(spec: &BrowserSpec) {
                 serde_json::json!({
                     "target_id": target,
                     "tab_id": tab,
+                    "origin": challenge_origin,
+                    "blocker_id": blocker_id,
                     "session": session,
                 }),
             );

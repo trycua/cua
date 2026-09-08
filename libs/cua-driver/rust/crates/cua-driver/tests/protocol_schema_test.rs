@@ -99,7 +99,10 @@ fn tools_list_schema_shape() {
     );
     for (name, required) in [
         ("browser_prepare", &[][..]),
-        ("browser_resume", &["target_id", "tab_id"][..]),
+        (
+            "browser_resume",
+            &["target_id", "tab_id", "origin", "blocker_id"][..],
+        ),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
         ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),

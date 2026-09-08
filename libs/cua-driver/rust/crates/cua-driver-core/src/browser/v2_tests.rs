@@ -19,6 +19,7 @@ use crate::action_record::ActionExecutionRecord;
 use crate::protocol::{Content, ToolResult};
 use crate::tool::Tool;
 
+use super::challenge::{browser_challenge_report, BrowserChallengeLabel, BrowserChallengeSource};
 use super::engine::BrowserEngine;
 use super::mock_cdp::{MockCdpServer, MockEvent, MockHandler, MockReply};
 use super::platform::{
@@ -54,6 +55,11 @@ struct FixtureState {
     navigation_final_url: Option<String>,
     navigation_retry_after: Option<String>,
     emit_navigation_response: bool,
+    fail_network_enable: bool,
+    fail_network_disable_attempts: usize,
+    fail_page_navigate: bool,
+    network_enable_reply_gate: Option<Arc<tokio::sync::Notify>>,
+    page_navigate_reply_gate: Option<Arc<tokio::sync::Notify>>,
     iframe_loader: String,
     oopif_loader: String,
     tab_sessions: u64,
@@ -85,6 +91,11 @@ impl Default for FixtureState {
             navigation_final_url: None,
             navigation_retry_after: None,
             emit_navigation_response: true,
+            fail_network_enable: false,
+            fail_network_disable_attempts: 0,
+            fail_page_navigate: false,
+            network_enable_reply_gate: None,
+            page_navigate_reply_gate: None,
             iframe_loader: "L_IFRAME_1".into(),
             oopif_loader: "L_OOPIF_1".into(),
             tab_sessions: 0,
@@ -562,7 +573,25 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             "Page.captureScreenshot" if is_tab => {
                 MockReply::ok(json!({"data": st.screenshot_data.clone()}))
             }
-            "Network.enable" | "Network.disable" if is_tab => MockReply::ok(json!({})),
+            "Network.enable" if is_tab && st.fail_network_enable => {
+                MockReply::err(-32000, "Network observation unavailable")
+            }
+            "Network.disable" if is_tab && st.fail_network_disable_attempts > 0 => {
+                st.fail_network_disable_attempts -= 1;
+                MockReply::err(-32000, "Network cleanup unavailable")
+            }
+            "Network.enable" if is_tab => {
+                let reply = MockReply::ok(json!({}));
+                if let Some(gate) = st.network_enable_reply_gate.clone() {
+                    reply.with_reply_gate(gate)
+                } else {
+                    reply
+                }
+            }
+            "Network.disable" if is_tab => MockReply::ok(json!({})),
+            "Page.navigate" if is_tab && st.fail_page_navigate => {
+                MockReply::err(-32000, "fixture navigation transport failure")
+            }
             "Page.navigate" if is_tab => {
                 let requested_url = call.params["url"].as_str().unwrap_or_default().to_owned();
                 let final_url = st
@@ -576,10 +605,13 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                 if let Some(retry_after) = st.navigation_retry_after.clone() {
                     headers.insert("Retry-After".into(), Value::String(retry_after));
                 }
-                let reply = MockReply::ok(json!({
+                let mut reply = MockReply::ok(json!({
                     "frameId": "F_MAIN",
                     "loaderId": loader_id,
                 }));
+                if let Some(gate) = st.page_navigate_reply_gate.clone() {
+                    reply = reply.with_reply_gate(gate);
+                }
                 if !st.emit_navigation_response {
                     return reply;
                 }
@@ -1223,6 +1255,11 @@ async fn approved_existing_profile_tools_stay_within_the_reviewed_cdp_surface() 
         "unavailable",
         "existing-profile navigation must not widen the reviewed CDP surface"
     );
+    assert_eq!(
+        structured(&navigated)["page_blocked"],
+        Value::Null,
+        "without response observation, blocker absence is unknown"
+    );
 
     let forbidden = [
         "Runtime.enable",
@@ -1528,15 +1565,15 @@ async fn semantic_snapshot_keeps_visible_content_after_hidden_node_pressure() {
 
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["format"], "semantic_v2", "{snap}");
-    assert_eq!(snap["challenge"]["required"], false, "{snap}");
     assert_eq!(
-        snap["challenge"]["detection_status"], "not_detected",
+        snap["challenge"]["status"], "not_detected",
         "challenge detection examines the complete semantic document, not only the paginated output: {snap}"
     );
     assert_eq!(
         snap["challenge"]["origin"], "https://fixture.test",
         "{snap}"
     );
+    assert_eq!(snap["blocker"], Value::Null, "{snap}");
     assert!(
         snap["outline"]
             .as_str()
@@ -1779,7 +1816,7 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
         semantic_snapshot_with(&f, &target, &tab, json!({"query": "Archive item 304"})).await;
     assert_eq!(queried["snapshot"]["scope"], "query", "{queried}");
     assert_eq!(
-        queried["challenge"]["detection_status"], "not_detected",
+        queried["challenge"]["status"], "not_detected",
         "querying the returned nodes must not narrow challenge observation: {queried}"
     );
     assert_eq!(queried["refs"].as_array().unwrap().len(), 1, "{queried}");
@@ -1808,7 +1845,7 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
     let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": heading_ref})).await;
     assert_eq!(scoped["snapshot"]["scope"], "subtree", "{scoped}");
     assert_eq!(
-        scoped["challenge"]["detection_status"], "not_detected",
+        scoped["challenge"]["status"], "not_detected",
         "scoping the returned nodes must not narrow challenge observation: {scoped}"
     );
     assert_eq!(scoped["refs"].as_array().unwrap().len(), 0, "{scoped}");
@@ -1840,6 +1877,11 @@ async fn navigation_targets_an_inactive_tab_without_activating_it() {
         .as_ref()
         .expect("navigation structured content");
     assert_eq!(structured["status"], "ok", "{structured}");
+    assert_eq!(
+        structured["page_blocked"],
+        Value::Null,
+        "a successful HTTP response does not prove the reached page is unblocked"
+    );
     let navigate = recorded_calls(&f, "Page.navigate");
     assert_eq!(navigate.len(), 1, "{navigate:?}");
     assert_eq!(
@@ -1866,8 +1908,401 @@ async fn about_navigation_does_not_enable_http_response_observation() {
     let result = structured(&result);
     assert_eq!(result["status"], "ok", "{result}");
     assert_eq!(result["response_observation"], "unavailable", "{result}");
+    assert_eq!(result["page_blocked"], Value::Null, "{result}");
     assert!(recorded_calls(&f, "Network.enable").is_empty());
     assert!(recorded_calls(&f, "Network.disable").is_empty());
+}
+
+#[tokio::test]
+async fn opaque_challenge_blocker_stops_opaque_actions_but_allows_navigation_away() {
+    let f = fixture_with(|state| state.main_url = "about:blank".into()).await;
+    let (target, tab) = bind(&f).await;
+    let blocker = f.engine.store.block_origin_for_challenge(
+        SESSION,
+        "",
+        BrowserChallengeSource::Semantic,
+        None,
+    );
+    let blocker = blocker.to_value(std::time::Instant::now());
+    assert_eq!(blocker["origin"], Value::Null, "{blocker}");
+    assert_eq!(
+        blocker["handling"], "navigate_away_or_end_session",
+        "{blocker}"
+    );
+
+    let refused = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "about:blank",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_origin_blocked",
+        "{}",
+        structured(&refused)
+    );
+    assert!(recorded_calls(&f, "Page.navigate").is_empty());
+
+    let escaped = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/after-challenge",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&escaped)["status"],
+        "ok",
+        "{}",
+        structured(&escaped)
+    );
+}
+
+#[tokio::test]
+async fn session_capacity_blocker_refuses_about_navigation_before_dispatch() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    for index in 0..=64 {
+        f.engine.store.block_origin_for_challenge(
+            SESSION,
+            &format!("https://capacity-{index}.example"),
+            BrowserChallengeSource::Semantic,
+            None,
+        );
+    }
+
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "about:blank",
+            "session": SESSION,
+        }))
+        .await;
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(
+        result["refusal"]["detail"]["blocker"]["kind"], "safety_capacity",
+        "{result}"
+    );
+    assert!(recorded_calls(&f, "Page.navigate").is_empty());
+}
+
+#[tokio::test]
+async fn capacity_transition_waits_for_previously_admitted_cross_origin_action() {
+    let f = fixture_with(|state| {
+        state.main_url = "https://www.google.com/sorry/index".into();
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    for index in 0..64 {
+        f.engine.store.block_origin_for_challenge(
+            SESSION,
+            &format!("https://capacity-{index}.example"),
+            BrowserChallengeSource::Semantic,
+            None,
+        );
+    }
+    let admitted = f
+        .engine
+        .lock_origin_admission(SESSION, "https://already-running.example")
+        .await;
+    let engine = f.engine.clone();
+    let call_target = target.clone();
+    let call_tab = tab.clone();
+    let snapshot = tokio::spawn(async move {
+        GetBrowserStateTool::new(engine)
+            .invoke(json!({
+                "target_id": call_target,
+                "tab_id": call_tab,
+                "snapshot_format": "semantic_v2",
+                "session": SESSION,
+            }))
+            .await
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "DOMSnapshot.captureSnapshot").is_empty() {
+            assert!(!snapshot.is_finished());
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the challenge snapshot must reach observation");
+    tokio::task::yield_now().await;
+    assert!(!snapshot.is_finished());
+    assert!(!f
+        .engine
+        .store
+        .active_origin_blocker(SESSION, "https://capacity-0.example")
+        .unwrap()
+        .requires_session_end());
+
+    drop(admitted);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), snapshot)
+        .await
+        .expect("capacity transition must complete after the prior action leaves")
+        .expect("snapshot task must not panic");
+    assert_eq!(
+        structured(&result)["blocker"]["kind"],
+        "safety_capacity",
+        "{}",
+        structured(&result)
+    );
+}
+
+#[tokio::test]
+async fn required_navigation_response_observation_failure_refuses_before_dispatch() {
+    let f = fixture_with(|state| state.fail_network_enable = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let old_ref = ref_of(&snap, "main", "main-btn");
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/not-dispatched",
+            "session": SESSION,
+        }))
+        .await;
+
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(
+        result["refusal"]["code"], "browser_action_unavailable",
+        "{result}"
+    );
+    assert_eq!(recorded_calls(&f, "Network.enable").len(), 1);
+    assert!(recorded_calls(&f, "Page.navigate").is_empty());
+    assert!(f
+        .engine
+        .store
+        .resolve_ref(SESSION, &target, &tab, &old_ref)
+        .is_ok());
+}
+
+#[tokio::test]
+async fn cancelled_challenge_snapshot_finishes_its_owned_blocker_transition() {
+    let f = fixture_with(|state| {
+        state.main_url = "https://www.google.com/sorry/index".into();
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let generation = f
+        .engine
+        .store
+        .get_target(SESSION, &target)
+        .unwrap()
+        .generation;
+    let challenge = browser_challenge_report(
+        "https://www.google.com/sorry/index",
+        std::iter::empty::<BrowserChallengeLabel<'static>>(),
+        true,
+    );
+    let admitted = f
+        .engine
+        .lock_origin_admission(SESSION, "https://already-running.example")
+        .await;
+    let cancelled = tokio::time::timeout(
+        std::time::Duration::from_millis(20),
+        f.engine
+            .commit_snapshot_challenge(SESSION, &target, &tab, generation, &challenge, None),
+    )
+    .await;
+    assert!(
+        cancelled.is_err(),
+        "the owned commit must wait for the already-admitted action"
+    );
+    drop(admitted);
+
+    let blocker = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let Some(blocker) = f
+                .engine
+                .store
+                .active_origin_blocker(SESSION, "https://www.google.com")
+            {
+                break blocker;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the cancellation-owned transition must commit the observed challenge");
+    assert_eq!(
+        blocker.to_value(std::time::Instant::now())["kind"],
+        "anti_bot_challenge"
+    );
+}
+
+#[tokio::test]
+async fn page_navigate_error_after_dispatch_pauses_the_exact_tab() {
+    let f = fixture_with(|state| state.fail_page_navigate = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let old_ref = ref_of(&snap, "main", "main-btn");
+
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target.clone(),
+            "tab_id": tab.clone(),
+            "url": "https://fixture.test/uncertain-error",
+            "session": SESSION,
+        }))
+        .await;
+    let result = structured(&result);
+    assert_eq!(result["status"], "refused", "{result}");
+    assert_eq!(result["refusal"]["detail"]["refs_invalidated"], true);
+    assert_eq!(
+        result["refusal"]["detail"]["blocker"]["kind"], "navigation_outcome_unknown",
+        "{result}"
+    );
+    assert!(f
+        .engine
+        .store
+        .resolve_ref(SESSION, &target, &tab, &old_ref)
+        .is_err());
+
+    let retry = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/must-not-dispatch",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&retry)["refusal"]["code"],
+        "browser_origin_blocked",
+        "{retry:?}"
+    );
+    assert_eq!(recorded_calls(&f, "Page.navigate").len(), 1);
+}
+
+#[tokio::test]
+async fn missing_terminal_navigation_response_returns_a_fail_closed_unknown_result() {
+    let f = fixture_with(|state| state.emit_navigation_response = false).await;
+    let (target, tab) = bind(&f).await;
+
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target.clone(),
+            "tab_id": tab.clone(),
+            "url": "https://fixture.test/no-terminal-response",
+            "session": SESSION,
+        }))
+        .await;
+    let result = structured(&result);
+    assert_eq!(result["status"], "ok", "{result}");
+    assert_eq!(result["input_delivered"], true, "{result}");
+    assert_eq!(result["page_blocked"], Value::Null, "{result}");
+    assert_eq!(result["navigation_outcome"], "unknown", "{result}");
+    assert_eq!(
+        result["blocker"]["kind"], "navigation_outcome_unknown",
+        "{result}"
+    );
+
+    let retry = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/must-not-dispatch",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&retry)["refusal"]["code"],
+        "browser_origin_blocked",
+        "{retry:?}"
+    );
+    assert_eq!(recorded_calls(&f, "Page.navigate").len(), 1);
+}
+
+#[tokio::test]
+async fn failed_network_disable_keeps_drop_cleanup_armed() {
+    let f = fixture_with(|state| state.fail_network_disable_attempts = 2).await;
+    let (target, tab) = bind(&f).await;
+    let result = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/cleanup-retry",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&result)["status"],
+        "ok",
+        "{}",
+        structured(&result)
+    );
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Network.disable").len() < 3 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("failed explicit cleanup must retain bounded drop retries until one succeeds");
+}
+
+#[tokio::test]
+async fn cancelled_network_enable_still_attempts_cleanup_before_navigation() {
+    let reply_gate = Arc::new(tokio::sync::Notify::new());
+    let f = fixture_with({
+        let reply_gate = reply_gate.clone();
+        move |state| state.network_enable_reply_gate = Some(reply_gate)
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let snap = snapshot(&f, &target, &tab).await;
+    let old_ref = ref_of(&snap, "main", "main-btn");
+    let engine = f.engine.clone();
+    let call_target = target.clone();
+    let call_tab = tab.clone();
+    let navigation = tokio::spawn(async move {
+        BrowserNavigateTool::new(engine)
+            .invoke(json!({
+                "target_id": call_target,
+                "tab_id": call_tab,
+                "url": "https://fixture.test/cancel-enable",
+                "session": SESSION,
+            }))
+            .await
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Network.enable").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("navigation must send Network.enable before the test cancels it");
+    navigation.abort();
+    assert!(
+        navigation.await.is_err_and(|error| error.is_cancelled()),
+        "fixture must cancel while the Network.enable reply is pending"
+    );
+    reply_gate.notify_one();
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Network.disable").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("cancelling Network.enable must retain an armed cleanup guard");
+    assert!(recorded_calls(&f, "Page.navigate").is_empty());
+    assert!(
+        f.engine
+            .store
+            .resolve_ref(SESSION, &target, &tab, &old_ref)
+            .is_ok(),
+        "cancellation before navigation must not invalidate the current page refs"
+    );
 }
 
 #[tokio::test]
@@ -1905,6 +2340,11 @@ async fn navigation_429_pauses_only_the_response_origin_until_resume() {
         !blocked.to_string().contains("private-token"),
         "blocker results must not retain URL details: {blocked}"
     );
+    let blocker_origin = blocked["blocker"]["origin"].as_str().unwrap().to_owned();
+    let blocker_id = blocked["blocker"]["blocker_id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
 
     let refused = navigate
         .invoke(json!({
@@ -1922,10 +2362,48 @@ async fn navigation_429_pauses_only_the_response_origin_until_resume() {
     );
     assert_eq!(recorded_calls(&f, "Page.navigate").len(), 1);
 
+    let wrong_origin = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "origin": "https://other.example",
+            "blocker_id": blocker_id,
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&wrong_origin)["refusal"]["code"],
+        "browser_wrong_target_refused",
+        "{}",
+        structured(&wrong_origin)
+    );
+
+    let wrong_id = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "origin": blocker_origin,
+            "blocker_id": "blocker-stale",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&wrong_id)["refusal"]["code"],
+        "browser_action_unavailable",
+        "{}",
+        structured(&wrong_id)
+    );
+    assert_eq!(
+        structured(&wrong_id)["refusal"]["detail"]["blocker"]["blocker_id"],
+        blocker_id
+    );
+
     let resumed = BrowserResumeTool::new(f.engine.clone())
         .invoke(json!({
             "target_id": target,
             "tab_id": tab,
+            "origin": blocker_origin,
+            "blocker_id": blocker_id,
             "session": SESSION,
         }))
         .await;
@@ -1936,6 +2414,22 @@ async fn navigation_429_pauses_only_the_response_origin_until_resume() {
         structured(&resumed)
     );
     assert_eq!(structured(&resumed)["action_dispatched"], false);
+
+    let stale_resume = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "origin": blocker_origin,
+            "blocker_id": blocker_id,
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&stale_resume)["refusal"]["code"],
+        "browser_action_unavailable",
+        "{}",
+        structured(&stale_resume)
+    );
 
     f.state.lock().unwrap().navigation_status = 200;
     let retried = navigate
@@ -2023,6 +2517,155 @@ async fn navigation_observes_final_429_after_a_redirect() {
 }
 
 #[tokio::test]
+async fn redirected_429_waits_for_response_origin_admission_before_installing_blocker() {
+    let f = fixture_with(|state| {
+        state.navigation_redirect_status = Some(302);
+        state.navigation_final_url = Some("https://rate.example/final".into());
+        state.navigation_status = 429;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let admission = f
+        .engine
+        .lock_origin_admission(SESSION, "https://rate.example")
+        .await;
+    let engine = f.engine.clone();
+    let call_target = target.clone();
+    let call_tab = tab.clone();
+    let navigation = tokio::spawn(async move {
+        BrowserNavigateTool::new(engine)
+            .invoke(json!({
+                "target_id": call_target,
+                "tab_id": call_tab,
+                "url": "https://entry.example/start",
+                "session": SESSION,
+            }))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Page.navigate").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("navigation should dispatch before the redirect origin is known");
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while f
+            .engine
+            .store
+            .active_tab_navigation_blocker(SESSION, &target, &tab, "https://rate.example")
+            .is_none()
+        {
+            assert!(!navigation.is_finished());
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the response must be latched before waiting for its transition");
+    assert!(
+        !navigation.is_finished(),
+        "response-origin admission must serialize blocker installation"
+    );
+    assert!(
+        f.engine
+            .store
+            .active_origin_blocker(SESSION, "https://rate.example")
+            .is_none(),
+        "the blocker cannot be inserted without response-origin admission"
+    );
+    assert!(f
+        .engine
+        .store
+        .active_tab_navigation_blocker(SESSION, &target, &tab, "https://rate.example",)
+        .is_some());
+
+    drop(admission);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), navigation)
+        .await
+        .expect("navigation should continue after response-origin admission")
+        .expect("navigation task should not panic");
+    let result = structured(&result);
+    assert_eq!(result["page_blocked"], true, "{result}");
+    assert_eq!(result["blocker"]["origin"], "https://rate.example");
+}
+
+#[tokio::test]
+async fn cancellation_while_committing_redirected_429_keeps_the_tab_paused() {
+    let f = fixture_with(|state| {
+        state.navigation_redirect_status = Some(302);
+        state.navigation_final_url = Some("https://rate.example/final".into());
+        state.navigation_status = 429;
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let admission = f
+        .engine
+        .lock_origin_admission(SESSION, "https://unrelated.example")
+        .await;
+    let engine = f.engine.clone();
+    let call_target = target.clone();
+    let call_tab = tab.clone();
+    let navigation = tokio::spawn(async move {
+        BrowserNavigateTool::new(engine)
+            .invoke(json!({
+                "target_id": call_target,
+                "tab_id": call_tab,
+                "url": "https://entry.example/start",
+                "session": SESSION,
+            }))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if f.engine
+                .store
+                .active_tab_navigation_blocker(SESSION, &target, &tab, "https://rate.example")
+                .is_some()
+            {
+                break;
+            }
+            assert!(!navigation.is_finished());
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the observed response must be latched before the transition wait");
+
+    navigation.abort();
+    assert!(navigation.await.is_err_and(|error| error.is_cancelled()));
+    drop(admission);
+    let blocker = tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let Some(blocker) = f
+                .engine
+                .store
+                .active_origin_blocker(SESSION, "https://rate.example")
+            {
+                break blocker;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("the cancellation-owned transition must retain the observed 429");
+    assert_eq!(
+        blocker.to_value(std::time::Instant::now())["kind"],
+        "rate_limited"
+    );
+    assert!(f
+        .engine
+        .store
+        .active_tab_navigation_blocker(SESSION, &target, &tab, "https://rate.example")
+        .is_none());
+    let state = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(
+        state["blocker"]["kind"], "rate_limited",
+        "cancellation must retain the exact observed redirect outcome: {state}"
+    );
+    assert_eq!(state["blocker"]["origin"], "https://rate.example");
+}
+
+#[tokio::test]
 async fn navigation_reports_a_known_blocker_at_the_redirect_origin() {
     let f = fixture_with(|state| {
         state.navigation_redirect_status = Some(302);
@@ -2030,9 +2673,12 @@ async fn navigation_reports_a_known_blocker_at_the_redirect_origin() {
     })
     .await;
     let (target, tab) = bind(&f).await;
-    f.engine
-        .store
-        .block_origin_for_challenge(SESSION, "https://blocked.example");
+    f.engine.store.block_origin_for_challenge(
+        SESSION,
+        "https://blocked.example",
+        BrowserChallengeSource::Semantic,
+        None,
+    );
 
     let result = BrowserNavigateTool::new(f.engine.clone())
         .invoke(json!({
@@ -2088,6 +2734,168 @@ async fn successful_navigation_resets_an_elapsed_rate_limit_incident() {
 }
 
 #[tokio::test]
+async fn click_waits_for_same_origin_admission_before_dispatch() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let frame_tree_calls = recorded_calls(&f, "Page.getFrameTree").len();
+    let admission = f
+        .engine
+        .lock_origin_admission(SESSION, "https://fixture.test")
+        .await;
+
+    let engine = f.engine.clone();
+    let click = tokio::spawn(async move {
+        BrowserClickTool::new(engine)
+            .invoke(json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": button,
+                "input_route": "dom_event",
+                "session": SESSION,
+            }))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Page.getFrameTree").len() == frame_tree_calls {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("click should reach live-origin admission");
+    tokio::task::yield_now().await;
+    assert!(!click.is_finished(), "same-origin admission must serialize");
+    assert!(
+        recorded_calls(&f, "Runtime.callFunctionOn").is_empty(),
+        "click must not dispatch before origin admission"
+    );
+
+    drop(admission);
+    let clicked = tokio::time::timeout(std::time::Duration::from_secs(1), click)
+        .await
+        .expect("click should continue after admission")
+        .expect("click task should not panic");
+    assert_eq!(
+        structured(&clicked)["status"],
+        "ok",
+        "{}",
+        structured(&clicked)
+    );
+    assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+}
+
+#[tokio::test]
+async fn click_refuses_when_live_origin_changes_during_admission() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let snap = semantic_snapshot(&f, &target, &tab).await;
+    let button = ref_of(&snap, "main", "main-btn");
+    let frame_tree_calls = recorded_calls(&f, "Page.getFrameTree").len();
+    let admission = f
+        .engine
+        .lock_origin_admission(SESSION, "https://fixture.test")
+        .await;
+
+    let engine = f.engine.clone();
+    let click = tokio::spawn(async move {
+        BrowserClickTool::new(engine)
+            .invoke(json!({
+                "target_id": target,
+                "tab_id": tab,
+                "ref": button,
+                "input_route": "dom_event",
+                "session": SESSION,
+            }))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Page.getFrameTree").len() == frame_tree_calls {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("click should read the live origin before admission");
+    f.state.lock().unwrap().main_url = "https://changed.example/".into();
+    drop(admission);
+
+    let refused = tokio::time::timeout(std::time::Duration::from_secs(1), click)
+        .await
+        .expect("click should finish after admission")
+        .expect("click task should not panic");
+    assert_eq!(
+        structured(&refused)["refusal"]["code"],
+        "browser_wrong_target_refused",
+        "{}",
+        structured(&refused)
+    );
+    assert!(recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
+}
+
+#[tokio::test]
+async fn semantic_challenge_waits_for_origin_admission_before_installing_blocker() {
+    let f = fixture_with(|state| {
+        state.main_url = "https://www.google.com/sorry/index".into();
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let admission = f
+        .engine
+        .lock_origin_admission(SESSION, "https://www.google.com")
+        .await;
+    let engine = f.engine.clone();
+    let call_target = target.clone();
+    let call_tab = tab.clone();
+    let snapshot = tokio::spawn(async move {
+        GetBrowserStateTool::new(engine)
+            .invoke(json!({
+                "target_id": call_target,
+                "tab_id": call_tab,
+                "session": SESSION,
+                "snapshot_format": "semantic_v2",
+            }))
+            .await
+    });
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Target.detachFromTarget").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("semantic snapshot should reach blocker installation");
+    assert!(
+        !snapshot.is_finished(),
+        "challenge installation must wait for origin admission"
+    );
+    assert!(
+        f.engine
+            .store
+            .active_origin_blocker(SESSION, "https://www.google.com")
+            .is_none(),
+        "the challenge blocker cannot be inserted without origin admission"
+    );
+    assert!(
+        f.engine.store.get_target(SESSION, &target).unwrap().tabs[&tab]
+            .snapshots
+            .is_empty(),
+        "snapshot state and its challenge blocker commit together after admission"
+    );
+
+    drop(admission);
+    let result = tokio::time::timeout(std::time::Duration::from_secs(1), snapshot)
+        .await
+        .expect("snapshot should continue after origin admission")
+        .expect("snapshot task should not panic");
+    assert_eq!(structured(&result)["challenge"]["status"], "detected");
+    assert_eq!(structured(&result)["blocker"]["required"], true);
+    assert!(f
+        .engine
+        .store
+        .active_origin_blocker(SESSION, "https://www.google.com")
+        .is_some());
+}
+
+#[tokio::test]
 async fn semantic_challenge_pauses_actions_until_explicit_resume() {
     let f = fixture_with(|state| {
         state.main_url = "https://www.google.com/sorry/index?private=query".into();
@@ -2095,9 +2903,15 @@ async fn semantic_challenge_pauses_actions_until_explicit_resume() {
     .await;
     let (target, tab) = bind(&f).await;
     let snap = semantic_snapshot(&f, &target, &tab).await;
-    assert_eq!(snap["challenge"]["required"], true, "{snap}");
+    assert_eq!(snap["challenge"]["status"], "detected", "{snap}");
     assert_eq!(snap["challenge"]["kind"], "anti_bot_challenge", "{snap}");
     assert_eq!(snap["challenge"]["origin"], "https://www.google.com");
+    assert_eq!(snap["challenge"].as_object().unwrap().len(), 5, "{snap}");
+    assert_eq!(snap["blocker"]["kind"], "anti_bot_challenge", "{snap}");
+    let blocker_id = snap["blocker"]["blocker_id"]
+        .as_str()
+        .expect("challenge snapshot blocker id")
+        .to_owned();
     let button = ref_of(&snap, "main", "main-btn");
 
     let refused = BrowserClickTool::new(f.engine.clone())
@@ -2122,6 +2936,8 @@ async fn semantic_challenge_pauses_actions_until_explicit_resume() {
         .invoke(json!({
             "target_id": target,
             "tab_id": tab,
+            "origin": "https://www.google.com",
+            "blocker_id": blocker_id,
             "session": SESSION,
         }))
         .await;
@@ -2150,7 +2966,8 @@ async fn semantic_challenge_pauses_actions_until_explicit_resume() {
     assert!(!recorded_calls(&f, "Runtime.callFunctionOn").is_empty());
 
     let repeated = semantic_snapshot(&f, &target, &tab).await;
-    assert_eq!(repeated["challenge"]["required"], true, "{repeated}");
+    assert_eq!(repeated["challenge"]["status"], "detected", "{repeated}");
+    assert_eq!(repeated["blocker"]["required"], true, "{repeated}");
     let refused_again = BrowserClickTool::new(f.engine.clone())
         .invoke(json!({
             "target_id": target,
@@ -2163,6 +2980,72 @@ async fn semantic_challenge_pauses_actions_until_explicit_resume() {
     assert_eq!(
         structured(&refused_again)["refusal"]["code"],
         "browser_origin_blocked"
+    );
+}
+
+#[tokio::test]
+async fn challenge_blocker_id_tracks_the_proven_main_document() {
+    let f = fixture_with(|state| {
+        state.main_url = "https://www.google.com/sorry/index".into();
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+
+    let first = semantic_snapshot(&f, &target, &tab).await;
+    let first_id = first["blocker"]["blocker_id"]
+        .as_str()
+        .expect("first blocker id")
+        .to_owned();
+    let repeated = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(
+        repeated["blocker"]["blocker_id"], first_id,
+        "the same proven document must preserve its blocker capability: {repeated}"
+    );
+
+    f.state.lock().unwrap().main_loader = "L_MAIN_RELOADED".into();
+    let stale_resume = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target.clone(),
+            "tab_id": tab.clone(),
+            "origin": "https://www.google.com",
+            "blocker_id": first_id,
+            "session": SESSION,
+        }))
+        .await;
+    let stale_resume = structured(&stale_resume);
+    assert_eq!(
+        stale_resume["refusal"]["code"], "browser_action_unavailable",
+        "{stale_resume}"
+    );
+    let reloaded_id = stale_resume["refusal"]["detail"]["blocker"]["blocker_id"]
+        .as_str()
+        .expect("replacement blocker id")
+        .to_owned();
+    assert_ne!(
+        reloaded_id, first_id,
+        "a direct resume after same-origin reload must rotate and refuse the old capability"
+    );
+
+    let reloaded = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(
+        reloaded["blocker"]["blocker_id"], reloaded_id,
+        "the next observation of that proven document must preserve its replacement capability: {reloaded}"
+    );
+
+    let current_resume = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "origin": "https://www.google.com",
+            "blocker_id": reloaded_id,
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&current_resume)["cleared"],
+        true,
+        "{}",
+        structured(&current_resume)
     );
 }
 
@@ -2218,6 +3101,108 @@ async fn cancelled_navigation_invalidates_refs_and_disables_network_observation(
     })
     .await
     .expect("cancelling navigation must disable temporary network observation");
+
+    let challenge = f.engine.store.block_origin_for_challenge(
+        SESSION,
+        "https://fixture.test",
+        BrowserChallengeSource::Semantic,
+        None,
+    );
+    let challenge_id = challenge.blocker_id().to_owned();
+    let state = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(
+        state["blocker"]["kind"], "navigation_outcome_unknown",
+        "cancellation after dispatch must leave an exact fail-closed marker: {state}"
+    );
+    let blocker_id = state["blocker"]["blocker_id"]
+        .as_str()
+        .expect("navigation blocker id")
+        .to_owned();
+    let origin = state["blocker"]["origin"]
+        .as_str()
+        .expect("refreshed live origin")
+        .to_owned();
+    let retry = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target.clone(),
+            "tab_id": tab.clone(),
+            "url": "https://fixture.test/must-not-dispatch",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&retry)["refusal"]["detail"]["blocker"]["blocker_id"],
+        blocker_id,
+        "{retry:?}"
+    );
+    assert_eq!(recorded_calls(&f, "Page.navigate").len(), 1);
+
+    let resumed = BrowserResumeTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "origin": origin,
+            "blocker_id": blocker_id,
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(structured(&resumed)["cleared"], true, "{resumed:?}");
+
+    let still_blocked = BrowserNavigateTool::new(f.engine.clone())
+        .invoke(json!({
+            "target_id": target,
+            "tab_id": tab,
+            "url": "https://fixture.test/challenge-remains",
+            "session": SESSION,
+        }))
+        .await;
+    assert_eq!(
+        structured(&still_blocked)["refusal"]["detail"]["blocker"]["blocker_id"],
+        challenge_id,
+        "clearing a tab navigation interlock must not clear an origin challenge: {still_blocked:?}"
+    );
+    assert_eq!(recorded_calls(&f, "Page.navigate").len(), 1);
+}
+
+#[tokio::test]
+async fn cancelled_navigation_after_send_before_reply_pauses_the_exact_tab() {
+    let reply_gate = Arc::new(tokio::sync::Notify::new());
+    let f = fixture_with({
+        let reply_gate = reply_gate.clone();
+        move |state| state.page_navigate_reply_gate = Some(reply_gate)
+    })
+    .await;
+    let (target, tab) = bind(&f).await;
+    let engine = f.engine.clone();
+    let call_target = target.clone();
+    let call_tab = tab.clone();
+    let navigation = tokio::spawn(async move {
+        BrowserNavigateTool::new(engine)
+            .invoke(json!({
+                "target_id": call_target,
+                "tab_id": call_tab,
+                "url": "https://fixture.test/cancel-before-reply",
+                "session": SESSION,
+            }))
+            .await
+    });
+
+    tokio::time::timeout(std::time::Duration::from_secs(1), async {
+        while recorded_calls(&f, "Page.navigate").is_empty() {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("navigation must enter the transport before cancellation");
+    navigation.abort();
+    assert!(navigation.await.is_err_and(|error| error.is_cancelled()));
+    reply_gate.notify_one();
+
+    let state = semantic_snapshot(&f, &target, &tab).await;
+    assert_eq!(
+        state["blocker"]["kind"], "navigation_outcome_unknown",
+        "cancellation after transport entry must fail closed: {state}"
+    );
 }
 
 #[tokio::test]
@@ -2331,7 +3316,7 @@ async fn semantic_snapshot_uses_bounded_dom_fallback_only_for_known_size_failure
     let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
-    assert_eq!(snap["challenge"]["detection_status"], "unknown", "{snap}");
+    assert_eq!(snap["challenge"]["status"], "unknown", "{snap}");
     let document_calls = recorded_calls(&f, "DOM.getDocument");
     assert!(document_calls
         .iter()
@@ -2355,7 +3340,7 @@ async fn semantic_snapshot_uses_bounded_dom_fallback_for_full_tree_timeout() {
     let snap = semantic_snapshot_with(&f, &target, &tab, json!({"query": "Reply"})).await;
     assert_eq!(snap["status"], "ok", "{snap}");
     assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
-    assert_eq!(snap["challenge"]["detection_status"], "unknown", "{snap}");
+    assert_eq!(snap["challenge"]["status"], "unknown", "{snap}");
     let document_calls = recorded_calls(&f, "DOM.getDocument");
     assert!(document_calls
         .iter()
@@ -2492,6 +3477,38 @@ async fn protected_browser_scope_reproves_live_origin_and_omits_sensitive_url_te
     assert!(
         !second.to_string().contains("one-time-token"),
         "query text must never reach the consent resource"
+    );
+}
+
+#[tokio::test]
+async fn protected_resume_scope_rejects_noncanonical_origin_and_missing_blocker_id() {
+    let f = fixture().await;
+    let (target, tab) = bind(&f).await;
+    let invalid_origin = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "origin": "https://fixture.test/path",
+        "blocker_id": "blocker-example",
+        "session": SESSION,
+    });
+    assert!(
+        browser_protected_resource_scope(&f.engine, &invalid_origin, "browser_resume")
+            .await
+            .expect_err("a noncanonical origin cannot produce an approval resource")
+            .contains("canonical non-opaque origin")
+    );
+
+    let missing_id = json!({
+        "target_id": target,
+        "tab_id": tab,
+        "origin": "https://fixture.test",
+        "session": SESSION,
+    });
+    assert!(
+        browser_protected_resource_scope(&f.engine, &missing_id, "browser_resume")
+            .await
+            .expect_err("a missing blocker id cannot produce an approval resource")
+            .contains("exact blocker_id")
     );
 }
 

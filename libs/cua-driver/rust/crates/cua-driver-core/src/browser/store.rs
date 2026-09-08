@@ -24,6 +24,7 @@ use serde::Serialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use super::challenge::BrowserChallengeSource;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::semantic::SemanticDocument;
 use super::types::{
@@ -202,6 +203,9 @@ pub struct TabRecord {
     /// page, so the public `active` field must be JSON null.
     pub active: Option<bool>,
     pub generation: u64,
+    /// Set when navigation may have dispatched but its outcome was not
+    /// committed. Mutations stay paused until exact explicit resume.
+    pub(crate) navigation_blocker_id: Option<String>,
     pub snapshots: HashMap<u64, SnapshotRecord>,
 }
 
@@ -237,6 +241,7 @@ pub struct TargetRecord {
 struct SessionTargets {
     targets: HashMap<String, TargetRecord>,
     origin_blockers: HashMap<String, OriginBlocker>,
+    blocker_capacity_id: Option<String>,
 }
 
 const MAX_BLOCKED_ORIGINS_PER_SESSION: usize = 64;
@@ -248,14 +253,17 @@ const RATE_LIMIT_SERVER_RETRY_MAX: Duration = Duration::from_secs(24 * 60 * 60);
 enum OriginBlockerKind {
     AntiBotChallenge,
     RateLimited,
+    NavigationOutcomeUnknown,
+    SafetyCapacity,
 }
 
 #[derive(Debug, Clone)]
 pub(crate) struct OriginBlocker {
+    blocker_id: String,
     origin: String,
     kind: OriginBlockerKind,
+    challenge_document: Option<FrameIdentity>,
     detection_source: &'static str,
-    detected_at: Instant,
     retry_at: Option<Instant>,
     attempt: u32,
     server_directed: bool,
@@ -263,9 +271,19 @@ pub(crate) struct OriginBlocker {
 }
 
 impl OriginBlocker {
+    pub(crate) fn blocker_id(&self) -> &str {
+        &self.blocker_id
+    }
+
+    pub(crate) fn requires_challenge_document_reproof(&self) -> bool {
+        self.kind == OriginBlockerKind::AntiBotChallenge
+    }
+
     fn active(&self, now: Instant) -> bool {
         match self.kind {
-            OriginBlockerKind::AntiBotChallenge => true,
+            OriginBlockerKind::AntiBotChallenge
+            | OriginBlockerKind::NavigationOutcomeUnknown
+            | OriginBlockerKind::SafetyCapacity => true,
             OriginBlockerKind::RateLimited => {
                 self.retry_at.map(|retry_at| now < retry_at).unwrap_or(true)
             }
@@ -278,6 +296,9 @@ impl OriginBlocker {
             u64::try_from(milliseconds).unwrap_or(u64::MAX)
         });
         let (kind, requires_user, handling) = match self.kind {
+            OriginBlockerKind::AntiBotChallenge if self.origin.is_empty() => {
+                ("anti_bot_challenge", true, "navigate_away_or_end_session")
+            }
             OriginBlockerKind::AntiBotChallenge => (
                 "anti_bot_challenge",
                 true,
@@ -286,11 +307,31 @@ impl OriginBlocker {
             OriginBlockerKind::RateLimited => {
                 ("rate_limited", false, "wait_until_retry_or_explicit_resume")
             }
+            OriginBlockerKind::NavigationOutcomeUnknown if self.origin.is_empty() => (
+                "navigation_outcome_unknown",
+                true,
+                "refresh_state_then_explicit_resume_or_end_session",
+            ),
+            OriginBlockerKind::NavigationOutcomeUnknown => (
+                "navigation_outcome_unknown",
+                true,
+                "explicit_resume_or_end_session",
+            ),
+            OriginBlockerKind::SafetyCapacity => (
+                "safety_capacity",
+                true,
+                "end_session_before_more_browser_actions",
+            ),
         };
         json!({
             "required": true,
+            "blocker_id": self.blocker_id,
             "kind": kind,
-            "origin": self.origin,
+            "origin": if self.origin.is_empty() {
+                Value::Null
+            } else {
+                Value::String(self.origin.clone())
+            },
             "detection_source": self.detection_source,
             "retry_after_ms": retry_after_ms,
             "requires_user": requires_user,
@@ -299,6 +340,143 @@ impl OriginBlocker {
             "server_directed_retry": self.server_directed,
             "server_retry_after_capped": self.server_retry_after_capped,
         })
+    }
+
+    pub(crate) fn requires_session_end(&self) -> bool {
+        self.kind == OriginBlockerKind::SafetyCapacity
+    }
+}
+
+#[derive(Debug)]
+pub(crate) enum ClearOriginBlockerFailure {
+    Missing,
+    Mismatch(OriginBlocker),
+    SessionEndRequired(OriginBlocker),
+}
+
+fn new_blocker_id() -> String {
+    format!("blocker-{}", Uuid::new_v4())
+}
+
+fn safety_capacity_blocker(origin: &str, blocker_id: &str) -> OriginBlocker {
+    OriginBlocker {
+        blocker_id: blocker_id.to_owned(),
+        origin: origin.to_owned(),
+        kind: OriginBlockerKind::SafetyCapacity,
+        challenge_document: None,
+        detection_source: "blocker_capacity",
+        retry_at: None,
+        attempt: 1,
+        server_directed: false,
+        server_retry_after_capped: false,
+    }
+}
+
+fn navigation_outcome_blocker(origin: &str, blocker_id: &str) -> OriginBlocker {
+    OriginBlocker {
+        blocker_id: blocker_id.to_owned(),
+        origin: origin.to_owned(),
+        kind: OriginBlockerKind::NavigationOutcomeUnknown,
+        challenge_document: None,
+        detection_source: "navigation_dispatch",
+        retry_at: None,
+        attempt: 1,
+        server_directed: false,
+        server_retry_after_capped: false,
+    }
+}
+
+fn install_challenge_blocker(
+    session_targets: &mut SessionTargets,
+    origin: &str,
+    source: BrowserChallengeSource,
+    document_identity: Option<&FrameIdentity>,
+) -> OriginBlocker {
+    if let Some(blocker_id) = session_targets.blocker_capacity_id.as_deref() {
+        return safety_capacity_blocker(origin, blocker_id);
+    }
+    if let Some(challenge) = session_targets
+        .origin_blockers
+        .get(origin)
+        .filter(|blocker| {
+            blocker.kind == OriginBlockerKind::AntiBotChallenge
+                && document_identity.is_some()
+                && blocker.challenge_document.as_ref() == document_identity
+        })
+    {
+        return challenge.clone();
+    }
+    let blocker = OriginBlocker {
+        blocker_id: new_blocker_id(),
+        origin: origin.to_owned(),
+        kind: OriginBlockerKind::AntiBotChallenge,
+        challenge_document: document_identity.cloned(),
+        detection_source: source.as_str(),
+        retry_at: None,
+        attempt: 1,
+        server_directed: false,
+        server_retry_after_capped: false,
+    };
+    match insert_bounded_origin_blocker(session_targets, origin, blocker.clone()) {
+        Ok(()) => blocker,
+        Err(capacity_id) => safety_capacity_blocker(origin, &capacity_id),
+    }
+}
+
+fn install_rate_limit_blocker(
+    session_targets: &mut SessionTargets,
+    origin: &str,
+    server_retry_after: Option<Duration>,
+    now: Instant,
+) -> OriginBlocker {
+    if let Some(blocker_id) = session_targets.blocker_capacity_id.as_deref() {
+        return safety_capacity_blocker(origin, blocker_id);
+    }
+    if let Some(challenge) = session_targets
+        .origin_blockers
+        .get(origin)
+        .filter(|blocker| blocker.kind == OriginBlockerKind::AntiBotChallenge)
+    {
+        return challenge.clone();
+    }
+    let existing_rate_limit = session_targets
+        .origin_blockers
+        .get(origin)
+        .filter(|blocker| blocker.kind == OriginBlockerKind::RateLimited);
+    let attempt = existing_rate_limit
+        .map(|blocker| blocker.attempt.saturating_add(1))
+        .unwrap_or(1);
+    let (delay, server_retry_after_capped) = server_retry_after.map_or_else(
+        || (bounded_rate_limit_backoff(attempt), false),
+        |delay| {
+            (
+                delay.min(RATE_LIMIT_SERVER_RETRY_MAX),
+                delay > RATE_LIMIT_SERVER_RETRY_MAX,
+            )
+        },
+    );
+    let blocker = OriginBlocker {
+        // Every new 429 is newer server evidence. Rotate the capability so a
+        // resume decision for an earlier retry window cannot clear it.
+        blocker_id: new_blocker_id(),
+        origin: origin.to_owned(),
+        kind: OriginBlockerKind::RateLimited,
+        challenge_document: None,
+        detection_source: "http_status",
+        // A hostile or malformed Retry-After must not turn an arithmetic
+        // overflow into an origin pause with no end time.
+        retry_at: Some(
+            now.checked_add(delay)
+                .or_else(|| now.checked_add(RATE_LIMIT_BACKOFF_MAX))
+                .unwrap_or(now),
+        ),
+        attempt,
+        server_directed: server_retry_after.is_some(),
+        server_retry_after_capped,
+    };
+    match insert_bounded_origin_blocker(session_targets, origin, blocker.clone()) {
+        Ok(()) => blocker,
+        Err(capacity_id) => safety_capacity_blocker(origin, &capacity_id),
     }
 }
 
@@ -508,71 +686,186 @@ impl BrowserStore {
         });
     }
 
-    pub(crate) fn block_origin_for_challenge(&self, session: &str, origin: &str) -> OriginBlocker {
-        let now = Instant::now();
-        let blocker = OriginBlocker {
-            origin: origin.to_owned(),
-            kind: OriginBlockerKind::AntiBotChallenge,
-            detection_source: "page_state",
-            detected_at: now,
-            retry_at: None,
-            attempt: 1,
-            server_directed: false,
-            server_retry_after_capped: false,
-        };
-        self.insert_origin_blocker(session, origin, blocker.clone());
-        blocker
+    #[cfg(test)]
+    pub(crate) fn block_origin_for_challenge(
+        &self,
+        session: &str,
+        origin: &str,
+        source: BrowserChallengeSource,
+        document_identity: Option<&FrameIdentity>,
+    ) -> OriginBlocker {
+        // Production callers own the session transition guard: insertion can
+        // cross the bounded-store limit and latch the whole session closed.
+        let mut inner = self.inner.lock().unwrap();
+        let session_targets = inner.entry(session.to_owned()).or_default();
+        install_challenge_blocker(session_targets, origin, source, document_identity)
     }
 
+    /// Install a challenge only while the exact snapshot target generation is
+    /// still live. Cancellation-owned commits use this check so session end or
+    /// later session-id reuse cannot resurrect stale blocker state.
+    pub(crate) fn block_origin_for_challenge_if_target_matches(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        target_generation: u64,
+        origin: &str,
+        source: BrowserChallengeSource,
+        document_identity: Option<&FrameIdentity>,
+    ) -> Option<OriginBlocker> {
+        let mut inner = self.inner.lock().unwrap();
+        let session_targets = inner.get_mut(session)?;
+        let target_matches = session_targets
+            .targets
+            .get(target_id)
+            .is_some_and(|target| {
+                target.generation == target_generation && target.tabs.contains_key(tab_id)
+            });
+        target_matches
+            .then(|| install_challenge_blocker(session_targets, origin, source, document_identity))
+    }
+
+    /// Persist an exact-tab pause when navigation may have dispatched but its
+    /// final outcome was not committed. Repeated uncertain outcomes preserve
+    /// the same capability until the caller explicitly clears it.
+    pub(crate) fn block_tab_for_unknown_navigation(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        observed_origin: &str,
+    ) -> Option<OriginBlocker> {
+        let mut inner = self.inner.lock().unwrap();
+        let tab = inner
+            .get_mut(session)?
+            .targets
+            .get_mut(target_id)?
+            .tabs
+            .get_mut(tab_id)?;
+        let blocker_id = tab
+            .navigation_blocker_id
+            .get_or_insert_with(new_blocker_id)
+            .clone();
+        Some(navigation_outcome_blocker(observed_origin, &blocker_id))
+    }
+
+    pub(crate) fn active_tab_navigation_blocker(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        live_origin: &str,
+    ) -> Option<OriginBlocker> {
+        let inner = self.inner.lock().unwrap();
+        let blocker_id = inner
+            .get(session)?
+            .targets
+            .get(target_id)?
+            .tabs
+            .get(tab_id)?
+            .navigation_blocker_id
+            .as_deref()?;
+        Some(navigation_outcome_blocker(live_origin, blocker_id))
+    }
+
+    pub(crate) fn clear_tab_navigation_blocker_if_matches(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        live_origin: &str,
+        blocker_id: &str,
+    ) -> Result<OriginBlocker, ClearOriginBlockerFailure> {
+        let mut inner = self.inner.lock().unwrap();
+        let Some(tab) = inner
+            .get_mut(session)
+            .and_then(|targets| targets.targets.get_mut(target_id))
+            .and_then(|target| target.tabs.get_mut(tab_id))
+        else {
+            return Err(ClearOriginBlockerFailure::Missing);
+        };
+        let Some(current_id) = tab.navigation_blocker_id.as_deref() else {
+            return Err(ClearOriginBlockerFailure::Missing);
+        };
+        let current = navigation_outcome_blocker(live_origin, current_id);
+        if current_id != blocker_id {
+            return Err(ClearOriginBlockerFailure::Mismatch(current));
+        }
+        tab.navigation_blocker_id = None;
+        Ok(current)
+    }
+
+    #[cfg(test)]
     pub(crate) fn block_origin_for_rate_limit(
         &self,
         session: &str,
         origin: &str,
         server_retry_after: Option<Duration>,
     ) -> OriginBlocker {
+        // Production callers own the session transition guard for the same
+        // reason as challenge insertion: capacity failure is session-wide.
         let now = Instant::now();
         let mut inner = self.inner.lock().unwrap();
         let session_targets = inner.entry(session.to_owned()).or_default();
-        if let Some(challenge) = session_targets
-            .origin_blockers
-            .get(origin)
-            .filter(|blocker| blocker.kind == OriginBlockerKind::AntiBotChallenge)
-        {
-            return challenge.clone();
+        install_rate_limit_blocker(session_targets, origin, server_retry_after, now)
+    }
+
+    /// Commit a proven main-document response only if the exact navigation
+    /// target generation is still live. The outer transition guard orders this
+    /// store update against admitted browser actions.
+    pub(crate) fn apply_navigation_response_if_target_matches(
+        &self,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        target_generation: u64,
+        origin: &str,
+        status: u16,
+        retry_after: Option<Duration>,
+    ) -> Option<Option<OriginBlocker>> {
+        let now = Instant::now();
+        let mut inner = self.inner.lock().unwrap();
+        let session_targets = inner.get_mut(session)?;
+        let target_matches = session_targets
+            .targets
+            .get(target_id)
+            .is_some_and(|target| {
+                target.generation == target_generation && target.tabs.contains_key(tab_id)
+            });
+        if !target_matches {
+            return None;
         }
-        let attempt = session_targets
+        if status == 429 {
+            return Some(Some(install_rate_limit_blocker(
+                session_targets,
+                origin,
+                retry_after,
+                now,
+            )));
+        }
+        if let Some(blocker_id) = session_targets.blocker_capacity_id.as_deref() {
+            return Some(Some(safety_capacity_blocker(origin, blocker_id)));
+        }
+        if let Some(blocker) = session_targets
             .origin_blockers
             .get(origin)
-            .filter(|blocker| blocker.kind == OriginBlockerKind::RateLimited)
-            .map(|blocker| blocker.attempt.saturating_add(1))
-            .unwrap_or(1);
-        let (delay, server_retry_after_capped) = server_retry_after.map_or_else(
-            || (bounded_rate_limit_backoff(attempt), false),
-            |delay| {
-                (
-                    delay.min(RATE_LIMIT_SERVER_RETRY_MAX),
-                    delay > RATE_LIMIT_SERVER_RETRY_MAX,
-                )
-            },
-        );
-        let blocker = OriginBlocker {
-            origin: origin.to_owned(),
-            kind: OriginBlockerKind::RateLimited,
-            detection_source: "http_status",
-            detected_at: now,
-            // A hostile or malformed Retry-After must not turn an arithmetic
-            // overflow into an origin pause with no end time.
-            retry_at: Some(
-                now.checked_add(delay)
-                    .or_else(|| now.checked_add(RATE_LIMIT_BACKOFF_MAX))
-                    .unwrap_or(now),
-            ),
-            attempt,
-            server_directed: server_retry_after.is_some(),
-            server_retry_after_capped,
-        };
-        insert_bounded_origin_blocker(session_targets, origin, blocker.clone());
-        blocker
+            .filter(|blocker| blocker.active(now))
+            .cloned()
+        {
+            return Some(Some(blocker));
+        }
+        if (200..400).contains(&status)
+            && session_targets
+                .origin_blockers
+                .get(origin)
+                .is_some_and(|blocker| {
+                    blocker.kind == OriginBlockerKind::RateLimited && !blocker.active(now)
+                })
+        {
+            session_targets.origin_blockers.remove(origin);
+        }
+        Some(None)
     }
 
     pub(crate) fn active_origin_blocker(
@@ -581,26 +874,70 @@ impl BrowserStore {
         origin: &str,
     ) -> Option<OriginBlocker> {
         let now = Instant::now();
-        self.inner
-            .lock()
-            .unwrap()
-            .get(session)
-            .and_then(|targets| targets.origin_blockers.get(origin))
-            .filter(|blocker| blocker.active(now))
-            .cloned()
+        self.inner.lock().unwrap().get(session).and_then(|targets| {
+            if let Some(blocker_id) = targets.blocker_capacity_id.as_deref() {
+                Some(safety_capacity_blocker(origin, blocker_id))
+            } else {
+                targets
+                    .origin_blockers
+                    .get(origin)
+                    .filter(|blocker| blocker.active(now))
+                    .cloned()
+            }
+        })
     }
 
-    pub(crate) fn clear_origin_blocker(&self, session: &str, origin: &str) -> bool {
-        self.inner
-            .lock()
-            .unwrap()
-            .get_mut(session)
-            .and_then(|targets| targets.origin_blockers.remove(origin))
-            .is_some()
+    pub(crate) fn clear_origin_blocker_if_matches(
+        &self,
+        session: &str,
+        origin: &str,
+        blocker_id: &str,
+        live_challenge_document: Option<&FrameIdentity>,
+    ) -> Result<OriginBlocker, ClearOriginBlockerFailure> {
+        let now = Instant::now();
+        let mut inner = self.inner.lock().unwrap();
+        let Some(targets) = inner.get_mut(session) else {
+            return Err(ClearOriginBlockerFailure::Missing);
+        };
+        if let Some(capacity_id) = targets.blocker_capacity_id.as_deref() {
+            return Err(ClearOriginBlockerFailure::SessionEndRequired(
+                safety_capacity_blocker(origin, capacity_id),
+            ));
+        }
+        let Some(current) = targets
+            .origin_blockers
+            .get(origin)
+            .filter(|blocker| blocker.active(now))
+            .cloned()
+        else {
+            return Err(ClearOriginBlockerFailure::Missing);
+        };
+        if current.blocker_id != blocker_id {
+            return Err(ClearOriginBlockerFailure::Mismatch(current));
+        }
+        if current.kind == OriginBlockerKind::AntiBotChallenge
+            && (current.challenge_document.is_none()
+                || current.challenge_document.as_ref() != live_challenge_document)
+        {
+            // The explicit decision is a capability for one proven challenge
+            // document. A reload, same-origin replacement, or unavailable
+            // loader proof creates a new incident rather than letting the old
+            // decision clear whatever is currently live.
+            let mut replacement = current;
+            replacement.blocker_id = new_blocker_id();
+            replacement.challenge_document = live_challenge_document.cloned();
+            targets
+                .origin_blockers
+                .insert(origin.to_owned(), replacement.clone());
+            return Err(ClearOriginBlockerFailure::Mismatch(replacement));
+        }
+        targets.origin_blockers.remove(origin);
+        Ok(current)
     }
 
     /// Forget an elapsed rate-limit incident after a successful document
     /// response. Active pauses and challenge blockers are never cleared here.
+    #[cfg(test)]
     pub(crate) fn clear_elapsed_rate_limit_after_success(
         &self,
         session: &str,
@@ -618,12 +955,6 @@ impl BrowserStore {
             blocker.kind == OriginBlockerKind::RateLimited && !blocker.active(now)
         });
         elapsed && blockers.remove(origin).is_some()
-    }
-
-    fn insert_origin_blocker(&self, session: &str, origin: &str, blocker: OriginBlocker) {
-        let mut inner = self.inner.lock().unwrap();
-        let session_targets = inner.entry(session.to_owned()).or_default();
-        insert_bounded_origin_blocker(session_targets, origin, blocker);
     }
 
     /// Drop the whole namespace for an ended session. Wired to
@@ -660,7 +991,10 @@ fn insert_bounded_origin_blocker(
     session: &mut SessionTargets,
     origin: &str,
     blocker: OriginBlocker,
-) {
+) -> Result<(), String> {
+    if let Some(blocker_id) = session.blocker_capacity_id.as_ref() {
+        return Err(blocker_id.clone());
+    }
     if !session.origin_blockers.contains_key(origin)
         && session.origin_blockers.len() >= MAX_BLOCKED_ORIGINS_PER_SESSION
     {
@@ -674,16 +1008,16 @@ fn insert_bounded_origin_blocker(
     if !session.origin_blockers.contains_key(origin)
         && session.origin_blockers.len() >= MAX_BLOCKED_ORIGINS_PER_SESSION
     {
-        if let Some(oldest) = session
-            .origin_blockers
-            .iter()
-            .min_by_key(|(_, blocker)| blocker.detected_at)
-            .map(|(origin, _)| origin.clone())
-        {
-            session.origin_blockers.remove(&oldest);
-        }
+        // Every retained entry is still active. Keep those exact blockers and
+        // fail the whole session closed rather than silently making either an
+        // old or newly observed origin actionable. Session end is the only
+        // safe reset because the omitted origin set is no longer enumerable.
+        let blocker_id = new_blocker_id();
+        session.blocker_capacity_id = Some(blocker_id.clone());
+        return Err(blocker_id);
     }
     session.origin_blockers.insert(origin.to_owned(), blocker);
+    Ok(())
 }
 
 impl Default for BrowserStore {
@@ -719,6 +1053,13 @@ mod tests {
             cdp_window_id: Some(11),
             quality: BindingQuality::Exact,
             tabs: HashMap::new(),
+        }
+    }
+
+    fn document_identity(loader_id: &str) -> FrameIdentity {
+        FrameIdentity {
+            frame_id: "frame-main".to_owned(),
+            loader_id: loader_id.to_owned(),
         }
     }
 
@@ -758,6 +1099,7 @@ mod tests {
                     url: "https://example.test".into(),
                     active: Some(true),
                     generation: 0,
+                    navigation_blocker_id: None,
                     snapshots: HashMap::from([(
                         snap_id,
                         SnapshotRecord {
@@ -907,7 +1249,32 @@ mod tests {
     #[test]
     fn challenge_blockers_are_origin_local_session_state() {
         let store = BrowserStore::new();
-        store.block_origin_for_challenge("session-a", "https://blocked.example");
+        let identity = document_identity("loader-1");
+        let blocker = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Semantic,
+            Some(&identity),
+        );
+        let blocker_id = blocker.to_value(Instant::now())["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            blocker.to_value(Instant::now())["detection_source"],
+            "semantic"
+        );
+        let repeated = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Semantic,
+            Some(&identity),
+        );
+        assert_eq!(
+            repeated.to_value(Instant::now())["blocker_id"],
+            blocker_id,
+            "re-observing the same active challenge must preserve its capability"
+        );
 
         assert!(store
             .active_origin_blocker("session-a", "https://blocked.example")
@@ -918,10 +1285,116 @@ mod tests {
         assert!(store
             .active_origin_blocker("session-b", "https://blocked.example")
             .is_none());
-        assert!(store.clear_origin_blocker("session-a", "https://blocked.example"));
+        assert!(store
+            .clear_origin_blocker_if_matches(
+                "session-a",
+                "https://blocked.example",
+                &blocker_id,
+                Some(&identity),
+            )
+            .is_ok());
         assert!(store
             .active_origin_blocker("session-a", "https://blocked.example")
             .is_none());
+        let replacement = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Semantic,
+            Some(&identity),
+        );
+        assert_ne!(
+            replacement.to_value(Instant::now())["blocker_id"],
+            blocker_id,
+            "a cleared challenge followed by a new observation is a new incident"
+        );
+    }
+
+    #[test]
+    fn challenge_blocker_rotates_for_a_new_or_unproven_document() {
+        let store = BrowserStore::new();
+        let first = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Url,
+            Some(&document_identity("loader-1")),
+        );
+        let first_id = first.to_value(Instant::now())["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(first.to_value(Instant::now())["detection_source"], "url");
+
+        let reloaded = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Url,
+            Some(&document_identity("loader-2")),
+        );
+        let reloaded_id = reloaded.to_value(Instant::now())["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_ne!(reloaded_id, first_id);
+
+        let unproven = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Url,
+            None,
+        );
+        assert_ne!(
+            unproven.to_value(Instant::now())["blocker_id"],
+            reloaded_id,
+            "identity equality must be proven before preserving a blocker capability"
+        );
+    }
+
+    #[test]
+    fn unknown_navigation_blocker_is_tab_local_and_exactly_cleared() {
+        let (store, target_id, tab_id, _) = store_with_ref();
+        let blocker = store
+            .block_tab_for_unknown_navigation("sess-a", &target_id, &tab_id, "")
+            .expect("known tab");
+        let initial = blocker.to_value(Instant::now());
+        let blocker_id = initial["blocker_id"].as_str().unwrap().to_owned();
+        assert_eq!(initial["kind"], "navigation_outcome_unknown");
+        assert_eq!(initial["origin"], Value::Null);
+
+        let reported = store
+            .active_tab_navigation_blocker("sess-a", &target_id, &tab_id, "https://reached.example")
+            .unwrap()
+            .to_value(Instant::now());
+        assert_eq!(reported["blocker_id"], blocker_id);
+        assert_eq!(reported["origin"], "https://reached.example");
+        assert!(matches!(
+            store.clear_tab_navigation_blocker_if_matches(
+                "sess-a",
+                &target_id,
+                &tab_id,
+                "https://reached.example",
+                "blocker-stale",
+            ),
+            Err(ClearOriginBlockerFailure::Mismatch(_))
+        ));
+        assert!(store
+            .clear_tab_navigation_blocker_if_matches(
+                "sess-a",
+                &target_id,
+                &tab_id,
+                "https://reached.example",
+                &blocker_id,
+            )
+            .is_ok());
+        assert!(
+            store
+                .active_tab_navigation_blocker(
+                    "sess-a",
+                    &target_id,
+                    &tab_id,
+                    "https://reached.example",
+                )
+                .is_none()
+        );
     }
 
     #[test]
@@ -968,12 +1441,60 @@ mod tests {
         let first_ms = first.to_value(now)["retry_after_ms"].as_u64().unwrap();
         let second_value = second.to_value(now);
         let second_ms = second_value["retry_after_ms"].as_u64().unwrap();
+        let first_id = first.to_value(now)["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let second_id = second_value["blocker_id"].as_str().unwrap().to_owned();
 
         assert!((1_900..=2_500).contains(&first_ms), "{first_ms}");
         assert!((3_900..=5_000).contains(&second_ms), "{second_ms}");
         assert!(second_ms > first_ms);
         assert_eq!(second_value["attempt"], 2);
         assert_eq!(second_value["server_directed_retry"], false);
+        assert_ne!(first_id, second_id);
+        let failure = store
+            .clear_origin_blocker_if_matches(
+                "session-a",
+                "https://blocked.example",
+                &first_id,
+                None,
+            )
+            .expect_err("an earlier 429 capability must not clear a later retry window");
+        let ClearOriginBlockerFailure::Mismatch(current) = failure else {
+            panic!("expected blocker-id mismatch");
+        };
+        assert_eq!(current.to_value(now)["blocker_id"], second_id);
+    }
+
+    #[test]
+    fn stale_blocker_id_refuses_without_clearing_the_current_incident() {
+        let store = BrowserStore::new();
+        let blocker = store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Semantic,
+            Some(&document_identity("loader-1")),
+        );
+
+        let failure = store
+            .clear_origin_blocker_if_matches(
+                "session-a",
+                "https://blocked.example",
+                "blocker-stale",
+                Some(&document_identity("loader-1")),
+            )
+            .unwrap_err();
+        let ClearOriginBlockerFailure::Mismatch(current) = failure else {
+            panic!("expected blocker-id mismatch");
+        };
+        assert_eq!(
+            current.to_value(Instant::now())["blocker_id"],
+            blocker.to_value(Instant::now())["blocker_id"]
+        );
+        assert!(store
+            .active_origin_blocker("session-a", "https://blocked.example")
+            .is_some());
     }
 
     #[test]
@@ -1010,7 +1531,12 @@ mod tests {
             store.block_origin_for_rate_limit("session-a", "https://recovered.example", None);
         assert_eq!(next.to_value(Instant::now())["attempt"], 1);
 
-        store.block_origin_for_challenge("session-a", "https://challenge.example");
+        store.block_origin_for_challenge(
+            "session-a",
+            "https://challenge.example",
+            BrowserChallengeSource::Semantic,
+            Some(&document_identity("loader-1")),
+        );
         assert!(
             !store.clear_elapsed_rate_limit_after_success("session-a", "https://challenge.example")
         );
@@ -1026,7 +1552,12 @@ mod tests {
     #[test]
     fn rate_limit_cannot_replace_an_active_challenge() {
         let store = BrowserStore::new();
-        store.block_origin_for_challenge("session-a", "https://blocked.example");
+        store.block_origin_for_challenge(
+            "session-a",
+            "https://blocked.example",
+            BrowserChallengeSource::Semantic,
+            Some(&document_identity("loader-1")),
+        );
         let blocker = store.block_origin_for_rate_limit(
             "session-a",
             "https://blocked.example",
@@ -1053,6 +1584,8 @@ mod tests {
             store.block_origin_for_challenge(
                 "session-a",
                 &format!("https://challenge-{index}.example"),
+                BrowserChallengeSource::Semantic,
+                None,
             );
         }
         store.block_origin_for_rate_limit(
@@ -1061,7 +1594,16 @@ mod tests {
             Some(Duration::ZERO),
         );
 
-        store.block_origin_for_challenge("session-a", "https://new.example");
+        let admitted = store.block_origin_for_challenge(
+            "session-a",
+            "https://new.example",
+            BrowserChallengeSource::Semantic,
+            None,
+        );
+        assert_eq!(
+            admitted.to_value(Instant::now())["kind"],
+            "anti_bot_challenge"
+        );
 
         let inner = store.inner.lock().unwrap();
         let blockers = &inner["session-a"].origin_blockers;
@@ -1069,5 +1611,95 @@ mod tests {
         assert!(!blockers.contains_key("https://elapsed.example"));
         assert!(blockers.contains_key("https://challenge-0.example"));
         assert!(blockers.contains_key("https://new.example"));
+    }
+
+    #[test]
+    fn all_active_capacity_fails_the_session_closed_without_eviction() {
+        let store = BrowserStore::new();
+        for index in 0..MAX_BLOCKED_ORIGINS_PER_SESSION {
+            store.block_origin_for_challenge(
+                "session-a",
+                &format!("https://challenge-{index}.example"),
+                BrowserChallengeSource::Semantic,
+                None,
+            );
+        }
+
+        store.block_origin_for_challenge(
+            "session-a",
+            "https://new.example",
+            BrowserChallengeSource::Semantic,
+            None,
+        );
+
+        {
+            let inner = store.inner.lock().unwrap();
+            let session = &inner["session-a"];
+            assert_eq!(
+                session.origin_blockers.len(),
+                MAX_BLOCKED_ORIGINS_PER_SESSION
+            );
+            assert!(session
+                .origin_blockers
+                .contains_key("https://challenge-0.example"));
+            assert!(!session.origin_blockers.contains_key("https://new.example"));
+            assert!(session.blocker_capacity_id.is_some());
+        }
+
+        for origin in [
+            "https://challenge-0.example",
+            "https://new.example",
+            "https://otherwise-unblocked.example",
+        ] {
+            let blocker = store
+                .active_origin_blocker("session-a", origin)
+                .expect("capacity latch must block every origin");
+            let value = blocker.to_value(Instant::now());
+            assert_eq!(value["kind"], "safety_capacity", "{origin}: {value}");
+            assert_eq!(
+                value["handling"], "end_session_before_more_browser_actions",
+                "{origin}: {value}"
+            );
+            assert!(blocker.requires_session_end());
+        }
+        let first_id = store
+            .active_origin_blocker("session-a", "https://challenge-0.example")
+            .unwrap()
+            .to_value(Instant::now())["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        let other_id = store
+            .active_origin_blocker("session-a", "https://otherwise-unblocked.example")
+            .unwrap()
+            .to_value(Instant::now())["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert_eq!(
+            first_id, other_id,
+            "the session capacity incident has one id"
+        );
+        let capacity_id = store
+            .active_origin_blocker("session-a", "https://challenge-0.example")
+            .unwrap()
+            .to_value(Instant::now())["blocker_id"]
+            .as_str()
+            .unwrap()
+            .to_owned();
+        assert!(matches!(
+            store.clear_origin_blocker_if_matches(
+                "session-a",
+                "https://challenge-0.example",
+                &capacity_id,
+                None,
+            ),
+            Err(ClearOriginBlockerFailure::SessionEndRequired(_))
+        ));
+
+        store.remove_session("session-a");
+        assert!(store
+            .active_origin_blocker("session-a", "https://new.example")
+            .is_none());
     }
 }

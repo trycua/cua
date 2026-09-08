@@ -69,17 +69,13 @@ Semantic snapshot requests may also contain one of these read scopes:
   "refs": [],
   "content_refs": [],
   "challenge": {
-    "required": false,
-    "detection_status": "not_detected",
+    "status": "not_detected",
     "kind": null,
     "origin": "https://example.test",
-    "provider": null,
-    "confidence": null,
-    "requires_user": false,
-    "handling": "none",
-    "message": null,
-    "signals": []
+    "source": null,
+    "confidence": null
   },
+  "blocker": null,
   "oopif": {
     "status": "attached",
     "frames": 1
@@ -94,47 +90,90 @@ state. Known oversized-DOM fallback produces a partial snapshot with
 
 ## Challenge report
 
-`semantic_v2` includes an advisory `challenge` object. It conservatively checks
+`semantic_v2` includes a `challenge` object. It conservatively checks
 the top-level URL and the collected semantic document for common CAPTCHA and
 bot-verification signals. Detection is independent of the requested query,
 scope, or continuation page. It does not use the cached tab title as evidence.
 `dom_refs_v1` is unchanged.
 
-When a likely challenge is present, `required` is true and `kind` is
+When a likely challenge is present, `status` is `detected` and `kind` is
 `anti_bot_challenge`:
 
 ```json
 {
-  "required": true,
-  "detection_status": "detected",
+  "status": "detected",
   "kind": "anti_bot_challenge",
   "origin": "https://example.test",
-  "provider": "generic",
-  "confidence": "medium",
-  "requires_user": true,
-  "handling": "explicit_resume_or_user_handoff",
-  "message": "A CAPTCHA or bot-verification challenge appears to be present. Do not issue another action to this origin until the caller explicitly resumes or a user takes over.",
-  "signals": [
-    {
-      "source": "page_text",
-      "provider": "generic",
-      "reason": "challenge_copy"
-    }
-  ]
+  "source": "semantic",
+  "confidence": "medium"
 }
 ```
 
-`detection_status` is one of `detected`, `not_detected`, or `unknown`. A report
-uses `not_detected` only when the underlying semantic document and supported
-frame collection were complete. When collection is incomplete and no signal is
-found, it returns `required: false` with `detection_status: "unknown"`; this does
-not prove that the page has no challenge. A positive signal can still be
-reported from incomplete state.
+The same snapshot returns containment separately:
+
+```json
+{
+  "blocker": {
+    "required": true,
+    "blocker_id": "blocker-...",
+    "kind": "anti_bot_challenge",
+    "origin": "https://example.test",
+    "detection_source": "semantic",
+    "retry_after_ms": null,
+    "requires_user": true,
+    "handling": "explicit_resume_or_user_handoff",
+    "attempt": 1,
+    "server_directed_retry": false,
+    "server_retry_after_capped": false
+  }
+}
+```
+
+`status` is one of `detected`, `not_detected`, or `unknown`. `source` is `url`
+for a known challenge endpoint. It is `semantic` for a robot or
+human-verification checkbox, or for distinct visible labels that corroborate
+different challenge phrases. `confidence` is `high` for the narrow URL
+classifications and `medium` for semantic detection.
+The remaining fields are `null` when no challenge is detected. `origin` is also
+`null` when the page URL has no web origin, such as `about:blank`.
+
+A report uses `not_detected` only when the underlying semantic document and
+supported frame collection were complete. When collection is incomplete and no
+signal is found, it returns `status: "unknown"`; this does not prove that the
+page has no challenge. A positive signal can still be reported from incomplete
+state.
 
 The report uses fixed labels and returns only the URL origin. It does not copy
 page text, paths, or query strings into the challenge fields. Detection is not
-universal, and an advisory report does not itself pause actions or solve the
-challenge.
+universal: a single stock phrase in ordinary page copy, offscreen content, or a
+control's mutable value is not enough to classify a page.
+
+The advisory `challenge` object keeps this five-field shape. When its status is
+`detected`, the separate top-level `blocker` object reports the action pause and
+its opaque `blocker_id`. After an explicit caller decision, `browser_resume`
+requires that blocker's exact current `origin` and `blocker_id`; a stale id or a
+different live origin refuses. Repeated observations preserve the id only when
+the driver proves they describe the same main document. A reload or unproven
+document identity creates a replacement blocker with a new id.
+
+An opaque page has `origin: null`. Its blocker pauses actions on opaque pages;
+navigate to a web origin or end the session rather than inventing an origin for
+`browser_resume`. A `safety_capacity` blocker is session-wide and can be cleared
+only by ending the session. Containment does not solve or bypass a challenge.
+
+If `browser_navigate` may have entered the browser transport but the final
+document outcome cannot be proven, the driver retains a
+`navigation_outcome_unknown` blocker for that exact tab. The navigation result
+keeps `page_blocked` null rather than guessing. Refresh `get_browser_state` to
+bind the blocker to the live non-opaque origin, then either end the session or
+pass that exact `origin` and `blocker_id` to `browser_resume`. Cancellation
+before the navigation reaches the shared browser writer does not create this
+blocker or invalidate the current refs.
+
+HTTP response observation is narrower than semantic challenge detection. It
+applies to explicit `browser_navigate` calls on driver-owned and embedded
+endpoints. A click, form submission, reload, or page-driven navigation is not
+claimed to observe a main-document HTTP 429 in this contract.
 
 ## Action refs
 

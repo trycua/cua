@@ -246,6 +246,19 @@ pub struct CdpConnection {
     reader: tokio::task::JoinHandle<()>,
 }
 
+/// Removes an unanswered command from the demultiplexer when its caller is
+/// cancelled at any await point.
+struct PendingCallCleanup {
+    demux: Arc<Demux>,
+    id: u64,
+}
+
+impl Drop for PendingCallCleanup {
+    fn drop(&mut self) {
+        self.demux.pending.lock().unwrap().remove(&self.id);
+    }
+}
+
 impl Drop for CdpConnection {
     fn drop(&mut self) {
         self.reader.abort();
@@ -356,6 +369,26 @@ impl CdpConnection {
         method: &str,
         params: Value,
     ) -> anyhow::Result<Value> {
+        self.call_with_dispatch_started(session_id, method, params, || {})
+            .await
+    }
+
+    /// Issue one CDP command and synchronously mark the point after the shared
+    /// writer is acquired but before the WebSocket send is awaited.
+    ///
+    /// Consequential callers use this boundary to distinguish cancellation
+    /// while merely waiting for the writer from cancellation once the command
+    /// may have entered the transport. The callback must not block or panic.
+    pub(crate) async fn call_with_dispatch_started<F>(
+        &self,
+        session_id: Option<&str>,
+        method: &str,
+        params: Value,
+        on_dispatch_started: F,
+    ) -> anyhow::Result<Value>
+    where
+        F: FnOnce(),
+    {
         let policy = self.method_policy();
         if !policy.allows(method) {
             anyhow::bail!(
@@ -368,11 +401,14 @@ impl CdpConnection {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
         let (tx, rx) = oneshot::channel();
         self.demux.pending.lock().unwrap().insert(id, tx);
+        let _pending_cleanup = PendingCallCleanup {
+            demux: self.demux.clone(),
+            id,
+        };
         // Close can race the initial check. If the reader cleared the
         // pending map just before this insertion, remove the orphaned
         // sender now instead of waiting for the call timeout.
         if self.is_closed() {
-            self.demux.pending.lock().unwrap().remove(&id);
             anyhow::bail!("CDP socket closed before {method}");
         }
 
@@ -382,18 +418,18 @@ impl CdpConnection {
         }
         let sent = {
             let mut writer = self.writer.lock().await;
+            // There is no suspension point between this marker and entering
+            // the send future. From here, cancellation or transport failure
+            // cannot prove that the peer did not receive the command.
+            on_dispatch_started();
             writer.send(Message::Text(msg.to_string())).await
         };
         if let Err(e) = sent {
-            self.demux.pending.lock().unwrap().remove(&id);
             anyhow::bail!("CDP send failed during {method}: {e}");
         }
 
         match tokio::time::timeout(CALL_TIMEOUT, rx).await {
-            Err(_) => {
-                self.demux.pending.lock().unwrap().remove(&id);
-                anyhow::bail!("CDP {method} timed out after {CALL_TIMEOUT:?}")
-            }
+            Err(_) => anyhow::bail!("CDP {method} timed out after {CALL_TIMEOUT:?}"),
             Ok(Err(_)) => anyhow::bail!("CDP socket closed during {method}"),
             Ok(Ok(CallOutcome::Result(v))) => Ok(v),
             Ok(Ok(CallOutcome::Error {
@@ -684,6 +720,39 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(result["echoed"]["x"], 7);
+    }
+
+    #[tokio::test]
+    async fn dispatch_marker_is_not_set_while_waiting_for_the_shared_writer() {
+        let server = MockCdpServer::start(StdArc::new(|_| MockReply::ok(json!({})))).await;
+        let conn = Arc::new(CdpConnection::connect(&server.ws_url()).await.unwrap());
+        let held_conn = conn.clone();
+        let writer = held_conn.writer.lock().await;
+        let marked = Arc::new(AtomicBool::new(false));
+        let task_conn = conn.clone();
+        let task_marked = marked.clone();
+        let call = tokio::spawn(async move {
+            task_conn
+                .call_with_dispatch_started(None, "Blocked.onWriter", json!({}), move || {
+                    task_marked.store(true, Ordering::Release);
+                })
+                .await
+        });
+
+        tokio::task::yield_now().await;
+        assert!(!marked.load(Ordering::Acquire));
+        assert!(!call.is_finished());
+        call.abort();
+        assert!(call.await.is_err_and(|error| error.is_cancelled()));
+        assert!(
+            !marked.load(Ordering::Acquire),
+            "cancellation before writer ownership must remain pre-dispatch"
+        );
+        assert!(
+            conn.demux.pending.lock().unwrap().is_empty(),
+            "a cancelled call must not leave an unanswered demux entry"
+        );
+        drop(writer);
     }
 
     #[tokio::test]

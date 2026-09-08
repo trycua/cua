@@ -69,11 +69,14 @@ authorization. `get_browser_state` never performs setup itself.
 If a site presents a CAPTCHA or bot-verification challenge, Cua Driver reports
 a fixed classification rather than copying page text into the challenge report
 or acting on it. A later `get_browser_state` snapshot can report
-`challenge.required: true` with
-`handling: "explicit_resume_or_user_handoff"`. Read-only snapshots remain
-available, but the driver refuses navigation and mutations to that origin.
-Ask the user to take over, or call `browser_resume` only after an explicit
-caller decision; another positive semantic snapshot pauses the origin again.
+`challenge.status: "detected"` and a separate `blocker` object. Read-only
+snapshots remain available, but the driver refuses navigation and mutations to
+that blocker's origin. Ask the user to take over, or call `browser_resume` only
+after an explicit caller decision, passing the exact `blocker.origin` and opaque
+`blocker.blocker_id`. A stale id refuses. The same proven page preserves its id;
+a reload or unproven document identity replaces it. When `blocker.origin` is
+null, navigate away from the opaque page or end the session instead of
+inventing an origin.
 
 ## Attach to an existing Chrome or Edge profile
 
@@ -432,14 +435,31 @@ browser_navigate({
 })
 ```
 
-Navigation invalidates every prior ref for the tab. Wait for the destination,
-then call `get_browser_state` in snapshot mode again. On driver-owned and
-embedded endpoints, a main-document HTTP 429 returns `page_blocked` separately
+Once navigation dispatch starts, it invalidates every prior ref for the tab.
+Wait for the destination, then call `get_browser_state` in snapshot mode again.
+For this explicit `browser_navigate` call on driver-owned and embedded
+endpoints, an observed main-document HTTP 429 returns `page_blocked` separately
 from `input_delivered`, honors `Retry-After` when present, and otherwise starts
-a bounded per-origin backoff. The driver refuses more actions to that origin
-until the wait ends or the caller explicitly invokes `browser_resume`.
-Unrelated origins remain available. Existing-profile attachments do not enable
-CDP network observation and report response metadata as unavailable.
+a bounded per-origin backoff. This response observation does not cover a
+navigation caused by a click, form submission, reload, or page script. The
+driver refuses more actions to the observed response origin
+until the wait ends or the caller explicitly invokes `browser_resume` with the
+exact `origin` and `blocker_id` from the current blocker report. A stale id
+refuses. Unrelated origins remain available unless the bounded blocker store
+returns a session-wide `safety_capacity` blocker; that requires ending the
+session. Only a positively identified
+blocker sets `page_blocked: true`; otherwise it is null because an HTTP response
+alone cannot prove that the reached document is free of a page-level challenge.
+Existing-profile attachments do not enable CDP network observation and report
+response metadata as unavailable.
+
+If dispatch starts but the final document outcome cannot be proven because the
+command fails, is cancelled, or produces no matching terminal response, the
+exact tab receives a `navigation_outcome_unknown` blocker. The result leaves
+`page_blocked` unknown. Refresh `get_browser_state`, then use the current
+blocker's exact non-null `origin` and `blocker_id` for an explicit resume, or end
+the session. Cancellation before dispatch neither creates this blocker nor
+invalidates the current refs.
 
 ## End the session
 

@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 
+use super::challenge::BrowserChallengeLabel;
 use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry};
 
 pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
@@ -186,24 +187,20 @@ impl SemanticDocument {
         };
     }
 
-    /// Text values available to page-level classification. Hidden and fully
-    /// occluded retained state is excluded so it cannot describe the page the
-    /// caller is actually observing.
-    pub(crate) fn challenge_texts(&self) -> impl Iterator<Item = &str> {
+    /// Visible accessible labels available to page-level classification.
+    ///
+    /// Roles and mutable control values are not page copy. Offscreen retained
+    /// state is also excluded so a stale message cannot classify the viewport.
+    pub(crate) fn visible_challenge_labels(
+        &self,
+    ) -> impl Iterator<Item = BrowserChallengeLabel<'_>> {
         self.nodes
             .iter()
-            .filter(|node| {
-                !matches!(
-                    node.visibility,
-                    BrowserVisibility::CssHidden | BrowserVisibility::PageOccluded
-                )
-            })
-            .flat_map(|node| {
-                [
-                    node.role.as_str(),
-                    node.name.as_deref().unwrap_or_default(),
-                    node.value.as_deref().unwrap_or_default(),
-                ]
+            .filter(|node| node.visibility == BrowserVisibility::InViewport)
+            .filter_map(|node| {
+                node.name
+                    .as_deref()
+                    .map(|name| BrowserChallengeLabel::new(&node.role, name))
             })
     }
 
@@ -1492,6 +1489,55 @@ mod tests {
         assert_eq!(
             clean_semantic_text("\u{e001} Reply\u{00a0}now \u{f8ff}".to_owned()).as_deref(),
             Some("Reply now")
+        );
+    }
+
+    #[test]
+    fn challenge_labels_exclude_control_values_and_nonviewport_state() {
+        let node = |ax_id: &str,
+                    name: Option<&str>,
+                    value: Option<&str>,
+                    visibility: BrowserVisibility| SemanticNode {
+            ax_id: ax_id.to_owned(),
+            parent_ax_id: None,
+            child_ax_ids: Vec::new(),
+            backend_node_id: None,
+            role: "textbox".to_owned(),
+            name: name.map(str::to_owned),
+            value: value.map(str::to_owned),
+            states: BTreeMap::new(),
+            frame: frame(),
+            visibility,
+            actions: Vec::new(),
+            document_order: 0,
+        };
+        let document = SemanticDocument {
+            nodes: vec![
+                node(
+                    "visible",
+                    Some("Draft excerpt"),
+                    Some("Verify you are human"),
+                    BrowserVisibility::InViewport,
+                ),
+                node(
+                    "offscreen",
+                    Some("Complete the security check"),
+                    None,
+                    BrowserVisibility::Offscreen,
+                ),
+                node(
+                    "hidden",
+                    Some("I'm not a robot"),
+                    None,
+                    BrowserVisibility::CssHidden,
+                ),
+            ],
+            ..SemanticDocument::default()
+        };
+
+        assert_eq!(
+            document.visible_challenge_labels().collect::<Vec<_>>(),
+            vec![BrowserChallengeLabel::new("textbox", "Draft excerpt")]
         );
     }
 }

@@ -38,10 +38,11 @@ use super::binding::{
     CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpPool};
-use super::challenge::browser_challenge_value;
-use super::challenge::browser_origin;
+use super::challenge::{browser_challenge_report, browser_origin, BrowserChallengeReport};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
-use super::mutation::{MutationGates, MutationKey};
+use super::mutation::{
+    MutationGates, MutationKey, OriginAdmissionGates, OriginAdmissionGuard, OriginTransitionGuard,
+};
 use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupRequest,
@@ -55,8 +56,8 @@ use super::semantic::{
     SEMANTIC_COMPUTED_STYLES,
 };
 use super::store::{
-    format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
-    SnapshotRecord, TabRecord, TargetRecord,
+    format_ref, BrowserStore, ClearOriginBlockerFailure, FrameIdentity, FrameKind, FrameRef,
+    OriginBlocker, RefEntry, SemanticContinuation, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -83,6 +84,7 @@ pub struct BrowserEngine {
     pub(crate) approval_broker: Arc<crate::consent::ApprovalBroker>,
     pub(crate) protected_resource_ownership: Arc<crate::consent::ProtectedResourceOwnershipStore>,
     mutation_gates: MutationGates,
+    origin_admission_gates: OriginAdmissionGates,
     reconnect_gates: ReconnectGates,
     pending_existing_profile_cleanups: Mutex<HashMap<String, Vec<ExistingProfileSetupRequest>>>,
     session_end_hook: Mutex<Option<crate::session::SessionEndHookRegistration>>,
@@ -390,7 +392,8 @@ pub(crate) struct SemanticSnapshotOutcome {
     pub snapshot_id: u64,
     pub url: String,
     pub title: String,
-    pub challenge: Value,
+    pub challenge: BrowserChallengeReport,
+    pub blocker: Option<Value>,
     pub outline: String,
     pub refs: Vec<SemanticListedRef>,
     pub content_refs: Vec<SemanticListedRef>,
@@ -638,6 +641,7 @@ impl BrowserEngine {
             approval_broker,
             protected_resource_ownership,
             mutation_gates: MutationGates::new(),
+            origin_admission_gates: OriginAdmissionGates::new(),
             reconnect_gates: ReconnectGates::new(),
             pending_existing_profile_cleanups: Mutex::new(HashMap::new()),
             session_end_hook: Mutex::new(None),
@@ -648,6 +652,7 @@ impl BrowserEngine {
                 let mut cleanup_errors = Vec::new();
                 if let Some(engine) = weak.upgrade() {
                     engine.store.remove_session(session_id);
+                    engine.origin_admission_gates.remove_session(session_id);
                     engine.cleanup_prepared_session(session_id);
                     let pending = {
                         let mut pending = engine.pending_existing_profile_cleanups.lock().unwrap();
@@ -1343,6 +1348,7 @@ impl BrowserEngine {
                     url: c.url.clone(),
                     active: selected_cdp_target_id.map(|selected| selected == c.cdp_target_id),
                     generation: grant.as_ref().map_or(0, |grant| grant.generation),
+                    navigation_blocker_id: None,
                     snapshots: HashMap::new(),
                 },
             );
@@ -1637,21 +1643,23 @@ impl BrowserEngine {
             })
     }
 
-    pub(crate) fn enforce_origin_not_blocked(
+    fn enforce_origin_not_blocked(
         &self,
         session: &str,
         origin: &str,
     ) -> Result<(), BrowserRefusal> {
-        if origin.is_empty() {
-            return Ok(());
-        }
         let Some(blocker) = self.store.active_origin_blocker(session, origin) else {
             return Ok(());
+        };
+        let scope = if origin.is_empty() {
+            "the current opaque page"
+        } else {
+            origin
         };
         Err(refuse(
             BrowserRefusalCode::BrowserOriginBlocked,
             format!(
-                "browser actions to {origin} are paused after a detected blocker; wait for the reported retry window or call browser_resume after an explicit caller decision"
+                "browser actions to {scope} are paused; follow the returned blocker's handling field before retrying"
             ),
         )
         .with_detail(json!({
@@ -1659,7 +1667,32 @@ impl BrowserEngine {
         })))
     }
 
-    pub(crate) async fn enforce_live_origin_not_blocked(
+    fn enforce_tab_navigation_known(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+        live_origin: &str,
+    ) -> Result<(), BrowserRefusal> {
+        let Some(blocker) = self.store.active_tab_navigation_blocker(
+            session,
+            &validated.record.target_id,
+            &validated.tab.tab_id,
+            live_origin,
+        ) else {
+            return Ok(());
+        };
+        Err(refuse(
+            BrowserRefusalCode::BrowserOriginBlocked,
+            "the prior navigation outcome is unknown; refresh browser state, then explicitly resume the exact blocker or end the session",
+        )
+        .with_detail(json!({
+            "blocker": blocker.to_value(std::time::Instant::now()),
+            "input_delivered": Value::Null,
+            "page_blocked": Value::Null,
+        })))
+    }
+
+    pub(crate) async fn require_known_navigation_outcome(
         &self,
         session: &str,
         validated: &ValidatedTab,
@@ -1667,20 +1700,247 @@ impl BrowserEngine {
         let live_url = self
             .live_top_level_url(&validated.conn, &validated.cdp_session)
             .await?;
-        self.enforce_origin_not_blocked(session, &browser_origin(&live_url))
+        self.enforce_tab_navigation_known(session, validated, &browser_origin(&live_url))
+    }
+
+    pub(crate) async fn lock_origin_admission(
+        &self,
+        session: &str,
+        origin: &str,
+    ) -> OriginAdmissionGuard {
+        self.origin_admission_gates.lock(session, origin).await
+    }
+
+    pub(crate) async fn lock_origin_transition(
+        &self,
+        session: &str,
+        origin: &str,
+    ) -> OriginTransitionGuard {
+        self.origin_admission_gates
+            .transition(session, origin)
+            .await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn origin_admission_registry_counts(&self) -> (usize, usize) {
+        self.origin_admission_gates.registry_counts()
+    }
+
+    pub(crate) async fn admit_origin_action(
+        &self,
+        session: &str,
+        origin: &str,
+    ) -> Result<OriginAdmissionGuard, BrowserRefusal> {
+        let admission = self.lock_origin_admission(session, origin).await;
+        self.enforce_origin_not_blocked(admission.session(), admission.origin())?;
+        Ok(admission)
+    }
+
+    async fn lock_live_origin_admission(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+    ) -> Result<(String, OriginAdmissionGuard), BrowserRefusal> {
+        let first_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        let first_origin = browser_origin(&first_url);
+        let admission = self.lock_origin_admission(session, &first_origin).await;
+        let confirmed_url = self
+            .live_top_level_url(&validated.conn, &validated.cdp_session)
+            .await?;
+        let confirmed_origin = browser_origin(&confirmed_url);
+        let same_origin = first_origin == confirmed_origin
+            && (!first_origin.is_empty() || first_url == confirmed_url);
+        if !same_origin {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the live top-level browser origin changed while the action was being admitted; retry after revalidating the tab",
+            ));
+        }
+        Ok((confirmed_origin, admission))
+    }
+
+    pub(crate) async fn admit_live_origin_action(
+        &self,
+        session: &str,
+        validated: &ValidatedTab,
+    ) -> Result<OriginAdmissionGuard, BrowserRefusal> {
+        let (origin, admission) = self.lock_live_origin_admission(session, validated).await?;
+        if self
+            .store
+            .active_origin_blocker(session, &origin)
+            .is_some_and(|blocker| blocker.requires_session_end())
+        {
+            return self
+                .enforce_origin_not_blocked(session, &origin)
+                .map(|_| admission);
+        }
+        self.enforce_tab_navigation_known(session, validated, &origin)?;
+        self.enforce_origin_not_blocked(session, &origin)?;
+        Ok(admission)
+    }
+
+    pub(crate) async fn commit_snapshot_challenge(
+        self: &Arc<Self>,
+        session: &str,
+        target_id: &str,
+        tab_id: &str,
+        target_generation: u64,
+        challenge: &BrowserChallengeReport,
+        document_identity: Option<&FrameIdentity>,
+    ) -> Result<Option<OriginBlocker>, BrowserRefusal> {
+        let Some((origin, source)) = challenge.containment_target() else {
+            return Ok(None);
+        };
+        let engine = self.clone();
+        let session = session.to_owned();
+        let target_id = target_id.to_owned();
+        let tab_id = tab_id.to_owned();
+        let origin = origin.to_owned();
+        let document_identity = document_identity.cloned();
+
+        // The spawned commit owns the write transition. Dropping the snapshot
+        // request therefore cannot discard a positive observation while it is
+        // waiting for already-admitted work to finish. The store revalidates
+        // the exact target generation before insertion, so an ended or reused
+        // session cannot be recreated by this detached task.
+        let commit = tokio::spawn(async move {
+            let admission = engine.lock_origin_transition(&session, &origin).await;
+            engine.store.block_origin_for_challenge_if_target_matches(
+                admission.session(),
+                &target_id,
+                &tab_id,
+                target_generation,
+                admission.origin(),
+                source,
+                document_identity.as_ref(),
+            )
+        });
+        match commit.await {
+            Ok(Some(blocker)) => Ok(Some(blocker)),
+            Ok(None) => Err(refuse(
+                BrowserRefusalCode::BrowserBindingStale,
+                "the exact browser target ended or changed before the detected challenge could be committed",
+            )),
+            Err(error) => Err(refuse(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                format!("the detected challenge commit task failed: {error}"),
+            )),
+        }
+    }
+
+    pub(crate) fn apply_navigation_response_while_admitted(
+        &self,
+        admission: &OriginTransitionGuard,
+        target_id: &str,
+        tab_id: &str,
+        target_generation: u64,
+        status: u16,
+        retry_after: Option<std::time::Duration>,
+    ) -> Result<Option<OriginBlocker>, BrowserRefusal> {
+        self.store
+            .apply_navigation_response_if_target_matches(
+                admission.session(),
+                target_id,
+                tab_id,
+                target_generation,
+                admission.origin(),
+                status,
+                retry_after,
+            )
+            .ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserBindingStale,
+                    "the exact browser target ended or changed before its navigation response could be committed",
+                )
+            })
     }
 
     pub(crate) async fn clear_live_origin_blocker(
         &self,
         session: &str,
         validated: &ValidatedTab,
-    ) -> Result<(String, bool), BrowserRefusal> {
-        let live_url = self
-            .live_top_level_url(&validated.conn, &validated.cdp_session)
-            .await?;
-        let origin = browser_origin(&live_url);
-        let cleared = !origin.is_empty() && self.store.clear_origin_blocker(session, &origin);
-        Ok((origin, cleared))
+        expected_origin: &str,
+        blocker_id: &str,
+    ) -> Result<String, BrowserRefusal> {
+        let (origin, _admission) = self.lock_live_origin_admission(session, validated).await?;
+        if origin != expected_origin {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserWrongTargetRefused,
+                "the supplied blocker origin does not match the exact live tab origin",
+            )
+            .with_detail(json!({
+                "expected_origin": expected_origin,
+                "live_origin": origin,
+            })));
+        }
+        match self.store.clear_tab_navigation_blocker_if_matches(
+            session,
+            &validated.record.target_id,
+            &validated.tab.tab_id,
+            &origin,
+            blocker_id,
+        ) {
+            Ok(_) => return Ok(origin),
+            Err(ClearOriginBlockerFailure::Mismatch(blocker)) => {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserActionUnavailable,
+                    "the blocker capability is stale or belongs to a replaced blocker incident",
+                )
+                .with_detail(json!({
+                    "blocker": blocker.to_value(std::time::Instant::now()),
+                })))
+            }
+            Err(ClearOriginBlockerFailure::SessionEndRequired(_)) => {
+                unreachable!("an exact-tab navigation blocker never requires session end")
+            }
+            Err(ClearOriginBlockerFailure::Missing) => {}
+        }
+        let live_challenge_document = if self
+            .store
+            .active_origin_blocker(session, &origin)
+            .is_some_and(|blocker| blocker.requires_challenge_document_reproof())
+        {
+            match self
+                .local_frame_tree(&validated.conn, &validated.cdp_session)
+                .await
+            {
+                Ok(tree) => Some(tree.main_identity()),
+                Err(FrameTreeError::Unsupported | FrameTreeError::Failed(_)) => None,
+            }
+        } else {
+            None
+        };
+        match self
+            .store
+            .clear_origin_blocker_if_matches(
+                session,
+                &origin,
+                blocker_id,
+                live_challenge_document.as_ref(),
+            )
+        {
+            Ok(_) => Ok(origin),
+            Err(ClearOriginBlockerFailure::Missing) => Err(refuse(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "the blocker capability is stale or no longer active for the exact live origin",
+            )),
+            Err(ClearOriginBlockerFailure::Mismatch(blocker)) => Err(refuse(
+                BrowserRefusalCode::BrowserActionUnavailable,
+                "the blocker capability is stale or belongs to a replaced blocker incident",
+            )
+            .with_detail(json!({
+                "blocker": blocker.to_value(std::time::Instant::now()),
+            }))),
+            Err(ClearOriginBlockerFailure::SessionEndRequired(blocker)) => Err(refuse(
+                BrowserRefusalCode::BrowserOriginBlocked,
+                "the session could not retain another exact blocker; end this session before performing more browser actions",
+            )
+            .with_detail(json!({
+                "blocker": blocker.to_value(std::time::Instant::now()),
+            }))),
+        }
     }
 
     pub(crate) async fn attest_protected_tab(
@@ -2483,7 +2743,8 @@ impl BrowserEngine {
         snapshot_id: u64,
         url: String,
         title: String,
-        challenge: Value,
+        challenge: BrowserChallengeReport,
+        blocker: Option<Value>,
         page: super::semantic::SemanticPage,
         document_complete: bool,
         scope: &'static str,
@@ -2517,6 +2778,7 @@ impl BrowserEngine {
                 url,
                 title,
                 challenge,
+                blocker,
                 outline: page.outline,
                 refs,
                 content_refs,
@@ -2533,7 +2795,7 @@ impl BrowserEngine {
     }
 
     pub(crate) async fn snapshot_tab_semantic(
-        &self,
+        self: &Arc<Self>,
         session: &str,
         target_id: &str,
         tab_id: &str,
@@ -2561,24 +2823,27 @@ impl BrowserEngine {
             if let Some(identity) = &snapshot.semantic_root_identity {
                 let conn = self.connection_for_record(session, &record).await?;
                 let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-                let tree = self.local_frame_tree(&conn, &cdp_session).await.map_err(|error| {
-                    match error {
+                let tree = self
+                    .local_frame_tree(&conn, &cdp_session)
+                    .await
+                    .map_err(|error| match error {
                         FrameTreeError::Unsupported => refuse(
                             BrowserRefusalCode::BrowserRouteUnavailable,
-                            "the browser no longer reports its frame tree, so the semantic \n+                             continuation's document identity cannot be re-proven",
+                            "the browser no longer reports its frame tree, so the semantic \
+                             continuation's document identity cannot be re-proven",
                         ),
                         FrameTreeError::Failed(error) => route_err(
                             "Page.getFrameTree failed during semantic continuation revalidation",
                             error,
                         ),
-                    }
-                })?;
+                    })?;
                 if !tree.proves(identity) {
                     self.store
                         .invalidate_tab_snapshots(session, target_id, tab_id);
                     return Err(refuse(
                         BrowserRefusalCode::BrowserRefStale,
-                        "the page navigated since this semantic continuation was minted; \n+                         re-run get_browser_state to start a fresh snapshot",
+                        "the page navigated since this semantic continuation was minted; \
+                         re-run get_browser_state to start a fresh snapshot",
                     ));
                 }
             }
@@ -2588,11 +2853,36 @@ impl BrowserEngine {
                     "the continuation no longer has semantic snapshot state",
                 )
             })?;
-            let challenge = browser_challenge_value(
+            let challenge = browser_challenge_report(
                 &snapshot.url,
-                document.challenge_texts(),
+                document.visible_challenge_labels(),
                 document.complete && continuation.oopif_supported,
             );
+            let challenge_blocker = self
+                .commit_snapshot_challenge(
+                    session,
+                    target_id,
+                    tab_id,
+                    record.generation,
+                    &challenge,
+                    snapshot.semantic_root_identity.as_ref(),
+                )
+                .await?;
+            let origin = browser_origin(&snapshot.url);
+            let origin_blocker =
+                challenge_blocker.or_else(|| self.store.active_origin_blocker(session, &origin));
+            let tab_blocker = self
+                .store
+                .active_tab_navigation_blocker(session, target_id, tab_id, &origin);
+            let blocker = if origin_blocker
+                .as_ref()
+                .is_some_and(OriginBlocker::requires_session_end)
+            {
+                origin_blocker
+            } else {
+                tab_blocker.or(origin_blocker)
+            }
+            .map(|blocker| blocker.to_value(std::time::Instant::now()));
             let page = document.page(
                 continuation.offset,
                 DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2616,6 +2906,7 @@ impl BrowserEngine {
                 snapshot.url.clone(),
                 tab.title,
                 challenge,
+                blocker,
                 page,
                 document.complete,
                 "continuation",
@@ -2761,11 +3052,36 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
-        let challenge = browser_challenge_value(
+        let challenge = browser_challenge_report(
             &url,
-            semantic.challenge_texts(),
+            semantic.visible_challenge_labels(),
             semantic.complete && matches!(oopif, OopifStatus::Attached(_)),
         );
+        let challenge_blocker = self
+            .commit_snapshot_challenge(
+                session,
+                target_id,
+                tab_id,
+                record.generation,
+                &challenge,
+                semantic_root_identity.as_ref(),
+            )
+            .await?;
+        let origin = browser_origin(&url);
+        let origin_blocker =
+            challenge_blocker.or_else(|| self.store.active_origin_blocker(session, &origin));
+        let tab_blocker = self
+            .store
+            .active_tab_navigation_blocker(session, target_id, tab_id, &origin);
+        let blocker = if origin_blocker
+            .as_ref()
+            .is_some_and(OriginBlocker::requires_session_end)
+        {
+            origin_blocker
+        } else {
+            tab_blocker.or(origin_blocker)
+        }
+        .map(|blocker| blocker.to_value(std::time::Instant::now()));
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2786,6 +3102,7 @@ impl BrowserEngine {
             url.clone(),
             tab.title.clone(),
             challenge,
+            blocker,
             page,
             semantic.complete,
             scope,

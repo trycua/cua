@@ -76,10 +76,13 @@ other app. `get_browser_state` binds that exact window to a session-scoped
 target and tab, then returns short-lived page refs for `browser_click`,
 `browser_type`, and `browser_navigate`.
 
-A semantic snapshot that detects a CAPTCHA pauses mutations to that origin;
-HTTP 429 responses do the same on endpoints where response observation is
-available. `browser_resume` clears only the exact live origin after an explicit
-caller decision. It does not solve the challenge or bypass the site's control.
+A semantic snapshot that detects a CAPTCHA pauses mutations to that origin. An
+HTTP 429 observed during explicit `browser_navigate` does the same on
+driver-owned and embedded endpoints. An uncertain post-dispatch navigation
+pauses the exact tab until state is refreshed. After an explicit caller
+decision, `browser_resume` requires the exact live origin and opaque blocker id
+from the separate blocker report. A stale id refuses. It does not solve the
+challenge or bypass the site's control.
 
 Setup is never a hidden read side effect. `browser_prepare` requires explicit
 approval before launching a driver-managed profile or attaching to an existing

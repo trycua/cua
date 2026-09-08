@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import subprocess
@@ -153,3 +154,60 @@ def test_current_autostart_file_is_a_rust_install_marker(
 
     assert not autostart_file.exists()
     assert not skill_link.is_symlink()
+
+
+def test_uninstall_removes_generated_claude_mcp_registration(tmp_path: Path) -> None:
+    home, _calls, env = _sandbox(tmp_path, "Linux")
+    driver_home = home / ".cua-driver"
+    driver_home.mkdir()
+    (driver_home / ".telemetry_id").write_text("fixture\n", encoding="utf-8")
+
+    release_cli = home / ".local/bin/cua-driver"
+    claude_json = home / ".claude.json"
+    claude_json.write_text(
+        json.dumps(
+            {
+                "mcpServers": {
+                    "cua-computer-use": {
+                        "command": str(release_cli),
+                        "args": ["mcp"],
+                    },
+                    "renamed-cua": {
+                        "command": str(release_cli),
+                        "args": ["mcp"],
+                    },
+                    "unrelated": {
+                        "command": "/usr/bin/example",
+                        "args": ["mcp"],
+                    },
+                },
+                "projects": {
+                    "/workspace": {
+                        "mcpServers": {
+                            "cua-computer-use": {
+                                "command": str(release_cli),
+                                "args": ["mcp"],
+                            },
+                            "project-tool": {"command": "/usr/bin/project-tool"},
+                        }
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    result = _run_uninstall(env)
+
+    config = json.loads(claude_json.read_text(encoding="utf-8"))
+    assert set(config["mcpServers"]) == {"unrelated"}
+    assert set(config["projects"]["/workspace"]["mcpServers"]) == {"project-tool"}
+    assert "user:cua-computer-use" in result.stdout
+    assert "user:renamed-cua" in result.stdout
+
+
+def test_windows_uninstaller_names_shipped_claude_mcp_server() -> None:
+    script = (UNINSTALL.parent / "uninstall.ps1").read_text(encoding="utf-8-sig")
+
+    assert "claude mcp remove cua-computer-use -s user" in script
+    assert "claude mcp remove cua-driver-rs\"" not in script

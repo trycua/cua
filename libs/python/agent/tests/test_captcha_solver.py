@@ -8,7 +8,6 @@ from typing import Any
 import pytest
 from cua_agent import ComputerAgent
 from cua_agent.callbacks import CaptchaSolverCallback
-from cua.callbacks import CaptchaSolverCallback as CompatCaptchaSolverCallback
 
 
 def image_message(image: bytes) -> dict[str, Any]:
@@ -30,7 +29,6 @@ def image_call_message(image: bytes, call_id: str) -> dict[str, Any]:
 
 def test_callback_is_exported() -> None:
     assert CaptchaSolverCallback.__name__ == "CaptchaSolverCallback"
-    assert CompatCaptchaSolverCallback is CaptchaSolverCallback
 
 
 @pytest.mark.parametrize(

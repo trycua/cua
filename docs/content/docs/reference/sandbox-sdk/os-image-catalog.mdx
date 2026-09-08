@@ -1,10 +1,9 @@
 ---
 title: OS and image catalog
-description: Hosted Fleet VM images, published candidates, and local Docker and Lume images, with selection and validation limits.
+description: Hosted Fleet VM images and local Docker and Lume images, with selection and validation limits.
 ---
 
 For a hosted pool, start with [Hosted Fleet images](#hosted-fleet-images).
-[Published candidates](#published-candidates) have a separate validation status.
 [Local images](#local-images) target Docker or Lume on your own hardware, not the
 hosted Fleet VM path.
 
@@ -115,41 +114,6 @@ Windows images do not include a Windows license. Bring your own valid licenses
 covering your intended use, including the applicable hosting and virtualization
 rights. An image being available or booting successfully does not establish
 licensing eligibility. Bundled applications have their own license terms.
-
-## Published candidates
-
-These NixOS artifacts are published candidates, not built-in SDK mappings or
-default Fleet selections. Anonymous registry checks resolved both tags on
-September 7, 2026. Publication does not establish a successful Fleet claim,
-guest-service readiness, or validated desktop operations.
-
-| Candidate | Desktop / window manager | Validation recorded here |
-| --- | --- | --- |
-| NixOS StumpWM | StumpWM | Published; original build and Fleet-operation evidence not established here |
-| NixOS XFCE | Xfce / Xfwm4 | Published; original build and Fleet-operation evidence not established here |
-
-The published tags are:
-
-```text
-public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm:git-ee87f38043c043831a8761016015d6ef5ae783d9
-public.ecr.aws/k5j5w0x5/cua-nixos-xfce:git-ee87f38043c043831a8761016015d6ef5ae783d9
-```
-
-Their resolved digests are:
-
-```text
-public.ecr.aws/k5j5w0x5/cua-nixos-stumpwm@sha256:3c5e87fae2486e8c7a1bc6546338c4183ff0bddbd40dd540981ab4d30e03e374
-public.ecr.aws/k5j5w0x5/cua-nixos-xfce@sha256:cd8075aff31f234bcd0573c424ab3f7d2aaf625798dee2352a76b1f58cff64dd
-```
-
-The public OCI configuration identifies Linux/amd64 artifact packaging, but
-does not identify the guest NixOS release, exact Driver/server versions, or
-service ports. Original public build and Fleet-operation results are not
-available in this catalog. Before adopting either candidate, verify its build
-provenance, Fleet admission, boot, services, and the operations your workload
-needs. A commit-named tag is not itself a build or test result. See [Prepare and
-reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image)
-for the artifact and readiness requirements.
 
 ## Local images
 

@@ -22,7 +22,6 @@ from cua_driver import (
     connect_remote_channel,
     create_remote_trusted_session,
 )
-from cua_driver._native import uniffi_set_event_loop
 
 
 class Carrier(ForeignDriverEnvelopeChannel):
@@ -38,6 +37,8 @@ class Carrier(ForeignDriverEnvelopeChannel):
         self.response_mode = "ok"
         self.supports_cancellation = True
         self.identity_error = False
+        self.minimum_version = 1
+        self.negotiate_wait = False
 
     def identity(self):
         if self.identity_error:
@@ -47,9 +48,12 @@ class Carrier(ForeignDriverEnvelopeChannel):
         )
 
     async def negotiate(self):
+        if self.negotiate_wait:
+            self.started.set()
+            await asyncio.Event().wait()
         return ForeignDriverChannelCapabilities(
-            minimum_envelope_version=1,
-            maximum_envelope_version=1,
+            minimum_envelope_version=self.minimum_version,
+            maximum_envelope_version=self.minimum_version,
             supports_cancellation=self.supports_cancellation,
         )
 
@@ -105,14 +109,12 @@ class RemoteChannelTests(unittest.IsolatedAsyncioTestCase):
         self.original_unraisablehook = sys.unraisablehook
         sys.unraisablehook = self.unraisable_errors.append
         self.assertTrue(asyncio.get_running_loop().get_debug())
-        uniffi_set_event_loop(asyncio.get_running_loop())
         self.carrier = Carrier()
         self.driver = connect_remote_channel(self.carrier)
 
     async def asyncTearDown(self):
         await self.driver.shutdown()
         await asyncio.sleep(0)
-        uniffi_set_event_loop(None)
         sys.unraisablehook = self.original_unraisablehook
         self.assertEqual(self.unraisable_errors, [], "native callback raised an unhandled exception")
 
@@ -191,6 +193,55 @@ class RemoteChannelTests(unittest.IsolatedAsyncioTestCase):
             await task
         await asyncio.wait_for(self.carrier.cancelled.wait(), 2)
         self.assertEqual(self.carrier.cancelled_id, self.carrier.requests[0].request_id)
+
+    async def test_rejected_bound_negotiation_closes_channel(self):
+        for minimum_version, cancellation in [(1, False), (2, True)]:
+            self.carrier.bound = Carrier()
+            self.carrier.bound.minimum_version = minimum_version
+            self.carrier.bound.supports_cancellation = cancellation
+            with self.assertRaises(DriverError.Protocol):
+                await create_remote_trusted_session(self.driver, session_options())
+            self.assertTrue(self.carrier.bound.closed.is_set())
+            self.assertEqual(self.carrier.bound.requests, [])
+
+    async def test_cancelled_bound_negotiation_closes_channel(self):
+        self.carrier.bound = Carrier()
+        self.carrier.bound.negotiate_wait = True
+        task = asyncio.create_task(create_remote_trusted_session(self.driver, session_options()))
+        await asyncio.wait_for(self.carrier.bound.started.wait(), 2)
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        await asyncio.wait_for(self.carrier.bound.closed.wait(), 2)
+
+    async def test_channels_on_independent_loops_and_wrong_loop_rejected(self):
+        async def other_loop():
+            with self.assertRaisesRegex(RuntimeError, "different asyncio event loop"):
+                connect_remote_channel(self.carrier)
+            carrier = Carrier()
+            driver = connect_remote_channel(carrier)
+            try:
+                self.assertEqual((await driver.call_tool("health_report", "{}")).text, "carrier response")
+                session = await create_remote_trusted_session(driver, session_options())
+                session.close()
+                await asyncio.wait_for(carrier.bound.closed.wait(), 2)
+            finally:
+                await driver.shutdown()
+
+        await asyncio.gather(
+            asyncio.to_thread(lambda: asyncio.run(other_loop(), debug=True)),
+            self.driver.call_tool("health_report", "{}"),
+        )
+
+    async def test_closed_owner_loop_returns_error_without_unraisable_callback(self):
+        async def create_on_other_loop():
+            return connect_remote_channel(Carrier())
+
+        driver = await asyncio.to_thread(lambda: asyncio.run(create_on_other_loop(), debug=True))
+        with self.assertRaisesRegex(DriverError.Remote, "event loop is closed"):
+            await driver.call_tool("health_report", "{}")
+        with self.assertRaisesRegex(DriverError.Remote, "event loop is closed"):
+            await driver.shutdown()
 
 
 if __name__ == "__main__":

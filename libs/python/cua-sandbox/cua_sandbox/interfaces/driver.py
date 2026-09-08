@@ -64,9 +64,10 @@ def _sdk() -> Any:
 class Driver:
     """Accessor for optional typed Driver sessions; does not replace Sandbox transport.
 
-    Each connection is a host-bound Standard session. Use typed inputs with
-    ``session=None`` where optional. For required session fields, obtain the
-    bound name with ``sandbox.driver.session_name(driver)``. Creating or
+    Each connection is a host-bound session with a launcher-selected permission
+    mode (Standard by default). Remote clients cannot select its authority.
+    Use typed inputs with ``session=None`` where optional. For required session
+    fields, obtain the bound name with ``sandbox.driver.session_name(driver)``. Creating or
     rebinding trusted sessions is unsupported. Remote cleanup is best effort
     with a bounded timeout; failures warn and do not block claim release.
     """
@@ -283,7 +284,7 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
 
         async def bind_session(self, options):
             raise self.fail(
-                "Fleet Driver connections use a host-bound Standard session; rebinding is unsupported"
+                "Fleet Driver connections use a host-bound session; rebinding is unsupported"
             )
 
         async def exchange(self, request):

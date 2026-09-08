@@ -44,8 +44,11 @@ async def inspect_guest(pool):
 `driver` is the generated `cua_driver.CuaDriver`, not a parallel desktop API.
 Use `session=None` for optional session fields. For required session fields,
 `session_name(driver)` returns the active connection's host-bound label. The
-carrier creates a Standard session; remote permission grants, new trusted
-sessions, and session rebinding are not supported.
+carrier creates a Standard session by default. Only the trusted launcher can
+opt into Unrestricted mode, with an explicitly acknowledged Unrestricted daemon;
+remote clients cannot select session authority. Bounded mode and carrier manifest
+configuration are unsupported, as are remote permission grants, new trusted
+sessions, and session rebinding.
 
 ## Failure and cleanup behavior
 

@@ -301,7 +301,7 @@ async def test_cancelled_request_never_dispatches_and_cancel_after_close_is_loca
 
 async def test_bind_session_is_unsupported_without_dispatch(sandbox):
     async with sandbox.driver.connect() as driver:
-        with pytest.raises(ChannelError, match="Standard.*unsupported"):
+        with pytest.raises(ChannelError, match="rebinding is unsupported"):
             await driver.channel.bind_session(object())
         assert len(sandbox._transport.events) == 1
 

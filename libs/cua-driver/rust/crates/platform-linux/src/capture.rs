@@ -1293,6 +1293,9 @@ mod tests {
                     "0",
                     "640x480x24",
                     "-ac",
+                    // The readiness probe drops its connection before the
+                    // fixture connects. Do not reset in that empty-client gap.
+                    "-noreset",
                     "-nolisten",
                     "tcp",
                 ])

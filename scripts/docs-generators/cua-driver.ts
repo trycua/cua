@@ -15,6 +15,7 @@ import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import config from './config.json';
 
 // ============================================================================
 // Types
@@ -205,6 +206,7 @@ export function getLatestReleasedVersion(git: GitRunner = runGit): string {
 async function main() {
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check') || args.includes('--check-only');
+  const platform = referencePlatform(process.platform);
 
   console.log('Cua Driver Documentation Generator');
   console.log('===================================\n');
@@ -225,11 +227,7 @@ async function main() {
   // Step 2: Extract all docs in a single invocation
   console.log('\nExtracting documentation...');
   const binary = process.env.CUA_DRIVER_BINARY || CUA_DRIVER_BIN;
-  const dumpDocsJson = execFileSync(binary, ['dump-docs', '--type', 'all', '--pretty'], {
-    cwd: CUA_DRIVER_DIR,
-    encoding: 'utf-8',
-  });
-  const dumpDocs: DumpDocsOutput = JSON.parse(dumpDocsJson);
+  const dumpDocs = extractDocumentation(binary);
   console.log(`   Found ${dumpDocs.cli.commands.length} CLI commands`);
   console.log(`   Found ${dumpDocs.mcp.tools.length} MCP tools`);
 
@@ -243,64 +241,66 @@ async function main() {
   // binary reports an empty/missing version.
   const currentVersion = dumpDocs.cli.version || dumpDocs.mcp.version || releasedVersion;
 
-  const cliMdx = generateCLIReferenceMDX(dumpDocs.cli, currentVersion);
-  const mcpMdx = generateMCPToolsMDX(dumpDocs.mcp, currentVersion);
-
-  const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli-reference.mdx');
-  const mcpPath = path.join(DOCS_OUTPUT_DIR, 'mcp-tools.mdx');
-
-  if (checkOnly) {
-    // Check mode: compare with existing files
-    console.log('\nChecking for documentation drift...');
-
-    let hasDrift = false;
-
-    if (fs.existsSync(cliPath)) {
-      const existingCli = fs.readFileSync(cliPath, 'utf-8');
-      if (existingCli !== cliMdx) {
-        console.error('cli-reference.mdx is out of sync with source code');
-        hasDrift = true;
-      } else {
-        console.log('cli-reference.mdx is up to date');
-      }
-    } else {
-      console.error('cli-reference.mdx does not exist');
-      hasDrift = true;
-    }
-
-    if (fs.existsSync(mcpPath)) {
-      const existingMcp = fs.readFileSync(mcpPath, 'utf-8');
-      if (existingMcp !== mcpMdx) {
-        console.error('mcp-tools.mdx is out of sync with source code');
-        hasDrift = true;
-      } else {
-        console.log('mcp-tools.mdx is up to date');
-      }
-    } else {
-      console.error('mcp-tools.mdx does not exist');
-      hasDrift = true;
-    }
-
-    if (hasDrift) {
-      console.error(
-        "\nRun 'npx tsx scripts/docs-generators/cua-driver.ts' to update documentation"
-      );
-      process.exit(1);
-    }
-
-    console.log('\nAll cua-driver documentation is up to date!');
-  } else {
-    // Generate mode: write files
-    fs.mkdirSync(DOCS_OUTPUT_DIR, { recursive: true });
-
-    fs.writeFileSync(cliPath, cliMdx);
-    console.log(`   Generated ${path.relative(ROOT_DIR, cliPath)}`);
-
-    fs.writeFileSync(mcpPath, mcpMdx);
-    console.log(`   Generated ${path.relative(ROOT_DIR, mcpPath)}`);
-
-    console.log('\ncua-driver documentation generated successfully!');
+  const drift = syncReferences(DOCS_OUTPUT_DIR, dumpDocs, currentVersion, platform, checkOnly);
+  if (checkOnly && drift.length > 0) {
+    for (const file of drift) console.error(`${file} is missing or out of sync with source code`);
+    console.error(
+      "Run 'pnpm --dir docs docs:generate:cua-driver' on the same platform to update documentation"
+    );
+    process.exit(1);
   }
+  console.log(
+    checkOnly
+      ? 'Native and shared references are up to date.'
+      : 'Native and shared references generated.'
+  );
+}
+
+type DocumentationRunner = (
+  binary: string,
+  args: string[],
+  options: { cwd: string; encoding: 'utf-8'; env: NodeJS.ProcessEnv }
+) => string;
+
+export function extractDocumentation(
+  binary: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  run: DocumentationRunner = (command, args, options) => execFileSync(command, args, options)
+): DumpDocsOutput {
+  const policyVariables = new Set(['CUA_DRIVER_POLICY_FILE', 'CUA_DRIVER_MANAGED_POLICY_FILE']);
+  const env = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !policyVariables.has(key.toUpperCase()))
+  );
+  return JSON.parse(
+    run(binary, ['dump-docs', '--type', 'all', '--pretty'], {
+      cwd: CUA_DRIVER_DIR,
+      encoding: 'utf-8',
+      env,
+    })
+  );
+}
+
+export function syncReferences(
+  outputDirectory: string,
+  docs: DumpDocsOutput,
+  version: string,
+  platform: ReferencePlatform,
+  checkOnly: boolean
+): string[] {
+  const files = new Map([
+    ['cli-reference.mdx', generateCLIReferenceMDX(docs.cli, version)],
+    [platform.outputFile, generateMCPToolsMDX(docs.mcp, version, platform)],
+  ]);
+  const drift: string[] = [];
+  if (!checkOnly) fs.mkdirSync(outputDirectory, { recursive: true });
+  for (const [name, content] of files) {
+    const destination = path.join(outputDirectory, name);
+    if (!fs.existsSync(destination) || fs.readFileSync(destination, 'utf-8') !== content) {
+      drift.push(name);
+    }
+    if (!checkOnly) fs.writeFileSync(destination, content);
+  }
+  return drift;
 }
 
 // ============================================================================
@@ -600,13 +600,36 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
 // MCP Tools Generator
 // ============================================================================
 
-export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: string): string {
+export interface ReferencePlatform {
+  host: string;
+  name: string;
+  outputFile: string;
+}
+
+export const referencePlatforms: ReferencePlatform[] = config.generators[
+  'cua-driver'
+].outputs.flatMap((output) =>
+  output.platform ? [{ ...output.platform, outputFile: output.outputFile }] : []
+);
+
+export function referencePlatform(host: string): ReferencePlatform {
+  const platform = referencePlatforms.find((candidate) => candidate.host === host);
+  if (!platform) throw new Error(`Native MCP reference generation is not implemented for ${host}`);
+  return platform;
+}
+
+export function generateMCPToolsMDX(
+  docs: MCPDocumentation,
+  releasedVersion: string,
+  platform: ReferencePlatform
+): string {
   const lines: string[] = [];
 
   // Frontmatter — must be at the very beginning of the file
   lines.push('---');
-  lines.push('title: MCP Tools');
-  lines.push('description: Reference for every MCP tool Cua Driver exposes');
+  const platformName = platform.name;
+  lines.push(`title: MCP Tools (${platformName})`);
+  lines.push(`description: Reference for MCP tools Cua Driver exposes on ${platformName}`);
   lines.push('---');
   lines.push('');
   lines.push(`{/*
@@ -617,6 +640,17 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
 */}`);
   lines.push('');
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
+  lines.push('');
+
+  const otherPlatforms = referencePlatforms
+    .filter((candidate) => candidate.host !== platform.host)
+    .map(
+      (candidate) =>
+        `[${candidate.name} MCP tools](/reference/cua-driver/${candidate.outputFile.replace(/\.mdx$/, '')})`
+    );
+  lines.push(`This reference describes the **${platformName}** native tool registry.`);
+  if (otherPlatforms.length > 0) lines.push(`Other platforms: ${otherPlatforms.join(', ')}.`);
+  lines.push('See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.');
   lines.push('');
 
   // Introduction — mirror the existing hand-written header prose

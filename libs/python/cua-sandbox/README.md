@@ -96,6 +96,22 @@ Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
 
+Fleet sandboxes can also create time-limited, revocable public URLs for an
+exposed service. Treat each URL as a bearer credential and revoke it as soon as
+the recipient no longer needs access.
+
+```python
+signed_url = await sb.services.create_signed_url(
+    "mcp",
+    label="Customer demo",
+    expires_in_seconds=3600,
+)
+print(signed_url.url)
+
+active_urls = await sb.services.list_signed_urls()
+await sb.services.revoke_signed_url(signed_url)
+```
+
 ## Fleet pools and durable claims
 
 For production workloads, claim from an existing pool. Supplying `pool=` never changes its configuration; `name=` names the claim, while `sb.name` is the separately bound sandbox resource.

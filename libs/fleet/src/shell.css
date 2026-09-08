@@ -1,9 +1,142 @@
+/* Same source the docs site uses for --cua-font-docs (src/website/app/app.css)
+   — Urbanist/JetBrains Mono/Instrument Serif ship as local assets (see
+   main.tsx) but Inter doesn't, so it was silently falling back to the
+   system UI font, which reads visibly rougher than actual Inter. */
+@font-face {
+  font-family: "Inter";
+  src: url("https://fonts.gstatic.com/s/inter/v20/UcC73FwrK3iLTeHuS_nVMrMxCp50SjIa1ZL7W0Q5nw.woff2")
+    format("woff2");
+  font-weight: 400 600;
+  font-style: normal;
+  font-display: swap;
+}
+
 html,
 body,
 #root,
 .cua-shell {
   min-height: 100%;
   background: var(--cua-dashboard-background, #000000);
+}
+
+.cua-auth-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  box-sizing: border-box;
+  padding: 32px;
+  background:
+    radial-gradient(ellipse 90% 70% at 6% 104%, #173249 0%, #111d2a 38%, #07080a 74%),
+    #07080a;
+  color: var(--cua-dashboard-text, #f6f8fb);
+  font-family: var(--cua-dashboard-font-body, "Urbanist", sans-serif);
+}
+
+.cua-auth-error__panel {
+  width: min(100%, 420px);
+}
+
+.cua-auth-error__brand {
+  margin: 0 0 32px;
+  font-size: 16px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.cua-auth-error h1 {
+  margin: 0;
+  font-family: var(--cua-dashboard-font-display, "Instrument Serif", serif);
+  font-size: clamp(38px, 8vw, 52px);
+  font-weight: 400;
+  letter-spacing: -0.025em;
+  line-height: 1;
+}
+
+.cua-auth-error p:not(.cua-auth-error__brand) {
+  margin: 18px 0 0;
+  color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.72));
+  font-size: 15px;
+  line-height: 1.55;
+}
+
+.cua-auth-error code {
+  display: block;
+  margin-top: 20px;
+  padding: 12px 14px;
+  overflow-wrap: anywhere;
+  border: 1px solid var(--cua-color-line-soft, rgba(255, 255, 255, 0.12));
+  border-radius: var(--cua-radius-control, 10px);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--cua-color-text-body, rgba(224, 230, 238, 0.84));
+  font-family: var(--cua-dashboard-font-mono, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.cua-auth-error button {
+  min-height: 48px;
+  margin-top: 24px;
+  padding: 0 22px;
+  border: 1px solid var(--cua-color-brand-primary, #9fd7ff);
+  border-radius: var(--cua-radius-control, 10px);
+  background: var(--cua-action-primary-background, #9fd7ff);
+  color: var(--cua-action-primary-foreground, #07131e);
+  cursor: pointer;
+  font: 600 14px/1 var(--cua-dashboard-font-body, "Urbanist", sans-serif);
+}
+
+.cua-auth-error button:focus-visible {
+  outline: 3px solid var(--cua-color-brand-primary, #9fd7ff);
+  outline-offset: 3px;
+}
+
+/* Cloudscape's Link component hardcodes text-decoration-line: underline
+   across many variant/state rules (default, hover/focus/active, recovery,
+   info, top-navigation…) — no typed theming token controls this (checked
+   internal/generated/theming) — so every one of them needs a blanket,
+   unconditional override rather than chasing each state individually. */
+[class*="awsui_link_"]:not(#\9) {
+  text-decoration-line: none !important;
+}
+
+/* Cloudscape form-control theming. applyTheme() in main.tsx only covers
+   the token names exposed by the theming API's typed surface — these are
+   the raw generated CSS custom properties the Input/Textarea/Select/
+   PropertyFilter etc. controls actually read (see e.g.
+   node_modules/@cloudscape-design/components/input/styles.scoped.css),
+   which have no typed equivalent, so they're set directly here instead. */
+/* !important on every custom property here: @cloudscape-design/components
+   applyTheme() (main.tsx) injects its own generated stylesheet at runtime,
+   which redefines the FULL set of design tokens (including ones we never
+   passed it) and loads after this file in the DOM — so a plain :root
+   declaration of equal specificity loses to it on load order alone. */
+:root {
+  /* colorBackgroundInputDefault, colorBorderInputDefault and
+     spaceFieldVertical are set via the typed applyTheme() API in
+     main.tsx instead — no typed equivalent exists for these two. */
+  --awsui-style-placeholder-font-style-6b9ypa: normal !important;
+  --color-text-body-default-vvtq8u: var(--cua-color-text-body, rgba(224, 230, 238, 0.84)) !important;
+
+  /* Button "normal" variant — grayscale cua secondary-action tokens
+     instead of Cloudscape's default light-blue. */
+  --color-background-button-normal-default-7f99mv: var(--cua-action-secondary-application-background, #202124) !important;
+  --color-text-button-normal-default-nzalii: var(--cua-action-secondary-application-foreground, rgba(255, 255, 255, 0.86)) !important;
+  --color-border-button-normal-default-glqfp1: var(--cua-action-secondary-application-border, rgba(255, 255, 255, 0.1)) !important;
+  --color-background-button-normal-hover-53op9s: var(--cua-color-surface-card-hover, #222222) !important;
+  --color-border-button-normal-hover-6a2tdq: var(--cua-action-secondary-application-hover-border, rgba(255, 255, 255, 0.22)) !important;
+  --color-text-button-normal-hover-gusgyv: var(--cua-action-secondary-application-hover-foreground, #ffffff) !important;
+  --color-background-button-normal-active-5imwxd: var(--cua-color-surface-card-hover, #222224) !important;
+  --color-border-button-normal-active-ru7yhb: var(--cua-action-secondary-application-hover-border, rgba(255, 255, 255, 0.22)) !important;
+  --color-text-button-normal-active-vihsxh: var(--cua-action-secondary-application-hover-foreground, #ffffff) !important;
+}
+
+/* Match the input's outer box model to CuaButton's wrapper (shell.css
+   .cua-dashboard-button), which has no external margin of its own — so
+   the property filter and the refresh button sit flush in the same row. */
+[class*="awsui_input-container"]:not(#\9),
+[class*="awsui_select-trigger"]:not(#\9) {
+  margin: 0;
+  vertical-align: middle;
 }
 
 .cua-shell {
@@ -18,6 +151,8 @@ body,
 }
 
 .cua-shell__topnav {
+  position: sticky;
+  top: 0;
   z-index: 1000;
   overflow: visible;
   background: var(--cua-dashboard-background);
@@ -58,17 +193,299 @@ body,
 
 .cua-shell__nav {
   font-size: 14px;
+  background: #000;
+  overflow-x: hidden;
+}
+
+/* app-layout / content-layout content-header bottom padding — no typed
+   theming token exists for this (checked internal/generated/theming), and
+   the CSS custom property backing it (--space-content-header-padding-
+   bottom-*) carries a build-generated hash suffix that isn't guaranteed
+   stable across a Cloudscape version bump, so target the semantic class
+   substring instead — the "header-wrapper" part of the name is what's
+   actually stable, the hash is not. */
+[class*="header-wrapper_"]:not(#\9) {
+  padding-block-end: 0 !important;
+}
+
+/* Container's border (e.g. "Create API key") is drawn on the compound
+   selector root.variant-default/variant-stacked.refresh — matching all
+   three class-name fragments (rather than the generic "awsui_root_" alone,
+   which many other components also use) keeps this scoped to Container. */
+.cua-shell [class*="variant-default_"][class*="_refresh_"]:not(#\9),
+.cua-shell [class*="variant-stacked_"][class*="_refresh_"]:not(#\9) {
+  border: none !important;
+}
+
+/* Cloudscape's navigation drawer panel + its collapse control — force
+   solid black and lock the drawer permanently open (see App.tsx, which
+   also pins navigationOpen=true and no-ops onNavigationChange). The
+   `:not(#\9)` suffix matches Cloudscape's own specificity-boost trick so
+   these overrides win regardless of load order. */
+[class*="awsui_navigation_"]:not(#\9),
+[class*="awsui_navigation-container_"]:not(#\9) {
+  background: #000 !important;
+  background-color: #000 !important;
+}
+
+[class*="awsui_list_"][class*="awsui_list-variant-root_"]:not(#\9),
+[class*="awsui_list-variant-expandable-link-group_"]:not(#\9),
+.cua-shell__nav [class*="awsui_list_"]:not(#\9) {
+  padding-inline-start: 0 !important;
+  padding-inline-end: 0 !important;
+}
+
+[class*="awsui_section_"]:not(#\9),
+[class*="awsui_expandable-link-group_"]:not(#\9) {
+  margin-inline-start: 0 !important;
+  margin-block: 0 !important;
+}
+
+/* The ExpandableSection root nested inside SideNavigation's "Threads"
+   section — requiring both class fragments together (rather than the
+   generic "awsui_root_" alone, which many components use) keeps this
+   scoped to that nested composition specifically. */
+.cua-shell__nav [class*="awsui_section_"][class*="awsui_root_"]:not(#\9) {
+  width: 100%;
+}
+
+/* No collapse/expand caret on "Recent agents" — it's a flat list, not a
+   collapsible group. */
+.cua-shell__nav [class*="awsui_section_"] [class*="icon-container"] {
+  display: none !important;
+}
+
+.cua-shell__nav [class*="awsui_divider-default_"]:not(#\9) {
+  margin-block: 12px !important;
+}
+
+/* Thread rows (New thread / individual threads / Archived threads) sit
+   under an expandable-link-group — sized down to just fit their own text
+   instead of the standard 36px nav-row height, since "Recent agents" is
+   a denser list, not a set of primary destinations like Pools/Usage. */
+[class*="awsui_list-variant-expandable-link-group_"] [class*="awsui_link_"]:not(#\9) {
+  min-height: 0;
+  padding-block: 2px;
+}
+
+.cua-shell__nav [class*="awsui_link_"]:not(#\9) {
+  padding-inline-start: 12px;
+  padding-inline-end: 12px;
+  padding-block: 4px;
+}
+
+.cua-shell__nav [class*="awsui_link_"]:not(#\9):not([class*="awsui_link-active_"]) {
+  opacity: 0.75;
+}
+
+.cua-shell__nav [class*="awsui_list-item_"]:not(#\9) {
+  margin-block: 2px;
+}
+
+[class*="awsui_list-variant-expandable-link-group_"] [class*="awsui_list-item_"]:not(#\9) {
+  margin-block: 0;
+}
+
+/* Desktop/tablet: sidebar is pinned open, no collapse control (matches
+   the App.tsx navigationOpen logic — pinned above this same breakpoint).
+   Below it, mobile keeps the toggle so the drawer can still be closed. */
+@media (min-width: 1024px) {
+  [class*="navigation-toggle"]:not(#\9),
+  [class*="navigation-close"]:not(#\9),
+  button[aria-label="Open navigation"],
+  button[aria-label="Close navigation"] {
+    display: none !important;
+  }
+}
+
+/* Below 1024px, these two are visible again (see above) — center their
+   icon directly with flex instead of relying on Cloudscape's own
+   margin-inline:auto/inset-inline:0 centering trick, which these two
+   buttons render off-center on this build. Scoped to the same breakpoint
+   as the hide rule above — an unconditional display:inline-flex here
+   would win over that rule's display:none on desktop, since it's later
+   in the cascade at equal specificity/importance. */
+@media (max-width: 1023px) {
+  [class*="awsui_navigation-toggle_"]:not(#\9),
+  [class*="awsui_navigation-close_"]:not(#\9) {
+    display: inline-flex !important;
+    align-items: center;
+    justify-content: center;
+  }
+
+  [class*="awsui_navigation-toggle_"]:not(#\9) [class*="awsui_icon_"]:not(#\9),
+  [class*="awsui_navigation-close_"]:not(#\9) [class*="awsui_icon_"]:not(#\9) {
+    position: static !important;
+    margin: 0 !important;
+    inset: auto !important;
+  }
+}
+
+[class*="awsui_top-navigation_"]:not(#\9) {
+  background: rgba(0, 0, 0, 1) !important;
+  background-color: rgba(0, 0, 0, 1) !important;
+  backdrop-filter: blur(16px) saturate(140%);
+  -webkit-backdrop-filter: blur(16px) saturate(140%);
+  /* colorBorderDividerDefault (applyTheme, main.tsx) doesn't reach this
+     element's border-block-end — still resolves to Cloudscape's own
+     unthemed #c6c6cd fallback — so pin it directly here. */
+  border-block-end-color: var(--cua-color-line-soft, rgba(255, 255, 255, 0.12)) !important;
+  /* Cloudscape hardcodes "auto" here — the docs header (Tailwind
+     Preflight) gets antialiased/grayscale smoothing for free, which is
+     why its text reads smoother at the same font. */
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+}
+
+/* Docs header: h-[60px], pl-3/pl-5/pl-6 responsive → 24px at this
+   breakpoint (DocsHeader.tsx). Cloudscape's own padding-box defaults to
+   56px tall with 32px left padding. */
+[class*="awsui_padding-box_"]:not(#\9) {
+  block-size: 59px !important;
+  padding-inline-start: 24px !important;
+}
+
+/* Matches the Cua docs header identity: a separate icon mark (22-24px)
+   plus wordmark text, rather than a single lockup image. */
+.cua-shell__topnav img[alt="Cua"] {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+[class*="awsui_logo_"]:not(#\9) {
+  margin-inline-end: 0.5rem !important;
+}
+
+.cua-shell__topnav [class*="awsui_title_"]:not(#\9) {
+  font-family: var(--cua-font-docs, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif) !important;
+  font-size: 18px !important;
+  font-weight: 500 !important;
+  line-height: 1 !important;
+  letter-spacing: normal !important;
+  color: var(--cua-color-text-strong, #f6f8fb) !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+}
+
+/* The info/badge span (e.g. the "Admin" badge) is Cloudscape's markup as
+   a SIBLING of <a>, both children of <li> — not nested inside the link —
+   so it needs the list-item itself turned into the flex row for it to
+   sit inline with the icon/text instead of dropping to its own line. */
+.cua-shell__nav [class*="awsui_list-item_"]:not(#\9) {
+  margin-inline: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.cua-shell__nav [class*="awsui_list-item_"]:not(#\9) > a {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.cua-shell__nav [class*="awsui_list-item_"]:not(#\9) > [class*="awsui_info_"] {
+  flex: 0 0 auto;
+  margin-inline-start: 0;
+}
+
+/* Typography matched to the Cua docs sidebar's section/link buttons
+   (font-medium text-[14px] leading-5, .font-docs → --cua-font-docs). */
+.cua-shell__nav a:not(#\9) {
+  box-sizing: border-box;
+  display: flex !important;
+  flex-wrap: nowrap !important;
+  align-items: center !important;
+  gap: 6px;
+  min-height: 36px;
+  border-radius: var(--cua-radius-control, 10px);
+  color: var(--cua-color-text-strong, #f6f8fb) !important;
+  background-color: transparent;
+  font-family: var(--cua-font-docs, "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif) !important;
+  font-size: 14px !important;
+  font-weight: 500 !important;
+  line-height: 20px !important;
+  letter-spacing: normal !important;
+  -webkit-font-smoothing: antialiased !important;
+  -moz-osx-font-smoothing: grayscale !important;
+}
+
+.cua-shell__nav a:not(#\9):hover {
+  background-color: var(--cua-color-surface-elevated-1, #181818) !important;
+}
+
+.cua-shell__nav [class*="awsui_link-active_"]:not(#\9) {
+  font-weight: 700;
+  background-color: var(--cua-color-surface-elevated-2, #212121) !important;
+}
+
+.cua-shell__nav .cua-nav-icon {
+  display: grid;
+  flex: 0 0 auto;
+  place-content: center;
+  width: 36px;
+  height: 36px;
+  margin-inline-start: -8px;
+}
+
+.cua-shell__nav .cua-nav-icon svg {
+  width: 16px;
+  height: 16px;
+}
+
+[class*="awsui_list-variant-expandable-link-group_"] .cua-nav-icon {
+  width: 20px;
+  height: 20px;
+  margin-inline-start: 0;
+}
+
+/* "Threads" section header — sized/colored like the app's eyebrow label
+   (.cua-pagehead__eyebrow) instead of Cloudscape's bold heading. Margin
+   goes on the text itself, not the header row/button, so the row's own
+   click target and padding stay untouched. */
+.cua-shell__nav [class*="awsui_header-text_"]:not(#\9) {
+  margin-inline-start: 8px;
+  color: var(--cua-color-text-muted, rgba(224, 230, 238, 0.68)) !important;
+  font-family: var(--cua-dashboard-font-mono, monospace) !important;
+  font-size: var(--cua-dashboard-eyebrow-size, 11px) !important;
+  font-weight: 500 !important;
+  letter-spacing: var(--cua-dashboard-eyebrow-tracking, 0.08em) !important;
+  text-transform: uppercase !important;
+}
+
+.cua-shell__nav a:not(#\9) > *:not(.cua-nav-icon) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cua-shell__nav [class*="awsui_info_"]:not(#\9) {
+  display: inline-flex !important;
+  flex: 0 0 auto;
+  align-items: center;
+  overflow: visible;
+  white-space: nowrap;
+}
+
+.cua-shell__nav [class*="awsui_info_"] [class*="awsui_badge"] {
+  border-radius: 4px !important;
+  flex-shrink: 0;
+}
+
+.cua-shell__nav [class*="icon-container"] {
+  opacity: 0.5;
 }
 
 .cua-pagehead {
   box-sizing: border-box;
-  min-height: 96px;
+  margin-bottom: 0;
   padding: 18px 0 14px;
   --cua-pagehead-bleed: var(--cua-layout-application-inline);
 }
 
 .cua-pagehead__eyebrow {
-  margin: 0 0 10px;
+  margin: 0;
   color: var(--cua-color-text-muted);
   font-family: var(--cua-dashboard-font-mono);
   font-size: var(--cua-dashboard-eyebrow-size);
@@ -116,6 +533,28 @@ body,
   border-radius: var(--cua-radius-control);
 }
 
+.cua-page-table [class*="awsui_row_"]:not(#\9) {
+  box-sizing: border-box;
+  height: 60px;
+}
+
+/* Row divider lines hidden — scoped to just table rows rather than the
+   shared colorBorderDividerSecondary token, which is also used for other
+   dividers elsewhere in the app. */
+.cua-page-table [class*="awsui_body-cell_"]:not(#\9) {
+  border-block-end: none !important;
+}
+
+/* Tabs (e.g. "Instances | Configuration"): hide the bottom rule under the
+   whole tab bar and the "|" separator between tab items. */
+[class*="awsui_tabs-header-with-divider_"]:not(#\9) {
+  border-block-end: none !important;
+}
+
+[class*="awsui_tabs-tab-header-container_"]:not(#\9)::before {
+  border-inline-end: none !important;
+}
+
 .cua-visually-hidden {
   position: absolute;
   width: 1px;
@@ -136,6 +575,64 @@ body,
   white-space: nowrap;
 }
 
+.cua-instance-log-view {
+  box-sizing: border-box;
+  height: clamp(360px, 60vh, 720px);
+  overflow: hidden;
+  border: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: var(--cua-radius-control);
+  background:
+    linear-gradient(180deg, rgba(159, 215, 255, 0.035), transparent 72px),
+    #0a0d10;
+}
+
+#cua-dashboard-root .cua-instance-log-lines {
+  box-sizing: border-box;
+  padding: 12px 0;
+  background: transparent;
+  color: #d9e4ec;
+  font-family: var(--cua-dashboard-font-mono, monospace);
+  font-size: 12px;
+  tab-size: 2;
+}
+
+#cua-dashboard-root .cua-instance-log-lines .log-line {
+  padding: 0 16px;
+}
+
+#cua-dashboard-root .cua-instance-log-lines .log-line:hover {
+  background: rgba(159, 215, 255, 0.055);
+}
+
+#cua-dashboard-root .cua-instance-log-search {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--cua-color-border-subtle, rgba(255, 255, 255, 0.12));
+  background: rgba(255, 255, 255, 0.025);
+  color: #d9e4ec;
+  font-family: var(--cua-dashboard-font-mono, monospace);
+}
+
+#cua-dashboard-root .cua-instance-log-search input {
+  min-width: min(280px, 45vw);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: #11161b;
+  color: #f6f8fb;
+  font-family: inherit;
+}
+
+#cua-dashboard-root .cua-instance-log-search input:focus {
+  border-color: #9fd7ff;
+  outline: 2px solid rgba(159, 215, 255, 0.22);
+  outline-offset: 1px;
+}
+
+#cua-dashboard-root .cua-instance-log-search button {
+  color: #d9e4ec;
+}
+
 #cua-dashboard-root .cua-dashboard-button button {
   appearance: none;
   display: inline-flex;
@@ -154,7 +651,7 @@ body,
 #cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled),
 #cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled):hover,
 #cua-dashboard-root .cua-dashboard-button--primary button:not(:disabled):active {
-  border-color: transparent;
+  border: none;
   background: var(--cua-action-primary-background);
   box-shadow: none;
   color: var(--cua-action-primary-foreground);
@@ -267,7 +764,6 @@ body#cua-dashboard-root[data-awsui-focus-visible="true"]
 
 @media (max-width: 687px) {
   .cua-pagehead {
-    min-height: 96px;
     padding-top: 16px;
   }
 

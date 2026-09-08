@@ -4,7 +4,7 @@
 // tests we intercept every outbound request so no real Keycloak or K8s
 // cluster is needed.
 
-import type { Page } from "@playwright/test"
+import type { Page } from "@playwright/test";
 
 // ---------------------------------------------------------------------------
 // Keycloak auth mocking
@@ -39,7 +39,7 @@ const FAKE_TOKEN =
       aud: "cyclops-cs-spa",
     }),
   ) +
-  ".fake-signature"
+  ".fake-signature";
 
 /**
  * Stub Keycloak auth so the AuthProvider renders children immediately.
@@ -52,21 +52,23 @@ const FAKE_TOKEN =
  * This avoids the real keycloak-js redirecting to the Keycloak login page.
  */
 export interface MockFeatureFlags {
-  admin?: boolean
-  billing?: boolean
-  chat?: boolean
+  admin?: boolean;
+  billing?: boolean;
+  chat?: boolean;
+  usage?: boolean;
+  usagePricing?: { vcpuHourUSD: number; memoryGiBHourUSD: number };
 }
 
 export interface MockAuthOptions {
-  holdConfig?: boolean
-  holdAuth?: boolean
-  initRejects?: boolean
-  refreshFails?: boolean
+  holdConfig?: boolean;
+  holdAuth?: boolean;
+  initRejects?: boolean;
+  refreshFails?: boolean;
 }
 
 export interface MockAuthControl {
-  releaseConfig(): void
-  releaseAuth(): Promise<void>
+  releaseConfig(): void;
+  releaseAuth(): Promise<void>;
 }
 
 export async function mockAuth(
@@ -74,11 +76,11 @@ export async function mockAuth(
   flags: MockFeatureFlags = {},
   options: MockAuthOptions = {},
 ): Promise<MockAuthControl> {
-  const config = deferred()
-  if (!options.holdConfig) config.resolve()
-  const holdAuth = options.holdAuth ?? false
-  const initRejects = options.initRejects ?? false
-  const refreshFails = options.refreshFails ?? false
+  const config = deferred();
+  if (!options.holdConfig) config.resolve();
+  const holdAuth = options.holdAuth ?? false;
+  const initRejects = options.initRejects ?? false;
+  const refreshFails = options.refreshFails ?? false;
   // Intercept the Vite pre-bundled keycloak-js module. Vite serves
   // node_modules deps from /.vite/deps/ or /node_modules/.vite/deps/.
   // Replace the entire module with a stub Keycloak class.
@@ -114,6 +116,7 @@ export async function mockAuth(
             this.realmAccess = { roles: [] };
             this.resourceAccess = {};
             this.subject = "test-user-id";
+            this.sessionId = "test-session-id";
           }
           async init(options) {
             window.__MOCK_KEYCLOAK__.initOptions = options;
@@ -155,36 +158,241 @@ export async function mockAuth(
         export default Keycloak;
         export { Keycloak };
       `,
-    })
-  })
+    });
+  });
 
-  await page.route("**/api/config", async route => {
-    await config.promise
+  await page.route("**/api/config", async (route) => {
+    await config.promise;
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
         admin: flags.admin ?? false,
         billing: flags.billing ?? false,
         chat: flags.chat ?? false,
+        usage: flags.usage ?? false,
+        usage_pricing: {
+          vcpu_hour_usd: flags.usagePricing?.vcpuHourUSD ?? 0.044625,
+          memory_gib_hour_usd: flags.usagePricing?.memoryGiBHourUSD ?? 0.0223125,
+        },
       }),
-    })
-  })
+    });
+  });
 
   // Intercept any stray Keycloak endpoint requests
   await page.route("**/realms/cyclops-cs/**", (route) =>
     route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
-  )
+  );
 
   return {
     releaseConfig: config.resolve,
     releaseAuth: () =>
       page.evaluate(() => {
-        const control = (window as unknown as {
-          __MOCK_KEYCLOAK__: { releaseAuth(): void }
-        }).__MOCK_KEYCLOAK__
-        control.releaseAuth()
+        const control = (
+          window as unknown as {
+            __MOCK_KEYCLOAK__: { releaseAuth(): void };
+          }
+        ).__MOCK_KEYCLOAK__;
+        control.releaseAuth();
       }),
-  }
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Feature flags / per-user config mocking
+// ---------------------------------------------------------------------------
+
+export async function mockConfigApi(
+  page: Page,
+  config: { admin: boolean; billing?: boolean },
+): Promise<void> {
+  await page.route("**/api/config", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ billing: false, ...config }),
+    }),
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Admin feature flags API mocking
+// ---------------------------------------------------------------------------
+
+export type MockFeatureFlagValueType = "boolean" | "number" | "string" | "json";
+export type MockFeatureFlagOwnership = "terraform" | "ad_hoc" | "external";
+
+export interface MockAdminFeatureFlag {
+  key: string;
+  path: string;
+  value_type: MockFeatureFlagValueType;
+  value: unknown;
+  raw_value: string;
+  ownership: MockFeatureFlagOwnership;
+  managed_by?: string;
+  deletable: boolean;
+  version: number;
+  modified_at: string;
+  description?: string;
+  tags: Record<string, string>;
+}
+
+export interface MockFeatureFlagRequest {
+  method: string;
+  key?: string;
+  body?: Record<string, unknown>;
+}
+
+export const DEFAULT_ADMIN_FEATURE_FLAGS: MockAdminFeatureFlag[] = [
+  {
+    key: "admin-subs",
+    path: "/feature-flags/cyclops-cs/admin-subs",
+    value_type: "json",
+    value: ["test-user-id", "other-admin"],
+    raw_value: '["test-user-id","other-admin"]',
+    ownership: "terraform",
+    managed_by: "terraform",
+    deletable: false,
+    version: 7,
+    modified_at: "2026-08-12T10:15:00Z",
+    description: "Cyclops administrators",
+    tags: { ManagedBy: "Terraform" },
+  },
+  {
+    key: "new-checkout",
+    path: "/feature-flags/cyclops-cs/new-checkout",
+    value_type: "boolean",
+    value: true,
+    raw_value: "true",
+    ownership: "ad_hoc",
+    managed_by: "cyclops-cs",
+    deletable: true,
+    version: 3,
+    modified_at: "2026-08-13T08:30:00Z",
+    description: "Enable the checkout experiment",
+    tags: { ManagedBy: "cyclops-cs" },
+  },
+  {
+    key: "legacy-threshold",
+    path: "/feature-flags/cyclops-cs/legacy-threshold",
+    value_type: "number",
+    value: 12.5,
+    raw_value: "12.5",
+    ownership: "external",
+    managed_by: "migration-tool",
+    deletable: false,
+    version: 11,
+    modified_at: "2026-08-11T17:45:00Z",
+    tags: {},
+  },
+];
+
+function rawFeatureFlagValue(
+  value: unknown,
+  valueType: MockFeatureFlagValueType,
+): string {
+  if (valueType === "string") return String(value);
+  return JSON.stringify(value);
+}
+
+export async function mockAdminFeatureFlagsApi(
+  page: Page,
+  initialFlags: MockAdminFeatureFlag[] = DEFAULT_ADMIN_FEATURE_FLAGS,
+): Promise<{
+  flags: MockAdminFeatureFlag[];
+  requests: MockFeatureFlagRequest[];
+}> {
+  const flags = initialFlags.map((flag) => ({
+    ...flag,
+    tags: { ...flag.tags },
+  }));
+  const requests: MockFeatureFlagRequest[] = [];
+
+  await page.route(
+    /\/api\/admin\/feature-flags(?:\/[^/?]+)?(?:\?.*)?$/,
+    async (route) => {
+      const request = route.request();
+      const url = new URL(request.url());
+      const pathParts = url.pathname.split("/").filter(Boolean);
+      const encodedKey = pathParts.length > 3 ? pathParts.at(-1) : undefined;
+      const key = encodedKey ? decodeURIComponent(encodedKey) : undefined;
+      const body = request.postData()
+        ? (request.postDataJSON() as Record<string, unknown>)
+        : undefined;
+      requests.push({ method: request.method(), key, body });
+
+      if (request.method() === "GET" && !key) {
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(flags),
+        });
+        return;
+      }
+
+      if (request.method() === "POST" && !key && body) {
+        const valueType = body.value_type as MockFeatureFlagValueType;
+        const created: MockAdminFeatureFlag = {
+          key: String(body.key),
+          path: `/feature-flags/cyclops-cs/${String(body.key)}`,
+          value_type: valueType,
+          value: body.value,
+          raw_value: rawFeatureFlagValue(body.value, valueType),
+          ownership: "ad_hoc",
+          managed_by: "cyclops-cs",
+          deletable: true,
+          version: 1,
+          modified_at: "2026-08-13T12:00:00Z",
+          description: body.description ? String(body.description) : undefined,
+          tags: { ManagedBy: "cyclops-cs" },
+        };
+        flags.push(created);
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(created),
+        });
+        return;
+      }
+
+      const index = flags.findIndex((flag) => flag.key === key);
+      if (index < 0) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({
+            code: "flag_not_found",
+            message: "feature flag not found",
+          }),
+        });
+        return;
+      }
+
+      if (request.method() === "PUT" && body) {
+        const valueType = body.value_type as MockFeatureFlagValueType;
+        flags[index] = {
+          ...flags[index],
+          value_type: valueType,
+          value: body.value,
+          raw_value: rawFeatureFlagValue(body.value, valueType),
+          version: flags[index].version + 1,
+          modified_at: "2026-08-13T12:05:00Z",
+        };
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(flags[index]),
+        });
+        return;
+      }
+
+      if (request.method() === "DELETE") {
+        flags.splice(index, 1);
+        await route.fulfill({ status: 204, body: "" });
+        return;
+      }
+
+      await route.continue();
+    },
+  );
+
+  return { flags, requests };
 }
 
 // ---------------------------------------------------------------------------
@@ -192,10 +400,10 @@ export async function mockAuth(
 // ---------------------------------------------------------------------------
 
 export interface MockNamespace {
-  name: string
-  status: string
-  createdAt: string
-  labels: Record<string, string> | null
+  name: string;
+  status: string;
+  createdAt: string;
+  labels: Record<string, string> | null;
 }
 
 const DEFAULT_NAMESPACES: MockNamespace[] = [
@@ -211,7 +419,7 @@ const DEFAULT_NAMESPACES: MockNamespace[] = [
     createdAt: "2026-02-01T12:00:00Z",
     labels: null,
   },
-]
+];
 
 export async function mockNamespacesApi(
   page: Page,
@@ -223,37 +431,37 @@ export async function mockNamespacesApi(
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(namespaces),
-      })
+      });
     } else if (route.request().method() === "POST") {
-      const body = route.request().postDataJSON()
+      const body = route.request().postDataJSON();
       const created: MockNamespace = {
         name: body.name,
         status: "Active",
         createdAt: new Date().toISOString(),
         labels: null,
-      }
-      namespaces.push(created)
+      };
+      namespaces.push(created);
       await route.fulfill({
         status: 201,
         contentType: "application/json",
         body: JSON.stringify(created),
-      })
+      });
     } else {
-      await route.continue()
+      await route.continue();
     }
-  })
+  });
 
   await page.route("**/api/namespaces/*", async (route) => {
     if (route.request().method() === "DELETE") {
-      const url = new URL(route.request().url())
-      const name = url.pathname.split("/").pop()
-      const idx = namespaces.findIndex((ns) => ns.name === name)
-      if (idx >= 0) namespaces.splice(idx, 1)
-      await route.fulfill({ status: 204, body: "" })
+      const url = new URL(route.request().url());
+      const name = url.pathname.split("/").pop();
+      const idx = namespaces.findIndex((ns) => ns.name === name);
+      if (idx >= 0) namespaces.splice(idx, 1);
+      await route.fulfill({ status: 204, body: "" });
     } else {
-      await route.continue()
+      await route.continue();
     }
-  })
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -261,10 +469,10 @@ export async function mockNamespacesApi(
 // ---------------------------------------------------------------------------
 
 export interface MockUserApiKey {
-  id: string
-  client_id: string
-  name: string
-  scope: string[]
+  id: string;
+  client_id: string;
+  name: string;
+  scope: string[];
 }
 
 const DEFAULT_USER_KEYS: MockUserApiKey[] = [
@@ -274,7 +482,7 @@ const DEFAULT_USER_KEYS: MockUserApiKey[] = [
     name: "my-key",
     scope: [],
   },
-]
+];
 
 export async function mockUserKeysApi(
   page: Page,
@@ -285,16 +493,16 @@ export async function mockUserKeysApi(
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify({ keys }),
-      })
+      });
     } else if (route.request().method() === "POST") {
-      const body = route.request().postDataJSON()
+      const body = route.request().postDataJSON();
       const newKey: MockUserApiKey = {
         id: `key-${Date.now()}`,
         client_id: `sa-testuser-${body.name}`,
         name: body.name,
         scope: body.scope ?? [],
-      }
-      keys.push(newKey)
+      };
+      keys.push(newKey);
       await route.fulfill({
         status: 201,
         contentType: "application/json",
@@ -306,23 +514,23 @@ export async function mockUserKeysApi(
           name: newKey.name,
           scope: newKey.scope,
         }),
-      })
+      });
     } else {
-      await route.continue()
+      await route.continue();
     }
-  })
+  });
 
   await page.route("**/api/user-keys/*", async (route) => {
     if (route.request().method() === "DELETE") {
-      const url = new URL(route.request().url())
-      const id = url.pathname.split("/").pop()
-      const idx = keys.findIndex((k) => k.id === id)
-      if (idx >= 0) keys.splice(idx, 1)
-      await route.fulfill({ status: 204, body: "" })
+      const url = new URL(route.request().url());
+      const id = url.pathname.split("/").pop();
+      const idx = keys.findIndex((k) => k.id === id);
+      if (idx >= 0) keys.splice(idx, 1);
+      await route.fulfill({ status: 204, body: "" });
     } else {
-      await route.continue()
+      await route.continue();
     }
-  })
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -330,14 +538,14 @@ export async function mockUserKeysApi(
 // ---------------------------------------------------------------------------
 
 export interface MockGitHubTrustPolicy {
-  id: string
-  owner_sub: string
-  name: string
-  repository: string
-  allowed_namespaces: string[]
-  enabled: boolean
-  created_at: string
-  updated_at: string
+  id: string;
+  owner_sub: string;
+  name: string;
+  repository: string;
+  allowed_namespaces: string[];
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 const DEFAULT_GITHUB_TRUST_POLICIES: MockGitHubTrustPolicy[] = [
@@ -351,7 +559,7 @@ const DEFAULT_GITHUB_TRUST_POLICIES: MockGitHubTrustPolicy[] = [
     created_at: "2026-06-26T10:00:00Z",
     updated_at: "2026-06-26T10:30:00Z",
   },
-]
+];
 
 export async function mockGitHubTrustPoliciesApi(
   page: Page,
@@ -368,11 +576,11 @@ export async function mockGitHubTrustPoliciesApi(
             audience: "fleets",
           },
         }),
-      })
-      return
+      });
+      return;
     }
     if (route.request().method() === "POST") {
-      const body = route.request().postDataJSON()
+      const body = route.request().postDataJSON();
       const created: MockGitHubTrustPolicy = {
         id: `gh-policy-${Date.now()}`,
         owner_sub: "test-user-id",
@@ -382,43 +590,46 @@ export async function mockGitHubTrustPoliciesApi(
         enabled: body.enabled ?? true,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
-      }
-      policies.unshift(created)
+      };
+      policies.unshift(created);
       await route.fulfill({
         status: 201,
         contentType: "application/json",
         body: JSON.stringify(created),
-      })
-      return
+      });
+      return;
     }
-    await route.continue()
-  })
+    await route.continue();
+  });
 
   await page.route("**/api/github-trust-policies/*", async (route) => {
-    const url = new URL(route.request().url())
-    const id = url.pathname.split("/").pop()
-    const policy = policies.find(item => item.id === id)
+    const url = new URL(route.request().url());
+    const id = url.pathname.split("/").pop();
+    const policy = policies.find((item) => item.id === id);
     if (route.request().method() === "PATCH") {
       if (!policy) {
-        await route.fulfill({ status: 404, body: JSON.stringify({ error: "not found" }) })
-        return
+        await route.fulfill({
+          status: 404,
+          body: JSON.stringify({ error: "not found" }),
+        });
+        return;
       }
-      const body = route.request().postDataJSON()
-      Object.assign(policy, body, { updated_at: new Date().toISOString() })
+      const body = route.request().postDataJSON();
+      Object.assign(policy, body, { updated_at: new Date().toISOString() });
       await route.fulfill({
         contentType: "application/json",
         body: JSON.stringify(policy),
-      })
-      return
+      });
+      return;
     }
     if (route.request().method() === "DELETE") {
-      const idx = policies.findIndex(item => item.id === id)
-      if (idx >= 0) policies.splice(idx, 1)
-      await route.fulfill({ status: 204, body: "" })
-      return
+      const idx = policies.findIndex((item) => item.id === id);
+      if (idx >= 0) policies.splice(idx, 1);
+      await route.fulfill({ status: 204, body: "" });
+      return;
     }
-    await route.continue()
-  })
+    await route.continue();
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -433,9 +644,10 @@ export async function mockPoolsApi(page: Page): Promise<void> {
     spec: {
       replicas: 2,
       sandboxTemplateRef: { name: "demo-pool-template" },
+      ttlSecondsAfterCreated: 3600,
     },
     status: { replicas: 2, readyReplicas: 2 },
-  }
+  };
   const template = {
     apiVersion: "osgym.cua.ai/v1alpha1",
     kind: "OSGymSandboxTemplate",
@@ -445,45 +657,57 @@ export async function mockPoolsApi(page: Page): Promise<void> {
         containerDiskImage: "test-image:latest",
         cpuCores: 4,
         memory: "4Gi",
-        services: [],
+        services: [{ name: "mcp", targetPort: 8080, protocol: "TCP" }],
       },
     },
-  }
+  };
 
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxwarmpools",
     async (route) => {
-      const namespace = route.request().url().split("/namespaces/")[1].split("/")[0]
+      const namespace = route
+        .request()
+        .url()
+        .split("/namespaces/")[1]
+        .split("/")[0];
       if (route.request().method() === "GET") {
         await route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify({ items: namespace === "demo-pool" ? [pool] : [] }),
-        })
+          body: JSON.stringify({
+            items: namespace === "demo-pool" ? [pool] : [],
+          }),
+        });
       } else if (route.request().method() === "POST") {
-        const body = route.request().postDataJSON()
+        const body = route.request().postDataJSON();
         await route.fulfill({
           status: 201,
           contentType: "application/json",
-          body: JSON.stringify({ ...body, status: { replicas: body.spec.replicas } }),
-        })
+          body: JSON.stringify({
+            ...body,
+            status: { replicas: body.spec.replicas },
+          }),
+        });
       } else {
-        await route.continue()
+        await route.continue();
       }
     },
-  )
+  );
 
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxwarmpools/demo-pool",
     async (route) => {
       if (route.request().method() === "GET") {
-        await route.fulfill({ contentType: "application/json", body: JSON.stringify(pool) })
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(pool),
+        });
       } else if (route.request().method() === "DELETE") {
-        await route.fulfill({ status: 204, body: "" })
+        await route.fulfill({ status: 204, body: "" });
       } else {
-        await route.continue()
+        await route.continue();
       }
     },
-  )
+  );
 
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxtemplates",
@@ -493,17 +717,165 @@ export async function mockPoolsApi(page: Page): Promise<void> {
           status: 201,
           contentType: "application/json",
           body: route.request().postData() ?? "{}",
-        })
+        });
       } else {
-        await route.continue()
+        await route.continue();
       }
     },
-  )
+  );
 
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxtemplates/demo-pool-template",
     async (route) => {
-      await route.fulfill({ contentType: "application/json", body: JSON.stringify(template) })
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(template),
+      });
+    },
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Instances API mocking (OSGymSandbox CRD)
+// ---------------------------------------------------------------------------
+
+export async function mockInstancesApi(page: Page): Promise<void> {
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxes",
+    async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              apiVersion: "osgym.cua.ai/v1alpha1",
+              kind: "OSGymSandbox",
+              metadata: {
+                name: "vm-xyz789",
+                namespace: "demo-pool",
+                creationTimestamp: "2026-05-28T09:55:00Z",
+                annotations: {
+                  "osgym.cua.ai/origin-warmpool": "demo-pool",
+                  "osgym.cua.ai/origin-warmpool-namespace": "demo-pool",
+                },
+                ownerReferences: [
+                  {
+                    apiVersion: "osgym.cua.ai/v1alpha1",
+                    kind: "OSGymSandboxClaim",
+                    name: "claim-abc123",
+                    uid: "claim-abc123-uid",
+                    controller: true,
+                  },
+                ],
+              },
+              status: { phase: "Ready", ready: true },
+            },
+            {
+              apiVersion: "osgym.cua.ai/v1alpha1",
+              kind: "OSGymSandbox",
+              metadata: {
+                name: "vm-ready456",
+                namespace: "demo-pool",
+                creationTimestamp: "2026-05-28T09:58:00Z",
+                labels: { "osgym.cua.ai/warmpool": "demo-pool" },
+                annotations: {
+                  "osgym.cua.ai/origin-warmpool": "demo-pool",
+                  "osgym.cua.ai/origin-warmpool-namespace": "demo-pool",
+                },
+              },
+              status: { phase: "Ready", ready: true },
+            },
+            {
+              apiVersion: "osgym.cua.ai/v1alpha1",
+              kind: "OSGymSandbox",
+              metadata: {
+                name: "other-pool-instance",
+                namespace: "demo-pool",
+                labels: { "osgym.cua.ai/warmpool": "other-pool" },
+              },
+              status: { phase: "Ready", ready: true },
+            },
+          ],
+        }),
+      })
+    },
+  )
+}
+
+export async function mockInstanceDetailApi(page: Page): Promise<void> {
+  await page.route(
+    "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/demo-pool/osgymsandboxes/vm-xyz789",
+    async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          apiVersion: "osgym.cua.ai/v1alpha1",
+          kind: "OSGymSandbox",
+          metadata: {
+            name: "vm-xyz789",
+            namespace: "demo-pool",
+            creationTimestamp: "2026-05-28T09:55:00Z",
+            annotations: {
+              "osgym.cua.ai/origin-warmpool": "demo-pool",
+              "osgym.cua.ai/origin-warmpool-namespace": "demo-pool",
+            },
+            ownerReferences: [
+              {
+                kind: "OSGymSandboxClaim",
+                name: "claim-abc123",
+                controller: true,
+              },
+            ],
+          },
+          spec: { vmTemplate: { runtime: "kubevirt" } },
+          status: {
+            phase: "Ready",
+            ready: true,
+            vmName: "vm-xyz789",
+          },
+        }),
+      })
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/api/v1/namespaces/demo-pool/pods?labelSelector=*",
+    async route => {
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          items: [
+            {
+              metadata: {
+                name: "virt-launcher-vm-xyz789-abcde",
+                namespace: "demo-pool",
+                creationTimestamp: "2026-05-28T09:55:10Z",
+              },
+              spec: {
+                nodeName: "kubevirt-worker-1",
+                containers: [{ name: "compute" }, { name: "guest-console-log" }],
+              },
+              status: { phase: "Running" },
+            },
+          ],
+        }),
+      })
+    },
+  )
+
+  await page.route(
+    "**/api/k8s/api/v1/namespaces/demo-pool/pods/virt-launcher-vm-xyz789-abcde/log?*",
+    async route => {
+      const url = new URL(route.request().url())
+      const container = url.searchParams.get("container")
+      if (container !== "guest-console-log") {
+        await route.fulfill({ status: 400, body: "unexpected log container" })
+        return
+      }
+      await route.fulfill({
+        contentType: "text/plain",
+        body: "2026-05-28T10:00:00Z guest console ready\n",
+      })
     },
   )
 }
@@ -512,40 +884,80 @@ export async function mockPoolsApi(page: Page): Promise<void> {
 // Claims API mocking (OSGymSandboxClaim CRD)
 // ---------------------------------------------------------------------------
 
-export async function mockClaimsApi(page: Page): Promise<void> {
+export interface MockClaim {
+  name: string;
+  namespace?: string;
+  phase?: "Bound" | "Pending" | "Failed";
+  sandboxName?: string;
+  sandboxService?: string;
+  ttlSecondsAfterCreated?: number;
+}
+
+export interface MockClaimsApiOptions {
+  claims?: MockClaim[];
+}
+
+export interface MockClaimsApiControl {
+  holdNextLists(count?: number): void;
+  releaseLists(): void;
+}
+
+export async function mockClaimsApi(
+  page: Page,
+  options: MockClaimsApiOptions = {},
+): Promise<MockClaimsApiControl> {
+  const claims = options.claims ?? [
+    {
+      name: "claim-abc123",
+      namespace: "demo-pool",
+      phase: "Bound",
+      sandboxName: "vm-xyz789",
+      sandboxService: "vm-xyz789-svc",
+      ttlSecondsAfterCreated: 1800,
+    },
+  ];
+  const heldLists: Array<ReturnType<typeof deferred>> = [];
+  const activeLists = new Set<ReturnType<typeof deferred>>();
+  const items = claims.map((claim) => ({
+    apiVersion: "osgym.cua.ai/v1alpha1",
+    kind: "OSGymSandboxClaim",
+    metadata: {
+      name: claim.name,
+      namespace: claim.namespace ?? "demo-pool",
+      creationTimestamp: "2026-05-28T10:00:00Z",
+    },
+    spec: {
+      sandboxTemplateRef: { name: "demo-pool-template" },
+      warmpool: "demo-pool",
+      ttlSecondsAfterCreated: claim.ttlSecondsAfterCreated,
+    },
+    status: {
+      phase: claim.phase ?? "Bound",
+      ...(claim.phase === "Pending" ? {} : {
+        sandbox: {
+          name: claim.sandboxName ?? `${claim.name}-sandbox`,
+          service: claim.sandboxService ?? `${claim.name}-svc`,
+        },
+      }),
+    },
+  }));
+
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxclaims",
     async (route) => {
       if (route.request().method() === "GET") {
+        const heldList = heldLists.shift();
+        if (heldList) {
+          activeLists.add(heldList);
+          await heldList.promise;
+          activeLists.delete(heldList);
+        }
         await route.fulfill({
           contentType: "application/json",
-          body: JSON.stringify({
-            items: [
-              {
-                apiVersion: "osgym.cua.ai/v1alpha1",
-                kind: "OSGymSandboxClaim",
-                metadata: {
-                  name: "claim-abc123",
-                  namespace: "demo-pool",
-                  creationTimestamp: "2026-05-28T10:00:00Z",
-                },
-                spec: {
-                  sandboxTemplateRef: { name: "demo-pool-template" },
-                  warmpool: "demo-pool",
-                },
-                status: {
-                  phase: "Bound",
-                  sandbox: {
-                    name: "vm-xyz789",
-                    service: "vm-xyz789-svc",
-                  },
-                },
-              },
-            ],
-          }),
-        })
+          body: JSON.stringify({ items }),
+        });
       } else if (route.request().method() === "POST") {
-        const body = route.request().postDataJSON()
+        const body = route.request().postDataJSON();
         await route.fulfill({
           status: 201,
           contentType: "application/json",
@@ -560,88 +972,110 @@ export async function mockClaimsApi(page: Page): Promise<void> {
             spec: body.spec,
             status: { phase: "Pending" },
           }),
-        })
+        });
       } else {
-        await route.continue()
+        await route.continue();
       }
     },
-  )
+  );
 
   // DELETE for individual claims
   await page.route(
     "**/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/*/osgymsandboxclaims/*",
     async (route) => {
       if (route.request().method() === "DELETE") {
-        await route.fulfill({ status: 200, body: "{}" })
+        await route.fulfill({ status: 200, body: "{}" });
       } else {
-        await route.continue()
+        await route.continue();
       }
     },
-  )
-}
+  );
 
+  return {
+    holdNextLists(count = 1) {
+      for (let index = 0; index < count; index += 1) heldLists.push(deferred());
+    },
+    releaseLists() {
+      for (const list of [...heldLists.splice(0), ...activeLists]) list.resolve();
+    },
+  };
+}
 
 // ---------------------------------------------------------------------------
 // Chat API mocking
 // ---------------------------------------------------------------------------
 
 export interface MockChatMessage {
-  id: string
-  role: "user" | "assistant" | "tool"
-  content: string
-  created_at: string
-  tool_call_id?: string
+  id: string;
+  role: "user" | "assistant" | "tool";
+  content: string;
+  created_at: string;
+  tool_call_id?: string;
   tool_calls?: Array<{
-    id: string
-    type: "function"
-    function: { name: string; arguments: string }
-  }>
+    id: string;
+    type: "function";
+    function: { name: string; arguments: string };
+  }>;
 }
 
 export interface MockChatConversation {
-  id: string
-  title: string
-  created_at: string
-  updated_at: string
-  messages: MockChatMessage[]
+  id: string;
+  title: string;
+  created_at: string;
+  updated_at: string;
+  archived_at?: string;
+  messages: MockChatMessage[];
 }
 
 export interface MockChatApiOptions {
-  conversations?: MockChatConversation[]
-  holdList?: boolean
-  holdConversation?: boolean
-  turns?: MockChatTurn[]
-  refreshError?: { afterTurnRequests: number; message: string }
-  holdRefresh?: boolean
-  createError?: { message: string }
+  conversations?: MockChatConversation[];
+  holdList?: boolean;
+  listError?: { message: string };
+  listErrorAfterPatch?: { message: string };
+  holdConversation?: boolean;
+  turns?: MockChatTurn[];
+  refreshError?: { afterTurnRequests: number; message: string };
+  holdRefresh?: boolean;
+  createError?: { message: string };
+  holdPatch?: boolean;
+  holdCreate?: boolean;
 }
 
 export interface MockChatApiControl {
-  authorizationHeaders: string[]
-  createRequests: number
-  turnRequests: Array<{ conversationId: string; messages: Array<Record<string, unknown>> }>
-  releaseList(): void
-  releaseConversation(): void
-  releaseRefresh(): void
-  releaseTurn(): void
+  authorizationHeaders: string[];
+  createRequests: number;
+  listRequests: number;
+  turnRequests: Array<{
+    conversationId: string;
+    messages: Array<Record<string, unknown>>;
+  }>;
+  patchRequests: Array<{ conversationId: string; archived: boolean }>;
+  remainingTurns: number;
+  releaseList(): void;
+  releaseConversation(): void;
+  releaseRefresh(): void;
+  releaseTurn(): void;
+  releasePatch(): void;
+  releaseCreate(): void;
 }
 
 export interface MockChatTurn {
-  events?: Array<Record<string, unknown>>
-  error?: { status: number; message: string }
-  hold?: boolean
+  events?: Array<Record<string, unknown>>;
+  error?: { status: number; message: string };
+  hold?: boolean;
+  archiveBeforeError?: boolean;
 }
 
 function deferred(): { promise: Promise<void>; resolve: () => void } {
-  let resolve = () => {}
-  const promise = new Promise<void>(complete => {
-    resolve = complete
-  })
-  return { promise, resolve }
+  let resolve = () => {};
+  const promise = new Promise<void>((complete) => {
+    resolve = complete;
+  });
+  return { promise, resolve };
 }
 
 function defaultChatConversations(): MockChatConversation[] {
-  const now = new Date().toISOString()
+  const now = new Date().toISOString();
   return [
     {
       id: "conversation-1",
@@ -663,151 +1097,493 @@ function defaultChatConversations(): MockChatConversation[] {
         },
       ],
     },
-  ]
+    {
+      id: "archived-conversation-1",
+      title: "Archived browser task",
+      created_at: now,
+      updated_at: now,
+      archived_at: now,
+      messages: [],
+    },
+  ];
 }
 
 export async function mockChatApi(
   page: Page,
   options: MockChatApiOptions = {},
 ): Promise<MockChatApiControl> {
-  const conversations = options.conversations ?? defaultChatConversations()
-  const authorizationHeaders: string[] = []
-  const createRequests = { count: 0 }
-  const turnRequests: Array<{ conversationId: string; messages: Array<Record<string, unknown>> }> = []
-  const list = deferred()
-  const conversation = deferred()
-  const refresh = deferred()
-  const turnGate = deferred()
-  const turns = [...(options.turns ?? [])]
-  let refreshFailuresRemaining = options.refreshError ? 1 : 0
-  let createFailuresRemaining = options.createError ? 1 : 0
+  const conversations = options.conversations ?? defaultChatConversations();
+  const authorizationHeaders: string[] = [];
+  const createRequests = { count: 0 };
+  const listRequests = { count: 0 };
+  const turnRequests: Array<{
+    conversationId: string;
+    messages: Array<Record<string, unknown>>;
+  }> = [];
+  const patchRequests: Array<{ conversationId: string; archived: boolean }> =
+    [];
+  const list = deferred();
+  const conversation = deferred();
+  const refresh = deferred();
+  const turnGate = deferred();
+  const patch = deferred();
+  const create = deferred();
+  const turns = [...(options.turns ?? [])];
+  let refreshFailuresRemaining = options.refreshError ? 1 : 0;
+  let postPatchListFailuresRemaining = options.listErrorAfterPatch ? 1 : 0;
+  let createFailuresRemaining = options.createError ? 1 : 0;
 
-  if (!options.holdList) list.resolve()
-  if (!options.holdConversation) conversation.resolve()
-  if (!options.holdRefresh) refresh.resolve()
-  if (!turns.some(item => item.hold)) turnGate.resolve()
+  if (!options.holdList) list.resolve();
+  if (!options.holdConversation) conversation.resolve();
+  if (!options.holdRefresh) refresh.resolve();
+  if (!turns.some((item) => item.hold)) turnGate.resolve();
+  if (!options.holdPatch) patch.resolve();
+  if (!options.holdCreate) create.resolve();
 
-  await page.route("**/api/chat/conversations", async route => {
-    if (route.request().method() === "GET") {
-      authorizationHeaders.push(route.request().headers().authorization ?? "")
-      if (options.refreshError && turnRequests.length >= options.refreshError.afterTurnRequests && refreshFailuresRemaining > 0) {
-        refreshFailuresRemaining -= 1
-        await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: options.refreshError.message }) })
-        return
+  await page.route(
+    (url) => url.pathname === "/api/chat/conversations",
+    async (route) => {
+      if (route.request().method() === "GET") {
+        listRequests.count += 1;
+        authorizationHeaders.push(
+          route.request().headers().authorization ?? "",
+        );
+        if (options.listError) {
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: options.listError.message }),
+          });
+          return;
+        }
+        if (
+          options.listErrorAfterPatch &&
+          patchRequests.length > 0 &&
+          postPatchListFailuresRemaining > 0
+        ) {
+          postPatchListFailuresRemaining -= 1;
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: options.listErrorAfterPatch.message }),
+          });
+          return;
+        }
+        if (
+          options.refreshError &&
+          turnRequests.length >= options.refreshError.afterTurnRequests &&
+          refreshFailuresRemaining > 0
+        ) {
+          refreshFailuresRemaining -= 1;
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: options.refreshError.message }),
+          });
+          return;
+        }
+        const archivedValues = new URL(route.request().url()).searchParams.getAll("archived");
+        let archived = false;
+        if (archivedValues.length === 1 && archivedValues[0] === "true") archived = true;
+        else if (archivedValues.length !== 0 && (archivedValues.length !== 1 || archivedValues[0] !== "false")) {
+          await route.fulfill({
+            status: 400,
+            contentType: "application/json",
+            body: JSON.stringify({ error: "invalid archived query value" }),
+          });
+          return;
+        }
+        const summaries = conversations
+          .filter((item) => Boolean(item.archived_at) === archived)
+          .map(({ messages: _messages, ...summary }) => summary);
+        await list.promise;
+        if (options.holdRefresh && turnRequests.length > 0)
+          await refresh.promise;
+        await route.fulfill({
+          contentType: "application/json",
+          body: JSON.stringify(summaries),
+        });
+        return;
       }
-      await list.promise
-      if (options.holdRefresh && turnRequests.length > 0) await refresh.promise
-      await route.fulfill({
-        contentType: "application/json",
-        body: JSON.stringify(
-          conversations.map(({ messages: _messages, ...summary }) => summary),
-        ),
-      })
-      return
-    }
 
-    if (route.request().method() === "POST") {
-      createRequests.count += 1
-      if (createFailuresRemaining > 0) {
-        createFailuresRemaining -= 1
-        await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: options.createError!.message }) })
-        return
+      if (route.request().method() === "POST") {
+        createRequests.count += 1;
+        await create.promise;
+        if (createFailuresRemaining > 0) {
+          createFailuresRemaining -= 1;
+          await route.fulfill({
+            status: 500,
+            contentType: "application/json",
+            body: JSON.stringify({ error: options.createError!.message }),
+          });
+          return;
+        }
+        const now = new Date().toISOString();
+        const created: MockChatConversation = {
+          id: `conversation-${conversations.length + 1}`,
+          title: "",
+          created_at: now,
+          updated_at: now,
+          messages: [],
+        };
+        conversations.unshift(created);
+        await route.fulfill({
+          status: 201,
+          contentType: "application/json",
+          body: JSON.stringify(created),
+        });
+        return;
       }
-      const now = new Date().toISOString()
-      const created: MockChatConversation = {
-        id: `conversation-${conversations.length + 1}`,
-        title: "New conversation",
-        created_at: now,
-        updated_at: now,
-        messages: [],
-      }
-      conversations.unshift(created)
-      await route.fulfill({
-        status: 201,
-        contentType: "application/json",
-        body: JSON.stringify(created),
-      })
-      return
+
+      await route.continue();
+    },
+  );
+
+  await page.route("**/api/chat/conversations/*", async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const pathParts = url.pathname.split("/").filter(Boolean);
+    if (
+      pathParts.length !== 4 ||
+      pathParts.slice(0, 3).join("/") !== "api/chat/conversations"
+    ) {
+      await route.fallback();
+      return;
     }
 
-    await route.continue()
-  })
-
-  await page.route("**/api/chat/conversations/*", async route => {
-    if (route.request().method() !== "GET") {
-      await route.continue()
-      return
-    }
-
-    if (options.refreshError && turnRequests.length >= options.refreshError.afterTurnRequests && refreshFailuresRemaining > 0) {
-      refreshFailuresRemaining -= 1
-      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: options.refreshError.message }) })
-      return
-    }
-    await conversation.promise
-    if (options.holdRefresh && turnRequests.length > 0) await refresh.promise
-    const id = new URL(route.request().url()).pathname.split("/").pop()
-    const selected = conversations.find(item => item.id === id)
+    const id = pathParts[3];
+    const selected = conversations.find((item) => item.id === id);
     if (!selected) {
       await route.fulfill({
         status: 404,
         contentType: "application/json",
         body: JSON.stringify({ error: "conversation not found" }),
-      })
-      return
+      });
+      return;
     }
-    await route.fulfill({ contentType: "application/json", body: JSON.stringify(selected) })
-  })
 
-  await page.route("**/api/chat/conversations/*/turns", async route => {
+    if (request.method() === "PATCH") {
+      let body: unknown;
+      try {
+        body = JSON.parse(request.postData() ?? "");
+      } catch {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "invalid body" }),
+        });
+        return;
+      }
+      if (typeof body !== "object" || body === null || Array.isArray(body)) {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "invalid body" }),
+        });
+        return;
+      }
+      const archiveRequest = body as Record<string, unknown>;
+      const fields = Object.keys(archiveRequest);
+      if (
+        fields.length !== 1 ||
+        fields[0] !== "archived" ||
+        typeof archiveRequest.archived !== "boolean"
+      ) {
+        await route.fulfill({
+          status: 400,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "invalid body" }),
+        });
+        return;
+      }
+      patchRequests.push({ conversationId: id, archived: archiveRequest.archived });
+      await patch.promise;
+      const now = new Date().toISOString();
+      selected.updated_at = now;
+      if (archiveRequest.archived) selected.archived_at = now;
+      else delete selected.archived_at;
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(selected),
+      });
+      return;
+    }
+
+    if (request.method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+
+    if (
+      options.refreshError &&
+      turnRequests.length >= options.refreshError.afterTurnRequests &&
+      refreshFailuresRemaining > 0
+    ) {
+      refreshFailuresRemaining -= 1;
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: options.refreshError.message }),
+      });
+      return;
+    }
+    await conversation.promise;
+    if (options.holdRefresh && turnRequests.length > 0) await refresh.promise;
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify(selected),
+    });
+  });
+
+  await page.route("**/api/chat/conversations/*/turns", async (route) => {
     if (route.request().method() !== "POST") {
-      await route.continue()
-      return
+      await route.continue();
+      return;
     }
 
-    const url = new URL(route.request().url())
-    const conversationId = url.pathname.split("/").slice(-2, -1)[0]
-    const body = route.request().postDataJSON() as { messages?: Array<Record<string, unknown>> }
-    turnRequests.push({ conversationId, messages: body.messages ?? [] })
-    const now = new Date().toISOString()
-    const selected = conversations.find(item => item.id === conversationId)
+    const url = new URL(route.request().url());
+    const conversationId = url.pathname.split("/").slice(-2, -1)[0];
+    const body = route.request().postDataJSON() as {
+      messages?: Array<Record<string, unknown>>;
+    };
+    turnRequests.push({ conversationId, messages: body.messages ?? [] });
+    const now = new Date().toISOString();
+    const selected = conversations.find((item) => item.id === conversationId);
+    if (selected?.archived_at) {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "conversation is archived" }),
+      });
+      return;
+    }
     if (selected) {
       for (const message of body.messages ?? []) {
-        selected.messages.push({ id: `message-${selected.messages.length + 1}`, role: message.role as MockChatMessage["role"], content: String(message.content ?? ""), created_at: now, ...(typeof message.tool_call_id === "string" ? { tool_call_id: message.tool_call_id } : {}) })
+        selected.messages.push({
+          id: `message-${selected.messages.length + 1}`,
+          role: message.role as MockChatMessage["role"],
+          content: String(message.content ?? ""),
+          created_at: now,
+          ...(typeof message.tool_call_id === "string"
+            ? { tool_call_id: message.tool_call_id }
+            : {}),
+        });
       }
-      selected.updated_at = now
+      selected.updated_at = now;
     }
-    const turn = turns.shift()
+    const turn = turns.shift();
     if (!turn) {
-      await route.fulfill({ status: 500, contentType: "application/json", body: JSON.stringify({ error: "No mock turn" }) })
-      return
+      await route.fulfill({
+        status: 500,
+        contentType: "application/json",
+        body: JSON.stringify({ error: "No mock turn" }),
+      });
+      return;
     }
-    if (turn.hold) await turnGate.promise
+    if (turn.hold) await turnGate.promise;
+    if (turn.archiveBeforeError && selected) selected.archived_at = now;
     if (turn.error) {
       await route.fulfill({
         status: turn.error.status,
         contentType: "application/json",
         body: JSON.stringify({ error: turn.error.message }),
-      })
-      return
+      });
+      return;
     }
     if (selected) {
-      const final = [...(turn.events ?? [])].reverse().find(event => event.type === "assistant")?.message as Record<string, unknown> | undefined
-      if (final) selected.messages.push({ id: `message-${selected.messages.length + 1}`, role: "assistant", content: String(final.content ?? ""), created_at: now, ...(Array.isArray(final.tool_calls) ? { tool_calls: final.tool_calls as MockChatMessage["tool_calls"] } : {}) })
+      const final = [...(turn.events ?? [])]
+        .reverse()
+        .find((event) => event.type === "assistant")?.message as
+        Record<string, unknown> | undefined;
+      if (final)
+        selected.messages.push({
+          id: `message-${selected.messages.length + 1}`,
+          role: "assistant",
+          content: String(final.content ?? ""),
+          created_at: now,
+          ...(Array.isArray(final.tool_calls)
+            ? { tool_calls: final.tool_calls as MockChatMessage["tool_calls"] }
+            : {}),
+        });
     }
     await route.fulfill({
       contentType: "application/x-ndjson",
-      body: (turn.events ?? []).map(event => JSON.stringify(event) + "\n").join(""),
-    })
-  })
+      body: (turn.events ?? [])
+        .map((event) => JSON.stringify(event) + "\n")
+        .join(""),
+    });
+  });
 
   return {
     authorizationHeaders,
-    get createRequests() { return createRequests.count },
+    get createRequests() {
+      return createRequests.count;
+    },
+    get listRequests() {
+      return listRequests.count;
+    },
+    get remainingTurns() {
+      return turns.length;
+    },
     turnRequests,
+    patchRequests,
     releaseList: list.resolve,
     releaseConversation: conversation.resolve,
     releaseRefresh: refresh.resolve,
     releaseTurn: turnGate.resolve,
-  }
+    releasePatch: patch.resolve,
+    releaseCreate: create.resolve,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Signed service URLs API mocking
+// ---------------------------------------------------------------------------
+
+export interface MockSignedServiceUrl {
+  id: string;
+  namespace: string;
+  claim: string;
+  sandbox: string;
+  service: string;
+  logicalService: string;
+  label?: string;
+  url: string;
+  createdAt: string;
+  expiresAt: string;
+  revokedAt?: string;
+}
+
+export interface MockSignedServiceUrlsApiOptions {
+  holdListClaims?: string[];
+  holdCreateClaims?: string[];
+  holdRevokeIds?: string[];
+  unavailable?: { list?: boolean; create?: boolean; revoke?: boolean };
+}
+
+export async function mockSignedServiceUrlsApi(
+  page: Page,
+  initial: MockSignedServiceUrl[] = [],
+  options: MockSignedServiceUrlsApiOptions = {},
+): Promise<{
+  urls: MockSignedServiceUrl[];
+  requests: Array<{ method: string; id?: string; body?: Record<string, unknown> }>;
+  releaseList(claim: string): void;
+  releaseCreate(claim: string): void;
+  releaseRevoke(id: string): void;
+}> {
+  const urls = [...initial];
+  const requests: Array<{ method: string; id?: string; body?: Record<string, unknown> }> = [];
+  const heldLists = new Map<string, ReturnType<typeof deferred>>(
+    (options.holdListClaims ?? []).map((claim) => [claim, deferred()]),
+  );
+  const heldCreates = new Map<string, ReturnType<typeof deferred>>(
+    (options.holdCreateClaims ?? []).map((claim) => [claim, deferred()]),
+  );
+  const heldRevokes = new Map<string, ReturnType<typeof deferred>>(
+    (options.holdRevokeIds ?? []).map((id) => [id, deferred()]),
+  );
+
+  await page.route(/\/api\/signed-service-urls\/[^/?]+(?:\/[^/?]+)?(?:\?.*)?$/, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+    const parts = url.pathname.split("/").filter(Boolean);
+    const namespace = decodeURIComponent(parts[2] ?? "");
+    const id = parts.length > 3 ? decodeURIComponent(parts[3]) : undefined;
+    const body = request.postData()
+      ? request.postDataJSON() as Record<string, unknown>
+      : undefined;
+    requests.push({ method: request.method(), id, body });
+
+    if (request.method() === "GET" && !id) {
+      const claim = url.searchParams.get("claim") ?? "";
+      await heldLists.get(claim)?.promise;
+      if (options.unavailable?.list) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed service URLs are unavailable" }),
+        });
+        return;
+      }
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify(urls.filter((item) => item.namespace === namespace && item.claim === claim)),
+      });
+      return;
+    }
+
+    if (request.method() === "POST" && !id && body) {
+      await heldCreates.get(String(body.claim))?.promise;
+      if (options.unavailable?.create) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed service URLs are unavailable" }),
+        });
+        return;
+      }
+      const signedUrlId = `00000000-0000-4000-8000-${String(urls.length + 1).padStart(12, "0")}`;
+      const createdAt = "2099-01-01T00:00:00Z";
+      const created: MockSignedServiceUrl = {
+        id: signedUrlId,
+        namespace,
+        claim: String(body.claim),
+        sandbox: String(body.sandbox),
+        service: String(body.service),
+        logicalService: String(body.logicalService),
+        ...(typeof body.label === "string" ? { label: body.label } : {}),
+        url: `https://run.cua.ai/api/signed/${signedUrlId}`,
+        createdAt,
+        expiresAt: new Date(Date.parse(createdAt) + Number(body.expiresInSeconds) * 1000).toISOString(),
+      };
+      urls.push(created);
+      await route.fulfill({
+        status: 201,
+        contentType: "application/json",
+        body: JSON.stringify(created),
+      });
+      return;
+    }
+
+    if (request.method() === "DELETE" && id) {
+      await heldRevokes.get(id)?.promise;
+      if (options.unavailable?.revoke) {
+        await route.fulfill({
+          status: 503,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed service URLs are unavailable" }),
+        });
+        return;
+      }
+      const index = urls.findIndex((item) => item.namespace === namespace && item.id === id);
+      if (index < 0) {
+        await route.fulfill({
+          status: 404,
+          contentType: "application/json",
+          body: JSON.stringify({ error: "signed URL not found" }),
+        });
+        return;
+      }
+      urls[index].revokedAt = "2026-08-31T12:30:00Z";
+      await route.fulfill({ status: 204, body: "" });
+      return;
+    }
+
+    await route.continue();
+  });
+
+  return {
+    urls,
+    requests,
+    releaseList(claim: string) {
+      heldLists.get(claim)?.resolve();
+    },
+    releaseCreate(claim: string) {
+      heldCreates.get(claim)?.resolve();
+    },
+    releaseRevoke(id: string) {
+      heldRevokes.get(id)?.resolve();
+    },
+  };
 }

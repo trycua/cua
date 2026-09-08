@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import fleet_sdk
 import pytest
 from cua_sandbox import (
     ClaimSpec,
@@ -152,6 +153,8 @@ class FakeFleetClient:
         self.deleted_templates: list[str] = []
         self.renewed: list[tuple[str, str]] = []
         self.service_requests: list[object] = []
+        self.signed_url_creates: list[tuple[object, str, str | None, int]] = []
+        self.signed_url_revocations: list[object] = []
         self.wait_calls = 0
         self.closed = False
 
@@ -195,6 +198,23 @@ class FakeFleetClient:
         self.service_requests.append((sandbox, service, path, request))
         return SimpleNamespace(status=200, headers=[], body=b'{"result":"ok"}')
 
+    async def create_signed_service_url(
+        self,
+        sandbox,
+        service,
+        *,
+        label=None,
+        expires_in_seconds,
+    ):
+        self.signed_url_creates.append((sandbox, service, label, expires_in_seconds))
+        return signed_service_url()
+
+    async def list_signed_service_urls(self, sandbox):
+        return [signed_service_url()]
+
+    async def revoke_signed_service_url(self, signed_url):
+        self.signed_url_revocations.append(signed_url)
+
     async def delete_claim(self, claim: object) -> None:
         self.released.append(claim.metadata.name)
         if self.release_error:
@@ -208,6 +228,21 @@ class FakeFleetClient:
 
     async def close(self) -> None:
         self.closed = True
+
+
+def signed_service_url() -> SimpleNamespace:
+    return SimpleNamespace(
+        id="31e1c9bb-8cc9-4c50-9cf4-51798b6978e4",
+        namespace="foo",
+        claim="claim-1",
+        sandbox="sandbox-1",
+        service="mcp",
+        label="Customer demo",
+        url="https://signed.example/link",
+        created_at="2026-09-01T12:00:00Z",
+        expires_at="2026-09-01T13:00:00Z",
+        revoked_at=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -258,6 +293,87 @@ async def test_fleet_client_reconcile_template_delegates_to_generated_client() -
     client._client = GeneratedClient()
 
     assert await client.reconcile_template("desired") is expected
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_manages_signed_service_urls(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class RequestBuilder:
+        def __init__(self):
+            self.values = {}
+
+        def sandbox(self, value):
+            self.values["sandbox"] = value
+            return self
+
+        def service(self, value):
+            self.values["service"] = value
+            return self
+
+        def label(self, value):
+            self.values["label"] = value
+            return self
+
+        def expires_in_seconds(self, value):
+            self.values["expires_in_seconds"] = value
+            return self
+
+        def build(self):
+            return SimpleNamespace(**self.values)
+
+    class GeneratedSignedServiceURL(SimpleNamespace):
+        def __init__(self, **values):
+            super().__init__(**values)
+
+    class GeneratedClient:
+        async def create_signed_service_url(self, request):
+            calls.append(("create", request))
+            return signed_service_url()
+
+        async def list_signed_service_urls(self, sandbox):
+            calls.append(("list", sandbox))
+            return [signed_service_url()]
+
+        async def revoke_signed_service_url(self, signed_url):
+            calls.append(("revoke", signed_url))
+
+    monkeypatch.setattr(
+        fleet_sdk,
+        "CreateSignedServiceUrlRequestBuilder",
+        RequestBuilder,
+        raising=False,
+    )
+    monkeypatch.setattr(fleet_sdk, "SignedServiceUrl", GeneratedSignedServiceURL, raising=False)
+    client = object.__new__(_FleetClient)
+    client._client = GeneratedClient()
+    sandbox = FleetSandbox(
+        namespace="foo",
+        claim="claim-1",
+        name="sandbox-1",
+        services=["mcp"],
+    )
+
+    created = await client.create_signed_service_url(
+        sandbox,
+        "mcp",
+        label="Customer demo",
+        expires_in_seconds=3600,
+    )
+    listed = await client.list_signed_service_urls(sandbox)
+    await client.revoke_signed_service_url(created)
+
+    create_request = calls[0][1]
+    assert create_request.sandbox is sandbox
+    assert (create_request.service, create_request.label, create_request.expires_in_seconds) == (
+        "mcp",
+        "Customer demo",
+        3600,
+    )
+    assert calls[1] == ("list", sandbox)
+    assert listed == [created]
+    assert calls[2][0] == "revoke"
+    assert calls[2][1].id == created.id
 
 
 @pytest.mark.asyncio
@@ -545,6 +661,35 @@ async def test_claim_exposes_named_service_requests(monkeypatch):
     _, service, path, request = claim_client.service_requests[0]
     assert (service, path, request.method) == ("mcp", "/mcp", "POST")
     assert request.body == b'{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'
+
+
+@pytest.mark.asyncio
+async def test_claim_manages_signed_service_urls(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim() as sandbox:
+        created = await sandbox.services.create_signed_url(
+            "mcp",
+            label="Customer demo",
+            expires_in_seconds=3600,
+        )
+        listed = await sandbox.services.list_signed_urls()
+        await sandbox.services.revoke_signed_url(created)
+
+    bound, service, label, expires_in_seconds = claim_client.signed_url_creates[0]
+    assert (bound.name, service, label, expires_in_seconds) == (
+        "sandbox-1",
+        "mcp",
+        "Customer demo",
+        3600,
+    )
+    assert created.url == "https://signed.example/link"
+    assert listed == [created]
+    assert claim_client.signed_url_revocations == [created]
 
 
 @pytest.mark.asyncio

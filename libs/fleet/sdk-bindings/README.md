@@ -11,8 +11,13 @@ four-language binding surface; separate UniFFI snapshots are described below.
 
 `go-uniffi` and `ts-uniffi` (Node.js) are checked-in compatibility snapshots
 produced by `uniffi-bindgen-go` and `uniffi-bindgen-react-native`, not outputs
-of `generate-sdk-bindings.sh`. They retain direct record constructors and do
-not advertise builders.
+of `generate-sdk-bindings.sh`. `generate-compat-sdk-bindings.sh` owns their
+narrow repository compatibility normalization: every snapshot is derived from
+fresh raw generator output, then deterministic removal excludes only generated
+builder ABI. It retains all non-builder generated content, including record
+fields and serialization such as TTL fields, so these snapshots continue to
+expose direct record constructors only. The normalizer never uses a checked-in
+snapshot as transformation input.
 
 `ts-uniffi-browser` (Browser/WASM) regenerates from Rust metadata during its
 build, commits its TypeScript record modules, and verifies that generated
@@ -30,8 +35,10 @@ checked-in scope, and runtime API.
 CRD bundle at `clusters/base/osgym/crd.yaml` is derived from that schema with
 `generate-crds`; it is not hand-maintained and must not be post-processed.
 Short-term compatibility breaks in this evolving API are intentional. Update
-the schema and raw CRD together rather than adding compatibility shims,
-rewriters, or binding-specific post-processing.
+the schema and raw CRD together rather than adding compatibility shims or
+rewriters. The only binding-specific exception is the repository-owned Go/Node
+compatibility normalization above: it deterministically removes generated
+builder ABI from fresh raw output and does not alter the schema or CRD source.
 
 Generated binding source is committed so review and drift checks are
 reproducible. Native libraries, Cargo target output, Gradle caches, and staged
@@ -84,6 +91,8 @@ wrapper around UniFFI `0.31.0`:
 ```sh
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh"
 "$REPO_ROOT/cyclops-cs/scripts/generate-sdk-bindings.sh" --check
+"$REPO_ROOT/cyclops-cs/scripts/generate-compat-sdk-bindings.sh"
+"$REPO_ROOT/cyclops-cs/scripts/generate-compat-sdk-bindings.sh" --check
 "$REPO_ROOT/cyclops-cs/scripts/test-generate-sdk-bindings.sh"
 ```
 

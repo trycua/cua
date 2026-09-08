@@ -10,12 +10,14 @@ import SpaceBetween from "@cloudscape-design/components/space-between"
 import StatusIndicator from "@cloudscape-design/components/status-indicator"
 import { useFlash } from "../components/FlashContext"
 import { DesktopPane } from "../components/DesktopPane"
-import { deleteClaim, getClaim } from "../sdk/claims"
-import type { Claim } from "../sdk/models"
-import { getPool } from "../sdk/pools"
+import { deleteClaim, getClaim } from "../fleet/claims"
+import type { Claim, PoolService } from "../fleet/models"
+import { getPool } from "../fleet/pools"
+import type { Sandbox } from "../../sdk-bindings/ts-uniffi-browser/ts/index.web"
 import { CuaButton } from "../components/CuaButton"
 import { PageEmpty, PageError } from "../components/PageState"
 import { PageShell } from "../components/PageShell"
+import { SignedServiceUrls } from "../components/SignedServiceUrls"
 
 function phaseType(phase: string): "success" | "pending" | "error" | "info" {
   switch (phase) {
@@ -30,18 +32,48 @@ function phaseType(phase: string): "success" | "pending" | "error" | "info" {
   }
 }
 
+function boundSandbox(claim: Claim, services: PoolService[]): Sandbox | null {
+  if (claim.phase !== "Bound" || !claim.sandboxName) return null
+  return {
+    namespace: claim.namespace,
+    claim: claim.name,
+    name: claim.sandboxName,
+    services: services.map(service => service.name),
+  }
+}
+
 export function ClaimDetail() {
   const { namespace = "", poolName = "", claimName = "" } = useParams()
+
+  return (
+    <ClaimDetailContent
+      key={`${namespace}/${poolName}/${claimName}`}
+      namespace={namespace}
+      poolName={poolName}
+      claimName={claimName}
+    />
+  )
+}
+
+function ClaimDetailContent({
+  namespace,
+  poolName,
+  claimName,
+}: {
+  namespace: string
+  poolName: string
+  claimName: string
+}) {
   const navigate = useNavigate()
   const flash = useFlash()
 
   const [claim, setClaim] = useState<Claim | null>(null)
-  const [services, setServices] = useState<{ name: string; targetPort: number; protocol: string }[]>([])
+  const [services, setServices] = useState<PoolService[]>([])
+  const [sandbox, setSandbox] = useState<Sandbox | null>(null)
   const [loading, setLoading] = useState(true)
   const [confirmRelease, setConfirmRelease] = useState(false)
   const [releasing, setReleasing] = useState(false)
   const [loadError, setLoadError] = useState<string | null>(null)
-
   const load = async () => {
     setLoading(true)
     setLoadError(null)
@@ -50,8 +82,10 @@ export function ClaimDetail() {
         getClaim(namespace, claimName),
         getPool(namespace, poolName),
       ])
+      const nextSandbox = boundSandbox(claimData, poolData.services)
       setClaim(claimData)
       setServices(poolData.services)
+      setSandbox(nextSandbox)
     } catch (e) {
       const message = String((e as Error).message)
       setLoadError(message)
@@ -78,13 +112,15 @@ export function ClaimDetail() {
     const id = setInterval(async () => {
       try {
         const c = await getClaim(namespace, claimName)
+        const nextSandbox = boundSandbox(c, services)
         setClaim(c)
+        setSandbox(nextSandbox)
       } catch {
         // Silent — next tick will retry
       }
     }, 3000)
     return () => clearInterval(id)
-  }, [claim?.phase, namespace, claimName])
+  }, [claim?.phase, namespace, claimName, services])
 
   const release = async () => {
     setReleasing(true)
@@ -237,6 +273,8 @@ export function ClaimDetail() {
           </Box>
         </Container>
       )}
+
+      {sandbox && <SignedServiceUrls key={`${sandbox.namespace}/${sandbox.name}`} sandbox={sandbox} />}
 
       <Modal
         visible={confirmRelease}

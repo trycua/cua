@@ -22,6 +22,7 @@ from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
 from cua_sandbox.generated.image_models import ImageFileReference
 from cua_sandbox.image import Image
+from cua_sandbox.interfaces import SignedServiceURL
 from cua_sandbox.localhost import Localhost, localhost
 from cua_sandbox.pool import Pool, Template
 from cua_sandbox.runtime.compat import (
@@ -87,6 +88,7 @@ __all__ = [
     "SandboxService",
     "SandboxServiceBuilder",
     "ServiceProtocol",
+    "SignedServiceURL",
     "Firmware",
     "Sandbox",
     "SandboxInfo",

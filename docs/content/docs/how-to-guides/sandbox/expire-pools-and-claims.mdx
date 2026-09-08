@@ -8,16 +8,17 @@ import { Callout } from 'fumadocs-ui/components/callout';
 Pools and claims accept an optional creation-age TTL. Pass
 `ttl_seconds_after_created=` (requires `cua-sandbox>=0.4.2`) and the resource
 is deleted once it has existed that many seconds, whether or not it is in use.
-Without the argument nothing is reaped — pools and claims live until you
-delete them.
+Without this argument, there is no creation-age TTL from this setting. Explicit
+claim lifecycle deadlines, normal claim release, pool deletion, and platform
+policies can still end resources.
 
 This guide assumes a pool created as in
 [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python).
 
 ## Expire a pool
 
-Pass the TTL to `Pool.apply()` to delete the whole pool — its warm replicas
-and its template — a fixed time after the pool was first created:
+Pass the TTL to `Pool.apply()` for a pool you own to request automatic deletion
+a fixed time after the pool was first created:
 
 ```python
 from cua_sandbox import Image, Pool
@@ -46,14 +47,25 @@ async with pool.claim(
 ```
 
 A claim TTL fills in the claim's lifecycle shutdown time with a `Delete`
-policy; a claim that already carries an explicit lifecycle keeps it.
+policy; a claim that already carries an explicit lifecycle keeps it. Exiting
+the claim context still releases it immediately, even if its TTL has not
+elapsed. Disconnecting alone does not release it or cancel its deadline.
 
 ## The clock starts at creation
 
 The TTL counts from the resource's original creation, not its last use:
 re-running `Pool.apply()` reconciles the existing pool without resetting its
 age, and reconnecting to a named claim keeps the deadline set when the claim
-was first created.
+was first created. Passing a TTL when attaching to an existing named claim
+does not replace that claim's spec or renew its deadline. A pool may therefore
+expire shortly after a rerun if it is already near the end of its lifetime.
+
+Use a TTL as a cleanup backstop for interrupted jobs, and still release claims
+when work finishes. It is not an inactivity timeout or an automatic heartbeat.
+Keep the pool lifetime longer than the intended work, including startup time,
+and copy results out before the deadline. Controller-driven deletion is
+asynchronous; verify resource absence after expiry instead of treating the
+deadline as proof that cleanup has finished.
 
 ## Hand-built claim specs
 
@@ -77,8 +89,11 @@ async with pool.claim(spec=spec) as sandbox:
 ## Pool expiry under live claims
 
 <Callout type="warn">
-  Treat a pool TTL that can expire while claims are held as a capacity event,
-  not just cleanup: deleting the pool drains its sandboxes, and a claim that
-  outlives its pool destroys its sandbox on release instead of returning it
-  to the pool.
+  Treat a pool TTL that can expire while claims are held as a capacity event, not just cleanup:
+  deleting the pool drains its sandboxes, and a claim that outlives its pool destroys its sandbox on
+  release instead of returning it to the pool.
 </Callout>
+
+If cleanup was interrupted, use the resource identities you recorded and
+[inspect the remaining pool and claims](/how-to-guides/sandbox/troubleshoot-fleet-pools#recover-interrupted-cleanup).
+Reapplying a pool is a configuration write, not a cleanup operation.

@@ -136,7 +136,7 @@ async def collect_resource_inventory(client: CyclopsClient, name: str) -> dict[s
         pools = await client.list_pools(name)
         claims = await client.list_claims(name)
     except Exception as error:
-        if is_not_found_error(error):
+        if is_pool_missing_error(error):
             return {"templates": [], "pools": [], "claims": []}
         raise
     return {

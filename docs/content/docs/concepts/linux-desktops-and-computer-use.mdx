@@ -1,0 +1,141 @@
+---
+title: Linux desktops and computer use
+description: How X11, Wayland, desktop environments, and compositors affect Cua Driver's capture and input routes.
+---
+
+X11, Wayland, Hyprland, and Omarchy describe different parts of a Linux
+desktop, not interchangeable operating systems. For Cua Driver, the important
+questions are which display session is running, how the target application
+connects to it, and which capture and input routes that combination exposes.
+
+This page explains those layers. For accepted capabilities and limitations,
+use the [Linux support matrix](/reference/cua-driver/platform-support#linux-window-systems).
+
+## Where the names fit
+
+A **distribution**, such as Ubuntu, Fedora, or Arch Linux, supplies the
+operating system and packages. A **desktop environment**, such as GNOME, KDE
+Plasma, or Xfce, supplies the shell and desktop applications. The same
+distribution can run different desktop environments and display sessions.
+
+**X11** and **Wayland** are display protocols. They define how applications
+communicate with the software that displays their windows and delivers input.
+
+- In an X11 session, an X server such as **Xorg** manages the display and input.
+  A window manager handles placement and focus. A compositing manager may add
+  visual effects. **Xvfb** is an X server backed by a virtual framebuffer,
+  useful for automated desktops; it does not reproduce every physical Xorg
+  input path.
+- In a Wayland session, the **compositor** combines display-server, window
+  management, and composition responsibilities. **Sway** and **Hyprland** are
+  different Wayland compositors. GNOME uses **Mutter**, and KDE Plasma uses
+  **KWin** for its Wayland session.
+
+**Omarchy** is an Arch-based desktop setup built around Hyprland and Wayland.
+An Omarchy machine therefore needs Hyprland-specific validation, not just an
+"Arch Linux works" or "Wayland works" result. A plugin for Hyprland is not
+limited to Omarchy, but it must match the Hyprland build that loads it.
+
+**wlroots** is a library for building Wayland compositors, including Sway. It
+is not another display protocol. Modern Hyprland is not based on wlroots,
+although it implements some protocols with `wlr` names. Shared protocol names
+do not establish identical behavior or transfer Sway's test results to
+Hyprland.
+
+## XWayland is an application compatibility path
+
+**XWayland** runs X11 applications inside a Wayland session. One desktop can
+contain both native Wayland applications and X11 applications using XWayland.
+Some toolkits can use either backend, so an application's name alone does not
+identify its input path.
+
+Cua Driver can use an X11 route only when the target exposes a real X11
+window. XWayland does not make a native Wayland window addressable through
+X11, and it does not guarantee that every X11 background-input technique works
+unchanged inside a Wayland compositor.
+
+## Capture, accessibility, and input are separate capabilities
+
+Seeing an application's pixels does not imply permission or a safe route to
+control it. Cua Driver combines several facilities:
+
+- **AT-SPI** exposes application accessibility trees and semantic actions,
+  such as invoking a button or editing an accessible text field. Availability
+  depends on the application and its accessibility bridge as well as the
+  desktop session.
+- **Capture and window-discovery protocols** provide images, window identity,
+  and geometry. Wayland compositors expose different combinations, sometimes
+  requiring a compositor-specific adapter or helper.
+- **Portals and libei** provide permission-mediated capture or emulated-input
+  routes where the desktop implements them. An input grant does not by itself
+  provide an arbitrary background-window target.
+- **Compositor integrations** can expose capabilities absent from ordinary
+  client protocols. They need their own compatibility, authorization, and
+  behavioral tests.
+
+This is why a successful `cua-driver doctor` check establishes prerequisites,
+not proof that every action reaches every application.
+
+## Wayland has coordinates, but controls input routing
+
+Wayland compositors have output layouts and surface coordinates. What an
+ordinary application generally lacks is unrestricted access to other windows'
+global geometry and an API for sending raw input to any chosen window.
+
+A compositor adapter can tell Cua Driver where a window is. That still does not
+change which window receives input from the compositor's active **seat**, the
+logical grouping of pointer, keyboard, and other input devices. Moving a
+virtual pointer to a screen coordinate can target an occluding window instead
+of the intended background window.
+
+Isolated background input therefore requires more than coordinate conversion
+or drawing a second cursor. It must keep the user's pointer focus, held
+buttons, keyboard state, and active gestures independent from agent input.
+Client applications must also accept the resulting events.
+
+## Background actions are not all raw input
+
+An AT-SPI action can invoke an accessible button without synthesizing a mouse
+click. That can work while the window stays in the background. A pixel-addressed
+request can also resolve to an accessible control and use a semantic action;
+pixel addressing does not necessarily mean raw event injection.
+
+A canvas drag or game keypress may require raw pointer or keyboard events
+instead. When Cua Driver has no safe target-addressed route, the correct
+outcome is a structured refusal, not a hidden focus change. Foreground
+delivery is a separate, explicitly authorized operation.
+
+See [Capture and delivery modalities](/concepts/capture-and-delivery-modalities)
+for the action axes and [Best-effort background](/concepts/the-no-foreground-contract)
+for the no-foreground contract.
+
+## A private desktop is different from a shared desktop
+
+A Fleet VM gives the agent a separate desktop. Foreground input inside that
+VM does not take over the user's host desktop, but it can still interfere
+with another actor inside the same VM. VM isolation does not prove isolated
+background delivery within one desktop session.
+
+Likewise, the experimental nested `cua-compositor` controls its own Wayland
+session. Its input capabilities do not establish support on stock Sway,
+Hyprland, GNOME, or KDE.
+
+For an existing Linux host, use the support row for its compositor and the
+target application's backend. For a separate Omarchy desktop, see
+[Run Omarchy on Fleet](/how-to-guides/sandbox/run-omarchy-on-cloud-fleet) or
+the experimental [Apple Silicon VM guide](/how-to-guides/lume/run-omarchy-arm64).
+Those guides describe environments, not a broader input-support guarantee.
+
+## Find the applicable support evidence
+
+Use [Platform Support](/reference/cua-driver/platform-support) for accepted
+behavior and [Platform Roadmap](/reference/cua-driver/platform-roadmap) for
+engineering work and missing evidence. In particular, the
+[Hyprland and Omarchy status](/reference/cua-driver/platform-support#hyprland-and-omarchy)
+separates driver validation from the experimental plugin foundation.
+
+A source-branch test result is not a released capability. Record the driver
+version, compositor version, application backend, and tested source revision
+when comparing results. [How Cua Driver is validated](/concepts/how-cua-driver-is-validated)
+explains why a passing test must observe application state and desktop side
+effects, not only a successful tool response.

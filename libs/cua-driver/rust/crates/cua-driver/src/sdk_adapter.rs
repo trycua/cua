@@ -57,6 +57,34 @@ pub struct SdkAdapter {
 }
 
 impl SdkAdapter {
+    pub fn create_envelope_receiver(
+        &self,
+    ) -> Result<
+        (
+            Arc<cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver>,
+            String,
+        ),
+        String,
+    > {
+        // The private HTTP slice requests only Standard; the runtime's immutable
+        // ceiling rejects incompatible hosts rather than widening their policy.
+        let public_session = format!("http-{}", uuid::Uuid::new_v4());
+        let options = TrustedSessionOptions {
+            public_session: public_session.clone(),
+            mode: cua_driver_sdk::SessionPermissionMode::Standard,
+            ttl_seconds: 3600,
+            idle_ttl_seconds: 300,
+            capability_manifest_path: None,
+            bounded_manifest_path: None,
+        };
+        cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver::for_driver(
+            self.driver.clone(),
+            options,
+        )
+        .map(|receiver| (receiver, public_session))
+        .map_err(|error| error.to_string())
+    }
+
     pub async fn load(driver: Arc<CuaDriver>) -> anyhow::Result<Arc<Self>> {
         let tools_json = driver
             .list_tools_json()

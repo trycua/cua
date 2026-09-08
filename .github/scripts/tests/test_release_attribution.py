@@ -10,12 +10,14 @@ from jsonschema import Draft202012Validator
 from release_attribution import (
     CommitRecord,
     LEGACY_RELEASE_BUMP_RE,
+    PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
     build_manifest,
     changelog_references_change,
     linked_issue_numbers,
     login_from_email,
+    merge_contributors,
     release_bump,
     release_entries,
     render_body,
@@ -124,6 +126,80 @@ def test_login_from_noreply_and_override():
     )
     assert login_from_email("person@example.com", {"person@example.com": "person"}) == "person"
     assert login_from_email("person@example.com", {}) is None
+
+
+def test_release_notes_dedupe_contributors_across_roles_and_login_case():
+    contributors = [
+        {"login": "ngnichtel", "role": "author", "external": True},
+        {"login": "ngnichtel", "role": "coauthor", "external": True},
+        {"login": "goldenfish123321", "role": "coauthor", "external": True},
+        {"login": "GoldenFish123321", "role": "reporter", "external": True},
+    ]
+    assert merge_contributors(contributors) == [
+        {
+            "login": "goldenfish123321",
+            "roles": ["coauthor", "reporter"],
+            "external": True,
+        },
+        {
+            "login": "ngnichtel",
+            "roles": ["author", "coauthor"],
+            "external": True,
+        },
+    ]
+
+    manifest = {
+        "displayName": "Cua Driver",
+        "version": "0.13.1",
+        "repository": "trycua/cua",
+        "tag": "cua-driver-rs-v0.13.1",
+        "compareUrl": (
+            "https://github.com/trycua/cua/compare/cua-driver-rs-v0.12.6...cua-driver-rs-v0.13.1"
+        ),
+        "visualRequested": False,
+        "changes": [
+            {
+                "type": "fix",
+                "summary": "preserve contributor credit",
+                "pr": 2559,
+                "contributors": contributors,
+            }
+        ],
+        "contributors": merge_contributors(contributors),
+    }
+    body = render_body(manifest)
+    assert "Thanks @ngnichtel, @goldenfish123321." in body
+    assert "reported by @GoldenFish123321" not in body
+    assert body.count("@ngnichtel") == 2
+    assert body.count("@goldenfish123321") == 2
+    assert "@GoldenFish123321" not in body
+
+
+def test_cua_driver_release_footer_explains_github_prerelease_label():
+    footer = (REPO_ROOT / ".github/release-notes/cua-driver-rs.md").read_text()
+    manifest = {
+        "displayName": "Cua Driver",
+        "version": "0.17.0",
+        "repository": "trycua/cua",
+        "tag": "cua-driver-rs-v0.17.0",
+        "compareUrl": (
+            "https://github.com/trycua/cua/compare/cua-driver-rs-v0.16.0...cua-driver-rs-v0.17.0"
+        ),
+        "visualRequested": False,
+        "changes": [],
+        "contributors": [],
+        "assets": [],
+    }
+
+    body = render_body(manifest, footer)
+    normalized = " ".join(body.split())
+
+    assert "Why GitHub says “Pre-release”" in body
+    assert "repository-wide “Latest” pointer" in normalized
+    assert "plain Cua Driver SemVer" in normalized
+    assert "0.17.0" not in footer
+    assert "npm and PyPI" in normalized
+    assert "`cua-driver-rs-v*` releases directly" in normalized
 
 
 def test_cross_repository_references_are_not_resolved_in_cua():
@@ -256,6 +332,18 @@ def test_legacy_release_bump_subject_is_recognized():
     assert LEGACY_RELEASE_BUMP_RE.match("Bump cua-driver-rs to v0.8.3")
     assert LEGACY_RELEASE_BUMP_RE.match("Bump lume to v0.3.16")
     assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
+
+
+def test_published_installer_bump_subject_is_recognized_narrowly():
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to nightly [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "feat(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
 
 
 def test_changelog_accepts_verified_commit_link_when_pr_suffix_is_missing():
@@ -414,6 +502,85 @@ def test_manifest_is_pr_first_and_renders_deterministically(tmp_path: Path):
     assert preflight["sha"] == commit_sha
 
 
+def test_nightly_manifest_attributes_maintenance_prs_without_a_versioned_changelog(
+    tmp_path: Path,
+):
+    git(tmp_path, "init")
+    git(tmp_path, "config", "user.name", "Release Test")
+    git(tmp_path, "config", "user.email", "release@example.com")
+    product = tmp_path / "libs/cua-driver/rust"
+    product.mkdir(parents=True)
+    (product / "CHANGELOG.md").write_text("# Changelog\n")
+    (product / "driver.txt").write_text("initial\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "chore: seed fixture")
+    git(tmp_path, "tag", "cua-driver-rs-v0.8.1")
+
+    (product / "driver.txt").write_text("documented\n")
+    git(tmp_path, "add", ".")
+    git(tmp_path, "commit", "-m", "docs(driver): explain nightly sessions")
+    commit_sha = git(tmp_path, "rev-parse", "HEAD")
+
+    config = {
+        "bots": [],
+        "coauthorOverrides": {},
+        "ignoredCoauthorEmails": [],
+        "identityOverrides": {},
+        "internalHandles": [],
+        "optOutHandles": [],
+    }
+    manifest = build_manifest(
+        repo_root=tmp_path,
+        repository="trycua/cua",
+        product="cua-driver-rs",
+        display_name="Cua Driver",
+        version="0.8.2-nightly.20260812.42",
+        tag="nightly-cua-driver-rs-v0.8.2-nightly.20260812.42",
+        release_ref=commit_sha,
+        previous_tag="cua-driver-rs-v0.8.1",
+        expected_sha=commit_sha,
+        paths=("libs/cua-driver",),
+        changelog_path=product / "CHANGELOG.md",
+        attribution_config=config,
+        github=FakeGitHub(commit_sha),
+        channel="nightly",
+    )
+
+    assert manifest["channel"] == "nightly"
+    assert manifest["compareUrl"].endswith(f"/compare/cua-driver-rs-v0.8.1...{commit_sha}")
+    assert manifest["visualRequested"] is False
+    assert manifest["changes"][0]["type"] == "docs"
+    assert manifest["changes"][0]["pr"] == 12
+    assert {item["login"] for item in manifest["contributors"]} == {
+        "bug-reporter",
+        "pr-author",
+        "source-author",
+    }
+    schema = json.loads((REPO_ROOT / ".github/release-manifest.schema.json").read_text())
+    validator = Draft202012Validator(schema, format_checker=None)
+    validator.validate(manifest)
+    stable_shaped = dict(manifest)
+    stable_shaped.pop("channel")
+    assert any("is not one of" in error.message for error in validator.iter_errors(stable_shaped))
+
+    with pytest.raises(ReleaseError, match="no releasing pull requests"):
+        build_manifest(
+            repo_root=tmp_path,
+            repository="trycua/cua",
+            product="cua-driver-rs",
+            display_name="Cua Driver",
+            version="0.8.2",
+            tag="cua-driver-rs-v0.8.2",
+            release_ref=commit_sha,
+            previous_tag="cua-driver-rs-v0.8.1",
+            expected_sha=commit_sha,
+            paths=("libs/cua-driver",),
+            changelog_path=product / "CHANGELOG.md",
+            attribution_config=config,
+            github=FakeGitHub(commit_sha),
+        )
+
+
 def test_unresolved_human_coauthor_fails_closed():
     commit = CommitRecord(
         "deadbeef",
@@ -441,3 +608,60 @@ def test_unresolved_human_coauthor_fails_closed():
                 "optOutHandles": [],
             },
         )
+
+
+def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commit = CommitRecord(
+        "aebd9962d2686e75ff9e17e0a3735e303ff96981",
+        "fix(cua-driver): stop Windows update --apply from killing itself (#2805)",
+        "Co-authored-by: Roman Syuzyov <rsyuzyov@gmail.com>",
+    )
+    pull = {
+        "user": {"login": "rsyuzyov"},
+        "author_association": "CONTRIBUTOR",
+        "body": "",
+        "labels": [],
+    }
+
+    contributors, issues, visual_requested = _change_contributors(
+        pull,
+        commit,
+        FakeGitHub(commit.sha),
+        "trycua/cua",
+        config,
+    )
+
+    assert contributors == [
+        {"login": "rsyuzyov", "role": "author", "external": True},
+        {"login": "rsyuzyov", "role": "coauthor", "external": True},
+    ]
+    assert issues == []
+    assert visual_requested is False
+
+
+def test_pr_3266_squash_coauthor_resolves_through_verified_identity_override():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commit = CommitRecord(
+        "2fd8bfc6dd5d7d67d00a4151c1159e665abb9ef0",
+        "test(cua-driver): seed macOS Lume TCC grants (#3266)",
+        "Co-authored-by: jf-mac-mini <jf-mac-mini@jf-mac-mini-4.local>",
+    )
+    pull = {
+        "user": {"login": "0xjohnnydev"},
+        "author_association": "CONTRIBUTOR",
+        "body": "",
+        "labels": [],
+    }
+
+    contributors, _, _ = _change_contributors(
+        pull,
+        commit,
+        FakeGitHub(commit.sha),
+        "trycua/cua",
+        config,
+    )
+    assert contributors == [
+        {"login": "0xjohnnydev", "role": "author", "external": True},
+        {"login": "0xjohnnydev", "role": "coauthor", "external": True},
+    ]

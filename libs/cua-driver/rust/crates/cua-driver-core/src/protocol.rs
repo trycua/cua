@@ -289,6 +289,11 @@ pub struct ToolResult {
     pub is_error: Option<bool>,
     #[serde(rename = "structuredContent", skip_serializing_if = "Option::is_none")]
     pub structured_content: Option<Value>,
+    /// Rich actuator facts retained inside the daemon. This is deliberately
+    /// skipped by serde so the nonbreaking truth-layer migration cannot alter
+    /// the MCP result envelope or its legacy structured payload.
+    #[serde(skip)]
+    pub action_record: Option<crate::action_record::ActionExecutionRecord>,
 }
 
 impl ToolResult {
@@ -309,6 +314,14 @@ impl ToolResult {
 
     pub fn with_structured(mut self, v: Value) -> Self {
         self.structured_content = Some(v);
+        self
+    }
+
+    pub fn with_action_record(
+        mut self,
+        record: crate::action_record::ActionExecutionRecord,
+    ) -> Self {
+        self.action_record = Some(record);
         self
     }
 }
@@ -344,7 +357,7 @@ fn agent_instructions() -> String {
     } else if cfg!(target_os = "windows") {
         (
             "UIA (UI Automation)",
-            "WINDOWS.md (UIA tree, UWP / ApplicationFrameHost hosting, Session 0 isolation)",
+            "WINDOWS.md (UIA tree, UWP/ApplicationFrameHost hosting, Session 0 isolation)",
         )
     } else {
         (
@@ -356,19 +369,19 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Tools let you interact with any app without stealing keyboard focus or moving the visible cursor. Prefer element_index ({tree_kind}) paths over pixel coordinates — they work on backgrounded/hidden windows.
+Before UI work, classify the desired outcome. For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+
+On continuation/recent-work, when available, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery; otherwise continue.
+
+For app/window outcomes, use the narrowest semantic Cua route first: `set_window_frame` plus `list_windows` readback for geometry, typed browser tools for supported page content, and clipboard tools for clipboard state. Then climb through background `element_index` ({tree_kind}), background pixels, foreground delivery, and desktop fallback. Never advance on transport success alone.
 
 Workflow per turn:
-0. start_session(session) once at the start of a run → declares THIS run's identity (a stable id you choose, e.g. "research-1"). Pass that same `session` on every action below. It owns your agent cursor (a distinct color per id) and follows the run across apps/windows. End with end_session(session) when done. Concurrent runs/subagents each use their OWN `session`. (Omitting `session` still works, just with no cursor.)
-1. launch_app  → idempotent, returns pid + windows array in one call. Pass creates_new_application_instance:true if another run may touch the same app, so you get your own window.
-2. (skip list_windows when launch_app already returned a single window)
-3. get_window_state(pid, window_id) → refresh the {tree_kind} snapshot, get element indices
-4. click/type_text/press_key using element_index from step 3 (+ your `session`)
-5. get_window_state(pid, window_id) again → verify the action landed
+0. `start_session` is optional. For multi-call work, prefer a short `session` label and repeat it on every call that accepts it. Unnamed calls use the transport's implicit session. Only `start_session` revives an ended name; `end_session` explicitly cleans up.
+1. `launch_app`, then `get_window_state(pid, window_id)` to refresh element indices.
+2. Act with the fresh index.
+3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-Agent cursor: a per-SESSION overlay cursor visualises where a run is acting without moving the real pointer. It is shown only for a DECLARED session (pass `session`), is color-coded by the session id, and is removed by end_session or the idle-TTL. The same id over MCP, the CLI, or the raw socket drives the same cursor. set_agent_cursor_* tools hide/show/customise it. Note: a pure accessibility-action (element_index) click snaps the cursor with a brief pulse on its first action rather than a long glide, so it can be easy to miss — issue a pixel click or move_cursor first for a visibly gliding demo/recording.
-
-If a `cua-driver` skill is loaded in your harness (Claude Code / Codex / OpenClaw / OpenCode dirs), prefer its detailed workflow — SKILL.md plus {platform_skill_pointer}. Install with `cua-driver skills install` if not yet present."#
+If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
     )
 }
 
@@ -415,6 +428,108 @@ mod image_mime_type_tests {
             v.get("mimeType").is_none(),
             "text content must not carry mimeType"
         );
+    }
+}
+
+#[cfg(test)]
+mod action_record_wire_tests {
+    use super::ToolResult;
+    use crate::action_record::{
+        ActionEffect, ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
+    };
+
+    #[test]
+    fn internal_action_record_never_changes_mcp_serialization() {
+        let legacy = serde_json::json!({
+            "path": "cgevent",
+            "verified": false,
+            "effect": "unverifiable",
+        });
+        let plain = ToolResult::text("clicked").with_structured(legacy.clone());
+        let with_truth = ToolResult::text("clicked")
+            .with_structured(legacy)
+            .with_action_record(
+                ActionExecutionRecord::builder(
+                    ActionEffect::Unverifiable,
+                    ActionTransport::MacosCgEventPid,
+                    RequestedDelivery::Background,
+                )
+                .actual_delivery(ActualDelivery::Background)
+                .build()
+                .expect("valid action record"),
+            );
+        assert_eq!(
+            serde_json::to_value(plain).expect("serialize plain result"),
+            serde_json::to_value(with_truth).expect("serialize result with internal truth"),
+        );
+    }
+}
+
+#[cfg(test)]
+mod agent_instruction_tests {
+    use super::{agent_instructions, initialize_result};
+
+    #[test]
+    fn instructions_route_structured_and_visual_verification_to_the_right_owner() {
+        let instructions = agent_instructions();
+        assert!(instructions.contains("verify_state"));
+        assert!(instructions.contains("`unknown` is not success"));
+        assert!(instructions.contains("multimodal agent"));
+        assert!(instructions.contains("client-provided app API/SDK"));
+        assert!(instructions.contains("headless/background interface"));
+        assert!(instructions.contains("read the result back in that semantic domain"));
+        assert!(instructions.contains("narrowest semantic Cua route first"));
+        assert!(instructions.contains("`set_window_frame` plus `list_windows` readback"));
+        assert!(instructions.contains("typed browser tools for supported page content"));
+        assert!(instructions.contains("has no shell"));
+        assert!(
+            instructions.find("client-provided app API/SDK")
+                < instructions.find("background `element_index`"),
+            "semantic/headless operations must precede native UI dispatch"
+        );
+        assert!(
+            instructions.split_whitespace().count() <= 200,
+            "initialize instructions should stay within the documented context budget"
+        );
+    }
+
+    #[test]
+    fn initialize_instructions_describe_implicit_session_lifecycle() {
+        let result = initialize_result();
+        let instructions = result["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions");
+
+        assert!(instructions.contains("`start_session` is optional"));
+        assert!(instructions.contains("prefer a short `session` label"));
+        assert!(instructions.contains("repeat it on every call that accepts it"));
+        assert!(instructions.contains("transport's implicit session"));
+        assert!(instructions.contains("Only `start_session` revives an ended name"));
+        assert!(instructions.contains("`end_session` explicitly cleans up"));
+        assert!(
+            !instructions.contains("`start_session(session)` once"),
+            "initialize instructions must not require explicit session setup"
+        );
+    }
+
+    #[test]
+    fn initialize_instructions_conditionally_consult_history_before_discovery() {
+        let instructions = initialize_result()["instructions"]
+            .as_str()
+            .expect("initialize result should carry agent instructions")
+            .to_owned();
+
+        assert!(instructions.contains("continuation/recent-work"));
+        let status = instructions.find("call `history_status`").unwrap();
+        let bounded_query = instructions
+            .find("one bounded initial `history_query`")
+            .unwrap();
+        let discovery = instructions.find("broad discovery").unwrap();
+        assert!(status < bounded_query);
+        assert!(bounded_query < discovery);
+        assert!(instructions.contains("if ready"));
+        assert!(instructions.contains("otherwise continue"));
+        assert!(instructions.split_whitespace().count() <= 200);
     }
 }
 

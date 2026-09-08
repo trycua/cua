@@ -101,22 +101,25 @@ for w in data.get('windows', []):
     if w.get('pid')==$HARNESS_PID and 'AppKit' in (w.get('title') or ''):
         print(w.get('window_id'));break" 2>/dev/null || echo "")
 echo "  Window id=$WIN_ID"
+SMOKE_SESSION="macos-smoke"
+run_tool start_session "{\"session\":\"$SMOKE_SESSION\"}"
 
 # ── group 1: no-arg tools (informational, always-safe) ──────────────────────
 echo ""
 echo "=== group 1: no-arg / config tools ==="
 for t in check_permissions get_screen_size get_cursor_position get_config \
-         get_agent_cursor_state get_recording_state list_apps list_windows; do
+         get_recording_state list_apps list_windows; do
     run_tool "$t"
 done
+run_tool get_agent_cursor_state "{\"session\":\"$SMOKE_SESSION\"}"
 
 # ── group 2: setters ─────────────────────────────────────────────────────────
 echo ""
 echo "=== group 2: setters ==="
 run_tool set_config '{"max_image_dimension":1024}'
-run_tool set_agent_cursor_enabled '{"enabled":true}'
-run_tool set_agent_cursor_style '{"style":"default"}'
-run_tool set_agent_cursor_motion '{}'
+run_tool set_agent_cursor_enabled "{\"session\":\"$SMOKE_SESSION\",\"enabled\":true}"
+run_tool set_agent_cursor_theme "{\"session\":\"$SMOKE_SESSION\",\"theme_id\":\"cua.default\"}"
+run_tool set_agent_cursor_motion "{\"session\":\"$SMOKE_SESSION\"}"
 run_tool stop_recording '{}'
 
 # ── group 3: app lifecycle ──────────────────────────────────────────────────

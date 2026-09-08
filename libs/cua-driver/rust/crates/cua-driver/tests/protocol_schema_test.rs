@@ -1,7 +1,8 @@
 //! Pure `tools/list` schema-shape assertions.
 //!
 //! These never invoke a tool — they only inspect the advertised inputSchemas:
-//! that `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
+//! that every tool keeps its top-level schema provider-compatible, that
+//! `type_text_chars` is hidden, the `list_windows.on_screen_only` knob, the
 //! `set_agent_cursor_motion` Bezier knobs, delivery and scope enums, and the
 //! `set_config.capture_mode` enum and the per-session capture-scope contract.
 
@@ -35,6 +36,20 @@ fn tools_list_schema_shape() {
             .unwrap_or_else(|| panic!("{name} not found in tools/list"))["inputSchema"]
             ["properties"]
     };
+    for tool in tools {
+        let name = tool["name"].as_str().expect("tool name");
+        let schema = &tool["inputSchema"];
+        assert_eq!(
+            schema["type"], "object",
+            "{name} must advertise a plain object input schema"
+        );
+        for unsupported in ["anyOf", "oneOf", "allOf"] {
+            assert!(
+                schema.get(unsupported).is_none(),
+                "{name} top-level {unsupported} is rejected by Bedrock: {schema}"
+            );
+        }
+    }
     let enum_contains = |schema: &serde_json::Value, expected: &str| {
         schema["enum"]
             .as_array()
@@ -82,7 +97,7 @@ fn tools_list_schema_shape() {
         "get_browser_state should advertise opt-in exact-tab capture"
     );
     for (name, required) in [
-        ("browser_prepare", &["pid"][..]),
+        ("browser_prepare", &[][..]),
         ("browser_navigate", &["target_id", "tab_id", "url"][..]),
         ("browser_click", &["target_id", "tab_id"][..]),
         ("browser_type", &["target_id", "tab_id", "ref", "text"][..]),
@@ -109,7 +124,6 @@ fn tools_list_schema_shape() {
             );
         }
     }
-
     const DELIVERY_MODE_TOOLS: &[&str] = &[
         "click",
         "double_click",
@@ -157,9 +171,8 @@ fn tools_list_schema_shape() {
         list_resp["result"]["capability_version"], "1",
         "adding one capability token is additive and must not bump the vocabulary version"
     );
-    // Capture scope belongs to the session lifecycle on every platform. The
-    // action-level `scope` selects a coordinate/transport form but cannot
-    // override the session policy enforced by the registry.
+    // Session capture scope remains advertised only for compatibility. New
+    // clients choose one typed window or desktop target on each action.
     let capture_scope = &properties("start_session")["capture_scope"];
     for expected in ["auto", "window", "desktop"] {
         assert!(
@@ -255,7 +268,7 @@ fn tools_list_schema_shape() {
 }
 
 #[test]
-fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
+fn legacy_page_mutation_requires_unrestricted_launch_and_operator_opt_in() {
     let args = serde_json::json!({
         "action": "enable_javascript_apple_events",
         "user_has_confirmed_enabling": false
@@ -266,16 +279,18 @@ fn legacy_page_mutation_flag_is_read_by_the_spawned_daemon() {
         let response = driver.call("page", args.clone());
         assert!(response.is_error(), "mutation must refuse by default");
         assert!(
-            response
-                .text()
-                .contains("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS=1"),
-            "default refusal must name the operator gate: {}",
+            response.text().contains("requires unrestricted mode"),
+            "default refusal must name the trusted launch gate: {}",
             response.text()
         );
     }
 
-    let mut driver = McpDriver::spawn_with_env(&[("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1")])
-        .expect("spawn source-built driver with daemon-scoped compatibility flag");
+    let mut driver = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+        ("CUA_DRIVER_ENABLE_LEGACY_PAGE_MUTATIONS", "1"),
+    ])
+    .expect("spawn source-built driver with unrestricted legacy compatibility enabled");
     let response = driver.call("page", args);
     assert!(
         response.is_error(),
@@ -329,7 +344,11 @@ fn linux_cursor_motion_knobs_are_applied() {
         "Linux cursor motion update failed: {response:?}"
     );
     let structured = &response["result"]["structuredContent"];
-    assert_eq!(structured["arc_size"].as_f64(), Some(0.4));
-    assert_eq!(structured["glide_duration_ms"].as_f64(), Some(500.0));
-    assert_eq!(structured["idle_hide_ms"].as_f64(), Some(5000.0));
+    assert_eq!(structured["session"].as_str(), Some("schema-linux"));
+    assert_eq!(structured["motion"]["arc_size"].as_f64(), Some(0.4));
+    assert_eq!(
+        structured["motion"]["glide_duration_ms"].as_f64(),
+        Some(500.0)
+    );
+    assert_eq!(structured["motion"]["idle_hide_ms"].as_f64(), Some(5000.0));
 }

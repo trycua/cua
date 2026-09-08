@@ -60,6 +60,11 @@ VERIFIED_IDENTITY_PR_RE = re.compile(
 )
 TRAILING_PR_RE = re.compile(r"\s+\(#(?P<number>\d+)\)\s*$")
 LEGACY_RELEASE_BUMP_RE = re.compile(r"^Bump (?:cua-driver-rs|lume) to v\S+$", re.IGNORECASE)
+PUBLISHED_INSTALLER_BUMP_RE = re.compile(
+    r"^chore\(cua-driver\): advance published installer version to "
+    r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*) \[skip ci\]$",
+    re.IGNORECASE,
+)
 NOREPLY_RE = re.compile(
     r"^(?:\d+\+)?(?P<login>[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})(?:\[bot\])?)@users\.noreply\.github\.com$",
     re.IGNORECASE,
@@ -223,7 +228,13 @@ def parse_conventional_line(line: str) -> ConventionalEntry | None:
     )
 
 
-def release_entries(subject: str, commit_body: str, pull_body: str) -> list[ConventionalEntry]:
+def release_entries(
+    subject: str,
+    commit_body: str,
+    pull_body: str,
+    *,
+    allowed_types: set[str] = RELEASING_TYPES,
+) -> list[ConventionalEntry]:
     override = OVERRIDE_RE.search(pull_body or "")
     candidates = override.group("body").splitlines() if override else [subject]
     entries = [entry for line in candidates if (entry := parse_conventional_line(line))]
@@ -232,7 +243,7 @@ def release_entries(subject: str, commit_body: str, pull_body: str) -> list[Conv
             ConventionalEntry(entry.change_type, entry.scope, entry.summary, True)
             for entry in entries
         ]
-    return [entry for entry in entries if entry.change_type in RELEASING_TYPES]
+    return [entry for entry in entries if entry.change_type in allowed_types]
 
 
 def validate_pr_title(
@@ -320,6 +331,30 @@ def _normalized_set(config: Mapping[str, Any], key: str) -> set[str]:
     return {str(item).strip().lower() for item in config.get(key, [])}
 
 
+def unresolved_coauthor_identities(
+    commits: Sequence[CommitRecord], config: Mapping[str, Any]
+) -> list[dict[str, str]]:
+    """Return commit trailers that cannot resolve to a trusted contributor."""
+    ignored = _normalized_set(config, "ignoredCoauthorEmails")
+    overrides = _normalized_map(config, "identityOverrides")
+    coauthor_overrides = _normalized_map(config, "coauthorOverrides")
+    unresolved: dict[tuple[str, str], dict[str, str]] = {}
+    for commit in commits:
+        for match in COAUTHOR_RE.finditer(commit.body):
+            name = match.group("name").strip() or "unknown"
+            email = match.group("email").strip().lower()
+            if not email or email in ignored:
+                continue
+            identity = f"{name} <{email}>".lower()
+            login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
+            if login:
+                continue
+            unresolved.setdefault(
+                (commit.sha, email), {"sha": commit.sha, "name": name, "email": email}
+            )
+    return sorted(unresolved.values(), key=lambda item: (item["email"], item["sha"]))
+
+
 def validate_pr_attribution(
     *,
     repository: str,
@@ -374,6 +409,16 @@ def validate_pr_attribution(
         )
         return login or None
 
+    commit_shas = {str(item.get("sha") or "") for item in commits}
+    credited_coauthors: set[str] = set()
+    for item in commits:
+        message = str((item.get("commit") or {}).get("message") or "")
+        for match in COAUTHOR_RE.finditer(message):
+            email = match.group("email").strip().lower()
+            login = resolved_login(match.group("name"), email)
+            if login and email not in ignored:
+                credited_coauthors.add(login.lower())
+
     def record_unresolved(
         *, email: str, name: str, sha: str, kind: str, references: Sequence[int]
     ) -> None:
@@ -402,32 +447,41 @@ def validate_pr_attribution(
         author_email = str(author.get("email") or "").strip().lower()
         linked_author = str((item.get("author") or {}).get("login") or "").strip()
         author_login = resolved_login(author_name, author_email, linked_author)
-        committer = commit.get("committer") or {}
-        committer_email = str(committer.get("email") or "").strip().lower()
-        linked_committer = str((item.get("committer") or {}).get("login") or "").strip()
-        preserved_unlinked_author = (
-            not author_login
-            and bool(pull_login)
-            and linked_committer.lower() == pull_login.lower()
-            and author_email != committer_email
+        parents = [str(parent.get("sha") or "") for parent in item.get("parents") or []]
+        is_base_sync_merge = len(parents) > 1 and any(
+            parent and parent not in commit_shas for parent in parents[1:]
         )
-        # An ordinary direct PR author is credited from pull-request metadata even
-        # when their commit email is private. A distinct unlinked author committed
-        # by the landing PR author is a strong cherry-pick/preservation signal.
-        if preserved_unlinked_author and author_email not in ignored:
-            record_unresolved(
-                email=author_email,
-                name=author_name,
-                sha=sha,
-                kind="commit author",
-                references=references,
-            )
-        elif author_login and (
+        unlinked_author = not author_login and author_email not in ignored
+        distinct_external_author = bool(author_login) and (
             author_login.lower() != pull_login.lower()
             and not is_bot(author_login, bots)
             and author_login.lower() not in internal
             and author_login.lower() not in opt_out
-        ):
+        )
+        # An ordinary direct PR author is credited from pull-request metadata even
+        # when their commit email is private. A distinct unlinked author committed
+        # by the landing PR author is a strong cherry-pick/preservation signal.
+        #
+        # A base synchronization merge imports a parent outside the PR commit set,
+        # so it is not salvaged contributor work. Its distinct author must still
+        # have explicit coauthor credit elsewhere in the PR.
+        if is_base_sync_merge and distinct_external_author:
+            if author_login.lower() not in credited_coauthors:
+                trailer = f"Co-authored-by: {author_name} <{author_email}>"
+                early_errors.append(
+                    f"base synchronization merge {sha} is authored by @{author_login}, "
+                    "distinct from the landing PR author, but that contribution is not "
+                    f"credited; add `{trailer}` to a commit in this PR"
+                )
+        elif unlinked_author:
+            record_unresolved(
+                email=author_email,
+                name=author_name,
+                sha=sha,
+                kind="unlinked commit author (would become a squash coauthor)",
+                references=references,
+            )
+        elif distinct_external_author:
             if not references:
                 early_errors.append(
                     f"commit {sha} is authored by @{author_login}, distinct from landing "
@@ -633,8 +687,9 @@ def merge_contributors(items: Iterable[Mapping[str, Any]]) -> list[dict[str, Any
     by_login: dict[str, dict[str, Any]] = {}
     for item in items:
         login = str(item["login"])
+        key = login.lower()
         existing = by_login.setdefault(
-            login,
+            key,
             {"login": login, "roles": set(), "external": bool(item.get("external", True))},
         )
         existing["roles"].add(str(item["role"]))
@@ -714,8 +769,9 @@ def _change_contributors(
         login = coauthor_overrides.get(identity) or login_from_email(email, overrides)
         if not login:
             raise ReleaseError(
-                f"commit {commit.sha} has an unresolved human coauthor email; "
-                "add an exceptional identityOverrides entry"
+                f"commit {commit.sha} has unresolved human coauthor {email}; "
+                "link that email to GitHub, amend the commit with a recognized email, "
+                "or add a verified identityOverrides entry"
             )
         if is_bot(login, bots) or login.lower() in opt_out:
             continue
@@ -818,7 +874,10 @@ def build_manifest(
     release_ref: str | None = None,
     exclude_paths: Sequence[str] = (),
     asset_dir: Path | None = None,
+    channel: str = "stable",
 ) -> dict[str, Any]:
+    if channel not in {"stable", "nightly"}:
+        raise ReleaseError(f"unsupported release channel: {channel}")
     current_ref = release_ref or tag
     actual_sha = resolve_tag_sha(repo_root, current_ref)
     if actual_sha != expected_sha:
@@ -833,33 +892,42 @@ def build_manifest(
     visual_requested = False
 
     for commit in commits_in_range(repo_root, previous_tag, current_ref, paths, exclude_paths):
-        if re.match(
-            r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE
-        ) or LEGACY_RELEASE_BUMP_RE.match(commit.subject):
+        if (
+            re.match(r"^chore(?:\([^)]+\))?: release\b", commit.subject, re.IGNORECASE)
+            or LEGACY_RELEASE_BUMP_RE.match(commit.subject)
+            or PUBLISHED_INSTALLER_BUMP_RE.match(commit.subject)
+        ):
             continue
         parsed_subject = parse_conventional_line(commit.subject)
-        subject_is_releasing = bool(
-            parsed_subject and parsed_subject.change_type in RELEASING_TYPES
-        )
+        included_types = ALLOWED_TITLE_TYPES if channel == "nightly" else RELEASING_TYPES
+        subject_is_included = bool(parsed_subject and parsed_subject.change_type in included_types)
         pull = resolve_pull_for_commit(
             github,
             repository,
             commit,
-            required=subject_is_releasing,
+            required=subject_is_included,
         )
         if pull is None:
             continue
         pull_body = str(pull.get("body") or "")
-        if not subject_is_releasing and not OVERRIDE_RE.search(pull_body):
+        if not subject_is_included and not OVERRIDE_RE.search(pull_body):
             continue
         pull_number = int(pull["number"])
         pull_commits[pull_number].add(commit.sha)
-        entries = release_entries(commit.subject, commit.body, pull_body)
+        entries = release_entries(
+            commit.subject,
+            commit.body,
+            pull_body,
+            allowed_types=included_types,
+        )
         if not entries:
             continue
-        contributors, issues, pull_visual = _change_contributors(
-            pull, commit, github, repository, attribution_config
-        )
+        try:
+            contributors, issues, pull_visual = _change_contributors(
+                pull, commit, github, repository, attribution_config
+            )
+        except ReleaseError as error:
+            raise ReleaseError(f"pull request #{pull_number}: {error}") from error
         visual_requested = visual_requested or pull_visual
         all_contributors.extend(contributors)
 
@@ -880,33 +948,37 @@ def build_manifest(
                 }
             )
 
-    if not changes:
+    if not changes and channel == "stable":
         raise ReleaseError(f"no releasing pull requests found for {tag}")
 
-    changelog_section = extract_changelog_section(changelog_path, version)
-    missing_prs = sorted(
-        {
-            int(change["pr"])
-            for change in changes
-            if not changelog_references_change(
-                changelog_section,
-                int(change["pr"]),
-                pull_commits[int(change["pr"])],
-            )
-        }
-    )
-    if missing_prs:
-        raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
+    if channel == "stable":
+        changelog_content = extract_changelog_section(changelog_path, version)
+        missing_prs = sorted(
+            {
+                int(change["pr"])
+                for change in changes
+                if not changelog_references_change(
+                    changelog_content,
+                    int(change["pr"]),
+                    pull_commits[int(change["pr"])],
+                )
+            }
+        )
+        if missing_prs:
+            raise ReleaseError(f"changelog section is missing pull requests: {missing_prs}")
+    else:
+        changelog_content = changelog_path.read_text()
 
-    bump = release_bump(changes, version)
+    bump = release_bump(changes, version) if changes else "patch"
 
     owner, repo = repository.split("/", 1)
+    compare_target = actual_sha if channel == "nightly" else tag
     compare_url = (
-        f"https://github.com/{owner}/{repo}/compare/{quote(previous_tag)}...{quote(tag)}"
+        f"https://github.com/{owner}/{repo}/compare/{quote(previous_tag)}...{quote(compare_target)}"
         if previous_tag
         else f"https://github.com/{owner}/{repo}/releases/tag/{quote(tag)}"
     )
-    return {
+    manifest = {
         "schema": (
             f"https://raw.githubusercontent.com/{repository}/{actual_sha}/"
             ".github/release-manifest.schema.json"
@@ -923,31 +995,38 @@ def build_manifest(
         "compareUrl": compare_url,
         "changelog": {
             "path": changelog_path.relative_to(repo_root).as_posix(),
-            "sha256": sha256(changelog_section.encode()).hexdigest(),
+            "sha256": sha256(changelog_content.encode()).hexdigest(),
         },
-        "visualRequested": visual_requested or bump == "major",
+        "visualRequested": channel == "stable" and (visual_requested or bump == "major"),
         "changes": changes,
         "contributors": merge_contributors(all_contributors),
         "assets": asset_checksums(asset_dir),
     }
+    if channel == "nightly":
+        manifest["channel"] = "nightly"
+    return manifest
 
 
-def _thanks(change: Mapping[str, Any]) -> str:
-    external = [
-        item
-        for item in change.get("contributors", [])
-        if item.get("external") and item.get("role") in {"author", "coauthor"}
-    ]
-    reporters = [
-        item
-        for item in change.get("contributors", [])
-        if item.get("external") and item.get("role") == "reporter"
-    ]
+def format_change_thanks(change: Mapping[str, Any]) -> str:
+    external: dict[str, Mapping[str, Any]] = {}
+    reporters: dict[str, Mapping[str, Any]] = {}
+    for item in change.get("contributors", []):
+        if not item.get("external"):
+            continue
+        login = str(item["login"])
+        key = login.lower()
+        if item.get("role") in {"author", "coauthor"}:
+            external.setdefault(key, item)
+        elif item.get("role") == "reporter":
+            reporters.setdefault(key, item)
+    for key in external:
+        reporters.pop(key, None)
+
     parts: list[str] = []
     if external:
-        parts.append("Thanks " + ", ".join(f"@{item['login']}" for item in external))
+        parts.append("Thanks " + ", ".join(f"@{item['login']}" for item in external.values()))
     if reporters:
-        parts.append("reported by " + ", ".join(f"@{item['login']}" for item in reporters))
+        parts.append("reported by " + ", ".join(f"@{item['login']}" for item in reporters.values()))
     return "; ".join(parts)
 
 
@@ -990,7 +1069,7 @@ def render_body(manifest: Mapping[str, Any], footer: str = "") -> str:
             continue
         lines.extend(["", f"## {TYPE_HEADINGS[change_type]}", ""])
         for change in grouped[change_type]:
-            suffix = _thanks(change)
+            suffix = format_change_thanks(change)
             bullet = (
                 f"- {change['summary']}. ([#{change['pr']}]({repository_url}/pull/{change['pr']}))"
             )
@@ -1107,6 +1186,7 @@ def collect_command(args: argparse.Namespace) -> None:
         release_ref=args.ref,
         exclude_paths=args.exclude_path,
         asset_dir=args.asset_dir.resolve() if args.asset_dir else None,
+        channel=args.channel,
     )
     write_json(args.output, manifest)
     print(f"wrote {args.output} with {len(manifest['changes'])} changes")
@@ -1203,6 +1283,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--config", type=Path, default=Path(".github/release-attribution-config.json")
     )
     collect.add_argument("--asset-dir", type=Path)
+    collect.add_argument("--channel", choices=("stable", "nightly"), default="stable")
     collect.add_argument("--output", type=Path, required=True)
 
     render = subparsers.add_parser("render")

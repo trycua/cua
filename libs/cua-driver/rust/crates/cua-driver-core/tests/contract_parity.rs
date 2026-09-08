@@ -17,6 +17,12 @@ fn canonical_session_contract_matches_live_registry() {
         .tools
         .into_iter()
         .filter(|contract| contract.schema_mode == SchemaMode::CanonicalRuntime)
+        .filter(|contract| {
+            contract
+                .capabilities
+                .iter()
+                .any(|capability| capability.starts_with("session."))
+        })
     {
         let entry = live["tools"]
             .as_array()

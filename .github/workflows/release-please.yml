@@ -61,6 +61,9 @@ jobs:
           echo "::error::Select cua-driver-rs or lume when forcing a bump type."
           exit 1
 
+      - name: Reject manifest tags outside main history
+        run: python3 .github/scripts/validate_release_please_tags.py --target HEAD
+
       - name: Resolve targeted release request
         id: request
         if: >-
@@ -192,8 +195,7 @@ jobs:
               python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                docs/content/docs/reference/cua-driver/cli-reference.mdx \
-                docs/content/docs/reference/cua-driver/mcp-tools.mdx
+                docs/content/docs/reference/cua-driver
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
             else
               python3 .github/scripts/sync_lume_release_docs.py

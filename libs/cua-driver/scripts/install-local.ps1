@@ -64,6 +64,7 @@ $RepoRoot    = (Resolve-Path "$ScriptDir\..\rust").Path
 $BinaryName  = "cua-driver-local.exe"
 $BuiltBinaryName = "cua-driver.exe"
 $UiaBinaryName = "cua-driver-uia-local.exe"
+$ThemeBinaryName = "cua-cursor-theme.exe"
 # Always release-config — matches the binary install.ps1 hands end users.
 $Config      = "release"
 
@@ -147,7 +148,18 @@ function Register-CuaDriverAutostart {
 }
 
 function Stop-CuaDriverLocalDaemons {
-    & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    # A missing task is the normal state for -NoAutoStart and for a first
+    # install. Windows PowerShell 5.1 promotes schtasks.exe stderr to an
+    # ErrorRecord, so temporarily relax the script-wide Stop preference for
+    # this deliberately best-effort cleanup.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & schtasks.exe /End /TN "cua-driver-local-serve" 2>$null | Out-Null
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
     Get-Process -Name "cua-driver-local","cua-driver-uia-local" -ErrorAction SilentlyContinue |
         Stop-Process -Force -ErrorAction SilentlyContinue
 }
@@ -172,13 +184,24 @@ if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) {
 
 # ---------- Build ----------------------------------------------------------
 
-Write-Step "cargo build --release -p cua-driver -p cua-driver-uia"
+Write-Step "cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli"
 Push-Location $RepoRoot
 try {
-    & cargo build --release -p cua-driver -p cua-driver-uia
-    if ($LASTEXITCODE -ne 0) {
+    # Windows PowerShell 5.1 promotes native stderr into ErrorRecord objects.
+    # Cargo writes ordinary progress there, so the script-wide Stop preference
+    # would terminate a healthy build before its exit code can be inspected.
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & cargo build --release -p cua-driver -p cua-driver-uia -p cursor-theme-cli
+        $buildExit = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($buildExit -ne 0) {
         Write-Host "Error: cargo build failed." -ForegroundColor Red
-        exit $LASTEXITCODE
+        exit $buildExit
     }
 }
 finally {
@@ -186,8 +209,13 @@ finally {
 }
 $BuiltBinary = Join-Path $RepoRoot "target\$Config\$BuiltBinaryName"
 $BuiltUiaBinary = Join-Path $RepoRoot "target\$Config\cua-driver-uia.exe"
+$BuiltThemeBinary = Join-Path $RepoRoot "target\$Config\$ThemeBinaryName"
 if (-not (Test-Path -LiteralPath $BuiltBinary)) {
     Write-Host "Error: build produced no binary at $BuiltBinary" -ForegroundColor Red
+    exit 1
+}
+if (-not (Test-Path -LiteralPath $BuiltThemeBinary)) {
+    Write-Host "Error: build produced no cursor-theme compiler at $BuiltThemeBinary" -ForegroundColor Red
     exit 1
 }
 
@@ -232,6 +260,7 @@ if (Test-Path -LiteralPath $DestBinary) {
 Write-Step "staging into $VersionedDir"
 New-Item -ItemType Directory -Path $VersionedDir -Force | Out-Null
 Copy-Item -LiteralPath $BuiltBinary -Destination $DestBinary -Force
+Copy-Item -LiteralPath $BuiltThemeBinary -Destination (Join-Path $VersionedDir $ThemeBinaryName) -Force
 $DestUiaBinary = Join-Path $VersionedDir $UiaBinaryName
 if (Test-Path -LiteralPath $BuiltUiaBinary) {
     Copy-Item -LiteralPath $BuiltUiaBinary -Destination $DestUiaBinary -Force
@@ -239,12 +268,12 @@ if (Test-Path -LiteralPath $BuiltUiaBinary) {
 $installedBinary = $DestBinary
 
 # Stage the skill pack alongside the binary. install-local mirrors what
-# install.ps1 does from a release zip — copies Skills/cua-driver-rs/ from
+# install.ps1 does from a release zip — copies Skills/cua-driver/ from
 # the repo into the versioned dir so the `current` junction below
 # transparently exposes it to agents.
-$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver-rs"
+$SourceSkills = Join-Path $RepoRoot "Skills\cua-driver"
 if (Test-Path -LiteralPath $SourceSkills) {
-    $StagedSkills = Join-Path $VersionedDir "Skills\cua-driver-rs"
+    $StagedSkills = Join-Path $VersionedDir "Skills\cua-driver"
     if (Test-Path -LiteralPath $StagedSkills) {
         Remove-Item -LiteralPath $StagedSkills -Recurse -Force
     }
@@ -401,3 +430,11 @@ if ($AutoStart) {
     Write-Host "  cua-driver-local autostart disable   (remove)" -ForegroundColor Cyan
     Write-Host ""
 }
+
+# Native tools such as `schtasks.exe /Query` leave `$LASTEXITCODE` unchanged
+# even after later PowerShell commands succeed. When this script is launched
+# through `powershell.exe -File`, that stale value can become the process exit
+# code and make a completed install look failed to CI callers. Every real
+# failure above exits or throws explicitly, so finish with an unambiguous
+# success status.
+exit 0

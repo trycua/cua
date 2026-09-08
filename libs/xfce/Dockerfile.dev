@@ -147,6 +147,16 @@ RUN uv pip install --system cua-bench-ui>=0.7.0 --no-cache-dir
 RUN uv pip install --system playwright && \
     python3.12 -m playwright install --with-deps firefox
 
+# Install the same released Cua Driver SDK used by the production image. This
+# makes the Python API and bundled executable available without changing the
+# existing computer-server runtime or port contract.
+COPY xfce/requirements-cua-driver.txt /tmp/requirements-cua-driver.txt
+RUN uv pip install --system --no-cache-dir \
+        -r /tmp/requirements-cua-driver.txt && \
+    python3.12 -c \
+        "from pathlib import Path; from cua_driver import CuaDriver, get_binary_path; assert Path(get_binary_path()).is_file()" && \
+    cua-driver --version
+
 # Fix any cache files created by pip
 RUN chown -R cua:cua /home/cua/.cache
 

@@ -1,27 +1,43 @@
 ---
 title: 'Cua documentation'
-description: 'Open-source computer-use automation for real machines and local isolated desktops.'
+description: 'Open-source computer-use automation for real machines and isolated desktops.'
 ---
 
-Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cua Driver to drive a machine you already have, Cua Sandbox to start an isolated local desktop, or Cua-Bench to evaluate computer-use agents.
+Cua is an open-source MIT-licensed platform ([github.com/trycua/cua](https://github.com/trycua/cua)) for **computer-use automation**: letting AI agents operate computers by clicking, typing, and reading the screen and accessibility tree. What we refer to as **Computer-Use 2.0** treats the GUI as one tool surface in an agent loop, alongside code, shell, files, and APIs. Use Cloud Fleets to provision isolated cloud desktops, Cua Driver to operate a machine you already have, Lume to manage local macOS VMs, or Cua-Bench to evaluate computer-use agents.
+
+For live service availability and incident updates, see [Cua Status](https://status.cua.ai).
 
 import { Card, Cards } from 'fumadocs-ui/components/card';
 
+## Choose your path
+
 <Cards>
+  <Card title="Your first Cloud Fleet" href="/tutorials/your-first-cloud-fleet">
+    Provision a Cloud Fleet, claim an isolated Linux desktop, run a command, save a screenshot, and
+    delete the cloud resources when you finish.
+  </Card>
   <Card title="Drive a real app — Cua Driver" href="/tutorials/drive-your-first-app">
     Run a background driver on macOS, Windows, or Linux so an agent can operate native GUI apps you
     already have without bringing them to the foreground or moving the real mouse. It speaks MCP
     over stdio and is also a plain CLI.
   </Card>
-  <Card title="Start a local desktop — Cua Sandbox" href="/tutorials/your-first-local-sandbox">
-    Start a disposable Linux desktop with Docker, or use a local VM runtime when you need a fresh,
-    isolated computer on your own hardware.
+  <Card title="Create a local macOS VM with Lume" href="/tutorials/create-your-first-lume-vm">
+    Install Lume on an Apple Silicon Mac, create a vanilla Tahoe guest, and connect over SSH.
   </Card>
-  <Card title="Evaluate agents with Cua-Bench" href="/concepts/what-is-cua-bench">
-    Define verifiable computer-use tasks, run agents across local or hosted environments, and score
-    the resulting trajectories.
+  <Card title="Build your first Cua-Bench task" href="/tutorials/your-first-cua-bench-task">
+    Create and verify a simulated computer-use task before evaluating agents.
   </Card>
 </Cards>
+
+Local sandboxes and Cloud Fleets share the [Sandbox SDK](/reference/sandbox-sdk),
+but their credentials, images, connections, and cleanup behavior differ. Start
+with [How sandboxes work](/concepts/how-sandboxes-work) for the shared model and
+[Runtime support](/reference/sandbox-sdk/runtime-support) for the differences.
+The Lume tutorial uses the Lume CLI directly, not the Sandbox SDK.
+
+Building Cua Driver into your own product? Start with [Choose a Cua Driver
+integration](/concepts/choose-a-cua-driver-integration) to decide whether MCP,
+the SDK, or an app-hosted service should own the runtime.
 
 ## Cua Driver in action
 
@@ -29,8 +45,8 @@ These recordings show agents operating desktop apps while the user's active wind
 
 <div className="not-prose my-8 grid gap-5 md:grid-cols-2">
   <VideoDemo
-    src="https://trycua.github.io/assets/videos/cua-driver/windows-wpf-agent-qa.mp4"
-    poster="https://trycua.github.io/assets/posters/cua-driver/windows-wpf-agent-qa.jpg"
+    src="https://github.com/user-attachments/assets/4159f98d-9623-40d0-a85f-37c913b1403b"
+    poster="https://github.com/user-attachments/assets/54536146-328a-431c-95b4-14a799248026"
     title="Build and check a WPF app on Windows"
     sourceUrl="https://x.com/trycua/status/2059688966085853245"
   >
@@ -38,8 +54,8 @@ These recordings show agents operating desktop apps while the user's active wind
   </VideoDemo>
 
   <VideoDemo
-    src="https://trycua.github.io/assets/videos/cua-driver/linux-headless-spreadsheet.mp4"
-    poster="https://trycua.github.io/assets/posters/cua-driver/linux-headless-spreadsheet.jpg"
+    src="https://github.com/user-attachments/assets/7096c772-aa24-4286-a453-6aedfbeb3e23"
+    poster="https://github.com/user-attachments/assets/74d428cb-1adc-4ebc-bc43-590f0966e84b"
     title="Fill a Linux spreadsheet over SSH"
     sourceUrl="https://x.com/trycua/status/2067639346719826213"
   >
@@ -49,12 +65,20 @@ These recordings show agents operating desktop apps while the user's active wind
 
 ## How these docs are organised
 
-Tutorials: learn by doing. Start with [Tutorials](/tutorials).
+Tutorials: learn by doing. [Choose a first tutorial](/tutorials).
 
 Concepts: understand how and why Cua works. Start with [Concepts](/concepts).
+
+Use Cua with: choose a model provider, agent harness, or local runtime. Start with [Use Cua with](/use-cua-with).
 
 How-to guides: recipes for a goal. Start with [How-to guides](/how-to-guides).
 
 Reference: precise technical description. Start with [Reference](/reference).
 
-For existing apps and signed-in state, start with **Cua Driver**. For fresh isolated local desktops, start with **Cua Sandbox**. Lume is the local Apple Silicon VM substrate behind part of the stack.
+## Find a tool or API
+
+- [Cloud Fleets overview](/cloud-fleets): pools, claims, and cloud capacity.
+- [Sandbox SDK reference](/reference/sandbox-sdk): the shared Python API and its runtime-specific contracts.
+- [Cua CLI reference](/reference/cua-cli/cli-reference): the general command-line interface, with separate [authentication](/reference/cua-cli/authentication) and [CLI MCP server](/reference/cua-cli/mcp-server) references.
+- [Lume reference](/reference/lume/cli-reference): local VM commands.
+- [Connect your agent to Cua docs](/how-to-guides/agent-context/connect-your-agent-to-cua-docs): documentation lookup, distinct from controlling a desktop with Driver.

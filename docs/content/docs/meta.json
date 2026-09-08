@@ -3,9 +3,12 @@
   "root": true,
   "pages": [
     "index",
+    "cloud-fleets",
     "---Learn---",
     "tutorials",
     "concepts",
+    "---Connect---",
+    "use-cua-with",
     "---Do---",
     "how-to-guides",
     "reference"

@@ -1,7 +1,7 @@
 ---
 name: cua-driver
-description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, click/type/scroll by element_index or pixel coordinates, and verify via re-snapshot without bringing the target to the foreground. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host.
-version: 0.12.3 # x-release-please-version
+description: Drive a native GUI app (macOS, Windows, Linux) via the cua-driver CLI (default) or MCP server; snapshot its accessibility tree, act through snapshot-bound element tokens, native menu paths, exact window geometry, or pixel coordinates, and verify from fresh state. Use when the user asks you to operate, drive, automate, or perform a GUI task in a real application on the host, or to continue, resume, or recall recent Cua activity.
+version: 0.24.0 # x-release-please-version
 metadata:
   openclaw:
     requires:
@@ -23,6 +23,9 @@ metadata:
       - name: CUA_DRIVER_RS_MCP_HTTP_PORT
         required: false
         description: Optional port for the local MCP HTTP endpoint.
+      - name: CUA_DRIVER_RS_MCP_HTTP_TOKEN
+        required: false
+        description: Required host-generated bearer token when the local MCP HTTP endpoint is enabled.
     homepage: https://cua.ai/docs/cua-driver
 ---
 
@@ -32,6 +35,25 @@ Orchestrates cross-platform app automation via `cua-driver`. Whenever
 a user asks to drive a native app, follow the loop in this skill
 rather than calling tools ad-hoc — the snapshot-before-action
 invariant is not optional and silently breaks if you skip it.
+
+## Consult recent Cua activity only for continuation
+
+When both `history_status` and `history_query` are advertised and the user asks
+to continue, resume, or recall prior Cua work, call `history_status` first. If
+history is healthy and access is admitted, make one bounded initial
+`history_query` before broad application or window discovery. Treat returned
+metadata only as a lead and verify current state through the least intrusive
+appropriate source. Content, geometry, arguments, results, and user intent
+omitted from the metadata remain unknown.
+
+Make another bounded query only when the initial slice exposes a relevant
+session or sequence boundary; never broaden a query to reconstruct excluded
+fields.
+
+Continue without history when either tool is absent, access is denied, the
+query is empty, or history is unhealthy. Do not query history for unrelated
+tasks merely because the tools are advertised, and never mutate history
+lifecycle or settings.
 
 ## Platform-specific reading — read this first
 
@@ -62,10 +84,86 @@ Use whichever combination matches the host. When in doubt, run
 `cua-driver doctor` — it reports the platform and the right entry
 point.
 
+## Start with the narrowest semantic route
+
+Before opening or operating an application, name the desired postcondition and
+use the first applicable route below. Verify the result in the same domain
+before stopping or advancing:
+
+0. **Caller-provided headless/background operation for a non-GUI outcome.**
+   Prefer an exact application API/SDK, service or database client, CLI, or
+   filesystem operation over imitating a user. This includes batch-safe file
+   moves, renames, copies, directory creation, archive extraction, data
+   conversion, and process inspection. Read the resulting semantic state back;
+   a zero exit status alone is not proof.
+1. **Typed Cua operation for an application or window outcome.** Use
+   `set_window_frame` for exact geometry, `invoke_menu` for a known native
+   application-menu path, typed browser tools for supported page content, and
+   clipboard tools for clipboard state. Verify with
+   `list_windows`, `get_browser_state`, or `clipboard_read`, respectively.
+2. **Background accessibility action.** Use a fresh AX/UIA/AT-SPI target.
+3. **Background pixel action.** Use the pixels from the same state snapshot.
+4. **Foreground delivery.** Retry only the action that evidence says could not
+   land in the background.
+5. **Desktop fallback.** Select an exact desktop target for that call only.
+   Later calls may return to an exact window target in the same session.
+
+Use Cua Driver when the outcome lives in an application's UI or window state,
+or when the user explicitly asks to operate that GUI. Once the task crosses
+that boundary, do not replace Cua's targeted and verified actions with shell
+scripts that mutate the app UI. A shell is a capability of the calling agent,
+not of the Cua Driver MCP server; an MCP-only client must not assume one exists.
+
+### Filesystem outcomes and GUI fallbacks
+
+When the requested outcome is a filesystem change and the caller has a
+headless filesystem or command capability, keep it on rung 0. Enumerate the
+exact source set, decide the destination-conflict policy before changing
+anything, perform one batch-safe operation, then independently read back both
+source and destination manifests. Do not open a file manager merely to mimic a
+move, copy, or rename that the caller can execute and verify directly.
+
+If the caller has no such capability, use the file manager as a GUI fallback
+and keep each claim narrow:
+
+1. After entering an inline rename and setting its value, commit it with the
+   platform's confirmation key, then take a fresh snapshot. Value readback from
+   the inline editor proves only that the editor changed; it does not prove the
+   filesystem rename committed.
+2. For a multi-selection, use the platform modifier (`cmd` on macOS, `ctrl` on
+   Windows/Linux). On macOS and Windows, issue that modified click with
+   `delivery_mode:"foreground"` so the target observes physical modifier state;
+   a refused background attempt is an escalation signal, not a failed action to
+   trust or repeat. Re-snapshot before the next operation. Continue only when
+   every intended item is selected and the prior selection was preserved.
+3. After a cross-window drag or paste, verify the destination contains the
+   complete expected set and the source reflects copy-versus-move semantics.
+   A delivered drag, keypress, or menu action is not file-operation proof.
+4. If a destination conflict presents an unrecognized policy or ambiguous
+   partial result, stop that GUI path and surface the unresolved state instead
+   of retrying blindly.
+
+### Clipboard outcomes and GUI fallbacks
+
+When the requested postcondition is an exact value on the system clipboard,
+rather than the literal gesture of selecting and copying it, keep the operation
+semantic. Read the value from the narrowest typed source, call
+`clipboard_write`, then prove the real clipboard state with `clipboard_read`.
+For browser content, this means reading the page with `get_browser_state` and
+writing the exact observed text; a passive page-text ref does not need to be
+clicked first.
+
+Use visual selection followed by the platform copy hotkey only when the user
+explicitly asks for that gesture, the source cannot expose the value
+semantically, or direct clipboard tools are unavailable. Treat that as a GUI
+fallback: re-snapshot before acting, verify the selected range when the
+application exposes it, and escalate only the delivery step that cannot land
+in the background.
+
 ## The no-foreground principle (window phase)
 
-In a strict `window` session, and during the initial window phase of an
-`auto` session, **the user's frontmost app MUST NOT change.** Every platform
+During window-targeted background actions, **the user's frontmost app MUST NOT
+change.** Every platform
 has its own list of forbidden commands:
 
 - macOS: any `open` invocation, any `osascript` that mutates GUI
@@ -79,25 +177,38 @@ If you reach for a command that says "activate", "foreground",
 "raise", or "make key", stop and translate to the cua-driver tool
 that does the same intent without focus-stealing.
 
-A strict `desktop` session is an explicit user choice to operate the visible
-desktop and therefore uses foreground/system input. An `auto` session may enter
-that phase only after the complete window ladder below has been attempted and
-verified, followed by `escalate_session`. Never infer desktop permission from a
-failed action or a proxy/transport session id.
+`delivery_mode:"foreground"` is a user-visible takeover boundary, not an
+automatic retry. Use it only when the user already authorized foreground
+control for this workflow or after asking for approval. It may change focus,
+workspace, and the compositor cursor while the action runs; restoration is
+best-effort. If background delivery is unavailable and foreground control is
+not authorized, stop with the driver's refusal instead of silently escalating.
 
-## Defaults — always prefer cua-driver over shell shims
+A desktop target is an explicit per-call choice to operate the visible desktop
+and therefore uses foreground/system input. Use it only after the narrower
+window ladder has been attempted and verified. Permission policy must still
+admit the display resource. Never infer desktop permission from a failed action
+or a public session label.
 
-**Default transport is the `cua-driver` CLI** — `Bash` shelling out
-to `cua-driver <tool-name> '<JSON-args>'`. MCP tools (prefix
-`mcp__cua-driver__*`) only when the user explicitly asks for them.
-CLI wins because it picks up rebuilds instantly, failures are
-easier to diagnose, and there's no per-tool schema-load overhead.
+## GUI transport defaults — prefer cua-driver over GUI shell shims
+
+**Default transport is the `cua-driver` CLI for one-off calls** — `Bash`
+shelling out to `cua-driver <tool-name> '<JSON-args>'`. Each CLI invocation
+owns a disposable transport session that is cleaned up after its response.
+Use one persistent `cua-driver mcp` connection for a multi-call GUI workflow
+that needs shared cursor, recording, browser, or named-session state. A public
+session label is not a credential and a later one-shot process cannot adopt
+the previous process's lifecycle merely by repeating that label.
+
+CLI wins for isolated inspection and management because it picks up rebuilds
+instantly, failures are easier to diagnose, and there's no per-tool
+schema-load overhead. Persistent MCP wins for an ordered action loop.
 
 Every reference to `click(...)`, `get_window_state(...)` etc. in this
 skill means `cua-driver click '{...}'` — translate to MCP form only
 when MCP is requested.
 
-### Claude Code computer-use compatibility mode
+### Claude Code computer-use compatibility flag
 
 For normal Claude Code use, keep the default CLI or `cua-driver` MCP
 server path above. If the user explicitly wants Claude Code's
@@ -107,20 +218,10 @@ vision/computer-use-style flow, they can register:
 cua-driver mcp-config --client claude   # then paste + run the printed line
 ```
 
-Observation: Claude Code vision flows appear to treat a screenshot
-MCP tool as the image-grounding anchor. This compatibility mode keeps
-the normal CuaDriver tools and changes only `screenshot`. The
-compatibility `screenshot` requires `pid` and `window_id`, captures
-only that target window, and returns the window-local pixel
-coordinate frame. Start with `launch_app` or `list_windows`, then
-call `screenshot({pid, window_id})`; do not assume desktop
-coordinates or a full-screen capture.
-
-Use MCP for this Claude Code vision/computer-use-style path. Do not
-shell out to `cua-driver screenshot` as a substitute: CLI screenshots
-still work as CuaDriver calls, but they do not expose the
-`mcp__cua-computer-use__screenshot` tool name that Claude Code
-appears to use as the image-grounding cue.
+The compatibility flag is retained for old setup snippets, but the standalone
+`screenshot` tool was removed. It does not add or replace tools. Use
+`get_window_state({pid, window_id})` for a window-local accessibility snapshot
+and PNG, or `get_desktop_state()` for an explicitly authorized desktop capture.
 
 ## Using cua-driver from the shell
 
@@ -128,30 +229,34 @@ Tool names are `snake_case`, management subcommands are
 `kebab-case` — no ambiguity. Tools invoked as `cua-driver
 <tool-name> '<JSON-args>'`. Management subcommands:
 
-- `cua-driver serve` — start the persistent daemon (**required for every
-  tool call**). CLI and MCP processes are adapters; the daemon owns policy,
-  platform identity, state, and the per-pid element cache.
-  macOS users: see `MACOS.md` for the LaunchServices-routed launch
-  form.
+- `cua-driver serve` — start an explicit persistent service when short-lived
+  clients must share runtime state or a platform identity. Bare MCP owns its
+  runtime directly on Windows/Linux and uses the signed app service on macOS;
+  `cua-driver mcp --socket <endpoint>` selects a service explicitly.
+  One-shot CLI tool calls still use the service path. macOS users: see
+  `MACOS.md` for the LaunchServices-routed launch form.
 - `cua-driver stop` / `status`
 - `cua-driver list-tools`, `describe <tool>`
 - `cua-driver recording start|stop|status` — see `RECORDING.md`
 - `cua-driver check-update [--json] [--no-cache]` — read-only "is a newer release available?" probe. Same payload as the `check_for_update` MCP tool; pair with `cua-driver update --apply` to install.
 
-Canonical multi-step workflow (example shape — platform-specific
-launch idioms in the per-OS companion file):
+Canonical multi-step workflow within one persistent MCP connection (example
+shape — platform-specific launch idioms in the per-OS companion file):
 
 ```bash
-cua-driver serve
-cua-driver launch_app '{"bundle_id":"..."}'
+# Start the service once, then connect one MCP client with `cua-driver mcp`.
+# The calls below are tool calls on that same connection, not separate shell
+# invocations of `cua-driver <tool>`.
+launch_app({"bundle_id":"..."})
 # → {pid: 844, windows: [{window_id: 10725, ...}]}
-cua-driver get_window_state '{"pid":844,"window_id":10725}'
-cua-driver click '{"pid":844,"window_id":10725,"element_index":14}'
-cua-driver stop
+get_window_state({"pid":844,"window_id":10725})
+# Use the returned structuredContent.elements[].element_token:
+click({"pid":844,"element_token":"s0000002a:14"})
+verify_state({"pid":844,"window_id":10725,"expect":[{"element":{"selector":{"label_contains":"Saved"},"exists":true}}]})
 ```
 
 For Chromium page content, keep the same native window selection but switch to
-the browser capability loop: `start_session`, bind `(pid, window_id)` with
+the browser capability loop: use one lifecycle session, bind `(pid, window_id)` with
 `get_browser_state`, snapshot the returned tab, then use `browser_click`,
 `browser_type`, or `browser_navigate`. Read `BROWSER.md` before using this
 route. Browser target ids, tab ids, and refs are session-scoped and stale refs
@@ -159,22 +264,48 @@ must be replaced by a fresh snapshot.
 
 ## Agent cursor overlay
 
-Visual cursor overlay for demos and screen recordings. It is enabled by
-default for declared sessions; anonymous actions remain cursor-less. Toggle with
-`cua-driver set_agent_cursor_enabled '{"enabled":true|false}'` only to
-hide or re-show it. A triangle pointer Bezier-glides to each click
-target, ring-ripples on landing, idle-hides after ~1.5s. Motion knobs:
+Visual cursor overlay for demos and screen recordings. It initializes on the
+first cursor-bearing action, including `move_cursor`, and follows the
+transport's implicit or named lifecycle session. Toggle a named cursor with
+`set_agent_cursor_enabled` to hide or re-show it. The embedded
+`cua.default` theme uses a session-colored pointer over a larger,
+cursor-shaped glow in the same session color. The glow fades to transparent
+around the full silhouette. Action marks use the same
+session-colored center and white-outline treatment, plus a tighter, softer
+glow. This pairing preserves contrast across varied backgrounds. It provides animations for
+idle, observe, click, drag, scroll, text, key, navigation, app, transfer,
+recording, and system activity. Motion knobs:
 `set_agent_cursor_motion` takes any subset of `start_handle`,
 `end_handle`, `arc_size`, `arc_flow`, `spring` — tuneable at runtime,
 persisted to config.
 
+**Agent-control safety.** Keep this overlay enabled whenever the agent is
+controlling pointer or keyboard input. Cursor-bearing and keyboard actions
+automatically re-show their session cursor, even if it was hidden while idle.
+On Linux, ordinary `move_cursor({x,y})` moves only this synthetic cursor.
+`move_cursor({x,y,scope:"desktop"})` is the explicit escape hatch that moves
+the user's compositor cursor and must not be used unless the user asked for
+desktop-pointer control. Raw Wayland input that requires
+`delivery_mode:"foreground"` crosses the same user-visible takeover boundary.
+
+Delivery and target context is shown as host-owned chips inside the session
+badge. Themes own the twelve action animations only. The session name and
+context chips fade independently, so an active tool can show its execution
+context without revealing a session name that has already faded.
+
 **Per-session cursors.** Each MCP session automatically owns its own
 cursor, keyed by the session's id (the proxy mints one session id per
 MCP connection and the daemon scopes the cursor, config overrides, and
-recording to it). You normally pass nothing — the session key is wired
-through for you. Pass an explicit `cursor_id` only to _deliberately
-share_ one cursor across sessions. When a session ends (the MCP client
-disconnects) its cursor is removed automatically.
+recording to it). The CLI and SDK contracts take the declared `session`
+explicitly. Cursor-theme controls no longer accept `cursor_id` or the legacy
+shape/color/image fields. Input-delivery tools may still use `cursor_id` to
+name a virtual pointer; it never selects artwork. The default cursor is Cua
+blue, while each named session receives a stable fill from the built-in
+palette. Select only preinstalled
+themes with `set_agent_cursor_theme`; theme source paths and inline animation
+data are never accepted through an agent tool. Use the trusted local
+`cua-driver cursor-theme` workflow to validate, compile, preview, install,
+list, or remove custom themes.
 
 **Visibility caveat (AX runs).** On a pure accessibility-action run
 (clicking by `element_index`), the first action **seeds the cursor
@@ -186,14 +317,26 @@ recording, do a pixel click (`click({pid,x,y})`) or a `move_cursor`
 first to put the cursor on-screen; subsequent AX actions then glide the
 full path normally.
 
-Requires the daemon process's UI runloop, which `cua-driver serve`
-bootstraps. One-shot CLI adapters do not own an overlay themselves.
+Pixel `click` already glides the overlay. Do not call `move_cursor`
+immediately before `click` on the same target; that plays two glides.
+Use `move_cursor` to place the overlay without clicking, or as the
+one-time seed above before AX actions.
 
-## The core invariant — snapshot before AND after every action
+Requires a suitable UI event loop. Service and private-worker runtimes provide
+one. On macOS, a same-process SDK runtime or `cua-driver mcp --direct` without
+a certified host main-thread adapter returns a structured
+`facility_unavailable` result for overlay operations; do not treat that as a
+successful cursor move. One-shot CLI adapters do not own an overlay
+themselves.
 
-**Every action MUST be bracketed by the state tool for the session's effective
-scope**: `get_window_state(pid, window_id)` in window scope, or
-`get_desktop_state(session)` in desktop scope.
+## The core invariant — snapshot before and verify after every action
+
+**Every action MUST be bracketed by observation for the session's effective
+scope.** Use `get_window_state(pid, window_id)` before a window action (or
+`get_desktop_state(session)` in desktop scope), then use `verify_state` for an
+expressible window-scoped postcondition. In effective desktop scope,
+`verify_state` is intentionally refused with `window_scope_disabled`; verify
+with a fresh `get_desktop_state` result and agent-owned visual/semantic reading.
 
 - **Before** — the pre-action snapshot resolves the `element_index`
   you're about to use. Indices from previous turns are stale; the
@@ -202,46 +345,120 @@ scope**: `get_window_state(pid, window_id)` in window scope, or
   N+1, and indices from window A don't resolve against window B of
   the same app. Skip this and element-indexed actions fail with
   `No cached AX state`.
-- **After** — the post-action snapshot verifies the action actually
-  landed. Without it you can't tell a silent no-op from a real
-  effect. The accessibility-tree change (new value, new window,
-  disappeared menu, disabled button, etc.) is your evidence that
-  the action fired. If nothing changed, the action probably failed
-  silently — say so, don't assume success.
+- **After** — `verify_state(pid, window_id, expect)` checks a bounded,
+  deterministic postcondition. Results are `satisfied`, `unsatisfied`, or
+  `unknown`; `unknown` never means success. Set `include_screenshot:true` when
+  the outcome also needs visual reading. The driver returns that final image
+  without interpreting it. A multimodal agent harness reads the image and owns
+  the stop/retry/ladder decision.
 
-This applies to pixel clicks and desktop actions too — re-snapshot after to
-confirm the action landed on the intended target.
+`unknown_reason` distinguishes invalid/unsupported predicates, untrusted web
+content, ambiguous matches, missing targets, unavailable observations, and
+`stability_unproven`. A positive final sample that was not observed for the
+requested consecutive sample count is `stability_unproven`, not success.
+Negative element existence is conservative: when an accessibility projection
+cannot prove its search domain exhaustive, absence remains `unknown`.
 
-## Choose capture scope when the session starts
+Do not make the driver invent task meaning or retry actions automatically.
+For postconditions not expressible by `verify_state`, take a fresh state
+snapshot and let the agent judge the tree and/or image explicitly. This applies
+to pixel clicks and desktop actions too.
 
-`capture_scope` is a per-session policy, not persistent configuration. Declare
-it with `start_session`; it is immutable until that session ends. Concurrent
-sessions may choose different policies safely.
+### Read action facts without confusing them with task success
 
-- `auto` (default): begins with effective scope `window`. Desktop perception
-  and actions are locked until the window ladder is exhausted, each attempted
-  action is verified, and the caller explicitly invokes `escalate_session`.
-  Escalation is one-way for the live session.
-- `window`: strict window-only perception and actions. Desktop tools are always
-  rejected with `desktop_scope_disabled`.
-- `desktop`: strict full-desktop perception and foreground/system actions.
-  Window-scoped perception and actions are rejected with
-  `window_scope_disabled`.
+A successful action returns `effect` and `route`, with optional typed
+`delivery`, `evidence`, and `escalation`. These fields describe the actuator;
+they do not declare the user's task complete.
 
-```bash
-cua-driver start_session '{"session":"research-1","capture_scope":"auto"}'
-cua-driver get_session_state '{"session":"research-1"}'
+- `confirmed` means the driver has publishable value readback or window-change
+  evidence for that action.
+- `partial` means only `delivery.delivered_count` was delivered.
+- `unverifiable` means the driver cannot prove the effect.
+- `suspected_noop` means available evidence suggests no useful change.
+- `refused` means the selected route deliberately did not deliver.
+
+The route vocabulary is intentionally cross-platform:
+`accessibility`, `synthetic_events`, `global_input`, `dom`, and
+`trusted_input`. Do not branch on private OS transport names.
+
+An optional escalation is a harness instruction, never an automatic retry:
+
+- `pixel`: refresh visual state and choose an exact pixel target;
+- `foreground`: explicitly select foreground delivery if the authorization
+  stack admits the tool and exact target;
+- `page`: bind the native window to a supported browser page route;
+- `session`: a legacy compatibility signal from an older capture-scope daemon;
+  current callers choose a desktop target on the specific action instead.
+
+Branch on the closed reason vocabulary:
+`route_unavailable`, `delivery_failed`, `effect_unconfirmed`,
+`suspected_noop`, and `permission_required`.
+
+After any action, keep using `verify_state` or a fresh state snapshot for the
+actual task postcondition. The multimodal harness owns visual reading and the
+decision to stop, retry, or advance the ladder.
+
+## Choose the target on each action
+
+A session owns lifecycle, cursor, recording, cleanup, and telemetry state. It
+does not store the current capture modality. Select an exact target on each
+action:
+
+```jsonc
+{"target":{"kind":"window","pid":844,"window_id":10725}}
+{"target":{"kind":"desktop","display_id":"primary"}}
 ```
 
-Do not use `config set capture_scope` or `set_config`; that key is retired and
-stale values on disk are ignored. Always pass the public `session` field on
-state and action calls. Reserved fields such as `_session_id` are transport
-metadata and cannot create or change policy.
+The window target uses window-local coordinates and the background/foreground
+delivery ladder. The desktop target uses screen coordinates and foreground
+delivery. A desktop action does not disable window tools for later calls.
 
-During a mixed-version rollout, require `tools/list` to advertise
-`session.capture_scope` (and `session.capture_scope.escalate` for `auto`). If an
-older daemon does not advertise them, fail closed and ask for an upgrade; never
-fall back to the retired global config key.
+`start_session` is optional. For a multi-call run, prefer a short public
+`session` label and pass the same label on every call that accepts it. The label
+is call-scoped: if a later call omits it, that call uses the authenticated
+transport's implicit session instead. Unnamed calls on one transport reuse that
+implicit identity. The default idle TTL is five minutes. Call
+`start_session(session)` to name or configure a run before acting, or to revive
+an ended name.
+
+Do not use `config set capture_scope` or `set_config`; that key is retired and
+stale values on disk are ignored. `start_session.capture_scope`,
+`get_session_state`, and `escalate_session` are deprecated compatibility
+surfaces. There is no `deescalate_session`. Reserved fields such as
+`_session_id` are transport metadata and cannot create authority.
+
+## Keep authorization separate from sessions
+
+The trusted host selects one permission profile at startup. `standard` keeps
+the normal profile behavior and residual approval requirements, `bounded`
+requires a reviewed capability manifest and has no runtime approval path, and
+`unrestricted` bypasses Cua approval prompts after explicit risk acceptance.
+Hard invariants plus managed and user policy remain binding in every profile.
+
+An optional capability manifest is a deny-by-default ceiling in `standard` and
+`unrestricted`; `bounded` requires one. It can remove tools or typed resources
+from the selected profile, but it cannot grant a tool, resource, or approval
+bypass that another authorization layer denies. Approval is considered only
+after the tool and every adapter-attested resource are inside manifest scope.
+
+Use the canonical startup pair together:
+
+```bash
+cua-driver mcp \
+  --permission-mode standard \
+  --capability-manifest ./capabilities.yaml \
+  --approve-capability-manifest
+```
+
+Capability manifest v3 omits file-level `mode` and `ask.tools`. Its
+`allow.tools` list is nonempty. Lifetime fields are optional in `standard` and
+`unrestricted`; `bounded` requires both `expires_after` and `idle_timeout`.
+The older `--session-policy` names remain compatibility aliases and must not be
+used in new configurations.
+
+Starting, ending, naming, reconnecting, or omitting a session never changes
+permission authority. A public session label is lifecycle metadata, never a
+grant, caller identity, or bearer credential.
 
 ### Why window selection is the caller's job now
 
@@ -299,7 +516,8 @@ capture, no mode flip.
 You don't pick a capture mode; you pick **how you address the target**
 on the action call, and that one choice selects the rung:
 
-- **element ax action** — pass `element_index` / `element_token`.
+- **element ax action** — pass `element_token` (preferred), or the exact
+  `element_index` + `snapshot_id` pair from the same response.
   Dispatches through the **accessibility rung**: AXPress (macOS) / UIA
   Invoke (Windows) / AT-SPI `doAction` (Linux). Backgroundable,
   z-order-independent, and the only **driver-verifiable** rung.
@@ -313,7 +531,7 @@ for the _dispatch_ path — it conflated perception with dispatch.
 Perception is always both; dispatch is `ax` or `px`.
 
 **The keyboard family has both forms too.** `type_text`, `press_key`,
-and `hotkey` take `element_index` (ax) **or** `x,y` (px) — mutually
+and `hotkey` take a snapshot-bound element target (ax) **or** `x,y` (px) — mutually
 exclusive, same as the pointer tools. The px form **pixel-clicks at
 `(x,y)` to establish real renderer focus, then delivers the
 keystroke(s)** to the now-focused element (it reuses `click`'s
@@ -323,10 +541,11 @@ for Chromium/Electron inputs the AX path can't reach, and
 `hotkey({pid, x, y, keys:["cmd","v"]})` to paste into a specific field.
 
 **Typing default (the ladder).** Call `type_text` directly with
-`element_index` (ax) — it targets the field, no pre-click. On
+`element_token` (ax) — it targets the field, no pre-click. On
 Electron/Catalyst the AX layer echoes the write without rendering it,
-so the driver returns `effect:"unverifiable"` + `escalation:"px"`
-there (never a false `verified:true`) — follow it, and cross-check the
+so the driver returns `effect:"unverifiable"` with
+`escalation.target:"pixel"` there (never a false `effect:"confirmed"`) —
+follow it, and cross-check the
 screenshot in the response (the only ground truth). Escalate to the px
 form — `type_text({pid, window_id, x, y, text})` — which pixel-clicks
 to focus, then types. **If the target control is closed** (a search
@@ -335,43 +554,41 @@ in the background): a px focus-click won't reliably open _and_ focus a
 closed control, so the text leaks into whatever's already focused.
 Escalate to `delivery_mode:"foreground"` only if it still drops.
 
-**`set_value` stays AX-only by design** — it's for **non-text**
-controls (dropdown / `AXPopUpButton`, checkbox, slider, stepper). Its
-pixel counterpart is a `click`/`drag` on the control, not a "set value
-at a pixel." So: text → `type_text` (ax+px); non-text control values →
-`set_value`; pixel-manipulate a control → `click`/`drag`.
+**`set_value` stays AX-only by design** — use it when the intent is to
+replace a control's whole value: dropdowns, checkboxes, sliders, steppers,
+and native text fields such as Finder's inline rename editor. Use
+`type_text` when the intent is to insert text at the current selection or
+cursor. Its pixel counterpart is a `click`/`drag` on the control, not a
+"set value at a pixel." So: insert text → `type_text` (ax+px); replace a
+surfaced native value → `set_value`; pixel-manipulate a control →
+`click`/`drag`.
 
-**Action responses carry an effect/escalation verdict**
+**Action responses carry closed action facts**
 
-Every action response keeps `verified` (did the driver read back a
-post-condition?) and adds two machine-readable fields so you know
-whether — and where — to climb the ladder:
+Use the `effect`, `route`, optional `delivery`, `evidence`, and
+`escalation` rules in “Read action facts without confusing them with task
+success” above. The old `verified`, `path`, coordinates, scope, and
+`escalation.recommended` response fields no longer exist.
+The full wire contract and 0.14 migration notes are in
+`../../../docs/action-result-contract.md`.
 
-- `effect`: one of
-  - `"confirmed"` — the driver read back the effect (`ax` rung only).
-  - `"unverifiable"` — dispatched, but the driver has no handle to
-    read back (every `px`/CGEvent path; foreground rung). **You**
-    confirm it off the screenshot — it is not a failure.
-  - `"suspected_noop"` — the `ax` action **likely did nothing** (the
-    element didn't actually advertise the action, or you hit a passive
-    label). This is the explicit **"cross to `px`"** trigger.
-- `escalation`: `{recommended, reason}` when the driver thinks you
-  should change rung —
-  - `"px"` — the element isn't really actionable in `ax`; do an
-    **element px action** off the screenshot you already have.
-  - `"foreground"` — a background insert/click was _dropped_ on
-    delivery; re-call the same action with `delivery_mode:"foreground"`.
+A successful accessibility value write can still return
+`effect:"unverifiable"` when the provider publishes its new value only after
+the action call unwinds. Take a fresh snapshot before retrying; an immediate
+retry can duplicate text. An explicit pixel escalation is reserved for a web
+surface whose accessibility layer echoed the write without proving that the
+renderer observed it.
 
 `get_window_state` itself, when the AX tree comes back empty (a non-AX
 surface like Electron/Chromium/canvas), returns `degraded: true`
-**plus the same `escalation` hint** — normally pointing at `px` (you
+plus an observation-specific escalation hint — normally pointing at pixels (you
 still have the screenshot from the same call to click off).
 
-**Platform nuance for `escalation`.** On **Wayland** an unfocused
+**Platform nuance for action escalation.** On **Wayland** an unfocused
 window cannot be pixel-targeted in the background (libei →
-`background_unavailable`), so there the recommendation is
-**`foreground`, not `px`**. macOS, X11, and most Windows surfaces
-_can_ pixel-target in the background, so they recommend `px`. See
+`background_unavailable`), so the action target is
+**`foreground`, not `pixel`**. macOS, X11, and most Windows surfaces
+can pixel-target in the background, so they target `pixel`. See
 `LINUX.md` / `WINDOWS.md`.
 
 ## The verify-then-escalate ladder (algorithm)
@@ -382,50 +599,58 @@ the tree against the pixels you already have, and only change
 _dispatch rung_ on a real signal. Walk the rungs:
 
 ```
-# Rung 1 — element ax action, backgrounded (the cheap default)
-get_window_state(pid, window_id)            # tree + screenshot, both, always
-resp = click(pid, window_id, element_index) # or type_text / set_value / press_key
-get_window_state(pid, window_id)            # re-snapshot — did the tree change?
+# Routes 0–1 — resolve non-GUI, exact geometry, and supported page outcomes first
+# Use a caller-provided semantic operation for a non-GUI outcome, then read it back.
+# For exact window geometry: set_window_frame(...), then list_windows(...) readback.
+# For a known native menu command: invoke_menu(pid, window_id, path), then verify its effect.
+# For supported page content: get_browser_state(...), typed browser action, refresh refs.
+# Continue below only when the postcondition actually requires native UI interaction.
 
-if resp.effect == "confirmed" and tree changed:
+# Route 2 — element AX/UIA/AT-SPI action, backgrounded
+get_window_state(pid, window_id)            # tree + screenshot, both, always
+resp = click(pid, element_token)            # or type_text / set_value / press_key
+check = verify_state(                       # bounded structured read-back
+    pid, window_id,
+    expect=[...],
+    include_screenshot=true                 # optional evidence for multimodal harness
+)
+
+if check.status == "satisfied":
     done                                    # driver-verified
+
+if check.status == "unknown" and check has an image:
+    harness reads the image                  # model-owned visual interpretation
+    if visual outcome is satisfied: done
 
 # escalate only on a real signal
 if resp.effect == "suspected_noop"
-   or resp.escalation.recommended == "px"
+   or resp.escalation.target == "pixel"
    or get_window_state.degraded            # empty tree → non-AX surface
+   or check.status != "satisfied"
    or the tree looks wrong vs the screenshot:   # e.g. an h:1 / off-viewport row
 
-    # Rung 2 — element px action off the SAME screenshot
+    # Route 3 — element px action off the SAME screenshot
     pick the target pixel from the screenshot already in the response
     click(pid, x, y)                        # background pixel — still no foreground
-    get_window_state(pid, window_id)        # re-snapshot, eyeball the result
+    verify_state(..., include_screenshot=true)
     if it landed: done
 
-# Rung 2b — exact browser page tools, when get_browser_state can bind this window
-# Use typed browser refs for page content; native window tools still handle chrome.
-get_browser_state(session, pid, window_id)
-browser_click(session, target_id, tab_id, ref) # or browser_type; see BROWSER.md
-get_browser_state(session, pid, window_id)     # verify with fresh refs
-if it landed: done
-
-# Rung 3 — background delivery was dropped (insert/click never arrived)
-if resp.escalation.recommended == "foreground"
+# Route 4 — background delivery was dropped (insert/click never arrived)
+if resp.escalation.target == "foreground"
    or the px action still did nothing:
+    require existing user authorization for visible foreground control
+    otherwise stop and ask; do not retry automatically
     re-call the same action with delivery_mode:"foreground"
     # on Wayland this is the ONLY escalation — px-bg can't target an
     # unfocused window there; see LINUX.md
     verify again
 
-# Rung 4 — desktop fallback (auto sessions only, explicit and one-way)
-# Reach this only after AX, window-pixel, browser-page (when available), and
-# foreground-window delivery have all been exhausted and verified ineffective.
-escalate_session(session,
-    reason="foreground_ineffective",       # or another advertised reason
-    detail="bounded non-sensitive summary")
-get_desktop_state(session)                  # full primary display
-desktop_action(session, scope="desktop", ...)  # no pid/window_id
-get_desktop_state(session)                  # verify in the same coordinate frame
+# Route 5 — per-call desktop fallback
+# Reach this only after semantic, AX, window-pixel, and foreground-window
+# delivery have all been exhausted and verified ineffective.
+get_desktop_state()                         # full primary display
+desktop_action(target={kind:"desktop", display_id:"primary"}, ...)
+get_desktop_state()                         # verify in the same coordinate frame
 ```
 
 The two ideas to hold onto: (1) the AX tree **lies** on canvas / web /
@@ -456,44 +681,51 @@ last resort.
 ## The canonical loop
 
 ```
-start_session(session, capture_scope="auto") # once per run; policy is immutable
-launch_app(target)
+# for multi-call work, repeat the same session label on every call that accepts it
+launch_app(target, session)
   → pick window_id from the returned `windows` array
     (or call list_windows(pid) separately)
   → get_window_state(pid, window_id)
-    → [act]  # every action also takes (pid, window_id) + your `session`
-  → get_window_state(pid, window_id) → verify
-end_session(session)              # when the run finishes
+    → [act]  # pass target={kind:"window", pid, window_id}
+  → verify_state(pid, window_id, expect)  # structured check; optional image
+end_session(session?)             # optional explicit cleanup
 ```
 
-For strict desktop sessions, replace the window portion with
-`get_desktop_state(session) → action(session, scope="desktop", ...) →
-get_desktop_state(session)`. Desktop actions use screen-absolute coordinates
-from that exact full-display image and omit `pid`/`window_id`. The global
-`get_screen_size` and `get_cursor_position` helpers are desktop-scoped too.
+An existing-profile `end_session` restores the Chromium browser's
+remote-debugging toggle when Cua enabled it and no other Cua session still uses
+that browser process and dismisses the exact native consent prompt. If exact
+cleanup cannot be proven, session cleanup fails closed and a later
+`end_session` retries it.
+
+For screen-absolute work, replace the window portion with
+`get_desktop_state() → action(target={kind:"desktop",display_id:"primary"}, ...)
+→ get_desktop_state()`. Desktop actions use coordinates from that exact
+full-display image.
 
 `launch_app` now returns a `windows` array alongside the pid, so the
 common case collapses to two calls (`launch_app` → `get_window_state`)
 without a separate `list_windows` hop.
 
-**Declare a session.** A session is _your run's_ identity — a stable id
-you choose (`"research-1"`), declared with `start_session` and passed as
-`session` on every action. It owns your agent cursor and capture policy (a
-distinct colour and one immutable policy per id), follows the run across any
-apps/windows, and is the same whether
-you drive over MCP, the CLI, or the socket. Declaring the session creates the
-cursor; anonymous actions remain cursor-less.
-End with `end_session` (or the idle-TTL reclaims it).
+**Prefer a named session for multi-call work.** Choose a short label (for
+example, `session: "research-1"`) and pass the same value on every call that
+accepts it. Passing it once is not sticky: a later call that omits `session`
+uses the transport's implicit session. Call `start_session(session)` when you
+need to name or configure the run before acting, or to revive a name after
+`end_session`. For one-off or deliberately unlabeled work, omission is valid
+and the transport still gets one private lifecycle identity and visible agent
+cursor. A public label makes inspection and cleanup easier, but it is not a
+credential. End with `end_session` when useful; transport close or the
+five-minute idle TTL also reclaims it.
 
-**Concurrent runs/subagents:** each run may independently choose `auto`,
-`window`, or `desktop`; one session's escalation never changes another. Also,
+**Concurrent runs/subagents:** each transport gets its own implicit session.
+Also,
 `launch_app` is idempotent — two runs that
 launch the same app get the **same** instance (and on single-instance apps
 like Calculator, the same window), so they clobber each other. Give each run
-its **own `session`** (→ its own cursor) AND pass
+its **own connection** (for independent lifecycle/cursor ownership) AND pass
 `creates_new_application_instance: true` to `launch_app` (→ its own window).
-The element cache is keyed on `(pid, window_id)` and the cursor on `session`,
-so distinct instances + distinct sessions keep the runs fully separated.
+The element cache is keyed on `(pid, window_id)` and the cursor on the private
+lifecycle session, so distinct instances and transports keep the runs isolated.
 
 **Parallelism vs. ordering.** Distinct sessions give distinct _cursors_, not
 distinct _connections_. Subagents that share one `cua-driver mcp` (stdio)
@@ -501,8 +733,10 @@ connection have their tool calls **serialized** by the transport — they take
 turns, not run in parallel. That's not a correctness problem (session + window
 isolation means they can't collide), just a throughput one. For genuinely
 parallel agents, give each its **own connection**: separate `cua-driver mcp`
-processes, or point each agent's MCP client at the daemon's HTTP endpoint
-(`CUA_DRIVER_RS_MCP_HTTP_PORT` → `POST http://127.0.0.1:<port>/mcp`). The daemon
+processes, or point each agent's MCP client at the daemon's HTTP endpoint.
+Set `CUA_DRIVER_RS_MCP_HTTP_PORT` and a host-generated
+`CUA_DRIVER_RS_MCP_HTTP_TOKEN` of at least 32 characters, then send
+`Authorization: Bearer <token>` to `POST http://127.0.0.1:<port>/mcp`. The daemon
 serves connections concurrently; per-connection ordering keeps each agent's own
 sequence (e.g. `3 → + → 1 → =`) correct.
 
@@ -515,21 +749,21 @@ app record doesn't carry window state on purpose. In the common
 single-window case you can skip `list_windows` entirely and read the
 `windows` array that `launch_app` already returned.
 
-### Snapshot and act by element_index
+### Snapshot and act with a snapshot-bound target
 
 Call `get_window_state({pid, window_id})` with the `window_id` from
 `launch_app`'s `windows` array (or a fresh `list_windows({pid})` if
 you're interacting with a long-lived process). It returns **the tree
 and the screenshot together** by default, so you can both dispatch by
-`element_index` and ground on pixels from one call — no config change,
+`element_token` and ground on pixels from one call — no config change,
 no mode flip. When you're just re-indexing before an element ax action
 and don't need fresh pixels, pass `include_screenshot:false` to skip
 the grab (a perf knob, not a modality choice).
 
 The response carries:
 
-- `tree_markdown` — every actionable element tagged `[N]`. That `N`
-  is the `element_index`. The tree can be very large (Finder is
+- `tree_markdown` — every actionable element tagged `[N]`; the structured row
+  with the same `element_index` carries its opaque `element_token`. The tree can be very large (Finder is
   ~1600 elements, ~190 KB); when it exceeds token limits the MCP
   harness saves it to a file and returns the path. Use `Bash` +
   `jq -r '.tree_markdown'` + `grep` to pull the section you need.
@@ -548,10 +782,10 @@ The response carries:
 
 ```bash
 # write to file — stdout stays readable (AX/UIA tree / summary only, no base64)
-cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.jpg"}'
+cua-driver get_window_state '{"pid":N,"window_id":W,"screenshot_out_file":"/tmp/shot.png"}'
 
 # CLI --screenshot-out-file flag is equivalent
-cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.jpg
+cua-driver get_window_state '{"pid":N,"window_id":W}' --screenshot-out-file /tmp/shot.png
 ```
 
 Pass `screenshot_out_file` when using `get_window_state` via CLI or
@@ -566,7 +800,7 @@ they come from the _same_ call.** Each half carries signal the other
 can't, which is exactly why you cross-check them:
 
 - The **tree** tells you _what's clickable_ — roles, labels,
-  `element_index` handles, advertised actions, parent-child
+  snapshot-bound element handles, advertised actions, parent-child
   structure. This is the ground truth for an **element ax action**.
 - The **screenshot** tells you _which one_ — the tree often has many
   buttons with similar or empty labels ("Delete", "OK", anonymous
@@ -577,7 +811,7 @@ can't, which is exactly why you cross-check them:
   catch the tree _lying_ (an `h:1`/off-viewport row, a Catalyst null
   value).
 
-Default to dispatching by `element_index` (the **element ax action**) —
+Default to dispatching by `element_token` (the **element ax action**) —
 it's the verifiable, backgroundable rung. Do an **element px action**
 (`x,y` off the same screenshot) when the tree can't disambiguate
 (repeated/empty labels), when it's empty (`degraded` — non-AX
@@ -592,30 +826,40 @@ video / WebGL / custom-drawn surface that isn't in the tree
 
 The `actions=[...]` list on each element is **advisory**, not
 authoritative. cua-driver does not pre-flight check against it —
-`click({pid, element_index})` always attempts the default action (or
+`click({pid, element_token})` always attempts the default action (or
 the action you pass) and surfaces whatever the target returns. **Try
 the click first** — pivot only on the returned error code.
 
 ### Tool dispatch table
 
-Every row assumes a `(pid, window_id)` pair from the last
-`get_window_state`; `window_id` is required alongside `element_index`,
-ignored on pixel-only forms unless you want to anchor the conversion
-against a specific window.
+Every row assumes a fresh `get_window_state`. Prefer its opaque
+`element_token`. If a client uses the visible integer instead, it must send
+the response's `snapshot_id` with `element_index`; bare indices fail closed in
+0.17. Pixel-only forms remain independent of snapshot handles.
 
 | Intent                           | Tool                                                                                                            | Notes                                                                                                                                                                                                                 |
 | -------------------------------- | --------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | List an app's windows            | `list_windows({pid})`                                                                                           | returns `window_id`, `title`, `bounds`, `z_index`, `is_on_screen`, `on_current_space`. Already included in `launch_app`'s response — only call this for long-lived pids                                               |
+| Set an exact window frame        | `set_window_frame({pid, window_id, x, y, width, height})`                                                       | uses the platform window manager and returns `confirmed` only after geometry readback; inspect `list_windows` again before continuing when the result is not confirmed                                                |
+| Invoke a native application menu | `invoke_menu({pid, window_id, path:["Window","Arrange","Left"]})`                                              | resolves exact immediate-child labels from live native state at every hop; refuses missing, ambiguous, or disabled segments and never falls back to pixels; verify the command's semantic effect afterward          |
 | Snapshot a window                | `get_window_state({pid, window_id})`                                                                            | returns `tree_markdown` + `screenshot_*`; populates the `(pid, window_id)` element_index cache                                                                                                                        |
-| Left click                       | `click({pid, window_id, element_index})`                                                                        | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]`                                                                                                        |
-| Double-click / open              | `double_click({pid, window_id, element_index})`                                                                 | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center                                                                        |
-| Right click / context menu       | `right_click({pid, window_id, element_index})` or `click({pid, window_id, element_index, action: "show_menu"})` | Browser page content should use the typed route where available; see `BROWSER.md`                                                                                                                                     |
-| Type at cursor                   | `type_text({pid, text, window_id, element_index})` (ax) or `type_text({pid, text, window_id, x, y})` (px)       | ax focuses the element then writes via the platform's text-set primitive; **px** pixel-clicks `(x,y)` to focus the renderer, then types — the one-call fix for Chromium/Electron inputs the AX path can't reach       |
-| Set whole non-text control value | `set_value({pid, window_id, element_index, value})`                                                             | **AX-only by design** — dropdown/`AXPopUpButton`, checkbox, slider, stepper; **also the keyboard-commit workaround on minimized windows.** For text use `type_text`; to pixel-manipulate a control use `click`/`drag` |
-| Scroll                           | `scroll({pid, direction, amount, by, window_id, element_index})`                                                | synthesizes per-pid PageUp/PageDown/arrows                                                                                                                                                                            |
-| Focus + send key                 | `press_key({pid, key, window_id, element_index, modifiers})` (ax) or `press_key({pid, key, x, y})` (px)         | ax `element_index` sets focus then posts the key; **px** pixel-clicks `(x,y)` to focus, then sends the key                                                                                                            |
+| Verify a postcondition           | `verify_state({pid, window_id, expect, include_screenshot?})`                                                   | polls bounded structured predicates; returns `satisfied`, `unsatisfied`, or `unknown`. Optional final image is interpreted by the agent harness, never by the driver                                                 |
+| Left click                       | `click({pid, element_token})` or `click({pid, window_id, element_index, snapshot_id})`                          | default `action: "press"`. Pixel form: `click({pid, x, y})` (window_id optional) — `modifier: ["cmd"\|"ctrl"]`                                                                                                        |
+| Double-click / open              | `double_click({pid, element_token})`                                                                            | Default action when the element advertises one (Open on Finder items / openable rows), else stamped pixel double-click at the element's center                                                                        |
+| Right click / context menu       | `right_click({pid, element_token})` or `click({pid, element_token, action:"show_menu"})`                       | Browser page content should use the typed route where available; see `BROWSER.md`                                                                                                                                     |
+| Type at cursor                   | `type_text({pid, text, element_token})` (ax) or `type_text({pid, text, window_id, x, y})` (px)                  | ax focuses the element then writes via the platform's text-set primitive; **px** pixel-clicks `(x,y)` to focus the renderer, then types — the one-call fix for Chromium/Electron inputs the AX path can't reach       |
+| Set whole non-text control value | `set_value({pid, element_token, value})`                                                                         | **AX-only by design** — dropdown/`AXPopUpButton`, checkbox, slider, stepper; **also the keyboard-commit workaround on minimized windows.** For text use `type_text`; to pixel-manipulate a control use `click`/`drag` |
+| Scroll                           | `scroll({pid, direction, amount, by, element_token})`                                                           | synthesizes per-pid PageUp/PageDown/arrows                                                                                                                                                                            |
+| Focus + send key                 | `press_key({pid, key, element_token, modifiers})` (ax) or `press_key({pid, key, x, y})` (px)                    | ax targets the element before posting the key; **px** pixel-clicks `(x,y)` to focus, then sends the key                                                                                                               |
 | Send key to pid                  | `press_key({pid, key, modifiers})`                                                                              | no focus change; key goes to pid's current focus                                                                                                                                                                      |
 | Modifier combo                   | `hotkey({pid, keys})` (no focus) or `hotkey({pid, x, y, keys})` (px)                                            | e.g. `["cmd","c"]` / `["ctrl","c"]`; posted per-pid, not HID tap. **px** pixel-clicks `(x,y)` to focus a field first, e.g. `["cmd","v"]` to paste into it                                                             |
+
+`list_windows.z_index` uses one portable convention: higher integer
+values are closer to the front. Select a frontmost candidate with the
+maximum non-null value. If all values are `null` (as they can be on
+native Wayland), use an explicit fallback; never treat `null` as zero
+or infer stacking from array order. The `windows` records returned by
+`launch_app` use the same convention.
 
 In effective desktop scope, the foreground/system equivalents omit
 `pid`/`window_id` and pass `scope:"desktop"`: `click`, `scroll`, `drag`,
@@ -627,9 +871,10 @@ target's per-pid event-post path. Only a strict/effective desktop session may
 omit `pid`, and it intentionally routes keyboard input to the current
 foreground application.
 
-**Why `element_index` is the primary path:** works on hidden /
-occluded / off-desktop windows, no focus steal, stable across
-rebuilds, labels tell you what you're clicking. Reach for pixel
+**Why the snapshot-bound element target is the primary path:** works on hidden /
+occluded / off-desktop windows, avoids focus steal, and fails closed after a
+tree rebuild instead of silently retargeting a reused index. Labels tell you
+what you're clicking. Reach for pixel
 coordinates only when the accessibility tree can't.
 
 ## Cross-platform parameter contract
@@ -637,7 +882,7 @@ coordinates only when the accessibility tree can't.
 The capture, dispatch, and addressing params — `session`,
 `delivery_mode`, `capture_mode` (deprecated/ignored — see the behavior
 matrix; still in the schema only so old callers don't error), `scope`,
-`modifier`, `button`, `element_index`, `element_token` — are a **shared
+`modifier`, `button`, `element_index`, `snapshot_id`, `element_token` — are a **shared
 schema contract**: identical _shape_ (`type`/`enum`/`items`) on macOS,
 Windows, and Linux.
 They compose from canonical fragments in
@@ -661,10 +906,14 @@ Two consequences for callers:
   `scroll`, `type_text`, `press_key`, `hotkey` — uniformly. The
   `foreground` rung briefly fronts the target, acts, then restores the
   prior frontmost: the explicit last resort when a background attempt
-  didn't land. **`foreground` is a reaction, never a prediction.** Always
+  didn't land. **`foreground` is a reaction and a user-authorization gate,
+  never a prediction.** Always
   fire the `background` default first and let the driver tell you it
-  can't (a `background_unavailable` error or `escalation.recommended ==
-"foreground"`) — or observe a verified no-op — _before_ you escalate.
+  can't (a `background_unavailable` error with
+  `escalation.recommended == "foreground"`, or a successful action result
+  with `escalation.target == "foreground"`) — or observe a confirmed no-op —
+  _before_ you consider escalation. Then use it only when the user already
+  authorized visible foreground control or after asking for approval.
   Do **not** reason "it's a GTK/Chromium/Electron app, so background will
   drop, so I'll front up-front": the toolkit lists in the tool schemas
   are the _driver's_ internal detectors, not a checklist for you to front
@@ -685,7 +934,7 @@ schema-rejected.
 
 Genuinely platform-specific params stay OUT of the shared contract by
 design (launch-app identifiers, the Windows-only `debug_window_info`, the
-macOS-only `check_permissions.prompt`). The per-OS files list the
+macOS-only status-only `check_permissions.prompt`). The per-OS files list the
 residuals that matter when you drive on that platform.
 
 ## Pixel-coordinate clicks
@@ -770,29 +1019,34 @@ embedded webview for which exact browser binding is unavailable. The legacy
 `page` tool remains a compatibility surface; do not use it as the starting
 point for new browser workflows.
 
-## Re-snapshot and verify — mandatory
+## Verify after every action — mandatory
 
-**Always** call `get_window_state({pid, window_id})` after the
-action. This isn't optional verification — it's the second half of
-the snapshot invariant.
+**Always** verify after an action. Prefer
+`verify_state({pid, window_id, expect})` for structured state such as a
+window's existence/bounds or a semantic element's existence, value, enabled
+state, or selected state. Use its bounded poll and stable-sample requirement
+instead of hand-written sleeps. `unknown` means the driver could not establish
+the predicate; it is not success. Once a session has effective desktop scope,
+use a fresh `get_desktop_state(session)` result instead—window-scoped
+`verify_state` is denied by that capture policy.
 
-Check the tree diff: a changed value, a new element, a new window,
-or the disappearance of the thing you just clicked (menus collapse
-after selection, buttons may become disabled, etc.). The re-snapshot
-gives you both the tree and the screenshot, so you cross-check the tree
-diff against the pixels in one call — and when you're only confirming a
-tree change, `include_screenshot:false` skips the grab.
+Pass `include_screenshot:true` when visual evidence is useful. The same result
+then contains a fresh final window image. The driver still evaluates only the
+structured predicates; the multimodal agent harness reads the pixels and
+decides whether to stop, retry, or advance the ladder. For a postcondition not
+expressible by the tool, explicitly take a fresh `get_window_state` snapshot
+and have the harness judge its tree and image.
 
 Switch to an **element px action** only on a real signal: the action
-response carried `effect:"suspected_noop"`, the re-snapshot came back
-`degraded` (empty tree → non-AX surface), the tree looks
-unchanged/unreadable or disagrees with the screenshot, or
-`escalation.recommended` points you there (`px`). That's the
+response carried `effect:"suspected_noop"`, verification returned
+`unsatisfied`/`unknown`, the snapshot came back `degraded` (empty tree →
+non-AX surface), the tree looks unchanged/unreadable or disagrees with the screenshot, or
+`escalation.target` points you there (`pixel`). That's the
 verify-then-escalate ladder in the behavior-matrix section. If the tree
 is unchanged AND the screenshot confirms nothing moved, the action
 likely failed silently — **tell the user what you attempted and what
 you observed**, don't paper over with "done" language (and consider
-`delivery_mode:"foreground"` when `escalation.recommended ==
+`delivery_mode:"foreground"` when `escalation.target ==
 "foreground"`). Agents that skip this step report success on
 silently-dropped actions — the single most common failure mode.
 
@@ -814,8 +1068,9 @@ doesn't-survive-across-sessions caveat.
 | Error text                                                                         | Meaning                                                                                                                                                                          | Fix                                                                                                                                                                                                                  |
 | ---------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `No cached AX state for pid X window_id W`                                         | You either skipped `get_window_state` this turn, or passed a different `window_id` to the click than the one the snapshot cached against                                         | Call `get_window_state({pid: X, window_id: W})` first — the same window_id you intend to click in                                                                                                                    |
-| `Invalid element_index N for pid X window_id W`                                    | Index is stale or out of range                                                                                                                                                   | Re-run `get_window_state` with the same window_id, pick a fresh index from the new tree                                                                                                                              |
+| `snapshot_id_required` / `stale_element_token`                                    | A bare index was supplied, or a newer snapshot superseded this target                                                                                                            | Re-run `get_window_state`; use the new `element_token`, or send its `snapshot_id` with the matching integer                                                                                                          |
 | `window_id W belongs to pid P, not …`                                              | Passed a window_id that's owned by a different process                                                                                                                           | Use `list_windows({pid: X})` to enumerate this pid's own windows                                                                                                                                                     |
+| `ambiguous_window_target`                                                          | A PID-only window action matched multiple eligible top-level windows                                                                                                              | Use the returned candidates or `list_windows({pid: X})`, select the intended sibling, and retry with its explicit `window_id`                                                                                       |
 | `AX action … failed with code …` / `UIA invoke failed`                             | Element doesn't support the default action                                                                                                                                       | Try `show_menu`, `confirm`, `cancel`, `pick`, or fall through to a pixel click on the element's center                                                                                                               |
 | `The user doesn't want to proceed with this tool use. The tool use was rejected …` | The harness uses this _exact_ string for BOTH a permission-prompt denial AND a manual interrupt (Esc / stop) of a running tool — they are indistinguishable from the tool result | Treat as "tool canceled, no result, await the user." Do NOT paraphrase ("you stopped me") — quote the literal message and name the canceled tool + its args, so the user can tell what was in flight vs. what landed |
 
@@ -825,7 +1080,9 @@ respective companion files.
 
 ## Things to avoid
 
-- **Never** reuse an `element_index` across a re-snapshot of the same pid.
+- **Never** reuse an element target across a re-snapshot of the same window.
+  A new snapshot invalidates older tokens immediately. Bare `element_index`
+  input is rejected; use `element_token` or `element_index` + `snapshot_id`.
 - **Don't conflate the two addressing modes.** The tree gives you
   `element_index` handles; the screenshot (same call) gives you the
   pixel frame. An **element ax action** addresses by index, an

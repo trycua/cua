@@ -26,8 +26,8 @@ name: "CI: cua-driver distro-compat matrix"
 # Trigger workflow changes in PRs and on main so edits to this matrix validate
 # against the current release. Source changes do not run this workflow because
 # it downloads a published binary rather than building the proposed commit.
-# Release tags always run the matrix against the matching artifact, and
-# workflow_dispatch remains available for maintainer-requested validation.
+# Published Cua Driver releases run the matrix against their matching artifact,
+# and workflow_dispatch remains available for maintainer-requested validation.
 #
 # Companion to the Rust desktop E2E workflows; it validates released binaries,
 # not source-built harness behavior.
@@ -37,13 +37,15 @@ on:
     paths:
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
   push:
-    # Path filters do not apply to tag pushes, so every release tag still runs.
     # Main-branch pushes run only when the matrix itself changes.
     branches: [main]
-    tags:
-      - "cua-driver-rs-v*"
     paths:
       - ".github/workflows/ci-distro-compat-cua-driver.yml"
+  release:
+    # The Cua Driver release train separates immutable tag creation from an
+    # explicitly dispatched publication step. Wait for publication so the
+    # released-binary matrix never races a draft release.
+    types: [published]
   workflow_dispatch:
     inputs:
       version:
@@ -61,6 +63,9 @@ jobs:
   # we use that instead.
   resolve-version:
     name: Resolve release version
+    if: |
+      github.event_name != 'release' ||
+      startsWith(github.event.release.tag_name, 'cua-driver-rs-v')
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.pick.outputs.version }}
@@ -71,11 +76,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           INPUT_VERSION: ${{ inputs.version }}
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: |
           if [[ -n "$INPUT_VERSION" ]]; then
             VERSION="$INPUT_VERSION"
-          elif [[ "$GITHUB_REF" == refs/tags/cua-driver-rs-v* ]]; then
-            VERSION="${GITHUB_REF#refs/tags/cua-driver-rs-v}"
+          elif [[ "$GITHUB_EVENT_NAME" == "release" ]]; then
+            VERSION="${RELEASE_TAG#cua-driver-rs-v}"
           else
             # Fetch the latest release that matches the cua-driver-rs-v* pattern.
             # The releases are marked prerelease=true so we use /releases instead
@@ -104,21 +110,11 @@ jobs:
         env:
           BINARY_URL: ${{ steps.pick.outputs.binary_url }}
         run: |
-          # The tag and desktop CD workflows start at the same time. Building,
-          # notarizing, and publishing every platform can take several minutes,
-          # so a tag-triggered compatibility run must wait for the release asset
-          # instead of treating the initial 404 as a broken release.
-          for attempt in $(seq 1 90); do
-            if curl -fsSL "$BINARY_URL" -o cua-driver-release.tar.gz; then
-              exit 0
-            fi
-            if [[ "$attempt" -eq 90 ]]; then
-              echo "ERROR: release asset was still unavailable after 15 minutes"
-              exit 1
-            fi
-            echo "Release asset not available yet (attempt ${attempt}/90); retrying in 10s..."
-            sleep 10
-          done
+          # Release assets are staged before the draft becomes public. Keep a
+          # short retry window only for transient GitHub/CDN propagation.
+          curl --fail --silent --show-error --location \
+            --retry 5 --retry-delay 2 --retry-all-errors \
+            "$BINARY_URL" -o cua-driver-release.tar.gz
 
       - name: Cache released binary for matrix
         if: steps.pick.outputs.version != 'none'

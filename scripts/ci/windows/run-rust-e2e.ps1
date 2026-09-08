@@ -50,6 +50,11 @@ $env:CUA_TEST_APPS_ROOT = Join-Path $rustRoot "test-apps"
 $env:CUA_TEST_REQUIRE_FIXTURES = "1"
 $env:CUA_TEST_DRIVER_STDERR = "1"
 $env:CUA_E2E_FORBID_SKIPS = "1"
+# This matrix runs in a disposable, authenticated desktop session. This
+# testkit-only switch gives spawned behavior daemons explicit unrestricted
+# authorization without leaking product authorization variables into the
+# SDK/runtime tests executed by this runner.
+$env:CUA_E2E_UNRESTRICTED_GUI = "1"
 $sourceMarker = Join-Path $repoRoot ".cua-e2e-source-sha"
 if (Test-Path $sourceMarker) {
     $env:CUA_E2E_SOURCE_MARKER = $sourceMarker
@@ -201,6 +206,115 @@ function Invoke-CargoTest {
     }
 }
 
+function Invoke-ComputerHistoryGate {
+    $historyHome = Join-Path $artifactDir "history-product-home"
+    $historyBinDir = Join-Path $artifactDir "history-product-bin"
+    $historyLocalAppData = Join-Path $artifactDir "history-local-app-data"
+    $historyPipeName = "cua-driver-local-history-$PID"
+    $historyPipe = "\\.\pipe\$historyPipeName"
+    $env:CUA_DRIVER_LOCAL_HOME = $historyHome
+    $env:CUA_DRIVER_LOCAL_INSTALL_DIR = $historyBinDir
+    $env:CUA_E2E_HISTORY_DAEMON_SOCKET = $historyPipe
+    $env:LOCALAPPDATA = $historyLocalAppData
+
+    Write-Host "[HISTORY] Installing the exact candidate into an isolated local namespace" -ForegroundColor Yellow
+    $installLog = Join-Path $artifactDir "history-install-local.log"
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $installOutput = @(& (Join-Path $driverRoot "scripts\install-local.ps1") `
+            -NoAutoStart -NoPathUpdate 2>&1) | ForEach-Object {
+                if ($_ -is [System.Management.Automation.ErrorRecord]) {
+                    $_.Exception.Message
+                } else {
+                    $_.ToString()
+                }
+            }
+        $installExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    $installOutput | Tee-Object -FilePath $installLog
+    if ($installExit -ne 0) {
+        $script:FailureCount++
+        return
+    }
+
+    $installed = Join-Path $historyHome "packages\current\cua-driver-local.exe"
+    $env:CUA_E2E_INSTALLED_DRIVER_BIN = $installed
+    if (-not (Test-Path -LiteralPath $installed)) {
+        Write-Host "[HISTORY FAIL] Installed driver is missing: $installed" -ForegroundColor Red
+        $script:FailureCount++
+        return
+    }
+
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $installed history purge-offline --yes 2>&1 |
+            Set-Content (Join-Path $artifactDir "history-purge-preflight.log")
+        $purgeExit = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if ($purgeExit -ne 0) {
+        Write-Host "[HISTORY FAIL] Installed driver could not establish an empty encrypted store" -ForegroundColor Red
+        $script:FailureCount++
+        return
+    }
+
+    $daemonLog = Join-Path $artifactDir "history-daemon.log"
+    $daemonErr = Join-Path $artifactDir "history-daemon.err.log"
+    $daemon = Start-Process -FilePath $installed -ArgumentList @(
+        "serve",
+        "--socket", $historyPipe,
+        "--permission-mode", "unrestricted",
+        "--dangerously-bypass-approvals"
+    ) -RedirectStandardOutput $daemonLog -RedirectStandardError $daemonErr -PassThru
+
+    $ready = $false
+    for ($attempt = 0; $attempt -lt 150; $attempt++) {
+        if ($daemon.HasExited) { break }
+        try {
+            $probe = [System.IO.Pipes.NamedPipeClientStream]::new(
+                ".",
+                $historyPipeName,
+                [System.IO.Pipes.PipeDirection]::InOut
+            )
+            $probe.Connect(100)
+            $probe.Dispose()
+            $ready = $true
+            break
+        } catch {
+            Start-Sleep -Milliseconds 100
+        }
+    }
+    if (-not $ready) {
+        Write-Host "[HISTORY FAIL] Installed daemon did not become ready" -ForegroundColor Red
+        $script:FailureCount++
+        if (-not $daemon.HasExited) { Stop-Process -Id $daemon.Id -Force }
+        return
+    }
+
+    Invoke-CargoTest "computer-history-encrypted-lifecycle" @(
+        "test", "-p", "cua-driver", "--test", "computer_history_cross_platform_test", "--",
+        "--ignored", "--exact", "encrypted_history_survives_restart_and_cryptographically_purges",
+        "--nocapture", "--test-threads=1"
+    )
+
+    $previousPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        & $installed stop --socket $historyPipe 2>&1 | Add-Content $daemonLog
+    } finally {
+        $ErrorActionPreference = $previousPreference
+    }
+    if (-not $daemon.HasExited) {
+        $daemon.WaitForExit(5000) | Out-Null
+    }
+    if (-not $daemon.HasExited) { Stop-Process -Id $daemon.Id -Force }
+}
+
 function Test-E2eRecordings {
     $failureCount = 0
     $errors = @(Get-ChildItem -Path $recordingRoot -Filter "recording-error.txt" -Recurse -ErrorAction SilentlyContinue)
@@ -255,6 +369,21 @@ function Test-E2eRecordings {
 $script:FailureCount = 0
 
 if ($suite -in @("shared", "all")) {
+    Invoke-CargoTest "protected permission prompt socket" @(
+        "test", "-p", "cua-driver", "--test", "permission_prompt_authorization_test", "--",
+        "--test-threads=1"
+    )
+    Invoke-CargoTest "SDK runtime contract" @(
+        "test", "-p", "cua-driver-sdk", "--lib", "--", "--test-threads=1"
+    )
+    Invoke-CargoTest "SDK runtime configuration" @(
+        "test", "-p", "cua-driver-sdk", "--test", "runtime_configuration", "--",
+        "--test-threads=1"
+    )
+    Invoke-CargoTest "private worker lifecycle" @(
+        "test", "-p", "cua-driver", "--test", "private_worker_test", "--",
+        "--test-threads=1"
+    )
     Invoke-CargoTest "shared behavior matrix" @(
         "test", "-p", "cua-driver", "--test", "cross_platform_behavior_test", "--",
         "--ignored", "--exact", "shared_web_action_matrix_is_state_verified",
@@ -268,6 +397,14 @@ if ($suite -in @("shared", "all")) {
 }
 
 if ($suite -in @("native", "all")) {
+    Invoke-CargoTest "Windows installed-app discovery deadline" @(
+        "test", "-p", "cua-driver", "--test", "protocol_tools_call_test", "--",
+        "--exact", "tools_call_list_apps", "--nocapture", "--test-threads=1"
+    )
+    Invoke-CargoTest "Agent cursor showcase" @(
+        "test", "-p", "cua-driver", "--test", "agent_cursor_showcase_test", "--",
+        "--ignored", "--nocapture", "--test-threads=1"
+    )
     Invoke-CargoTest "Windows native harnesses" @(
         "test", "-p", "cua-driver", "--test", "harness_wpf_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
@@ -299,6 +436,10 @@ if ($suite -in @("capture", "all")) {
         "test", "-p", "cua-driver", "--test", "desktop_scope_windows_test", "--",
         "--ignored", "--nocapture", "--test-threads=1"
     )
+}
+
+if ($suite -in @("shared", "all")) {
+    Invoke-ComputerHistoryGate
 }
 
 $script:FailureCount += (Test-E2eRecordings)

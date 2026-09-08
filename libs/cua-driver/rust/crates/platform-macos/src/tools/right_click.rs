@@ -43,16 +43,11 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid"],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer", "description": "Target process ID." },
-                "element_index": {
-                    "type": "integer",
-                    "description": "Element index from last get_window_state. Routes through AXShowMenu. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op."
-                },
-                "element_token": {
-                    "type": "string",
-                    "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded."
-                },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "window_id": {
                     "type": "integer",
                     "description": "CGWindowID. Required when element_index is used. Optional when element_token is supplied (the token carries it)."
@@ -108,6 +103,7 @@ impl Tool for RightClickTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "right_click",
         ) {
@@ -157,6 +153,18 @@ impl Tool for RightClickTool {
             };
             let element_ptr = element_guard.as_ptr();
 
+            let _mutation_lease = match super::gate_background_window_action(
+                pid,
+                wid,
+                Some(element_ptr),
+                cua_driver_core::background_input::BackgroundAction::AxSemantic,
+            )
+            .await
+            {
+                Ok(lease) => lease,
+                Err(refusal_result) => return refusal_result,
+            };
+
             let result =
                 tokio::task::spawn_blocking(move || ax_show_menu(element_ptr, idx, pid, wid)).await;
 
@@ -170,49 +178,56 @@ impl Tool for RightClickTool {
         // ── Pixel path ───────────────────────────────────────────────────────
         let (mut cx, mut cy) = (x.unwrap(), y.unwrap());
         // Scale back from downscaled-image space to native pixels when needed.
-        if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        if let Some(ratio) = self.state.resize_registry.ratio(pid, window_id) {
             cx *= ratio;
             cy *= ratio;
         }
 
         // Window-local → screen coordinate translation + win-local logical coords
-        // for CGEventSetWindowLocation (matches click.rs enhancement).
+        // for CGEventSetWindowLocation (shared with click.rs via px_frame, which
+        // refuses a window with no live frame).
         let (screen_x, screen_y, win_local_x, win_local_y) = if let Some(wid) = window_id {
-            let result = tokio::task::spawn_blocking(move || {
-                let bounds = crate::windows::window_bounds_by_id(wid);
-                let scale: f64 = if let Some(ref b) = bounds {
-                    if let Ok(png) = crate::capture::screenshot_window_bytes(wid) {
-                        if png.len() >= 24 {
-                            let pw =
-                                u32::from_be_bytes([png[16], png[17], png[18], png[19]]) as f64;
-                            let lw = b.width;
-                            if lw > 0.0 && pw > lw {
-                                pw / lw
-                            } else {
-                                1.0
-                            }
-                        } else {
-                            1.0
-                        }
-                    } else {
-                        1.0
+            match super::px_frame::resolve_or_refuse(wid).await {
+                Ok(frame) => {
+                    let translated = frame.to_screen(cx, cy);
+                    if !delivery_mode.is_foreground()
+                        && (translated.2 < 0.0
+                            || translated.3 < 0.0
+                            || translated.2 > frame.bounds.width
+                            || translated.3 > frame.bounds.height)
+                    {
+                        return ToolResult::error(format!(
+                            "right_click: window-local point ({:.1}, {:.1}) pt lies outside \
+                             window {wid}'s {:.0}×{:.0} pt frame; background delivery refused",
+                            translated.2, translated.3, frame.bounds.width, frame.bounds.height
+                        ));
                     }
-                } else {
-                    1.0
-                };
-                (bounds, scale)
-            })
-            .await
-            .unwrap_or((None, 1.0));
-            if let (Some(b), scale) = result {
-                let wx = cx / scale;
-                let wy = cy / scale;
-                (b.x + wx, b.y + wy, wx, wy)
-            } else {
-                (cx, cy, cx, cy)
+                    translated
+                }
+                Err(refusal) => return refusal,
             }
         } else {
             (cx, cy, cx, cy)
+        };
+
+        let _mutation_lease = if !delivery_mode.is_foreground() {
+            if let Some(wid) = window_id {
+                match super::gate_background_window_action(
+                    pid,
+                    wid,
+                    None,
+                    cua_driver_core::background_input::BackgroundAction::WindowPointer,
+                )
+                .await
+                {
+                    Ok(lease) => Some(lease),
+                    Err(refusal_result) => return refusal_result,
+                }
+            } else {
+                None
+            }
+        } else {
+            None
         };
 
         // Pin overlay above the target window before animating.

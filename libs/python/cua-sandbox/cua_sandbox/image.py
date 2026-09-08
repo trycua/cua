@@ -24,9 +24,26 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Mapping, Optional, Tuple
+
+from cua_sandbox.generated.image_models import ImageFileReference, ImageResource
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_LINUX_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:main-38352d34"
+# Anonymously pullable, so the built-in Windows image needs no registry credentials.
+# The guest is Windows Server 2022 (build 10.0.20348), which is why ``Image.windows()``
+# defaults to "2022". ``Image.windows("11")`` still means client Windows 11, which has
+# no containerDisk and is installed locally from a downloaded evaluation ISO.
+# Index digest: sha256:6d341afc26a37c4072d22ba403a89ecdad9a29aebab79570b5a38da6b8e16370
+DEFAULT_WINDOWS_REGISTRY_IMAGE = "public.ecr.aws/k5j5w0x5/cua-windows-2022:main-bac7daa3"
+
+# Built-in image descriptors that resolve to a pinned KubeVirt containerDisk, so
+# Fleet cloud and the local QEMU runtime boot byte-identical disks.
+BUILTIN_REGISTRY_IMAGES: Dict[Tuple[str, str, str, Optional[str]], str] = {
+    ("linux", "ubuntu", "24.04", "vm"): DEFAULT_LINUX_REGISTRY_IMAGE,
+    ("windows", "windows", "2022", "vm"): DEFAULT_WINDOWS_REGISTRY_IMAGE,
+}
 
 _IMAGE_CACHE = Path.home() / ".cua" / "cua-sandbox" / "image-cache"
 
@@ -143,8 +160,14 @@ class Image:
         return cls(os_type="macos", distro="macos", version=version, kind=kind)
 
     @classmethod
-    def windows(cls, version: str = "11", kind: str = "vm") -> Image:
-        """Windows image. Always a VM (QEMU or Hyper-V)."""
+    def windows(cls, version: str = "2022", kind: str = "vm") -> Image:
+        """Windows image. Always a VM (QEMU or Hyper-V).
+
+        Defaults to ``"2022"`` (Windows Server 2022), the only version with a pinned
+        containerDisk — see :data:`BUILTIN_REGISTRY_IMAGES`. Other versions, including
+        ``"11"``, have no pinned disk: on Fleet cloud they are unsupported, and locally
+        they are installed from a downloaded evaluation ISO.
+        """
         return cls(os_type="windows", distro="windows", version=version, kind=kind)
 
     @classmethod
@@ -153,9 +176,26 @@ class Image:
         return cls(os_type="android", distro="android", version=version, kind=kind)
 
     @classmethod
-    def from_registry(cls, ref: str) -> Image:
-        """Create an image from a registry reference. kind is resolved after pull."""
-        return cls(os_type="linux", distro="registry", version="latest", kind=None, _registry=ref)
+    def from_registry(
+        cls,
+        ref: str,
+        *,
+        os_type: str = "linux",
+        kind: Optional[str] = None,
+    ) -> Image:
+        """Create an image from a registry reference.
+
+        os_type selects the firmware: Windows guest disks are built UEFI-only,
+        so a Windows containerDisk pulled from a registry must say so or it is
+        handed BIOS and will not boot. kind is resolved after pull when omitted.
+        """
+        return cls(
+            os_type=os_type,
+            distro="registry",
+            version="latest",
+            kind=kind,
+            _registry=ref,
+        )
 
     @classmethod
     def from_file(
@@ -373,6 +413,87 @@ class Image:
 
     # ── Serialization ────────────────────────────────────────────────────
 
+    def to_build_recipe(
+        self,
+        *,
+        name: str,
+        namespace: str,
+        tags: Mapping[str, str] | None = None,
+        timeout_seconds: int | None = None,
+        disk_size: str | None = None,
+        file_references: Mapping[str, ImageFileReference] | None = None,
+    ) -> Dict[str, Any]:
+        """Return a CRD-validated Image custom-resource manifest."""
+        if self._registry is not None:
+            raise ValueError("remote builds do not accept registry-only images")
+        if self._disk_path is not None:
+            raise ValueError("remote builds do not accept local disk images")
+        if self._snapshot_source is not None:
+            raise ValueError("remote builds do not accept snapshot source images")
+        if self.os_type != "linux" or self.kind != "vm":
+            raise ValueError("remote builds currently support only Linux VM recipes")
+
+        references = dict(file_references or {})
+        required_sources = {source for source, _ in self._files}
+        missing_sources = sorted(required_sources - references.keys())
+        if missing_sources:
+            raise ValueError(f"missing file reference for {missing_sources[0]}")
+        unused_sources = sorted(references.keys() - required_sources)
+        if unused_sources:
+            raise ValueError(f"unused file references: {', '.join(unused_sources)}")
+
+        layers = []
+        for layer in self._layers:
+            if layer["type"] == "app_install":
+                layers.append({"type": "app_install", "appId": layer["app_id"]})
+            else:
+                layers.append(layer)
+
+        recipe: Dict[str, Any] = {
+            "osType": self.os_type,
+            "distro": self.distro,
+            "version": self.version,
+            "kind": self.kind,
+            "layers": layers,
+        }
+        if self._env:
+            recipe["env"] = dict(self._env)
+        if self._ports:
+            recipe["ports"] = list(self._ports)
+        if self._files:
+            recipe["files"] = [
+                {
+                    "source": references[source].model_dump(
+                        by_alias=True,
+                        exclude_none=True,
+                        mode="json",
+                    ),
+                    "destination": destination,
+                }
+                for source, destination in self._files
+            ]
+
+        spec: Dict[str, Any] = {"recipe": recipe}
+        if tags:
+            spec["metadata"] = {"tags": dict(tags)}
+        build: Dict[str, Any] = {}
+        if timeout_seconds is not None:
+            build["timeoutSeconds"] = timeout_seconds
+        if disk_size is not None:
+            build["diskSize"] = disk_size
+        if build:
+            spec["build"] = build
+
+        validated = ImageResource.model_validate(
+            {
+                "apiVersion": "images.cua.ai/v1alpha1",
+                "kind": "Image",
+                "metadata": {"name": name, "namespace": namespace},
+                "spec": spec,
+            }
+        )
+        return validated.model_dump(by_alias=True, exclude_none=True, mode="json")
+
     def to_dict(self) -> Dict[str, Any]:
         """Serialize to a plain dict suitable for JSON or cloud API."""
         d: Dict[str, Any] = {
@@ -477,3 +598,15 @@ class Image:
             f"Image({self.os_type}/{self.distro}:{self.version}, "
             f"kind={self.kind}, {len(self._layers)} layers{reg})"
         )
+
+
+def cloud_registry_image(image: Image) -> Optional[str]:
+    """Return the explicit or built-in containerDisk reference for an image.
+
+    An explicit ``Image.from_registry(...)`` reference always wins; otherwise the
+    built-in descriptors resolve through :data:`BUILTIN_REGISTRY_IMAGES`. Images
+    with no pinned disk (custom distros, container kinds) return ``None``.
+    """
+    if image._registry is not None:
+        return image._registry
+    return BUILTIN_REGISTRY_IMAGES.get((image.os_type, image.distro, image.version, image.kind))

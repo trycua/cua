@@ -1,0 +1,110 @@
+name: "Infra: Fleets WIF smoke pool"
+
+on:
+  workflow_dispatch:
+    inputs:
+      recreate_pool:
+        description: "Recreate a pool that was previously owned by different credentials"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: fleets-wif-smoke-infra
+  cancel-in-progress: false
+
+env:
+  AWS_REGION: us-west-2
+  CYCLOPS_ENDPOINT: https://run.cua.ai
+  CYCLOPS_CLIENT_ID: ${{ secrets.FLEETS_TERRAFORM_CLIENT_ID }}
+  CYCLOPS_CLIENT_SECRET: ${{ secrets.FLEETS_TERRAFORM_CLIENT_SECRET }}
+  CYCLOPS_TOKEN_URL: ${{ secrets.FLEETS_TERRAFORM_TOKEN_URL }}
+  POOL_BOOTSTRAP_CLIENT_ID: ${{ secrets.CUA_CLIENT_ID }}
+  POOL_BOOTSTRAP_CLIENT_SECRET: ${{ secrets.CUA_CLIENT_SECRET }}
+  POOL_BOOTSTRAP_TOKEN_URL: https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token
+  FLEETS_PROVIDER_COMMIT: f9cc244f62fc1ed3f66142b872a9837a755f6847
+  FLEETS_PROVIDER_VERSION: 1.0.0
+  TF_IN_AUTOMATION: "true"
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::296062593712:role/github-actions-cua-fleets-wif-smoke
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.25.8"
+          cache: false
+
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.11.4"
+
+      - name: Build the pinned Fleets provider
+        shell: bash
+        run: |
+          set -euo pipefail
+          provider_dir="$RUNNER_TEMP/terraform-provider-fleets"
+          sdk_parent="$RUNNER_TEMP/sdk-bindings"
+          mirror="$RUNNER_TEMP/terraform-plugins"
+          target="$mirror/registry.terraform.io/trycua/fleets/$FLEETS_PROVIDER_VERSION/$(go env GOOS)_$(go env GOARCH)"
+
+          git clone https://github.com/trycua/terraform-provider-fleets.git "$provider_dir"
+          git -C "$provider_dir" checkout "$FLEETS_PROVIDER_COMMIT"
+          mkdir -p "$sdk_parent" "$target"
+          ln -s "$GITHUB_WORKSPACE/libs/fleet/sdk-bindings/go-uniffi" "$sdk_parent/go-uniffi"
+
+          native_target="$RUNNER_TEMP/fleets-sdk-native"
+          cargo build --locked --manifest-path libs/fleet/Cargo.toml --package cyclops-sdk --target-dir "$native_target"
+          native_dir="$native_target/debug"
+          test -f "$native_dir/libcyclops_sdk.so"
+          export CGO_CFLAGS="-I$GITHUB_WORKSPACE/libs/fleet/sdk-bindings/go-uniffi/fleet_sdk -I$GITHUB_WORKSPACE/libs/fleet/sdk-bindings/go-uniffi/cyclops_sdk_schema"
+          export CGO_LDFLAGS="-L$native_dir -lcyclops_sdk -Wl,-rpath,$native_dir"
+          export LD_LIBRARY_PATH="$native_dir${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+
+          go -C "$provider_dir" build -o "$target/terraform-provider-fleets_v$FLEETS_PROVIDER_VERSION" .
+
+          cli_config="$RUNNER_TEMP/terraformrc-fleets"
+          cat > "$cli_config" <<CONFIG
+          provider_installation {
+            filesystem_mirror {
+              path    = "$mirror"
+              include = ["registry.terraform.io/trycua/fleets"]
+            }
+
+            direct {
+              exclude = ["registry.terraform.io/trycua/fleets"]
+            }
+          }
+          CONFIG
+          echo "TF_CLI_CONFIG_FILE=$cli_config" >> "$GITHUB_ENV"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
+
+      - name: Apply pool and trust policy
+        working-directory: infra/fleets-wif-smoke
+        run: |
+          terraform init -input=false
+          terraform validate
+          if [ "${{ inputs.recreate_pool }}" = "true" ]; then
+            CYCLOPS_CLIENT_ID="$POOL_BOOTSTRAP_CLIENT_ID" \
+            CYCLOPS_CLIENT_SECRET="$POOL_BOOTSTRAP_CLIENT_SECRET" \
+            CYCLOPS_TOKEN_URL="$POOL_BOOTSTRAP_TOKEN_URL" \
+              terraform destroy -input=false -auto-approve \
+                -target=fleets_pool.cua_cli_wif_smoke
+          fi
+          terraform plan -input=false -out=tfplan
+          terraform apply -input=false -auto-approve tfplan

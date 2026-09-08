@@ -13,75 +13,8 @@ import json
 import os
 import platform as sys_platform
 import subprocess
-from typing import Any, Dict, Optional
 
-# =============================================================================
-# Platform Configurations
-# =============================================================================
-
-PLATFORMS: Dict[str, Dict[str, Any]] = {
-    "linux-docker": {
-        "image": "trycua/cua-xfce:latest",
-        "description": "Linux GUI container (no KVM required)",
-        "internal_vnc_port": 6901,
-        "internal_api_port": 8000,
-        "requires_kvm": False,
-        "image_marker": None,
-        "os_type": "linux",
-        "boot_timeout": 60,
-        "use_overlays": False,
-    },
-    "linux-qemu": {
-        "image": "trycua/cua-qemu-linux:latest",
-        "description": "Linux VM with QEMU/KVM (OSWorld)",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "image_marker": "linux.boot",
-        "os_type": "linux",
-        "boot_timeout": 120,
-        "use_overlays": True,
-    },
-    "windows-qemu": {
-        "image": "trycua/cua-qemu-windows:latest",
-        "description": "Windows VM with QEMU/KVM (Windows Arena)",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "image_marker": "windows.boot",
-        "os_type": "windows",
-        "boot_timeout": 180,
-        "use_overlays": True,
-    },
-    "android-qemu": {
-        "image": "trycua/cua-qemu-android:latest",
-        "description": "Android VM with QEMU/KVM",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "image_marker": "android.boot",
-        "os_type": "android",
-        "boot_timeout": 120,
-        "use_overlays": True,
-    },
-    "macos-lume": {
-        "image": None,
-        "description": "macOS VM with Apple Virtualization (Lume, Apple Silicon only)",
-        "internal_vnc_port": None,
-        "internal_api_port": 5000,
-        "requires_kvm": False,
-        "image_marker": None,
-        "os_type": "macos",
-        "boot_timeout": 120,
-        "use_overlays": False,
-        "requires_apple_silicon": True,
-    },
-}
-
-
-# =============================================================================
-# Helper Functions
-# =============================================================================
+from ...platforms import PLATFORMS, get_platform_config
 
 
 def check_docker() -> bool:
@@ -134,11 +67,6 @@ def check_image_exists(image_name: str) -> bool:
         return bool(result.stdout.strip())
     except Exception:
         return False
-
-
-def get_platform_config(platform_name: str) -> Optional[Dict[str, Any]]:
-    """Get platform configuration by name."""
-    return PLATFORMS.get(platform_name)
 
 
 # =============================================================================

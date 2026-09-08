@@ -67,6 +67,10 @@ pub(crate) fn default_memory() -> Option<String> {
     Some("4Gi".into())
 }
 
+pub(crate) fn default_nested_virtualization() -> Option<bool> {
+    Some(false)
+}
+
 pub(crate) fn default_firmware() -> Option<Firmware> {
     Some(Firmware::Bios)
 }
@@ -111,7 +115,17 @@ pub enum ServiceProtocol {
     UDP,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct SandboxService {
     #[schemars(description = "Service name suffix (sandbox name is prepended).")]
@@ -162,7 +176,17 @@ pub struct OidcConfig {
     pub refresh_interval_seconds: Option<u32>,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct VmTemplate {
     #[schemars(
@@ -231,6 +255,13 @@ pub struct VmTemplate {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub firmware: Option<Firmware>,
     #[schemars(
+        default = "default_nested_virtualization",
+        description = "Enable nested KVM by setting domain.cpu.model to host-passthrough"
+    )]
+    #[schemars(schema_with = "bool_schema")]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nested_virtualization: Option<bool>,
+    #[schemars(
         description = "Optional KubeVirt readinessProbe/livenessProbe for the VMI, gating ready on the guest actually serving."
     )]
     #[schemars(schema_with = "preserved_json_schema")]
@@ -255,7 +286,17 @@ pub(crate) fn date_time_schema(_: &mut schemars::SchemaGenerator) -> schemars::S
     schemars::json_schema!({"type": "string", "format": "date-time"})
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 pub struct SandboxTemplateRef {
     pub name: String,
 }

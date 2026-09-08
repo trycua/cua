@@ -1,21 +1,21 @@
-# Minimal OSGymWorkspacePool CRD — just enough for the apiserver to serve the
-# resource the RBAC test targets. Schema is irrelevant to authorization (RBAC
-# keys off apiGroup/resource/verb), so this mirrors the e2e fixture
-# (nixos/tenant-rbac/osgym-pool-crd.yaml) and keeps the test self-contained.
+# Minimal native fleet CRDs for the e2e test — just enough schema to
+# create/list the resources the tenant RBAC targets (OSGymSandboxWarmPool +
+# OSGymSandboxTemplate). The production CRDs live with the operator; this
+# fixture keeps the test self-contained.
 apiVersion: apiextensions.k8s.io/v1
 kind: CustomResourceDefinition
 metadata:
-  name: osgymworkspacepools.cua.ai
+  name: osgymsandboxwarmpools.osgym.cua.ai
 spec:
-  group: cua.ai
+  group: osgym.cua.ai
   scope: Namespaced
   names:
-    plural: osgymworkspacepools
-    singular: osgymworkspacepool
-    kind: OSGymWorkspacePool
-    shortNames: ["owp"]
+    plural: osgymsandboxwarmpools
+    singular: osgymsandboxwarmpool
+    kind: OSGymSandboxWarmPool
+    shortNames: ["oswp"]
   versions:
-    - name: v1
+    - name: v1alpha1
       served: true
       storage: true
       schema:
@@ -26,5 +26,29 @@ spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true
             status:
+              type: object
+              x-kubernetes-preserve-unknown-fields: true
+---
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: osgymsandboxtemplates.osgym.cua.ai
+spec:
+  group: osgym.cua.ai
+  scope: Namespaced
+  names:
+    plural: osgymsandboxtemplates
+    singular: osgymsandboxtemplate
+    kind: OSGymSandboxTemplate
+    shortNames: ["ost"]
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
               type: object
               x-kubernetes-preserve-unknown-fields: true

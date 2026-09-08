@@ -1,5 +1,6 @@
-import Foundation
 import CoreGraphics
+import Foundation
+import Virtualization
 
 // MARK: - Support Types
 
@@ -50,9 +51,25 @@ class VM {
     private var virtualizationService: VMVirtualizationService?
     internal let vncService: VNCService
     private var clipboardWatcher: ClipboardWatcher?
+    private var displayPresenter: VMDisplayPresenter?
+    private var displayContext: VMDisplayContext?
+    private var nativeAttachRegistered = false
+    private var activeSharedDirectories: [SharedDirectory] = []
+    private var scopedSharedDirectoryURLs: [URL] = []
+    private var clipboardTransferInProgress = false
+    private var sessionCleanedUp = true
+    /// Policy of the session currently owned by this object. Cleanup needs it
+    /// because a VNC-disabled session's marker is not owned by `vncService`.
+    private var activeVNCPolicy: VNCPolicy = .enabled
+    private var activeNoVNCSession: VNCSession?
     internal let virtualizationServiceFactory:
         (VMVirtualizationServiceContext) throws -> VMVirtualizationService
     private let vncServiceFactory: (VMDirectory) -> VNCService
+    private let displayPresenterFactory: @MainActor (DisplayMode, VNCService) -> VMDisplayPresenter
+    /// Resolves the config-file run-lock owner during cross-process `stop`.
+    // Lifecycle commands may run while the host is under VM boot I/O. Give
+    // their one-shot lock lookup more time than list/get's latency-bound probe.
+    private let runLockProbe: RunLockProbe = LsofRunLockProbe(timeout: 10)
 
     // MARK: - Initialization
 
@@ -62,11 +79,14 @@ class VM {
             VMVirtualizationService = { try DarwinVirtualizationService(configuration: $0) },
         vncServiceFactory: @escaping (VMDirectory) -> VNCService = {
             DefaultVNCService(vmDirectory: $0)
-        }
+        },
+        displayPresenterFactory: @escaping @MainActor (DisplayMode, VNCService) -> VMDisplayPresenter =
+            defaultDisplayPresenter
     ) {
         self.vmDirContext = vmDirContext
         self.virtualizationServiceFactory = virtualizationServiceFactory
         self.vncServiceFactory = vncServiceFactory
+        self.displayPresenterFactory = displayPresenterFactory
 
         // Initialize VNC service
         self.vncService = vncServiceFactory(vmDirContext.dir)
@@ -142,12 +162,33 @@ class VM {
 
     // MARK: - VM Lifecycle Management
 
+    static func shouldStartClipboardWatcher(
+        displayMode: DisplayMode,
+        osType: String,
+        explicitlyRequested: Bool
+    ) -> Bool {
+        explicitlyRequested
+            || (displayMode == .native && osType.caseInsensitiveCompare("macOS") == .orderedSame)
+    }
+
     func run(
-        noDisplay: Bool, sharedDirectories: [SharedDirectory], mount: Path?, vncPort: Int = 0,
-        vncPassword: String? = nil, recoveryMode: Bool = false, usbMassStoragePaths: [Path]? = nil,
-        additionalDiskPaths: [Path]? = nil,
-        networkMode: NetworkMode? = nil, clipboard: Bool = false
+        displayMode: DisplayMode = .vnc, sharedDirectories: [SharedDirectory], mount: Path?,
+        vncPort: Int = 0, vncPassword: String? = nil, recoveryMode: Bool = false,
+        usbMassStoragePaths: [Path]? = nil, additionalDiskPaths: [Path]? = nil,
+        networkMode: NetworkMode? = nil, clipboard: Bool = false,
+        vncPolicy: VNCPolicy = .enabled
     ) async throws {
+        // Defense in depth: the CLI and the controller reject these combinations
+        // first, but no caller may reach a VNC-dependent path with VNC disabled.
+        if let option = VNCPolicy.conflictingOption(
+            policy: vncPolicy,
+            displayMode: displayMode,
+            vncPort: vncPort,
+            vncPassword: vncPassword
+        ) {
+            throw VMError.vncDisabledConflict(option)
+        }
+
         guard let resizeGuard = try vmDirContext.dir.tryAcquireResizeGuard(exclusive: false) else {
             throw DiskResizeError.resizeInProgress(vmDirContext.name)
         }
@@ -159,7 +200,8 @@ class VM {
             "VM.run method called",
             metadata: [
                 "name": vmDirContext.name,
-                "noDisplay": "\(noDisplay)",
+                "displayMode": displayMode.rawValue,
+                "vncPolicy": vncPolicy.rawValue,
                 "recoveryMode": "\(recoveryMode)",
             ])
 
@@ -226,6 +268,14 @@ class VM {
             }
         }
         Logger.info("Successfully acquired lock", metadata: ["name": vmDirContext.name])
+        defer {
+            flock(fileHandle.fileDescriptor, LOCK_UN)
+            try? fileHandle.close()
+        }
+        sessionCleanedUp = false
+        activeVNCPolicy = vncPolicy
+        activeNoVNCSession = nil
+        activeSharedDirectories = sharedDirectories
 
         Logger.info(
             "Running VM with configuration",
@@ -246,15 +296,20 @@ class VM {
             // host directory contents, so the guest will see the file once written).
             let lumeConfigDir = FileManager.default.temporaryDirectory
                 .appendingPathComponent("lume-config-\(vmDirContext.name)")
-            try? FileManager.default.createDirectory(at: lumeConfigDir, withIntermediateDirectories: true)
             // Remove stale vnc.env from a previous run so the guest doesn't
-            // read outdated port/password before the new file is written.
+            // read outdated port/password before the new file is written. A
+            // VNC-disabled run does the same removal so nothing left by an
+            // earlier VNC-enabled run of this VM can leak into the guest.
             try? FileManager.default.removeItem(
                 at: lumeConfigDir.appendingPathComponent("vnc.env"))
-            let lumeConfigSharedDir = SharedDirectory(
-                hostPath: lumeConfigDir.path, tag: "lume-config", readOnly: true)
             var allSharedDirectories = sharedDirectories
-            allSharedDirectories.append(lumeConfigSharedDir)
+            if vncPolicy.isEnabled {
+                try? FileManager.default.createDirectory(
+                    at: lumeConfigDir, withIntermediateDirectories: true)
+                allSharedDirectories.append(
+                    SharedDirectory(
+                        hostPath: lumeConfigDir.path, tag: "lume-config", readOnly: true))
+            }
 
             Logger.info(
                 "Creating virtualization service context", metadata: ["name": vmDirContext.name])
@@ -280,39 +335,64 @@ class VM {
                 "Successfully initialized virtualization service",
                 metadata: ["name": vmDirContext.name])
 
-            Logger.info(
-                "Setting up VNC",
-                metadata: [
-                    "name": vmDirContext.name,
-                    "noDisplay": "\(noDisplay)",
-                    "port": "\(vncPort)",
-                ])
-            let vncInfo = try await setupSession(
-                port: vncPort, password: vncPassword, sharedDirectories: sharedDirectories)
-
-            // Parse VNC port and password from the VNC URL for config distribution.
-            // URL format: vnc://:password@host:port — URLComponents needs http:// to parse correctly.
-            var vncPortValue: Int?
-            var vncPasswordValue: String?
-            if let components = URLComponents(string: vncInfo.replacingOccurrences(of: "vnc://", with: "http://")),
-               let port = components.port {
-                vncPortValue = port
-                vncPasswordValue = components.password ?? ""
-                let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(vncPasswordValue!)\n"
-                try? envContent.write(
-                    to: lumeConfigDir.appendingPathComponent("vnc.env"),
-                    atomically: true, encoding: .utf8)
-                Logger.info("Wrote VNC config to shared directory", metadata: [
-                    "port": "\(port)", "path": lumeConfigDir.path])
-            }
-            Logger.info(
-                "VNC setup successful", metadata: ["name": vmDirContext.name, "vncInfo": vncInfo])
-
-            // Start the VM
             guard let service = virtualizationService else {
                 Logger.error("Virtualization service is nil", metadata: ["name": vmDirContext.name])
                 throw VMError.internalError("Virtualization service not initialized")
             }
+
+            let presenter = displayPresenterFactory(displayMode, vncService)
+            displayPresenter = presenter
+
+            // Parsed from the VNC URL for config distribution; both stay nil for
+            // a VNC-disabled run so no credential is ever written or sent.
+            var vncPortValue: Int?
+            var vncPasswordValue: String?
+            let vncInfo: String?
+
+            if vncPolicy.isEnabled {
+                // VNC remains active for automation and late remote attachment in every
+                // display mode, including the in-process native viewer.
+                Logger.info(
+                    "Setting up VNC",
+                    metadata: [
+                        "name": vmDirContext.name,
+                        "displayMode": displayMode.rawValue,
+                        "port": "\(vncPort)",
+                    ])
+                let url = try await setupSession(
+                    port: vncPort, password: vncPassword, sharedDirectories: sharedDirectories)
+                vncInfo = url
+
+                // URL format: vnc://:password@host:port — URLComponents needs http:// to parse correctly.
+                if let components = URLComponents(
+                    string: url.replacingOccurrences(of: "vnc://", with: "http://")),
+                   let port = components.port {
+                    vncPortValue = port
+                    vncPasswordValue = components.password ?? ""
+                    let envContent = "VNC_PORT=\(port)\nVNC_PASSWORD=\(vncPasswordValue!)\n"
+                    try? envContent.write(
+                        to: lumeConfigDir.appendingPathComponent("vnc.env"),
+                        atomically: true, encoding: .utf8)
+                    Logger.info("Wrote VNC config to shared directory", metadata: [
+                        "port": "\(port)", "path": lumeConfigDir.path])
+                }
+                Logger.info(
+                    "VNC setup successful", metadata: ["name": vmDirContext.name, "vncInfo": url])
+            } else {
+                vncInfo = nil
+                // No listener, no credentials, no vnc.env. The session marker
+                // still records the owning process so a detached `get`/`list`
+                // in another process can prove this VM is running.
+                saveNoVNCSessionData(sharedDirectories: sharedDirectories)
+                Logger.info(
+                    "VNC disabled for this run; no VNC server will be started",
+                    metadata: [
+                        "name": vmDirContext.name,
+                        "displayMode": displayMode.rawValue,
+                    ])
+            }
+
+            // Start the VM
             Logger.info(
                 "Starting VM via virtualization service", metadata: ["name": vmDirContext.name])
             try await service.start()
@@ -324,11 +404,68 @@ class VM {
                 )
             }
 
-            // Open the VNC client only after VM start to avoid connecting to an empty framebuffer.
-            if !noDisplay {
+            // macOS does not include a SPICE guest agent, so its native viewer uses
+            // Lume's SSH bridge automatically. Keep --clipboard as an explicit opt-in
+            // for other display modes and guest operating systems.
+            if Self.shouldStartClipboardWatcher(
+                displayMode: displayMode,
+                osType: getOSType(),
+                explicitlyRequested: clipboard
+            ) {
+                await startClipboardWatcherIfNeeded()
+            }
+
+            if displayMode == .vnc {
                 await waitForVisibleFramebufferBeforeOpeningClient()
-                Logger.info("Starting VNC session", metadata: ["name": vmDirContext.name])
-                try await vncService.openClient(url: vncInfo)
+            }
+            // Attach VZVirtualMachineView only once the guest has entered its live state.
+            // Attaching a native view to a stopped VM can leave its display black.
+            let context = VMDisplayContext(
+                virtualMachine: service.displayVirtualMachine,
+                vncURL: vncInfo,
+                resolution: vmDirContext.config.display,
+                vmName: vmDirContext.name,
+                copyFromGuest: { [weak self] in
+                    guard let self else { throw ClipboardSyncError.unavailable }
+                    try await self.copyClipboardFromGuest()
+                },
+                pasteIntoGuest: { [weak self] in
+                    guard let self else { throw ClipboardSyncError.unavailable }
+                    try await self.pasteClipboardIntoGuest()
+                },
+                addSharedFolder: { [weak self] url, readOnly in
+                    guard let self else {
+                        throw VMError.internalError("The VM session is no longer available")
+                    }
+                    try await self.addSharedFolder(url, readOnly: readOnly)
+                },
+                copyFilesToGuestDesktop: { [weak self] urls in
+                    guard let self else {
+                        throw VMError.internalError("The VM session is no longer available")
+                    }
+                    try await self.copyFilesToGuestDesktop(urls)
+                }
+            )
+            displayContext = context
+            try await presenter.show(context: context)
+            presenter.virtualMachineDidStart()
+
+            if NativeApplicationLoop.isActive {
+                do {
+                    try NativeDisplayAttachService.register(
+                        vmDirectory: vmDirContext.dir
+                    ) { [weak self] in
+                        await self?.showNativeDisplay()
+                    }
+                    nativeAttachRegistered = true
+                } catch {
+                    Logger.debug(
+                        "Live native display attachment is unavailable",
+                        metadata: [
+                            "name": vmDirContext.name,
+                            "error": error.localizedDescription,
+                        ])
+                }
             }
 
             // Write VNC config into VM via SSH (background task).
@@ -343,16 +480,9 @@ class VM {
                 }
             }
 
-            // Start clipboard watcher for automatic host-to-VM clipboard sync
-            // Requires SSH/Remote Login to be enabled on the VM
-            if clipboard {
-                clipboardWatcher = ClipboardWatcher(vmName: vmDirContext.name, storage: vmDirContext.storage)
-                await clipboardWatcher?.start()
-            }
-
-            while true {
-                try await Task.sleep(nanoseconds: UInt64(1e9))
-            }
+            try await service.waitForStop()
+            Logger.info("VM lifecycle ended", metadata: ["name": vmDirContext.name])
+            await cleanupSession()
         } catch {
             Logger.error(
                 "Failed in VM.run",
@@ -361,24 +491,244 @@ class VM {
                     "error": error.localizedDescription,
                     "errorType": "\(type(of: error))",
                 ])
-            await clipboardWatcher?.stop()
-            clipboardWatcher = nil
-            virtualizationService = nil
-            vncService.stop()
 
-            // Release lock
-            Logger.info("Releasing file lock after error", metadata: ["name": vmDirContext.name])
-            flock(fileHandle.fileDescriptor, LOCK_UN)
-            try? fileHandle.close()
-
-            // Additionally, perform our aggressive unlock to ensure no locks remain
-            Logger.info(
-                "Performing additional lock cleanup after error",
-                metadata: ["name": vmDirContext.name])
-            unlockConfigFile()
-
+            // Presentation/startup failure and task cancellation must not leave a running guest.
+            if let service = virtualizationService,
+                service.state == .running || service.state == .paused
+            {
+                try? await service.stop()
+            }
+            await cleanupSession()
             throw error
         }
+    }
+
+    private func showNativeDisplay() async {
+        guard let context = displayContext else {
+            Logger.error(
+                "Cannot attach native display without an active VM context",
+                metadata: ["name": vmDirContext.name])
+            return
+        }
+
+        do {
+            if getOSType().caseInsensitiveCompare("macOS") == .orderedSame {
+                await startClipboardWatcherIfNeeded()
+            }
+
+            if let nativePresenter = displayPresenter as? NativeVMDisplayPresenter {
+                try await nativePresenter.show(context: context)
+            } else {
+                let nativePresenter = NativeVMDisplayPresenter()
+                try await nativePresenter.show(context: context)
+                displayPresenter?.hide()
+                displayPresenter = nativePresenter
+            }
+            Logger.info(
+                "Attached native display to running VM",
+                metadata: ["name": vmDirContext.name])
+        } catch {
+            Logger.error(
+                "Failed to attach native display",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "error": error.localizedDescription,
+                ])
+        }
+    }
+
+    private func startClipboardWatcherIfNeeded() async {
+        guard clipboardWatcher == nil else { return }
+        let watcher = ClipboardWatcher(
+            vmName: vmDirContext.name,
+            storage: vmDirContext.storage,
+            macAddress: vmDirContext.config.macAddress
+        )
+        clipboardWatcher = watcher
+        await watcher.start()
+    }
+
+    private func withManualClipboardTransfer<T: Sendable>(
+        _ watcher: ClipboardWatcher,
+        operation: () async throws -> T
+    ) async throws -> T {
+        guard !clipboardTransferInProgress else {
+            throw ClipboardSyncError.transferInProgress
+        }
+
+        clipboardTransferInProgress = true
+        defer { clipboardTransferInProgress = false }
+
+        try await watcher.beginManualTransfer()
+        do {
+            let result = try await operation()
+            await watcher.endManualTransfer()
+            return result
+        } catch {
+            await watcher.endManualTransfer()
+            throw error
+        }
+    }
+
+    private func copyClipboardFromGuest() async throws {
+        guard let clipboardWatcher else {
+            throw ClipboardSyncError.unavailable
+        }
+        try await withManualClipboardTransfer(clipboardWatcher) {
+            let baseline = try await clipboardWatcher.vmClipboardChangeCount()
+            try Task.checkCancellation()
+            for attempt in 0..<2 {
+                try await sendGuestClipboardShortcut("c")
+                try Task.checkCancellation()
+                do {
+                    try await clipboardWatcher.pullVMClipboardToHost(after: baseline)
+                    try Task.checkCancellation()
+                    return
+                } catch ClipboardSyncError.guestCopyTimedOut where attempt == 0 {
+                    Logger.debug(
+                        "Guest copy did not update the pasteboard; retrying shortcut",
+                        metadata: ["vm": vmDirContext.name]
+                    )
+                    try await Task.sleep(for: .milliseconds(150))
+                }
+            }
+        }
+    }
+
+    private func pasteClipboardIntoGuest() async throws {
+        guard let clipboardWatcher else {
+            throw ClipboardSyncError.unavailable
+        }
+        try await withManualClipboardTransfer(clipboardWatcher) {
+            try await clipboardWatcher.pushHostClipboardToVM()
+            try Task.checkCancellation()
+            // Give the guest pasteboard server a moment to publish the new value
+            // before delivering Command-V to the foreground application.
+            try await Task.sleep(for: .milliseconds(100))
+            try await sendGuestClipboardShortcut("v")
+        }
+    }
+
+    private func sendGuestClipboardShortcut(_ character: Character) async throws {
+        try await vncService.connectInputClient()
+        defer { vncService.disconnectInputClient() }
+        try await vncService.sendCharWithModifiers(character, modifiers: .command)
+    }
+
+    private func addSharedFolder(_ url: URL, readOnly: Bool) async throws {
+        var isDirectory: ObjCBool = false
+        guard url.isFileURL,
+              FileManager.default.fileExists(atPath: url.path, isDirectory: &isDirectory),
+              isDirectory.boolValue else {
+            throw VMError.internalError("Select an existing host directory")
+        }
+        guard let virtualizationService else {
+            throw VMError.internalError("Virtualization service is not initialized")
+        }
+
+        let standardizedPath = url.standardizedFileURL.path
+        let sharedDirectory = SharedDirectory(
+            hostPath: standardizedPath,
+            tag: VZVirtioFileSystemDeviceConfiguration.macOSGuestAutomountTag,
+            readOnly: readOnly
+        )
+        let existing = activeSharedDirectories.filter {
+            URL(fileURLWithPath: $0.hostPath).standardizedFileURL.path != standardizedPath
+        }
+        let updated = existing + [sharedDirectory]
+
+        let gainedScopedAccess = url.startAccessingSecurityScopedResource()
+        do {
+            try await virtualizationService.updateSharedDirectories(updated)
+        } catch {
+            if gainedScopedAccess {
+                url.stopAccessingSecurityScopedResource()
+            }
+            throw error
+        }
+        if gainedScopedAccess {
+            scopedSharedDirectoryURLs.append(url)
+        }
+        activeSharedDirectories = updated
+        if activeVNCPolicy.isEnabled {
+            if let sessionURL = vncService.url {
+                saveSessionData(url: sessionURL, sharedDirectories: updated)
+            }
+        } else if activeNoVNCSession != nil {
+            saveNoVNCSessionData(sharedDirectories: updated)
+        }
+    }
+
+    private func copyFilesToGuestDesktop(_ urls: [URL]) async throws {
+        guard !urls.isEmpty else {
+            throw VMError.internalError("Drop at least one file or folder")
+        }
+        for url in urls {
+            guard url.isFileURL, FileManager.default.fileExists(atPath: url.path) else {
+                throw VMError.internalError("A dropped item is no longer available")
+            }
+        }
+
+        guard virtualizationService?.state == .running else {
+            throw SSHError.vmNotRunning(vmDirContext.name)
+        }
+        guard let macAddress = vmDirContext.config.macAddress else {
+            throw SSHError.noIPAddress(vmDirContext.name)
+        }
+        let ipAddress = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                continuation.resume(
+                    returning: DHCPLeaseParser.getIPAddress(forMAC: macAddress)
+                )
+            }
+        }
+        guard let ipAddress, !ipAddress.isEmpty else {
+            throw SSHError.noIPAddress(vmDirContext.name)
+        }
+
+        let client = SystemSSHClient(
+            host: ipAddress,
+            port: 22,
+            user: "lume",
+            password: "lume"
+        )
+        try await client.copyToRemoteDesktop(urls)
+
+        Logger.info(
+            "Copied dropped items to VM Desktop",
+            metadata: [
+                "name": vmDirContext.name,
+                "count": "\(urls.count)",
+            ])
+    }
+
+    private func cleanupSession() async {
+        guard !sessionCleanedUp else { return }
+        sessionCleanedUp = true
+
+        // Detach native display before releasing the framework VM.
+        if nativeAttachRegistered {
+            NativeDisplayAttachService.unregister()
+            nativeAttachRegistered = false
+        }
+        displayPresenter?.hide()
+        displayPresenter = nil
+        displayContext = nil
+        await clipboardWatcher?.stop()
+        clipboardWatcher = nil
+        for url in scopedSharedDirectoryURLs {
+            url.stopAccessingSecurityScopedResource()
+        }
+        scopedSharedDirectoryURLs.removeAll()
+        activeSharedDirectories.removeAll()
+        vncService.stop()
+        if !activeVNCPolicy.isEnabled {
+            // No VNC service owns this run's marker, so drop it here. Doing it
+            // unconditionally also covers a failed start that never booted.
+            vmDirContext.dir.clearSession()
+            activeNoVNCSession = nil
+        }
+        virtualizationService = nil
     }
 
     @MainActor
@@ -395,20 +745,12 @@ class VM {
                 Logger.info(
                     "Stopping VM via virtualization service", metadata: ["name": vmDirContext.name])
                 try await service.stop()
-                await clipboardWatcher?.stop()
-                clipboardWatcher = nil
-                virtualizationService = nil
-                vncService.stop()
+                await cleanupSession()
                 Logger.info(
                     "VM stopped successfully via virtualization service",
                     metadata: ["name": vmDirContext.name])
 
-                // Try to ensure any existing locks are released
-                Logger.info(
-                    "Attempting to clear any locks on config file",
-                    metadata: ["name": vmDirContext.name])
-                unlockConfigFile()
-
+                // VM.run owns the lock and releases it as its lifecycle wait returns.
                 return
             } catch let error {
                 Logger.error(
@@ -440,23 +782,10 @@ class VM {
             throw VMError.notRunning(vmDirContext.name)
         }
 
-        // Get the PID of the process holding the lock using lsof command
+        // Get the PID of the process holding the lock
         Logger.info(
             "Finding process holding lock on config file", metadata: ["name": vmDirContext.name])
-        let task = Process()
-        task.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-        task.arguments = ["-F", "p", vmDirContext.dir.configPath.path]
-
-        let outputPipe = Pipe()
-        task.standardOutput = outputPipe
-
-        try task.run()
-        task.waitUntilExit()
-
-        let outputData = try outputPipe.fileHandleForReading.readToEnd() ?? Data()
-        guard let outputString = String(data: outputData, encoding: .utf8),
-            let pidString = outputString.split(separator: "\n").first?.dropFirst(),  // Drop the 'p' prefix
-            let pid = pid_t(pidString)
+        guard let pid = runLockProbe.lockOwnerPID(ofFileAt: vmDirContext.dir.configPath.path)
         else {
             try? fileHandle.close()
             Logger.info(
@@ -796,7 +1125,11 @@ class VM {
             throw VMError.internalError("Virtualization service not initialized")
         }
 
-        try await vncService.start(port: port, password: password, virtualMachine: service.getVirtualMachine())
+        try await vncService.start(
+            port: port,
+            password: password,
+            virtualMachine: service.displayVirtualMachine
+        )
 
         guard let url = vncService.url else {
             throw VMError.vncNotConfigured
@@ -820,6 +1153,33 @@ class VM {
                 ])
         } catch {
             Logger.error("Failed to save VNC session", metadata: ["error": "\(error)"])
+        }
+    }
+
+    /// Persists the session marker for a run started with `--vnc disabled`.
+    ///
+    /// There is no URL or port to record, so the marker carries this process's
+    /// PID and start time. `get`/`list` in another process treat the VM as
+    /// running only after proving that PID still holds the config-file run lock.
+    private func saveNoVNCSessionData(sharedDirectories: [SharedDirectory]) {
+        let session = VNCSession.vncDisabled(
+            pid: activeNoVNCSession?.pid ?? getpid(),
+            startedAt: activeNoVNCSession?.startedAt ?? Date().timeIntervalSince1970,
+            sharedDirectories: sharedDirectories.isEmpty ? nil : sharedDirectories
+        )
+        do {
+            try vmDirContext.dir.saveSession(session)
+            activeNoVNCSession = session
+            Logger.info(
+                "Saved VNC-disabled session marker",
+                metadata: [
+                    "name": vmDirContext.name,
+                    "pid": "\(session.pid ?? 0)",
+                    "sessionsPath": vmDirContext.dir.sessionsPath.path,
+                ])
+        } catch {
+            Logger.error(
+                "Failed to save VNC-disabled session marker", metadata: ["error": "\(error)"])
         }
     }
 

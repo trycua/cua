@@ -19,6 +19,7 @@ use crate::tool_args::ArgsExt;
 use super::cdp_ws::CdpConnection;
 use super::engine::BrowserEngine;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::required_session_schema;
 use super::store::BrowserActionKind;
 
 /// Injected by an MCP host only after its destructive-tool approval flow.
@@ -46,10 +47,7 @@ impl BrowserDownloadTool {
                 input_schema: json!({
                     "type": "object",
                     "properties": {
-                        "session": {
-                            "type": "string",
-                            "description": "Explicit caller session owning the browser capabilities."
-                        },
+                        "session": required_session_schema(),
                         "target_id": {
                             "type": "string",
                             "description": "Opaque exact browser target id from get_browser_state."

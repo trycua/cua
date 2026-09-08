@@ -22,7 +22,15 @@ from typing import Any, Iterator, Optional
 
 from cua_sandbox.image import Image
 from cua_sandbox.localhost import Localhost as _AsyncLocalhost
+from cua_sandbox.pool import Pool as _AsyncPool
+from cua_sandbox.pool import Template as _AsyncTemplate
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
+from fleet_sdk import (
+    ClaimSpec,
+    CreatePoolRequest,
+    CreateTemplateRequest,
+    WarmPoolAutoscaling,
+)
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -70,6 +78,108 @@ class _SyncProxy:
 
     def __repr__(self) -> str:
         return f"Sync({self._async_obj!r})"
+
+
+class Template:
+    """Blocking facade for :class:`cua_sandbox.Template`."""
+
+    def __init__(self, async_template: _AsyncTemplate) -> None:
+        self._async_template = async_template
+
+    @property
+    def name(self) -> str:
+        return self._async_template.name
+
+    @classmethod
+    def reconcile(cls, request: CreateTemplateRequest) -> "Template":
+        """Synchronously create or update a Fleet sandbox template."""
+        return cls(_run(_AsyncTemplate.reconcile(request)))
+
+
+class Pool:
+    """Blocking facade for :class:`cua_sandbox.Pool`.
+
+    ``Pool.reconcile`` and ``pool.claim`` use the same Fleet lifecycle as the
+    async API, but yield synchronous sandbox interface methods for scripts and
+    notebooks.
+    """
+
+    def __init__(self, async_pool: _AsyncPool) -> None:
+        self._async_pool = async_pool
+
+    @property
+    def name(self) -> str:
+        return self._async_pool.name
+
+    @classmethod
+    def reconcile(cls, request: CreatePoolRequest) -> "Pool":
+        """Synchronously create or update a Fleet pool."""
+        return cls(_run(_AsyncPool.reconcile(request)))
+
+    @classmethod
+    def get(cls, name: str) -> "Pool":
+        """Synchronously fetch an existing Fleet pool without changing it."""
+        return cls(_run(_AsyncPool.get(name)))
+
+    @classmethod
+    def apply(
+        cls,
+        image: Image,
+        *,
+        name: str,
+        replicas: int = 1,
+        cpu: int | None = None,
+        memory_mb: int | None = None,
+        services: dict[str, int] | None = None,
+        autoscaling: WarmPoolAutoscaling | None = None,
+        ttl_seconds_after_created: int | None = None,
+    ) -> "Pool":
+        """Synchronously apply an image-backed Fleet pool."""
+        return cls(
+            _run(
+                _AsyncPool.apply(
+                    image,
+                    name=name,
+                    replicas=replicas,
+                    cpu=cpu,
+                    memory_mb=memory_mb,
+                    services=services,
+                    autoscaling=autoscaling,
+                    ttl_seconds_after_created=ttl_seconds_after_created,
+                )
+            )
+        )
+
+    def delete(self) -> None:
+        """Synchronously delete this Fleet pool."""
+        _run(self._async_pool.delete())
+
+    @contextmanager
+    def claim(
+        self,
+        *,
+        spec: ClaimSpec | None = None,
+        name: str | None = None,
+        service: str = "server",
+        time_to_start: float | None = None,
+        ttl_seconds_after_created: int | None = None,
+    ) -> Iterator[_SyncProxy]:
+        """Synchronously claim a sandbox and release it on exit."""
+        context = self._async_pool.claim(
+            spec=spec,
+            name=name,
+            service=service,
+            time_to_start=time_to_start,
+            ttl_seconds_after_created=ttl_seconds_after_created,
+        )
+        sandbox = _run(context.__aenter__())
+        try:
+            yield _SyncProxy(sandbox)
+        except BaseException as error:
+            _run(context.__aexit__(type(error), error, error.__traceback__))
+            raise
+        else:
+            _run(context.__aexit__(None, None, None))
 
 
 @contextmanager

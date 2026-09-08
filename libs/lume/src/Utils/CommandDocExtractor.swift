@@ -85,7 +85,10 @@ enum CommandDocExtractor {
             setDoc,
             listDoc,
             runDoc,
+            attachDoc,
             stopDoc,
+            shutdownDoc,
+            restartDoc,
             sshDoc,
             sipDoc,
             ipswDoc,
@@ -96,6 +99,7 @@ enum CommandDocExtractor {
             logsDoc,
             checkUpdateDoc,
             updateDoc,
+            channelDoc,
             setupDoc,
             dumpDocsDoc,
         ]
@@ -342,13 +346,37 @@ enum CommandDocExtractor {
                 OptionDoc(name: "disk", shortName: nil, help: "Disk image to attach as a read-write virtio-blk device", type: "[String]", defaultValue: nil, isOptional: true),
                 OptionDoc(name: "registry", shortName: nil, help: "Container registry URL", type: "String", defaultValue: "ghcr.io", isOptional: false),
                 OptionDoc(name: "organization", shortName: nil, help: "Organization to pull from", type: "String", defaultValue: "trycua", isOptional: false),
+                OptionDoc(name: "display", shortName: nil, help: "Local viewer to open: vnc, native, or none. The VNC server remains available in every mode", type: "DisplayMode", defaultValue: "native", isOptional: false),
+                OptionDoc(name: "log-file", shortName: nil, help: "Log path for --detach", type: "String", defaultValue: "~/Library/Logs/lume/{vm}.log", isOptional: true),
+                OptionDoc(name: "vnc", shortName: nil, help: "VNC server policy: enabled or disabled. disabled starts the VM with no VNC listener and reports a null vncUrl", type: "VNCPolicy", defaultValue: "enabled", isOptional: false),
                 OptionDoc(name: "vnc-port", shortName: nil, help: "Port for VNC server (0 for auto-assign)", type: "Int", defaultValue: "0", isOptional: false),
                 OptionDoc(name: "recovery-mode", shortName: nil, help: "For macOS VMs only, boot in recovery mode", type: "Bool", defaultValue: "false", isOptional: true),
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
             ],
             flags: [
-                FlagDoc(name: "no-display", shortName: "d", help: "Do not start the VNC client", defaultValue: false),
+                FlagDoc(name: "no-display", shortName: "d", help: "Compatibility alias for --display none", defaultValue: false),
+                FlagDoc(name: "detach", shortName: nil, help: "Run the VM in the background and return immediately", defaultValue: false),
+                FlagDoc(name: "clipboard", shortName: nil, help: "Enable bidirectional clipboard sync via SSH. Automatic for native macOS display", defaultValue: false),
             ],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Attach
+
+    private static var attachDoc: CommandDoc {
+        CommandDoc(
+            name: "attach",
+            abstract: "Open a viewer for a running virtual machine",
+            discussion: "Native display is preferred when the owning lume run process supports live attachment. VNC is used as the automatic fallback.",
+            arguments: [
+                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "display", shortName: nil, help: "Viewer to open: native or vnc", type: "AttachDisplayMode", defaultValue: "native with VNC fallback", isOptional: true),
+                OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+            ],
+            flags: [],
             subcommands: []
         )
     }
@@ -365,6 +393,41 @@ enum CommandDocExtractor {
             ],
             options: [
                 OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+            ],
+            flags: [],
+            subcommands: []
+        )
+    }
+
+    // MARK: - Guest power
+
+    private static var shutdownDoc: CommandDoc {
+        guestPowerDoc(
+            name: "shutdown",
+            abstract: "Gracefully shut down a virtual machine"
+        )
+    }
+
+    private static var restartDoc: CommandDoc {
+        guestPowerDoc(
+            name: "restart",
+            abstract: "Gracefully restart a virtual machine"
+        )
+    }
+
+    private static func guestPowerDoc(name: String, abstract: String) -> CommandDoc {
+        CommandDoc(
+            name: name,
+            abstract: abstract,
+            discussion: "Requests the operation inside the guest over SSH. VMs created with --unattended use lume/lume credentials by default.",
+            arguments: [
+                ArgumentDoc(name: "name", help: "Name of the virtual machine", type: "String", isOptional: false),
+            ],
+            options: [
+                OptionDoc(name: "user", shortName: "u", help: "SSH username", type: "String", defaultValue: "lume", isOptional: false),
+                OptionDoc(name: "password", shortName: "p", help: "SSH and sudo password", type: "String", defaultValue: "lume", isOptional: false),
+                OptionDoc(name: "storage", shortName: nil, help: "VM storage location to use", type: "String", defaultValue: nil, isOptional: true),
+                OptionDoc(name: "timeout", shortName: "t", help: "SSH command timeout in seconds", type: "Int", defaultValue: "30", isOptional: false),
             ],
             flags: [],
             subcommands: []
@@ -642,6 +705,36 @@ enum CommandDocExtractor {
                 FlagDoc(name: "json", shortName: nil, help: "Emit the structured update-state payload as JSON", defaultValue: false),
             ],
             subcommands: []
+        )
+    }
+
+    private static var channelDoc: CommandDoc {
+        CommandDoc(
+            name: "channel",
+            abstract: "Inspect or change the stable/nightly update channel; selection does not install",
+            discussion: "Selection is persistent but never installs by itself; use lume update --apply after changing it.",
+            arguments: [],
+            options: [],
+            flags: [],
+            subcommands: [
+                CommandDoc(
+                    name: "status",
+                    abstract: "Show selected and current release channels",
+                    discussion: nil,
+                    arguments: [], options: [],
+                    flags: [FlagDoc(name: "json", shortName: nil, help: "Emit machine-readable channel state as JSON", defaultValue: false)],
+                    subcommands: []
+                ),
+                CommandDoc(
+                    name: "set",
+                    abstract: "Save stable or nightly as the update channel",
+                    discussion: nil,
+                    arguments: [ArgumentDoc(name: "channel", help: "Release channel: stable or nightly", type: "String", isOptional: false)],
+                    options: [],
+                    flags: [FlagDoc(name: "json", shortName: nil, help: "Emit machine-readable channel state as JSON", defaultValue: false)],
+                    subcommands: []
+                ),
+            ]
         )
     }
 

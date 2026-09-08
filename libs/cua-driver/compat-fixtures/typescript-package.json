@@ -1,0 +1,99 @@
+{
+  "package_exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./embedded": {
+      "types": "./dist/embedded.d.ts",
+      "import": "./dist/embedded.js"
+    },
+    "./electron": {
+      "types": "./dist/electron.d.ts",
+      "import": "./dist/electron.js"
+    }
+  },
+  "root_declaration_exports": [
+    "CaptureScope",
+    "ClickButton",
+    "ClickInput",
+    "CuaDriver",
+    "CuaDriverInterface",
+    "CuaDriverLike",
+    "DesktopScope",
+    "DragInput",
+    "DriverError",
+    "DriverError_Tags",
+    "DriverExecutionMode",
+    "DriverMetadata",
+    "DriverOptions",
+    "EffectiveScope",
+    "EmbeddedCuaDriverHost",
+    "EmbeddedCuaDriverHostInterface",
+    "EmbeddedCuaDriverHostLike",
+    "EmbeddedDriverConnection",
+    "EmbeddedDriverError",
+    "EmbeddedDriverError_Tags",
+    "EmbeddedDriverExit",
+    "EmbeddedDriverHostOptions",
+    "EmbeddedDriverHostState",
+    "EmbeddedEnvironmentVariable",
+    "EmbeddedMcpConfiguration",
+    "EmbeddedPermissionMode",
+    "EndSessionInput",
+    "EndSessionOutput",
+    "EscalateSessionInput",
+    "EscalationReason",
+    "GetCursorPositionInput",
+    "GetDesktopStateInput",
+    "GetScreenSizeInput",
+    "GetSessionStateInput",
+    "HotkeyInput",
+    "ImageContent",
+    "MacOsPermissionStatus",
+    "MoveCursorInput",
+    "Platform",
+    "PressKeyInput",
+    "ScrollBy",
+    "ScrollDirection",
+    "ScrollInput",
+    "SdkClientKind",
+    "SessionStateOutput",
+    "StartSessionInput",
+    "StartSessionOutput",
+    "ToolResult",
+    "TypeTextInput",
+    "currentMacOsPermissionStatus",
+    "openMacOsScreenRecordingSettings",
+    "requestMacOsPermissions"
+  ],
+  "cua_driver_declarations": [
+    "static connect(socketPath: string | undefined): CuaDriverLike;",
+    "static connectWithClientKind(socketPath: string | undefined, clientKind: SdkClientKind): CuaDriverLike;",
+    "static create(options: DriverOptions | undefined): CuaDriverLike;",
+    "static createWithClientKind(options: DriverOptions | undefined, clientKind: SdkClientKind): CuaDriverLike;",
+    "callTool(name: string, argumentsJson: string, asyncOpts_?: { signal: AbortSignal; }): Promise<ToolResult>;",
+    "shutdown(asyncOpts_?: { signal: AbortSignal; }): Promise<void>;"
+  ],
+  "native_entrypoint_fragments": [
+    "export * from './cua_driver_contract.js';",
+    "export * from './cua_driver_sdk.js';"
+  ],
+  "entrypoint_declarations": {
+    "index.d.ts": [
+      "export * from \"./native/index.js\";",
+      "export { default } from \"./native/index.js\";"
+    ],
+    "embedded.d.ts": [
+      "EmbeddedCuaDriverHost",
+      "EmbeddedDriverConnection",
+      "EmbeddedPermissionMode"
+    ],
+    "electron.d.ts": [
+      "MacOSPermissionStatus",
+      "requestMacOSPermissions",
+      "hasRequiredMacOSPermissions",
+      "openMacOSScreenRecordingSettings"
+    ]
+  }
+}

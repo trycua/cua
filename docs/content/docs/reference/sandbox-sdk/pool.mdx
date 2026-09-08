@@ -1,0 +1,157 @@
+---
+title: Pool and claim reference
+description: Python Fleet pool configuration, claim acquisition, cleanup, and resource types in cua-sandbox 0.4.3.
+---
+
+`Pool` and `Template` are exported by `cua_sandbox` 0.4.3. These APIs use Fleet
+credentials independently of the legacy `CUA_API_KEY` flow. See
+[configuration and authentication](/reference/sandbox-sdk#configuration-and-authentication).
+
+## Pool.apply
+
+Reconciles a named Fleet pool and its template from an `Image`:
+
+```python
+async def apply(
+    image: Image, *, name: str, replicas: int = 1,
+    cpu: int | None = None, memory_mb: int | None = None,
+    services: dict[str, int] | None = None,
+    autoscaling: WarmPoolAutoscaling | None = None,
+    ttl_seconds_after_created: int | None = None,
+) -> Pool: ...
+```
+
+| Parameter | Contract |
+| --- | --- |
+| `image` | Built-in or explicit registry image accepted by the [Fleet image constraints](/reference/sandbox-sdk/image#fleet-image-constraints) |
+| `name` | Required nonempty pool name; pool names are globally unique across accounts |
+| `replicas` | Desired pool replica count; default `1` |
+| `cpu`, `memory_mb` | Optional template CPU and memory overrides |
+| `services` | Mapping from service name to target port. If omitted or empty, uses `server: 8000` and `port-N: N` for exposed image ports other than 8000 |
+| `autoscaling` | Optional `WarmPoolAutoscaling` resource |
+| `ttl_seconds_after_created` | Optional pool expiry in seconds from creation |
+
+The method reconciles the pool, then its template. If template reconciliation
+fails, it attempts to delete the reconciled pool. A returned `Pool` holds the
+template reference so that `delete()` can remove both resources.
+
+## Pool lookup, reconciliation, and deletion
+
+These methods use the typed Fleet requests for explicit configuration:
+
+```python
+async def get(name: str) -> Pool: ...
+async def reconcile(request: CreatePoolRequest) -> Pool: ...
+async def delete(self) -> None: ...
+```
+
+`Pool.get()` retrieves an existing pool without reconciling its configuration.
+`Pool.reconcile()` requires a `CreatePoolRequest` instance and creates or
+reconciles the pool described by it. Both return a wrapper with `name: str` and
+`resource`, the underlying Fleet pool resource.
+
+`delete()` deletes the pool. It also deletes the owned template when called on
+the result of `Pool.apply()`. A wrapper returned by `get()` or `reconcile()` does
+not record template ownership; manage that template separately.
+
+`PoolAccessDeniedError` reports Fleet pool access denial. Choose a pool name
+owned by the authenticated account; an inaccessible name is not an invitation
+to overwrite another account's pool.
+
+## Pool.claim
+
+Returns an awaitable that also supports an async context manager:
+
+```python
+def claim(
+    self, *, spec: ClaimSpec | None = None, name: str | None = None,
+    service: str = "server", time_to_start: float | None = None,
+    ttl_seconds_after_created: int | None = None,
+): ...
+```
+
+| Parameter | Contract |
+| --- | --- |
+| `spec` | Optional typed claim specification |
+| `name` | Optional claim identity. If a matching claim exists in the pool namespace, reconnects to it; otherwise creates it |
+| `service` | Named service to connect to; default `"server"` |
+| `time_to_start` | Optional service readiness timeout in seconds, after claim binding |
+| `ttl_seconds_after_created` | Optional claim expiry in seconds from creation; cannot be combined with an explicit `spec` |
+
+`await pool.claim()` waits for binding and service readiness, then returns a
+connected `Sandbox`. Its caller must call `close()` to release the claim.
+`async with pool.claim()` calls `close()` on exit, including when it reuses a
+named claim. If acquisition fails, the SDK attempts to release a claim created
+by that acquisition; it does not release a preexisting claim on that path.
+
+`disconnect()` only drops the connection. It does not release the claim. See
+[Sandbox lifecycle and ownership](/reference/sandbox-sdk#lifecycle-and-ownership).
+
+## Pool.create_claim
+
+Creates a claim without waiting for binding or connecting a service:
+
+```python
+async def create_claim(
+    self, *, spec: ClaimSpec | None = None, name: str | None = None,
+    ttl_seconds_after_created: int | None = None,
+): ...
+```
+
+The returned handle has these members. Its concrete class is private; obtain it
+through `create_claim()` rather than importing the class.
+
+| Member | Contract |
+| --- | --- |
+| `namespace`, `name`, `pool_name`, `service` | Claim identity and selected service; default service is `"server"` |
+| `to_dict() -> dict[str, Any]` | Serializes identity for `Sandbox.from_dict()` |
+| `await wait(service=None, time_to_start=None) -> Sandbox` | Waits for binding and service readiness and connects |
+| `await renew(shutdown_time: str) -> None` | Updates the absolute shutdown timestamp |
+| `await release() -> None` | Deletes the claim; an already-missing claim is accepted |
+
+The caller owns cleanup after `create_claim()`, including when a later `wait()`
+fails. After connecting, `Sandbox.close()` releases the claim and disconnects.
+
+## Expiry and renewal
+
+The `ttl_seconds_after_created` convenience parameters accept integer values
+from `0` through `4294967295`, excluding booleans. `None` omits the field. The
+schema describes the field as a creation-age TTL; accepting a value at the
+client does not establish the server's expiry policy. Pool and claim TTLs are
+configured separately.
+When supplying an explicit `ClaimSpec`, set the TTL in that spec instead of
+passing the convenience parameter.
+
+`Sandbox.keep_alive(minutes=...)` updates the claim's absolute shutdown time.
+It does not reset the resource's creation timestamp. See
+[Expire pools and claims](/how-to-guides/sandbox/expire-pools-and-claims)
+for expiry configuration.
+
+## Template and resource types
+
+`Template.reconcile(request: CreateTemplateRequest)` is async and returns a
+wrapper with `name` and `resource`. `TemplateResource` is the underlying Fleet
+template type, distinct from the `Template` wrapper.
+
+The following types and their named builders are reexported by `cua_sandbox`:
+
+| Type | Main fields or purpose | Builder |
+| --- | --- | --- |
+| `CreatePoolRequest` | `namespace`, `spec` | `CreatePoolRequestBuilder` |
+| `CreateTemplateRequest` | `namespace`, `name`, `spec` | `CreateTemplateRequestBuilder` |
+| `SandboxTemplateRef` | Template `name` | `SandboxTemplateRefBuilder` |
+| `OsGymSandboxWarmPoolSpec` | `replicas`, `sandbox_template_ref`, `autoscaling`, `ttl_seconds_after_created` | `OsGymSandboxWarmPoolSpecBuilder` |
+| `WarmPoolAutoscaling` | `min_pool_size`, `initial_pool_size`, `max_pool_size` | `WarmPoolAutoscalingBuilder` |
+| `OsGymSandboxTemplateSpec` | `vm_template` | `OsGymSandboxTemplateSpecBuilder` |
+| `VmTemplate` | Container disk image, runtime, resources, firmware, and services | `VmTemplateBuilder` |
+| `SandboxService` | `name`, `target_port`, optional `protocol` | `SandboxServiceBuilder` |
+
+`ClaimSpec`, `RuntimeKind`, `Firmware`, and `ServiceProtocol` are also
+reexported. A `ClaimSpec` constructor requires keyword arguments
+`sandbox_template_ref`, `warmpool`, `bind_deadline`, and `lifecycle`, even when
+the latter three are `None`; `ttl_seconds_after_created` is optional. Builders
+provide named setters and `build()` for the types listed above.
+
+These bindings come from the published `cua-fleet` 0.1.14 dependency, imported
+as `fleet_sdk`. Type availability describes the client schema; it does not
+establish runtime or image support on a deployment.

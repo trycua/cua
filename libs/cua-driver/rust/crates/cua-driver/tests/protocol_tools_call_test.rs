@@ -12,11 +12,20 @@
 #![cfg(any(target_os = "macos", target_os = "windows"))]
 
 use cua_driver_testkit::RawDriver;
+#[cfg(target_os = "windows")]
+use cua_driver_testkit::{Driver, McpDriver};
+
+fn spawn_unrestricted() -> Option<RawDriver> {
+    RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+}
 
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn tools_call_list_apps() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -31,7 +40,13 @@ fn tools_call_list_apps() {
         "method": "tools/call",
         "params": { "name": "list_apps", "arguments": {} }
     }));
+    let started = std::time::Instant::now();
     let resp = d.recv();
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(8),
+        "list_apps exceeded its optional installed-app discovery budget: {:?}",
+        started.elapsed()
+    );
     assert_eq!(resp["id"], 2);
     assert!(resp["result"]["content"].is_array());
     if cfg!(target_os = "windows") {
@@ -61,9 +76,92 @@ fn tools_call_list_apps() {
 }
 
 #[test]
+#[cfg(target_os = "windows")]
+fn launch_unknown_app_is_bounded_and_keeps_mcp_session_responsive() {
+    let Some(mut driver) = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ]) else {
+        return;
+    };
+    let missing_name = format!("CuaMissingAppIssue2856_{}.exe", std::process::id());
+
+    let launch_started = std::time::Instant::now();
+    let launch = driver.call("launch_app", serde_json::json!({ "name": missing_name }));
+    let launch_elapsed = launch_started.elapsed();
+    assert!(
+        launch_elapsed < std::time::Duration::from_secs(10),
+        "unknown-app launch exceeded its hard response budget: {launch_elapsed:?}; response={:?}",
+        launch.raw
+    );
+    assert!(
+        launch.is_error(),
+        "unknown app should fail: {:?}",
+        launch.raw
+    );
+    let error = launch.text().to_ascii_lowercase();
+    assert!(
+        error.contains("not found") || error.contains("lookup") && error.contains("unavailable"),
+        "expected an explicit not-found or lookup-unavailable error, got: {}",
+        launch.text()
+    );
+
+    let follow_up_started = std::time::Instant::now();
+    let windows = driver.call("list_windows", serde_json::json!({}));
+    let follow_up_elapsed = follow_up_started.elapsed();
+    assert!(
+        follow_up_elapsed < std::time::Duration::from_secs(5),
+        "follow-up list_windows call was not responsive: {follow_up_elapsed:?}; response={:?}",
+        windows.raw
+    );
+    assert!(
+        !windows.is_error(),
+        "follow-up list_windows failed after unknown launch: {:?}",
+        windows.raw
+    );
+    assert!(
+        windows.structured()["windows"].is_array(),
+        "follow-up list_windows returned no windows array: {:?}",
+        windows.raw
+    );
+}
+
+#[test]
+#[cfg(target_os = "windows")]
+#[ignore = "requires an interactive Windows desktop with Microsoft Edge installed"]
+fn launch_edge_from_apps_folder_registration() {
+    let Some(mut driver) = McpDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ]) else {
+        return;
+    };
+
+    let launch = driver.call(
+        "launch_app",
+        serde_json::json!({
+            "name": "Microsoft Edge",
+            "urls": ["https://example.com"]
+        }),
+    );
+    assert!(
+        !launch.is_error(),
+        "Edge AppsFolder launch failed: {:?}",
+        launch.raw
+    );
+    assert!(
+        launch.structured()["pid"]
+            .as_u64()
+            .is_some_and(|pid| pid > 0),
+        "Edge AppsFolder launch returned no process id: {:?}",
+        launch.raw
+    );
+}
+
+#[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_config_and_check_permissions() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -84,7 +182,7 @@ fn get_config_and_check_permissions() {
 
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
-        "params":{"name":"check_permissions","arguments":{}}
+        "params":{"name":"check_permissions","arguments":{"prompt":false}}
     }));
     let resp = d.recv();
     assert!(!resp["result"]["isError"].as_bool().unwrap_or(false));
@@ -142,7 +240,7 @@ fn get_config_and_check_permissions() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_accessibility_tree() {
     //! get_accessibility_tree returns a lightweight process+window snapshot.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -185,7 +283,7 @@ fn get_accessibility_tree() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn list_windows_structured_content() {
     //! Verify list_windows returns structuredContent.windows array with expected fields.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -224,7 +322,7 @@ fn list_windows_structured_content() {
 #[test]
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn get_screen_size_and_cursor_position() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -278,7 +376,7 @@ fn get_window_state_returns_both_with_opt_out() {
     //! Perception is mode-agnostic: get_window_state returns BOTH the tree AND a
     //! screenshot by default (the deprecated `capture_mode` arg is ignored), and
     //! `include_screenshot:false` is the opt-out that returns the tree only.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -395,7 +493,7 @@ fn get_window_state_returns_both_with_opt_out() {
 fn scroll_tool() {
     //! scroll with direction=down, by=line, amount=1 against the first available window.
     //! Verifies the tool is accepted and returns content, not a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -444,7 +542,7 @@ fn scroll_tool() {
 fn type_text_tool() {
     //! Opens TextEdit (or reuses it if already running) and types a short string via type_text.
     //! Skips gracefully if TextEdit is not available or has no window.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -510,7 +608,7 @@ fn type_text_tool() {
 #[cfg(target_os = "windows")]
 fn type_text_notepad() {
     //! Launch Notepad, type a short string via type_text. Skips if Notepad unavailable.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -579,7 +677,7 @@ fn type_text_chars_tool() {
     //! Verify type_text_chars with delay_ms is accepted without error (dry-run via TextEdit or
     //! a pid that accepts WM_CHAR). We just verify the tool responds with a non-error.
     //! Skips gracefully if no visible TextEdit window.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -604,14 +702,41 @@ fn type_text_chars_tool() {
         return;
     };
 
-    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
+    // Resolve an exact on-screen window. PID-only targeting is deliberately
+    // refused when an app owns multiple eligible windows.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":3,"method":"tools/call",
+        "params":{"name":"list_windows","arguments":{"pid":pid,"on_screen_only":true}}
+    }));
+    let resp = d.recv();
+    let windows = resp["result"]["structuredContent"]["windows"].as_array();
+    let Some(window_id) = windows
+        .and_then(|windows| windows.first())
+        .and_then(|window| window["window_id"].as_u64())
+    else {
+        eprintln!("TextEdit has no on-screen windows — skipping type_text_chars test");
+        return;
+    };
+
+    // type_text_chars with delay_ms=5 — just verify the tool invocation is accepted.
+    d.send(&serde_json::json!({
+        "jsonrpc":"2.0","id":4,"method":"tools/call",
         "params":{"name":"type_text_chars","arguments":{
-            "pid": pid, "text": "hi", "delay_ms": 5
+            "pid": pid, "window_id": window_id, "text": "hi", "delay_ms": 5
         }}
     }));
     let resp = d.recv();
+    if resp["result"]["isError"].as_bool().unwrap_or(false)
+        && matches!(
+            resp["result"]["structuredContent"]["code"].as_str(),
+            Some("off_space_or_ax_unresolved" | "window_target_not_found")
+        )
+    {
+        eprintln!(
+            "TextEdit has no safe AX-resolved input target in this desktop session — skipping type_text_chars test"
+        );
+        return;
+    }
     assert!(
         !resp["result"]["isError"].as_bool().unwrap_or(false),
         "type_text_chars returned error: {resp:?}"
@@ -631,7 +756,7 @@ fn type_text_chars_tool() {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn hotkey_keys_array() {
     //! Verify hotkey accepts a keys array without a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -681,7 +806,7 @@ fn hotkey_keys_array() {
 fn press_key_harmless() {
     //! press_key with a harmless key (F24 — virtually no app responds to it) sent to the
     //! first available window. Just verifies the tool doesn't return a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -722,7 +847,7 @@ fn press_key_harmless() {
 fn click_pixel_path() {
     //! click at window-local (5, 5) — title bar area, safe to click without disrupting UI.
     //! Verifies the pixel-coordinate path for click works without a protocol error.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -760,7 +885,7 @@ fn click_pixel_path() {
 #[test]
 #[cfg(target_os = "windows")]
 fn double_click_and_right_click() {
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -813,7 +938,7 @@ fn double_click_and_right_click() {
 #[cfg(target_os = "macos")]
 fn double_click_and_right_click_pixel_path() {
     //! double_click and right_click at title-bar coords — verifies both tools accept pixel path.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -875,7 +1000,7 @@ fn double_click_and_right_click_pixel_path() {
 fn set_value_via_element_index() {
     //! get_window_state on TextEdit → find a text-area element → set_value on it.
     //! Skips gracefully if TextEdit is not available.
-    let Some(mut d) = RawDriver::spawn() else {
+    let Some(mut d) = spawn_unrestricted() else {
         return;
     };
 
@@ -940,11 +1065,15 @@ fn set_value_via_element_index() {
         eprintln!("No AX elements — skipping set_value test");
         return;
     }
+    let snapshot_id = resp["result"]["structuredContent"]["snapshot_id"]
+        .as_str()
+        .expect("get_window_state snapshot_id")
+        .to_owned();
 
     // set_value on element 0 — this is the document / text area in a new TextEdit document.
     d.send(&serde_json::json!({
         "jsonrpc":"2.0","id":6,"method":"tools/call",
-        "params":{"name":"set_value","arguments":{"pid": pid, "window_id": wid, "element_index": 0, "value": "cua-test-value"}}
+        "params":{"name":"set_value","arguments":{"pid": pid, "window_id": wid, "element_index": 0, "snapshot_id": snapshot_id, "value": "cua-test-value"}}
     }));
     let resp = d.recv();
     // set_value may fail if element 0 is not settable; accept tool-level errors but not protocol errors.

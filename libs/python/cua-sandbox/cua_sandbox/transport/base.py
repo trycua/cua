@@ -66,6 +66,33 @@ class Transport(ABC):
     async def get_environment(self) -> str:
         """Return 'windows', 'mac', 'linux', or 'browser'."""
 
+    async def request_service(
+        self,
+        name: str,
+        *,
+        method: str,
+        path: str,
+        json_body: Any = None,
+        headers: Any = None,
+    ) -> Any:
+        """Request an auxiliary named service exposed by this sandbox."""
+        raise NotImplementedError(f"{type(self).__name__} does not support named service requests.")
+
+    async def create_signed_service_url(
+        self,
+        name: str,
+        *,
+        label: str | None,
+        expires_in_seconds: int,
+    ) -> Any:
+        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
+
+    async def list_signed_service_urls(self) -> list[Any]:
+        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
+
+    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
+        raise NotImplementedError(f"{type(self).__name__} does not support signed service URLs.")
+
     async def forward_tunnel(self, sandbox_port: int | str) -> "TunnelInfo":
         """Forward *sandbox_port* to an available host port and return info.
 
@@ -75,7 +102,8 @@ class Transport(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support port forwarding. "
-            "Supported transports: ADBTransport, GRPCEmulatorTransport, SSHTransport."
+            "Supported transports: ADBTransport, FleetCloudTransport, "
+            "GRPCEmulatorTransport, SSHTransport."
         )
 
     async def close_tunnel(self, info: "TunnelInfo") -> None:

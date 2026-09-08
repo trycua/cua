@@ -1,6 +1,4 @@
-use crate::{
-    OSGymSandbox, OSGymSandboxClaim, OSGymSandboxTemplate, OSGymSandboxWarmPool, OSGymWorkspacePool,
-};
+use crate::{OSGymSandbox, OSGymSandboxClaim, OSGymSandboxTemplate, OSGymSandboxWarmPool};
 use anyhow::{Context, Result, bail};
 use kube::CustomResourceExt;
 use serde::Deserialize;
@@ -13,7 +11,6 @@ pub fn render_crds() -> Result<String> {
         serde_yaml::to_string(&OSGymSandboxTemplate::crd())?,
         serde_yaml::to_string(&OSGymSandboxWarmPool::crd())?,
         serde_yaml::to_string(&OSGymSandboxClaim::crd())?,
-        serde_yaml::to_string(&OSGymWorkspacePool::crd())?,
     ];
 
     Ok(resources.join("---\n"))

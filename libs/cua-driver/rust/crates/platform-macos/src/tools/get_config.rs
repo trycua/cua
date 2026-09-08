@@ -76,8 +76,8 @@ impl Tool for GetConfigTool {
             // sharing its package version.
             "source_sha": option_env!("CUA_DRIVER_SOURCE_SHA"),
             "platform": "macos",
-            // capture_mode is per-call; capture_scope is per-session and is
-            // reported by get_session_state rather than persistent config.
+            // capture_mode is deprecated; capture_scope is retired from
+            // persistent config. Actions select a target per call.
             "max_image_dimension": max_image_dimension,
             "agent_cursor": {
                 "enabled": cursor_enabled,

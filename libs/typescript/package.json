@@ -16,7 +16,8 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm build:core && pnpm -r typecheck",
     "format": "prettier --write .",
-    "format:check": "prettier --check ."
+    "format:check": "prettier --check .",
+    "build:fleet": "pnpm --filter @trycua/fleet build"
   },
   "packageManager": "pnpm@10.12.3",
   "devDependencies": {

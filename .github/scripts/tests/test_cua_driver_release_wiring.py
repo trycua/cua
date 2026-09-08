@@ -1,7 +1,11 @@
 """Regression tests for cua-driver-rs release and PyPI wiring."""
 
 import json
+import os
 from pathlib import Path
+import subprocess
+import tempfile
+import textwrap
 import unittest
 
 
@@ -20,7 +24,165 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('workflows: ["CD: Cua Driver (cross-platform)"]', workflow)
         self.assertNotIn("branches:\n      - main", workflow)
         self.assertIn("github.event.workflow_run.conclusion == 'success'", workflow)
+        self.assertIn("  actions: read", workflow)
+        self.assertIn('RUN_ID: ${{ github.event.workflow_run.id }}', workflow)
+        self.assertIn(
+            'actions/runs/$RUN_ID/artifacts?per_page=100',
+            workflow,
+        )
+        self.assertIn("cua-driver-release-metadata-", workflow)
+        self.assertIn('"${#RELEASE_VERSIONS[@]}" -gt 1', workflow)
+        sha_fallback = 'git tag --points-at "$HEAD_SHA"'
+        self.assertIn(sha_fallback, workflow)
+        self.assertLess(
+            workflow.index("cua-driver-release-metadata-"),
+            workflow.index(sha_fallback),
+        )
         self.assertIn('gh release view "$TAG" --repo "$GITHUB_REPOSITORY"', workflow)
+
+    def run_sdk_version_step(
+        self, metadata: str, *, manual: bool = False, artifacts: str = "",
+        tag: str = "cua-driver-rs-v0.23.2", release_status: int = 0,
+        input_version: str = "0.23.2",
+    ) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+        workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
+        step = workflow.split("      - name: Determine version\n", 1)[1]
+        script = textwrap.dedent(
+            step.split("        run: |\n", 1)[1].split("\n  # Build wheels", 1)[0]
+        )
+        self.assertNotIn("${{", script)
+        mocks = r'''
+gh() {
+  if [ "$1" = api ]; then
+    printf '%s\n' "$TEST_ARTIFACTS"
+  elif [ "$*" = "release view $TEST_TAG --repo example/repo --json tagName,isDraft" ]; then
+    printf '%s' "$TEST_METADATA"
+    return "$TEST_RELEASE_STATUS"
+  else
+    echo "Unexpected gh arguments: $*" >&2
+    return 99
+  fi
+}
+git() {
+  case "$*" in
+    'fetch --tags') ;;
+    "tag --points-at $HEAD_SHA") printf '%s\n' "$TEST_TAG" ;;
+    *) echo "Unexpected git arguments: $*" >&2; return 99 ;;
+  esac
+}
+# macOS ships Bash 3; emulate only the array read used by this Ubuntu step.
+if [ "${BASH_VERSINFO[0]}" -lt 4 ]; then
+  mapfile() {
+    [ "$*" = '-t RELEASE_VERSIONS' ] || return 99
+    RELEASE_VERSIONS=()
+    while IFS= read -r line; do
+      RELEASE_VERSIONS+=("$line")
+    done
+  }
+fi
+'''
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "outputs"
+            result = subprocess.run(
+                ["bash", "-eo", "pipefail", "-c", mocks + script],
+                cwd=REPO_ROOT,
+                env={
+                    **os.environ,
+                    "EVENT_NAME": "workflow_dispatch" if manual else "workflow_run",
+                    "INPUT_VERSION": input_version,
+                    "RUN_ID": "123",
+                    "HEAD_SHA": "a" * 40,
+                    "GITHUB_REPOSITORY": "example/repo",
+                    "GITHUB_OUTPUT": str(output),
+                    "RUNNER_TEMP": temp,
+                    "TEST_ARTIFACTS": artifacts,
+                    "TEST_TAG": tag,
+                    "TEST_METADATA": metadata,
+                    "TEST_RELEASE_STATUS": str(release_status),
+                },
+                capture_output=True, text=True,
+            )
+            outputs = dict(
+                line.split("=", 1)
+                for line in (output.read_text().splitlines() if output.exists() else [])
+            )
+        return result, outputs
+
+    def test_sdk_publish_requires_exact_published_release_metadata(self) -> None:
+        tag = "cua-driver-rs-v0.23.2"
+        cases = {
+            "published": (json.dumps({"tagName": tag, "isDraft": False}), 0, True),
+            "published_prerelease": (
+                json.dumps({"tagName": tag, "isDraft": False, "isPrerelease": True}),
+                0, True,
+            ),
+            "draft": (json.dumps({"tagName": tag, "isDraft": True}), 0, False),
+            "missing": ("", 1, False),
+            "wrong_tag": ('{"tagName":"cua-driver-rs-v9.9.9","isDraft":false}', 0, False),
+            "malformed": ("not json", 0, False),
+            "empty": ("", 0, False),
+            "null": ("null", 0, False),
+            "missing_draft": (json.dumps({"tagName": tag}), 0, False),
+            "string_draft": (json.dumps({"tagName": tag, "isDraft": "false"}), 0, False),
+            "multiple_objects": (
+                json.dumps({"tagName": tag, "isDraft": False}) + '\n{}', 0, False,
+            ),
+        }
+        for manual in (False, True):
+            for name, (metadata, status, publish) in cases.items():
+                with self.subTest(manual=manual, metadata=name):
+                    result, outputs = self.run_sdk_version_step(
+                        metadata, manual=manual, release_status=status,
+                    )
+                    if manual and not publish:
+                        self.assertNotEqual(result.returncode, 0, result.stdout)
+                        self.assertNotEqual(outputs.get("should_publish"), "true")
+                    else:
+                        self.assertEqual(result.returncode, 0, result.stderr)
+                        self.assertEqual(outputs["should_publish"], str(publish).lower())
+                        self.assertEqual(outputs["tag"], tag)
+
+    def test_sdk_publish_artifact_resolution_also_checks_publication(self) -> None:
+        for draft in (False, True):
+            with self.subTest(draft=draft):
+                result, outputs = self.run_sdk_version_step(
+                    json.dumps({"tagName": "cua-driver-rs-v0.23.2", "isDraft": draft}),
+                    artifacts="cua-driver-release-metadata-0.23.2",
+                )
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(outputs["should_publish"], str(not draft).lower())
+
+    def test_sdk_publish_no_matching_tag_skips(self) -> None:
+        result, outputs = self.run_sdk_version_step("", tag="")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(outputs, {
+            "version": "0.0.0", "tag": "cua-driver-rs-v0.0.0", "should_publish": "false",
+        })
+
+    def test_sdk_publish_accepts_published_prerelease_versions(self) -> None:
+        for version in ("0.23.2-rc.1", "0.23.2+build.7", "0.23.2-rc.1+build.7"):
+            tag = "cua-driver-rs-v" + version
+            for manual, artifacts in ((True, ""), (False, ""),
+                                      (False, "cua-driver-release-metadata-" + version)):
+                with self.subTest(version=version, manual=manual, artifacts=artifacts):
+                    result, outputs = self.run_sdk_version_step(
+                        json.dumps({"tagName": tag, "isDraft": False, "isPrerelease": True}),
+                        manual=manual, artifacts=artifacts, tag=tag, input_version=version,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertEqual(outputs, {
+                        "version": version, "tag": tag, "should_publish": "true",
+                    })
+
+    def test_sdk_publish_rejects_invalid_versions(self) -> None:
+        for version in ("0.23.2/other", "$(exit 0)", "0.23.2\nshould_publish=true"):
+            with self.subTest(version=version):
+                result, outputs = self.run_sdk_version_step(
+                    "", manual=True, input_version=version,
+                )
+                self.assertNotEqual(result.returncode, 0, result.stdout)
+                self.assertIn("Invalid Cua Driver version:", result.stderr)
+                self.assertNotEqual(outputs.get("should_publish"), "true")
 
     def test_python_publish_defaults_to_current_rust_version(self) -> None:
         workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
@@ -40,6 +202,20 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
 
         self.assertIn("os: windows-11-arm", workflow)
         self.assertEqual(workflow.count("os: windows-latest"), 1)
+
+    def test_windows_node_runtime_statically_links_and_verifies_the_crt(self) -> None:
+        build_script = self.read("libs/cua-driver/scripts/build-node-runtime.mjs")
+        release_workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn('target.endsWith("-pc-windows-msvc")', build_script)
+        self.assertIn('"-C target-feature=+crt-static"', build_script)
+        self.assertIn("Verify Node runtime is self-contained on Windows", release_workflow)
+        self.assertIn("dumpbin /DEPENDENTS", release_workflow)
+        self.assertIn("VCRUNTIME|MSVCP|CONCRT|UCRTBASE|api-ms-win-crt-", release_workflow)
+        self.assertIn("verify-windows-node-runtime:", release_workflow)
+        self.assertIn("os: windows-11-arm", release_workflow)
+        self.assertIn("Import exact candidate through public SDK", release_workflow)
+        self.assertIn("process.arch !== '${{ matrix.node_arch }}'", release_workflow)
 
     def test_npm_publish_uses_explicit_local_tarball_paths(self) -> None:
         workflow = self.read(".github/workflows/cd-py-cua-driver.yml")
@@ -97,6 +273,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn('"component": "cua-driver-rs"', config)
         self.assertIn('"component": "lume"', config)
         self.assertIn("5c625bfb5d1ff62eadeeb3772007f7f66fdcf071", workflow)
+        self.assertIn("validate_release_please_tags.py --target HEAD", workflow)
         self.assertIn('-p cua-driver --precise "$DRIVER_VERSION"', workflow)
         self.assertIn(
             "gh pr list --state open --base main --limit 100 --json number",
@@ -183,7 +360,10 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
     def test_distro_compat_downloads_release_asset_once_per_run(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
-        self.assertEqual(workflow.count('curl -fsSL "$BINARY_URL"'), 1)
+        self.assertEqual(
+            workflow.count('"$BINARY_URL" -o cua-driver-release.tar.gz'),
+            1,
+        )
         self.assertIn("actions/upload-artifact@v4", workflow)
         self.assertIn("actions/download-artifact@v4", workflow)
         self.assertIn("cua-driver-release-${{ steps.pick.outputs.version }}", workflow)
@@ -198,7 +378,14 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow.count('      - ".github/workflows/ci-distro-compat-cua-driver.yml"'),
             2,
         )
-        self.assertIn('      - "cua-driver-rs-v*"', workflow)
+        self.assertIn("  release:\n", workflow)
+        self.assertIn("    types: [published]", workflow)
+        self.assertIn(
+            "startsWith(github.event.release.tag_name, 'cua-driver-rs-v')",
+            workflow,
+        )
+        self.assertIn('VERSION="${RELEASE_TAG#cua-driver-rs-v}"', workflow)
+        self.assertNotIn('      - "cua-driver-rs-v*"', workflow)
         self.assertIn("  workflow_dispatch:", workflow)
 
     def test_expensive_rust_workflows_do_not_watch_the_entire_tree(self) -> None:
@@ -220,7 +407,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
                 relative_path,
             )
 
-    def test_release_please_keeps_driver_version_sources_synced(self) -> None:
+    def test_release_please_keeps_release_version_sources_synced(self) -> None:
         config = self.read("release-please-config.json")
 
         self.assertIn('"path": "rust/Cargo.toml"', config)
@@ -230,9 +417,61 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertEqual(
             config.count('"path": "typescript/package-lock.json"'), 2
         )
-        self.assertIn('"path": "scripts/_install-rust.sh"', config)
-        self.assertIn('"path": "scripts/install.ps1"', config)
+        self.assertNotIn('"path": "scripts/_install-rust.sh"', config)
+        self.assertNotIn('"path": "scripts/install.ps1"', config)
         self.assertIn('"path": "rust/Skills/cua-driver/SKILL.md"', config)
+
+    def test_driver_installer_version_advances_only_after_publication(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        release_job = workflow.index("  release:")
+        control_checkout = workflow.index(
+            "- name: Check out release control tooling", release_job
+        )
+        stamp = workflow.index(
+            "python3 release-control/.github/scripts/"
+            "update_cua_driver_installer_version.py",
+            control_checkout,
+        )
+        staged_shell = workflow.index(
+            "--shell-path release-upload/_install-rust.sh", stamp
+        )
+        staged_powershell = workflow.index(
+            "--powershell-path release-upload/install.ps1", stamp
+        )
+        publish = workflow.index(
+            "- name: Publish the verified Release Please draft", staged_powershell
+        )
+        verify_public = workflow.index(
+            "- name: Verify the release and every staged asset are public", publish
+        )
+        app_token = workflow.index(
+            "- name: Generate post-publication GitHub App token", verify_public
+        )
+        advance = workflow.index(
+            "- name: Advance public installer version on main", app_token
+        )
+
+        self.assertLess(release_job, control_checkout)
+        self.assertLess(control_checkout, stamp)
+        self.assertLess(stamp, staged_shell)
+        self.assertLess(staged_shell, staged_powershell)
+        self.assertLess(staged_powershell, publish)
+        self.assertLess(publish, verify_public)
+        self.assertLess(verify_public, app_token)
+        self.assertLess(app_token, advance)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+        self.assertIn("path: release-control", workflow)
+        self.assertIn("select(.draft == false and .published_at != null)", workflow)
+        self.assertIn("missing-release-assets.txt", workflow)
+        self.assertIn("--allow-newer", workflow)
+        self.assertIn(
+            "--state-path "
+            '"$UPDATE_ROOT/.github/release-state/cua-driver-rs-published-version"',
+            workflow,
+        )
+        self.assertIn("-F force=false", workflow)
+        self.assertIn("[skip ci]", workflow)
 
     def test_release_installers_preserve_legacy_telemetry_state_before_cleanup(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-rust.sh")
@@ -259,6 +498,36 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             cleanup,
         )
 
+    def test_release_installers_bound_cursor_theme_compatibility(self) -> None:
+        shell = self.read("libs/cua-driver/scripts/_install-rust.sh")
+        self.assertIn('CURSOR_THEME_REQUIRED_FROM="0.12.7"', shell)
+        self.assertIn('"$VERSION" "$CURSOR_THEME_REQUIRED_FROM"', shell)
+
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        self.assertIn('$CursorThemeRequiredFrom = [version]"0.12.7"', powershell)
+        self.assertIn("[version]$version -ge $CursorThemeRequiredFrom", powershell)
+
+    def test_windows_installer_elevates_autostart_binary_without_command_string(
+        self,
+    ) -> None:
+        powershell = self.read("libs/cua-driver/scripts/install.ps1")
+        block = powershell.split(
+            "function Register-CuaDriverAutostart {", maxsplit=1
+        )[1].split(
+            "# ---------- Concurrent-install lockfile", maxsplit=1
+        )[0]
+
+        self.assertIn(
+            "Start-Process -FilePath $InstalledBinary",
+            block,
+        )
+        self.assertIn(
+            '-ArgumentList @("autostart", "enable")',
+            block,
+        )
+        self.assertNotIn("$elevCmd", block)
+        self.assertNotIn("Read-Host", block)
+
     def test_local_installer_does_not_clean_release_or_legacy_homes(self) -> None:
         installer = self.read("libs/cua-driver/scripts/_install-local-rust.sh")
 
@@ -278,6 +547,44 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertNotIn('permission prompts say \\"Cua Driver\\"', installer)
         self.assertIn("launches the installed", shared_hints)
         self.assertNotIn("launches CuaDriver", shared_hints)
+
+    def test_post_install_hints_include_muse_stdio_mcp_config(self) -> None:
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn("Muse Code (macOS / Linux", shared_hints)
+        self.assertIn("$XDG_CONFIG_HOME/muse/settings.json", shared_hints)
+        self.assertIn('"mcp_servers": {', shared_hints)
+        self.assertIn('"transport": "stdio"', shared_hints)
+        self.assertIn('"command": "{{BINARY}}"', shared_hints)
+        self.assertIn('"args": ["mcp"]', shared_hints)
+        self.assertIn("MCP servers load at startup", shared_hints)
+
+    def test_post_install_hints_use_canonical_capability_manifest_flags(self) -> None:
+        shared_hints = self.read("libs/cua-driver/scripts/post-install-hints.txt")
+
+        self.assertIn("--capability-manifest", shared_hints)
+        self.assertIn("--approve-capability-manifest", shared_hints)
+        self.assertNotIn("--session-policy", shared_hints)
+        self.assertNotIn("--approve-session-policy", shared_hints)
+
+    def test_agent_sdk_examples_use_implicit_sessions_and_per_call_targets(self) -> None:
+        example_dir = REPO_ROOT / "libs/cua-driver/examples/agent-sdks"
+        examples = "\n".join(
+            path.read_text()
+            for path in example_dir.iterdir()
+            if path.suffix in {".py", ".ts", ".md"}
+        )
+
+        for forbidden in [
+            "CUA_CAPTURE_SCOPE",
+            "StartSessionInput",
+            "CaptureScope",
+            "capture_scope",
+        ]:
+            self.assertNotIn(forbidden, examples)
+        self.assertIn("implicit lifecycle session", examples)
+        self.assertIn("ActionTarget.DESKTOP", examples)
+        self.assertIn("new ActionTarget.Desktop", examples)
 
     def test_local_macos_signing_uses_an_unambiguous_identity_hash(self) -> None:
         signing = self.read("libs/cua-driver/scripts/_local-signing.sh")
@@ -332,8 +639,19 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "libs/cua-driver/rust/crates/cua-driver/src/skills.rs"
         )
         self.assertIn(
-            "releases/download/cua-driver-rs-v{version}/"
-            "cua-driver-rs-v{version}-skills.tar.gz",
+            'const STABLE_RELEASE_TAG_PREFIX: &str = "cua-driver-rs-v"',
+            skill_installer,
+        )
+        self.assertIn(
+            'const NIGHTLY_RELEASE_TAG_PREFIX: &str = "nightly-cua-driver-rs-v"',
+            skill_installer,
+        )
+        self.assertIn(
+            "releases/download/{tag_prefix}{version}/",
+            skill_installer,
+        )
+        self.assertIn(
+            "{STABLE_RELEASE_TAG_PREFIX}{version}-skills.tar.gz",
             skill_installer,
         )
         self.assertIn(
@@ -354,7 +672,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             "github.event_name == 'workflow_dispatch' && inputs.publish && "
             "format('refs/tags/cua-driver-rs-v{0}', inputs.version) || github.ref"
         )
-        self.assertEqual(workflow.count(immutable_ref), 4)
+        self.assertEqual(workflow.count(immutable_ref), 7)
         self.assertIn(
             "name: Ensure Rust target is installed\n"
             "        working-directory: libs/cua-driver/rust",
@@ -369,6 +687,90 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("inputs.publish == true", workflow)
         self.assertIn('--tag "${{ steps.version.outputs.tag }}"', workflow)
         self.assertIn('--sha "${{ steps.version.outputs.sha }}"', workflow)
+
+    def test_driver_attribution_preflight_gates_candidate_builds(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        preflight = workflow.index("  release-attribution-preflight:")
+        linux = workflow.index("  build-linux:", preflight)
+        windows = workflow.index("  build-windows:", linux)
+        macos = workflow.index("  build-macos-universal:", windows)
+        release = workflow.index("  release:", macos)
+        preflight_block = workflow[preflight:linux]
+
+        self.assertIn("name: release attribution preflight", preflight_block)
+        self.assertIn("ref: ${{ github.workflow_sha }}", preflight_block)
+        self.assertIn("path: release-control", preflight_block)
+        self.assertIn(
+            "python3 release-control/.github/scripts/release_attribution.py collect",
+            preflight_block,
+        )
+        self.assertIn('--repo-root "$GITHUB_WORKSPACE"', preflight_block)
+        self.assertIn('--sha "$SHA"', preflight_block)
+        self.assertIn(
+            "No immutable release candidate requested; skipping attribution preflight.",
+            preflight_block,
+        )
+        for block in (
+            workflow[linux:windows],
+            workflow[windows:macos],
+            workflow[macos:release],
+        ):
+            self.assertIn("needs: release-attribution-preflight", block)
+
+        # Keep the publication-time guard as defense in depth.
+        self.assertEqual(
+            workflow.count("python3 .github/scripts/release_attribution.py collect"),
+            1,
+        )
+
+    def test_driver_windows_release_signs_every_pe_binary_before_packaging(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        windows = workflow.index("  build-windows:")
+        next_job = workflow.index("  verify-windows-node-runtime:", windows)
+        block = workflow[windows:next_job]
+
+        self.assertIn("  id-token: write\n", workflow)
+        self.assertIn("    environment: cua-driver-release-signing\n", block)
+        self.assertIn(
+            "azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca",
+            block,
+        )
+        self.assertIn(
+            "azure/artifact-signing-action@c7ab2a863ab5f9a846ddb8265964877ef296ee82",
+            block,
+        )
+        self.assertIn("${{ vars.AZURE_ARTIFACT_SIGNING_ENDPOINT }}", block)
+        self.assertIn("${{ vars.AZURE_ARTIFACT_SIGNING_ACCOUNT_NAME }}", block)
+        self.assertIn(
+            "${{ vars.AZURE_ARTIFACT_SIGNING_CERTIFICATE_PROFILE_NAME }}",
+            block,
+        )
+        for binary in (
+            "cua-driver.exe",
+            "cua-cursor-theme.exe",
+            "cua-driver-uia.exe",
+            "cua_driver_sdk.dll",
+            "cua_driver_node_runtime.node",
+        ):
+            self.assertIn(binary, block)
+
+        login = block.index("- name: Azure login for Artifact Signing")
+        signing = block.index("- name: Sign Windows binaries", login)
+        verify = block.index("- name: Verify Authenticode signatures", signing)
+        package = block.index("- name: Package", verify)
+        self.assertLess(login, signing)
+        self.assertLess(signing, verify)
+        self.assertLess(verify, package)
+        self.assertIn("Get-AuthenticodeSignature", block)
+        self.assertIn("$signature.Status -ne 'Valid'", block)
+        self.assertIn("Cua AI, Inc", block)
+        self.assertNotIn("currently shipped UNSIGNED", block)
+
+    def test_driver_nightly_grants_oidc_to_reusable_signing_workflow(self) -> None:
+        workflow = self.read(".github/workflows/nightly-cua-driver.yml")
+        self.assertIn("  id-token: write\n", workflow)
+        self.assertIn("uses: ./.github/workflows/cd-rust-cua-driver.yml", workflow)
 
     def test_driver_tag_build_cannot_publish_before_manual_e2e_gate(self) -> None:
         workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
@@ -387,7 +789,7 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn("CUA_DRIVER_LOCAL_HOME: ${{ runner.temp }}/cua-driver-local-home", linux)
 
         windows = self.read(".github/workflows/e2e-rust-windows.yml")
-        self.assertIn('name: "Windows / install-local.ps1 smoke"', windows)
+        self.assertIn('name: "Windows / installer and update smoke"', windows)
         self.assertIn("install-local.ps1 -NoAutoStart -NoPathUpdate", windows)
         self.assertIn('CUA_DRIVER_LOCAL_HOME = Join-Path $env:RUNNER_TEMP', windows)
 
@@ -400,6 +802,111 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
             workflow,
         )
         self.assertIn("} > checksums.txt", workflow)
+
+    def test_driver_release_verifies_archives_before_publish(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+
+        self.assertIn("verify-release-artifacts:", workflow)
+        self.assertIn("name: release artifact contract", workflow)
+        self.assertIn("verify_cua_driver_release_archives.py", workflow)
+        self.assertIn("ref: ${{ github.workflow_sha }}", workflow)
+        self.assertIn(
+            "[build-linux, build-windows, build-macos-universal, "
+            "verify-windows-node-runtime, "
+            "verify-release-artifacts, verify-mcp-client-discovery, build-hyprland-plugin-source]",
+            workflow,
+        )
+
+    def test_driver_release_blocks_on_packaged_mcp_client_discovery(self) -> None:
+        workflow = self.read(".github/workflows/cd-rust-cua-driver.yml")
+        ci_workflow = self.read(
+            ".github/workflows/ci-cua-driver-contract-clients.yml"
+        )
+        package = json.loads(
+            self.read(
+                ".github/scripts/cua-driver-mcp-compat/package.json"
+            )
+        )
+        expected = json.loads(
+            self.read(
+                ".github/scripts/cua-driver-mcp-compat/expected-tools.json"
+            )
+        )
+
+        self.assertIn("verify-mcp-client-discovery:", workflow)
+        self.assertIn("name: packaged MCP client discovery", workflow)
+        self.assertIn("name: cua-driver-rs-linux-x86_64", workflow)
+        self.assertIn("-binary.tar.gz", workflow)
+        self.assertIn("CUA_DRIVER_BINARY", workflow)
+        self.assertIn("npm run verify", workflow)
+        self.assertIn("MCP discovery in pinned clients", ci_workflow)
+        self.assertIn("Verify discovery without model or account calls", ci_workflow)
+        self.assertEqual(
+            package["dependencies"],
+            {
+                "@anthropic-ai/claude-code": "2.1.224",
+                "@modelcontextprotocol/sdk": "1.30.0",
+                "@openai/codex": "0.146.1",
+            },
+        )
+        self.assertEqual(
+            expected["baseTools"], sorted(expected["baseTools"])
+        )
+        self.assertEqual(
+            len(expected["baseTools"]), len(set(expected["baseTools"]))
+        )
+        self.assertEqual(len(expected["baseTools"]), 56)
+        self.assertEqual(
+            expected["outputSchemaCountByPlatform"],
+            {"darwin": 32, "linux": 36, "win32": 32},
+        )
+        self.assertEqual(
+            expected["platformTools"],
+            {
+                "linux": [
+                    "mouse_button_down",
+                    "mouse_button_up",
+                    "mouse_drag",
+                    "parallel_mouse_drag",
+                ]
+            },
+        )
+
+    def test_installer_compatibility_runs_current_installers_on_releases(
+        self,
+    ) -> None:
+        workflow = self.read(
+            ".github/workflows/ci-cua-driver-installer-compat.yml"
+        )
+
+        self.assertIn("workflow_call:\n", workflow)
+        self.assertIn("Installer compatibility summary", workflow)
+        self.assertIn("ubuntu-latest, macos-26, windows-latest", workflow)
+        self.assertIn("repos/$GITHUB_REPOSITORY/releases?per_page=100", workflow)
+        self.assertIn("libs/cua-driver/scripts/install.sh", workflow)
+        self.assertIn("libs/cua-driver/scripts/install.ps1", workflow)
+        self.assertIn("-NoAutoStart", workflow)
+        self.assertIn('CUA_DRIVER_RS_TELEMETRY_ENABLED: "false"', workflow)
+
+        release_metadata = self.read(
+            ".github/workflows/ci-release-metadata.yml"
+        )
+        self.assertIn(
+            "uses: ./.github/workflows/ci-cua-driver-installer-compat.yml",
+            release_metadata,
+        )
+        self.assertIn(
+            "validate:\n    needs: installer-compatibility",
+            release_metadata,
+        )
+        self.assertIn(
+            "needs: installer-compatibility\n    if: always()",
+            release_metadata,
+        )
+        self.assertIn(
+            'if [[ "$INSTALLER_CERTIFICATION_RESULT" != "success" ]]',
+            release_metadata,
+        )
 
     def test_lume_uses_the_same_draft_finalizer(self) -> None:
         workflow = self.read(".github/workflows/cd-swift-lume.yml")
@@ -421,11 +928,12 @@ class TestCuaDriverReleaseWiring(unittest.TestCase):
         self.assertIn(".stdout(Stdio::null())", telemetry)
         self.assertIn(".stderr(Stdio::null())", telemetry)
 
-    def test_released_linux_smoke_waits_for_assets_and_installs_xkbcommon(self) -> None:
+    def test_released_linux_smoke_follows_publication_and_installs_xkbcommon(self) -> None:
         workflow = self.read(".github/workflows/ci-distro-compat-cua-driver.yml")
 
-        self.assertIn("for attempt in $(seq 1 90)", workflow)
-        self.assertIn("release asset was still unavailable after 15 minutes", workflow)
+        self.assertIn("--retry 5 --retry-delay 2 --retry-all-errors", workflow)
+        self.assertNotIn("for attempt in $(seq 1 90)", workflow)
+        self.assertNotIn("release asset was still unavailable after 15 minutes", workflow)
         self.assertEqual(workflow.count("libxkbcommon0"), 4)
         self.assertEqual(workflow.count('libxkbcommon"'), 2)
 

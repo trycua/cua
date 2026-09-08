@@ -1,0 +1,218 @@
+---
+title: Use Computer History
+description: Enable, inspect, query, and delete the encrypted Computer History preview in Cua Driver nightly builds.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+import { Tabs, Tab } from 'fumadocs-ui/components/tabs';
+
+Computer History keeps an encrypted local record of actions performed through
+Cua Driver. This guide covers the early preview in nightly macOS, Windows, and
+Linux builds.
+
+<Callout type="info">
+  Computer History is off by default. It records metadata for Cua-mediated actions after you enable
+  it. It does not watch unrelated desktop activity.
+</Callout>
+
+## Before you start
+
+- Use an interactive macOS, Windows, or Linux desktop session.
+- Grant Cua Driver the operating-system permissions needed for the actions you
+  want it to perform. Computer History grants no new action permissions.
+- On Linux, run an unlocked Secret Service implementation such as GNOME
+  Keyring. History fails closed when no unlocked Secret Service is available.
+
+## Install the nightly build
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)" -- --channel nightly
+```
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+& ([scriptblock]::Create((irm https://cua.ai/driver/install.ps1))) -Channel nightly
+```
+
+  </Tab>
+</Tabs>
+
+To move an existing installation to nightly, run:
+
+```bash
+cua-driver channel set nightly
+cua-driver update --apply
+cua-driver channel status
+```
+
+## Enable history
+
+```bash
+cua-driver history enable
+cua-driver history status
+```
+
+`history enable` initializes a device-local native credential, verifies an
+encrypted write and read, and starts capture. The default retention period is
+7 days, and the encrypted-store quota is 100 MiB.
+
+The store uses the current user's macOS Keychain, Windows Credential Manager,
+or Linux Secret Service. There is no plaintext fallback, and capture performs
+no network I/O.
+
+## Inspect recent events
+
+List the newest 50 events:
+
+```bash
+cua-driver history list 50
+```
+
+Show one event by sequence number:
+
+```bash
+cua-driver history show 42
+```
+
+Add `--json` to `status`, `list`, or `show` when another local program needs a
+structured response.
+
+## Let an agent consult history
+
+An admitted Cua Driver runtime exposes two read-only tools:
+
+- `history_status`, authorized by `history.status`;
+- `history_query`, authorized by `history.query`.
+
+Connect the agent through the normal Cua Driver MCP or SDK path. The active
+permission mode, policy ceiling, and capability manifest authorize every
+call. A query returns at most 200 metadata events and appends an encrypted
+access-audit event when it returns data.
+
+Tool availability does not make an agent consult history automatically. For
+continuation and recent-work requests, give the agent a trusted history-first
+instruction or have the host perform the status and bounded-query preflight.
+See the [agent integration reference](/reference/cua-driver/computer-history)
+for the consultation flow and permission contract.
+
+The agent tools cannot enable, pause, resume, disable, delete, or export
+history. They cannot retrieve encryption keys.
+
+## Pause, resume, or disable capture
+
+```bash
+cua-driver history pause
+cua-driver history resume
+cua-driver history disable
+```
+
+Pause and disable preserve existing encrypted history. A permitted agent can
+still query that history while the runtime admits the preview.
+
+## Delete history
+
+```bash
+cua-driver history delete --yes
+```
+
+This destroys the exact namespace key and deletes the encrypted store. It
+does not claim physical erasure from backups, filesystem snapshots, copied
+ciphertext, SSD wear leveling, or memory that a process already decrypted.
+
+To delete history while uninstalling:
+
+<Tabs items={['macOS and Linux', 'Windows']}>
+  <Tab value="macOS and Linux">
+
+```bash
+/bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)" -- --purge
+```
+
+Run this as the interactive login user, without `sudo`, so native credential
+cleanup stays in that user's context.
+
+  </Tab>
+  <Tab value="Windows">
+
+```powershell
+$env:CUA_DRIVER_RS_UNINSTALL_FORCE = '1'
+$env:CUA_DRIVER_RS_UNINSTALL_PURGE = '1'
+irm https://cua.ai/driver/uninstall.ps1 | iex
+```
+
+  </Tab>
+</Tabs>
+
+## Return to stable
+
+```bash
+cua-driver history disable
+cua-driver channel set stable
+cua-driver update --apply
+```
+
+Changing channels preserves encrypted history unless you explicitly delete or
+purge it.
+
+## Data boundaries
+
+History may contain timestamps, opaque session and action IDs, Cua capability
+names, fixed application identity fields, and fixed delivery, route, evidence,
+effect, lifecycle, access, and health categories.
+
+It never stores screenshots, video, audio, typed text, raw keystrokes,
+clipboard contents, raw tool arguments or results, accessibility trees, file
+paths, window titles, URLs, or free-form diagnostics.
+
+Default encrypted-store locations are:
+
+- macOS: `~/Library/Application Support/cua-driver/computer-history`;
+- Windows: `%LOCALAPPDATA%\cua-driver\computer-history`;
+- Linux: `$XDG_STATE_HOME/cua-driver/computer-history`, or
+  `~/.local/state/cua-driver/computer-history` when `XDG_STATE_HOME` is unset.
+
+The filesystem can reveal that the directory exists, its total size, and file
+modification times. Copying only the encrypted files to another machine does
+not provide recovery because the namespace key stays in the current user's
+native credential store.
+
+## Troubleshooting
+
+### `history_preview_not_admitted`
+
+The running development daemon lacks preview admission. Restart it with:
+
+```bash
+cua-driver serve --experimental-history
+```
+
+Installed nightly builds handle the verified relaunch during `history enable`.
+
+### `history_key_locked` or `history_key_unavailable`
+
+Unlock the login session and its native credential store, then retry. On
+Linux, confirm that a Secret Service implementation is running. Capture stays
+disabled, and Cua Driver creates no plaintext history files.
+
+### `history_quota_reached`
+
+Delete history if you no longer need it. Reaching the quota does not block the
+computer action that encountered the full store.
+
+### `history_storage_corrupt`
+
+The reader found an invalid, incomplete, reordered, or unauthenticated record.
+It refuses the affected store. If you accept permanent data loss, run
+`cua-driver history delete --yes` and enable history again.
+
+## Related documentation
+
+- [Computer History agent integration](/reference/cua-driver/computer-history)
+- [Permission modes](/reference/cua-driver/permission-modes)
+- [Permission policies](/reference/cua-driver/permission-policies)
+- [Install Cua Driver](/how-to-guides/driver/install)

@@ -44,13 +44,17 @@ async fn caches_token_until_expiry_and_encodes_credentials() {
     assert_eq!(requests[0].method, "POST");
     assert_eq!(
         requests[0].body,
-        Some(b"grant_type=client_credentials&client_id=client+id%2B%2F%25&client_secret=secret+%26%3D%2B%2F%25".to_vec())
+        Some(b"grant_type=client_credentials".to_vec())
     );
     assert_eq!(
         requests[0].headers,
         vec![
             header("accept", "application/json"),
             header("content-type", "application/x-www-form-urlencoded"),
+            header(
+                "authorization",
+                "Basic Y2xpZW50IGlkKy8lOnNlY3JldCAmPSsvJQ=="
+            ),
         ]
     );
     assert_bearer(&requests[1], "token-a");
@@ -336,6 +340,7 @@ async fn does_not_attach_bearer_to_cross_origin_requests() {
         url: "https://cyclops.example/api/pools".into(),
         headers: vec![header("Authorization", "Basic external")],
         body: Some(vec![0, 1, 2]),
+        timeout_secs: None,
     };
 
     let response = client.execute_authenticated(external).await.unwrap();
@@ -426,6 +431,7 @@ fn request(url: &str) -> HttpRequest {
             header("x-trace", "keep"),
         ],
         body: None,
+        timeout_secs: None,
     }
 }
 

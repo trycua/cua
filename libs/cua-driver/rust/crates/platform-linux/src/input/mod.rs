@@ -14,6 +14,7 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+mod mpx_owner;
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -21,6 +22,7 @@ use evdev::{AttributeSet, EventType, InputEvent, Key, RelativeAxisType};
 use std::collections::HashMap;
 use std::ffi::{CStr, CString};
 use std::fs;
+use std::panic::{catch_unwind, AssertUnwindSafe};
 use std::ptr;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
@@ -126,6 +128,17 @@ static UINPUT_POINTERS: OnceLock<Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
     OnceLock::new();
 static XLIB_THREADS_READY: OnceLock<Result<(), String>> = OnceLock::new();
 static MPX_NAME_COUNTER: AtomicU64 = AtomicU64::new(1);
+// evdev 0.12.2 asserts `name.len() + 1 < UINPUT_MAX_NAME_SIZE` while building
+// a device. Linux defines UINPUT_MAX_NAME_SIZE as 80, leaving 78 usable bytes.
+const EVDEV_UINPUT_NAME_MAX_BYTES: usize = 78;
+const UINPUT_POINTER_SUFFIX: &str = " uinput pointer";
+pub const UINPUT_UNAVAILABLE_CODE: &str = "uinput_unavailable";
+
+#[derive(Debug, thiserror::Error)]
+#[error("Linux uinput pointer unavailable: {reason}")]
+struct UinputUnavailable {
+    reason: String,
+}
 
 fn mpx_pointers() -> &'static Mutex<HashMap<String, MasterPointerIds>> {
     MPX_POINTERS.get_or_init(|| Mutex::new(HashMap::new()))
@@ -137,11 +150,75 @@ fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
 
 fn master_pointer_name(cursor_id: &str) -> String {
     let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("CUA {cursor_id} mp-{}-{nonce}", std::process::id())
+    if let Ok(owner) = mpx_owner::Owner::current() {
+        return owner.master_name(nonce);
+    }
+    // Unknown procfs identity cannot safely participate in automatic recovery.
+    // Preserve ordinary operation, with the legacy name and cleanup behavior.
+    let prefix = "CUA ";
+    let suffix = format!(" mp-{}-{nonce}", std::process::id());
+    let max_cursor_bytes = EVDEV_UINPUT_NAME_MAX_BYTES
+        .saturating_sub(prefix.len() + suffix.len() + UINPUT_POINTER_SUFFIX.len());
+    let cursor_id = sanitize_device_name(cursor_id);
+    format!(
+        "{prefix}{}{suffix}",
+        truncate_utf8(&cursor_id, max_cursor_bytes)
+    )
 }
 
 fn slave_pointer_name(master_name: &str) -> String {
-    format!("{master_name} uinput pointer")
+    format!("{master_name}{UINPUT_POINTER_SUFFIX}")
+}
+
+fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
+    let mut end = value.len().min(max_bytes);
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    &value[..end]
+}
+
+fn sanitize_device_name(value: &str) -> String {
+    value
+        .chars()
+        .map(|ch| if ch.is_control() { '_' } else { ch })
+        .collect()
+}
+
+fn normalize_uinput_device_name(name: &str) -> String {
+    let sanitized = sanitize_device_name(name);
+    truncate_utf8(&sanitized, EVDEV_UINPUT_NAME_MAX_BYTES).to_owned()
+}
+
+fn panic_payload_message(payload: &(dyn std::any::Any + Send)) -> &str {
+    payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("unknown panic")
+}
+
+pub(crate) fn uinput_unavailable(reason: impl Into<String>) -> anyhow::Error {
+    UinputUnavailable {
+        reason: reason.into(),
+    }
+    .into()
+}
+
+fn guarded_uinput_creation<T>(name: &str, create: impl FnOnce(&str) -> Result<T>) -> Result<T> {
+    let name = normalize_uinput_device_name(name);
+    match catch_unwind(AssertUnwindSafe(|| create(&name))) {
+        Ok(Ok(device)) => Ok(device),
+        Ok(Err(error)) => Err(uinput_unavailable(error.to_string())),
+        Err(payload) => Err(uinput_unavailable(format!(
+            "device creation panicked: {}",
+            panic_payload_message(payload.as_ref())
+        ))),
+    }
+}
+
+pub fn is_uinput_unavailable(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<UinputUnavailable>().is_some()
 }
 
 fn master_pointer_device_name(master_name: &str) -> String {
@@ -315,17 +392,134 @@ fn is_xvfb_process_running() -> bool {
 /// NOTE: this only rules out the servers known to lack uinput→X-slave hotplug.
 /// A `true` result means "worth attempting"; the per-action call still fails
 /// gracefully (and the caller falls back) if the slave never binds.
+fn real_pointer_capabilities_available(
+    server_supported: bool,
+    xvfb: bool,
+    uinput_accessible: bool,
+    unsafe_hotplug_session: bool,
+) -> bool {
+    server_supported && !xvfb && uinput_accessible && !unsafe_hotplug_session
+}
+
+fn nonempty(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn desktop_value_is_kde(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value
+            .split([':', ';', ','])
+            .map(str::trim)
+            .any(|token| token.eq_ignore_ascii_case("kde") || token.eq_ignore_ascii_case("plasma"))
+    })
+}
+
+/// KDE Plasma 6 / Qt 6.11 applications on X11 can crash session-wide when an
+/// ephemeral uinput pointer is hotplugged into Xorg. Foreground input does not
+/// need that device: the click, drag, scroll, and keyboard tools already use
+/// XTEST after activating the target window. Disable only the MPX/uinput
+/// capability here so callers retain their existing foreground escalation and
+/// XSendEvent fallback behavior.
+fn kde_x11_uinput_hotplug_is_unsafe(
+    session_type: Option<&str>,
+    current_desktop: Option<&str>,
+    session_desktop: Option<&str>,
+    desktop_session: Option<&str>,
+    kde_full_session: Option<&str>,
+    display: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
+    let explicit_x11 = session_type.is_some_and(|value| value.eq_ignore_ascii_case("x11"));
+    let explicit_wayland = session_type.is_some_and(|value| value.eq_ignore_ascii_case("wayland"));
+    if explicit_wayland || (!explicit_x11 && nonempty(wayland_display)) {
+        return false;
+    }
+
+    let x11 = explicit_x11 || nonempty(display);
+    let kde = desktop_value_is_kde(current_desktop)
+        || desktop_value_is_kde(session_desktop)
+        || desktop_value_is_kde(desktop_session)
+        || kde_full_session.is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        });
+
+    x11 && kde
+}
+
+fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
+    let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+    let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let session_desktop = std::env::var("XDG_SESSION_DESKTOP").ok();
+    let desktop_session = std::env::var("DESKTOP_SESSION").ok();
+    let kde_full_session = std::env::var("KDE_FULL_SESSION").ok();
+    let display = std::env::var("DISPLAY").ok();
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+
+    kde_x11_uinput_hotplug_is_unsafe(
+        session_type.as_deref(),
+        current_desktop.as_deref(),
+        session_desktop.as_deref(),
+        desktop_session.as_deref(),
+        kde_full_session.as_deref(),
+        display.as_deref(),
+        wayland_display.as_deref(),
+    )
+}
+
+fn uinput_accessible() -> bool {
+    fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open("/dev/uinput")
+        .is_ok()
+}
+
 pub fn real_pointer_input_available() -> bool {
+    // Do not even probe /dev/uinput on an affected KDE/X11 session. Creating
+    // the device is itself the dangerous operation; a later fallback is too
+    // late once Xorg has announced the hotplug to Qt clients.
+    if kde_x11_uinput_hotplug_is_unsafe_from_env() {
+        return false;
+    }
+
+    // `ensure_master_pointer` creates an XI2 master before attaching the
+    // uinput slave. If this process cannot open /dev/uinput, attempting that
+    // path on every click/scroll would create and abandon an XInput master
+    // pair until Xorg terminates the client with BadAlloc. Skip MPX entirely
+    // when the required device is inaccessible.
+    if !uinput_accessible() {
+        return false;
+    }
     let Ok(display) = open_display() else {
         return false;
     };
-    let supported =
-        supports_parallel_pointer_injection(display).is_ok() && !is_xvfb_process_running();
+    let supported = real_pointer_capabilities_available(
+        supports_parallel_pointer_injection(display).is_ok(),
+        is_xvfb_process_running(),
+        true,
+        false,
+    );
     unsafe { x11::xlib::XCloseDisplay(display) };
     supported
 }
 
 fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
+    ensure_master_pointer_for_session(cursor_id, kde_x11_uinput_hotplug_is_unsafe_from_env())
+}
+
+fn ensure_master_pointer_for_session(
+    cursor_id: &str,
+    unsafe_hotplug_session: bool,
+) -> Result<MasterPointerIds> {
+    if unsafe_hotplug_session {
+        return Err(uinput_unavailable(
+            "disabled on KDE Plasma X11; retry with delivery_mode='foreground'",
+        ));
+    }
+
     if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
         return Ok(ids);
     }
@@ -340,6 +534,18 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     }
 
     let base = master_pointer_name(cursor_id);
+    let device_name = slave_pointer_name(&base);
+    // Acquire the non-X resource before mutating the XInput hierarchy. The
+    // inexpensive availability probe above handles the normal permission
+    // denial; this ordering also prevents a race or late open failure from
+    // leaking a newly created master pair.
+    let uinput_device = match create_uinput_pointer(&device_name) {
+        Ok(device) => device,
+        Err(error) => {
+            unsafe { x11::xlib::XCloseDisplay(display) };
+            return Err(error);
+        }
+    };
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     let name = CString::new(base.clone())?;
     unsafe {
@@ -380,8 +586,6 @@ fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
     let keyboard_id = keyboard_id
         .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
 
-    let device_name = slave_pointer_name(&base);
-    let uinput_device = create_uinput_pointer(&device_name)?;
     let slave_pointer_id = wait_for_slave_pointer_id(display, &device_name)?;
     attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
     set_flat_pointer_accel(display, slave_pointer_id);
@@ -412,11 +616,12 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let Ok(display) = open_display() else {
         return;
     };
+    let _ = remove_master_pointer(display, ids.pointer_id);
+    unsafe { x11::xlib::XCloseDisplay(display) };
+}
 
-    let Ok(devices) = xi2_query_devices(display) else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
-    };
+fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> Result<()> {
+    let devices = xi2_query_devices(display)?;
 
     let mut virtual_core_pointer = None;
     let mut virtual_core_keyboard = None;
@@ -431,44 +636,92 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let (Some(return_pointer), Some(return_keyboard)) =
         (virtual_core_pointer, virtual_core_keyboard)
     else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
+        bail!("cannot remove MPX master without its virtual core return devices");
     };
 
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     unsafe {
         let remove = change.remove();
         (*remove)._type = x11::xinput2::XIRemoveMaster;
-        (*remove).deviceid = ids.pointer_id;
+        (*remove).deviceid = pointer_id;
         (*remove).return_mode = x11::xinput2::XIAttachToMaster;
         (*remove).return_pointer = return_pointer;
         (*remove).return_keyboard = return_keyboard;
-        let _ = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        let rc = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        x11::xlib::XSync(display, 0);
+        if rc != 0 {
+            bail!("XIChangeHierarchy(XIRemoveMaster) failed with status {rc}");
+        }
+    }
+    Ok(())
+}
+
+/// Recover only versioned masters whose local owner is provably gone. A PID
+/// alone cannot identify an owner on a shared/remote X server or across restarts.
+pub(crate) fn reap_orphaned_master_pointers() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        return;
+    }
+    let Ok(owner) = mpx_owner::Owner::current() else {
+        return;
+    };
+    let Ok(display) = open_display() else {
+        return;
+    };
+    // Prevent an ID from being removed/reused by another X client between our
+    // enumeration and removal. No network or arbitrary filesystem reads occur
+    // under this grab: owner checks inspect local procfs and kill(pid, 0).
+    unsafe {
+        x11::xlib::XGrabServer(display);
+    }
+    let result = (|| -> Result<()> {
+        for (id, use_, name) in xi2_query_devices(display)? {
+            if use_ != x11::xinput2::XIMasterPointer {
+                continue;
+            }
+            let Some(candidate) = mpx_owner::Owner::from_pointer_name(&name) else {
+                continue;
+            };
+            if candidate.stale_in(&owner) {
+                remove_master_pointer(display, id)?;
+                tracing::info!(device_id = id, "removed orphaned Cua MPX master pair");
+            }
+        }
+        Ok(())
+    })();
+    unsafe {
+        x11::xlib::XUngrabServer(display);
         x11::xlib::XSync(display, 0);
         x11::xlib::XCloseDisplay(display);
+    }
+    if let Err(error) = result {
+        tracing::warn!("MPX orphan recovery incomplete: {error}");
     }
 }
 
 fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
-    let mut keys = AttributeSet::<Key>::new();
-    keys.insert(Key::BTN_LEFT);
-    keys.insert(Key::BTN_RIGHT);
-    keys.insert(Key::BTN_MIDDLE);
+    guarded_uinput_creation(name, |name| {
+        let mut keys = AttributeSet::<Key>::new();
+        keys.insert(Key::BTN_LEFT);
+        keys.insert(Key::BTN_RIGHT);
+        keys.insert(Key::BTN_MIDDLE);
 
-    let mut rel_axes = AttributeSet::<RelativeAxisType>::new();
-    rel_axes.insert(RelativeAxisType::REL_X);
-    rel_axes.insert(RelativeAxisType::REL_Y);
-    // REL_WHEEL (vertical) and REL_HWHEEL (horizontal) so the same uinput slave
-    // can also drive scroll: libinput turns these into the XI2 smooth-scroll
-    // events GTK consumes, where synthetic Button4-7 XSendEvents are dropped.
-    rel_axes.insert(RelativeAxisType::REL_WHEEL);
-    rel_axes.insert(RelativeAxisType::REL_HWHEEL);
+        let mut rel_axes = AttributeSet::<RelativeAxisType>::new();
+        rel_axes.insert(RelativeAxisType::REL_X);
+        rel_axes.insert(RelativeAxisType::REL_Y);
+        // REL_WHEEL (vertical) and REL_HWHEEL (horizontal) so the same uinput
+        // slave can also drive scroll: libinput turns these into the XI2
+        // smooth-scroll events GTK consumes, where synthetic Button4-7
+        // XSendEvents are dropped.
+        rel_axes.insert(RelativeAxisType::REL_WHEEL);
+        rel_axes.insert(RelativeAxisType::REL_HWHEEL);
 
-    Ok(evdev::uinput::VirtualDeviceBuilder::new()?
-        .name(name)
-        .with_keys(&keys)?
-        .with_relative_axes(&rel_axes)?
-        .build()?)
+        Ok(evdev::uinput::VirtualDeviceBuilder::new()?
+            .name(name)
+            .with_keys(&keys)?
+            .with_relative_axes(&rel_axes)?
+            .build()?)
+    })
 }
 
 fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str) -> Result<i32> {
@@ -856,10 +1109,11 @@ fn ewmh_activate_window(
 /// primitives (proper `x_server_time` stamping beats the WM's focus-stealing
 /// prevention).
 ///
-/// Best-effort: if no X display can be opened the body still runs (without
-/// activation) so a headless/Wayland path degrades rather than hard-fails.
-/// `settle_ms` is the pause after activation before the first injected event —
-/// the WM needs a moment to complete the focus swap (mirrors the macOS settle).
+/// The transition is confirmed from both EWMH active-window state and the X11
+/// core input-focus tree before `body` runs. A fixed delay or a successful
+/// `XSetInputFocus` return is not evidence that global XTest input is safe.
+/// `settle_ms` is retained as a compatibility hint and folded into the bounded
+/// confirmation timeout; it is no longer an unconditional sleep.
 pub fn with_x11_foreground<T>(
     xid: u64,
     settle_ms: u64,
@@ -867,15 +1121,17 @@ pub fn with_x11_foreground<T>(
 ) -> Result<T> {
     let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
     if display.is_null() {
-        return body();
+        bail!("foreground_unavailable: cannot open DISPLAY to verify exact X11 input focus");
     }
     let prior = ewmh_active_window(display);
+    let mut prior_core_focus: x11::xlib::Window = 0;
+    let mut prior_revert = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut prior_core_focus, &mut prior_revert);
+    }
     ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
     unsafe {
         x11::xlib::XSync(display, 0);
-    }
-    if settle_ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(settle_ms));
     }
     // EWMH `_NET_ACTIVE_WINDOW` is honored as *raise-only* by WMs with
     // focus-stealing prevention (e.g. KWin): the window reaches the top of the
@@ -897,18 +1153,92 @@ pub fn with_x11_foreground<T>(
         x11::xlib::XSync(display, 0);
         x11::xlib::XSetErrorHandler(prev_handler);
     }
-    let result = body();
-    // Restore the prior active window (brief swap, like macOS/Windows).
+    let timeout = std::time::Duration::from_millis(settle_ms.max(400));
+    let deadline = std::time::Instant::now() + timeout;
+    let target = xid as x11::xlib::Window;
+    let focused = loop {
+        let active = ewmh_active_window(display) == Some(target);
+        if active && x11_focus_is_within(display, target) {
+            break true;
+        }
+        if std::time::Instant::now() >= deadline {
+            break false;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(10));
+    };
+    let result = if focused {
+        body()
+    } else {
+        let active = ewmh_active_window(display).unwrap_or(0);
+        Err(anyhow::anyhow!(
+            "foreground_unavailable: X11 did not confirm active window and input focus within \
+             exact target 0x{xid:x} before the {:?} deadline (active=0x{active:x}); no input was sent",
+            timeout
+        ))
+    };
+
+    // Restore both the EWMH active toplevel and the exact prior core focus.
     if let Some(p) = prior {
         ewmh_activate_window(display, p, xid as x11::xlib::Window);
+    }
+    if prior_core_focus != 0 {
         unsafe {
+            let previous_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+            x11::xlib::XSetInputFocus(
+                display,
+                prior_core_focus,
+                prior_revert,
+                x11::xlib::CurrentTime,
+            );
             x11::xlib::XSync(display, 0);
+            x11::xlib::XSetErrorHandler(previous_handler);
         }
     }
     unsafe {
         x11::xlib::XCloseDisplay(display);
     }
     result
+}
+
+fn x11_focus_is_within(display: *mut x11::xlib::Display, target: x11::xlib::Window) -> bool {
+    let mut focused: x11::xlib::Window = 0;
+    let mut revert_to = 0;
+    unsafe {
+        x11::xlib::XGetInputFocus(display, &mut focused, &mut revert_to);
+    }
+    if focused == target {
+        return true;
+    }
+    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
+    while focused != 0 && focused != root {
+        let mut query_root = 0;
+        let mut parent = 0;
+        let mut children: *mut x11::xlib::Window = ptr::null_mut();
+        let mut child_count = 0;
+        let status = unsafe {
+            x11::xlib::XQueryTree(
+                display,
+                focused,
+                &mut query_root,
+                &mut parent,
+                &mut children,
+                &mut child_count,
+            )
+        };
+        if !children.is_null() {
+            unsafe {
+                x11::xlib::XFree(children.cast());
+            }
+        }
+        if status == 0 || parent == 0 || parent == focused {
+            return false;
+        }
+        if parent == target {
+            return true;
+        }
+        focused = parent;
+    }
+    false
 }
 
 /// Activate `xid` and LEAVE it active (no restore) — the persistent foreground
@@ -1574,8 +1904,23 @@ pub fn send_focus_out(xid: u64) -> Result<()> {
 
 /// Send a button click (down + up) to a window at window-local coordinates.
 pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<()> {
+    send_click_with_modifiers(xid, x, y, count, button, &[])
+}
+
+/// Send a target-addressed X11 click whose event-state mask carries the named
+/// modifiers. Unlike a plain AT-SPI action, this preserves multi-selection
+/// semantics without changing the X input focus.
+pub fn send_click_with_modifiers(
+    xid: u64,
+    x: i32,
+    y: i32,
+    count: usize,
+    button: u8,
+    modifiers: &[&str],
+) -> Result<()> {
     let (conn, _) = connect_x11_for_input()?;
     let root = conn.setup().roots[0].root;
+    let modifier_state = modifiers_to_state(modifiers);
 
     for _ in 0..count {
         let target = resolve_event_target(&conn, xid, x, y)?;
@@ -1591,7 +1936,7 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             root_y: target.root_y,
             event_x: target.local_x,
             event_y: target.local_y,
-            state: KeyButMask::from(0u16),
+            state: modifier_state,
             same_screen: true,
         };
 
@@ -1607,7 +1952,9 @@ pub fn send_click(xid: u64, x: i32, y: i32, count: usize, button: u8) -> Result<
             root_y: target.root_y,
             event_x: target.local_x,
             event_y: target.local_y,
-            state: button_state_mask(button),
+            state: KeyButMask::from(
+                u16::from(modifier_state) | u16::from(button_state_mask(button)),
+            ),
             same_screen: true,
         };
 
@@ -2013,7 +2360,7 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
     Ok(())
 }
 
-/// Screen-absolute click via the XTest extension — the `capture_scope="desktop"`
+/// Screen-absolute click via the XTest extension — the desktop-target
 /// foreground click. It warps the real pointer to `(x, y)` and injects a true
 /// button press/release there, so the event lands on whatever window owns that
 /// screen pixel (the Linux peer of the Windows `WindowFromPoint` + macOS
@@ -2025,22 +2372,67 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
 /// by vision on the whole screen and issues a real screen-absolute pointer
 /// click. `button` is an X button number (1=left, 2=middle, 3=right).
 pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Result<()> {
+    send_click_xtest_desktop_with_modifiers(x, y, button, count, &[])
+}
+
+/// Real XTest click with physical modifier down/up transitions around the
+/// pointer gesture. Used only after the caller selected foreground delivery.
+pub fn send_click_xtest_desktop_with_modifiers(
+    x: i32,
+    y: i32,
+    button: u8,
+    count: usize,
+    modifiers: &[&str],
+) -> Result<()> {
     use x11rb::protocol::xtest::ConnectionExt as _;
     let (conn, screen_num) = connect_x11_for_input()?;
     let root = conn.setup().roots[screen_num].root;
-    // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the button
-    // events that follow are delivered at (x, y).
-    conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
-    let count = count.max(1);
-    for click_index in 0..count {
-        conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-        conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
-        if click_index + 1 < count {
-            // Chromium needs the first pair to reach the server before the
-            // second pair. A zero-gap batch produces two click events but no
-            // DOM dblclick event under Xvfb/Openbox.
-            conn.flush()?;
-            sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+    let mapping = conn.get_keyboard_mapping(8, 248)?.reply()?;
+    let mut guards = Vec::new();
+    let mut modifier_keycodes = Vec::new();
+    for modifier in modifiers {
+        let keysym = key_name_to_keysym(modifier)?;
+        let (keycode, guard) = keycode_for_keysym(&conn, &mapping, keysym, modifier)?;
+        if let Some(guard) = guard {
+            guards.push(guard);
+        }
+        modifier_keycodes.push(keycode);
+    }
+    let mut pressed = Vec::new();
+    let gesture_result = (|| -> Result<()> {
+        for &keycode in &modifier_keycodes {
+            conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+            pressed.push(keycode);
+        }
+        // Absolute pointer warp (MotionNotify, detail=0 => absolute) so the
+        // button events that follow are delivered at (x, y).
+        conn.xtest_fake_input(MOTION_NOTIFY_EVENT, 0, 0, root, x as i16, y as i16, 0)?;
+        let count = count.max(1);
+        for click_index in 0..count {
+            conn.xtest_fake_input(BUTTON_PRESS_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            conn.xtest_fake_input(BUTTON_RELEASE_EVENT, button, 0, root, x as i16, y as i16, 0)?;
+            if click_index + 1 < count {
+                // Chromium needs the first pair to reach the server before the
+                // second pair. A zero-gap batch produces two click events but
+                // no DOM dblclick event under Xvfb/Openbox.
+                conn.flush()?;
+                sleep(Duration::from_millis(DOUBLE_CLICK_DELAY_MS));
+            }
+        }
+        Ok(())
+    })();
+
+    // Always attempt to release every modifier that was successfully queued,
+    // including when a later pointer request fails. A failed gesture must not
+    // leave the desktop with a logically stuck Ctrl/Shift/Alt/Super key.
+    let mut release_result: Result<()> = Ok(());
+    for &keycode in pressed.iter().rev() {
+        if let Err(error) =
+            conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)
+        {
+            if release_result.is_ok() {
+                release_result = Err(error.into());
+            }
         }
     }
     conn.flush()?;
@@ -2049,6 +2441,9 @@ pub fn send_click_xtest_desktop(x: i32, y: i32, button: u8, count: usize) -> Res
     // under Xtigervnc where keyboard events did not (see send_key_xtest), but make
     // it explicit so the desktop click is reliable across X servers too.
     let _ = conn.get_input_focus()?.reply();
+    drop(guards);
+    gesture_result?;
+    release_result?;
     Ok(())
 }
 
@@ -2563,7 +2958,191 @@ exit 0"#,
 
 #[cfg(test)]
 mod path_tests {
-    use super::{path_cumulative, point_on_path, sample_function};
+    use super::{
+        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
+        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
+        modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
+        real_pointer_capabilities_available, sample_function, slave_pointer_name,
+        EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
+    };
+    use x11rb::protocol::xproto::KeyButMask;
+
+    #[test]
+    fn click_modifier_state_combines_canonical_names_and_aliases() {
+        let state = modifiers_to_state(&["ctrl", "shift", "meta"]);
+        assert!(state.contains(KeyButMask::CONTROL));
+        assert!(state.contains(KeyButMask::SHIFT));
+        assert!(state.contains(KeyButMask::MOD4));
+        assert!(!state.contains(KeyButMask::MOD1));
+
+        assert_eq!(
+            modifiers_to_state(&["control", "alt"]),
+            KeyButMask::from(u16::from(KeyButMask::CONTROL) | u16::from(KeyButMask::MOD1))
+        );
+    }
+
+    #[test]
+    fn slave_pointer_name_fits_evdev_uinput_limit() {
+        for cursor_id in ["m".repeat(200), "cursor-鼠".repeat(50)] {
+            let name = slave_pointer_name(&master_pointer_name(&cursor_id));
+            assert!(
+                name.len() <= 78,
+                "evdev 0.12 requires uinput names to be at most 78 bytes, got {}",
+                name.len()
+            );
+        }
+
+        let cursor_id = "same-long-cursor".repeat(20);
+        let first = slave_pointer_name(&master_pointer_name(&cursor_id));
+        let second = slave_pointer_name(&master_pointer_name(&cursor_id));
+        assert_ne!(first, second, "truncation must retain the unique nonce");
+        assert!(first.ends_with(UINPUT_POINTER_SUFFIX));
+        assert!(second.ends_with(UINPUT_POINTER_SUFFIX));
+    }
+
+    #[test]
+    fn uinput_name_normalization_covers_byte_boundaries_and_multibyte_text() {
+        let exact = "a".repeat(EVDEV_UINPUT_NAME_MAX_BYTES);
+        assert_eq!(normalize_uinput_device_name(&exact), exact);
+
+        let overlong_ascii = "a".repeat(EVDEV_UINPUT_NAME_MAX_BYTES + 1);
+        assert_eq!(
+            normalize_uinput_device_name(&overlong_ascii),
+            "a".repeat(EVDEV_UINPUT_NAME_MAX_BYTES)
+        );
+
+        let exact_multibyte = format!("{}鼠", "a".repeat(75));
+        assert_eq!(exact_multibyte.len(), EVDEV_UINPUT_NAME_MAX_BYTES);
+        assert_eq!(
+            normalize_uinput_device_name(&exact_multibyte),
+            exact_multibyte
+        );
+
+        let split_multibyte = format!("{}鼠", "a".repeat(77));
+        let normalized = normalize_uinput_device_name(&split_multibyte);
+        assert_eq!(normalized, "a".repeat(77));
+        assert!(normalized.is_char_boundary(normalized.len()));
+
+        assert_eq!(
+            normalize_uinput_device_name("CUA\0pointer\n"),
+            "CUA_pointer_"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn uinput_creation_panic_is_contained_and_daemon_worker_remains_usable() {
+        let failed = tokio::task::spawn_blocking(|| {
+            guarded_uinput_creation::<()>("panic", |_| panic!("synthetic evdev panic"))
+        })
+        .await
+        .expect("the blocking worker must not unwind");
+        let error = failed.expect_err("the panic must become an error");
+        assert!(is_uinput_unavailable(&error));
+        assert!(error.to_string().contains("device creation panicked"));
+
+        let subsequent = tokio::task::spawn_blocking(|| {
+            guarded_uinput_creation("subsequent", |name| Ok(name.to_owned()))
+        })
+        .await
+        .expect("the runtime must remain usable after the contained panic")
+        .expect("a subsequent device operation must succeed");
+        assert_eq!(subsequent, "subsequent");
+    }
+
+    #[test]
+    fn uinput_creation_error_is_stably_typed() {
+        let error =
+            guarded_uinput_creation::<()>("failure", |_| anyhow::bail!("permission denied"))
+                .expect_err("the injected builder error must be returned");
+        assert!(is_uinput_unavailable(&error));
+        assert_eq!(
+            error.to_string(),
+            "Linux uinput pointer unavailable: permission denied"
+        );
+    }
+
+    #[test]
+    #[ignore = "requires a writable /dev/uinput device"]
+    fn real_uinput_accepts_normalized_overlong_multibyte_name() {
+        let overlong_name = format!("CUA {}{UINPUT_POINTER_SUFFIX}", "鼠".repeat(100));
+        let device = create_uinput_pointer(&overlong_name)
+            .expect("normalized device name should create a real uinput pointer");
+        drop(device);
+    }
+
+    #[test]
+    fn real_pointer_capabilities_require_uinput_access() {
+        assert!(real_pointer_capabilities_available(
+            true, false, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, false, false, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            false, false, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, true, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, false, true, true
+        ));
+    }
+
+    #[test]
+    fn kde_x11_sessions_disable_uinput_pointer_hotplug() {
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("KDE"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            None,
+        ));
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("KDE"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            Some("wayland-0"),
+        ));
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            None,
+            None,
+            Some("plasma"),
+            None,
+            Some("true"),
+            Some(":1"),
+            None,
+        ));
+
+        assert!(!kde_x11_uinput_hotplug_is_unsafe(
+            Some("wayland"),
+            Some("KDE"),
+            None,
+            None,
+            Some("true"),
+            Some(":0"),
+            Some("wayland-0"),
+        ));
+        assert!(!kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("GNOME"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            None,
+        ));
+
+        let error = ensure_master_pointer_for_session("regression-test", true)
+            .expect_err("the creation choke point must refuse before opening X11 or uinput");
+        assert!(is_uinput_unavailable(&error));
+        assert!(error.to_string().contains("delivery_mode='foreground'"));
+    }
 
     #[test]
     fn sample_linear_function() {

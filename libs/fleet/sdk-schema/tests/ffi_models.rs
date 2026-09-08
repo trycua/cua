@@ -88,6 +88,7 @@ fn vm_template_round_trips_every_known_field() {
         cpu_cores: Some(8),
         memory: Some("8Gi".into()),
         firmware: Some(Firmware::Efi),
+        nested_virtualization: Some(true),
         probes: Some(Arc::new(
             PreservedJson::parse(r#"{"readinessProbe":{"tcpSocket":{"port":22}}}"#.into()).unwrap(),
         )),
@@ -143,6 +144,7 @@ fn minimal_vm_template_omits_none_fields_and_round_trips() {
         cpu_cores: None,
         memory: None,
         firmware: None,
+        nested_virtualization: None,
         probes: None,
         services: None,
         oidc: None,

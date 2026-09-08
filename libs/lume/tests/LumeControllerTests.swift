@@ -165,6 +165,83 @@ func testClonePreservesPairedBootPolicyState() throws {
 }
 
 @MainActor
+@Test("delete classifies resize guard contention using the transaction marker")
+func testDeleteClassifiesResizeGuardContentionWithoutMarkerAsRunning() async throws {
+    let tempConfigDir = try createTempDirectory()
+    let tempHomeDir = try createTempDirectory()
+
+    defer {
+        try? FileManager.default.removeItem(at: tempConfigDir)
+        try? FileManager.default.removeItem(at: tempHomeDir)
+    }
+
+    let previousXDGConfigHome = ProcessInfo.processInfo.environment["XDG_CONFIG_HOME"]
+    setenv("XDG_CONFIG_HOME", tempConfigDir.path, 1)
+    defer {
+        if let previousXDGConfigHome {
+            setenv("XDG_CONFIG_HOME", previousXDGConfigHome, 1)
+        } else {
+            unsetenv("XDG_CONFIG_HOME")
+        }
+    }
+
+    let settingsManager = SettingsManager(fileManager: .default)
+    try settingsManager.setHomeDirectory(path: tempHomeDir.path)
+    let home = Home(settingsManager: settingsManager, fileManager: .default)
+    let controller = LumeController(home: home, vmFactory: TestVMFactory())
+    let vmDir = try home.getVMDirectory("running-guard")
+    try FileManager.default.createDirectory(
+        at: vmDir.dir.url,
+        withIntermediateDirectories: true
+    )
+    try Data(repeating: 0, count: 1024).write(to: vmDir.diskPath.url)
+    try Data(repeating: 0, count: 1024).write(to: vmDir.nvramPath.url)
+    try vmDir.saveConfig(
+        VMConfig(
+            os: "macOS",
+            cpuCount: 1,
+            memorySize: 1024,
+            diskSize: 1024,
+            display: "1024x768"
+        ))
+
+    let acquired = try vmDir.tryAcquireResizeGuard(exclusive: false)
+    let resizeGuard = try #require(acquired)
+    defer {
+        flock(resizeGuard.fileDescriptor, LOCK_UN)
+        try? resizeGuard.close()
+    }
+
+    do {
+        try await controller.delete(name: vmDir.name)
+        Issue.record("Expected delete to reject a VM holding the resize guard")
+    } catch DiskResizeError.vmRunning(let name) {
+        #expect(name == vmDir.name)
+    } catch {
+        Issue.record("Expected vmRunning but got \(error)")
+    }
+
+    try vmDir.saveResizeMarker(
+        ResizeMarker(
+            version: ResizeMarker.currentVersion,
+            phase: 1,
+            oldSizeBytes: 1024,
+            newSizeBytes: 2048,
+            backupDiskPath: vmDir.diskBackupPath.path,
+            startedAt: 0
+        ))
+
+    do {
+        try await controller.delete(name: vmDir.name)
+        Issue.record("Expected delete to reject an armed resize transaction")
+    } catch DiskResizeError.resizeInProgress(let name) {
+        #expect(name == vmDir.name)
+    } catch {
+        Issue.record("Expected resizeInProgress but got \(error)")
+    }
+}
+
+@MainActor
 @Test("run rejects primary and duplicate additional disk aliases")
 func testRunRejectsAdditionalDiskAliases() async throws {
     let tempConfigDir = try createTempDirectory()

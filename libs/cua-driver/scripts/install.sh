@@ -10,6 +10,7 @@
 #                        ~/.local/bin (e.g. /usr/local/bin — that target needs sudo)
 #   --no-modify-path     skip auto-appending an `export PATH=...` line to your
 #                        shell rc when ~/.local/bin is missing from PATH
+#   --channel <name>     persist and install the latest stable or nightly release
 #   --backend=rust       explicit Rust backend (no-op; Rust is the only option)
 #   --experimental-rust  legacy alias for --backend=rust (no-op)
 #   --backend=swift      retired Swift backend (no-op; accepted for compat)
@@ -20,6 +21,7 @@
 #   CUA_DRIVER_RS_INSTALL_DIR=PATH same as --bin-dir
 #   CUA_DRIVER_BIN_DIR=PATH        legacy alias for --bin-dir
 #   CUA_DRIVER_NO_MODIFY_PATH=1    same as --no-modify-path
+#   CUA_DRIVER_RS_HOME=PATH        package and release-channel state home
 #
 # Uninstall:
 #   /bin/bash -c "$(curl -fsSL https://cua.ai/driver/uninstall.sh)"

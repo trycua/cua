@@ -30,6 +30,107 @@ The OS workflow may fan the complete matrix out into independent jobs for
 reporting and failure isolation. That is an execution detail; contributors
 should think of it as one canonical suite.
 
+### Evidence authority
+
+A canonical result is the complete repository harness run at the exact source
+SHA. A one-off app smoke, manually assembled script, video, or environment
+replay can diagnose a failure or provide release presentation evidence, but it
+does not replace the complete matrix.
+
+Windows and Linux use the repository's GitHub-hosted workflows when their
+strict environment preflights pass. Windows Azure RDP runs are optional
+environment-parity replays or a fallback when the hosted preflight cannot prove
+a required capability. macOS uses the logged-in Lume maintainer wrapper.
+For browser-facing changes or browser-use release certification, also run the
+standalone Chrome/Edge matrix: the macOS wrapper accepts
+`--standalone-browser`, while the Windows and Linux workflow is
+`.github/workflows/e2e-rust-standalone-browsers.yml`.
+
+Historical `*-plan.md`, `*-journal.md`, and release evidence documents record
+what was run at that time. They are not current execution instructions and do
+not override this guide or `scripts/ci/README.md`.
+
+### Hyprland validation decision (2026-09-07)
+
+[PR #3572](https://github.com/trycua/cua/pull/3572) is the dated, exact-source
+result record for the input v3 candidate. It distinguishes ordinary CI, the
+complete hosted X11, Sway, and Windows harnesses, native Hyprland acceptance,
+and bounded app evidence. A native behavioral pass with a failed wrapper or
+source-provenance check is not an accepted run. Use that record for results;
+the coverage requirements below do not assert a passing result or add macOS
+certification.
+
+The maintainer selects the same canonical Linux Rust harness for native
+Hyprland: run `scripts/ci/linux/run-rust-e2e.sh` with its complete `all` suite
+in the prepared native Hyprland desktop at the exact candidate SHA. Preserve
+the runner's required cells, assertions, and evidence checks. Record compositor
+and backend provenance; an X11 run does not establish native Hyprland coverage.
+Environment failures and failed cells remain failures, not permission to skip
+tests or change expected results.
+
+Before launching the native Hyprland harness, apply this map-time rule in the
+disposable desktop's Lua configuration and reload it:
+
+```lua
+hl.window_rule({
+    name = "cua-canonical-sentinel-animation",
+    match = {title = "^CuaTestHarness Sentinel \\[cdp=[0-9]+\\]$"},
+    no_anim = true,
+})
+```
+
+The preflight independently verifies `no_anim` for the exact sentinel, then
+waits for mapped fullscreen readiness before its first Driver activation.
+`hyprctl clients` reports geometry goals, not animated surface bounds; repeated
+equal goals alone cannot establish animation completion. This rule changes
+only the test sentinel's animation, not its placement or the product's geometry
+guard. Restore the original configuration after the run. It is a deterministic
+fixture requirement, not an Omarchy user configuration requirement.
+
+This is fixture regression coverage. For background `TARGET` input, the production compatibility gate in
+`platform-linux/src/wayland/hyprland_compatibility.rs` admits only the qualified
+native Calc `26.2.5-3` and Inkscape `1.4.4-6` packages. Ordinary GTK, Electron,
+and Tauri fixtures do not qualify for v3 background raw input. Their declared refusals
+can prove refusal behavior, but cannot prove plugin delivery or isolation.
+Do not widen background production admission or add a test bypass to make them qualify.
+
+The [accepted foreground extension](https://github.com/trycua/cua/issues/3550#issuecomment-5564996417)
+adds a separate production `FOREGROUND_TARGET` route for ordinary native
+top-level surfaces, advertised by `HELLO` with `foreground_target:true`.
+It does not apply the Calc/Inkscape background package gate. The existing
+complete suite covers defined native GTK3, Electron, and Tauri foreground
+cases. Acceptance requires those cases to pass. Preserve the runner and tests.
+Foreground activation and primary-cursor movement are intentional, with no
+restoration promise. Verify exact-target delivery and refusals for held
+keys/buttons, grabs, constraints, and drag-and-drop before primary takeover.
+Foreground drag cancellation on primary-input/focus transitions requires
+review and native evidence. No background refusal may escalate to this route.
+
+Retain a short real-app production smoke and instrumented isolation proof on
+both qualified apps as supporting compatibility evidence. Verify actual app
+effects, plugin transport attribution, primary-seat isolation, and cleanup;
+the uninstrumented smoke alone cannot establish those trace-based claims.
+The retained proof at source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`
+includes 20 instrumented actions, nine pointer effects, and six observation
+intervals, plus an uninstrumented six-action smoke. Saved outputs confirm Calc
+cell A1 contains `a` and the Inkscape object's x-coordinate changes from 40 to
+42 while y remains 60. The plugin tree and uninstrumented module hash are
+unchanged at `1133a06e4f205cf80188a7ac9e41102f37611fea`. This is bounded
+supporting evidence, not a complete app matrix or release-byte proof. Raw
+background qualification remains native Calc from `libreoffice-fresh 26.2.5-3`,
+Inkscape `1.4.4-6`, the plain compiled `evdev`/`pc105`/`us` keymap, and two
+seats. Chromium, Electron, and XWayland raw background input remain unqualified;
+semantic AT-SPI actions are separate.
+See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
+for the bounded plans and their limits.
+
+Three complete repetitions of the long Python Calc/Inkscape plan, including
+the 34 policy cases across both apps, are no longer a merge requirement.
+Extended Python stress runs remain diagnostics for specific unresolved
+failures. This decision changes test strategy, records no new passing result,
+and does not waive the affected CI, native evidence, or release gates in
+[RFC 3550](../../../rfcs/3550-hyprland-isolated-input.md).
+
 ## Repository Map
 
 ```text
@@ -62,12 +163,12 @@ cua/
 
 The important separation is:
 
-| Layer | Owns | Does not own |
-| --- | --- | --- |
-| Rust integration test | Scenarios, driver calls, assertions, action metadata | OS setup and fixture compilation |
-| `cua-driver-testkit` | Session helpers, fixture launching, screenshots, recordings, trajectories | The scenario list |
-| Fixture app | Visible controls and externally observable state markers | Driver correctness assertions |
-| OS runner | Build environment, user session, test selection, artifact collection | Test behavior definitions |
+| Layer                 | Owns                                                                      | Does not own                     |
+| --------------------- | ------------------------------------------------------------------------- | -------------------------------- |
+| Rust integration test | Scenarios, driver calls, assertions, action metadata                      | OS setup and fixture compilation |
+| `cua-driver-testkit`  | Session helpers, fixture launching, screenshots, recordings, trajectories | The scenario list                |
+| Fixture app           | Visible controls and externally observable state markers                  | Driver correctness assertions    |
+| OS runner             | Build environment, user session, test selection, artifact collection      | Test behavior definitions        |
 
 There is deliberately no second Python E2E implementation that the Rust suite
 has to mirror.
@@ -100,13 +201,13 @@ refusal and the absence of focus or input side effects.
 These run without a repo-local GUI application and normally run without
 `--ignored`:
 
-| Location or prefix | What it proves |
-| --- | --- |
-| `rust/crates/*/src/**` | Core driver, platform-independent logic, schemas, and helpers |
-| `protocol_*_test.rs` | MCP handshake, tool calls, sessions, media, and errors |
-| `schema_*_test.rs` | Shared schema and backend consistency |
-| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence |
-| `protocol_element_token_test.rs` | Element-token protocol behavior |
+| Location or prefix                     | What it proves                                                |
+| -------------------------------------- | ------------------------------------------------------------- |
+| `rust/crates/*/src/**`                 | Core driver, platform-independent logic, schemas, and helpers |
+| `protocol_*_test.rs`                   | MCP handshake, tool calls, sessions, media, and errors        |
+| `schema_*_test.rs`                     | Shared schema and backend consistency                         |
+| `transport_config_persistence_test.rs` | CLI/MCP configuration persistence                             |
+| `protocol_element_token_test.rs`       | Element-token protocol behavior                               |
 
 These tests should be fast, deterministic, and safe to run on ordinary CI
 workers. They do not prove that a real click, key, scroll, or background input
@@ -126,9 +227,9 @@ ordinary unit command.
 
 The canonical E2E suite has two behavior owners:
 
-| Owner | Purpose |
-| --- | --- |
-| Shared app | Same web behavior tested through Electron and Tauri |
+| Owner          | Purpose                                              |
+| -------------- | ---------------------------------------------------- |
+| Shared app     | Same web behavior tested through Electron and Tauri  |
 | Native harness | Toolkit-specific controls and native window behavior |
 
 WebView, CDP, and page-tool integration stays inside the shared or native
@@ -149,16 +250,16 @@ invocation.
 
 Runner: `scripts/ci/windows/run-rust-e2e.ps1`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native controls | `harness_wpf_test.rs` | Repo-local WPF app |
-| Native controls | `harness_winui3_test.rs` | Repo-local WinUI3 app |
-| Web integration | `harness_web_test.rs` | WebView2 and Electron |
-| Capture contract | `capture_contract_test.rs` | WPF plus driver tree/image output |
-| Launch contract | `launch_windows_test.rs` | Repo-local Electron launch and focus behavior |
-| Agent cursor | `agent_cursor_windows_test.rs` | Source-built cursor overlay and pixel evidence |
-| Desktop scope | `desktop_scope_windows_test.rs` | Windowless desktop input and scope rejection |
+| Runner area       | Rust test                         | Real harness or app                            |
+| ----------------- | --------------------------------- | ---------------------------------------------- |
+| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri                             |
+| Native controls   | `harness_wpf_test.rs`             | Repo-local WPF app                             |
+| Native controls   | `harness_winui3_test.rs`          | Repo-local WinUI3 app                          |
+| Web integration   | `harness_web_test.rs`             | WebView2 and Electron                          |
+| Capture contract  | `capture_contract_test.rs`        | WPF plus driver tree/image output              |
+| Launch contract   | `launch_windows_test.rs`          | Repo-local Electron launch and focus behavior  |
+| Agent cursor      | `agent_cursor_windows_test.rs`    | Source-built cursor overlay and pixel evidence |
+| Desktop scope     | `desktop_scope_windows_test.rs`   | Windowless desktop input and scope rejection   |
 
 Cross-cutting instrumentation used by these rows includes the testkit
 `DesktopObserver`, capture validation, cursor evidence, and desktop-scope
@@ -174,16 +275,16 @@ background delivery is tested.
 
 Runner: `libs/cua-driver/tests/runners/macos-lume/run-all.sh`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native web matrix | `cross_platform_behavior_test.rs` | Repo-local WKWebView host |
-| Native controls | `harness_appkit_test.rs` | Repo-local AppKit app |
-| Native controls | `harness_swiftui_test.rs` | Repo-local SwiftUI app |
-| Installed app launch | `installed_app_launch_macos_test.rs` | Calculator and TextEdit |
-| Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit |
-| Capture contract | `capture_contract_test.rs` | Installed driver and macOS capture APIs |
-| Desktop scope | `desktop_scope_macos_test.rs` | macOS window and desktop scope |
+| Runner area               | Rust test                              | Real harness or app                     |
+| ------------------------- | -------------------------------------- | --------------------------------------- |
+| Shared app matrix         | `cross_platform_behavior_test.rs`      | Electron and Tauri                      |
+| Native web matrix         | `cross_platform_behavior_test.rs`      | Repo-local WKWebView host               |
+| Native controls           | `harness_appkit_test.rs`               | Repo-local AppKit app                   |
+| Native controls           | `harness_swiftui_test.rs`              | Repo-local SwiftUI app                  |
+| Installed app launch      | `installed_app_launch_macos_test.rs`   | Calculator and TextEdit                 |
+| Installed app AX delivery | `installed_app_textedit_macos_test.rs` | TextEdit                                |
+| Capture contract          | `capture_contract_test.rs`             | Installed driver and macOS capture APIs |
+| Desktop scope             | `desktop_scope_macos_test.rs`          | macOS window and desktop scope          |
 
 The WKWebView host runs the same typed shared-web catalog as Electron and
 Tauri. Calculator and TextEdit add typed supporting rows for built-in app
@@ -197,12 +298,12 @@ to `scripts/ci/macos/run-rust-e2e.sh`.
 
 Runner: `scripts/ci/linux/run-rust-e2e.sh`
 
-| Runner area | Rust test | Real harness or app |
-| --- | --- | --- |
-| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri |
-| Native controls | `harness_gtk3_test.rs` | Repo-local GTK3 app |
-| Capture contract | `capture_contract_test.rs` | Linux capture backend |
-| Desktop scope | `desktop_scope_linux_test.rs` | X11/Wayland desktop scope |
+| Runner area       | Rust test                         | Real harness or app       |
+| ----------------- | --------------------------------- | ------------------------- |
+| Shared app matrix | `cross_platform_behavior_test.rs` | Electron and Tauri        |
+| Native controls   | `harness_gtk3_test.rs`            | Repo-local GTK3 app       |
+| Capture contract  | `capture_contract_test.rs`        | Linux capture backend     |
+| Desktop scope     | `desktop_scope_linux_test.rs`     | X11/Wayland desktop scope |
 
 Linux has separate X11 and Wayland concerns. Nix supplies the reproducible
 build and desktop environment, but the E2E test still needs an actual X11 or
@@ -230,14 +331,14 @@ delivery, refusal, and unproven-action ledger.
 
 These terms describe different dimensions:
 
-| Term | Meaning |
-| --- | --- |
-| AX | Address a target through its accessibility/UI automation element |
-| PX | Address a target by screen coordinates or pointer geometry |
-| Foreground | The target may be brought to the foreground for delivery |
-| Background | The target should receive the action without being raised or stealing focus |
-| Window scope | Capture or action is limited to one target window |
-| Desktop scope | Capture or action covers the full desktop |
+| Term          | Meaning                                                                     |
+| ------------- | --------------------------------------------------------------------------- |
+| AX            | Address a target through its accessibility/UI automation element            |
+| PX            | Address a target by screen coordinates or pointer geometry                  |
+| Foreground    | The target may be brought to the foreground for delivery                    |
+| Background    | The target should receive the action without being raised or stealing focus |
+| Window scope  | Capture or action is limited to one target window                           |
+| Desktop scope | Capture or action covers the full desktop                                   |
 
 The shared and native action matrices should test left click, right click,
 double click, typing, keys, hotkeys, scroll, child windows, and drag across
@@ -267,14 +368,14 @@ sentinel journals keyboard, pointer, wheel, visibility, focus, and heartbeat
 events while it fully covers the target. Background rows opt into both pieces
 of instrumentation directly; there is no special guard suite.
 
-| Invariant or scenario | What it checks |
-| --- | --- |
+| Invariant or scenario     | What it checks                                                               |
+| ------------------------- | ---------------------------------------------------------------------------- |
 | Background click/type/key | The target action does not move focus away from the user's foreground window |
-| Minimized app launch | `launch_app(start_minimized=true)` does not raise the new app |
-| Background hotkey | A keyboard chord does not steal focus |
-| Child-window click | A target-created window does not unexpectedly become foreground |
-| Background screenshot | Reading the target does not change focus or z-order |
-| Agent cursor visibility | The cursor appears in the captured pixels when enabled and moved |
+| Minimized app launch      | `launch_app(start_minimized=true)` does not raise the new app                |
+| Background hotkey         | A keyboard chord does not steal focus                                        |
+| Child-window click        | A target-created window does not unexpectedly become foreground              |
+| Background screenshot     | Reading the target does not change focus or z-order                          |
+| Agent cursor visibility   | The cursor appears in the captured pixels when enabled and moved             |
 
 The sentinel contract fails closed when the target is only partly covered or
 the heartbeat stops. Before any behavioral cells run, the strict environment
@@ -343,6 +444,10 @@ need normal test output and logs; they do not need desktop video.
   posture. A 300 ms baseline precedes dispatch, and capture continues through
   external oracle collection. `trajectory.json` must finish with
   `behavior_video.status = "finalized"`.
+- Use `agent_cursor_showcase_test` for cursor review media. Shared behavior
+  matrix daemons deliberately use `--no-overlay` so synthetic cursor pixels do
+  not contaminate action oracles; their videos prove tool behavior, not cursor
+  rendering.
 - Windows hosted runs use `GetConsoleWindow` to select the inherited
   HostedComputeAgent/runner console, verify its identity, and minimize it
   through `ShowWindow(SW_MINIMIZE)` before fixture or sentinel posture is

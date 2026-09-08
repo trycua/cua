@@ -13,6 +13,10 @@
 #   --autostart  register an auto-start daemon (macOS: LaunchAgent;
 #                Linux: systemd user unit). Default off; the post-install
 #                message prints the registration command for the platform.
+#   --bin-dir <path>
+#                install the visible symlink to <path> instead of
+#                ~/.local/bin. Takes precedence over
+#                CUA_DRIVER_LOCAL_INSTALL_DIR; must be absolute.
 #
 # Not for end-users — scripts/install.sh fetches a built release from
 # GitHub. This script is for the developer loop (rapid edit/build/test
@@ -77,6 +81,8 @@ fi
 
 BUILD_CONFIG="debug"
 INSTALL_AUTOSTART=false
+# Empty means "not passed" — the env var / default applies instead (see BIN_DIR below).
+BIN_DIR_OVERRIDE=""
 case "${CUA_DRIVER_REQUIRE_STABLE_SIGNING:-0}" in
     0|false|no|"") CUA_DRIVER_REQUIRE_STABLE_SIGNING=0 ;;
     1|true|yes) CUA_DRIVER_REQUIRE_STABLE_SIGNING=1 ;;
@@ -99,6 +105,17 @@ while [ "$#" -gt 0 ]; do
             CUA_DRIVER_REQUIRE_STABLE_SIGNING=1
             export CUA_DRIVER_REQUIRE_STABLE_SIGNING
             ;;
+        --bin-dir)
+            if [ "$#" -lt 2 ]; then
+                echo "${RED}Error: --bin-dir requires a value.${NORMAL}" >&2
+                exit 2
+            fi
+            BIN_DIR_OVERRIDE="$2"
+            shift
+            ;;
+        --bin-dir=*)
+            BIN_DIR_OVERRIDE="${1#*=}"
+            ;;
         --help|-h)
             echo "${BOLD}${BLUE}cua-driver-rs local installer${NORMAL}"
             echo "Usage: $0 [OPTIONS]"
@@ -112,6 +129,10 @@ while [ "$#" -gt 0 ]; do
             echo "                is attributed to com.trycua.driver.local (not your terminal),"
             echo "                so you grant Accessibility + Screen Recording once and"
             echo "                every cua-driver-local call/mcp routes through it correctly."
+            echo "  --bin-dir <path>"
+            echo "                Install the visible cua-driver-local symlink to <path>"
+            echo "                instead of ~/.local/bin. Must be an absolute path; takes"
+            echo "                precedence over CUA_DRIVER_LOCAL_INSTALL_DIR."
             echo "  --require-stable-signing"
             echo "                On macOS, stop before replacing the installed app unless"
             echo "                a certificate-backed identity is available. Recommended"
@@ -142,7 +163,18 @@ case "$OS" in
 esac
 
 HOME_DIR="${CUA_DRIVER_LOCAL_HOME:-$HOME/.cua-driver-local}"
-BIN_DIR="${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}"
+BIN_DIR="${BIN_DIR_OVERRIDE:-${CUA_DRIVER_LOCAL_INSTALL_DIR:-$HOME/.local/bin}}"
+# The symlink is created after this script cds into the Cargo workspace, so a
+# relative path would silently land inside rust/ — and uninstall-local.sh
+# rejects relative values outright, leaving it unremovable. Fail loudly instead.
+case "$BIN_DIR" in
+    /*) ;;
+    *)
+        echo "${RED}Error: bin dir must be an absolute path (got: $BIN_DIR).${NORMAL}" >&2
+        echo "Set it via --bin-dir /abs/path or CUA_DRIVER_LOCAL_INSTALL_DIR=/abs/path." >&2
+        exit 2
+        ;;
+esac
 RELEASES_DIR="$HOME_DIR/packages/releases"
 CURRENT_LINK="$HOME_DIR/packages/current"
 
@@ -200,14 +232,19 @@ export CARGO_TARGET_DIR="$BUILD_TARGET_DIR"
 echo "${BOLD}Building cua-driver ($BUILD_CONFIG)...${NORMAL}"
 cd "$REPO_ROOT"
 if [ "$BUILD_CONFIG" = "release" ]; then
-    cargo build --release -p cua-driver
+    cargo build --release -p cua-driver -p cursor-theme-cli
 else
-    cargo build -p cua-driver
+    cargo build -p cua-driver -p cursor-theme-cli
 fi
 
 BUILT_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-driver"
+BUILT_THEME_BINARY="$BUILD_TARGET_DIR/$BUILD_CONFIG/cua-cursor-theme"
 if [ ! -x "$BUILT_BINARY" ]; then
     echo "${RED}Error: build produced no binary at $BUILT_BINARY${NORMAL}"
+    exit 1
+fi
+if [ ! -x "$BUILT_THEME_BINARY" ]; then
+    echo "${RED}Error: build produced no cursor-theme compiler at $BUILT_THEME_BINARY${NORMAL}"
     exit 1
 fi
 echo ""
@@ -216,8 +253,34 @@ echo ""
 
 echo "${BOLD}Staging into $VERSIONED_DIR${NORMAL}"
 mkdir -p "$VERSIONED_DIR"
-cp "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
-chmod +x "$VERSIONED_DIR/cua-driver-local"
+
+# Copy through a temp file in the same directory, then rename over the
+# destination.
+#
+# A plain `cp` opens the destination with O_TRUNC and writes in place. When a
+# previous cua-driver-local is still running out of that exact path — the
+# common case, since the version tag is stable per config, so every rebuild
+# targets the same file — Linux refuses the open with ETXTBSY and the install
+# dies mid-stage:
+#
+#   cp: cannot create regular file '.../cua-driver-local': Text file busy
+#
+# The daemon stop further below cannot prevent this: it runs after the swap,
+# and a manually launched `serve` is not always reachable by it anyway.
+# rename(2) has no such restriction — the running process keeps executing the
+# old inode until it exits, and the new bytes are published atomically, so a
+# concurrent exec sees either the whole old binary or the whole new one.
+stage_binary() {
+    stage_src="$1"
+    stage_dest="$2"
+    stage_tmp="$stage_dest.stage.$$"
+    rm -f "$stage_tmp"
+    cp "$stage_src" "$stage_tmp"
+    chmod +x "$stage_tmp"
+    mv -f "$stage_tmp" "$stage_dest"
+}
+stage_binary "$BUILT_BINARY" "$VERSIONED_DIR/cua-driver-local"
+stage_binary "$BUILT_THEME_BINARY" "$VERSIONED_DIR/cua-cursor-theme"
 
 # Re-sign with a fresh ad-hoc signature.
 #
@@ -234,6 +297,8 @@ if [ "$OS" = "Darwin" ]; then
     if command -v codesign >/dev/null 2>&1; then
         codesign --force --sign - "$VERSIONED_DIR/cua-driver-local" 2>/dev/null \
             || echo "${YELLOW}warning: codesign --force --sign - failed; first run may fail with SIGKILL on macOS 26+${NORMAL}" >&2
+        codesign --force --sign - "$VERSIONED_DIR/cua-cursor-theme" 2>/dev/null \
+            || echo "${YELLOW}warning: cursor-theme sidecar signing failed${NORMAL}" >&2
     fi
 fi
 
@@ -247,6 +312,27 @@ if [ -d "$SOURCE_SKILLS" ]; then
     mkdir -p "$(dirname "$STAGED_SKILLS")"
     cp -R "$SOURCE_SKILLS" "$STAGED_SKILLS"
     echo "${GREEN}staged skill pack at $STAGED_SKILLS${NORMAL}"
+fi
+
+# Keep an already-installed GNOME helper aligned with the source-built driver.
+# Installing the helper is still opt-in. Once present, however, leaving old
+# compositor artwork behind after install-local creates a misleading
+# cross-platform mismatch.
+if [ "$OS" = "Linux" ]; then
+    SOURCE_WAYLAND_HELPER="$REPO_ROOT/../wayland-helper"
+    if [ -d "$SOURCE_WAYLAND_HELPER/winrects@cua" ]; then
+        STAGED_WAYLAND_HELPER="$VERSIONED_DIR/wayland-helper"
+        mkdir -p "$STAGED_WAYLAND_HELPER"
+        cp -R "$SOURCE_WAYLAND_HELPER/." "$STAGED_WAYLAND_HELPER/"
+
+        INSTALLED_WAYLAND_HELPER="${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/winrects@cua"
+        if [ -d "$INSTALLED_WAYLAND_HELPER" ]; then
+            cp "$SOURCE_WAYLAND_HELPER/winrects@cua/metadata.json" \
+                "$SOURCE_WAYLAND_HELPER/winrects@cua/extension.js" \
+                "$INSTALLED_WAYLAND_HELPER/"
+            echo "${GREEN}updated installed GNOME helper; reload the GNOME session to activate it${NORMAL}"
+        fi
+    fi
 fi
 
 # Atomically point `current` at the new versioned release dir.
@@ -301,8 +387,14 @@ if [ "$OS" = "Darwin" ]; then
     mkdir -p "$APP_STAGE/Contents/MacOS"
     cp -R "$SKELETON/Contents/." "$APP_STAGE/Contents/"
     cp "$VERSIONED_DIR/cua-driver-local" "$APP_STAGE/Contents/MacOS/cua-driver-local"
+    cp "$VERSIONED_DIR/cua-cursor-theme" "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
     chmod +x "$APP_STAGE/Contents/MacOS/cua-driver-local"
+    chmod +x "$APP_STAGE/Contents/MacOS/cua-cursor-theme"
     rm -f "$APP_STAGE/Contents/MacOS/.gitkeep"
+    PREVIOUS_REQUIREMENT=""
+    if [ -d "$APP_DEST" ] && command -v codesign >/dev/null 2>&1; then
+        PREVIOUS_REQUIREMENT="$(designated_requirement "$APP_DEST")"
+    fi
     # Stamp the local build version so the bundle reports something sane.
     if command -v plutil >/dev/null 2>&1; then
         plutil -replace CFBundleShortVersionString -string "$VERSION_TAG" \
@@ -413,16 +505,39 @@ INSTALLED_BIN="$BIN_DIR/cua-driver-local"
 # so the next invocation picks up this build. Best-effort, never
 # fails the install. Survivors (rare on Unix — `pkill` reaches all
 # user-owned procs without elevation) get a yellow hint.
+#
+# NOTE: do not use `pkill -x cua-driver-local`. `-x` compares against the
+# kernel's truncated process name — 15 chars on Linux (`comm`) — and
+# `cua-driver-local` is 16, so on Linux it silently matched nothing and
+# every pre-swap daemon survived the install. Match argv[0] instead, and
+# anchor it: an unanchored `-f` pattern also matches the launcher shells
+# whose script *text* contains the daemon path, killing the surrounding
+# session rather than the daemon.
 if [ "$OS" = "Darwin" ]; then
     launchctl unload "$HOME/Library/LaunchAgents/com.trycua.cua-driver-local.plist" 2>/dev/null || true
 elif [ "$OS" = "Linux" ] && command -v systemctl >/dev/null 2>&1; then
     systemctl --user stop cua-driver-local.service >/dev/null 2>&1 || true
 fi
-pkill -x cua-driver-local >/dev/null 2>&1 || true
+for _daemon_bin in "$INSTALLED_BIN" "$BIN_TARGET"; do
+    [ -n "$_daemon_bin" ] || continue
+    pkill -f "^${_daemon_bin}([[:space:]]|\$)" >/dev/null 2>&1 || true
+done
+unset _daemon_bin
+
+# A changed ad-hoc cdhash leaves the old csreq attached to this bundle's TCC
+# rows. Once the new bundle is registered and old daemons are stopped, reset
+# only its Accessibility and ScreenCapture rows so `permissions grant` can
+# create entries for the new identity.
+if [ "$OS" = "Darwin" ]; then
+    if ! reset_local_tcc_after_ad_hoc_change \
+        "$PREVIOUS_REQUIREMENT" "$INSTALLED_REQUIREMENT"; then
+        exit 1
+    fi
+fi
 
 # Agent skill pack symlinks: NOT auto-created. Run
 # `cua-driver skills install --local` to symlink agent dirs to the
-# staged copy at $VERSIONED_DIR/Skills/cua-driver-rs above.
+# staged copy at $VERSIONED_DIR/Skills/cua-driver above.
 echo ""
 
 # --- Autostart (optional) ----------------------------------------------

@@ -117,7 +117,14 @@ function createWindow() {
   }));
   mainWindow.webContents.on('did-create-window', child => {
     child.once('ready-to-show', () => {
-      child.showInactive();
+      // Mutter may activate a newly mapped native-Wayland child even when
+      // Electron requests showInactive(), which makes a background AX action
+      // appear to steal focus. The scenario's behavioral oracle is child
+      // creation, so keep the child hidden on native Wayland and preserve the
+      // visible non-activating window contract on the other backends.
+      if (!nativeWayland || customCuaCompositor) {
+        child.showInactive();
+      }
     });
   });
 

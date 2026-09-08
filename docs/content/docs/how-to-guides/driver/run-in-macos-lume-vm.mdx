@@ -102,10 +102,8 @@ without the system picker. Trigger that request with an actual desktop capture:
 ```bash
 DRIVER=/Users/lume/.local/bin/cua-driver
 
-"$DRIVER" call set_config '{"capture_scope":"desktop"}'
 "$DRIVER" call get_desktop_state '{}' \
   > /tmp/cua-driver-desktop-state.json
-"$DRIVER" call set_config '{"capture_scope":"window"}'
 ```
 
 Choose **Allow** on the direct-capture prompt. Check that the command returned
@@ -150,26 +148,30 @@ assert status['source']['attribution'] == 'driver-daemon'
 PY
 ```
 
-Run the prompt-capable live probe explicitly, then exercise both the
-accessibility and capture paths:
+Run the human-owned permission setup command from the VM's interactive
+Terminal. Agent and daemon tool calls are deliberately read-only and cannot
+raise macOS permission UI. Then exercise both the accessibility and capture
+paths:
 
 ```bash
-/Users/lume/.local/bin/cua-driver call check_permissions '{"prompt":true}' \
+/Users/lume/.local/bin/cua-driver permissions grant
+/Users/lume/.local/bin/cua-driver permissions status --json \
   > /tmp/cua-driver-permissions-live.json
 /usr/bin/python3 - <<'PY'
 import json
 
 with open('/tmp/cua-driver-permissions-live.json') as source:
-    status = json.load(source)['structuredContent']
+    status = json.load(source)
 
-assert status['screen_recording_capturable'] is True
-assert status['direct_capture_status'] == 'ready'
+assert status['screen_recording_capturable'] is None
+assert status['direct_capture_status'] == 'not_checked'
+assert status['direct_capture_verification']['source'] == 'permissions_grant'
+assert status['direct_capture_verification']['verified_at'].endswith('Z')
+assert status['direct_capture_verification']['bundle_id'] == 'com.trycua.driver'
 PY
 /Users/lume/.local/bin/cua-driver call get_accessibility_tree '{}'
-/Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"desktop"}'
 /Users/lume/.local/bin/cua-driver call get_desktop_state '{}' \
   > /tmp/cua-driver-desktop-state-second.json
-/Users/lume/.local/bin/cua-driver call set_config '{"capture_scope":"window"}'
 ```
 
 The commands must succeed without opening System Settings or another consent
@@ -190,6 +192,12 @@ the current registration command for your client:
 Follow the printed command, then restart the client. See [Connect your agent to
 Cua Driver](/how-to-guides/driver/connect-your-agent) for other supported
 clients.
+
+To use a locally served model, keep Cua Driver inside the guest and connect it
+to the model's harness through the generated MCP command. [Run a local model
+with Cua Driver](/how-to-guides/driver/run-with-local-model) shows a tested Muse
+Glimmer and Claude Code configuration. Running the exact driver in the guest
+keeps screenshots, input, and recording attached to the guest's macOS identity.
 
 ### Run the agent on the host
 
@@ -264,6 +272,7 @@ session that owns the visible desktop.
 
 ## Related guides
 
+- [Run a local model with Cua Driver](/how-to-guides/driver/run-with-local-model)
 - [Manage local Lume VMs](/how-to-guides/lume/manage-vms)
 - [macOS permissions reference](/reference/cua-driver/macos-permissions)
 - [Run Cua Driver macOS tests in a Lume VM](/how-to-guides/driver/run-tests-in-macos-lume-vm)

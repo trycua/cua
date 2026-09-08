@@ -14,7 +14,8 @@
 //! permissions, or display, so it runs in normal CI.
 
 use cua_driver_contract::{
-    compatibility::schema_subset_violations, manifest, Platform, SchemaMode,
+    compatibility::schema_subset_violations, is_action_result_tool, manifest, ActionResult,
+    Platform, SchemaMode, ToolOutput,
 };
 use cua_driver_core::tool::advertised_capabilities_for;
 use cua_driver_core::tool_schema::shared_schema_violations;
@@ -66,6 +67,12 @@ fn registered_tool_contracts_match_on_active_backend() {
             .unwrap_or_else(|| json!({}));
         violations.extend(shared_schema_violations(name, &schema));
 
+        if let Some(output_schema) = tool.get("outputSchema") {
+            if output_schema.get("type") != Some(&json!("object")) {
+                violations.push(format!("{name}: outputSchema root must have type=object"));
+            }
+        }
+
         let schema_accepts_delivery_mode = schema
             .pointer("/properties/delivery_mode")
             .is_some_and(Value::is_object);
@@ -80,6 +87,23 @@ fn registered_tool_contracts_match_on_active_backend() {
                 "{name}: delivery_mode schema={schema_accepts_delivery_mode} but \
                  input.delivery_mode capability={advertises_delivery_mode}"
             ));
+        }
+
+        if is_action_result_tool(name) {
+            // The live surface advertises the success shape beside the refusal
+            // envelope, because MCP holds every `structuredContent` — refusals
+            // included — to the advertised schema. The success variant must
+            // still be the shared ActionResult schema, byte for byte.
+            let expected =
+                cua_driver_contract::advertised_output_schema(ActionResult::output_schema());
+            let actual = tool.get("outputSchema");
+            if actual != Some(&expected) {
+                violations.push(format!(
+                    "{name}: live outputSchema does not equal the advertised ActionResult schema \
+                     (success variant + refusal envelope); actual={} expected={expected}",
+                    actual.unwrap_or(&Value::Null)
+                ));
+            }
         }
     }
 
@@ -197,6 +221,67 @@ fn portable_desktop_contracts_are_accepted_by_active_backend() {
         violations.len(),
         violations.join("\n  ")
     );
+}
+
+#[test]
+fn canonical_cursor_contracts_match_active_backend() {
+    let Some(mut driver) = RawDriver::spawn() else {
+        return;
+    };
+
+    driver.send(&json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize",
+        "params": {
+            "protocolVersion": "2024-11-05",
+            "capabilities": {},
+            "clientInfo": { "name": "cursor-contract-gate", "version": "1" }
+        }
+    }));
+    let _ = driver.recv();
+    driver.send(&json!({ "jsonrpc": "2.0", "id": 2, "method": "tools/list" }));
+    let response = driver.recv();
+    let live_tools = response["result"]["tools"]
+        .as_array()
+        .expect("tools/list must return result.tools");
+
+    for contract in manifest().tools.into_iter().filter(|contract| {
+        contract.schema_mode == SchemaMode::CanonicalRuntime
+            && contract
+                .capabilities
+                .iter()
+                .any(|capability| capability.starts_with("agent_cursor."))
+    }) {
+        let live = live_tools
+            .iter()
+            .find(|entry| entry["name"].as_str() == Some(&contract.name))
+            .unwrap_or_else(|| panic!("{} missing from live registry", contract.name));
+        assert_eq!(
+            live["description"], contract.description,
+            "{} description",
+            contract.name
+        );
+        assert_eq!(
+            live["inputSchema"], contract.input_schema,
+            "{} input schema",
+            contract.name
+        );
+        assert_eq!(
+            live["capabilities"],
+            json!(contract.capabilities),
+            "{} capabilities",
+            contract.name
+        );
+        assert_eq!(
+            live["annotations"]["readOnlyHint"], contract.annotations.read_only,
+            "{} readOnlyHint",
+            contract.name
+        );
+        assert_eq!(
+            live["annotations"]["idempotentHint"], contract.annotations.idempotent,
+            "{} idempotentHint",
+            contract.name
+        );
+    }
 }
 
 #[test]

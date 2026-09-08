@@ -1,0 +1,18 @@
+---
+title: xAI / Grok
+description: Use Grok Build or Grok Bot with Cua Driver.
+icon: Orbit
+---
+
+Use Grok Build when the agent and Cua Driver run on the same computer. Use Grok Bot when a persistent cloud agent should operate apps on your local computer, or when it should drive Grok Bot's own cloud computer.
+
+| Start here when…                          | Recommended path                                                                 |
+| ----------------------------------------- | -------------------------------------------------------------------------------- |
+| You use Grok Build                        | [Connect Grok Build to Cua Driver](/use-cua-with/grok-build)                     |
+| You use Grok Bot                          | [Let Grok Bot drive local or cloud-computer apps](/use-cua-with/grok-bot)        |
+| You are building a custom Grok agent      | Call Cua Driver through [MCP](/reference/cua-driver/mcp-tools) or the CLI        |
+| You want to manage the agent from T3 Code | Configure Grok Build first, then [use it through T3 Code](/use-cua-with/t3-code) |
+
+Cua Driver does not call the Grok API directly. Grok Build can launch Cua Driver as a local tool server. Grok Bot can invoke the local CLI under its local-computer policy, install Cua Driver on its own cloud computer, or reach an authenticated Streamable HTTP MCP endpoint through a gateway.
+
+See xAI's [Grok Build overview](https://docs.x.ai/build/overview), [MCP server guide](https://docs.x.ai/build/features/mcp-servers), and [Grok Bot overview](https://docs.x.ai/grok-bot/overview).

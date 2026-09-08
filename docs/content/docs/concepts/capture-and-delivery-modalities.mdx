@@ -1,6 +1,6 @@
 ---
 title: "Capture and Delivery Modalities"
-description: "How Cua Driver observes and acts on an app. Perception returns both the accessibility tree and a screenshot; the action call chooses the ax or px rung, delivery mode, and scope."
+description: "How Cua Driver observes and acts on an app. Perception returns both the accessibility tree and a screenshot; each action chooses its target, ax or px rung, and delivery mode."
 ---
 
 Every Cua Driver action is shaped by four things: **what the agent observes**, **which rung delivers the action**, **how input is delivered**, and **what coordinate space the action targets**. Most callers use the defaults: background, per-window, accessibility-first automation. The key change from earlier versions is that perception is no longer a mode you pick. `get_window_state` returns *both* the accessibility tree and a screenshot in one call. The action call chooses `ax` or `px` by how it addresses the target.
@@ -37,20 +37,24 @@ Set `delivery_mode` per call on the input family (`click`, `double_click`, `righ
 | `delivery_mode` | Behavior |
 |---|---|
 | `background` (default) | Input is routed to the target process/window/element directly. The user's frontmost app, real cursor, and window z-order are untouched when the target surface supports background delivery. See [Best-effort background](/concepts/the-no-foreground-contract). |
-| `foreground` | The target is briefly fronted (pair with `bring_to_front` to avoid a per-call flash), input lands on the now-active window, then the prior frontmost is restored. Use this when a background attempt did not land, or when the app only accepts events while foregrounded (DirectInput games, raw-input canvases). |
+| `foreground` | The target is briefly fronted for that action, input lands on the now-active window, then the prior frontmost is restored. Use this when a background attempt did not land, or when the app only accepts events while foregrounded (DirectInput games, raw-input canvases). |
 
 Only `background` and `foreground` are valid; the historical `auto` heuristic is removed. At runtime, omitted or unknown values fall back to `background` for safety. Element ax actions (`element_index`) address an element instead of the focused window, so they hold the background path without any `delivery_mode` flag. The delivery axis matters most for the pixel rung (`x, y`), where `background` routes the event to the target and `foreground` raises the window first.
 
-### 4. Capture scope: what coordinate space the action targets
+`bring_to_front` is not a normal escalation step. Reserve it for focus-proxy surfaces that must stay foreground across multiple calls, such as a remote desktop session. For an ordinary `background_unavailable` response, retry only the refused action with `delivery_mode:"foreground"`.
 
-Set with `set_config capture_scope=…`.
+### 4. Action target: what coordinate space the action uses
 
-| `capture_scope` | Coordinate space | Capture surface |
+Select the target on each action:
+
+| `target` | Coordinate space | Capture surface |
 |---|---|---|
-| `window` (default) | Per-window. Actions carry `pid` + `window_id`; coordinates are window-relative or addressed by `element_index`. | `get_window_state` |
-| `desktop` | Screen-absolute. Window-less actions (no `pid`/`window_id`) land at absolute screen coordinates via hit-testing (`WindowFromPoint`). | `get_desktop_state` with full display, no downscale |
+| `{kind:"window", pid, window_id}` | coordinates relative to the exact window, or an element from that window's snapshot | `get_window_state` |
+| `{kind:"desktop", display_id:"primary"}` | screen coordinates on the primary display | `get_desktop_state` |
 
-Desktop scope is the "Computer-Use 1.0" loop: the agent reads the whole screen and clicks absolute coordinates, the way a screenshot-only model expects. Window scope is the default because it is what makes background, concurrent automation possible.
+The per-call target keeps window and desktop work independent. A desktop action
+does not change session state or disable window tools for the next call.
+Legacy `capture_scope` configuration remains available during migration.
 
 ## Response signals: verification, effect, and escalation
 
@@ -68,6 +72,6 @@ The driver treats those as surface-aware verification cases. It probes at the el
 
 ## Where the exact matrix lives
 
-Perception is no longer an axis: every `get_window_state` returns both the tree and a screenshot by default. The enforceable constraints are the combination of **capture scope**, **action rung**, and **delivery mode**.
+Perception is no longer an axis: every `get_window_state` returns both the tree and a screenshot by default. The enforceable constraints are the combination of **action target**, **action rung**, and **delivery mode**.
 
 The exact validity matrix and platform-support table live in [Interface contracts](/reference/cua-driver/contracts). Keep this page as the mental model: observe both tree and pixels, start with the accessibility rung, use the screenshot-backed pixel rung when the tree is insufficient, and escalate to foreground only when the target app requires it.

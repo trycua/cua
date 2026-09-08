@@ -94,6 +94,12 @@ private `CUA_E2E_INTERNAL_LANE` partition to `shared`, `native`, or `capture`
 when it fans the same matrix into independent jobs. Those values are not public
 alternate suites.
 
+The complete harness result at the exact source SHA is the behavioral gate.
+Manual app smokes, standalone videos, legacy runners, and environment-parity
+replays are useful diagnostics but cannot replace it. When installed-browser
+behavior is in scope, run the standalone browser suite in addition to the
+complete repo-local matrix.
+
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
@@ -104,6 +110,14 @@ browser matrix after the canonical repo-local harness matrix.
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every
 scenario to `run-rust-e2e.sh`.
+
+The manually dispatched `sway-xwayland` capture lane uses the same wrapper with
+XWayland forced on. Its capture contract places a real repo-owned GTK3 X11
+fixture on inactive workspace 98, keeps an unrelated Wayland sentinel on the
+active output, and requires `get_window_state` to return
+`surface_identity_unproven` without screenshot bytes or a file. Sway IPC and
+the fixture accessibility state are external focus, workspace, and mutation
+oracles for that targeted regression.
 
 Run the nested compositor wrapper through
 `nix develop .#cua-driver-inject-e2e`. This environment is experimental and

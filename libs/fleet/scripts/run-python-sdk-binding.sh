@@ -6,8 +6,8 @@ bindings="$repo_root/cyclops-cs/sdk-bindings/python"
 library="$("$repo_root"/cyclops-cs/scripts/build-sdk-bindings-native.sh)"
 runtime="$(mktemp -d "${TMPDIR:-/tmp}/cyclops-python-sdk.XXXXXX")"
 trap 'rm -rf "$runtime"' EXIT
-cp -R "$bindings/cyclops_sdk" "$runtime/cyclops_sdk"
-cp "$library" "$runtime/cyclops_sdk/$(basename "$library")"
+cp -R "$bindings/fleet_sdk" "$runtime/fleet_sdk"
+cp "$library" "$runtime/fleet_sdk/$(basename "$library")"
 target="$1"
 case "$target" in /*) ;; *) target="$repo_root/$target" ;; esac
 shift

@@ -119,6 +119,8 @@ if (-not (Test-Path $env:CUA_TEST_DRIVER_BIN)) {
 
 $tests = @(
     "standalone_browser_background_type",
+    "standalone_browser_type_replace",
+    "standalone_browser_owned_permission_prompt",
     "standalone_browser_dialogs",
     "standalone_browser_download",
     "standalone_browser_existing_profile",
@@ -130,6 +132,7 @@ $tests = @(
     "standalone_browser_roundtrip",
     "standalone_browser_semantic_state",
     "standalone_browser_stale_ref",
+    "standalone_browser_trust_gated_dom_click",
     "standalone_browser_trusted_click",
     "standalone_browser_upload",
     "standalone_browser_window_collision"

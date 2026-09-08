@@ -2,9 +2,9 @@ mod support;
 
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpHeader,
-    HttpResponse, Pool, ResourceMetadata, SdkError,
+    HttpResponse, Pool, ResourceMetadata, SdkError, Template,
 };
-use cyclops_sdk_schema::ClaimSpec;
+use cyclops_sdk_schema::{ClaimSpec, DEFAULT_CLAIM_BIND_DEADLINE_SECONDS};
 use std::sync::Arc;
 use support::ScriptedHttpClient;
 
@@ -12,13 +12,13 @@ const BASE_URL: &str = "https://cyclops.example:8443/prefix";
 const TOKEN_URL: &str = "https://identity.example/oauth/token";
 const NAMESPACE: &str = "example-pool";
 const CLAIM_COLLECTION: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxclaims";
-const POOL_ITEM: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/cua.ai/v1/namespaces/example-pool/osgymworkspacepools/example-pool";
+const TEMPLATE_ITEM: &str = "https://cyclops.example:8443/prefix/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxtemplates/example-pool-template";
 
 #[tokio::test]
 async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
     let spec = claim_spec("explicit-template");
     let created = claim("claim-1", spec.clone(), None);
-    let mut unavailable_pool = pool(1, None);
+    let mut unavailable_pool = pool(1);
     unavailable_pool.status = Some(
         serde_json::from_value(serde_json::json!({ "availableCount": 0, "phase": "Pending" }))
             .unwrap(),
@@ -32,7 +32,8 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
         client(Arc::clone(&http), 2, 2)
             .create_claim(CreateClaimRequest {
                 pool: unavailable_pool,
-                spec: Some(spec),
+                spec: Some(spec.clone()),
+                name: None,
             })
             .await
             .unwrap(),
@@ -41,16 +42,63 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
 
     let requests = http.authenticated_requests().await;
     assert_eq!(requests.len(), 1);
-    assert_request(
-        &requests[0],
-        "POST",
-        CLAIM_COLLECTION,
-        Some(&json_bytes(&created)),
-    );
+    assert_claim_post(&requests[0], &spec);
 }
 
 #[tokio::test]
-async fn zero_and_nonzero_pools_post_claims_with_identical_sequencing() {
+async fn create_claim_defaults_missing_bind_deadline_to_900_seconds() {
+    let expected = claim("claim-1", claim_spec("example-pool-template"), None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &expected)),
+    ]));
+
+    client(Arc::clone(&http), 2, 2)
+        .create_claim(CreateClaimRequest {
+            pool: pool(1),
+            spec: Some({
+                let mut spec = claim_spec("example-pool-template");
+                spec.bind_deadline = None;
+                spec
+            }),
+            name: None,
+        })
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let body: serde_json::Value =
+        serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["spec"]["bindDeadline"], 900);
+}
+
+#[tokio::test]
+async fn create_claim_preserves_explicit_bind_deadline() {
+    let mut spec = claim_spec("example-pool-template");
+    spec.bind_deadline = Some(123);
+    let expected = claim("claim-1", spec.clone(), None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &expected)),
+    ]));
+
+    client(Arc::clone(&http), 2, 2)
+        .create_claim(CreateClaimRequest {
+            pool: pool(1),
+            spec: Some(spec),
+            name: None,
+        })
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let body: serde_json::Value =
+        serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["spec"]["bindDeadline"], 123);
+}
+
+#[tokio::test]
+async fn zero_and_nonzero_pools_post_a_single_claim_create() {
     for replicas in [0, 1] {
         let expected = claim("claim-1", claim_spec("example-pool-template"), None);
         let http = Arc::new(ScriptedHttpClient::new([
@@ -60,20 +108,16 @@ async fn zero_and_nonzero_pools_post_claims_with_identical_sequencing() {
 
         client(Arc::clone(&http), 2, 2)
             .create_claim(CreateClaimRequest {
-                pool: pool(replicas, None),
+                pool: pool(replicas),
                 spec: None,
+                name: None,
             })
             .await
             .unwrap();
 
         let requests = http.authenticated_requests().await;
         assert_eq!(requests.len(), 1, "replicas={replicas}");
-        assert_request(
-            &requests[0],
-            "POST",
-            CLAIM_COLLECTION,
-            Some(&json_bytes(&expected)),
-        );
+        assert_claim_post(&requests[0], &claim_spec("example-pool-template"));
     }
 }
 #[tokio::test]
@@ -108,6 +152,100 @@ async fn claim_crud_uses_prefixed_routes_and_expected_statuses() {
 }
 
 #[tokio::test]
+async fn renew_claim_merge_patches_only_the_lifecycle_shutdown_time() {
+    let current = claim("named-claim", claim_spec("example-pool-template"), None);
+    let item = format!("{CLAIM_COLLECTION}/named-claim");
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &current)),
+    ]));
+
+    assert_eq!(
+        client(Arc::clone(&http), 1, 1)
+            .renew_claim(current.clone(), "2026-01-01T00:10:00Z".into())
+            .await
+            .unwrap(),
+        current
+    );
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 1);
+    let request = &requests[0];
+    assert_eq!(request.method, "PATCH");
+    assert_eq!(request.url, item);
+    assert_eq!(
+        request
+            .headers
+            .iter()
+            .find(|header| header.name == "content-type")
+            .map(|header| header.value.as_str()),
+        Some("application/merge-patch+json")
+    );
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(request.body.as_deref().unwrap()).unwrap(),
+        serde_json::json!({ "spec": { "lifecycle": { "shutdownTime": "2026-01-01T00:10:00Z" } } })
+    );
+}
+
+#[tokio::test]
+async fn renew_claim_rejects_an_empty_shutdown_time_before_any_request() {
+    let http = Arc::new(ScriptedHttpClient::new([]));
+    let current = claim("named-claim", claim_spec("example-pool-template"), None);
+
+    assert!(matches!(
+        client(Arc::clone(&http), 1, 1)
+            .renew_claim(current, "  ".into())
+            .await,
+        Err(SdkError::Configuration { .. })
+    ));
+
+    assert!(http.authenticated_requests().await.is_empty());
+}
+
+#[tokio::test]
+async fn create_claim_uses_a_client_supplied_name_verbatim() {
+    let spec = claim_spec("example-pool-template");
+    let created = claim("claim-1", spec.clone(), None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &created)),
+    ]));
+
+    let result = client(Arc::clone(&http), 2, 2)
+        .create_claim(CreateClaimRequest {
+            pool: pool(1),
+            spec: Some(spec.clone()),
+            name: Some("claim-1".into()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(result, created);
+
+    let requests = http.authenticated_requests().await;
+    assert_eq!(requests.len(), 1);
+    let body: Claim = serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(body.metadata.name, "claim-1");
+}
+
+#[tokio::test]
+async fn create_claim_rejects_an_invalid_client_supplied_name_before_any_request() {
+    let http = Arc::new(ScriptedHttpClient::new([]));
+
+    assert!(matches!(
+        client(Arc::clone(&http), 1, 1)
+            .create_claim(CreateClaimRequest {
+                pool: pool(1),
+                spec: None,
+                name: Some("Not A DNS Label".into()),
+            })
+            .await,
+        Err(SdkError::InvalidResourceName { .. })
+    ));
+
+    assert!(http.authenticated_requests().await.is_empty());
+}
+
+#[tokio::test]
 async fn wait_claim_returns_bound_sandbox_with_sorted_deduplicated_pool_services() {
     let current = claim(
         "named-claim",
@@ -120,7 +258,10 @@ async fn wait_claim_returns_bound_sandbox_with_sorted_deduplicated_pool_services
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(200, &current)),
-        Ok(json_response(200, &pool(1, Some(vec!["z", "a", "z"])))),
+        Ok(json_response(
+            200,
+            &template_named("example-pool-template", Some(vec!["z", "a", "z"])),
+        )),
     ]));
     let client = client(Arc::clone(&http), 1, 2);
 
@@ -141,7 +282,7 @@ async fn wait_claim_returns_bound_sandbox_with_sorted_deduplicated_pool_services
         &format!("{CLAIM_COLLECTION}/named-claim"),
         None,
     );
-    assert_request(&requests[1], "GET", POOL_ITEM, None);
+    assert_request(&requests[1], "GET", TEMPLATE_ITEM, None);
 }
 
 #[tokio::test]
@@ -179,7 +320,7 @@ async fn wait_claim_reports_terminal_and_timeout_statuses() {
 #[tokio::test]
 async fn generated_claim_names_are_unique_under_concurrency_and_fit_dns_labels() {
     let pool_name = "a".repeat(63);
-    let pool = pool_named(&pool_name, 0, None);
+    let pool = pool_named(&pool_name, 0);
     let first = claim("placeholder", claim_spec("short-template"), None);
     let second = first.clone();
     let http = Arc::new(ScriptedHttpClient::new([
@@ -192,11 +333,13 @@ async fn generated_claim_names_are_unique_under_concurrency_and_fit_dns_labels()
     let (first, second) = tokio::join!(
         client.clone().create_claim(CreateClaimRequest {
             pool: pool.clone(),
-            spec: Some(claim_spec("short-template"))
+            spec: Some(claim_spec("short-template")),
+            name: None,
         }),
         client.create_claim(CreateClaimRequest {
             pool,
-            spec: Some(claim_spec("short-template"))
+            spec: Some(claim_spec("short-template")),
+            name: None,
         }),
     );
     assert!(first.is_ok());
@@ -226,15 +369,16 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
     let invalid_pool = Pool {
         metadata: ResourceMetadata {
             namespace: "Uppercase".into(),
-            ..pool(0, None).metadata
+            ..pool(0).metadata
         },
-        ..pool(0, None)
+        ..pool(0)
     };
     assert!(matches!(
         client(Arc::clone(&invalid_http), 1, 1)
             .create_claim(CreateClaimRequest {
                 pool: invalid_pool,
-                spec: None
+                spec: None,
+                name: None,
             })
             .await,
         Err(SdkError::InvalidResourceName { .. })
@@ -247,6 +391,7 @@ async fn validation_and_malformed_responses_fail_without_unexpected_http() {
             namespace: NAMESPACE.into(),
             name: "Uppercase".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..claim("valid-claim", claim_spec("example-pool-template"), None)
     };
@@ -286,32 +431,52 @@ fn client(http: Arc<ScriptedHttpClient>, pool_limit: u32, claim_limit: u32) -> A
     .unwrap()
 }
 
-fn pool(replicas: u32, services: Option<Vec<&str>>) -> Pool {
-    pool_named(NAMESPACE, replicas, services)
+fn pool(replicas: u32) -> Pool {
+    pool_named(NAMESPACE, replicas)
 }
 
-fn pool_named(name: &str, replicas: u32, services: Option<Vec<&str>>) -> Pool {
+fn pool_named(name: &str, replicas: u32) -> Pool {
+    Pool {
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxWarmPool".into(),
+        metadata: ResourceMetadata {
+            namespace: name.into(),
+            name: name.into(),
+            labels: None,
+            creation_timestamp: None,
+        },
+        spec: serde_json::from_value(serde_json::json!({
+            "replicas": replicas,
+            "sandboxTemplateRef": { "name": format!("{name}-template") },
+        }))
+        .unwrap(),
+        status: None,
+    }
+}
+
+fn template_named(name: &str, services: Option<Vec<&str>>) -> Template {
     let services = services.map(|services| {
         services
             .into_iter()
             .map(|name| serde_json::json!({ "name": name, "targetPort": 8080 }))
             .collect::<Vec<_>>()
     });
-    Pool {
-        api_version: "cua.ai/v1".into(),
-        kind: "OSGymWorkspacePool".into(),
+    Template {
+        api_version: "osgym.cua.ai/v1alpha1".into(),
+        kind: "OSGymSandboxTemplate".into(),
         metadata: ResourceMetadata {
-            namespace: name.into(),
+            namespace: NAMESPACE.into(),
             name: name.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec: serde_json::from_value(serde_json::json!({
-            "replicas": replicas,
-            "template": { "containerDiskImage": "registry.example/image:latest" },
-            "services": services,
+            "vmTemplate": {
+                "containerDiskImage": "registry.example/image:latest",
+                "services": services,
+            },
         }))
         .unwrap(),
-        status: None,
     }
 }
 
@@ -323,6 +488,7 @@ fn claim(name: &str, spec: ClaimSpec, status: Option<serde_json::Value>) -> Clai
             namespace: NAMESPACE.into(),
             name: name.into(),
             labels: None,
+            creation_timestamp: None,
         },
         spec,
         status: status.map(|status| serde_json::from_value(status).unwrap()),
@@ -350,6 +516,30 @@ fn response(status: u16, body: &[u8]) -> HttpResponse {
         body: body.to_vec(),
     }
 }
+fn assert_claim_post(request: &cyclops_sdk::HttpRequest, spec: &ClaimSpec) {
+    assert_eq!(request.method, "POST");
+    assert_eq!(request.url, CLAIM_COLLECTION);
+    let body: Claim = serde_json::from_slice(request.body.as_deref().unwrap()).unwrap();
+    assert_eq!(body.api_version, "osgym.cua.ai/v1alpha1");
+    assert_eq!(body.kind, "OSGymSandboxClaim");
+    assert_eq!(body.metadata.namespace, NAMESPACE);
+    let mut expected_spec = spec.clone();
+    if expected_spec.bind_deadline.is_none() {
+        expected_spec.bind_deadline = Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS);
+    }
+    assert_eq!(
+        serde_json::to_value(&body.spec).unwrap(),
+        serde_json::to_value(expected_spec).unwrap()
+    );
+    let name = &body.metadata.name;
+    assert!(name.starts_with("claim-"), "unexpected claim name {name:?}");
+    assert!(name.len() <= 63);
+    assert!(
+        name.bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+    );
+}
+
 fn assert_request(
     request: &cyclops_sdk::HttpRequest,
     method: &str,
@@ -382,7 +572,7 @@ fn assert_request(
 async fn default_template_ref_for_a_63_byte_pool_passes_through_without_dns_validation() {
     let pool_name = "a".repeat(63);
     let template_name = format!("{pool_name}-template");
-    let pool = pool_named(&pool_name, 0, None);
+    let pool = pool_named(&pool_name, 0);
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(
@@ -392,7 +582,11 @@ async fn default_template_ref_for_a_63_byte_pool_passes_through_without_dns_vali
     ]));
 
     client(Arc::clone(&http), 1, 1)
-        .create_claim(CreateClaimRequest { pool, spec: None })
+        .create_claim(CreateClaimRequest {
+            pool,
+            spec: None,
+            name: None,
+        })
         .await
         .unwrap();
 
@@ -415,8 +609,9 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
     ]));
     client(Arc::clone(&http), 1, 1)
         .create_claim(CreateClaimRequest {
-            pool: pool(0, None),
+            pool: pool(0),
             spec: Some(claim_spec(template_name)),
+            name: None,
         })
         .await
         .unwrap();
@@ -429,8 +624,9 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
     assert!(matches!(
         client(Arc::clone(&empty_http), 1, 1)
             .create_claim(CreateClaimRequest {
-                pool: pool(0, None),
+                pool: pool(0),
                 spec: Some(claim_spec("")),
+                name: None,
             })
             .await,
         Err(SdkError::Configuration { .. })
@@ -439,7 +635,7 @@ async fn explicit_non_dns_template_ref_passes_through_but_empty_ref_is_rejected_
 }
 
 #[tokio::test]
-async fn wait_claim_uses_controller_removesuffix_behavior_for_template_refs_without_suffixes() {
+async fn wait_claim_fetches_the_template_named_by_the_claim_ref_verbatim() {
     let current = claim(
         "named-claim",
         claim_spec("example-pool"),
@@ -451,7 +647,10 @@ async fn wait_claim_uses_controller_removesuffix_behavior_for_template_refs_with
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),
         Ok(json_response(200, &current)),
-        Ok(json_response(200, &pool(1, Some(vec!["shell"])))),
+        Ok(json_response(
+            200,
+            &template_named("example-pool", Some(vec!["shell"])),
+        )),
     ]));
 
     assert_eq!(
@@ -469,7 +668,12 @@ async fn wait_claim_uses_controller_removesuffix_behavior_for_template_refs_with
         &format!("{CLAIM_COLLECTION}/named-claim"),
         None,
     );
-    assert_request(&requests[1], "GET", POOL_ITEM, None);
+    assert_request(
+        &requests[1],
+        "GET",
+        "https://cyclops.example:8443/prefix/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/example-pool/osgymsandboxtemplates/example-pool",
+        None,
+    );
 }
 
 #[tokio::test]
@@ -480,6 +684,7 @@ async fn wait_claim_rejects_invalid_claim_identity_before_token_or_pool_lookup()
             namespace: NAMESPACE.into(),
             name: "Uppercase".into(),
             labels: None,
+            creation_timestamp: None,
         },
         ..claim("named-claim", claim_spec("example-pool-template"), None)
     };

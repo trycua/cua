@@ -72,6 +72,11 @@ extern "C" {
         attribute: CFStringRef,
         value: CFTypeRef,
     ) -> AXError;
+    pub fn AXUIElementIsAttributeSettable(
+        element: AXUIElementRef,
+        attribute: CFStringRef,
+        settable: *mut u8,
+    ) -> AXError;
     pub fn AXUIElementSetMessagingTimeout(
         element: AXUIElementRef,
         timeout_in_seconds: f32,
@@ -111,6 +116,7 @@ pub unsafe fn element_at_screen_position(pid: i32, x: f64, y: f64) -> Option<AXU
 // ── AXValue functions ────────────────────────────────────────────────────────
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
+    pub fn AXValueCreate(the_type: AXValueType, value_ptr: *const c_void) -> AXValueRef;
     pub fn AXValueGetType(value: AXValueRef) -> AXValueType;
     pub fn AXValueGetValue(
         value: AXValueRef,
@@ -119,9 +125,34 @@ extern "C" {
     ) -> bool;
 }
 
+#[repr(C)]
+struct CGPointValue {
+    x: f64,
+    y: f64,
+}
+
+#[repr(C)]
+struct CGSizeValue {
+    width: f64,
+    height: f64,
+}
+
 // ── Helper functions ──────────────────────────────────────────────────────────
 
 use core_foundation::{array::CFArray, base::TCFType, string::CFString as CFStr};
+
+/// Whether an AX attribute is currently writable on this element.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn is_attribute_settable(element: AXUIElementRef, attr_name: &str) -> bool {
+    let attr = CFStr::new(attr_name);
+    let mut settable = 0_u8;
+    AXUIElementIsAttributeSettable(element, attr.as_concrete_TypeRef(), &mut settable)
+        == kAXErrorSuccess
+        && settable != 0
+}
 
 /// Copy a string attribute from an AX element. Returns `None` on any error.
 ///
@@ -172,6 +203,11 @@ pub unsafe fn copy_number_attr(element: AXUIElementRef, attr_name: &str) -> Opti
 /// Copy a boolean attribute from an AX element. Returns `None` on any error
 /// or if the attribute is neither a `CFBoolean` nor a `CFNumber` (some apps
 /// report AXEnabled/AXSelected as a 0/1 CFNumber instead of a CFBoolean).
+///
+/// # Safety
+///
+/// `element` must be a valid Accessibility object reference for the duration
+/// of this call.
 pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
     use core_foundation::boolean::CFBoolean;
     use core_foundation::number::CFNumber;
@@ -192,6 +228,35 @@ pub unsafe fn copy_bool_attr(element: AXUIElementRef, attr_name: &str) -> Option
     }
     CFRelease(value);
     None
+}
+
+unsafe fn coerce_binary_value(value: CFTypeRef) -> Option<bool> {
+    use core_foundation::boolean::CFBoolean;
+    use core_foundation::number::CFNumber;
+    let type_id = core_foundation::base::CFGetTypeID(value);
+    if type_id == CFBoolean::type_id() {
+        return Some(CFBoolean::wrap_under_get_rule(value as _).into());
+    }
+    if type_id == CFNumber::type_id() {
+        return match CFNumber::wrap_under_get_rule(value as _).to_f64()? {
+            0.0 => Some(false),
+            1.0 => Some(true),
+            _ => None,
+        };
+    }
+    None
+}
+
+pub unsafe fn copy_binary_attr(element: AXUIElementRef, attr_name: &str) -> Option<bool> {
+    let attr = CFStr::new(attr_name);
+    let mut value: CFTypeRef = std::ptr::null();
+    let err = AXUIElementCopyAttributeValue(element, attr.as_concrete_TypeRef(), &mut value);
+    if err != kAXErrorSuccess || value.is_null() {
+        return None;
+    }
+    let result = coerce_binary_value(value);
+    CFRelease(value);
+    result
 }
 
 /// A copied AX attribute represented for both existing string-only consumers
@@ -249,6 +314,11 @@ unsafe fn coerce_stringish_value(value: CFTypeRef) -> Option<StringishAttrValue>
 /// markdown while using the same single AX read for structured control state.
 /// Numbers render without a trailing `.0` when integral (`8`, not `8.0`), and
 /// booleans render as `1`/`0` to match AppKit's two-state controls.
+///
+/// # Safety
+///
+/// `element` must be a valid Accessibility object reference for the duration
+/// of this call.
 pub unsafe fn copy_stringish_attr(
     element: AXUIElementRef,
     attr_name: &str,
@@ -425,6 +495,26 @@ pub unsafe fn focused_element_of_pid(pid: i32) -> Option<AXUIElementRef> {
     Some(value as AXUIElementRef)
 }
 
+/// Return the CGWindowID of the application's focused AX window.
+///
+/// This is a narrow read-only proof used before global keyboard delivery: an
+/// already focused exact window must not be re-activated, because doing so can
+/// make a focus-proxy renderer drop its current key target.
+pub fn focused_window_id_of_pid(pid: i32) -> Option<u32> {
+    unsafe {
+        let app = AXUIElementCreateApplication(pid);
+        if app.is_null() {
+            return None;
+        }
+        let window = copy_element_attr(app, "AXFocusedWindow");
+        CFRelease(app as CFTypeRef);
+        let window = window?;
+        let window_id = ax_get_window_id(window);
+        CFRelease(window as CFTypeRef);
+        window_id
+    }
+}
+
 /// Get the children of an AX element.
 ///
 /// # Safety
@@ -516,6 +606,53 @@ pub unsafe fn set_number_attr(element: AXUIElementRef, attr_name: &str, value: f
     let attr = CFStr::new(attr_name);
     let cf_value = CFNumber::from(value);
     AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), cf_value.as_CFTypeRef())
+}
+
+/// Set an AX CGPoint attribute such as `AXPosition`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_point_attr(element: AXUIElementRef, attr_name: &str, x: f64, y: f64) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let point = CGPointValue { x, y };
+    let value = AXValueCreate(
+        kAXValueCGPointType,
+        &point as *const CGPointValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
+}
+
+/// Set an AX CGSize attribute such as `AXSize`.
+///
+/// # Safety
+///
+/// `element` must be a valid, live `AXUIElementRef` for the duration of the call.
+pub unsafe fn set_size_attr(
+    element: AXUIElementRef,
+    attr_name: &str,
+    width: f64,
+    height: f64,
+) -> AXError {
+    let attr = CFStr::new(attr_name);
+    let size = CGSizeValue { width, height };
+    let value = AXValueCreate(
+        kAXValueCGSizeType,
+        &size as *const CGSizeValue as *const c_void,
+    );
+    if value.is_null() {
+        return kAXErrorFailure;
+    }
+    let result =
+        AXUIElementSetAttributeValue(element, attr.as_concrete_TypeRef(), value as CFTypeRef);
+    CFRelease(value as CFTypeRef);
+    result
 }
 
 /// Set an AX attribute to a CFBoolean true value.
@@ -615,6 +752,62 @@ pub unsafe fn copy_ax_windows(element: AXUIElementRef) -> Vec<AXUIElementRef> {
 mod tests {
     use super::*;
     use core_foundation::{boolean::CFBoolean, number::CFNumber};
+
+    #[test]
+    fn binary_value_accepts_booleans_and_exact_zero_or_one() {
+        let true_value = CFBoolean::true_value();
+        let false_value = CFBoolean::false_value();
+        let zero = CFNumber::from(0.0);
+        let one = CFNumber::from(1.0);
+        let fractional = CFNumber::from(0.5);
+        let other = CFNumber::from(2.0);
+        let string = CFStr::new("1");
+
+        assert_eq!(
+            unsafe { coerce_binary_value(true_value.as_CFTypeRef()) },
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(false_value.as_CFTypeRef()) },
+            Some(false)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(zero.as_CFTypeRef()) },
+            Some(false)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(one.as_CFTypeRef()) },
+            Some(true)
+        );
+        assert_eq!(
+            unsafe { coerce_binary_value(fractional.as_CFTypeRef()) },
+            None
+        );
+        assert_eq!(unsafe { coerce_binary_value(other.as_CFTypeRef()) }, None);
+        assert_eq!(unsafe { coerce_binary_value(string.as_CFTypeRef()) }, None);
+    }
+
+    #[test]
+    fn binary_value_rejects_near_binary_and_non_finite_numbers() {
+        for value in [
+            1e-20,
+            -1e-20,
+            f64::from_bits(1),
+            -f64::from_bits(1),
+            f64::from_bits(1.0_f64.to_bits() - 1),
+            f64::from_bits(1.0_f64.to_bits() + 1),
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+        ] {
+            let number = CFNumber::from(value);
+            assert_eq!(
+                unsafe { coerce_binary_value(number.as_CFTypeRef()) },
+                None,
+                "unexpected binary state for {value:?}"
+            );
+        }
+    }
 
     #[test]
     fn stringish_value_coerces_cfstring_cfnumber_and_cfboolean() {

@@ -81,8 +81,7 @@ Install Cua Driver so `cua-driver` is on `PATH`, then run:
   <Tab value="Python">
 
 ```bash
-CUA_CAPTURE_SCOPE=auto \
-  .venv/bin/python claude_agent.py --route mcp \
+.venv/bin/python claude_agent.py --route mcp \
   "Inspect the active app and summarize what is visible"
 ```
 
@@ -90,17 +89,18 @@ CUA_CAPTURE_SCOPE=auto \
   <Tab value="TypeScript">
 
 ```bash
-CUA_CAPTURE_SCOPE=auto \
-  npm run claude -- --route mcp \
+npm run claude -- --route mcp \
   "Inspect the active app and summarize what is visible"
 ```
 
   </Tab>
 </Tabs>
 
-The host creates the Cua session, supplies `cua-driver mcp` to Claude, and ends
-the session in `finally`. Claude discovers the full live MCP surface; the
-generated Cua language packages are not acting as MCP clients.
+The host supplies one long-lived `cua-driver mcp` transport to Claude. The
+first admitted stateful call creates its implicit session, later unnamed calls
+reuse it, and transport shutdown runs lifecycle cleanup. Claude discovers the
+full live MCP surface; the generated Cua language packages are not acting as
+MCP clients.
 
 Use only trusted tasks with these examples. They remove interactive approval
 prompts and deliberately exclude Claude Code's built-in shell and file tools.

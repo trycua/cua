@@ -113,10 +113,10 @@ func TestK8sProxy_ForwardsPath(t *testing.T) {
 		},
 		{
 			name:       "path with query params",
-			pathValue:  "api/v1/namespaces/foo/events",
-			queryParam: "fieldSelector=reason%3DPoolCreated",
-			wantPath:   "/api/v1/namespaces/foo/events",
-			wantQuery:  "fieldSelector=reason%3DPoolCreated",
+			pathValue:  "api/v1/namespaces/foo/pods",
+			queryParam: "fieldSelector=status.phase%3DRunning",
+			wantPath:   "/api/v1/namespaces/foo/pods",
+			wantQuery:  "fieldSelector=status.phase%3DRunning",
 		},
 	}
 
@@ -230,10 +230,41 @@ func TestK8sProxy_CreatesTracingSpan(t *testing.T) {
 	}
 }
 
-func TestK8sProxy_RejectsDisallowedPoolImagePullSecret(t *testing.T) {
+func TestK8sProxy_GitHubPrincipalAllowsNamespacedPoolCRUDPath(t *testing.T) {
+	var receivedPath string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer upstream.Close()
+	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
+
+	h := Handlers{}
+	r := httptest.NewRequest(http.MethodGet, "/api/k8s/apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools", nil)
+	r.SetPathValue("path", "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools")
+	r = withUser(r, &auth.User{
+		ID:                "user-123",
+		AZP:               "github-oidc",
+		PrincipalType:     auth.PrincipalTypeGitHubOIDC,
+		AllowedNamespaces: []string{"ns-a"},
+	})
+	w := httptest.NewRecorder()
+
+	h.K8s(w, r)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body = %s", w.Code, w.Body.String())
+	}
+	if receivedPath != "/apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools" {
+		t.Fatalf("upstream path = %q", receivedPath)
+	}
+}
+
+func TestK8sProxy_DirectHandlerLeavesAdmissionToMiddleware(t *testing.T) {
 	auth.LoadOpa()
 	upstreamCalled := false
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		upstreamCalled = true
 		w.WriteHeader(http.StatusCreated)
 	}))
@@ -241,39 +272,16 @@ func TestK8sProxy_RejectsDisallowedPoolImagePullSecret(t *testing.T) {
 	t.Setenv("KUBECTL_PROXY_ADDR", upstream.URL)
 
 	body := []byte(`{"spec":{"template":{"containerDiskImage":"evil.example/workspace:latest","imagePullSecret":"ecr-credentials"}}}`)
-	r := httptest.NewRequest(http.MethodPost, "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools", bytes.NewReader(body))
-	r.SetPathValue("path", "apis/cua.ai/v1/namespaces/foo/osgymworkspacepools")
-	w := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/k8s/apis/cua.ai/v1/namespaces/foo/osgymworkspacepools", bytes.NewReader(body))
+	request.SetPathValue("path", "apis/cua.ai/v1/namespaces/foo/osgymworkspacepools")
+	response := httptest.NewRecorder()
 
-	(Handlers{}).K8s(w, r)
+	(Handlers{}).K8s(response, request)
 
-	if w.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusForbidden, w.Body.String())
+	if response.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusCreated, response.Body.String())
 	}
-	if upstreamCalled {
-		t.Fatal("disallowed pool request reached kubectl proxy")
-	}
-}
-
-func TestBodyRequestsMacOS(t *testing.T) {
-	cases := []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"runtime macos", `{"spec":{"template":{"runtime":"macos","containerDiskImage":"img"}}}`, true},
-		{"runtime MacOS mixed-case", `{"spec":{"template":{"runtime":"MacOS"}}}`, true},
-		{"macos runtimeClass", `{"spec":{"template":{"runtimeClassName":"cua-macos-native"}}}`, true},
-		{"macos nodeSelector", `{"spec":{"template":{"nodeSelector":{"cua.ai/macos":"true"}}}}`, true},
-		{"kubevirt default", `{"spec":{"template":{"containerDiskImage":"img","cpuCores":4}}}`, false},
-		{"no template", `{"spec":{"replicas":1}}`, false},
-		{"garbage", `not json`, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			if got := bodyRequestsMacOS([]byte(c.body)); got != c.want {
-				t.Fatalf("bodyRequestsMacOS(%s) = %v, want %v", c.body, got, c.want)
-			}
-		})
+	if !upstreamCalled {
+		t.Fatal("direct handler request did not reach kubectl proxy")
 	}
 }

@@ -35,10 +35,12 @@ imports a generated Cua client.
    by UniFFI. Remove their language-native MCP facades because those duplicate
    a runtime-neutral protocol client that agent runtimes already provide. This
    deliberately makes the package API breaking before publication.
-3. Export the shared Rust request records for all 14 typed tools and the shared
-   typed session results. Desktop structured results retain platform extension
-   fields, so the native SDK preserves them in `ToolResult.structured_json`
-   while the live registry validates them with the canonical Rust result types.
+3. Export the shared Rust request records for all typed tools and shared typed
+   results. Action tools use the closed, cross-platform `ActionResult`; richer
+   observation payloads remain available in `ToolResult.structured_json`.
+   The live registry validates both against the canonical Rust result types.
+   See [Action results and postcondition
+   verification](action-result-contract.md).
 4. Use UniFFI as an SDK/server-composition architecture, not as a replacement
    for the agent MCP boundary. The first slice exports a shared Rust daemon
    client that application-owned servers can compose.

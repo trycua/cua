@@ -2,14 +2,9 @@
   "$schema": "https://biomejs.dev/schemas/2.4.15/schema.json",
   "vcs": { "enabled": false, "clientKind": "git", "useIgnoreFile": false },
   "files": {
-    "includes": ["src/**", "!**/dist", "!**/node_modules", "!src/api/generated/**"]
+    "includes": ["src/**", "!**/dist", "!**/node_modules"]
   },
-  "overrides": [
-    {
-      "includes": ["src/api/generated/**"],
-      "linter": { "enabled": false }
-    }
-  ],
+  "overrides": [],
   "formatter": { "enabled": false },
   "assist": { "actions": { "source": { "organizeImports": "off" } } },
   "linter": {

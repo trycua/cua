@@ -5,15 +5,15 @@
 //!   `INDENT- AXStaticText = "value"`  (non-indexed)
 //!
 //! Rules (from cua-driver reference):
-//! - An element is "actionable" (gets an index) when it has ≥1 action name.
+//! - An element is addressable (gets an index) when it has ≥1 action name or
+//!   exposes a writable AXValue control surface.
 //! - Non-actionable leaf nodes with a value are rendered as `AXRole = "value"`.
 //! - AXStaticText with no title/value is omitted.
 //! - Tree is walked depth-first; element_index is assigned in DFS order.
 
 use super::bindings::*;
+use super::window_scope::{decide_window_scope, TopLevelCandidate, WindowScope};
 use core_foundation::base::{CFEqual, CFRelease, CFRetain, CFTypeRef};
-use std::collections::HashSet;
-use std::sync::{Mutex, OnceLock};
 
 /// Default maximum depth for AX tree walks. Deep menus and complex web views
 /// can nest deeply; 25 covers realistic app chrome without exploding on
@@ -34,14 +34,6 @@ pub const DEFAULT_MAX_DEPTH: usize = 25;
 /// (issue #22865).
 pub const DEFAULT_MAX_ELEMENTS: usize = 2_000;
 
-/// How long to let a freshly-enabled Chromium/Electron app build its
-/// web-content AX tree before we read it. The tree is materialized
-/// asynchronously over IPC once the app detects an assistive client, so a
-/// walk that starts immediately sees only the chrome (title bar, a handful
-/// of elements). This settle is paid at most once per pid — see
-/// `enabled_pids`.
-const CHROMIUM_SETTLE_SECONDS: f64 = 0.5;
-
 /// Bound each native AX request. Tokio cannot cancel a blocked
 /// `AXUIElementCopyAttributeValue` after `spawn_blocking` starts, so the native
 /// messaging timeout is what keeps an unresponsive app from retaining a worker
@@ -50,14 +42,6 @@ const AX_MESSAGING_TIMEOUT_SECONDS: f32 = 2.0;
 
 unsafe fn set_messaging_timeout(element: AXUIElementRef) {
     let _ = AXUIElementSetMessagingTimeout(element, AX_MESSAGING_TIMEOUT_SECONDS);
-}
-
-/// Pids for which we have already flipped on accessibility and paid the
-/// one-time settle delay. Repeat snapshots of the same app skip the settle:
-/// the tree is already built and stays built for the life of the process.
-fn enabled_pids() -> &'static Mutex<HashSet<i32>> {
-    static ENABLED_PIDS: OnceLock<Mutex<HashSet<i32>>> = OnceLock::new();
-    ENABLED_PIDS.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
 /// A single node in the AX tree.
@@ -104,6 +88,10 @@ pub struct AXNode {
     pub enabled: Option<bool>,
     /// AXSelected. `None` when the app doesn't report the attribute.
     pub selected: Option<bool>,
+    /// True when this node is an AX web-document root or descends from one.
+    /// This trust marker is independent of actionable ancestry because
+    /// AXWebArea is commonly non-actionable and therefore has no element index.
+    pub in_web_content: bool,
 }
 
 #[derive(Default)]
@@ -127,11 +115,37 @@ where
     }
 }
 
+fn role_supports_value_addressing(role: &str) -> bool {
+    matches!(
+        role,
+        "AXTextField"
+            | "AXTextArea"
+            | "AXComboBox"
+            | "AXSlider"
+            | "AXStepper"
+            | "AXCheckBox"
+            | "AXRadioButton"
+    )
+}
+
+fn is_addressable(actions_present: bool, value_settable: bool, enabled: Option<bool>) -> bool {
+    (actions_present || value_settable) && enabled != Some(false)
+}
+
 pub struct TreeWalkResult {
     pub tree_markdown: String,
     pub nodes: Vec<AXNode>,
     /// True when the walk was cut short by the MAX_ELEMENTS cap.
     pub truncated: bool,
+    /// Whether the requested `window_id` actually resolved to an AX surface,
+    /// and if not, why. `None` when no `window_id` was requested.
+    ///
+    /// Issue #2237: without this, an unresolvable id was indistinguishable
+    /// from a clean snapshot — callers had no way to tell that the tree they
+    /// were handed belonged to a different surface. Any variant other than
+    /// [`WindowScope::Matched`] comes with an EMPTY walk, so `nodes` never
+    /// describes a window other than the requested one.
+    pub window_scope: Option<WindowScope>,
 }
 
 /// Walk the AX tree of `pid`, optionally filtered to a specific window.
@@ -181,6 +195,7 @@ pub fn walk_tree_bounded(
     // Set to true only when walk_element actually stops early due to the cap —
     // avoids a false-positive when the tree naturally ends on exactly the cap.
     let mut truncated = false;
+    let mut window_scope: Option<WindowScope> = None;
 
     unsafe {
         let app_elem = AXUIElementCreateApplication(pid);
@@ -189,6 +204,9 @@ pub fn walk_tree_bounded(
                 tree_markdown: String::new(),
                 nodes,
                 truncated: false,
+                // No application AX element at all, so a requested window
+                // certainly did not resolve.
+                window_scope: window_id.map(|_| WindowScope::AxUnresolved { ax_window_count: 0 }),
             };
         }
         set_messaging_timeout(app_elem);
@@ -198,20 +216,11 @@ pub fn walk_tree_bounded(
         // asks for it. Without this, the first walk of such an app returns an
         // empty/title-bar-only tree (#1616). Flip the enablement attribute,
         // then — only when the flip actually took and only the first time we
-        // see this pid — let the asynchronously-built tree settle before we
-        // read it. Native Cocoa apps reject the attribute, so they pay no
-        // settle cost. This relies on the MAX_ELEMENTS node cap to keep the
-        // now-materialized (potentially large) tree bounded.
-        let already_enabled = enabled_pids()
-            .lock()
-            .map(|s| s.contains(&pid))
-            .unwrap_or(false);
-        if !already_enabled && enable_chromium_accessibility(app_elem) {
-            crate::permissions::panel::pump_run_loop_briefly(CHROMIUM_SETTLE_SECONDS);
-            if let Ok(mut set) = enabled_pids().lock() {
-                set.insert(pid);
-            }
-        }
+        // see this process lifetime — let the asynchronously-built tree settle
+        // before we read it. Native Cocoa apps reject the attribute, so they
+        // pay no settle cost. This relies on the MAX_ELEMENTS node cap to keep
+        // the now-materialized (potentially large) tree bounded.
+        super::enablement::ensure_chromium_ax_enabled(pid, app_elem);
 
         // Union AXChildren + AXWindows — the only way to see background windows.
         // AXChildren omits windows when the app isn't frontmost (AppKit limitation).
@@ -236,21 +245,44 @@ pub fn walk_tree_bounded(
             }
         }
 
-        // Filter: keep non-window children (menu bar) + the target window.
+        // Scope: keep non-window children (menu bar) + the target window —
+        // but ONLY once the target window has actually been identified. When
+        // nothing claims the requested id, `decide_window_scope` reports why
+        // and walks nothing; it must never fall back to "everything that isn't
+        // a window", which is how issue #2237 returned menu bars as panels.
         let walk_these: Vec<AXUIElementRef> = if let Some(wid) = window_id {
-            top_level
+            let candidates: Vec<TopLevelCandidate> = top_level
                 .iter()
-                .copied()
-                .filter(|&child| {
+                .map(|&child| {
                     set_messaging_timeout(child);
                     let role = copy_string_attr(child, "AXRole").unwrap_or_default();
-                    if role != "AXWindow" {
-                        return true; // always keep menu bar and other non-window items
-                    }
+                    let subrole = copy_string_attr(child, "AXSubrole");
+                    let identifier = copy_string_attr(child, "AXIdentifier");
                     // Match AX window element → CGWindowID via private SPI.
-                    ax_get_window_id(child) == Some(wid)
+                    // Only windows carry one, so skip the round-trip elsewhere.
+                    let ax_window_id = if role == "AXWindow" {
+                        ax_get_window_id(child)
+                    } else {
+                        None
+                    };
+                    TopLevelCandidate {
+                        role,
+                        subrole,
+                        identifier,
+                        ax_window_id,
+                    }
                 })
-                .collect()
+                .collect();
+            let decision = decide_window_scope(&candidates, wid, || {
+                crate::windows::resolve_window_owner(pid, wid)
+            });
+            let walk = decision
+                .walk
+                .iter()
+                .map(|&index| top_level[index])
+                .collect();
+            window_scope = Some(decision.scope);
+            walk
         } else {
             top_level.to_vec()
         };
@@ -261,6 +293,7 @@ pub fn walk_tree_bounded(
                 child,
                 0,
                 None,
+                false,
                 &mut nodes,
                 &mut lines,
                 &mut index_counter,
@@ -300,6 +333,7 @@ pub fn walk_tree_bounded(
         tree_markdown,
         nodes,
         truncated: truncated_flag,
+        window_scope,
     }
 }
 
@@ -308,6 +342,7 @@ unsafe fn walk_element(
     element: AXUIElementRef,
     depth: usize,
     parent_index: Option<usize>,
+    in_web_content: bool,
     nodes: &mut Vec<AXNode>,
     lines: &mut Vec<(usize, String)>,
     counter: &mut usize,
@@ -333,6 +368,8 @@ unsafe fn walk_element(
 
     let role = copy_string_attr(element, "AXRole").unwrap_or_else(|| "AXUnknown".into());
 
+    let in_web_content = in_web_content || is_web_content_role(&role);
+
     // Skip pure layout containers that have no interesting content.
     if role == "AXScrollArea" || role == "AXGroup" {
         // Still recurse — children may be interesting. Layout containers
@@ -344,6 +381,7 @@ unsafe fn walk_element(
                 child,
                 depth,
                 parent_index,
+                in_web_content,
                 nodes,
                 lines,
                 counter,
@@ -384,7 +422,25 @@ unsafe fn walk_element(
 
     let has_content =
         !visible_title.is_empty() || !visible_description.is_empty() || !visible_value.is_empty();
-    let is_actionable = !actions.is_empty();
+    // Some native controls expose no AX action names but do expose a writable
+    // AXValue. Finder's transient inline-rename field is the important case:
+    // rendering it without an element_index leaves an agent able to see the
+    // field but unable to call set_value on it. Probe writability only for the
+    // small family of value controls so arbitrary display nodes do not pay an
+    // extra AX round trip.
+    let value_settable = actions.is_empty()
+        && role_supports_value_addressing(&role)
+        && is_attribute_settable(element, "AXValue");
+    // A closed submenu can keep its descendants in AXChildren while reporting
+    // those controls disabled. Never assign such a row a live element index:
+    // the same native state also causes dispatch to refuse it, and exposing an
+    // index for it invites agents to retain an unusable menu target.
+    let enabled = if !actions.is_empty() || value_settable {
+        copy_bool_attr(element, "AXEnabled")
+    } else {
+        None
+    };
+    let is_actionable = is_addressable(!actions.is_empty(), value_settable, enabled);
 
     if !is_actionable && !has_content && role != "AXWindow" && role != "AXSheet" {
         let children = copy_children(element);
@@ -393,6 +449,7 @@ unsafe fn walk_element(
                 child,
                 depth + 1,
                 parent_index,
+                in_web_content,
                 nodes,
                 lines,
                 counter,
@@ -422,7 +479,7 @@ unsafe fn walk_element(
             .filter(|v| !v.is_empty()),
         min_value: copy_number_attr(element, "AXMinValue"),
         max_value: copy_number_attr(element, "AXMaxValue"),
-        enabled: copy_bool_attr(element, "AXEnabled"),
+        enabled,
         selected: copy_bool_attr(element, "AXSelected"),
     });
     let node = if is_actionable {
@@ -462,6 +519,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            in_web_content,
         }
     } else {
         AXNode {
@@ -495,6 +553,7 @@ unsafe fn walk_element(
             max_value: control_state.max_value,
             enabled: control_state.enabled,
             selected: control_state.selected,
+            in_web_content,
         }
     };
 
@@ -513,6 +572,7 @@ unsafe fn walk_element(
             child,
             depth + 1,
             next_parent,
+            in_web_content,
             nodes,
             lines,
             counter,
@@ -522,6 +582,30 @@ unsafe fn walk_element(
             max_depth,
         );
         CFRelease(child as CFTypeRef);
+    }
+}
+
+fn is_web_content_role(role: &str) -> bool {
+    let normalized = role
+        .chars()
+        .filter(|character| character.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect::<String>();
+    normalized.contains("webarea") || normalized.contains("documentweb") || normalized == "document"
+}
+
+#[cfg(test)]
+mod web_content_role_tests {
+    use super::is_web_content_role;
+
+    #[test]
+    fn recognizes_native_web_document_roles_without_marking_app_chrome() {
+        for role in ["AXWebArea", "AXDocumentWeb", "document"] {
+            assert!(is_web_content_role(role), "{role} must start web trust");
+        }
+        for role in ["AXWindow", "AXButton", "AXToolbar"] {
+            assert!(!is_web_content_role(role), "{role} stays native");
+        }
     }
 }
 
@@ -651,6 +735,29 @@ fn leading_indent_depth(line: &str) -> usize {
 mod tests {
     use super::*;
     use std::cell::Cell;
+
+    #[test]
+    fn writable_value_controls_are_addressable_without_actions() {
+        assert!(is_addressable(false, true, Some(true)));
+        assert!(is_addressable(true, false, None));
+        assert!(!is_addressable(false, false, Some(true)));
+        assert!(!is_addressable(true, false, Some(false)));
+
+        for role in [
+            "AXTextField",
+            "AXTextArea",
+            "AXComboBox",
+            "AXSlider",
+            "AXStepper",
+            "AXCheckBox",
+            "AXRadioButton",
+        ] {
+            assert!(role_supports_value_addressing(role), "{role}");
+        }
+        for role in ["AXStaticText", "AXImage", "AXWindow", "AXGroup"] {
+            assert!(!role_supports_value_addressing(role), "{role}");
+        }
+    }
 
     #[test]
     fn control_state_reads_are_gated_by_actionability() {

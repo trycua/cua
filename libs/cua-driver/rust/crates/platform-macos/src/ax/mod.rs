@@ -18,9 +18,13 @@
 
 pub mod bindings;
 pub mod cache;
+pub mod enablement;
+pub mod exact_target;
 pub mod tree;
+pub mod window_scope;
 
 pub use cache::ElementCache;
 pub use tree::{
     walk_tree, walk_tree_bounded, AXNode, TreeWalkResult, DEFAULT_MAX_DEPTH, DEFAULT_MAX_ELEMENTS,
 };
+pub use window_scope::WindowScope;

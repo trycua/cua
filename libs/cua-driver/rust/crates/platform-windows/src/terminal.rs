@@ -7,7 +7,9 @@
 //! "type was acknowledged but nothing appeared". We detect the target
 //! by window class name; in background, type_text to a terminal returns
 //! `background_unavailable` (escalate to `delivery_mode:"foreground"`,
-//! which delivers via SendInput Unicode) rather than fronting it.
+//! which delivers via SendInput Unicode) rather than fronting it. Native
+//! ConsoleHost on ARM64 is the exception: it can accept those Unicode events
+//! without delivering them, so both modes return a hard refusal.
 //!
 //! Adding a new terminal: append a class-name prefix to
 //! [`TERMINAL_CLASS_PREFIXES`] and a coverage entry in the tests.
@@ -36,6 +38,14 @@ pub const TERMINAL_CLASS_PREFIXES: &[&str] = &[
     "Vim",
 ];
 
+/// Whether `type_text` has a known honest delivery route for a window class.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub(crate) enum TypeTextPolicy {
+    Supported,
+    ForegroundRequired,
+    Unsupported,
+}
+
 /// Returns `true` when `class_name` (typically the result of
 /// `GetClassNameW`) matches a known terminal-host class via prefix.
 pub fn class_matches_terminal(class_name: &str) -> bool {
@@ -45,6 +55,75 @@ pub fn class_matches_terminal(class_name: &str) -> bool {
     TERMINAL_CLASS_PREFIXES
         .iter()
         .any(|p| class_name.starts_with(p))
+}
+
+/// Decide the terminal route before invoking either PostMessage or SendInput.
+///
+/// `ConsoleWindowClass` is native ConsoleHost. On Windows 11 ARM64 its input
+/// queue can report every `KEYEVENTF_UNICODE` packet as accepted while the
+/// prompt remains unchanged. Since the driver has no independent delivery
+/// oracle for that surface, foreground delivery must refuse instead of
+/// returning a false success.
+pub(crate) fn type_text_policy_for_class(
+    class_name: &str,
+    foreground: bool,
+    windows_arm64: bool,
+) -> TypeTextPolicy {
+    if windows_arm64 && class_name.starts_with("ConsoleWindowClass") {
+        TypeTextPolicy::Unsupported
+    } else if class_matches_terminal(class_name) && !foreground {
+        TypeTextPolicy::ForegroundRequired
+    } else {
+        TypeTextPolicy::Supported
+    }
+}
+
+/// Resolve [`TypeTextPolicy`] for a live HWND.
+#[cfg(target_os = "windows")]
+pub(crate) fn type_text_policy(hwnd: u64, foreground: bool) -> TypeTextPolicy {
+    if hwnd == 0 {
+        return TypeTextPolicy::Supported;
+    }
+    let class = crate::input::delivery::read_class_name(hwnd);
+    type_text_policy_for_class(&class, foreground, cfg!(target_arch = "aarch64"))
+}
+
+#[cfg(not(target_os = "windows"))]
+pub(crate) fn type_text_policy(_hwnd: u64, _foreground: bool) -> TypeTextPolicy {
+    TypeTextPolicy::Supported
+}
+
+/// Hard refusal for native ConsoleHost, whose Unicode SendInput acceptance is
+/// not evidence that the prompt received the requested text.
+#[cfg(target_os = "windows")]
+pub(crate) fn native_consolehost_type_text_error(
+    hwnd: u64,
+) -> cua_driver_core::protocol::ToolResult {
+    let class = crate::input::delivery::read_class_name(hwnd);
+    native_consolehost_type_text_error_for_class(class)
+}
+
+#[cfg(any(test, target_os = "windows"))]
+fn native_consolehost_type_text_error_for_class(
+    class: String,
+) -> cua_driver_core::protocol::ToolResult {
+    let suggestion = "Use a process or PTY execution channel for console setup, \
+                      or launch a terminal host with a verifiable text-input route.";
+    cua_driver_core::protocol::ToolResult::error(format!(
+        "type_text is unavailable for native ConsoleHost window class '{class}': \
+         Windows can accept synthesized Unicode input without delivering it to \
+         the prompt, so Cua Driver refuses rather than reporting a false success. \
+         {suggestion}"
+    ))
+    .with_structured(serde_json::json!({
+        "code": "input_delivery_unavailable",
+        "target_class": class,
+        "event_kind": "text_input",
+        "effect": "refused",
+        "retryable": false,
+        "alternative_route": "process_or_pty",
+        "suggestion": suggestion,
+    }))
 }
 
 /// Returns `true` if the HWND at `hwnd` belongs to a known terminal
@@ -118,5 +197,46 @@ mod tests {
         assert!(class_matches_terminal("CASCADIA_HOSTING_WINDOW_CLASS"));
         assert!(class_matches_terminal("mintty"));
         assert!(class_matches_terminal("ConsoleWindowClass"));
+    }
+
+    #[test]
+    fn native_consolehost_refuses_both_delivery_modes() {
+        assert_eq!(
+            type_text_policy_for_class("ConsoleWindowClass", false, true),
+            TypeTextPolicy::Unsupported
+        );
+        assert_eq!(
+            type_text_policy_for_class("ConsoleWindowClass", true, true),
+            TypeTextPolicy::Unsupported
+        );
+        assert_eq!(
+            type_text_policy_for_class("ConsoleWindowClass", true, false),
+            TypeTextPolicy::Supported
+        );
+
+        let refusal =
+            native_consolehost_type_text_error_for_class("ConsoleWindowClass".to_string());
+        assert_eq!(refusal.is_error, Some(true));
+        let structured = refusal.structured_content.expect("structured refusal");
+        assert_eq!(structured["code"], "input_delivery_unavailable");
+        assert_eq!(structured["effect"], "refused");
+        assert_eq!(structured["retryable"], false);
+        assert_eq!(structured["alternative_route"], "process_or_pty");
+    }
+
+    #[test]
+    fn other_terminals_still_allow_foreground_delivery() {
+        assert_eq!(
+            type_text_policy_for_class("CASCADIA_HOSTING_WINDOW_CLASS", false, true),
+            TypeTextPolicy::ForegroundRequired
+        );
+        assert_eq!(
+            type_text_policy_for_class("CASCADIA_HOSTING_WINDOW_CLASS", true, true),
+            TypeTextPolicy::Supported
+        );
+        assert_eq!(
+            type_text_policy_for_class("Notepad", false, true),
+            TypeTextPolicy::Supported
+        );
     }
 }

@@ -1,46 +1,257 @@
 {
     "swagger": "2.0",
     "info": {
-        "description": "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / orch / svc), namespace management, and deprecated gateway / batch / label routes that now return 410 Gone. All pool operations use OSGymSandboxClaim CRs (Path B).",
+        "description": "Backend sidecar for the cyclops-cs SPA — Keycloak-authenticated key management, service proxies (k8s / svc), and namespace management. All pool operations use OSGymSandboxClaim CRs (Path B).",
         "title": "Cyclops CS Backend API",
         "contact": {},
         "version": "0.1"
     },
     "basePath": "/",
     "paths": {
-        "/api/batch/{pool}/lanes": {
+        "/api/admin/feature-flags": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Lists direct non-SecureString parameters under /feature-flags/cyclops-cs/ with typed values, ownership, and SSM versions.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "List Cyclops feature flags",
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/featureflagadmin.Flag"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            },
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Creates a String parameter under /feature-flags/cyclops-cs/ with cyclops-cs-admin ownership and a typed logical value.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "admin feature flags"
                 ],
-                "summary": "Deprecated batch lanes route",
-                "deprecated": true,
+                "summary": "Create an ad hoc Cyclops feature flag",
                 "parameters": [
                     {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
+                        "description": "Feature flag to create",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateFeatureFlagRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "201": {
+                        "description": "Created",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/featureflagadmin.Flag"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/admin/feature-flags/{key}": {
+            "put": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Updates the typed value when expected_version matches. Terraform and external ownership protect the key from deletion, not value edits.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "admin feature flags"
+                ],
+                "summary": "Update a Cyclops feature flag value",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Flat feature flag key",
+                        "name": "key",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Typed value and expected SSM version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.UpdateFeatureFlagRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/featureflagadmin.Flag"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
                         }
                     }
                 }
@@ -51,65 +262,162 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Deletes only cyclops-cs-admin-owned flags when expected_version matches. Terraform and external keys are protected.",
+                "consumes": [
+                    "application/json"
+                ],
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "admin feature flags"
                 ],
-                "summary": "Deprecated batch lanes route",
-                "deprecated": true,
+                "summary": "Delete an ad hoc Cyclops feature flag",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
+                        "description": "Flat feature flag key",
+                        "name": "key",
                         "in": "path",
                         "required": true
+                    },
+                    {
+                        "description": "Expected SSM version",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.DeleteFeatureFlagRequest"
+                        }
                     }
                 ],
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "422": {
+                        "description": "Unprocessable Entity",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "501": {
+                        "description": "Not Implemented",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.AdminAPIError"
                         }
                     }
                 }
             }
         },
-        "/api/batch/{pool}/submit": {
+        "/api/billing/portal-session": {
             "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Creates a Stripe-hosted Billing Portal Session for the customer owned by the authenticated Cyclops subject.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "billing"
                 ],
-                "summary": "Deprecated batch submission route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Create Stripe Billing Portal Session",
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -120,41 +428,57 @@
                 }
             }
         },
-        "/api/batch/{pool}/{id}": {
-            "delete": {
+        "/api/billing/setup-session": {
+            "post": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Creates a Stripe-hosted Checkout Session in setup mode for reusable off-session card collection.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "billing"
                 ],
-                "summary": "Deprecated batch delete route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Create Stripe card setup Session",
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSessionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -165,41 +489,150 @@
                 }
             }
         },
-        "/api/batch/{pool}/{id}/results": {
+        "/api/billing/setup-session/complete": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reconciles an authenticated subject's completed Stripe Checkout Session and configures its card as the default payment method.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Complete Stripe card setup Session",
+                "parameters": [
+                    {
+                        "description": "Completed Checkout Session",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSetupCompletionRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.BillingSetupCompletionResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/summary": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Returns a sanitized Stripe-backed billing summary for the authenticated Cyclops subject, including whether creating pools currently requires adding a payment card.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "billing"
                 ],
-                "summary": "Deprecated batch results route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
-                        "name": "id",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
+                "summary": "Billing summary",
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/billing.Summary"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "type": "object",
                             "additionalProperties": {
@@ -210,46 +643,442 @@
                 }
             }
         },
-        "/api/batch/{pool}/{id}/status": {
+        "/api/billing/usage": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
+                "description": "Returns Stripe-backed invoice spend, trend, and current-period line-item breakdown for the authenticated Fleet subject.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "batch"
+                    "billing"
                 ],
-                "summary": "Deprecated batch status route",
-                "deprecated": true,
+                "summary": "Billing usage",
+                "parameters": [
+                    {
+                        "enum": [
+                            3,
+                            6,
+                            12
+                        ],
+                        "type": "integer",
+                        "default": 6,
+                        "description": "History window in months",
+                        "name": "months",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/billing.Usage"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/billing/webhook": {
+            "post": {
+                "description": "Verifies a Stripe-signed raw webhook body and configures the default payment method for completed fleet setup intents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "tags": [
+                    "billing"
+                ],
+                "summary": "Receive Stripe webhook",
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "type": "object",
+                            "additionalProperties": {
+                                "type": "string"
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        "/api/chat/conversations": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "List the calling user's chat conversations",
+                "parameters": [
+                    {
+                        "type": "boolean",
+                        "description": "Whether to list archived conversations",
+                        "name": "archived",
+                        "in": "query"
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/chat.ConversationSummary"
+                            }
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Create a chat conversation",
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/chat.Conversation"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/chat/conversations/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Get a chat conversation",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Batch ID",
+                        "description": "Conversation ID",
                         "name": "id",
                         "in": "path",
                         "required": true
                     }
                 ],
                 "responses": {
-                    "410": {
-                        "description": "Gone",
+                    "200": {
+                        "description": "OK",
                         "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
+                            "$ref": "#/definitions/chat.Conversation"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "patch": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Archive or restore a chat conversation",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conversation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Archive state",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ArchiveConversationRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/chat.Conversation"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "413": {
+                        "description": "Request Entity Too Large",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/chat/conversations/{id}/turns": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/x-ndjson"
+                ],
+                "tags": [
+                    "chat"
+                ],
+                "summary": "Send a chat turn and stream the assistant response",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Conversation ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "User message or tool results",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.TurnRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.turnEvent"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "Conflict",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     }
                 }
@@ -286,38 +1115,6 @@
                 }
             }
         },
-        "/api/gateway/{name}/{path}": {
-            "get": {
-                "description": "The per-pool HTTP orchestrator has been deprecated and removed. All pools now use OSGymSandboxClaim CRs exclusively (Path B). This endpoint returns 410 Gone for any request. See CUA-609.",
-                "tags": [
-                    "gateway"
-                ],
-                "summary": "DEPRECATED: Per-pool orchestrator reverse-proxy (CUA-609)",
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name (DNS-1123 label)",
-                        "name": "name",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Upstream path (ignored)",
-                        "name": "path",
-                        "in": "path"
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Orchestrator HTTP layer deprecated (CUA-609)",
-                        "schema": {
-                            "$ref": "#/definitions/handlers.ErrorResponse"
-                        }
-                    }
-                }
-            }
-        },
         "/api/k8s/{path}": {
             "get": {
                 "security": [
@@ -325,7 +1122,7 @@
                         "BearerAuth": []
                     }
                 ],
-                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the SPA can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. EventList responses are filtered by the caller's OPA visible_events policy via auth.K8sEventFilterMiddleware (mounted in main.go's route chain).",
+                "description": "Forwards requests to http://127.0.0.1:8001 (the kubectl-proxy sidecar) so the caller can read K8s resources via the pod ServiceAccount. SPA-only; OPA-gated. The policy is an allowlist: only enumerated group/version/resource/method combinations are proxied (the osgym.cua.ai and cua.ai fleet CRDs, namespaced pod/service reads, a PATCH on osgymsandboxes items whose body touches only spec.vmTemplate.services, pod logs and metrics, KubeVirt reads, and API discovery). Anything else, including Kubernetes events and any cluster-scoped path, is denied and never reaches the sidecar.",
                 "tags": [
                     "passthrough"
                 ],
@@ -494,186 +1291,6 @@
                 }
             }
         },
-        "/api/label/{pool}/{label}": {
-            "delete": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label delete route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/batch": {
-            "post": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label batch route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/results": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label results route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        "/api/label/{pool}/{label}/status": {
-            "get": {
-                "security": [
-                    {
-                        "BearerAuth": []
-                    }
-                ],
-                "description": "Route is deprecated and unavailable. Returns 410 Gone for every request. The orchestrator-backed batch surface is retired; callers must migrate to the replacement flow.",
-                "produces": [
-                    "application/json"
-                ],
-                "tags": [
-                    "label"
-                ],
-                "summary": "Deprecated label status route",
-                "deprecated": true,
-                "parameters": [
-                    {
-                        "type": "string",
-                        "description": "Pool name",
-                        "name": "pool",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Label",
-                        "name": "label",
-                        "in": "path",
-                        "required": true
-                    }
-                ],
-                "responses": {
-                    "410": {
-                        "description": "Gone",
-                        "schema": {
-                            "type": "object",
-                            "additionalProperties": {
-                                "type": "string"
-                            }
-                        }
-                    }
-                }
-            }
-        },
         "/api/namespaces": {
             "get": {
                 "security": [
@@ -776,6 +1393,68 @@
             }
         },
         "/api/namespaces/{name}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Gets a K8s namespace via impersonation. Capsule restricts access to the caller's Tenant.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "namespaces"
+                ],
+                "summary": "Get a namespace owned by the calling user",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Namespace name",
+                        "name": "name",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.NamespaceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "Forbidden",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "502": {
+                        "description": "Bad Gateway",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
             "delete": {
                 "security": [
                     {
@@ -833,46 +1512,44 @@
                 }
             }
         },
-        "/api/orch/{namespace}/{service}/{path}": {
+        "/api/signed-service-urls/{namespace}": {
             "get": {
                 "security": [
                     {
                         "BearerAuth": []
                     }
                 ],
-                "description": "Resolves \u003cservice\u003e.\u003cnamespace\u003e.svc.cluster.local at request time (in-cluster DNS). The caller must hold RBAC in {namespace} (verified via an impersonated RoleBinding probe); OPA additionally validates that namespace and service look like DNS-1123 labels.",
-                "tags": [
-                    "passthrough"
+                "produces": [
+                    "application/json"
                 ],
-                "summary": "SPA-authenticated proxy to a per-namespace orchestrator service",
+                "tags": [
+                    "signed-service-urls"
+                ],
+                "summary": "List signed URLs for a sandbox claim",
                 "parameters": [
                     {
                         "type": "string",
-                        "description": "Namespace (DNS-1123 label)",
+                        "description": "K8s namespace",
                         "name": "namespace",
                         "in": "path",
                         "required": true
                     },
                     {
                         "type": "string",
-                        "description": "Service name (DNS-1123 label)",
-                        "name": "service",
-                        "in": "path",
-                        "required": true
-                    },
-                    {
-                        "type": "string",
-                        "description": "Upstream path",
-                        "name": "path",
-                        "in": "path",
+                        "description": "Claim name",
+                        "name": "claim",
+                        "in": "query",
                         "required": true
                     }
                 ],
                 "responses": {
                     "200": {
-                        "description": "Upstream response",
+                        "description": "OK",
                         "schema": {
-                            "type": "string"
+                            "type": "array",
+                            "items": {
+                                "$ref": "#/definitions/handlers.SignedServiceURLResponse"
+                            }
                         }
                     },
                     "400": {
@@ -887,14 +1564,152 @@
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     },
-                    "403": {
-                        "description": "Forbidden",
+                    "500": {
+                        "description": "Internal Server Error",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
                     },
-                    "502": {
-                        "description": "Bad Gateway",
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            },
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a temporary bearer link for one logical sandbox service.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "signed-service-urls"
+                ],
+                "summary": "Create a signed URL for a sandbox service",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "K8s namespace",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Signed service URL details",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/handlers.CreateSignedServiceURLRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.SignedServiceURLResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/api/signed-service-urls/{namespace}/{id}": {
+            "delete": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "tags": [
+                    "signed-service-urls"
+                ],
+                "summary": "Revoke a signed URL",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "K8s namespace",
+                        "name": "namespace",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "type": "string",
+                        "description": "Signed URL ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "204": {
+                        "description": "No Content"
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "Not Found",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/handlers.ErrorResponse"
+                        }
+                    },
+                    "503": {
+                        "description": "Service Unavailable",
                         "schema": {
                             "$ref": "#/definitions/handlers.ErrorResponse"
                         }
@@ -1099,7 +1914,7 @@
                 "tags": [
                     "health"
                 ],
-                "summary": "Liveness/readiness probe",
+                "summary": "Liveness probe",
                 "responses": {
                     "200": {
                         "description": "OK",
@@ -1112,12 +1927,385 @@
         }
     },
     "definitions": {
+        "billing.CardSummary": {
+            "type": "object",
+            "properties": {
+                "brand": {
+                    "type": "string"
+                },
+                "exp_month": {
+                    "type": "integer"
+                },
+                "exp_year": {
+                    "type": "integer"
+                },
+                "last4": {
+                    "type": "string"
+                }
+            }
+        },
+        "billing.Summary": {
+            "type": "object",
+            "required": [
+                "card",
+                "payment_method_present",
+                "pool_create_card_required"
+            ],
+            "properties": {
+                "card": {
+                    "allOf": [
+                        {
+                            "$ref": "#/definitions/billing.CardSummary"
+                        }
+                    ],
+                    "x-nullable": true
+                },
+                "payment_method_present": {
+                    "type": "boolean"
+                },
+                "pool_create_card_required": {
+                    "description": "PoolCreateCardRequired is advisory admission state the API handler\nfills in (Service.Summary always leaves it false): true when creating\na pool or any other custom resource would be denied because the\naccount has no qualifying payment card. The dashboard reads it to gate\ncreate flows before a request ever reaches the enforcing policy.",
+                    "type": "boolean"
+                }
+            }
+        },
+        "billing.Usage": {
+            "type": "object",
+            "properties": {
+                "breakdown": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/billing.UsageBreakdownItem"
+                    }
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "current_estimate": {
+                    "type": "integer"
+                },
+                "current_period_end": {
+                    "type": "string"
+                },
+                "current_period_start": {
+                    "type": "string"
+                },
+                "previous_period_amount": {
+                    "type": "integer"
+                },
+                "range_end": {
+                    "type": "string"
+                },
+                "range_start": {
+                    "type": "string"
+                },
+                "trend": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/billing.UsagePoint"
+                    }
+                }
+            }
+        },
+        "billing.UsageBreakdownItem": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "name": {
+                    "type": "string"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                },
+                "quantity": {
+                    "type": "integer"
+                }
+            }
+        },
+        "billing.UsagePoint": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer"
+                },
+                "estimate": {
+                    "type": "boolean"
+                },
+                "period_end": {
+                    "type": "string"
+                },
+                "period_start": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.Conversation": {
+            "type": "object",
+            "properties": {
+                "archived_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chat.Message"
+                    }
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.ConversationSummary": {
+            "type": "object",
+            "properties": {
+                "archived_at": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "title": {
+                    "type": "string"
+                },
+                "updated_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.Message": {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "role": {
+                    "$ref": "#/definitions/chat.Role"
+                },
+                "tool_call_id": {
+                    "type": "string"
+                },
+                "tool_calls": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chat.ToolCall"
+                    }
+                }
+            }
+        },
+        "chat.Role": {
+            "type": "string",
+            "enum": [
+                "user",
+                "assistant",
+                "tool"
+            ],
+            "x-enum-varnames": [
+                "RoleUser",
+                "RoleAssistant",
+                "RoleTool"
+            ]
+        },
+        "chat.ToolCall": {
+            "type": "object",
+            "properties": {
+                "function": {
+                    "$ref": "#/definitions/chat.ToolFunction"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                }
+            }
+        },
+        "chat.ToolFunction": {
+            "type": "object",
+            "properties": {
+                "arguments": {
+                    "type": "string"
+                },
+                "name": {
+                    "type": "string"
+                }
+            }
+        },
+        "featureflagadmin.Flag": {
+            "type": "object",
+            "properties": {
+                "deletable": {
+                    "type": "boolean"
+                },
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "managed_by": {
+                    "type": "string"
+                },
+                "modified_at": {
+                    "type": "string"
+                },
+                "ownership": {
+                    "$ref": "#/definitions/featureflagadmin.Ownership"
+                },
+                "path": {
+                    "type": "string"
+                },
+                "raw_value": {
+                    "type": "string"
+                },
+                "tags": {
+                    "type": "object",
+                    "additionalProperties": {
+                        "type": "string"
+                    }
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
+                },
+                "version": {
+                    "type": "integer"
+                }
+            }
+        },
+        "featureflagadmin.Ownership": {
+            "type": "string",
+            "enum": [
+                "terraform",
+                "ad_hoc",
+                "external"
+            ],
+            "x-enum-varnames": [
+                "OwnershipTerraform",
+                "OwnershipAdHoc",
+                "OwnershipExternal"
+            ]
+        },
+        "featureflags.ValueType": {
+            "type": "string",
+            "enum": [
+                "boolean",
+                "number",
+                "string",
+                "json"
+            ],
+            "x-enum-varnames": [
+                "ValueBoolean",
+                "ValueNumber",
+                "ValueString",
+                "ValueJSON"
+            ]
+        },
+        "handlers.AdminAPIError": {
+            "type": "object",
+            "properties": {
+                "code": {
+                    "type": "string"
+                },
+                "current": {
+                    "$ref": "#/definitions/featureflagadmin.Flag"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.ArchiveConversationRequest": {
+            "type": "object",
+            "required": [
+                "archived"
+            ],
+            "properties": {
+                "archived": {
+                    "type": "boolean"
+                }
+            }
+        },
+        "handlers.BillingSessionResponse": {
+            "type": "object",
+            "properties": {
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.BillingSetupCompletionRequest": {
+            "type": "object",
+            "properties": {
+                "session_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.BillingSetupCompletionResponse": {
+            "type": "object",
+            "properties": {
+                "applied": {
+                    "type": "boolean"
+                }
+            }
+        },
         "handlers.ConfigResponse": {
             "type": "object",
             "properties": {
                 "admin": {
                     "description": "Admin is true when the caller is in input.flags.admin_subs (OPA-evaluated).\nNon-admins get the customer view: infra-only nav (Nodes, Operator events)\nis hidden in the SPA and the corresponding kubectl-proxy paths are denied\nserver-side by authz.rego.",
                     "type": "boolean"
+                },
+                "billing": {
+                    "type": "boolean"
+                },
+                "chat": {
+                    "type": "boolean"
+                },
+                "usage": {
+                    "type": "boolean"
+                },
+                "usage_pricing": {
+                    "$ref": "#/definitions/handlers.UsagePricingConfig"
+                }
+            }
+        },
+        "handlers.CreateFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "description": {
+                    "type": "string"
+                },
+                "key": {
+                    "type": "string"
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
                 }
             }
         },
@@ -1163,6 +2351,40 @@
                 }
             }
         },
+        "handlers.CreateSignedServiceURLRequest": {
+            "type": "object",
+            "required": [
+                "claim",
+                "expiresInSeconds",
+                "logicalService",
+                "sandbox",
+                "service"
+            ],
+            "properties": {
+                "claim": {
+                    "type": "string"
+                },
+                "expiresInSeconds": {
+                    "type": "integer",
+                    "maximum": 86400,
+                    "minimum": 60
+                },
+                "label": {
+                    "description": "Label is optional and limited to 120 UTF-8 bytes. OpenAPI maxLength is a\ncharacter upper bound; backend byte validation remains authoritative.",
+                    "type": "string",
+                    "maxLength": 120
+                },
+                "logicalService": {
+                    "type": "string"
+                },
+                "sandbox": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                }
+            }
+        },
         "handlers.CreateUserKeyRequest": {
             "type": "object",
             "properties": {
@@ -1202,6 +2424,14 @@
                 },
                 "token_url": {
                     "type": "string"
+                }
+            }
+        },
+        "handlers.DeleteFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "type": "integer"
                 }
             }
         },
@@ -1263,6 +2493,78 @@
                 }
             }
         },
+        "handlers.SignedServiceURLResponse": {
+            "type": "object",
+            "properties": {
+                "claim": {
+                    "type": "string"
+                },
+                "createdAt": {
+                    "type": "string"
+                },
+                "expiresAt": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "label": {
+                    "type": "string"
+                },
+                "logicalService": {
+                    "type": "string"
+                },
+                "namespace": {
+                    "type": "string"
+                },
+                "revokedAt": {
+                    "type": "string"
+                },
+                "sandbox": {
+                    "type": "string"
+                },
+                "service": {
+                    "type": "string"
+                },
+                "url": {
+                    "type": "string"
+                }
+            }
+        },
+        "handlers.TurnRequest": {
+            "type": "object",
+            "properties": {
+                "messages": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/chat.Message"
+                    }
+                }
+            }
+        },
+        "handlers.UpdateFeatureFlagRequest": {
+            "type": "object",
+            "properties": {
+                "expected_version": {
+                    "type": "integer"
+                },
+                "value": {},
+                "value_type": {
+                    "$ref": "#/definitions/featureflags.ValueType"
+                }
+            }
+        },
+        "handlers.UsagePricingConfig": {
+            "type": "object",
+            "properties": {
+                "memory_gib_hour_usd": {
+                    "type": "number"
+                },
+                "vcpu_hour_usd": {
+                    "type": "number"
+                }
+            }
+        },
         "handlers.UserKeyResponse": {
             "type": "object",
             "properties": {
@@ -1280,6 +2582,20 @@
                     "items": {
                         "type": "string"
                     }
+                }
+            }
+        },
+        "handlers.turnEvent": {
+            "type": "object",
+            "properties": {
+                "delta": {
+                    "type": "string"
+                },
+                "message": {
+                    "$ref": "#/definitions/chat.Message"
+                },
+                "type": {
+                    "type": "string"
                 }
             }
         },
@@ -1306,7 +2622,7 @@
     },
     "securityDefinitions": {
         "BearerAuth": {
-            "description": "Keycloak access token. For /api/keys and /api/{k8s,orch} the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli). /api/gateway/{name} requires a per-key token whose `namespace` claim equals \"pool-{name}\" (enforced by OPA). The deprecated /api/batch/{pool} and /api/label/{pool} routes are permanently retired — they return 410 Gone for every request regardless of token validity.",
+            "description": "Keycloak access token. For /api/keys and /api/k8s the token is an interactive user JWT (azp=cyclops-cs-spa or azp=cua-cli).",
             "type": "apiKey",
             "name": "Authorization",
             "in": "header"

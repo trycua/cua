@@ -13,7 +13,10 @@ enum CommandRegistry {
             Set.self,
             List.self,
             Run.self,
+            Attach.self,
             Stop.self,
+            Shutdown.self,
+            Restart.self,
             SSH.self,
             Sip.self,
             IPSW.self,
@@ -24,6 +27,7 @@ enum CommandRegistry {
             Logs.self,
             CheckUpdate.self,
             Update.self,
+            ReleaseChannelCommand.self,
             Setup.self,
             DumpDocs.self,
         ]

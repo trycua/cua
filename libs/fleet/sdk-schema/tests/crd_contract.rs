@@ -26,76 +26,7 @@ fn generated_bundle_has_stable_resource_order() {
             "osgymsandboxtemplates.osgym.cua.ai",
             "osgymsandboxwarmpools.osgym.cua.ai",
             "osgymsandboxclaims.osgym.cua.ai",
-            "osgymworkspacepools.cua.ai",
         ]
-    );
-}
-
-#[test]
-fn workspace_pool_preserves_fields_constraints_and_kubernetes_extensions() {
-    let workspace_pool = semantic_yaml_documents(&render_crds().unwrap())
-        .unwrap()
-        .into_iter()
-        .find(|document| {
-            document.pointer("/metadata/name") == Some(&json!("osgymworkspacepools.cua.ai"))
-        })
-        .unwrap();
-    let schema = "/spec/versions/0/schema/openAPIV3Schema";
-
-    assert_eq!(
-        workspace_pool.pointer(&format!("{schema}/properties/spec/required")),
-        Some(&json!(["replicas", "template"]))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/properties/spec/properties/replicas/minimum"
-        )),
-        Some(&json!(0.0))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/properties/spec/properties/template/required"
-        )),
-        Some(&json!(["containerDiskImage"]))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!("{schema}/properties/spec/properties/template/properties/tolerations/items/x-kubernetes-preserve-unknown-fields")),
-        Some(&json!(true))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!("{schema}/properties/spec/properties/template/properties/probes/x-kubernetes-preserve-unknown-fields")),
-        Some(&json!(true))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/properties/spec/properties/autoscaling/properties/minPoolSize/default"
-        )),
-        Some(&json!(0))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/properties/spec/properties/autoscaling/properties/maxPoolSize/minimum"
-        )),
-        Some(&json!(1.0))
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/properties/spec/properties/services/items/properties/targetPort/maximum"
-        )),
-        Some(&json!(65535.0))
-    );
-    assert_eq!(
-        workspace_pool.pointer("/spec/versions/0/subresources/status"),
-        Some(&json!({}))
-    );
-    assert_eq!(
-        workspace_pool.pointer("/spec/versions/0/additionalPrinterColumns"),
-        Some(&json!([
-            {"name": "Replicas", "type": "integer", "jsonPath": ".spec.replicas"},
-            {"name": "Available", "type": "integer", "jsonPath": ".status.availableCount"},
-            {"name": "Phase", "type": "string", "jsonPath": ".status.phase"},
-            {"name": "Age", "type": "date", "jsonPath": ".metadata.creationTimestamp"},
-        ]))
     );
 }
 
@@ -128,76 +59,6 @@ fn assert_drift_reports(documents: &[serde_json::Value], expected_names: &[&str]
 }
 
 #[test]
-fn workspace_pool_schema_allows_only_historical_template_paths() {
-    let documents = generated_documents();
-    let workspace_pool = documents
-        .iter()
-        .find(|document| {
-            document.pointer("/metadata/name") == Some(&json!("osgymworkspacepools.cua.ai"))
-        })
-        .unwrap();
-    let schema = "/spec/versions/0/schema/openAPIV3Schema/properties";
-    let spec = workspace_pool
-        .pointer(&format!("{schema}/spec"))
-        .and_then(serde_json::Value::as_object)
-        .unwrap();
-    let template = workspace_pool
-        .pointer(&format!("{schema}/spec/properties/template"))
-        .and_then(serde_json::Value::as_object)
-        .unwrap();
-
-    assert_eq!(spec.get("required"), Some(&json!(["replicas", "template"])));
-    assert_eq!(
-        spec.get("properties")
-            .and_then(serde_json::Value::as_object)
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from(["autoscaling", "replicas", "services", "template",])
-    );
-    assert_eq!(
-        template.get("required"),
-        Some(&json!(["containerDiskImage"]))
-    );
-    assert_eq!(
-        template
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-            .unwrap()
-            .keys()
-            .map(String::as_str)
-            .collect::<std::collections::BTreeSet<_>>(),
-        std::collections::BTreeSet::from([
-            "command",
-            "containerDiskImage",
-            "cpuCores",
-            "firmware",
-            "imagePullSecret",
-            "memory",
-            "nodeSelector",
-            "oidc",
-            "probes",
-            "runtime",
-            "runtimeClassName",
-            "tolerations",
-        ])
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/spec/properties/template/properties/imagePullPolicy"
-        )),
-        None
-    );
-    assert_eq!(
-        workspace_pool.pointer(&format!(
-            "{schema}/spec/properties/template/properties/services"
-        )),
-        None
-    );
-}
-
-#[test]
 fn check_crds_reports_modified_removed_added_reordered_and_duplicate_documents() {
     let documents = generated_documents();
 
@@ -207,7 +68,7 @@ fn check_crds_reports_modified_removed_added_reordered_and_duplicate_documents()
 
     let mut removed = documents.clone();
     removed.pop();
-    assert_drift_reports(&removed, &["osgymworkspacepools.cua.ai"]);
+    assert_drift_reports(&removed, &["osgymsandboxclaims.osgym.cua.ai"]);
 
     let mut added = documents.clone();
     let mut additional = documents[0].clone();

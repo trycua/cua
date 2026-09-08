@@ -576,15 +576,38 @@ fn send_click_synthesized_mods_impl(
         // Capture whether the target was ALREADY always-on-top so we don't strip
         // that state on restore — only demote below if WE promoted it.
         let was_topmost = (GetWindowLongPtrW(target, GWL_EXSTYLE) as u32) & WS_EX_TOPMOST.0 != 0;
-        let foreground_attach_failed = activate && !crate::input::force_foreground_attached(target);
+        if activate && !crate::input::force_foreground_assisted(target).0 {
+            let actual = GetForegroundWindow();
+            bail!(
+                "foreground_unavailable: Windows did not activate exact target HWND {:?} \
+                 (actual foreground HWND {:?}); no mouse input was sent",
+                target.0,
+                actual.0
+            );
+        }
+        let foreground_target = if activate {
+            match crate::win32::capture_foreground_target(target.0 as usize as u64) {
+                Some(target) => Some(target),
+                None => bail!(
+                    "foreground_unavailable: exact target HWND {:?} disappeared before mouse \
+                     input could be sent",
+                    target.0
+                ),
+            }
+        } else {
+            None
+        };
         let noactivate = (!activate).then(|| crate::input::NoActivateGuard::arm(target));
-        if !activate || foreground_attach_failed {
-            let flags = if activate {
-                SWP_NOMOVE | SWP_NOSIZE
-            } else {
-                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE
-            };
-            let _ = SetWindowPos(target, HWND_TOPMOST, 0, 0, 0, 0, flags);
+        if !activate {
+            let _ = SetWindowPos(
+                target,
+                HWND_TOPMOST,
+                0,
+                0,
+                0,
+                0,
+                SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE,
+            );
         }
 
         // Move the cursor so the OS hover state matches before the click; the
@@ -597,14 +620,18 @@ fn send_click_synthesized_mods_impl(
         // poll GetKeyState (WPF, Chromium) observe the held state, then released
         // after the click loop below.
         let (mod_downs, mod_ups) = crate::input::keyboard::modifier_hold_inputs(modifiers);
+        let mut sent_ok = true;
         if !mod_downs.is_empty() {
-            SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            let sent = SendInput(&mod_downs, std::mem::size_of::<INPUT>() as i32);
+            sent_ok = sent as usize == mod_downs.len();
             sleep(Duration::from_millis(5));
         }
 
         let count = count.max(1);
-        let mut sent_ok = true;
         for i in 0..count {
+            if !sent_ok {
+                break;
+            }
             // Only the move record carries absolute coordinates. Button-only
             // records act at the current pointer position; adding ABSOLUTE to
             // them can prevent retained-mode controls from seeing the press.
@@ -621,7 +648,13 @@ fn send_click_synthesized_mods_impl(
 
         // Release any held modifiers (reverse order) before restoring z-order.
         if !mod_ups.is_empty() {
-            SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+            let released = SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+            if released as usize != mod_ups.len() {
+                // A second release attempt is safe and reduces the chance of a
+                // partially inserted chord leaving system modifier state held.
+                let _ = SendInput(&mod_ups, std::mem::size_of::<INPUT>() as i32);
+                sent_ok = false;
+            }
         }
 
         // Let the target process mouse-up before any background-route restore.
@@ -629,7 +662,7 @@ fn send_click_synthesized_mods_impl(
         // lose the click if the real cursor is warped away while those queued
         // messages are still being dispatched.
         sleep(Duration::from_millis(if activate { 120 } else { 40 }));
-        if !was_topmost && (!activate || foreground_attach_failed) {
+        if !was_topmost && !activate {
             let _ = SetWindowPos(
                 target,
                 HWND_NOTOPMOST,
@@ -656,13 +689,24 @@ fn send_click_synthesized_mods_impl(
         }
         drop(noactivate);
         if !sent_ok {
-            bail!("SendInput inserted fewer mouse events than expected for the foreground click.");
+            bail!(
+                "SendInput inserted fewer modifier or mouse events than expected for the \
+                 foreground click."
+            );
         }
         if activate {
-            let foreground_root = GetAncestor(GetForegroundWindow(), GA_ROOT);
-            let target_root = GetAncestor(target, GA_ROOT);
-            if foreground_root != target_root {
-                bail!("The foreground click did not activate its target window.");
+            let actual = GetForegroundWindow();
+            if !crate::win32::foreground_matches_target_or_owned_window(
+                foreground_target.expect("foreground target captured before input"),
+                actual.0 as usize as u64,
+            ) {
+                bail!(
+                    "foreground_unavailable: exact target HWND {:?} or a verified same-process \
+                     post-action window was not foreground after the click \
+                     (actual foreground HWND {:?})",
+                    target.0,
+                    actual.0
+                );
             }
         }
     }
@@ -948,6 +992,87 @@ pub fn foreground_window() -> Result<u64> {
 pub fn move_cursor_desktop(x: i32, y: i32) -> Result<()> {
     unsafe { SetCursorPos(x, y) }
         .map_err(|error| anyhow::anyhow!("SetCursorPos({x}, {y}) failed: {error}"))
+}
+
+/// Classify a `WM_NCHITTEST` result into the non-client regions where a
+/// posted-message drag can NEVER work: the OS handles caption and border
+/// drags with its interactive move/resize modal loop
+/// (`WM_NCLBUTTONDOWN` → `DefWindowProc` → `WM_SYSCOMMAND SC_MOVE/SC_SIZE`),
+/// which only real pointer input off the system input queue can drive.
+/// Posted `WM_MOUSEMOVE` streams are simply discarded, so background
+/// delivery must refuse with `background_unavailable` instead of reporting
+/// a success that moved nothing.
+pub fn classify_nc_move_resize_hit(hit: isize) -> Option<&'static str> {
+    // Constant values per winuser.h; kept as literals because the windows
+    // crate exposes hit-test codes as u32 while SendMessage returns LRESULT.
+    match hit {
+        2 => Some("caption / title bar"), // HTCAPTION
+        4 => Some("size box"),            // HTGROWBOX / HTSIZE
+        10..=17 => Some("resize border"), // HTLEFT..HTBOTTOMRIGHT
+        _ => None,
+    }
+}
+
+/// Screen-coordinate `WM_NCHITTEST` against the drag target's top-level
+/// window. Returns the human-readable region name when the point falls on a
+/// caption / resize border (the regions a posted drag cannot actuate), else
+/// `None`. Uses `SendMessageTimeoutW(SMTO_ABORTIFHUNG)` so a hung target
+/// cannot wedge the daemon; timeouts fail open (`None`) — the posted drag
+/// then proceeds exactly as before this check existed.
+pub fn non_client_move_resize_hit(root: u64, sx: i32, sy: i32) -> Option<&'static str> {
+    use windows::Win32::UI::WindowsAndMessaging::{
+        SendMessageTimeoutW, SMTO_ABORTIFHUNG, WM_NCHITTEST,
+    };
+    if root == 0 {
+        return None;
+    }
+    let hwnd = HWND(root as *mut _);
+    // Hit-test the top-level frame: the caption belongs to the root window
+    // even when the caller resolved a child HWND as the drag target.
+    let top = unsafe { GetAncestor(hwnd, GA_ROOT) };
+    let top = if top.0.is_null() { hwnd } else { top };
+    // WM_NCHITTEST takes SCREEN coordinates packed in LPARAM (signed 16-bit
+    // each — correct for any virtual-desktop position within ±32767).
+    let lp = LPARAM((((sy as i16 as u16 as u32) << 16) | (sx as i16 as u16 as u32)) as isize);
+    let mut result: usize = 0;
+    let ok = unsafe {
+        SendMessageTimeoutW(
+            top,
+            WM_NCHITTEST,
+            WPARAM(0),
+            lp,
+            SMTO_ABORTIFHUNG,
+            200, // ms — a live window answers this in microseconds
+            Some(&mut result),
+        )
+    };
+    if ok.0 == 0 {
+        return None; // timed out / hung target: fail open, post as before
+    }
+    classify_nc_move_resize_hit(result as isize)
+}
+
+#[cfg(test)]
+mod nc_hit_tests {
+    use super::classify_nc_move_resize_hit;
+
+    #[test]
+    fn caption_and_borders_refuse_posted_drags_client_area_does_not() {
+        assert_eq!(
+            classify_nc_move_resize_hit(2), // HTCAPTION
+            Some("caption / title bar")
+        );
+        assert_eq!(classify_nc_move_resize_hit(4), Some("size box")); // HTGROWBOX
+        for border in 10..=17 {
+            // HTLEFT..HTBOTTOMRIGHT
+            assert_eq!(classify_nc_move_resize_hit(border), Some("resize border"));
+        }
+        assert_eq!(classify_nc_move_resize_hit(1), None); // HTCLIENT
+        assert_eq!(classify_nc_move_resize_hit(0), None); // HTNOWHERE
+        assert_eq!(classify_nc_move_resize_hit(3), None); // HTSYSMENU (click, not drag-move)
+        assert_eq!(classify_nc_move_resize_hit(-1), None); // HTERROR
+        assert_eq!(classify_nc_move_resize_hit(18), None); // HTBORDER (non-resizable edge)
+    }
 }
 
 #[cfg(test)]

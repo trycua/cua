@@ -11,6 +11,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from ..platforms import (
+    CONTAINER_PLATFORMS,
+    PLATFORMS,
+    resolve_container_image,
+)
 from ..sessions.providers.local_environment import check_image_exists, pull_image
 from .docker_utils import (
     ContainerInfo,
@@ -27,46 +32,6 @@ from .docker_utils import (
     stop_container,
     wait_for_container,
 )
-
-# =============================================================================
-# Configuration
-# =============================================================================
-
-# Environment type configurations
-ENV_CONFIGS = {
-    "linux-docker": {
-        "image": "nikri/kicad-snorkel:20260316b",
-        "internal_vnc_port": 6901,
-        "internal_api_port": 8000,
-        "requires_kvm": False,
-        "os_type": "linux",
-        "use_overlays": False,  # Stateless container, no disk to protect
-    },
-    "linux-qemu": {
-        "image": "trycua/cua-qemu-linux:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "os_type": "linux",
-        "use_overlays": True,  # Protect golden QCOW2 disk
-    },
-    "windows-qemu": {
-        "image": "trycua/cua-qemu-windows:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "os_type": "windows",
-        "use_overlays": True,  # Protect golden QCOW2 disk
-    },
-    "android-qemu": {
-        "image": "trycua/cua-qemu-android:latest",
-        "internal_vnc_port": 8006,
-        "internal_api_port": 5000,
-        "requires_kvm": True,
-        "os_type": "android",
-        "use_overlays": True,  # Protect golden QCOW2 disk
-    },
-}
 
 # Default agent image
 DEFAULT_AGENT_IMAGE = "cua-bench:latest"
@@ -273,12 +238,12 @@ class TaskRunner:
             )
 
         # Validate env_type (skip validation for simulated since we don't use it)
-        if not is_simulated and env_type not in ENV_CONFIGS:
+        if not is_simulated and env_type not in CONTAINER_PLATFORMS:
             raise ValueError(
-                f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
+                f"Unknown env_type: {env_type}. Valid types: {list(CONTAINER_PLATFORMS)}"
             )
 
-        config = ENV_CONFIGS.get(env_type, {}) if not is_simulated else {}
+        config = PLATFORMS.get(env_type, {}) if not is_simulated else {}
         golden_name = golden_name or env_type if not is_simulated else "simulated"
 
         # Generate unique task ID
@@ -297,7 +262,11 @@ class TaskRunner:
             "network": network_name,
             "env_container": env_container_name if not is_simulated else None,
             "agent_container": agent_container_name,
-            "env_image": config.get("image") if not is_simulated else None,
+            "env_image": (
+                resolve_container_image(env_type, golden_name)
+                if not is_simulated
+                else None
+            ),
             "agent_image": self.agent_image,
             "remove_images": remove_images_after,
             "overlay_path": overlay_path,
@@ -486,12 +455,12 @@ class TaskRunner:
             await full_cleanup()
 
         # Validate env_type
-        if env_type not in ENV_CONFIGS:
+        if env_type not in CONTAINER_PLATFORMS:
             raise ValueError(
-                f"Unknown env_type: {env_type}. Valid types: {list(ENV_CONFIGS.keys())}"
+                f"Unknown env_type: {env_type}. Valid types: {list(CONTAINER_PLATFORMS)}"
             )
 
-        config = ENV_CONFIGS[env_type]
+        config = PLATFORMS[env_type]
         golden_name = golden_name or env_type
 
         # Auto-allocate ports if requested and not specified
@@ -518,7 +487,7 @@ class TaskRunner:
             "network": network_name,
             "env_container": env_container_name,
             "agent_container": None,  # No agent in interactive mode
-            "env_image": config["image"],
+            "env_image": resolve_container_image(env_type, golden_name),
             "agent_image": None,
             "remove_images": False,
             "overlay_path": overlay_path,
@@ -679,7 +648,7 @@ class TaskRunner:
 
         # Start container
         return await start_container(
-            image=config["image"],
+            image=resolve_container_image(env_type, golden_name),
             name=container_name,
             network=network_name,
             hostname=self.env_hostname,
@@ -997,15 +966,13 @@ class TaskRunner:
         localhost:8000, so no base64-exec calls are needed during the agent loop.
         """
         import signal
-        import sys
 
         from .daytona_harness import DaytonaHarness
 
         harness = DaytonaHarness()
 
         # Resolve env-type name → actual Docker image
-        _raw = golden_name or env_type or ""
-        env_image = ENV_CONFIGS.get(_raw, {}).get("image") or _raw or "nikri/kicad-snorkel:20260316b"
+        env_image = resolve_container_image(env_type, golden_name)
 
         # API keys and env vars to bake into the sandbox at creation time
         # (avoids passing secrets via process.exec env which triggers abuse detection)

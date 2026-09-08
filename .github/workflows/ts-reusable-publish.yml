@@ -104,6 +104,12 @@ jobs:
       - name: Publish to npm
         if: steps.verify-version.outputs.should_publish == 'true' || steps.check-version.outputs.changed == 'true'
         working-directory: ./${{ inputs.package_dir }}
-        run: npm publish --access public --provenance
+        run: |
+          if [ "${{ inputs.package_manager }}" = "pnpm" ]; then
+            # pnpm rewrites workspace protocol dependencies to registry semver ranges.
+            pnpm publish --access public --provenance --no-git-checks
+          else
+            npm publish --access public --provenance
+          fi
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

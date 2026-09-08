@@ -21,7 +21,14 @@ fn code(response: &Value) -> Option<&str> {
 
 #[test]
 fn policies_are_isolated_immutable_and_enforced_over_mcp() {
-    let mut driver = RawDriver::spawn().expect("spawn source-built driver");
+    // This test isolates capture-scope behavior. The trusted fixture opts
+    // into unrestricted mode at daemon launch so protected observation
+    // consent does not mask the scope policy being exercised.
+    let mut driver = RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+    .expect("spawn source-built driver");
     driver.send(&json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}));
     driver.recv();
 
@@ -105,6 +112,23 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
         json!({"session": "scope-auto"}),
     );
     assert_eq!(code(&auto_window), Some("window_scope_disabled"));
+    assert_eq!(
+        auto_window["result"]["structuredContent"],
+        json!({
+            "session": "scope-auto",
+            "capture_scope": "auto",
+            "effective_scope": "desktop",
+            "desktop_capture_authorized": true,
+            "desktop_unlocked": true,
+            "escalation_reason": "foreground_ineffective",
+            "escalation_detail": "window ladder exhausted",
+            "code": "window_scope_disabled"
+        })
+    );
+    assert_eq!(
+        auto_window["result"]["content"][0]["text"],
+        "window-scope tool 'get_window_state' is disabled because escalation to desktop scope is permanent for session 'scope-auto'; to recover, call end_session for session 'scope-auto', then call start_session with a new session id"
+    );
 
     let conflict = call(
         &mut driver,
@@ -148,6 +172,6 @@ fn persistent_capture_scope_key_is_retired() {
     assert_eq!(code(&response), Some("config_key_retired"));
     assert_eq!(
         response["result"]["structuredContent"]["replacement"],
-        "start_session.capture_scope"
+        "action.target"
     );
 }

@@ -4,25 +4,71 @@ package handlers
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net"
 	"net/http"
 	"regexp"
+	"time"
 
+	"cyclops-cs-backend/accountlookup"
 	"cyclops-cs-backend/auth"
+	"cyclops-cs-backend/chat"
 	"cyclops-cs-backend/config"
+	"cyclops-cs-backend/featureflagadmin"
 	"cyclops-cs-backend/keycloak"
+	"cyclops-cs-backend/productanalytics"
+	"cyclops-cs-backend/signedurls"
+	"cyclops-cs-backend/usage"
+
+	"github.com/google/uuid"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/trace"
 )
 
-type Handlers struct {
-	Admin      *keycloak.Admin
-	GatewayCfg config.GatewayConfiguration
-	AuthCfg    config.AuthConfiguration
-	KC         config.KeycloakConfiguration
+type UserAccountService interface {
+	UserCreatedAt(ctx context.Context, subject string) (time.Time, error)
+}
 
+type SignedServiceURLService interface {
+	Create(context.Context, signedurls.CreateInput) (signedurls.Record, error)
+	List(context.Context, string, string) ([]signedurls.Record, error)
+	Revoke(context.Context, string, uuid.UUID) (signedurls.Record, error)
+}
+
+type Handlers struct {
+	AccountLookup            *accountlookup.Service
+	Admin                    *keycloak.Admin
+	GatewayCfg               config.GatewayConfiguration
+	AuthCfg                  config.AuthConfiguration
+	KC                       config.KeycloakConfiguration
+	Stripe                   config.StripeConfiguration
+	Billing                  BillingService
+	UserAccounts             UserAccountService
+	WebhookVerifier          WebhookVerifier
+	Analytics                productanalytics.Capturer
+	SignedServiceURLs        *signedurls.Service
+	SignedServiceURLProvider func() *signedurls.Service
+	signedServiceURLs        SignedServiceURLService
+	signedServiceExists      func(context.Context, string, string, string) (bool, error)
+	checkSignedServiceExists bool
+
+	// Features carries the database-backed dependencies (the state query
+	// executor and the GitHub trust policy store). It is a pointer because
+	// setupRouter copies Handlers by value; see features.go.
+	Features *Features
+	Usage    usage.Provider
+
+	adminAccessEvaluator  func(context.Context, *auth.User) (bool, error)
+	usagePricingEvaluator func(context.Context, *auth.User) (auth.UsagePricing, error)
+
+	FeatureFlags *featureflagadmin.Service
+
+	Conversations       chat.ConversationStore
+	Model               chat.ModelClient
+	chatAccessEvaluator func(context.Context, *auth.User) (bool, error)
+	chatLocks           *conversationLockRegistry
 
 	// WorkloadAdmin manages per-tenant clients in the workloads realm so
 	// OSGym pool VMs can obtain a tenant-scoped OIDC token. nil disables
@@ -36,11 +82,55 @@ type Handlers struct {
 
 func New(admin *keycloak.Admin, cfg *config.Configuration) Handlers {
 	return Handlers{
-		Admin:      admin,
-		GatewayCfg: cfg.Gateway,
-		AuthCfg:    cfg.Auth,
-		KC:         cfg.Keycloak,
+		Features:     NewFeatures(),
+		Admin:        admin,
+		UserAccounts: admin,
+		GatewayCfg:   cfg.Gateway,
+		AuthCfg:      cfg.Auth,
+		KC:           cfg.Keycloak,
+		Stripe:       cfg.Stripe,
+		Analytics:    productanalytics.Nop(),
+		chatLocks:    newConversationLockRegistry(),
 	}
+}
+
+func (h Handlers) signedServiceURLService() SignedServiceURLService {
+	if h.SignedServiceURLProvider != nil {
+		if service := h.SignedServiceURLProvider(); service != nil {
+			return service
+		}
+	}
+	if h.SignedServiceURLs != nil {
+		return h.SignedServiceURLs
+	}
+	return h.signedServiceURLs
+}
+
+func (h Handlers) usagePricing(ctx context.Context, user *auth.User) (auth.UsagePricing, error) {
+	evaluator := h.usagePricingEvaluator
+	if evaluator == nil {
+		evaluator = auth.EvalUsagePricing
+	}
+	return evaluator(ctx, user)
+}
+
+func (h Handlers) isAdmin(ctx context.Context, user *auth.User) (bool, error) {
+	evaluator := h.adminAccessEvaluator
+	if evaluator == nil {
+		evaluator = auth.EvalIsAdminFresh
+	}
+	return evaluator(ctx, user)
+}
+
+func (h Handlers) chatEnabled(ctx context.Context, user *auth.User) (bool, error) {
+	if user == nil || user.ID == "" {
+		return false, nil
+	}
+	evaluator := h.chatAccessEvaluator
+	if evaluator == nil {
+		evaluator = auth.EvalChatEnabled
+	}
+	return evaluator(ctx, user)
 }
 
 var dnsLabel = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
@@ -61,6 +151,19 @@ func writeErr(w http.ResponseWriter, status int, msg string) {
 
 func currentUser(r *http.Request) *auth.User {
 	return auth.GetUser(r.Context())
+}
+
+func isGitHubPrincipal(user *auth.User) bool {
+	return user != nil && user.PrincipalType == auth.PrincipalTypeGitHubOIDC
+}
+
+func namespaceAllowed(user *auth.User, namespace string) bool {
+	for _, allowed := range user.AllowedNamespaces {
+		if allowed == namespace {
+			return true
+		}
+	}
+	return false
 }
 
 // statusCapture wraps http.ResponseWriter to capture the status code written

@@ -3,172 +3,95 @@ name: "CI: Check Docs"
 on:
   pull_request:
     paths:
-      # Cua Driver (Rust)
       - "libs/cua-driver/rust/crates/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
-      # Lume (Swift)
       - "libs/lume/src/**"
-      # Cua CLI (TypeScript)
-      - "libs/typescript/cua-cli/src/**"
-      # MCP Server (Python)
-      - "libs/python/mcp-server/src/**"
-      # Computer SDK
-      - "libs/python/computer/computer/**"
-      - "libs/typescript/computer/src/**"
-      # Agent SDK
-      - "libs/python/agent/agent/**"
-      - "libs/typescript/agent/src/**"
-      # Cua-Bot
-      - "libs/cuabot/src/**"
-      # Documentation files themselves
       - "docs/content/docs/reference/cua-driver/**"
-      - "docs/content/docs/cua/reference/**"
-      - "docs/content/docs/cuabot/reference/**"
-      # Generator scripts
+      - "docs/content/docs/reference/lume/**"
+      - "docs/package.json"
+      - "docs/pnpm-lock.yaml"
       - "scripts/docs-generators/**"
+      - ".github/workflows/ci-check-docs.yml"
+      - ".gitattributes"
+
+permissions:
+  contents: read
 
 jobs:
-  check-docs-sync:
-    name: Check Documentation Sync
-    runs-on: macos-latest
+  native-reference:
+    name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - library: cua-driver
+            platform: linux
+            os: ubuntu-latest
+          - library: cua-driver
+            platform: macos
+            os: macos-latest
+          - library: cua-driver
+            platform: windows
+            os: windows-latest
+          - library: lume
+            platform: macos
+            os: macos-latest
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
-          fetch-depth: 0 # Need full history for git tags (version discovery) and changed file detection
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
-
-      - name: Install pnpm
-        uses: pnpm/action-setup@v4
-
-      - name: Install Node dependencies
-        run: pnpm install
-        working-directory: docs
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Python doc dependencies
-        run: pip install -r scripts/docs-generators/requirements.txt
-
-      - name: Determine changed generators
-        id: changed
+      - uses: pnpm/action-setup@v4
+      - name: Install docs dependencies
+        run: pnpm --dir docs install --frozen-lockfile
+      - name: Test generator routing and ownership
         run: |
-          # Diff all commits in this PR against the base branch
-          BASE_SHA="${{ github.event.pull_request.base.sha }}"
-          CHANGED_FILES=$(git diff --name-only "$BASE_SHA" HEAD)
-          echo "Changed files:"
-          echo "$CHANGED_FILES"
-
-          # Check which generators need to run
-          GENERATORS=""
-
-          # Source changes
-          if echo "$CHANGED_FILES" | grep -q "^libs/cua-driver/rust/crates/\|^libs/cua-driver/rust/Cargo.toml\|^libs/cua-driver/rust/Cargo.lock\|^docs/content/docs/reference/cua-driver/"; then
-            GENERATORS="$GENERATORS cua-driver"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/lume/src/"; then
-            GENERATORS="$GENERATORS lume"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/typescript/cua-cli/src/"; then
-            GENERATORS="$GENERATORS cua-cli"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/mcp-server/src/"; then
-            GENERATORS="$GENERATORS mcp-server"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/python/computer/computer/\|^libs/python/agent/agent/"; then
-            GENERATORS="$GENERATORS python-sdk"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^libs/cuabot/src/"; then
-            GENERATORS="$GENERATORS cuabot"
-          fi
-
-          # Individual generator script changes — only trigger their own generator
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/cua-driver\.ts"; then
-            GENERATORS="$GENERATORS cua-driver"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/lume\.ts"; then
-            GENERATORS="$GENERATORS lume"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/python-sdk\.ts"; then
-            GENERATORS="$GENERATORS python-sdk"
-          fi
-          if echo "$CHANGED_FILES" | grep -q "^scripts/docs-generators/cuabot\.ts"; then
-            GENERATORS="$GENERATORS cuabot"
-          fi
-
-          # Only runner.ts changes trigger all generators (it's the orchestration layer)
-          # config.json changes only affect whichever generator scripts were also changed
-          if echo "$CHANGED_FILES" | grep -qE "^scripts/docs-generators/runner\.ts$"; then
-            GENERATORS="all"
-          fi
-
-          # Deduplicate
-          GENERATORS=$(echo "$GENERATORS" | tr ' ' '\n' | sort -u | tr '\n' ' ' | xargs)
-
-          echo "generators=$GENERATORS" >> $GITHUB_OUTPUT
-
-      - name: Build cua-driver (if needed)
-        if: contains(steps.changed.outputs.generators, 'cua-driver') || steps.changed.outputs.generators == 'all'
-        run: cargo build -p cua-driver --release
-        working-directory: libs/cua-driver/rust
-
-      - name: Build Lume (if needed)
-        if: contains(steps.changed.outputs.generators, 'lume') || steps.changed.outputs.generators == 'all'
-        run: swift build -c release
-        working-directory: libs/lume
-
-      - name: Run documentation check
+          node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
+      - name: Select affected generator
+        id: scope
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          LIBRARY: ${{ matrix.library }}
         run: |
-          GENERATORS="${{ steps.changed.outputs.generators }}"
-
-          if [ -z "$GENERATORS" ]; then
-            echo "No documentation-related changes detected."
-            exit 0
+          git diff --name-only "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files.txt"
+          GENERATORS=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files.txt")
+          if [[ " $GENERATORS " == *" $LIBRARY "* ]]; then
+            echo "selected=true" >> "$GITHUB_OUTPUT"
           fi
-
-          if [ "$GENERATORS" = "all" ]; then
-            npx tsx scripts/docs-generators/runner.ts --check
-          else
-            for gen in $GENERATORS; do
-              echo "Checking generator: $gen"
-              npx tsx scripts/docs-generators/runner.ts --library "$gen" --check
-            done
-          fi
-        working-directory: .
-
-      - name: Show help if check failed
-        if: failure()
+      - name: Install Linux build dependencies
+        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'linux'
         run: |
-          echo ""
-          echo "╔═══════════════════════════════════════════════════════════════════════╗"
-          echo "║                    Documentation Out of Sync!                        ║"
-          echo "╠═══════════════════════════════════════════════════════════════════════╣"
-          echo "║                                                                      ║"
-          echo "║  The documentation has drifted from the source code.                 ║"
-          echo "║                                                                      ║"
-          echo "║  To regenerate all docs, run from the repository root:               ║"
-          echo "║                                                                      ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts                         ║"
-          echo "║                                                                      ║"
-          echo "║  Or for a specific library:                                          ║"
-          echo "║                                                                      ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library lume          ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library python-sdk    ║"
-          echo "║    npx tsx scripts/docs-generators/runner.ts --library cuabot        ║"
-          echo "║                                                                      ║"
-          echo "║  For versioned docs and changelogs (after tagging a new release):    ║"
-          echo "║                                                                      ║"
-          echo "║    npx tsx scripts/docs-generators/generate-versioned-docs.ts        ║"
-          echo "║    npx tsx scripts/docs-generators/generate-changelog.ts             ║"
-          echo "║                                                                      ║"
-          echo "║  Then commit the updated documentation files.                        ║"
-          echo "║                                                                      ║"
-          echo "╚═══════════════════════════════════════════════════════════════════════╝"
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Check generated reference
+        if: steps.scope.outputs.selected == 'true' && matrix.platform != 'windows'
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
+      - name: Check generated reference in PowerShell
+        if: steps.scope.outputs.selected == 'true' && matrix.platform == 'windows'
+        shell: pwsh
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
+      - name: Verify docs extraction preserves policy-filtered discovery
+        if: steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
+        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts
+
+  check-docs-sync:
+    name: Check Documentation Sync
+    if: always()
+    needs: native-reference
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require native checks to pass
+        env:
+          RESULT: ${{ needs.native-reference.result }}
+        run: test "$RESULT" = success

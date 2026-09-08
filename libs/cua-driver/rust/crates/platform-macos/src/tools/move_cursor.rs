@@ -32,7 +32,7 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["x", "y"],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "x": { "type": "number" },
                 "y": { "type": "number" },
                 "scope": { "type": "string", "enum": ["window", "desktop"], "default": "window" },
@@ -80,6 +80,9 @@ impl Tool for MoveCursorTool {
                 }
                 Err(error) => ToolResult::error(format!("desktop pointer task failed: {error}")),
             };
+        }
+        if !self.state.cursor_overlay_available {
+            return super::cursor_overlay_unavailable();
         }
         let x = match args.require_f64("x") {
             Ok(v) => v,

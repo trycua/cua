@@ -1,14 +1,13 @@
-//! Stdio MCP proxy that forwards `tools/list` and `tools/call` through
-//! the running `cua-driver-rs serve` daemon over its Unix socket.
+//! Stdio MCP adapters for direct SDK-owned and service-owned runtimes.
 //!
-//! This is the only MCP execution path. The client side sees a normal stdio
-//! server, while the daemon remains the single owner of tool state, policy,
-//! and platform permission identity.
+//! The client side always sees a normal stdio server. Depending on platform
+//! and explicit launch options, this adapter either owns the SDK runtime
+//! directly or forwards to a service that owns it.
 //!
 //! On macOS the CLI can ensure a daemon is running under `LaunchServices`
-//! (which gives it the right TCC attribution). Embedded hosts and other
-//! platforms start the daemon explicitly. The MCP client never sees that
-//! boundary — it receives the standard JSON-RPC envelope.
+//! (which gives it the right TCC attribution). Embedded hosts may also start a
+//! private service explicitly. The MCP client never sees that ownership
+//! boundary — it receives the same JSON-RPC envelope.
 //!
 //! Why this lives in `cua-driver` and not `mcp-server`:
 //!   `cua_driver_core::server` defines the shared JSON-RPC protocol. The
@@ -25,10 +24,134 @@ use cua_driver_core::server::{
     observe_proxy_session_started, observe_proxy_tool_completed, tool_observation_timer,
     StdioExecutionPath,
 };
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
 use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin};
+
+/// Run stdio MCP directly over an SDK-owned runtime.
+///
+/// Windows and Linux use this when no explicit service endpoint was selected.
+/// The runtime lives exactly as long as stdin: EOF ends every observed public
+/// session, drains admitted work through `shutdown`, and releases process
+/// ownership before returning.
+pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Result<()> {
+    // Direct stdio is an action endpoint just like `serve`; enforce the same
+    // admin lock, bounded-manifest approval/expiry, and legacy-approval
+    // consistency before the first request can be read.
+    cua_driver_core::authorization::validate_startup_authorization()?;
+    validate_configured_policy()?;
+    let sdk = crate::sdk_adapter::SdkAdapter::load(driver.clone()).await?;
+    let stdin = tokio::io::stdin();
+    let stdout = tokio::io::stdout();
+    let mut reader = BufReader::new(stdin);
+    let mut writer = tokio::io::BufWriter::new(stdout);
+    let mut line = String::new();
+    let mut session_observed = false;
+    let transport_session = format!("mcp-{}", uuid::Uuid::new_v4());
+    struct DirectTransportCleanup {
+        sdk: Arc<crate::sdk_adapter::SdkAdapter>,
+        transport_session: String,
+    }
+    impl Drop for DirectTransportCleanup {
+        fn drop(&mut self) {
+            self.sdk.end_transport_sessions(&self.transport_session);
+        }
+    }
+    let _cleanup = DirectTransportCleanup {
+        sdk: sdk.clone(),
+        transport_session: transport_session.clone(),
+    };
+
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).await? == 0 {
+            break;
+        }
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<Request>(trimmed) {
+            Err(error) => {
+                error!("JSON parse error: {error}");
+                Response::parse_error()
+            }
+            Ok(request) if request.is_notification() => continue,
+            Ok(mut request) => {
+                apply_direct_session_identity(&mut request, &transport_session);
+                let initialize_metadata = (!session_observed)
+                    .then(|| request.initialize_metadata())
+                    .flatten();
+                let session_context = request.tool_call().ok().and_then(|call| {
+                    sdk.begin_tool_call(
+                        &call.name,
+                        &call.args,
+                        cua_driver_core::session::SessionTransport::McpStdio,
+                        cua_driver_core::session::SessionClientKind::Mcp,
+                    )
+                });
+                let timer = tool_observation_timer(
+                    &request,
+                    |name| sdk.is_known_tool(name),
+                    StdioExecutionPath::DirectDaemon,
+                );
+                let id = request.id.clone().unwrap_or(serde_json::Value::Null);
+                let response = cua_driver_core::server::handle_request_with_transport_session(
+                    request,
+                    id,
+                    sdk.as_ref(),
+                    &transport_session,
+                )
+                .await;
+                if let Some(metadata) = initialize_metadata {
+                    observe_proxy_session_started(metadata);
+                    session_observed = true;
+                }
+                if let Some(timer) = timer {
+                    let outcome = timer.finish(&response);
+                    if let Some(context) = session_context {
+                        context.complete(&outcome);
+                    }
+                    observe_proxy_tool_completed(outcome);
+                }
+                response
+            }
+        };
+        let serialized = serde_json::to_string(&response).unwrap_or_else(|error| {
+            format!(
+                r#"{{"jsonrpc":"2.0","id":null,"error":{{"code":-32603,"message":"serialize error: {error}"}}}}"#
+            )
+        });
+        writer.write_all(serialized.as_bytes()).await?;
+        writer.write_all(b"\n").await?;
+        writer.flush().await?;
+    }
+
+    sdk.shutdown().await.map_err(anyhow::Error::msg)
+}
+
+fn apply_direct_session_identity(request: &mut Request, transport_session: &str) {
+    let Some(arguments) = request
+        .params
+        .as_mut()
+        .and_then(|params| params.get_mut("arguments"))
+        .and_then(serde_json::Value::as_object_mut)
+    else {
+        return;
+    };
+    let effective = arguments
+        .get("session")
+        .and_then(serde_json::Value::as_str)
+        .filter(|session| !session.is_empty())
+        .unwrap_or(transport_session)
+        .to_owned();
+    arguments.insert("_session_id".into(), serde_json::Value::String(effective));
+    arguments.insert(
+        "_transport_session_id".into(),
+        serde_json::Value::String(transport_session.to_owned()),
+    );
+}
 
 /// Run the MCP stdio proxy. Reads JSON-RPC lines from stdin, forwards
 /// the body of each `tools/list` / `tools/call` to the daemon at
@@ -50,6 +173,11 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
              with `open -n -g -a CuaDriver --args serve` and retry."
         );
     }
+    // A selected service may outlive the CLI package that launched this
+    // proxy. Refuse an incompatible contract before creating the control
+    // binding or forwarding any action.
+    let compatibility_client = cua_driver_sdk::CuaDriver::connect(Some(socket_path.clone()))?;
+    compatibility_client.metadata().await?;
 
     // Mint this MCP session's identity once at proxy startup. One proxy process
     // == one MCP session; the daemon outlives it. We stamp this id on every
@@ -101,8 +229,34 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    let mut reader = BufReader::new(stdin);
-    let mut writer = tokio::io::BufWriter::new(stdout);
+    run_proxy_io(
+        BufReader::new(stdin),
+        tokio::io::BufWriter::new(stdout),
+        &socket_path,
+        &cached_tools_list,
+        &session_id,
+        daemon_observes_tool_calls,
+    )
+    .await
+}
+
+/// Run the service-owned stdio loop over caller-provided I/O.
+///
+/// A clean reader EOF must return `Ok(())` promptly. The caller then drops the
+/// persistent control connection, allowing the daemon to reap the MCP session
+/// and its recording, preview, and overlay state (issue #2002).
+async fn run_proxy_io<R, W>(
+    mut reader: R,
+    mut writer: W,
+    socket_path: &str,
+    cached_tools_list: &Arc<serde_json::Value>,
+    session_id: &str,
+    daemon_observes_tool_calls: bool,
+) -> anyhow::Result<()>
+where
+    R: AsyncBufRead + Unpin,
+    W: AsyncWrite + Unpin,
+{
     let mut line = String::new();
     let mut session_observed = false;
 
@@ -134,7 +288,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 let session_context = (!daemon_observes_tool_calls)
                     .then(|| {
                         req.tool_call().ok().and_then(|call| {
-                            let known_tool = proxy_knows_tool(&cached_tools_list, &call.name);
+                            let known_tool = proxy_knows_tool(cached_tools_list, &call.name);
                             cua_driver_core::session::begin_tool_call(
                                 &call.name,
                                 &call.args,
@@ -149,7 +303,7 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                     .then(|| {
                         tool_observation_timer(
                             &req,
-                            |name| proxy_knows_tool(&cached_tools_list, name),
+                            |name| proxy_knows_tool(cached_tools_list, name),
                             StdioExecutionPath::DaemonProxy,
                         )
                     })
@@ -158,9 +312,9 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
                 let response = handle_proxy_request(
                     req,
                     id,
-                    &socket_path,
-                    &cached_tools_list,
-                    &session_id,
+                    socket_path,
+                    cached_tools_list,
+                    session_id,
                     daemon_observes_tool_calls,
                 )
                 .await;
@@ -395,10 +549,10 @@ fn fetch_tools_list_from_daemon(
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("daemon list response missing `tools` array"))?;
 
-    // Reshape the daemon's `{name, description, input_schema, read_only,
-    // ..., capabilities}` envelope into MCP's `{name, description,
-    // inputSchema, annotations: {...}, capabilities}` shape. Same
-    // translation `ToolDef::to_list_entry` defines for the core protocol.
+    // Reshape the daemon's `{name, description, input_schema, output_schema,
+    // read_only, ..., capabilities}` envelope into MCP's `{name, description,
+    // inputSchema, outputSchema, annotations: {...}, capabilities}` shape.
+    // Same translation `ToolDef::to_list_entry` defines for the core protocol.
     //
     // `capabilities` is passed through verbatim when the daemon
     // provides it; older daemons that don't emit the field fall back
@@ -461,7 +615,7 @@ fn fetch_tools_list_from_daemon(
                         })
                     })
             });
-            serde_json::json!({
+            let mut tool = serde_json::json!({
                 "name": name,
                 "description": description,
                 "inputSchema": input_schema,
@@ -473,7 +627,16 @@ fn fetch_tools_list_from_daemon(
                 },
                 "capabilities": capabilities,
                 "risk": risk,
-            })
+            });
+            // Do not derive a new schema when an older daemon omitted it:
+            // mixed-version proxies must advertise only the result contract
+            // that the executing daemon actually owns.
+            if let Some(output_schema) = t.get("output_schema") {
+                tool.as_object_mut()
+                    .expect("MCP tool entry is an object")
+                    .insert("outputSchema".into(), output_schema.clone());
+            }
+            tool
         })
         .collect();
 
@@ -649,17 +812,69 @@ async fn forward_tool_call(
 
 // ── Tests ────────────────────────────────────────────────────────────────────
 //
-// Unit-test only the JSON shape of the proxy's tool-error envelope.
-// The full proxy loop is exercised by the macOS integration test
-// (the daemon-backed integration harness); these tests just lock
-// in the per-branch reshape so a
-// regression to `Response::error` for tool-level failures would fail
-// fast in CI on every platform.
+// The daemon-backed integration harness exercises the full proxy lifecycle.
+// These tests lock in the I/O loop's transport contract and the per-branch
+// response reshaping without requiring a live daemon.
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::serve::DaemonResponse;
+
+    #[tokio::test]
+    async fn proxy_loop_returns_promptly_on_clean_eof() {
+        let reader = BufReader::new(&b""[..]);
+        let mut writer = Vec::new();
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            run_proxy_io(
+                reader,
+                &mut writer,
+                "unused.sock",
+                &cached_tools,
+                "eof-test-session",
+                false,
+            ),
+        )
+        .await
+        .expect("clean EOF must return promptly");
+
+        assert!(result.is_ok(), "clean EOF must not error: {result:?}");
+        assert!(writer.is_empty(), "no request means no output");
+    }
+
+    #[tokio::test]
+    async fn proxy_loop_serves_initialize_before_eof() {
+        let input = b"{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\n";
+        let reader = BufReader::new(&input[..]);
+        let mut writer = Vec::new();
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            run_proxy_io(
+                reader,
+                &mut writer,
+                "unused.sock",
+                &cached_tools,
+                "initialize-test-session",
+                false,
+            ),
+        )
+        .await
+        .expect("initialize followed by EOF must return promptly");
+
+        assert!(
+            result.is_ok(),
+            "initialize exchange must not error: {result:?}"
+        );
+        let response: serde_json::Value =
+            serde_json::from_slice(&writer).expect("response must be JSON");
+        assert_eq!(response["id"], 1);
+        assert!(response.get("result").is_some());
+    }
 
     /// Reconstruct the `!resp.ok` branch in isolation so we can assert
     /// on the serialized shape without spinning up a real daemon /

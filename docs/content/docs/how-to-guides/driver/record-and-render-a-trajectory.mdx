@@ -8,8 +8,8 @@ import { Steps, Step } from 'fumadocs-ui/components/steps';
 Record an agent-driven task when you need both the action evidence and a short product demo. Cua Driver saves each action with before-and-after state, screenshots, and arguments. With video enabled, it also captures the display so you can render the trajectory with zoom effects around each action.
 
 <VideoDemo
-  src="https://trycua.github.io/assets/videos/cua-driver/macos-trajectory-capture.mp4"
-  poster="https://trycua.github.io/assets/posters/cua-driver/macos-trajectory-capture.jpg"
+  src="https://github.com/user-attachments/assets/9eafceca-1738-4e34-949a-2fb0dbe1832e"
+  poster="https://github.com/user-attachments/assets/d896dd2f-3f0a-4978-93a3-c9a5c562c3e8"
   title="Turn an agent trajectory into a zoom-on-click demo"
   sourceUrl="https://x.com/trycua/status/2047383207612645426"
 >
@@ -95,5 +95,17 @@ sudo apt install ffmpeg
 
   </Step>
 </Steps>
+
+## Example: edit a local-model trajectory
+
+<VideoDemo
+  src="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial.mp4"
+  poster="https://cuademo06261324.blob.core.windows.net/artifacts/demos/muse-glimmer/reminders-editorial-poster.jpg"
+  title="Turn a local-model run into a short product demo"
+>
+  Cua Driver captured the original display and action evidence while Muse Glimmer operated
+  Reminders. An editorial pass added the opening prompt and summarized tool trace; those overlays
+  are separate from the built-in trajectory renderer.
+</VideoDemo>
 
 For the complete recording schemas and render options, see [MCP recording tools](/reference/cua-driver/mcp-tools#recording-tools) and the [`cua-driver recording` CLI reference](/reference/cua-driver/cli-reference#trajectory-recording).

@@ -1,0 +1,21 @@
+---
+title: Kimi Code
+description: Connect Kimi Code CLI to Cua Driver over MCP.
+icon: MoonStar
+---
+
+Kimi Code CLI supports local stdio MCP servers. Find the installed Cua Driver path, then register and test it:
+
+```bash
+command -v cua-driver
+kimi mcp add cua-driver -- /absolute/path/to/cua-driver mcp
+kimi mcp test cua-driver
+```
+
+The `--` marks the start of the stdio command. Kimi Code can also load MCP configuration from `~/.kimi-code/mcp.json` or a project-level `.kimi-code/mcp.json`.
+
+Cua Driver currently has no dedicated Kimi Code preset, so this page follows Kimi Code's native MCP command and the standard `cua-driver mcp` entry point.
+
+Continue with the [generic MCP configuration](/how-to-guides/driver/connect-your-agent#generic-mcp-json) for Cua Driver runtime and permission guidance.
+
+Upstream: [Kimi Code CLI MCP guide](https://www.kimi.com/code/docs/en/kimi-code-cli/customization/mcp.html) and [`kimi mcp` reference](https://moonshotai.github.io/kimi-cli/en/reference/kimi-mcp.html).

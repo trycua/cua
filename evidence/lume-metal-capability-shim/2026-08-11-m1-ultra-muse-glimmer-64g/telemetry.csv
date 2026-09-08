@@ -1,0 +1,5 @@
+arm,wall_seconds,exit_code,guest_memory_free_percent_before,guest_memory_free_percent_after,swapouts_before,swapouts_after,compressor_pages_before,compressor_pages_after,aggregate_host_gpu_percent
+stock-pp512,110.877085,0,98,98,0,0,0,0,0-5
+unlocked-pp512,13.620625,0,98,98,0,0,0,0,7-99
+stock-tg128,192.354200,0,98,98,0,0,0,0,5-27
+unlocked-tg128,21.210745,0,98,98,0,0,0,0,5-98

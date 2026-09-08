@@ -27,7 +27,17 @@ fn sandbox_template_ref_schema(_: &mut schemars::SchemaGenerator) -> schemars::S
     })
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema, uniffi::Record)]
+#[derive(
+    Clone,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[serde(rename_all = "camelCase")]
 pub struct WarmPoolAutoscaling {
     #[schemars(
@@ -57,7 +67,17 @@ pub struct WarmPoolAutoscaling {
 }
 
 #[allow(clippy::duplicated_attributes)]
-#[derive(CustomResource, Clone, Debug, Deserialize, Serialize, JsonSchema, uniffi::Record)]
+#[derive(
+    CustomResource,
+    Clone,
+    Debug,
+    Deserialize,
+    Serialize,
+    JsonSchema,
+    uniffi::Record,
+    uniffi_builder_derive::UniffiBuilder,
+)]
+#[uniffi_builder(crate::SchemaBuildError)]
 #[kube(
     group = "osgym.cua.ai",
     version = "v1alpha1",
@@ -95,6 +115,15 @@ pub struct OSGymSandboxWarmPoolSpec {
     )]
     #[serde(skip_serializing_if = "Option::is_none")]
     pub autoscaling: Option<WarmPoolAutoscaling>,
+    #[schemars(
+        default,
+        schema_with = "integer_schema",
+        range(min = 0, max = u32::MAX),
+        description = "Creation-age TTL in seconds. When absent, the resource is not automatically reaped based on age."
+    )]
+    #[serde(skip_serializing_if = "Option::is_none")]
+    #[uniffi(default = None)]
+    pub ttl_seconds_after_created: Option<u32>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema, uniffi::Record)]

@@ -3,18 +3,16 @@
 import { randomUUID } from 'node:crypto';
 
 import {
-  CaptureScope,
+  ActionTarget,
   CuaDriver,
-  DesktopScope,
-  EndSessionInput,
   GetDesktopStateInput,
   PressKeyInput,
-  StartSessionInput,
   TypeTextInput,
 } from '@trycua/cua-driver';
 
 const fixture = process.env.CUA_FIXTURE_URL ?? 'http://127.0.0.1:8765';
 const timeoutMs = 10_000;
+const desktopTarget = new ActionTarget.Desktop({ displayId: 'primary' });
 
 async function bounded<T>(promise: Promise<T>, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -47,27 +45,14 @@ async function waitForSubmission(token: string): Promise<void> {
 }
 
 const token = `cua-${randomUUID().slice(0, 10)}`;
-const session = `native-typescript-${randomUUID().slice(0, 10)}`;
 await resetFixture();
 
 const driver = CuaDriver.create(undefined);
-let started = false;
 let mutationOutcomeUnknown = false;
 
 try {
-  await bounded(
-    driver.startSession(
-      StartSessionInput.new({
-        session,
-        captureScope: CaptureScope.Desktop,
-      })
-    ),
-    'start_session'
-  );
-  started = true;
-
   const before = await bounded(
-    driver.getDesktopState(GetDesktopStateInput.new({ session })),
+    driver.getDesktopState(GetDesktopStateInput.new({})),
     'get_desktop_state'
   );
   if (before.isError || before.images.length === 0) {
@@ -80,8 +65,7 @@ try {
       driver.typeText(
         TypeTextInput.new({
           text: token,
-          scope: DesktopScope.Desktop,
-          session,
+          target: desktopTarget,
         })
       ),
       'type_text'
@@ -92,8 +76,7 @@ try {
       driver.pressKey(
         PressKeyInput.new({
           key: 'ENTER',
-          scope: DesktopScope.Desktop,
-          session,
+          target: desktopTarget,
         })
       ),
       'press_key'
@@ -107,7 +90,7 @@ try {
   // fixture before considering any retry.
   await waitForSubmission(token);
   const after = await bounded(
-    driver.getDesktopState(GetDesktopStateInput.new({ session })),
+    driver.getDesktopState(GetDesktopStateInput.new({})),
     'post-action get_desktop_state'
   );
   if (after.isError || after.images.length === 0) {
@@ -119,16 +102,10 @@ try {
   }
 } finally {
   try {
-    if (started) {
-      await driver.endSession(EndSessionInput.new({ session }));
-    }
+    await driver.shutdown();
   } finally {
-    try {
-      await driver.shutdown();
-    } finally {
-      // shutdown() drains the runtime; this generated destructor releases the
-      // native UniFFI handle immediately instead of waiting for JavaScript GC.
-      (driver as unknown as { uniffiDestroy(): void }).uniffiDestroy();
-    }
+    // shutdown() drains the runtime; this generated destructor releases the
+    // native UniFFI handle immediately instead of waiting for JavaScript GC.
+    (driver as unknown as { uniffiDestroy(): void }).uniffiDestroy();
   }
 }

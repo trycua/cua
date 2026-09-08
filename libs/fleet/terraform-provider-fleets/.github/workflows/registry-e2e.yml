@@ -1,0 +1,55 @@
+name: Terraform Registry E2E
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Released provider version, with or without v prefix
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  registry-resolution:
+    runs-on: ubuntu-latest
+    env:
+      TF_IN_AUTOMATION: "true"
+      PROVIDER_VERSION: ${{ github.event.release.tag_name || inputs.version }}
+    steps:
+      - uses: hashicorp/setup-terraform@b9cd54a3c349d3f38e8881555d616ced269862dd # v3
+        with:
+          terraform_wrapper: false
+      - name: Resolve the public Registry provider from a clean directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${PROVIDER_VERSION#v}"
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+          cat > "$workdir/main.tf" <<EOF2
+          terraform {
+            required_providers {
+              fleets = {
+                source  = "trycua/fleets"
+                version = "${version}"
+              }
+            }
+          }
+          EOF2
+          cd "$workdir"
+          for attempt in $(seq 1 12); do
+            if terraform init -input=false -no-color; then
+              terraform validate -no-color
+              terraform providers
+              exit 0
+            fi
+            if [ "$attempt" -eq 12 ]; then
+              exit 1
+            fi
+            rm -rf .terraform .terraform.lock.hcl
+            sleep 30
+          done

@@ -1,1 +1,25 @@
-{ "title": "Sandbox", "pages": ["lifecycle", "secrets", "scale-out", "tunneling", "images", "interactive-shell"] }
+{
+  "title": "Sandbox",
+  "pages": [
+    "set-up-fleet-credentials",
+    "choose-an-image",
+    "manage-local-lifecycle",
+    "configure-pool-with-terraform",
+    "create-pool-with-python",
+    "create-pool-with-typescript",
+    "run-cursor-cloud-agent-on-fleet",
+    "expire-pools-and-claims",
+    "troubleshoot-fleet-pools",
+    "run-openclaw-on-cloud-fleet",
+    "run-omarchy-on-cloud-fleet",
+    "connect-to-omarchy-with-novnc",
+    "secrets",
+    "scale-out",
+    "tunneling",
+    "share-service-with-signed-url",
+    "images",
+    "prepare-and-reference-a-fleet-image",
+    "interactive-shell",
+    "minecraft"
+  ]
+}

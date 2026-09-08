@@ -55,6 +55,22 @@ class HarnessWindow(Gtk.Window):
         root.set_border_width(12)
         scroller.add(root)
 
+        # Native application menu used by invoke_menu E2E. The three-level
+        # hierarchy exercises live path re-resolution after each submenu opens.
+        menubar = Gtk.MenuBar()
+        window_item = Gtk.MenuItem(label="Window")
+        window_menu = Gtk.Menu()
+        arrange_item = Gtk.MenuItem(label="Arrange")
+        arrange_menu = Gtk.Menu()
+        left_item = Gtk.MenuItem(label="Left")
+        left_item.connect("activate", self.on_native_menu_left)
+        arrange_menu.append(left_item)
+        arrange_item.set_submenu(arrange_menu)
+        window_menu.append(arrange_item)
+        window_item.set_submenu(window_menu)
+        menubar.append(window_item)
+        root.pack_start(menubar, False, False, 0)
+
         # ── counter ───────────────────────────────────────────────────────
         self.counter_label = Gtk.Label(label="counter=0", xalign=0)
         root.pack_start(self.counter_label, False, False, 0)
@@ -110,6 +126,22 @@ class HarnessWindow(Gtk.Window):
         root.pack_start(self.chk, False, False, 0)
         self.chk_status = Gtk.Label(label="agreed=False", xalign=0)
         root.pack_start(self.chk_status, False, False, 0)
+
+        # ── multi-selection ───────────────────────────────────────────────
+        section(root, "multi selection")
+        self.selection = Gtk.ListBox()
+        self.selection.set_selection_mode(Gtk.SelectionMode.MULTIPLE)
+        for value in ("alpha", "beta", "gamma"):
+            row = aid(Gtk.ListBoxRow(), f"selection-{value}")
+            row.set_activatable(True)
+            row.set_selectable(True)
+            row.set_can_focus(True)
+            row.add(Gtk.Label(label=value, xalign=0))
+            self.selection.add(row)
+        self.selection.connect("selected-rows-changed", self.on_selection_changed)
+        root.pack_start(self.selection, False, False, 0)
+        self.selection_status = Gtk.Label(label="selection=none", xalign=0)
+        root.pack_start(self.selection_status, False, False, 0)
 
         # ── context_menu ──────────────────────────────────────────────────
         section(root, "context menu")
@@ -202,6 +234,14 @@ class HarnessWindow(Gtk.Window):
     def on_chk(self, c):
         self.chk_status.set_text(f"agreed={c.get_active()}")
 
+    def on_selection_changed(self, list_box):
+        values = sorted(
+            row.get_child().get_text() for row in list_box.get_selected_rows()
+        )
+        self.selection_status.set_text(
+            "selection=" + (",".join(values) if values else "none")
+        )
+
     def on_ctx_press(self, _w, ev):
         if ev.button == 3:
             self.menu.popup_at_pointer(ev)
@@ -209,6 +249,10 @@ class HarnessWindow(Gtk.Window):
     def on_ctx_item(self, _w, lbl):
         self._menu_action = lbl
         self.ctx_status.set_text(f"menu_action={lbl}")
+
+    def on_native_menu_left(self, _w):
+        self._menu_action = "window_arrange_left"
+        self.ctx_status.set_text("menu_action=window_arrange_left")
 
     def on_key_press(self, _w, ev):
         key = (Gdk.keyval_name(ev.keyval) or "unknown").lower()

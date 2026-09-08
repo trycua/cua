@@ -1,0 +1,2 @@
+# Keep this pinned so released XFCE image builds are reproducible.
+cua-driver==0.12.3

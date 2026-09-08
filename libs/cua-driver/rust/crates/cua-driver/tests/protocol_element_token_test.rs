@@ -1,16 +1,10 @@
-//! Integration tests for Surface 6 — opaque `element_token` alongside
-//! the existing integer `element_index`.
+//! Protocol integration tests for snapshot-bound element targeting.
 //!
 //! These exercise the MCP protocol surface (schema + capability claims)
 //! by spawning the real `cua-driver` binary and walking `tools/list`.
 //! Unit tests for the resolution logic live in
 //! `cua-driver-core::element_token` and the per-platform tool modules —
 //! this file is only for what's visible across the JSON-RPC boundary.
-
-// element_token resolution is exercised on macOS/Linux only; gate the whole
-// file (helpers included) so Windows excludes it instead of warning about the
-// then-unused tools/list helpers.
-#![cfg(any(target_os = "macos", target_os = "linux"))]
 
 use cua_driver_testkit::RawDriver;
 
@@ -29,12 +23,9 @@ fn fetch_tools_list() -> Option<serde_json::Value> {
     Some(driver.recv())
 }
 
-/// Surface 6: Every tool that accepts the opaque `element_token` arg
-/// must (a) advertise the field in its inputSchema and (b) claim the
-/// `accessibility.element_tokens` capability. These together let
-/// consumers detect support before issuing a token-carrying call.
+/// Every element-addressed tool advertises both safe target forms: an opaque
+/// token, or an integer paired with its snapshot id.
 #[test]
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
     let resp = match fetch_tools_list() {
         Some(r) => r,
@@ -63,7 +54,7 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
             .find(|t| t["name"].as_str() == Some(tool_name))
             .unwrap_or_else(|| panic!("tool {tool_name:?} missing from tools/list"));
 
-        // (a) inputSchema.properties.element_token present, type=string.
+        // (a) inputSchema exposes the three related target fields.
         let props = tool["inputSchema"]["properties"]
             .as_object()
             .unwrap_or_else(|| panic!("{tool_name} has no inputSchema.properties"));
@@ -77,6 +68,16 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
             et["type"].as_str(),
             Some("string"),
             "{tool_name} element_token must be type:string"
+        );
+        assert_eq!(
+            props["element_index"]["type"].as_str(),
+            Some("integer"),
+            "{tool_name} element_index must remain available only as a snapshot-bound pair"
+        );
+        assert_eq!(
+            props["snapshot_id"]["type"].as_str(),
+            Some("string"),
+            "{tool_name} must advertise snapshot_id for safe integer targeting"
         );
 
         // (b) capabilities array includes `accessibility.element_tokens`.
@@ -94,11 +95,10 @@ fn token_accepting_tools_advertise_element_token_in_schema_and_capabilities() {
     }
 }
 
-/// Surface 6: `get_window_state` claims `accessibility.element_tokens`
+/// `get_window_state` claims `accessibility.element_tokens`
 /// because it EMITS the tokens (the other side of the contract from
 /// the action tools above).
 #[test]
-#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn get_window_state_claims_element_tokens_capability() {
     let resp = match fetch_tools_list() {
         Some(r) => r,
@@ -122,39 +122,27 @@ fn get_window_state_claims_element_tokens_capability() {
     );
 }
 
-/// Surface 6 hard constraint: `element_index` MUST still be present on
-/// every token-accepting tool's schema — the new `element_token` field
-/// is additive, not a replacement. This is the regression guard for
-/// the back-compat contract.
+/// The native menu operation is a path contract, never another entry point for
+/// mutable snapshot indices.
 #[test]
-#[cfg(any(target_os = "macos", target_os = "linux"))]
-fn element_index_field_still_present_on_token_accepting_tools() {
-    let resp = match fetch_tools_list() {
-        Some(r) => r,
-        None => return,
+fn invoke_menu_is_path_only_and_claims_native_menu_capability() {
+    let Some(resp) = fetch_tools_list() else {
+        return;
     };
     let tools = resp["result"]["tools"].as_array().expect("tools array");
-
-    const TOKEN_TOOLS: &[&str] = &[
-        "click",
-        "double_click",
-        "right_click",
-        "scroll",
-        "type_text",
-        "press_key",
-        "set_value",
-    ];
-
-    for tool_name in TOKEN_TOOLS {
-        let tool = tools
-            .iter()
-            .find(|t| t["name"].as_str() == Some(tool_name))
-            .unwrap_or_else(|| panic!("{tool_name} missing"));
-        let props = tool["inputSchema"]["properties"].as_object().unwrap();
-        assert!(
-            props.contains_key("element_index"),
-            "Surface 6 hard constraint: {tool_name}.element_index must \
-             stay on the schema — element_token is purely additive"
-        );
-    }
+    let tool = tools
+        .iter()
+        .find(|tool| tool["name"].as_str() == Some("invoke_menu"))
+        .expect("invoke_menu missing");
+    let properties = tool["inputSchema"]["properties"]
+        .as_object()
+        .expect("invoke_menu properties");
+    assert!(properties.contains_key("path"));
+    assert!(!properties.contains_key("element_index"));
+    assert!(!properties.contains_key("element_token"));
+    let capabilities = tool["capabilities"].as_array().expect("capabilities");
+    assert!(capabilities.iter().any(|value| value == "menu.path.invoke"));
+    assert!(capabilities
+        .iter()
+        .any(|value| value == "accessibility.menu.native"));
 }

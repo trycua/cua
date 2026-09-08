@@ -273,21 +273,6 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
-    "uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Int8,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_ne": {
-      args: [FfiType.RustBuffer, FfiType.RustBuffer],
-      ret: FfiType.Int8,
-      hasRustCallStatus: true,
-    },
-    "uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash": {
-      args: [FfiType.RustBuffer],
-      ret: FfiType.UInt64,
-      hasRustCallStatus: true,
-    },
     "uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json": {
       args: [FfiType.RustBuffer],
       ret: FfiType.Handle,
@@ -385,9 +370,6 @@ interface NativeModuleInterface {
     ffi_cyclops_sdk_schema_rust_future_free_void(handle: bigint): void;
     uniffi_cyclops_sdk_schema_fn_clone_preservedjson(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_free_preservedjson(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
-    uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_eq(uniffiSelf: Uint8Array, other: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
-    uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_eq_ne(uniffiSelf: Uint8Array, other: Uint8Array, uniffi_out_err: UniffiRustCallStatus): number;
-    uniffi_cyclops_sdk_schema_fn_method_poolspec_uniffi_trait_hash(uniffiSelf: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_constructor_preservedjson_from_json(value: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cyclops_sdk_schema_fn_method_preservedjson_to_json(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     ffi_cyclops_sdk_schema_uniffi_contract_version(): number;

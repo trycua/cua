@@ -57,6 +57,15 @@ export CUA_TEST_APPS_ROOT="${RUST_ROOT}/test-apps"
 export CUA_TEST_REQUIRE_FIXTURES=1
 export CUA_TEST_DRIVER_STDERR=1
 export CUA_E2E_FORBID_SKIPS=1
+# The canonical behavior matrix runs inside a disposable CI desktop and must
+# exercise protected GUI operations without interactive approvals. This
+# testkit-only switch authorizes its spawned behavior daemons without leaking
+# product authorization variables into SDK/runtime tests in the same runner.
+# Focused tests can still select standard/bounded mode explicitly.
+export CUA_E2E_UNRESTRICTED_GUI=1
+# This runner contract requires a real or virtual desktop. Make GUI-dependent
+# lifecycle proofs fail instead of silently returning without evidence.
+export CUA_REQUIRE_GUI=1
 unset CUA_E2E_EXPECTED_MIN_CELLS
 if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   && -z "${CUA_E2E_CELL_FILTER:-}" \
@@ -82,6 +91,14 @@ else
   export CUA_E2E_COMPOSITOR="${CUA_E2E_COMPOSITOR:-openbox-x11}"
   export CUA_E2E_INPUT_BACKENDS="${CUA_E2E_INPUT_BACKENDS:-atspi,xsend-event,xtest}"
 fi
+CARGO_DRIVER_FEATURE_ARGS=()
+if [[ ",${CUA_E2E_INPUT_BACKENDS}," == *,libei-portal,* ]]; then
+  # GNOME and KDE retain DISPLAY for XWayland while the product route remains
+  # native Wayland. Their representative lanes require the release-shipped
+  # RemoteDesktop/libei adapter, so every cua-driver build/test in this runner
+  # must compile the same portal-input feature instead of falling back to wtype.
+  CARGO_DRIVER_FEATURE_ARGS=(--features portal-input)
+fi
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
   export CUA_ATSPI_DEBUG=1
 fi
@@ -97,11 +114,25 @@ command -v ffprobe >/dev/null || { echo "ffprobe is required for E2E trajectory 
 command -v jq >/dev/null || { echo "jq is required for E2E ownership validation" >&2; exit 1; }
 
 if [[ "${BUILD_FIXTURES}" == 1 ]]; then
-  cargo build --release -p cua-driver --manifest-path "${RUST_ROOT}/Cargo.toml"
+  cargo build --release -p cua-driver \
+    "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+    --manifest-path "${RUST_ROOT}/Cargo.toml"
   case "${SUITE}" in
     shared) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri}" ;;
-    native|capture) FIXTURE_TARGETS="electron,gtk3" ;;
-    *) FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3" ;;
+    native)
+      if [[ -n "${WAYLAND_DISPLAY:-}" && -z "${DISPLAY:-}" ]]; then
+        FIXTURE_TARGETS="electron,gtk3"
+      else
+        FIXTURE_TARGETS="electron,gtk3,gtk4"
+      fi
+      ;;
+    capture) FIXTURE_TARGETS="electron,gtk3" ;;
+    *)
+      FIXTURE_TARGETS="${CUA_E2E_HARNESS_FILTER:-electron,tauri},gtk3"
+      if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+        FIXTURE_TARGETS+=",gtk4"
+      fi
+      ;;
   esac
   bash "${DRIVER_ROOT}/tests/fixtures/build/linux.sh" --only "${FIXTURE_TARGETS}"
 fi
@@ -119,7 +150,12 @@ if [[ ("${SUITE}" == shared || "${SUITE}" == all) \
   )
 fi
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3")
+  required_fixtures+=(
+    "${CUA_TEST_APPS_ROOT}/harness-gtk3/CuaTestHarness.Gtk3"
+  )
+  if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+    required_fixtures+=("${CUA_TEST_APPS_ROOT}/harness-gtk4/CuaTestHarness.Gtk4")
+  fi
 fi
 for fixture in "${required_fixtures[@]}"; do
   if [[ ! -x "${fixture}" ]]; then
@@ -142,7 +178,9 @@ run_report() {
 
 echo "[PREFLIGHT] Linux desktop, fixture, AX, capture, and video"
 set +e
-(cd "${RUST_ROOT}" && cargo test -p cua-driver --test e2e_environment_preflight_test -- \
+(cd "${RUST_ROOT}" && cargo test -p cua-driver \
+  "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+  --test e2e_environment_preflight_test -- \
   --ignored --exact canonical_e2e_environment_is_ready --nocapture --test-threads=1) \
   2>&1 | tee "${ARTIFACT_DIR}/environment-preflight.log"
 PREFLIGHT_EXIT=${PIPESTATUS[0]}
@@ -168,30 +206,150 @@ run_test() {
   fi
 }
 
+run_computer_history_gate() {
+  local history_home="${ARTIFACT_DIR}/history-product-home"
+  local history_bin_dir="${ARTIFACT_DIR}/history-product-bin"
+  local history_socket="${ARTIFACT_DIR}/history-daemon.sock"
+  export CUA_DRIVER_LOCAL_HOME="${history_home}"
+  export CUA_DRIVER_LOCAL_INSTALL_DIR="${history_bin_dir}"
+  export XDG_STATE_HOME="${ARTIFACT_DIR}/history-state"
+
+  echo "[HISTORY] Installing the exact candidate into an isolated local namespace"
+  bash "${DRIVER_ROOT}/scripts/install-local.sh" --release \
+    2>&1 | tee "${ARTIFACT_DIR}/history-install-local.log"
+  export CUA_E2E_INSTALLED_DRIVER_BIN="${history_home}/packages/current/cua-driver-local"
+  export CUA_E2E_HISTORY_DAEMON_SOCKET="${history_socket}"
+  if [[ ! -x "${CUA_E2E_INSTALLED_DRIVER_BIN}" ]]; then
+    echo "installed history driver is missing: ${CUA_E2E_INSTALLED_DRIVER_BIN}" >&2
+    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+    return
+  fi
+
+  if ! "${CUA_E2E_INSTALLED_DRIVER_BIN}" history purge-offline --yes \
+      >"${ARTIFACT_DIR}/history-purge-preflight.log" 2>&1; then
+    echo "installed history driver could not establish an empty encrypted store" >&2
+    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+    return
+  fi
+
+  "${CUA_E2E_INSTALLED_DRIVER_BIN}" serve \
+    --socket "${history_socket}" \
+    --permission-mode unrestricted \
+    --dangerously-bypass-approvals \
+    >"${ARTIFACT_DIR}/history-daemon.log" 2>&1 &
+  local daemon_pid=$!
+  local ready=0
+  for _ in $(seq 1 150); do
+    if [[ -S "${history_socket}" ]]; then
+      ready=1
+      break
+    fi
+    if ! kill -0 "${daemon_pid}" 2>/dev/null; then
+      break
+    fi
+    sleep 0.1
+  done
+  if [[ "${ready}" != 1 ]]; then
+    echo "installed history daemon did not become ready" >&2
+    FAILURE_COUNT=$((FAILURE_COUNT + 1))
+    return
+  fi
+
+  run_test computer-history-encrypted-lifecycle \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test computer_history_cross_platform_test -- \
+      --ignored --exact encrypted_history_survives_restart_and_cryptographically_purges \
+      --nocapture --test-threads=1
+
+  set +e
+  "${CUA_E2E_INSTALLED_DRIVER_BIN}" stop --socket "${history_socket}" \
+    >>"${ARTIFACT_DIR}/history-daemon.log" 2>&1
+  wait "${daemon_pid}" 2>/dev/null
+  set -e
+}
+
 if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_test protected-permission-prompt-socket \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test permission_prompt_authorization_test -- --test-threads=1
+  run_test sdk-runtime-contract \
+    cargo test -p cua-driver-sdk --lib -- --test-threads=1
+  run_test sdk-runtime-configuration \
+    cargo test -p cua-driver-sdk --test runtime_configuration -- --test-threads=1
+  run_test private-worker-lifecycle \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test private_worker_test -- --test-threads=1
   run_test shared-behavior-matrix \
-    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test cross_platform_behavior_test -- \
       --ignored --exact shared_web_action_matrix_is_state_verified \
       --nocapture --test-threads=1
   run_test embedded-browser-routes \
-    cargo test -p cua-driver --test cross_platform_behavior_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test cross_platform_behavior_test -- \
       --ignored --exact embedded_browser_routes_are_exact_or_refused \
       --nocapture --test-threads=1
 fi
 
 if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
-  run_test gtk3-native-harness \
-    cargo test -p cua-driver --test harness_gtk3_test -- \
+  run_test wayland-overlay-idle-no-overlay \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test wayland_overlay_idle_test -- \
+      --ignored --exact no_overlay_flag_never_starts_wayland_overlay_thread \
+      --nocapture --test-threads=1
+  if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+    run_test wayland-overlay-idle-recovery \
+      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test wayland_overlay_idle_test -- \
+        --ignored --exact wayland_overlay_quiesces_and_recovers_after_capture_and_cursor_activity \
+        --nocapture --test-threads=1
+  fi
+  run_test agent-cursor-showcase \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test agent_cursor_showcase_test -- \
       --ignored --nocapture --test-threads=1
+  run_test gtk3-native-harness \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test harness_gtk3_test -- \
+      --ignored --nocapture --test-threads=1
+  if [[ -z "${WAYLAND_DISPLAY:-}" || -n "${DISPLAY:-}" ]]; then
+    run_test gtk4-target-selection \
+      cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+        --test harness_gtk4_test -- \
+        --ignored --nocapture --test-threads=1
+  else
+    # The GTK4 selection fixture is explicitly X11-only. Native Sway runs
+    # headless pixman and cannot initialize its EGL renderer, so record the
+    # typed environment limitation instead of manufacturing a pass/failure.
+    limitation="X11-only GTK4 fixture is not run in native Wayland/Sway; GTK4 coverage runs in the canonical X11 lane."
+    jq -n \
+      --arg reason "${limitation}" \
+      '{
+        schema: "cua-e2e-limitation-v1",
+        platform: "linux",
+        display_server: "wayland",
+        harness: "gtk4",
+        test: "gtk4-target-selection",
+        status: "not_applicable",
+        reason: $reason
+      }' > "${ARTIFACT_DIR}/gtk4-target-selection-limitation.json"
+    echo "[LIMITATION] gtk4-target-selection: ${limitation}"
+  fi
 fi
 
 if [[ "${SUITE}" == capture || "${SUITE}" == all ]]; then
   run_test capture-contract \
-    cargo test -p cua-driver --test capture_contract_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test capture_contract_test -- \
       --ignored --nocapture --test-threads=1
   run_test desktop-scope \
-    cargo test -p cua-driver --test desktop_scope_linux_test -- \
+    cargo test -p cua-driver "${CARGO_DRIVER_FEATURE_ARGS[@]}" \
+      --test desktop_scope_linux_test -- \
       --ignored --nocapture --test-threads=1
+fi
+
+if [[ "${SUITE}" == shared || "${SUITE}" == all ]]; then
+  run_computer_history_gate
 fi
 
 video_count=0

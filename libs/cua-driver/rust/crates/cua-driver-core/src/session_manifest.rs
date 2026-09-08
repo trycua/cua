@@ -1,11 +1,11 @@
-//! Immutable bounded-autonomy manifest loaded at trusted daemon startup.
+//! Immutable capability manifest loaded at trusted daemon startup.
 //!
 //! The agent may propose this file, but selecting and approving it is a
 //! launcher responsibility. The manifest only narrows the built-in,
 //! managed, and user policy layers; it cannot introduce unreviewed tools.
 
 use std::collections::HashSet;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -17,6 +17,8 @@ use sha2::{Digest, Sha256};
 
 pub const SESSION_POLICY_FILE_ENV: &str = "CUA_DRIVER_SESSION_POLICY_FILE";
 pub const SESSION_POLICY_APPROVED_ENV: &str = "CUA_DRIVER_SESSION_POLICY_APPROVED";
+pub const CAPABILITY_MANIFEST_FILE_ENV: &str = "CUA_DRIVER_CAPABILITY_MANIFEST_FILE";
+pub const CAPABILITY_MANIFEST_APPROVED_ENV: &str = "CUA_DRIVER_CAPABILITY_MANIFEST_APPROVED";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ManifestDecision {
@@ -28,28 +30,68 @@ pub enum ManifestDecision {
 
 #[derive(Debug, Clone)]
 pub struct SessionManifest {
+    version: u32,
     sha256: String,
-    expires_unix_ms: u128,
-    idle_timeout: Duration,
+    expires_unix_ms: Option<u128>,
+    idle_timeout: Option<Duration>,
     allow: HashSet<String>,
     deny: HashSet<String>,
     ask: HashSet<String>,
     existing_profiles: HashSet<(i64, u64)>,
+    existing_profile_kind: bool,
     browser_origins: HashSet<String>,
+    applications: Vec<ApplicationGrant>,
+    desktop_applications: HashSet<i64>,
+    desktop_windows: HashSet<(i64, u64)>,
+    desktop_display: bool,
+    readable_paths: HashSet<String>,
+    writable_paths: HashSet<String>,
+    readable_roots: Vec<PathGrant>,
+    writable_roots: Vec<PathGrant>,
+    terminable_pids: HashSet<i64>,
+    configuration_changes: Vec<(String, serde_json::Value)>,
+    computer_history_operations: HashSet<String>,
     last_authorized_dispatch: Arc<Mutex<Instant>>,
     idle_expired: Arc<AtomicBool>,
 }
 
+#[derive(Debug, Clone)]
+struct ApplicationGrant {
+    bundle_id: Option<String>,
+    executable: Option<String>,
+    #[allow(dead_code)]
+    launch: bool,
+    all_windows: bool,
+    terminate: TerminationGrant,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TerminationGrant {
+    Deny,
+    DriverLaunched,
+    Any,
+}
+
+#[derive(Debug, Clone)]
+struct PathGrant {
+    root: PathBuf,
+    recursive: bool,
+}
+
 impl SessionManifest {
+    pub fn version(&self) -> u32 {
+        self.version
+    }
+
     pub fn sha256(&self) -> &str {
         &self.sha256
     }
 
-    pub fn expires_unix_ms(&self) -> u128 {
+    pub fn expires_unix_ms(&self) -> Option<u128> {
         self.expires_unix_ms
     }
 
-    pub fn idle_timeout(&self) -> Duration {
+    pub fn idle_timeout(&self) -> Option<Duration> {
         self.idle_timeout
     }
 
@@ -91,9 +133,11 @@ impl SessionManifest {
                     .ok_or_else(|| {
                         "bounded existing-profile access requires window_id".to_owned()
                     })?;
-                if !self.existing_profiles.contains(&(pid, window_id)) {
+                if !self.existing_profile_kind
+                    && !self.existing_profiles.contains(&(pid, window_id))
+                {
                     return Err(format!(
-                        "browser pid {pid} window {window_id} is outside the bounded session policy"
+                        "browser pid {pid} window {window_id} is outside the capability manifest"
                     ));
                 }
             }
@@ -115,35 +159,362 @@ impl SessionManifest {
         if self.browser_origins.contains(&origin) {
             Ok(())
         } else {
+            Err("the live browser origin is outside the capability manifest".to_owned())
+        }
+    }
+
+    /// Match the implementation-attested resource of an active adapter
+    /// against the immutable capability manifest. A tool allow-list entry alone
+    /// never widens the resources approved at launch.
+    pub fn authorize_protected_resource(
+        &self,
+        adapter_id: &str,
+        resource: &serde_json::Value,
+    ) -> Result<(), String> {
+        let kind = resource
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("{adapter_id} did not attest a resource kind"))?;
+        let refused = || {
             Err(format!(
-                "browser origin '{origin}' is outside the bounded session policy"
+                "{adapter_id} resource kind '{kind}' is outside the capability manifest"
+            ))
+        };
+        match adapter_id {
+            "computer_history" => {
+                if kind != "computer_history" {
+                    return refused();
+                }
+                let operation = resource
+                    .get("operation")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "computer history did not attest an operation".to_owned())?;
+                self.computer_history_operations
+                    .contains(operation)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        format!(
+                            "computer history operation '{operation}' is outside the capability manifest"
+                        )
+                    })
+            }
+            "private_observation" => match kind {
+                "window" => self.authorize_desktop_window(resource),
+                "application" => self.authorize_desktop_application(resource),
+                "display" => self.desktop_display.then_some(()).ok_or_else(|| {
+                    "desktop display observation is outside the capability manifest".to_owned()
+                }),
+                "browser_target" | "authenticated_browser_tab" => {
+                    self.authorize_resource_origin(resource)
+                }
+                // `escalate_session` always expands a browser-scoped session
+                // to desktop scope; it has no caller-selectable capture_scope
+                // argument. Require the immutable manifest's display grant
+                // directly instead of keying enforcement on a field the tool
+                // can never send.
+                "session_capture_scope" => self.desktop_display.then_some(()).ok_or_else(|| {
+                    "desktop capture escalation is outside the capability manifest".to_owned()
+                }),
+                "session_trajectory_recording" => Ok(()),
+                _ => refused(),
+            },
+            "desktop_input" => match kind {
+                "window_input" => self.authorize_desktop_window(resource),
+                "application_input" => self.authorize_desktop_application(resource),
+                "display_input" => self.desktop_display.then_some(()).ok_or_else(|| {
+                    "desktop-wide input is outside the capability manifest".to_owned()
+                }),
+                _ => refused(),
+            },
+            "file_transfer_and_output" => self.authorize_file_resource(kind, resource),
+            "browser_bound_input" | "browser_consequential_action" => {
+                self.authorize_resource_origin(resource)
+            }
+            "process_control" => {
+                let pid = resource
+                    .pointer("/fingerprint/pid")
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or_else(|| "process control did not attest a pid".to_owned())?;
+                let driver_owned = resource
+                    .get("driver_owned")
+                    .and_then(serde_json::Value::as_bool)
+                    .unwrap_or(false);
+                let app_allowed = self.applications.iter().any(|application| {
+                    let identity_matches = application
+                        .executable
+                        .as_deref()
+                        .zip(
+                            resource
+                                .pointer("/fingerprint/executable")
+                                .and_then(serde_json::Value::as_str),
+                        )
+                        .is_some_and(|(allowed, actual)| allowed == actual);
+                    identity_matches
+                        && match application.terminate {
+                            TerminationGrant::Deny => false,
+                            TerminationGrant::DriverLaunched => driver_owned,
+                            TerminationGrant::Any => true,
+                        }
+                });
+                if self.terminable_pids.contains(&pid) || app_allowed {
+                    Ok(())
+                } else {
+                    Err(format!(
+                        "process pid {pid} is outside the capability manifest"
+                    ))
+                }
+            }
+            "driver_configuration" => {
+                let changes = resource
+                    .get("exact_changes")
+                    .and_then(serde_json::Value::as_object)
+                    .ok_or_else(|| {
+                        "driver configuration did not attest exact changes".to_owned()
+                    })?;
+                for (key, value) in changes {
+                    if !self
+                        .configuration_changes
+                        .iter()
+                        .any(|(allowed_key, allowed_value)| {
+                            allowed_key == key && allowed_value == value
+                        })
+                    {
+                        return Err(format!(
+                            "driver configuration change '{key}' is outside the capability manifest"
+                        ));
+                    }
+                }
+                Ok(())
+            }
+            _ => refused(),
+        }
+    }
+
+    fn authorize_desktop_window(&self, resource: &serde_json::Value) -> Result<(), String> {
+        let pid = resource
+            .get("pid")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| "window resource did not attest a pid".to_owned())?;
+        let window_id = resource
+            .get("window_id")
+            .and_then(serde_json::Value::as_u64)
+            .ok_or_else(|| "window resource did not attest a window_id".to_owned())?;
+        if self.desktop_windows.contains(&(pid, window_id))
+            || self.existing_profiles.contains(&(pid, window_id))
+            || self.resource_matches_application(resource, true)
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "desktop pid {pid} window {window_id} is outside the capability manifest"
             ))
         }
     }
 
+    fn authorize_desktop_application(&self, resource: &serde_json::Value) -> Result<(), String> {
+        let pid = resource
+            .get("pid")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or_else(|| "application resource did not attest a pid".to_owned())?;
+        if self.desktop_applications.contains(&pid)
+            || self
+                .existing_profiles
+                .iter()
+                .any(|(profile_pid, _)| *profile_pid == pid)
+            || self.resource_matches_application(resource, false)
+        {
+            Ok(())
+        } else {
+            Err(format!(
+                "desktop application pid {pid} is outside the capability manifest"
+            ))
+        }
+    }
+
+    fn resource_matches_application(
+        &self,
+        resource: &serde_json::Value,
+        require_all_windows: bool,
+    ) -> bool {
+        let bundle_id = resource
+            .get("bundle_id")
+            .and_then(serde_json::Value::as_str);
+        let executable = resource
+            .pointer("/fingerprint/executable")
+            .or_else(|| resource.get("executable"))
+            .or_else(|| resource.get("launch_path"))
+            .and_then(serde_json::Value::as_str);
+        self.applications.iter().any(|application| {
+            (!require_all_windows || application.all_windows)
+                && (application
+                    .bundle_id
+                    .as_deref()
+                    .zip(bundle_id)
+                    .is_some_and(|(allowed, actual)| allowed == actual)
+                    || application
+                        .executable
+                        .as_deref()
+                        .zip(executable)
+                        .is_some_and(|(allowed, actual)| allowed == actual))
+        })
+    }
+
+    fn authorize_resource_origin(&self, resource: &serde_json::Value) -> Result<(), String> {
+        let origin = resource
+            .get("live_origin")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| "browser resource did not attest a live origin".to_owned())?;
+        if self.browser_origins.contains(origin) {
+            Ok(())
+        } else {
+            Err("the live browser origin is outside the capability manifest".to_owned())
+        }
+    }
+
+    fn authorize_file_resource(
+        &self,
+        kind: &str,
+        resource: &serde_json::Value,
+    ) -> Result<(), String> {
+        let all_allowed =
+            |values: &serde_json::Value, allowed: &HashSet<String>, roots: &[PathGrant]| {
+                values.as_array().is_some_and(|values| {
+                    !values.is_empty()
+                        && values.iter().all(|value| {
+                            value
+                                .as_str()
+                                .is_some_and(|path| path_allowed(path, allowed, roots))
+                        })
+                })
+            };
+        match kind {
+            "browser_upload" => {
+                if all_allowed(
+                    &resource["canonical_paths"],
+                    &self.readable_paths,
+                    &self.readable_roots,
+                ) {
+                    Ok(())
+                } else {
+                    Err("one or more upload paths are outside the capability manifest".to_owned())
+                }
+            }
+            "trajectory_replay" => self.authorize_exact_path(
+                resource,
+                "canonical_source_directory",
+                &self.readable_paths,
+                &self.readable_roots,
+            ),
+            "browser_download" => self.authorize_exact_path(
+                resource,
+                "canonical_destination_root",
+                &self.writable_paths,
+                &self.writable_roots,
+            ),
+            "screenshot_output" => self.authorize_exact_path(
+                resource,
+                "canonical_output_path",
+                &self.writable_paths,
+                &self.writable_roots,
+            ),
+            "recording_output" | "recording_finalize" => self.authorize_exact_path(
+                resource,
+                "canonical_output_directory",
+                &self.writable_paths,
+                &self.writable_roots,
+            ),
+            // The exact dependency and confirmation bit are fixed by the
+            // typed install_ffmpeg route; the manifest's tool allow is the
+            // reviewed bounded decision.
+            "dependency_install" => Ok(()),
+            _ => Err(format!(
+                "file resource kind '{kind}' is outside the capability manifest"
+            )),
+        }
+    }
+
+    fn authorize_exact_path(
+        &self,
+        resource: &serde_json::Value,
+        key: &str,
+        allowed: &HashSet<String>,
+        roots: &[PathGrant],
+    ) -> Result<(), String> {
+        let path = resource
+            .get(key)
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| format!("file resource did not attest {key}"))?;
+        if path_allowed(path, allowed, roots) {
+            Ok(())
+        } else {
+            Err("the exact path is outside the capability manifest".to_owned())
+        }
+    }
+
     pub fn is_expired(&self) -> bool {
-        self.expires_unix_ms < now_unix_ms()
+        self.expires_unix_ms
+            .is_some_and(|expires_unix_ms| expires_unix_ms < now_unix_ms())
     }
 
     pub fn is_idle_expired(&self) -> bool {
         self.idle_expired.load(Ordering::Acquire)
     }
 
-    /// Refresh the bounded-mode idle lease only after a call passed every
+    /// Check the optional idle lease without refreshing it.
+    pub fn check_lifetime(&self) -> Result<(), String> {
+        if self.is_expired() {
+            return Err("capability manifest expired".to_owned());
+        }
+        let Some(idle_timeout) = self.idle_timeout else {
+            return Ok(());
+        };
+        if self.is_idle_expired() {
+            return Err("capability manifest idle timeout exceeded".to_owned());
+        }
+        let last = self.last_authorized_dispatch.lock().unwrap();
+        if Instant::now().duration_since(*last) > idle_timeout {
+            self.idle_expired.store(true, Ordering::Release);
+            return Err("capability manifest idle timeout exceeded".to_owned());
+        }
+        Ok(())
+    }
+
+    /// Refresh the capability-manifest idle lease only after a call passed every
     /// manifest decision and resource check. Once the idle lease expires it is
     /// terminal for this daemon instance; a tool call cannot revive it.
-    pub fn authorize_dispatch(&self) -> Result<(), String> {
-        if self.is_idle_expired() {
-            return Err("bounded session policy idle timeout exceeded".to_owned());
-        }
+    pub fn commit_authorized_dispatch(&self) -> Result<(), String> {
+        self.check_lifetime()?;
+        let Some(idle_timeout) = self.idle_timeout else {
+            return Ok(());
+        };
         let now = Instant::now();
         let mut last = self.last_authorized_dispatch.lock().unwrap();
-        if now.duration_since(*last) > self.idle_timeout {
+        if now.duration_since(*last) > idle_timeout {
             self.idle_expired.store(true, Ordering::Release);
-            return Err("bounded session policy idle timeout exceeded".to_owned());
+            return Err("capability manifest idle timeout exceeded".to_owned());
         }
         *last = now;
         Ok(())
+    }
+
+    /// Compatibility alias retained for downstream callers during migration.
+    pub fn authorize_dispatch(&self) -> Result<(), String> {
+        self.commit_authorized_dispatch()
+    }
+
+    pub fn validate_for_mode(
+        &self,
+        mode: crate::authorization::PermissionMode,
+    ) -> Result<(), String> {
+        if mode == crate::authorization::PermissionMode::Bounded
+            && (self.expires_unix_ms.is_none() || self.idle_timeout.is_none())
+        {
+            return Err(
+                "bounded mode requires capability manifest expires_after and idle_timeout"
+                    .to_owned(),
+            );
+        }
+        self.check_lifetime()
     }
 }
 
@@ -152,9 +523,12 @@ impl SessionManifest {
 #[serde(deny_unknown_fields)]
 struct RawManifest {
     version: u32,
-    mode: String,
-    expires_after: String,
-    idle_timeout: String,
+    #[serde(default)]
+    mode: Option<String>,
+    #[serde(default)]
+    expires_after: Option<String>,
+    #[serde(default)]
+    idle_timeout: Option<String>,
     #[serde(default)]
     resources: RawResources,
     #[serde(default)]
@@ -162,7 +536,7 @@ struct RawManifest {
     #[serde(default)]
     deny: RawToolSet,
     #[serde(default)]
-    ask: RawToolSet,
+    ask: Option<RawToolSet>,
 }
 
 #[cfg(feature = "yaml")]
@@ -170,7 +544,19 @@ struct RawManifest {
 #[serde(deny_unknown_fields)]
 struct RawResources {
     #[serde(default)]
+    apps: Vec<RawApplicationResource>,
+    #[serde(default)]
     browser: RawBrowserResources,
+    #[serde(default)]
+    desktop: RawDesktopResources,
+    #[serde(default)]
+    files: RawFileResources,
+    #[serde(default)]
+    processes: RawProcessResources,
+    #[serde(default)]
+    driver_configuration: RawDriverConfigurationResources,
+    #[serde(default)]
+    computer_history: RawComputerHistoryResources,
 }
 
 #[cfg(feature = "yaml")]
@@ -180,7 +566,32 @@ struct RawBrowserResources {
     #[serde(default)]
     existing_profiles: Vec<RawExistingProfile>,
     #[serde(default)]
+    profiles: Vec<RawBrowserProfile>,
+    #[serde(default)]
     origins: Vec<String>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawBrowserProfile {
+    kind: String,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawApplicationResource {
+    #[serde(default)]
+    bundle_id: Option<String>,
+    #[serde(default)]
+    executable: Option<String>,
+    #[serde(default)]
+    launch: bool,
+    #[serde(default)]
+    windows: Option<String>,
+    #[serde(default)]
+    terminate: Option<String>,
 }
 
 #[cfg(feature = "yaml")]
@@ -189,6 +600,80 @@ struct RawBrowserResources {
 struct RawExistingProfile {
     pid: i64,
     window_id: u64,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDesktopResources {
+    #[serde(default)]
+    applications: Vec<i64>,
+    #[serde(default)]
+    windows: Vec<RawDesktopWindow>,
+    #[serde(default)]
+    display: bool,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDesktopWindow {
+    pid: i64,
+    window_id: u64,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawFileResources {
+    #[serde(default)]
+    read: Vec<RawPathResource>,
+    #[serde(default)]
+    write: Vec<RawPathResource>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RawPathResource {
+    Exact(String),
+    Directory {
+        dir: String,
+        #[serde(default)]
+        recursive: bool,
+    },
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawProcessResources {
+    #[serde(default)]
+    terminate: Vec<i64>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawDriverConfigurationResources {
+    #[serde(default)]
+    changes: Vec<RawConfigurationChange>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawComputerHistoryResources {
+    #[serde(default)]
+    operations: Vec<String>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawConfigurationChange {
+    key: String,
+    value: serde_json::Value,
 }
 
 #[cfg(feature = "yaml")]
@@ -208,68 +693,181 @@ pub fn configured_session_manifest() -> Result<Option<&'static SessionManifest>,
     }
 }
 
+pub fn configured_capability_manifest() -> Result<Option<&'static SessionManifest>, String> {
+    configured_session_manifest()
+}
+
+pub fn capability_manifest_configured() -> bool {
+    std::env::var_os(CAPABILITY_MANIFEST_FILE_ENV).is_some()
+        || std::env::var_os(SESSION_POLICY_FILE_ENV).is_some()
+}
+
+pub fn capability_manifest_approved() -> bool {
+    [
+        CAPABILITY_MANIFEST_APPROVED_ENV,
+        SESSION_POLICY_APPROVED_ENV,
+    ]
+    .into_iter()
+    .any(|name| {
+        std::env::var(name).is_ok_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+    })
+}
+
 fn load_configured_manifest() -> Result<Option<SessionManifest>, String> {
-    let Some(path) = std::env::var_os(SESSION_POLICY_FILE_ENV) else {
+    let capability_path = std::env::var_os(CAPABILITY_MANIFEST_FILE_ENV);
+    let legacy_path = std::env::var_os(SESSION_POLICY_FILE_ENV);
+    if capability_path.is_some() && legacy_path.is_some() && capability_path != legacy_path {
+        return Err(format!(
+            "{CAPABILITY_MANIFEST_FILE_ENV} conflicts with deprecated {SESSION_POLICY_FILE_ENV}"
+        ));
+    }
+    let Some(path) = capability_path.or(legacy_path) else {
         return Ok(None);
     };
     load_manifest(Path::new(&path)).map(Some)
 }
 
-pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
-    let bytes = std::fs::read(path)
-        .map_err(|error| format!("failed to read session policy {}: {error}", path.display()))?;
+/// Load and validate an immutable capability manifest for a trusted
+/// runtime/session constructor.
+pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        format!(
+            "failed to read capability manifest {}: {error}",
+            path.display()
+        )
+    })?;
     if bytes.is_empty() {
-        return Err(format!("session policy {} is empty", path.display()));
+        return Err(format!("capability manifest {} is empty", path.display()));
     }
     #[cfg(feature = "yaml")]
-    let raw: RawManifest = serde_yaml_ng::from_slice(&bytes)
-        .map_err(|error| format!("failed to parse session policy {}: {error}", path.display()))?;
+    let raw: RawManifest = serde_yaml_ng::from_slice(&bytes).map_err(|error| {
+        format!(
+            "failed to parse capability manifest {}: {error}",
+            path.display()
+        )
+    })?;
     #[cfg(not(feature = "yaml"))]
-    return Err("session policy support requires the yaml feature".to_owned());
+    return Err("capability manifest support requires the yaml feature".to_owned());
 
     #[cfg(feature = "yaml")]
     {
-        if raw.version != 1 {
+        let RawManifest {
+            version,
+            mode,
+            expires_after,
+            idle_timeout,
+            resources,
+            allow,
+            deny,
+            ask,
+        } = raw;
+        let RawResources {
+            apps: raw_applications,
+            browser,
+            desktop,
+            files,
+            processes,
+            driver_configuration,
+            computer_history,
+        } = resources;
+        let RawBrowserResources {
+            existing_profiles: raw_existing_profiles,
+            profiles: raw_browser_profiles,
+            origins: raw_browser_origins,
+        } = browser;
+        let RawDesktopResources {
+            applications: raw_desktop_applications,
+            windows: raw_desktop_windows,
+            display: desktop_display,
+        } = desktop;
+        let RawFileResources {
+            read: raw_readable_paths,
+            write: raw_writable_paths,
+        } = files;
+        let RawProcessResources {
+            terminate: raw_terminable_pids,
+        } = processes;
+        let RawDriverConfigurationResources {
+            changes: raw_configuration_changes,
+        } = driver_configuration;
+        let RawComputerHistoryResources {
+            operations: raw_computer_history_operations,
+        } = computer_history;
+
+        if !matches!(version, 1..=3) {
             return Err(format!(
-                "unsupported session policy version {}; expected 1",
-                raw.version
+                "unsupported capability manifest version {}; expected 1, 2, or 3",
+                version
             ));
         }
-        if !matches!(raw.mode.as_str(), "bounded" | "autonomous") {
-            return Err("session policy mode must be bounded".to_owned());
+        if version < 3 {
+            if !mode
+                .as_deref()
+                .is_some_and(|mode| matches!(mode, "bounded" | "autonomous"))
+            {
+                return Err("legacy capability manifest mode must be bounded".to_owned());
+            }
+        } else if mode.is_some() {
+            return Err("capability manifest version 3 must not declare mode".to_owned());
         }
-        let expires_after = parse_duration(&raw.expires_after)?;
-        let idle_timeout = parse_duration(&raw.idle_timeout)?;
-        if expires_after.is_zero() || expires_after > Duration::from_secs(24 * 60 * 60) {
-            return Err("expires_after must be greater than zero and no more than 24h".to_owned());
-        }
-        if idle_timeout.is_zero() || idle_timeout > expires_after {
+        if version < 3 && (expires_after.is_none() || idle_timeout.is_none()) {
             return Err(
-                "idle_timeout must be greater than zero and no more than expires_after".to_owned(),
+                "legacy capability manifests require expires_after and idle_timeout".to_owned(),
             );
         }
-        let allow = validate_tools("allow", raw.allow.tools)?;
-        let deny = validate_tools("deny", raw.deny.tools)?;
-        let ask = validate_tools("ask", raw.ask.tools)?;
+        let expires_after = expires_after.as_deref().map(parse_duration).transpose()?;
+        let idle_timeout = idle_timeout.as_deref().map(parse_duration).transpose()?;
+        if expires_after.is_some_and(|duration| {
+            duration.is_zero() || duration > Duration::from_secs(24 * 60 * 60)
+        }) {
+            return Err("expires_after must be greater than zero and no more than 24h".to_owned());
+        }
+        if idle_timeout.is_some_and(|idle| {
+            idle.is_zero() || expires_after.is_some_and(|expires| idle > expires)
+        }) {
+            return Err("idle_timeout must be greater than zero and no more than expires_after when both are declared".to_owned());
+        }
+        let allow = validate_tools("allow", allow.tools)?;
+        let mut deny = validate_tools("deny", deny.tools)?;
+        let legacy_ask = if version < 3 {
+            validate_tools("ask", ask.unwrap_or_default().tools)?
+        } else if ask.is_some() {
+            return Err("capability manifest version 3 does not support ask.tools".to_owned());
+        } else {
+            HashSet::new()
+        };
+        for tool in legacy_ask {
+            if !deny.insert(tool.clone()) {
+                return Err(format!(
+                    "capability manifest tool '{tool}' appears in more than one decision set"
+                ));
+            }
+        }
+        let ask = HashSet::new();
         if allow.is_empty() {
-            return Err("session policy allow.tools must not be empty".to_owned());
+            return Err("capability manifest allow.tools must not be empty".to_owned());
         }
         for tool in &allow {
             if deny.contains(tool) || ask.contains(tool) {
                 return Err(format!(
-                    "session policy tool '{tool}' appears in more than one decision set"
+                    "capability manifest tool '{tool}' appears in more than one decision set"
                 ));
             }
         }
         for tool in &deny {
             if ask.contains(tool) {
                 return Err(format!(
-                    "session policy tool '{tool}' appears in more than one decision set"
+                    "capability manifest tool '{tool}' appears in more than one decision set"
                 ));
             }
         }
         let mut existing_profiles = HashSet::new();
-        for profile in raw.resources.browser.existing_profiles {
+        for profile in raw_existing_profiles {
             if profile.pid <= 0 || profile.window_id == 0 {
                 return Err(
                     "browser existing_profiles entries require positive pid and window_id"
@@ -283,8 +881,25 @@ pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 ));
             }
         }
+        if version == 1 && !raw_browser_profiles.is_empty() {
+            return Err(
+                "browser profiles require capability manifest version 2 or later".to_owned(),
+            );
+        }
+        let mut existing_profile_kind = false;
+        for profile in raw_browser_profiles {
+            match profile.kind.trim() {
+                "isolated" | "isolated_new" => {}
+                "existing_profile" => existing_profile_kind = true,
+                other => {
+                    return Err(format!(
+                        "unsupported browser profile kind '{other}'; expected isolated or existing_profile"
+                    ))
+                }
+            }
+        }
         let mut browser_origins = HashSet::new();
-        for raw_origin in raw.resources.browser.origins {
+        for raw_origin in raw_browser_origins {
             let origin = canonical_origin(&raw_origin)?;
             if origin != raw_origin.trim().trim_end_matches('/') {
                 return Err(format!(
@@ -293,6 +908,69 @@ pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             }
             if !browser_origins.insert(origin.clone()) {
                 return Err(format!("browser origins repeats '{origin}'"));
+            }
+        }
+        let desktop_applications =
+            validate_positive_pids("desktop applications", raw_desktop_applications)?;
+        if version == 1 && !raw_applications.is_empty() {
+            return Err(
+                "application identity resources require capability manifest version 2 or later"
+                    .to_owned(),
+            );
+        }
+        let applications = validate_applications(raw_applications)?;
+        let mut desktop_windows = HashSet::new();
+        for window in raw_desktop_windows {
+            if window.pid <= 0 || window.window_id == 0 {
+                return Err("desktop windows entries require positive pid and window_id".to_owned());
+            }
+            if !desktop_windows.insert((window.pid, window.window_id)) {
+                return Err(format!(
+                    "desktop windows repeats pid {} window {}",
+                    window.pid, window.window_id
+                ));
+            }
+        }
+        let (readable_paths, readable_roots) =
+            validate_manifest_path_resources("files.read", raw_readable_paths, version)?;
+        let (writable_paths, writable_roots) =
+            validate_manifest_path_resources("files.write", raw_writable_paths, version)?;
+        let terminable_pids = validate_positive_pids("processes.terminate", raw_terminable_pids)?;
+        let mut configuration_changes = Vec::new();
+        for change in raw_configuration_changes {
+            let key = change.key.trim();
+            if key.is_empty() || key == "capture_scope" {
+                return Err(
+                    "driver_configuration changes require a non-retired config key".to_owned(),
+                );
+            }
+            if configuration_changes
+                .iter()
+                .any(|(existing_key, existing_value)| {
+                    existing_key == key && existing_value == &change.value
+                })
+            {
+                return Err(format!(
+                    "driver_configuration changes repeats exact change '{key}'"
+                ));
+            }
+            configuration_changes.push((key.to_owned(), change.value));
+        }
+        if version < 3 && !raw_computer_history_operations.is_empty() {
+            return Err(
+                "computer_history resources require capability manifest version 3".to_owned(),
+            );
+        }
+        let mut computer_history_operations = HashSet::new();
+        for operation in raw_computer_history_operations {
+            let operation = operation.trim();
+            if !matches!(operation, "status" | "query") {
+                return Err(format!(
+                    "unsupported computer_history operation '{operation}'; expected status or query"
+                ));
+            }
+            if !computer_history_operations.insert(operation.to_owned()) {
+                return Err(format!("computer_history operations repeats '{operation}'"));
             }
         }
         if !browser_origins.is_empty() {
@@ -313,6 +991,7 @@ pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 "parallel_mouse_drag",
                 "get_accessibility_tree",
                 "get_window_state",
+                "verify_state",
                 "get_desktop_state",
             ];
             if let Some(tool) = ORIGIN_BYPASS_TOOLS
@@ -320,23 +999,41 @@ pub(crate) fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
                 .find(|tool| allow.contains(**tool))
             {
                 return Err(format!(
-                    "origin-scoped bounded manifests cannot allow '{tool}' because it bypasses the typed browser origin adapter"
+                    "origin-scoped capability manifests cannot allow '{tool}' because it bypasses the typed browser origin adapter"
                 ));
             }
         }
 
         let mut digest = Sha256::new();
-        digest.update(b"cua-driver-session-policy-v1\0");
+        let digest_domain = if version == 3 {
+            "cua-driver-capability-manifest"
+        } else {
+            "cua-driver-session-policy"
+        };
+        digest.update(format!("{digest_domain}-v{version}\0").as_bytes());
         digest.update(&bytes);
         Ok(SessionManifest {
+            version,
             sha256: format!("{:x}", digest.finalize()),
-            expires_unix_ms: now_unix_ms() + expires_after.as_millis(),
+            expires_unix_ms: expires_after.map(|duration| now_unix_ms() + duration.as_millis()),
             idle_timeout,
             allow,
             deny,
             ask,
             existing_profiles,
+            existing_profile_kind,
             browser_origins,
+            applications,
+            desktop_applications,
+            desktop_windows,
+            desktop_display,
+            readable_paths,
+            writable_paths,
+            readable_roots,
+            writable_roots,
+            terminable_pids,
+            configuration_changes,
+            computer_history_operations,
             last_authorized_dispatch: Arc::new(Mutex::new(Instant::now())),
             idle_expired: Arc::new(AtomicBool::new(false)),
         })
@@ -353,12 +1050,12 @@ fn validate_tools(section: &str, tools: Vec<String>) -> Result<HashSet<String>, 
                 == crate::authorization::RiskClass::Unclassified
         {
             return Err(format!(
-                "session policy {section}.tools contains unknown or unreviewed tool '{tool}'"
+                "capability manifest {section}.tools contains unknown or unreviewed tool '{tool}'"
             ));
         }
         if !validated.insert(canonical.clone()) {
             return Err(format!(
-                "session policy {section}.tools repeats '{canonical}'"
+                "capability manifest {section}.tools repeats '{canonical}'"
             ));
         }
     }
@@ -370,6 +1067,237 @@ fn canonical_tool_name(tool: &str) -> &str {
         "type_text_chars" => "type_text",
         other => other,
     }
+}
+
+#[cfg(feature = "yaml")]
+fn validate_positive_pids(section: &str, pids: Vec<i64>) -> Result<HashSet<i64>, String> {
+    let mut validated = HashSet::new();
+    for pid in pids {
+        if pid <= 0 {
+            return Err(format!("{section} entries must be positive pids"));
+        }
+        if !validated.insert(pid) {
+            return Err(format!("{section} repeats pid {pid}"));
+        }
+    }
+    Ok(validated)
+}
+
+#[cfg(feature = "yaml")]
+fn validate_applications(
+    applications: Vec<RawApplicationResource>,
+) -> Result<Vec<ApplicationGrant>, String> {
+    let mut validated = Vec::new();
+    for raw in applications {
+        let bundle_id = raw
+            .bundle_id
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        let executable = raw
+            .executable
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty());
+        if bundle_id.is_some() == executable.is_some() {
+            return Err(
+                "each application resource must declare exactly one of bundle_id or executable"
+                    .to_owned(),
+            );
+        }
+        let executable = executable
+            .map(|path| {
+                let path = Path::new(&path);
+                if !path.is_absolute() {
+                    return Err(
+                        "application executable identities must be canonical absolute paths"
+                            .to_owned(),
+                    );
+                }
+                canonical_manifest_path(path)
+            })
+            .transpose()?;
+        let all_windows = match raw.windows.as_deref().unwrap_or("all") {
+            "all" => true,
+            other => {
+                return Err(format!(
+                    "unsupported application windows scope '{other}'; expected all"
+                ))
+            }
+        };
+        let terminate = match raw.terminate.as_deref().unwrap_or("deny") {
+            "deny" => TerminationGrant::Deny,
+            "driver_launched" => TerminationGrant::DriverLaunched,
+            "any" => TerminationGrant::Any,
+            other => {
+                return Err(format!(
+                    "unsupported application terminate scope '{other}'; expected deny, driver_launched, or any"
+                ))
+            }
+        };
+        if validated.iter().any(|application: &ApplicationGrant| {
+            application.bundle_id == bundle_id && application.executable == executable
+        }) {
+            return Err("application resources repeat an identity".to_owned());
+        }
+        validated.push(ApplicationGrant {
+            bundle_id,
+            executable,
+            launch: raw.launch,
+            all_windows,
+            terminate,
+        });
+    }
+    Ok(validated)
+}
+
+#[cfg(feature = "yaml")]
+fn validate_manifest_path_resources(
+    section: &str,
+    resources: Vec<RawPathResource>,
+    version: u32,
+) -> Result<(HashSet<String>, Vec<PathGrant>), String> {
+    let mut exact = HashSet::new();
+    let mut roots = Vec::new();
+    for resource in resources {
+        match resource {
+            RawPathResource::Exact(path) => {
+                exact.extend(validate_manifest_paths(section, vec![path])?);
+            }
+            RawPathResource::Directory { dir, recursive } => {
+                if version < 2 {
+                    return Err(format!(
+                        "{section} directory roots require capability manifest version 2 or later"
+                    ));
+                }
+                let canonical = validate_manifest_paths(section, vec![dir])?
+                    .into_iter()
+                    .next()
+                    .expect("one validated path");
+                let root = PathBuf::from(&canonical);
+                if root.exists() && !root.is_dir() {
+                    return Err(format!("{section} directory root must name a directory"));
+                }
+                if roots
+                    .iter()
+                    .any(|grant: &PathGrant| grant.root == root && grant.recursive == recursive)
+                {
+                    return Err(format!("{section} repeats directory root '{canonical}'"));
+                }
+                roots.push(PathGrant { root, recursive });
+            }
+        }
+    }
+    Ok((exact, roots))
+}
+
+#[cfg(feature = "yaml")]
+fn validate_manifest_paths(section: &str, paths: Vec<String>) -> Result<HashSet<String>, String> {
+    let mut validated = HashSet::new();
+    for raw in paths {
+        let trimmed = raw.trim();
+        let path = Path::new(trimmed);
+        if !path.is_absolute()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    std::path::Component::ParentDir | std::path::Component::CurDir
+                )
+            })
+        {
+            return Err(format!(
+                "{section} path '{raw}' must be absolute and contain no '..' components"
+            ));
+        }
+        if path.parent().is_none() {
+            return Err(format!(
+                "{section} path '{raw}' must not name a filesystem root"
+            ));
+        }
+        if trimmed.len()
+            > path
+                .components()
+                .next()
+                .map_or(0, |root| root.as_os_str().len())
+            && (trimmed.ends_with('/') || trimmed.ends_with('\\'))
+        {
+            return Err(format!(
+                "{section} path '{raw}' must not end with a directory separator"
+            ));
+        }
+        let normalized = path.to_string_lossy().into_owned();
+        if normalized != trimmed {
+            return Err(format!(
+                "{section} path '{raw}' must use its normalized spelling"
+            ));
+        }
+        let canonical = canonical_manifest_path(path).map_err(|error| {
+            format!("{section} path '{raw}' could not be resolved safely: {error}")
+        })?;
+        if !validated.insert(canonical.clone()) {
+            return Err(format!("{section} repeats path '{canonical}'"));
+        }
+    }
+    Ok(validated)
+}
+
+fn path_allowed(path: &str, exact: &HashSet<String>, roots: &[PathGrant]) -> bool {
+    if exact.contains(path) {
+        return true;
+    }
+    let candidate = Path::new(path);
+    roots.iter().any(|grant| {
+        candidate == grant.root
+            || if grant.recursive {
+                candidate.starts_with(&grant.root)
+            } else {
+                candidate.parent() == Some(grant.root.as_path())
+            }
+    })
+}
+
+#[cfg(feature = "yaml")]
+fn canonical_manifest_path(path: &Path) -> Result<String, String> {
+    if path.exists() {
+        return std::fs::canonicalize(path)
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|error| error.to_string());
+    }
+
+    let mut existing = path;
+    let mut suffix = Vec::new();
+    while !existing.exists() {
+        match std::fs::symlink_metadata(existing) {
+            Ok(metadata) if metadata.file_type().is_symlink() => {
+                return Err("path contains a broken symbolic link".to_owned())
+            }
+            Ok(_) => return Err("path contains an unavailable filesystem entry".to_owned()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.to_string()),
+        }
+        let name = existing
+            .file_name()
+            .ok_or_else(|| "path has no existing ancestor".to_owned())?;
+        suffix.push(name.to_os_string());
+        existing = existing
+            .parent()
+            .ok_or_else(|| "path has no existing ancestor".to_owned())?;
+    }
+    let metadata = std::fs::symlink_metadata(existing).map_err(|error| error.to_string())?;
+    if !metadata.is_dir() {
+        return Err("existing ancestor is not a directory".to_owned());
+    }
+    let mut canonical = std::fs::canonicalize(existing).map_err(|error| error.to_string())?;
+    for component in suffix.into_iter().rev() {
+        let component_path = PathBuf::from(&component);
+        if !matches!(
+            component_path.components().next(),
+            Some(Component::Normal(_))
+        ) || component_path.components().count() != 1
+        {
+            return Err("path contains an unsafe component".to_owned());
+        }
+        canonical.push(component);
+    }
+    Ok(canonical.to_string_lossy().into_owned())
 }
 
 fn canonical_origin(raw: &str) -> Result<String, String> {
@@ -441,7 +1369,7 @@ mod tests {
 
     #[cfg(feature = "yaml")]
     #[test]
-    fn manifest_is_deny_by_default_and_preserves_ask() {
+    fn legacy_ask_is_deny_and_undeclared_tools_fail_closed() {
         let loaded = manifest(
             r#"
 version: 1
@@ -460,8 +1388,53 @@ ask:
         .unwrap();
         assert_eq!(loaded.decision("start_session"), ManifestDecision::Allow);
         assert_eq!(loaded.decision("page"), ManifestDecision::Deny);
-        assert_eq!(loaded.decision("browser_download"), ManifestDecision::Ask);
+        assert_eq!(loaded.decision("browser_download"), ManifestDecision::Deny);
         assert_eq!(loaded.decision("click"), ManifestDecision::Undeclared);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn version_three_removes_mode_and_ask_and_allows_optional_lifetimes() {
+        let loaded =
+            manifest("version: 3\nallow:\n  tools: [get_config]\ndeny:\n  tools: [page]\n")
+                .unwrap();
+        assert_eq!(loaded.version(), 3);
+        assert_eq!(loaded.expires_unix_ms(), None);
+        assert_eq!(loaded.idle_timeout(), None);
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Standard)
+            .is_ok());
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Unrestricted)
+            .is_ok());
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Bounded)
+            .is_err());
+
+        assert!(
+            manifest("version: 3\nmode: bounded\nallow:\n  tools: [get_config]\n")
+                .unwrap_err()
+                .contains("must not declare mode")
+        );
+        assert!(
+            manifest("version: 3\nallow:\n  tools: [get_config]\nask:\n  tools: [page]\n")
+                .unwrap_err()
+                .contains("does not support ask.tools")
+        );
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn version_three_lifetimes_are_enforced_when_declared() {
+        let loaded = manifest(
+            "version: 3\nexpires_after: 1h\nidle_timeout: 5m\nallow:\n  tools: [get_config]\n",
+        )
+        .unwrap();
+        assert!(loaded.expires_unix_ms().is_some());
+        assert_eq!(loaded.idle_timeout(), Some(Duration::from_secs(5 * 60)));
+        assert!(loaded
+            .validate_for_mode(crate::authorization::PermissionMode::Bounded)
+            .is_ok());
     }
 
     #[cfg(feature = "yaml")]
@@ -472,6 +1445,138 @@ ask:
         )
         .unwrap();
         assert_eq!(loaded.decision("get_config"), ManifestDecision::Allow);
+        assert_eq!(loaded.version(), 1);
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn version_two_supports_prelaunch_identities_profile_kinds_and_directory_roots() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("input");
+        let output = root.path().join("output");
+        std::fs::create_dir_all(input.join("nested")).unwrap();
+        std::fs::create_dir_all(&output).unwrap();
+        let executable = std::fs::canonicalize(std::env::current_exe().unwrap()).unwrap();
+        let input = std::fs::canonicalize(input).unwrap();
+        let output = std::fs::canonicalize(output).unwrap();
+        let loaded = manifest(&format!(
+            r#"
+version: 2
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  apps:
+    - executable: {executable:?}
+      launch: true
+      windows: all
+      terminate: driver_launched
+  browser:
+    profiles:
+      - kind: isolated
+      - kind: existing_profile
+  files:
+    read:
+      - dir: {input:?}
+        recursive: true
+    write:
+      - dir: {output:?}
+        recursive: false
+allow:
+  tools:
+    - browser_prepare
+    - get_window_state
+    - kill_app
+    - browser_set_input_files
+    - get_desktop_state
+"#,
+            executable = executable.to_string_lossy(),
+            input = input.to_string_lossy(),
+            output = output.to_string_lossy(),
+        ))
+        .unwrap();
+
+        assert_eq!(loaded.version(), 2);
+        loaded
+            .authorize_call(
+                "browser_prepare",
+                &serde_json::json!({
+                    "pid": 42,
+                    "window_id": 7,
+                    "strategy": {"kind": "existing_profile"}
+                }),
+            )
+            .unwrap();
+        loaded
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({
+                    "kind": "window",
+                    "pid": 42,
+                    "window_id": 7,
+                    "fingerprint": {
+                        "pid": 42,
+                        "start_time": 1,
+                        "executable": executable
+                    }
+                }),
+            )
+            .unwrap();
+        loaded
+            .authorize_protected_resource(
+                "process_control",
+                &serde_json::json!({
+                    "kind": "process_instance",
+                    "driver_owned": true,
+                    "fingerprint": {
+                        "pid": 42,
+                        "start_time": 1,
+                        "executable": executable
+                    }
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "process_control",
+                &serde_json::json!({
+                    "kind": "process_instance",
+                    "driver_owned": false,
+                    "fingerprint": {
+                        "pid": 42,
+                        "start_time": 1,
+                        "executable": executable
+                    }
+                }),
+            )
+            .is_err());
+        loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "browser_upload",
+                    "canonical_paths": [input.join("nested").join("fixture.txt")]
+                }),
+            )
+            .unwrap();
+        loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "screenshot_output",
+                    "canonical_output_path": output.join("capture.png")
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "screenshot_output",
+                    "canonical_output_path": output.join("nested").join("capture.png")
+                }),
+            )
+            .is_err());
     }
 
     #[cfg(feature = "yaml")]
@@ -519,9 +1624,306 @@ allow:
         manifest
             .authorize_browser_url("https://app.example.com/work?q=1")
             .unwrap();
+        manifest
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({"kind": "window", "pid": 42, "window_id": 7}),
+            )
+            .unwrap();
+        manifest
+            .authorize_protected_resource(
+                "desktop_input",
+                &serde_json::json!({"kind": "application_input", "pid": 42}),
+            )
+            .unwrap();
         assert!(manifest
             .authorize_browser_url("https://evil.example/redirect")
             .is_err());
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn about_blank_uses_one_manifest_and_protected_resource_spelling() {
+        let manifest = manifest(
+            r#"
+version: 1
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  browser:
+    origins: [about:blank]
+allow:
+  tools: [browser_click]
+"#,
+        )
+        .unwrap();
+
+        manifest.authorize_browser_url("about:blank").unwrap();
+        manifest
+            .authorize_protected_resource(
+                "browser_bound_input",
+                &serde_json::json!({
+                    "kind": "authenticated_browser_tab",
+                    "live_origin": "about:blank"
+                }),
+            )
+            .unwrap();
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn desktop_escalation_requires_the_manifest_display_grant() {
+        let without_display = manifest(
+            r#"
+version: 1
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources: {}
+allow:
+  tools: [escalate_session]
+"#,
+        )
+        .unwrap();
+        assert!(without_display
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({
+                    "kind": "session_capture_scope",
+                    "capture_scope": "desktop"
+                }),
+            )
+            .is_err());
+
+        let with_display = manifest(
+            r#"
+version: 1
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  desktop:
+    display: true
+allow:
+  tools: [escalate_session]
+"#,
+        )
+        .unwrap();
+        with_display
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({
+                    "kind": "session_capture_scope",
+                    "capture_scope": "desktop"
+                }),
+            )
+            .unwrap();
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn protected_resources_are_exactly_bounded_by_the_manifest() {
+        let root = tempfile::tempdir().unwrap();
+        let input = root.path().join("cua-input.txt");
+        let output = root.path().join("cua-output.png");
+        let outside = root.path().join("other.png");
+        let input_yaml = serde_json::to_string(&input.to_string_lossy()).unwrap();
+        let output_yaml = serde_json::to_string(&output.to_string_lossy()).unwrap();
+        let canonical_input = canonical_manifest_path(&input).unwrap();
+        let canonical_outside = canonical_manifest_path(&outside).unwrap();
+        let loaded = manifest(&format!(
+            r#"
+version: 1
+mode: bounded
+expires_after: 8h
+idle_timeout: 30m
+resources:
+  browser:
+    origins: [https://app.example.com]
+  desktop:
+    applications: [42]
+    windows:
+      - pid: 42
+        window_id: 7
+    display: false
+  files:
+    read: [{}]
+    write: [{}]
+  processes:
+    terminate: [42]
+  driver_configuration:
+    changes:
+      - key: max_image_dimension
+        value: 1200
+allow:
+  tools:
+    - browser_click
+    - browser_set_input_files
+    - kill_app
+    - set_config
+"#,
+            input_yaml, output_yaml
+        ))
+        .unwrap();
+
+        loaded
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({"kind": "window", "pid": 42, "window_id": 7}),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({"kind": "window", "pid": 42, "window_id": 8}),
+            )
+            .is_err());
+        assert!(loaded
+            .authorize_protected_resource(
+                "private_observation",
+                &serde_json::json!({"kind": "display"}),
+            )
+            .is_err());
+
+        loaded
+            .authorize_protected_resource(
+                "browser_bound_input",
+                &serde_json::json!({
+                    "kind": "authenticated_browser_tab",
+                    "live_origin": "https://app.example.com"
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "browser_bound_input",
+                &serde_json::json!({
+                    "kind": "authenticated_browser_tab",
+                    "live_origin": "https://other.example.com"
+                }),
+            )
+            .is_err());
+
+        loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "browser_upload",
+                    "canonical_paths": [canonical_input]
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "file_transfer_and_output",
+                &serde_json::json!({
+                    "kind": "screenshot_output",
+                    "canonical_output_path": canonical_outside
+                }),
+            )
+            .is_err());
+
+        loaded
+            .authorize_protected_resource(
+                "process_control",
+                &serde_json::json!({
+                    "kind": "process_instance",
+                    "fingerprint": {"pid": 42}
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "process_control",
+                &serde_json::json!({
+                    "kind": "process_instance",
+                    "fingerprint": {"pid": 43}
+                }),
+            )
+            .is_err());
+
+        loaded
+            .authorize_protected_resource(
+                "driver_configuration",
+                &serde_json::json!({
+                    "kind": "driver_configuration",
+                    "exact_changes": {"max_image_dimension": 1200}
+                }),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "driver_configuration",
+                &serde_json::json!({
+                    "kind": "driver_configuration",
+                    "exact_changes": {"max_image_dimension": 800}
+                }),
+            )
+            .is_err());
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn computer_history_resources_are_operation_scoped() {
+        let loaded = manifest(
+            r#"
+version: 3
+resources:
+  computer_history:
+    operations: [status]
+allow:
+  tools: [history_status, history_query]
+"#,
+        )
+        .unwrap();
+
+        loaded
+            .authorize_protected_resource(
+                "computer_history",
+                &serde_json::json!({"kind": "computer_history", "operation": "status"}),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "computer_history",
+                &serde_json::json!({"kind": "computer_history", "operation": "query"}),
+            )
+            .is_err());
+        assert!(loaded
+            .authorize_protected_resource(
+                "computer_history",
+                &serde_json::json!({"kind": "display", "operation": "status"}),
+            )
+            .is_err());
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn manifest_file_resources_reject_filesystem_roots() {
+        let current_dir = std::env::current_dir().unwrap();
+        let root = current_dir
+            .ancestors()
+            .last()
+            .expect("an absolute current directory has a filesystem root")
+            .to_string_lossy()
+            .into_owned();
+        let error = validate_manifest_paths("files.write", vec![root]).unwrap_err();
+        assert!(error.contains("must not name a filesystem root"));
+    }
+
+    #[cfg(all(feature = "yaml", unix))]
+    #[test]
+    fn manifest_file_resources_reject_broken_symlink_leaves() {
+        use std::os::unix::fs::symlink;
+
+        let dir = tempfile::tempdir().unwrap();
+        let link = dir.path().join("broken-output");
+        symlink(dir.path().join("missing-target"), &link).unwrap();
+        let error =
+            validate_manifest_paths("files.write", vec![link.to_string_lossy().into_owned()])
+                .unwrap_err();
+        assert!(error.contains("broken symbolic link"));
     }
 
     #[cfg(feature = "yaml")]
@@ -541,12 +1943,23 @@ allow:
         .unwrap();
         *loaded.last_authorized_dispatch.lock().unwrap() =
             Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
-        assert!(loaded.authorize_dispatch().is_err());
+        for mode in [
+            crate::authorization::PermissionMode::Standard,
+            crate::authorization::PermissionMode::Bounded,
+            crate::authorization::PermissionMode::Unrestricted,
+        ] {
+            assert!(
+                loaded.validate_for_mode(mode).is_err(),
+                "declared idle timeout must be enforced in {mode:?}"
+            );
+        }
+        assert!(loaded.commit_authorized_dispatch().is_err());
         assert!(loaded.is_idle_expired());
-        assert!(loaded.authorize_dispatch().is_err());
+        assert!(loaded.commit_authorized_dispatch().is_err());
 
-        assert!(manifest(
-            r#"
+        for bypass_tool in ["page", "verify_state"] {
+            let policy = format!(
+                r#"
 version: 1
 mode: bounded
 expires_after: 1h
@@ -555,11 +1968,16 @@ resources:
   browser:
     origins: [https://app.example.com]
 allow:
-  tools: [browser_navigate, page]
-"#,
-        )
-        .unwrap_err()
-        .contains("bypasses the typed browser origin adapter"));
+  tools: [browser_navigate, {bypass_tool}]
+"#
+            );
+            assert!(
+                manifest(&policy)
+                    .unwrap_err()
+                    .contains("bypasses the typed browser origin adapter"),
+                "{bypass_tool} must not bypass origin-scoped browser policy"
+            );
+        }
     }
 
     #[cfg(feature = "yaml")]

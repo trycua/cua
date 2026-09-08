@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import httpx
-from cyclops_sdk import HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse
+from fleet_sdk import HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse
 
 
 class CyclopsHttpClient(HttpClient):
@@ -14,15 +14,21 @@ class CyclopsHttpClient(HttpClient):
         self._owns_client = client is None
 
     async def execute(self, request: HttpRequest) -> HttpResponse:
+        request_kwargs = {
+            "headers": {header.name: header.value for header in request.headers},
+            "content": request.body,
+        }
+        if request.timeout_secs is not None:
+            request_kwargs["timeout"] = request.timeout_secs
+
         try:
             response = await self._client.request(
                 request.method,
                 request.url,
-                headers={header.name: header.value for header in request.headers},
-                content=request.body,
+                **request_kwargs,
             )
         except httpx.TransportError as error:
-            raise HttpError.Transport(str(error)) from error
+            raise HttpError.Transport(str(error) or type(error).__name__) from error
         return HttpResponse(
             status=response.status_code,
             headers=[

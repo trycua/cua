@@ -6,7 +6,7 @@
 import nativeModule from "./cua_driver_contract-ffi.js";
 import { type UniffiRustFutureContinuationCallback, type UniffiForeignFutureDroppedCallback, type UniffiForeignFutureDroppedCallbackStruct,
 } from "./cua_driver_contract-ffi.js";
-import { type UniffiByteArray, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiEnum, UniffiInternalError, UniffiRustCaller, uniffiCreateFfiConverterString, uniffiCreateRecord,
+import { type UniffiByteArray, AbstractFfiConverterByteArray, FfiConverterArray, FfiConverterBool, FfiConverterFloat64, FfiConverterInt32, FfiConverterInt64, FfiConverterOptional, FfiConverterUInt32, FfiConverterUInt64, FfiConverterUInt8, RustBuffer, UniffiEnum, UniffiInternalError, UniffiRustCaller, uniffiCreateFfiConverterString, uniffiCreateRecord, uniffiTypeNameSymbol,
 } from "@ubjs/core";
 const uniffiCaller = new UniffiRustCaller(() => ({ code: 0 }));
 
@@ -18,6 +18,631 @@ const uniffiIsDebug =
   false;
 
 // Public interface members begin here.
+
+export enum ActionDeliveryMode {
+    Background,
+    Foreground,
+    NotApplicable,
+    Unknown
+}
+
+const FfiConverterTypeActionDeliveryMode = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionDeliveryMode;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionDeliveryMode.Background;
+                case 2: return ActionDeliveryMode.Foreground;
+                case 3: return ActionDeliveryMode.NotApplicable;
+                case 4: return ActionDeliveryMode.Unknown;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionDeliveryMode.Background: return ordinalConverter.write(1, into);
+                case ActionDeliveryMode.Foreground: return ordinalConverter.write(2, into);
+                case ActionDeliveryMode.NotApplicable: return ordinalConverter.write(3, into);
+                case ActionDeliveryMode.Unknown: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionDelivery = {
+    mode: ActionDeliveryMode,
+    deliveredCount?: number
+}
+
+/**
+ * Generated factory for {@link ActionDelivery} record objects.
+ */
+export const ActionDelivery = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionDelivery, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionDelivery>,
+    });
+})();
+
+const FfiConverterTypeActionDelivery = (() => {
+    type TypeName = ActionDelivery;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                mode: FfiConverterTypeActionDeliveryMode.read(from),
+                deliveredCount: FfiConverterOptionalUInt32.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionDeliveryMode.write(value.mode, into);
+            FfiConverterOptionalUInt32.write(value.deliveredCount, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionDeliveryMode.allocationSize(value.mode) +
+             FfiConverterOptionalUInt32.allocationSize(value.deliveredCount);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ActionEscalationTarget {
+    Pixel,
+    Foreground,
+    Page,
+    Session
+}
+
+const FfiConverterTypeActionEscalationTarget = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEscalationTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEscalationTarget.Pixel;
+                case 2: return ActionEscalationTarget.Foreground;
+                case 3: return ActionEscalationTarget.Page;
+                case 4: return ActionEscalationTarget.Session;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEscalationTarget.Pixel: return ordinalConverter.write(1, into);
+                case ActionEscalationTarget.Foreground: return ordinalConverter.write(2, into);
+                case ActionEscalationTarget.Page: return ordinalConverter.write(3, into);
+                case ActionEscalationTarget.Session: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum ActionEscalationReason {
+    RouteUnavailable,
+    DeliveryFailed,
+    EffectUnconfirmed,
+    SuspectedNoop,
+    PermissionRequired
+}
+
+const FfiConverterTypeActionEscalationReason = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEscalationReason;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEscalationReason.RouteUnavailable;
+                case 2: return ActionEscalationReason.DeliveryFailed;
+                case 3: return ActionEscalationReason.EffectUnconfirmed;
+                case 4: return ActionEscalationReason.SuspectedNoop;
+                case 5: return ActionEscalationReason.PermissionRequired;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEscalationReason.RouteUnavailable: return ordinalConverter.write(1, into);
+                case ActionEscalationReason.DeliveryFailed: return ordinalConverter.write(2, into);
+                case ActionEscalationReason.EffectUnconfirmed: return ordinalConverter.write(3, into);
+                case ActionEscalationReason.SuspectedNoop: return ordinalConverter.write(4, into);
+                case ActionEscalationReason.PermissionRequired: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionEscalation = {
+    target: ActionEscalationTarget,
+    reason: ActionEscalationReason
+}
+
+/**
+ * Generated factory for {@link ActionEscalation} record objects.
+ */
+export const ActionEscalation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionEscalation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionEscalation>,
+    });
+})();
+
+const FfiConverterTypeActionEscalation = (() => {
+    type TypeName = ActionEscalation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                target: FfiConverterTypeActionEscalationTarget.read(from),
+                reason: FfiConverterTypeActionEscalationReason.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionEscalationTarget.write(value.target, into);
+            FfiConverterTypeActionEscalationReason.write(value.reason, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionEscalationTarget.allocationSize(value.target) +
+             FfiConverterTypeActionEscalationReason.allocationSize(value.reason);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ActionEvidenceKind {
+    ValueReadback,
+    WindowChange
+}
+
+const FfiConverterTypeActionEvidenceKind = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEvidenceKind;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEvidenceKind.ValueReadback;
+                case 2: return ActionEvidenceKind.WindowChange;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEvidenceKind.ValueReadback: return ordinalConverter.write(1, into);
+                case ActionEvidenceKind.WindowChange: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionEvidence = {
+    kind: ActionEvidenceKind
+}
+
+/**
+ * Generated factory for {@link ActionEvidence} record objects.
+ */
+export const ActionEvidence = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionEvidence, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionEvidence>,
+    });
+})();
+
+const FfiConverterTypeActionEvidence = (() => {
+    type TypeName = ActionEvidence;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                kind: FfiConverterTypeActionEvidenceKind.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionEvidenceKind.write(value.kind, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionEvidenceKind.allocationSize(value.kind);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum ActionEffect {
+    Confirmed,
+    Partial,
+    Unverifiable,
+    SuspectedNoop,
+    Refused
+}
+
+const FfiConverterTypeActionEffect = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionEffect;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionEffect.Confirmed;
+                case 2: return ActionEffect.Partial;
+                case 3: return ActionEffect.Unverifiable;
+                case 4: return ActionEffect.SuspectedNoop;
+                case 5: return ActionEffect.Refused;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionEffect.Confirmed: return ordinalConverter.write(1, into);
+                case ActionEffect.Partial: return ordinalConverter.write(2, into);
+                case ActionEffect.Unverifiable: return ordinalConverter.write(3, into);
+                case ActionEffect.SuspectedNoop: return ordinalConverter.write(4, into);
+                case ActionEffect.Refused: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum ActionRoute {
+    Accessibility,
+    SyntheticEvents,
+    GlobalInput,
+    SystemApi,
+    Dom,
+    TrustedInput
+}
+
+const FfiConverterTypeActionRoute = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionRoute;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return ActionRoute.Accessibility;
+                case 2: return ActionRoute.SyntheticEvents;
+                case 3: return ActionRoute.GlobalInput;
+                case 4: return ActionRoute.SystemApi;
+                case 5: return ActionRoute.Dom;
+                case 6: return ActionRoute.TrustedInput;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case ActionRoute.Accessibility: return ordinalConverter.write(1, into);
+                case ActionRoute.SyntheticEvents: return ordinalConverter.write(2, into);
+                case ActionRoute.GlobalInput: return ordinalConverter.write(3, into);
+                case ActionRoute.SystemApi: return ordinalConverter.write(4, into);
+                case ActionRoute.Dom: return ordinalConverter.write(5, into);
+                case ActionRoute.TrustedInput: return ordinalConverter.write(6, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type ActionResult = {
+    effect: ActionEffect,
+    route: ActionRoute,
+    delivery?: ActionDelivery,
+    evidence?: Array<ActionEvidence>,
+    escalation?: ActionEscalation
+}
+
+/**
+ * Generated factory for {@link ActionResult} record objects.
+ */
+export const ActionResult = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ActionResult, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ActionResult>,
+    });
+})();
+
+const FfiConverterTypeActionResult = (() => {
+    type TypeName = ActionResult;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                effect: FfiConverterTypeActionEffect.read(from),
+                route: FfiConverterTypeActionRoute.read(from),
+                delivery: FfiConverterOptionalTypeActionDelivery.read(from),
+                evidence: FfiConverterOptionalSequenceTypeActionEvidence.read(from),
+                escalation: FfiConverterOptionalTypeActionEscalation.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeActionEffect.write(value.effect, into);
+            FfiConverterTypeActionRoute.write(value.route, into);
+            FfiConverterOptionalTypeActionDelivery.write(value.delivery, into);
+            FfiConverterOptionalSequenceTypeActionEvidence.write(value.evidence, into);
+            FfiConverterOptionalTypeActionEscalation.write(value.escalation, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeActionEffect.allocationSize(value.effect) +
+             FfiConverterTypeActionRoute.allocationSize(value.route) +
+             FfiConverterOptionalTypeActionDelivery.allocationSize(value.delivery) +
+             FfiConverterOptionalSequenceTypeActionEvidence.allocationSize(value.evidence) +
+             FfiConverterOptionalTypeActionEscalation.allocationSize(value.escalation);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type BoundsExpectation = {
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    tolerancePx?: number
+}
+
+/**
+ * Generated factory for {@link BoundsExpectation} record objects.
+ */
+export const BoundsExpectation = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<BoundsExpectation, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<BoundsExpectation>,
+    });
+})();
+
+const FfiConverterTypeBoundsExpectation = (() => {
+    type TypeName = BoundsExpectation;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                height: FfiConverterFloat64.read(from),
+                tolerancePx: FfiConverterOptionalFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.height, into);
+            FfiConverterOptionalFloat64.write(value.tolerancePx, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.height) +
+             FfiConverterOptionalFloat64.allocationSize(value.tolerancePx);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+const stringConverter = (() => {
+    const encoder = new TextEncoder();
+    const decoder = new TextDecoder();
+    return {
+        stringToBytes: (s: string) => encoder.encode(s),
+        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
+        stringByteLength: (s: string) => encoder.encode(s).byteLength,
+        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
+            const view = new Uint8Array(
+                buf.arrayBuffer,
+                offset,
+                buf.arrayBuffer.byteLength - offset,
+            );
+            return encoder.encodeInto(s, view).written;
+        },
+        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
+            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
+    };
+})();
+const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
+
+
+// Enum: ActionTarget
+export enum ActionTarget_Tags {
+    Window = "Window",
+    Desktop = "Desktop"
+}
+/**
+ * Exact capture/input target selected independently for each action.
+ *
+ * `display_id="primary"` is the portable desktop target in this release.
+ * Platforms that cannot address another display reject it explicitly rather
+ * than silently changing coordinate spaces.
+ */
+export const ActionTarget = (() => {
+
+    type Window__interface = {
+        tag: ActionTarget_Tags.Window;
+        inner:
+Readonly<{pid: number; windowId: bigint}>
+    };
+    class Window_ extends UniffiEnum implements Window__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ActionTarget";
+        readonly tag = ActionTarget_Tags.Window;
+        readonly inner:
+Readonly<{pid: number; windowId: bigint}>;
+        constructor(
+inner: {pid: number; windowId: bigint }) {
+            super("ActionTarget", "Window");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {pid: number; windowId: bigint }): Window_ {
+            return new Window_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Window_ {
+            return obj.tag === ActionTarget_Tags.Window;
+        }
+
+    }
+
+    type Desktop__interface = {
+        tag: ActionTarget_Tags.Desktop;
+        inner:
+Readonly<{displayId: string}>
+    };
+    class Desktop_ extends UniffiEnum implements Desktop__interface {
+        /**
+         * @private
+         * This field is private and should not be used, use `tag` instead.
+         */
+        readonly [uniffiTypeNameSymbol] = "ActionTarget";
+        readonly tag = ActionTarget_Tags.Desktop;
+        readonly inner:
+Readonly<{displayId: string}>;
+        constructor(
+inner: {displayId: string }) {
+            super("ActionTarget", "Desktop");
+
+            this.inner = Object.freeze(inner);
+        }
+        static new(
+inner: {displayId: string }): Desktop_ {
+            return new Desktop_(inner);
+        }
+
+        static instanceOf(obj: any): obj is Desktop_ {
+            return obj.tag === ActionTarget_Tags.Desktop;
+        }
+
+    }
+
+    function instanceOf(obj: any): obj is ActionTarget {
+        return obj[uniffiTypeNameSymbol] === "ActionTarget";
+    }
+
+    return Object.freeze({
+        instanceOf,
+  Window: Window_,
+  Desktop: Desktop_
+    });
+
+})();
+/**
+ * Exact capture/input target selected independently for each action.
+ *
+ * `display_id="primary"` is the portable desktop target in this release.
+ * Platforms that cannot address another display reject it explicitly rather
+ * than silently changing coordinate spaces.
+ */
+export type ActionTarget = InstanceType<
+    typeof ActionTarget['Window' | 'Desktop']
+>;
+
+// FfiConverter for enum ActionTarget
+const FfiConverterTypeActionTarget = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = ActionTarget;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return new ActionTarget.Window({pid: FfiConverterUInt32.read(from), windowId: FfiConverterUInt64.read(from) });
+                case 2: return new ActionTarget.Desktop({displayId: FfiConverterString.read(from) });
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value.tag) {
+                case ActionTarget_Tags.Window: {
+                    ordinalConverter.write(1, into);
+                    const inner = value.inner;
+                    FfiConverterUInt32.write(inner.pid, into);
+                    FfiConverterUInt64.write(inner.windowId, into);
+                    return;
+                }
+                case ActionTarget_Tags.Desktop: {
+                    ordinalConverter.write(2, into);
+                    const inner = value.inner;
+                    FfiConverterString.write(inner.displayId, into);
+                    return;
+                }
+                default:
+                    // Throwing from here means that ActionTarget_Tags hasn't matched an ordinal.
+                    throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        allocationSize(value: TypeName): number {
+            switch (value.tag) {
+                case ActionTarget_Tags.Window: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(1);
+                    size += FfiConverterUInt32.allocationSize(inner.pid);
+                    size += FfiConverterUInt64.allocationSize(inner.windowId);
+                    return size;
+                }
+                case ActionTarget_Tags.Desktop: {
+                    const inner = value.inner;
+                    let size = ordinalConverter.allocationSize(2);
+                    size += FfiConverterString.allocationSize(inner.displayId);
+                    return size;
+                }
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+    }
+    return new FFIConverter();
+})();
 
 export enum DesktopScope {
     Desktop
@@ -44,27 +669,6 @@ const FfiConverterTypeDesktopScope = (() => {
     }
     return new FFIConverter();
 })();
-
-const stringConverter = (() => {
-    const encoder = new TextEncoder();
-    const decoder = new TextDecoder();
-    return {
-        stringToBytes: (s: string) => encoder.encode(s),
-        bytesToString: (ab: UniffiByteArray) => decoder.decode(ab),
-        stringByteLength: (s: string) => encoder.encode(s).byteLength,
-        writeStringIntoBuffer: (s: string, buf: any, offset: number): number => {
-            const view = new Uint8Array(
-                buf.arrayBuffer,
-                offset,
-                buf.arrayBuffer.byteLength - offset,
-            );
-            return encoder.encodeInto(s, view).written;
-        },
-        readStringFromBuffer: (buf: any, offset: number, length: number): string =>
-            decoder.decode(new Uint8Array(buf.arrayBuffer, offset, length)),
-    };
-})();
-const FfiConverterString = uniffiCreateFfiConverterString(stringConverter);
 
 export enum ClickButton {
     Left,
@@ -101,9 +705,14 @@ const FfiConverterTypeClickButton = (() => {
 export type ClickInput = {
     x: number,
     y: number,
-    scope: DesktopScope,
+    target?: ActionTarget,
     /**
-     * Optional session id.
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string,
     button?: ClickButton,
@@ -133,7 +742,8 @@ const FfiConverterTypeClickInput = (() => {
             return {
                 x: FfiConverterFloat64.read(from),
                 y: FfiConverterFloat64.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from),
                 button: FfiConverterOptionalTypeClickButton.read(from),
                 count: FfiConverterOptionalUInt32.read(from)
@@ -142,7 +752,8 @@ const FfiConverterTypeClickInput = (() => {
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterFloat64.write(value.x, into);
             FfiConverterFloat64.write(value.y, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalTypeClickButton.write(value.button, into);
             FfiConverterOptionalUInt32.write(value.count, into);
@@ -150,10 +761,598 @@ const FfiConverterTypeClickInput = (() => {
         allocationSize(value: TypeName): number {
             return FfiConverterFloat64.allocationSize(value.x) +
              FfiConverterFloat64.allocationSize(value.y) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalTypeClickButton.allocationSize(value.button) +
              FfiConverterOptionalUInt32.allocationSize(value.count);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardReadInput = {
+    /**
+     * Return plain-text clipboard content in addition to the available types.
+     * Clipboard content is privacy-sensitive and is never retained in telemetry.
+     */
+    includeText: boolean,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link ClipboardReadInput} record objects.
+ */
+export const ClipboardReadInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardReadInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardReadInput>,
+    });
+})();
+
+const FfiConverterTypeClipboardReadInput = (() => {
+    type TypeName = ClipboardReadInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                includeText: FfiConverterBool.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.includeText, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.includeText) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardReadOutput = {
+    supported: boolean,
+    types: Array<string>,
+    text?: string,
+    privacySensitive: boolean,
+    contentRedactedFromTelemetry: boolean
+}
+
+/**
+ * Generated factory for {@link ClipboardReadOutput} record objects.
+ */
+export const ClipboardReadOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardReadOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardReadOutput>,
+    });
+})();
+
+const FfiConverterTypeClipboardReadOutput = (() => {
+    type TypeName = ClipboardReadOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                supported: FfiConverterBool.read(from),
+                types: FfiConverterSequenceString.read(from),
+                text: FfiConverterOptionalString.read(from),
+                privacySensitive: FfiConverterBool.read(from),
+                contentRedactedFromTelemetry: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.supported, into);
+            FfiConverterSequenceString.write(value.types, into);
+            FfiConverterOptionalString.write(value.text, into);
+            FfiConverterBool.write(value.privacySensitive, into);
+            FfiConverterBool.write(value.contentRedactedFromTelemetry, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.supported) +
+             FfiConverterSequenceString.allocationSize(value.types) +
+             FfiConverterOptionalString.allocationSize(value.text) +
+             FfiConverterBool.allocationSize(value.privacySensitive) +
+             FfiConverterBool.allocationSize(value.contentRedactedFromTelemetry);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardWriteInput = {
+    /**
+     * Plain text to place on the clipboard.
+     */
+    text?: string,
+    /**
+     * Absolute path to a local image to place on the clipboard.
+     */
+    imagePath?: string,
+    /**
+     * Absolute path to a local file to place on the clipboard as a file URL.
+     */
+    filePath?: string,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link ClipboardWriteInput} record objects.
+ */
+export const ClipboardWriteInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardWriteInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardWriteInput>,
+    });
+})();
+
+const FfiConverterTypeClipboardWriteInput = (() => {
+    type TypeName = ClipboardWriteInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                text: FfiConverterOptionalString.read(from),
+                imagePath: FfiConverterOptionalString.read(from),
+                filePath: FfiConverterOptionalString.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.text, into);
+            FfiConverterOptionalString.write(value.imagePath, into);
+            FfiConverterOptionalString.write(value.filePath, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.text) +
+             FfiConverterOptionalString.allocationSize(value.imagePath) +
+             FfiConverterOptionalString.allocationSize(value.filePath) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ClipboardWriteOutput = {
+    supported: boolean,
+    writtenType: string,
+    types: Array<string>,
+    privacySensitive: boolean,
+    contentRedactedFromTelemetry: boolean
+}
+
+/**
+ * Generated factory for {@link ClipboardWriteOutput} record objects.
+ */
+export const ClipboardWriteOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ClipboardWriteOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ClipboardWriteOutput>,
+    });
+})();
+
+const FfiConverterTypeClipboardWriteOutput = (() => {
+    type TypeName = ClipboardWriteOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                supported: FfiConverterBool.read(from),
+                writtenType: FfiConverterString.read(from),
+                types: FfiConverterSequenceString.read(from),
+                privacySensitive: FfiConverterBool.read(from),
+                contentRedactedFromTelemetry: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterBool.write(value.supported, into);
+            FfiConverterString.write(value.writtenType, into);
+            FfiConverterSequenceString.write(value.types, into);
+            FfiConverterBool.write(value.privacySensitive, into);
+            FfiConverterBool.write(value.contentRedactedFromTelemetry, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterBool.allocationSize(value.supported) +
+             FfiConverterString.allocationSize(value.writtenType) +
+             FfiConverterSequenceString.allocationSize(value.types) +
+             FfiConverterBool.allocationSize(value.privacySensitive) +
+             FfiConverterBool.allocationSize(value.contentRedactedFromTelemetry);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type CursorMotionOutput = {
+    startHandle: number,
+    endHandle: number,
+    arcSize: number,
+    arcFlow: number,
+    spring: number,
+    glideDurationMs: number,
+    dwellAfterClickMs: number,
+    idleHideMs: number,
+    turnRadius: number
+}
+
+/**
+ * Generated factory for {@link CursorMotionOutput} record objects.
+ */
+export const CursorMotionOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorMotionOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorMotionOutput>,
+    });
+})();
+
+const FfiConverterTypeCursorMotionOutput = (() => {
+    type TypeName = CursorMotionOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                startHandle: FfiConverterFloat64.read(from),
+                endHandle: FfiConverterFloat64.read(from),
+                arcSize: FfiConverterFloat64.read(from),
+                arcFlow: FfiConverterFloat64.read(from),
+                spring: FfiConverterFloat64.read(from),
+                glideDurationMs: FfiConverterFloat64.read(from),
+                dwellAfterClickMs: FfiConverterFloat64.read(from),
+                idleHideMs: FfiConverterFloat64.read(from),
+                turnRadius: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.startHandle, into);
+            FfiConverterFloat64.write(value.endHandle, into);
+            FfiConverterFloat64.write(value.arcSize, into);
+            FfiConverterFloat64.write(value.arcFlow, into);
+            FfiConverterFloat64.write(value.spring, into);
+            FfiConverterFloat64.write(value.glideDurationMs, into);
+            FfiConverterFloat64.write(value.dwellAfterClickMs, into);
+            FfiConverterFloat64.write(value.idleHideMs, into);
+            FfiConverterFloat64.write(value.turnRadius, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.startHandle) +
+             FfiConverterFloat64.allocationSize(value.endHandle) +
+             FfiConverterFloat64.allocationSize(value.arcSize) +
+             FfiConverterFloat64.allocationSize(value.arcFlow) +
+             FfiConverterFloat64.allocationSize(value.spring) +
+             FfiConverterFloat64.allocationSize(value.glideDurationMs) +
+             FfiConverterFloat64.allocationSize(value.dwellAfterClickMs) +
+             FfiConverterFloat64.allocationSize(value.idleHideMs) +
+             FfiConverterFloat64.allocationSize(value.turnRadius);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type CursorPointOutput = {
+    x: number,
+    y: number
+}
+
+/**
+ * Generated factory for {@link CursorPointOutput} record objects.
+ */
+export const CursorPointOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorPointOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorPointOutput>,
+    });
+})();
+
+const FfiConverterTypeCursorPointOutput = (() => {
+    type TypeName = CursorPointOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum CursorReducedMotion {
+    Auto,
+    On,
+    Off
+}
+
+const FfiConverterTypeCursorReducedMotion = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorReducedMotion;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorReducedMotion.Auto;
+                case 2: return CursorReducedMotion.On;
+                case 3: return CursorReducedMotion.Off;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CursorReducedMotion.Auto: return ordinalConverter.write(1, into);
+                case CursorReducedMotion.On: return ordinalConverter.write(2, into);
+                case CursorReducedMotion.Off: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type CursorThemeOutput = {
+    id: string,
+    version: string,
+    profile: string,
+    reducedMotion: CursorReducedMotion,
+    fallback?: string
+}
+
+/**
+ * Generated factory for {@link CursorThemeOutput} record objects.
+ */
+export const CursorThemeOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorThemeOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorThemeOutput>,
+    });
+})();
+
+const FfiConverterTypeCursorThemeOutput = (() => {
+    type TypeName = CursorThemeOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                id: FfiConverterString.read(from),
+                version: FfiConverterString.read(from),
+                profile: FfiConverterString.read(from),
+                reducedMotion: FfiConverterTypeCursorReducedMotion.read(from),
+                fallback: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.id, into);
+            FfiConverterString.write(value.version, into);
+            FfiConverterString.write(value.profile, into);
+            FfiConverterTypeCursorReducedMotion.write(value.reducedMotion, into);
+            FfiConverterOptionalString.write(value.fallback, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.id) +
+             FfiConverterString.allocationSize(value.version) +
+             FfiConverterString.allocationSize(value.profile) +
+             FfiConverterTypeCursorReducedMotion.allocationSize(value.reducedMotion) +
+             FfiConverterOptionalString.allocationSize(value.fallback);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type CursorThemeSelection = {
+    themeId: string,
+    reducedMotion: CursorReducedMotion
+}
+
+/**
+ * Generated factory for {@link CursorThemeSelection} record objects.
+ */
+export const CursorThemeSelection = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorThemeSelection, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorThemeSelection>,
+    });
+})();
+
+const FfiConverterTypeCursorThemeSelection = (() => {
+    type TypeName = CursorThemeSelection;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                themeId: FfiConverterString.read(from),
+                reducedMotion: FfiConverterTypeCursorReducedMotion.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.themeId, into);
+            FfiConverterTypeCursorReducedMotion.write(value.reducedMotion, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.themeId) +
+             FfiConverterTypeCursorReducedMotion.allocationSize(value.reducedMotion);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum CursorAction {
+    Idle,
+    Observe,
+    Click,
+    Drag,
+    Scroll,
+    Text,
+    Key,
+    Navigate,
+    App,
+    Transfer,
+    Record,
+    System
+}
+
+const FfiConverterTypeCursorAction = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = CursorAction;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return CursorAction.Idle;
+                case 2: return CursorAction.Observe;
+                case 3: return CursorAction.Click;
+                case 4: return CursorAction.Drag;
+                case 5: return CursorAction.Scroll;
+                case 6: return CursorAction.Text;
+                case 7: return CursorAction.Key;
+                case 8: return CursorAction.Navigate;
+                case 9: return CursorAction.App;
+                case 10: return CursorAction.Transfer;
+                case 11: return CursorAction.Record;
+                case 12: return CursorAction.System;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case CursorAction.Idle: return ordinalConverter.write(1, into);
+                case CursorAction.Observe: return ordinalConverter.write(2, into);
+                case CursorAction.Click: return ordinalConverter.write(3, into);
+                case CursorAction.Drag: return ordinalConverter.write(4, into);
+                case CursorAction.Scroll: return ordinalConverter.write(5, into);
+                case CursorAction.Text: return ordinalConverter.write(6, into);
+                case CursorAction.Key: return ordinalConverter.write(7, into);
+                case CursorAction.Navigate: return ordinalConverter.write(8, into);
+                case CursorAction.App: return ordinalConverter.write(9, into);
+                case CursorAction.Transfer: return ordinalConverter.write(10, into);
+                case CursorAction.Record: return ordinalConverter.write(11, into);
+                case CursorAction.System: return ordinalConverter.write(12, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type CursorVisualOutput = {
+    requestedAction: CursorAction,
+    resolvedAction: CursorAction,
+    modifiers: Array<string>,
+    phase: string,
+    frame: bigint,
+    preemptedCount: bigint
+}
+
+/**
+ * Generated factory for {@link CursorVisualOutput} record objects.
+ */
+export const CursorVisualOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<CursorVisualOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<CursorVisualOutput>,
+    });
+})();
+
+const FfiConverterTypeCursorVisualOutput = (() => {
+    type TypeName = CursorVisualOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                requestedAction: FfiConverterTypeCursorAction.read(from),
+                resolvedAction: FfiConverterTypeCursorAction.read(from),
+                modifiers: FfiConverterSequenceString.read(from),
+                phase: FfiConverterString.read(from),
+                frame: FfiConverterUInt64.read(from),
+                preemptedCount: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeCursorAction.write(value.requestedAction, into);
+            FfiConverterTypeCursorAction.write(value.resolvedAction, into);
+            FfiConverterSequenceString.write(value.modifiers, into);
+            FfiConverterString.write(value.phase, into);
+            FfiConverterUInt64.write(value.frame, into);
+            FfiConverterUInt64.write(value.preemptedCount, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeCursorAction.allocationSize(value.requestedAction) +
+             FfiConverterTypeCursorAction.allocationSize(value.resolvedAction) +
+             FfiConverterSequenceString.allocationSize(value.modifiers) +
+             FfiConverterString.allocationSize(value.phase) +
+             FfiConverterUInt64.allocationSize(value.frame) +
+             FfiConverterUInt64.allocationSize(value.preemptedCount);
 
         }
     };
@@ -165,9 +1364,14 @@ export type DragInput = {
     fromY: number,
     toX: number,
     toY: number,
-    scope: DesktopScope,
+    target?: ActionTarget,
     /**
-     * Optional session id.
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string,
     durationMs?: bigint,
@@ -201,7 +1405,8 @@ const FfiConverterTypeDragInput = (() => {
                 fromY: FfiConverterFloat64.read(from),
                 toX: FfiConverterFloat64.read(from),
                 toY: FfiConverterFloat64.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from),
                 durationMs: FfiConverterOptionalUInt64.read(from),
                 steps: FfiConverterOptionalUInt64.read(from),
@@ -214,7 +1419,8 @@ const FfiConverterTypeDragInput = (() => {
             FfiConverterFloat64.write(value.fromY, into);
             FfiConverterFloat64.write(value.toX, into);
             FfiConverterFloat64.write(value.toY, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalUInt64.write(value.durationMs, into);
             FfiConverterOptionalUInt64.write(value.steps, into);
@@ -226,7 +1432,8 @@ const FfiConverterTypeDragInput = (() => {
              FfiConverterFloat64.allocationSize(value.fromY) +
              FfiConverterFloat64.allocationSize(value.toX) +
              FfiConverterFloat64.allocationSize(value.toY) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalUInt64.allocationSize(value.durationMs) +
              FfiConverterOptionalUInt64.allocationSize(value.steps) +
@@ -238,11 +1445,117 @@ const FfiConverterTypeDragInput = (() => {
     return new FFIConverter();
 })();
 
+export type ElementSelector = {
+    role?: string,
+    labelContains?: string
+}
+
+/**
+ * Generated factory for {@link ElementSelector} record objects.
+ */
+export const ElementSelector = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementSelector, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementSelector>,
+    });
+})();
+
+const FfiConverterTypeElementSelector = (() => {
+    type TypeName = ElementSelector;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                role: FfiConverterOptionalString.read(from),
+                labelContains: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.role, into);
+            FfiConverterOptionalString.write(value.labelContains, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.role) +
+             FfiConverterOptionalString.allocationSize(value.labelContains);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ElementPredicate = {
+    selector: ElementSelector,
+    /**
+     * Assert that at least one trusted element matches the selector.
+     *
+     * Element walks are not yet exhaustive on every platform, so absence
+     * cannot be proven. `false` is rejected instead of returning an
+     * indefinitely-unknown predicate.
+     */
+    exists?: boolean,
+    valueEquals?: string,
+    enabled?: boolean,
+    selected?: boolean
+}
+
+/**
+ * Generated factory for {@link ElementPredicate} record objects.
+ */
+export const ElementPredicate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ElementPredicate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ElementPredicate>,
+    });
+})();
+
+const FfiConverterTypeElementPredicate = (() => {
+    type TypeName = ElementPredicate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                selector: FfiConverterTypeElementSelector.read(from),
+                exists: FfiConverterOptionalBoolean.read(from),
+                valueEquals: FfiConverterOptionalString.read(from),
+                enabled: FfiConverterOptionalBoolean.read(from),
+                selected: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeElementSelector.write(value.selector, into);
+            FfiConverterOptionalBoolean.write(value.exists, into);
+            FfiConverterOptionalString.write(value.valueEquals, into);
+            FfiConverterOptionalBoolean.write(value.enabled, into);
+            FfiConverterOptionalBoolean.write(value.selected, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeElementSelector.allocationSize(value.selector) +
+             FfiConverterOptionalBoolean.allocationSize(value.exists) +
+             FfiConverterOptionalString.allocationSize(value.valueEquals) +
+             FfiConverterOptionalBoolean.allocationSize(value.enabled) +
+             FfiConverterOptionalBoolean.allocationSize(value.selected);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type EndSessionInput = {
     /**
-     * The session id to end.
+     * Optional public label to end. When omitted, end the caller's attached
+     * implicit session.
      */
-    session: string
+    session?: string
 }
 
 /**
@@ -266,14 +1579,14 @@ const FfiConverterTypeEndSessionInput = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                session: FfiConverterString.read(from)
+                session: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.session, into);
+            FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.session);
+            return FfiConverterOptionalString.allocationSize(value.session);
 
         }
     };
@@ -414,9 +1727,108 @@ const FfiConverterTypeEscalateSessionInput = (() => {
     return new FFIConverter();
 })();
 
+export type GetAgentCursorStateInput = {
+    session: string
+}
+
+/**
+ * Generated factory for {@link GetAgentCursorStateInput} record objects.
+ */
+export const GetAgentCursorStateInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<GetAgentCursorStateInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<GetAgentCursorStateInput>,
+    });
+})();
+
+const FfiConverterTypeGetAgentCursorStateInput = (() => {
+    type TypeName = GetAgentCursorStateInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type GetAgentCursorStateOutput = {
+    session: string,
+    enabled: boolean,
+    position?: CursorPointOutput,
+    theme: CursorThemeOutput,
+    visualState: CursorVisualOutput,
+    motion: CursorMotionOutput
+}
+
+/**
+ * Generated factory for {@link GetAgentCursorStateOutput} record objects.
+ */
+export const GetAgentCursorStateOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<GetAgentCursorStateOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<GetAgentCursorStateOutput>,
+    });
+})();
+
+const FfiConverterTypeGetAgentCursorStateOutput = (() => {
+    type TypeName = GetAgentCursorStateOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                enabled: FfiConverterBool.read(from),
+                position: FfiConverterOptionalTypeCursorPointOutput.read(from),
+                theme: FfiConverterTypeCursorThemeOutput.read(from),
+                visualState: FfiConverterTypeCursorVisualOutput.read(from),
+                motion: FfiConverterTypeCursorMotionOutput.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterBool.write(value.enabled, into);
+            FfiConverterOptionalTypeCursorPointOutput.write(value.position, into);
+            FfiConverterTypeCursorThemeOutput.write(value.theme, into);
+            FfiConverterTypeCursorVisualOutput.write(value.visualState, into);
+            FfiConverterTypeCursorMotionOutput.write(value.motion, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterBool.allocationSize(value.enabled) +
+             FfiConverterOptionalTypeCursorPointOutput.allocationSize(value.position) +
+             FfiConverterTypeCursorThemeOutput.allocationSize(value.theme) +
+             FfiConverterTypeCursorVisualOutput.allocationSize(value.visualState) +
+             FfiConverterTypeCursorMotionOutput.allocationSize(value.motion);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type GetCursorPositionInput = {
     /**
-     * Optional session id.
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string
 }
@@ -458,7 +1870,8 @@ const FfiConverterTypeGetCursorPositionInput = (() => {
 
 export type GetDesktopStateInput = {
     /**
-     * Optional session id.
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string,
     /**
@@ -507,7 +1920,8 @@ const FfiConverterTypeGetDesktopStateInput = (() => {
 
 export type GetScreenSizeInput = {
     /**
-     * Optional session id.
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string
 }
@@ -547,8 +1961,55 @@ const FfiConverterTypeGetScreenSizeInput = (() => {
     return new FFIConverter();
 })();
 
+export type GetSessionInput = {
+    /**
+     * Optional public label. When omitted, inspect the caller's attached
+     * implicit session.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link GetSessionInput} record objects.
+ */
+export const GetSessionInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<GetSessionInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<GetSessionInput>,
+    });
+})();
+
+const FfiConverterTypeGetSessionInput = (() => {
+    type TypeName = GetSessionInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type GetSessionStateInput = {
-    session: string
+    /**
+     * Optional public label. When omitted, inspect the caller's attached
+     * implicit session.
+     */
+    session?: string
 }
 
 /**
@@ -572,14 +2033,14 @@ const FfiConverterTypeGetSessionStateInput = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                session: FfiConverterString.read(from)
+                session: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.session, into);
+            FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.session);
+            return FfiConverterOptionalString.allocationSize(value.session);
 
         }
     };
@@ -588,9 +2049,14 @@ const FfiConverterTypeGetSessionStateInput = (() => {
 
 export type HotkeyInput = {
     keys: Array<string>,
-    scope: DesktopScope,
+    target?: ActionTarget,
     /**
-     * Optional session id.
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string
 }
@@ -617,19 +2083,354 @@ const FfiConverterTypeHotkeyInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 keys: FfiConverterSequenceString.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterSequenceString.write(value.keys, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterSequenceString.allocationSize(value.keys) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+/**
+ * Exact, immediate-child application menu path to resolve and invoke through
+ * the operating system's accessibility API. Path labels are matched after
+ * trimming surrounding whitespace and otherwise remain case-sensitive.
+ */
+export type InvokeMenuInput = {
+    pid: number,
+    windowId: bigint,
+    path: Array<string>,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link InvokeMenuInput} record objects.
+ */
+export const InvokeMenuInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<InvokeMenuInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<InvokeMenuInput>,
+    });
+})();
+
+const FfiConverterTypeInvokeMenuInput = (() => {
+    type TypeName = InvokeMenuInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterUInt32.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                path: FfiConverterSequenceString.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterSequenceString.write(value.path, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterSequenceString.allocationSize(value.path) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ListSessionsInput = {
+    /**
+     * Maximum number of content-free summaries to return (default 50, max
+     * 100). Ordinary agent transports are scoped to their own lease.
+     */
+    limit?: number,
+    /**
+     * Opaque continuation cursor returned by a previous call.
+     */
+    cursor?: string
+}
+
+/**
+ * Generated factory for {@link ListSessionsInput} record objects.
+ */
+export const ListSessionsInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ListSessionsInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ListSessionsInput>,
+    });
+})();
+
+const FfiConverterTypeListSessionsInput = (() => {
+    type TypeName = ListSessionsInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                limit: FfiConverterOptionalUInt32.read(from),
+                cursor: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalUInt32.write(value.limit, into);
+            FfiConverterOptionalString.write(value.cursor, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalUInt32.allocationSize(value.limit) +
+             FfiConverterOptionalString.allocationSize(value.cursor);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum SessionLifecycleState {
+    Active,
+    Ending
+}
+
+const FfiConverterTypeSessionLifecycleState = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SessionLifecycleState;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return SessionLifecycleState.Active;
+                case 2: return SessionLifecycleState.Ending;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case SessionLifecycleState.Active: return ordinalConverter.write(1, into);
+                case SessionLifecycleState.Ending: return ordinalConverter.write(2, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum SessionClientKindOutput {
+    Cli,
+    Direct,
+    Mcp,
+    PythonSdk,
+    TypescriptSdk
+}
+
+const FfiConverterTypeSessionClientKindOutput = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SessionClientKindOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return SessionClientKindOutput.Cli;
+                case 2: return SessionClientKindOutput.Direct;
+                case 3: return SessionClientKindOutput.Mcp;
+                case 4: return SessionClientKindOutput.PythonSdk;
+                case 5: return SessionClientKindOutput.TypescriptSdk;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case SessionClientKindOutput.Cli: return ordinalConverter.write(1, into);
+                case SessionClientKindOutput.Direct: return ordinalConverter.write(2, into);
+                case SessionClientKindOutput.Mcp: return ordinalConverter.write(3, into);
+                case SessionClientKindOutput.PythonSdk: return ordinalConverter.write(4, into);
+                case SessionClientKindOutput.TypescriptSdk: return ordinalConverter.write(5, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum SessionTransportOutput {
+    Cli,
+    Daemon,
+    McpStdio,
+    McpHttp
+}
+
+const FfiConverterTypeSessionTransportOutput = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = SessionTransportOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return SessionTransportOutput.Cli;
+                case 2: return SessionTransportOutput.Daemon;
+                case 3: return SessionTransportOutput.McpStdio;
+                case 4: return SessionTransportOutput.McpHttp;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case SessionTransportOutput.Cli: return ordinalConverter.write(1, into);
+                case SessionTransportOutput.Daemon: return ordinalConverter.write(2, into);
+                case SessionTransportOutput.McpStdio: return ordinalConverter.write(3, into);
+                case SessionTransportOutput.McpHttp: return ordinalConverter.write(4, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+/**
+ * Content-free lifecycle state safe for an ordinary agent transport.
+ */
+export type SessionOutput = {
+    /**
+     * Sanitized public label, or null for an unnamed implicit session.
+     */
+    session?: string,
+    implicit: boolean,
+    state: SessionLifecycleState,
+    clientKind: SessionClientKindOutput,
+    transport: SessionTransportOutput,
+    cursorVisible: boolean,
+    recordingActive: boolean,
+    idleSeconds: bigint,
+    expiresInSeconds: bigint
+}
+
+/**
+ * Generated factory for {@link SessionOutput} record objects.
+ */
+export const SessionOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SessionOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SessionOutput>,
+    });
+})();
+
+const FfiConverterTypeSessionOutput = (() => {
+    type TypeName = SessionOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterOptionalString.read(from),
+                implicit: FfiConverterBool.read(from),
+                state: FfiConverterTypeSessionLifecycleState.read(from),
+                clientKind: FfiConverterTypeSessionClientKindOutput.read(from),
+                transport: FfiConverterTypeSessionTransportOutput.read(from),
+                cursorVisible: FfiConverterBool.read(from),
+                recordingActive: FfiConverterBool.read(from),
+                idleSeconds: FfiConverterUInt64.read(from),
+                expiresInSeconds: FfiConverterUInt64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalString.write(value.session, into);
+            FfiConverterBool.write(value.implicit, into);
+            FfiConverterTypeSessionLifecycleState.write(value.state, into);
+            FfiConverterTypeSessionClientKindOutput.write(value.clientKind, into);
+            FfiConverterTypeSessionTransportOutput.write(value.transport, into);
+            FfiConverterBool.write(value.cursorVisible, into);
+            FfiConverterBool.write(value.recordingActive, into);
+            FfiConverterUInt64.write(value.idleSeconds, into);
+            FfiConverterUInt64.write(value.expiresInSeconds, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalString.allocationSize(value.session) +
+             FfiConverterBool.allocationSize(value.implicit) +
+             FfiConverterTypeSessionLifecycleState.allocationSize(value.state) +
+             FfiConverterTypeSessionClientKindOutput.allocationSize(value.clientKind) +
+             FfiConverterTypeSessionTransportOutput.allocationSize(value.transport) +
+             FfiConverterBool.allocationSize(value.cursorVisible) +
+             FfiConverterBool.allocationSize(value.recordingActive) +
+             FfiConverterUInt64.allocationSize(value.idleSeconds) +
+             FfiConverterUInt64.allocationSize(value.expiresInSeconds);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type ListSessionsOutput = {
+    sessions: Array<SessionOutput>,
+    nextCursor?: string
+}
+
+/**
+ * Generated factory for {@link ListSessionsOutput} record objects.
+ */
+export const ListSessionsOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<ListSessionsOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<ListSessionsOutput>,
+    });
+})();
+
+const FfiConverterTypeListSessionsOutput = (() => {
+    type TypeName = ListSessionsOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                sessions: FfiConverterSequenceTypeSessionOutput.read(from),
+                nextCursor: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterSequenceTypeSessionOutput.write(value.sessions, into);
+            FfiConverterOptionalString.write(value.nextCursor, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterSequenceTypeSessionOutput.allocationSize(value.sessions) +
+             FfiConverterOptionalString.allocationSize(value.nextCursor);
 
         }
     };
@@ -639,9 +2440,17 @@ const FfiConverterTypeHotkeyInput = (() => {
 export type MoveCursorInput = {
     x: number,
     y: number,
-    scope: DesktopScope,
     /**
-     * Optional session id.
+     * Preferred per-call target. New callers should set this field.
+     */
+    target?: ActionTarget,
+    /**
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string
 }
@@ -669,21 +2478,154 @@ const FfiConverterTypeMoveCursorInput = (() => {
             return {
                 x: FfiConverterFloat64.read(from),
                 y: FfiConverterFloat64.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterFloat64.write(value.x, into);
             FfiConverterFloat64.write(value.y, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterFloat64.allocationSize(value.x) +
              FfiConverterFloat64.allocationSize(value.y) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export enum VerificationStatus {
+    Satisfied,
+    Unsatisfied,
+    Unknown
+}
+
+const FfiConverterTypeVerificationStatus = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = VerificationStatus;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return VerificationStatus.Satisfied;
+                case 2: return VerificationStatus.Unsatisfied;
+                case 3: return VerificationStatus.Unknown;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case VerificationStatus.Satisfied: return ordinalConverter.write(1, into);
+                case VerificationStatus.Unsatisfied: return ordinalConverter.write(2, into);
+                case VerificationStatus.Unknown: return ordinalConverter.write(3, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export enum UnknownReason {
+    InvalidPredicate,
+    UnsupportedPredicate,
+    UntrustedSource,
+    MultiMatch,
+    TargetMissing,
+    ObservationUnavailable,
+    StabilityUnproven
+}
+
+const FfiConverterTypeUnknownReason = (() => {
+    const ordinalConverter = FfiConverterInt32;
+    type TypeName = UnknownReason;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            switch (ordinalConverter.read(from)) {
+                case 1: return UnknownReason.InvalidPredicate;
+                case 2: return UnknownReason.UnsupportedPredicate;
+                case 3: return UnknownReason.UntrustedSource;
+                case 4: return UnknownReason.MultiMatch;
+                case 5: return UnknownReason.TargetMissing;
+                case 6: return UnknownReason.ObservationUnavailable;
+                case 7: return UnknownReason.StabilityUnproven;
+                default: throw new UniffiInternalError.UnexpectedEnumCase();
+            }
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            switch (value) {
+                case UnknownReason.InvalidPredicate: return ordinalConverter.write(1, into);
+                case UnknownReason.UnsupportedPredicate: return ordinalConverter.write(2, into);
+                case UnknownReason.UntrustedSource: return ordinalConverter.write(3, into);
+                case UnknownReason.MultiMatch: return ordinalConverter.write(4, into);
+                case UnknownReason.TargetMissing: return ordinalConverter.write(5, into);
+                case UnknownReason.ObservationUnavailable: return ordinalConverter.write(6, into);
+                case UnknownReason.StabilityUnproven: return ordinalConverter.write(7, into);
+            }
+        }
+        allocationSize(value: TypeName): number {
+            return ordinalConverter.allocationSize(0);
+        }
+    }
+    return new FFIConverter();
+})();
+
+export type PredicateOutcome = {
+    index: bigint,
+    status: VerificationStatus,
+    unknownReason?: UnknownReason,
+    /**
+     * Normalized, bounded JSON projection of the matched state.
+     */
+    observedJson?: string
+}
+
+/**
+ * Generated factory for {@link PredicateOutcome} record objects.
+ */
+export const PredicateOutcome = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<PredicateOutcome, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<PredicateOutcome>,
+    });
+})();
+
+const FfiConverterTypePredicateOutcome = (() => {
+    type TypeName = PredicateOutcome;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                index: FfiConverterUInt64.read(from),
+                status: FfiConverterTypeVerificationStatus.read(from),
+                unknownReason: FfiConverterOptionalTypeUnknownReason.read(from),
+                observedJson: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt64.write(value.index, into);
+            FfiConverterTypeVerificationStatus.write(value.status, into);
+            FfiConverterOptionalTypeUnknownReason.write(value.unknownReason, into);
+            FfiConverterOptionalString.write(value.observedJson, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt64.allocationSize(value.index) +
+             FfiConverterTypeVerificationStatus.allocationSize(value.status) +
+             FfiConverterOptionalTypeUnknownReason.allocationSize(value.unknownReason) +
+             FfiConverterOptionalString.allocationSize(value.observedJson);
 
         }
     };
@@ -692,9 +2634,14 @@ const FfiConverterTypeMoveCursorInput = (() => {
 
 export type PressKeyInput = {
     key: string,
-    scope: DesktopScope,
+    target?: ActionTarget,
     /**
-     * Optional session id.
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string,
     modifiers?: Array<string>
@@ -722,20 +2669,23 @@ const FfiConverterTypePressKeyInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 key: FfiConverterString.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from),
                 modifiers: FfiConverterOptionalSequenceString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.key, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalSequenceString.write(value.modifiers, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.key) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalSequenceString.allocationSize(value.modifiers);
 
@@ -812,9 +2762,14 @@ export type ScrollInput = {
     x: number,
     y: number,
     direction: ScrollDirection,
-    scope: DesktopScope,
+    target?: ActionTarget,
     /**
-     * Optional session id.
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string,
     by?: ScrollBy,
@@ -845,7 +2800,8 @@ const FfiConverterTypeScrollInput = (() => {
                 x: FfiConverterFloat64.read(from),
                 y: FfiConverterFloat64.read(from),
                 direction: FfiConverterTypeScrollDirection.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from),
                 by: FfiConverterOptionalTypeScrollBy.read(from),
                 amount: FfiConverterOptionalUInt64.read(from)
@@ -855,7 +2811,8 @@ const FfiConverterTypeScrollInput = (() => {
             FfiConverterFloat64.write(value.x, into);
             FfiConverterFloat64.write(value.y, into);
             FfiConverterTypeScrollDirection.write(value.direction, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalTypeScrollBy.write(value.by, into);
             FfiConverterOptionalUInt64.write(value.amount, into);
@@ -864,7 +2821,8 @@ const FfiConverterTypeScrollInput = (() => {
             return FfiConverterFloat64.allocationSize(value.x) +
              FfiConverterFloat64.allocationSize(value.y) +
              FfiConverterTypeScrollDirection.allocationSize(value.direction) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session) +
              FfiConverterOptionalTypeScrollBy.allocationSize(value.by) +
              FfiConverterOptionalUInt64.allocationSize(value.amount);
@@ -942,6 +2900,15 @@ export type SessionStateOutput = {
     session: string,
     captureScope: CaptureScope,
     effectiveScope: EffectiveScope,
+    /**
+     * Whether this session is authorized to use desktop-scope capture and
+     * actions. This does not report the operating system's lock-screen state.
+     */
+    desktopCaptureAuthorized: boolean,
+    /**
+     * Compatibility field: this reports whether this session has unlocked
+     * desktop capture scope. It is not an operating-system lock-screen probe.
+     */
     desktopUnlocked: boolean,
     escalationReason?: EscalationReason,
     escalationDetail?: string
@@ -971,6 +2938,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
                 session: FfiConverterString.read(from),
                 captureScope: FfiConverterTypeCaptureScope.read(from),
                 effectiveScope: FfiConverterTypeEffectiveScope.read(from),
+                desktopCaptureAuthorized: FfiConverterBool.read(from),
                 desktopUnlocked: FfiConverterBool.read(from),
                 escalationReason: FfiConverterOptionalTypeEscalationReason.read(from),
                 escalationDetail: FfiConverterOptionalString.read(from)
@@ -980,6 +2948,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
             FfiConverterString.write(value.session, into);
             FfiConverterTypeCaptureScope.write(value.captureScope, into);
             FfiConverterTypeEffectiveScope.write(value.effectiveScope, into);
+            FfiConverterBool.write(value.desktopCaptureAuthorized, into);
             FfiConverterBool.write(value.desktopUnlocked, into);
             FfiConverterOptionalTypeEscalationReason.write(value.escalationReason, into);
             FfiConverterOptionalString.write(value.escalationDetail, into);
@@ -988,6 +2957,7 @@ const FfiConverterTypeSessionStateOutput = (() => {
             return FfiConverterString.allocationSize(value.session) +
              FfiConverterTypeCaptureScope.allocationSize(value.captureScope) +
              FfiConverterTypeEffectiveScope.allocationSize(value.effectiveScope) +
+             FfiConverterBool.allocationSize(value.desktopCaptureAuthorized) +
              FfiConverterBool.allocationSize(value.desktopUnlocked) +
              FfiConverterOptionalTypeEscalationReason.allocationSize(value.escalationReason) +
              FfiConverterOptionalString.allocationSize(value.escalationDetail);
@@ -997,15 +2967,384 @@ const FfiConverterTypeSessionStateOutput = (() => {
     return new FFIConverter();
 })();
 
+export type SetAgentCursorEnabledInput = {
+    session: string,
+    enabled: boolean
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorEnabledInput} record objects.
+ */
+export const SetAgentCursorEnabledInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorEnabledInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorEnabledInput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorEnabledInput = (() => {
+    type TypeName = SetAgentCursorEnabledInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                enabled: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterBool.write(value.enabled, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterBool.allocationSize(value.enabled);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetAgentCursorEnabledOutput = {
+    session: string,
+    enabled: boolean
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorEnabledOutput} record objects.
+ */
+export const SetAgentCursorEnabledOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorEnabledOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorEnabledOutput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorEnabledOutput = (() => {
+    type TypeName = SetAgentCursorEnabledOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                enabled: FfiConverterBool.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterBool.write(value.enabled, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterBool.allocationSize(value.enabled);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetAgentCursorMotionInput = {
+    session: string,
+    startHandle?: number,
+    endHandle?: number,
+    arcSize?: number,
+    arcFlow?: number,
+    spring?: number,
+    glideDurationMs?: number,
+    dwellAfterClickMs?: number,
+    idleHideMs?: number,
+    turnRadius?: number
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorMotionInput} record objects.
+ */
+export const SetAgentCursorMotionInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorMotionInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorMotionInput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorMotionInput = (() => {
+    type TypeName = SetAgentCursorMotionInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                startHandle: FfiConverterOptionalFloat64.read(from),
+                endHandle: FfiConverterOptionalFloat64.read(from),
+                arcSize: FfiConverterOptionalFloat64.read(from),
+                arcFlow: FfiConverterOptionalFloat64.read(from),
+                spring: FfiConverterOptionalFloat64.read(from),
+                glideDurationMs: FfiConverterOptionalFloat64.read(from),
+                dwellAfterClickMs: FfiConverterOptionalFloat64.read(from),
+                idleHideMs: FfiConverterOptionalFloat64.read(from),
+                turnRadius: FfiConverterOptionalFloat64.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterOptionalFloat64.write(value.startHandle, into);
+            FfiConverterOptionalFloat64.write(value.endHandle, into);
+            FfiConverterOptionalFloat64.write(value.arcSize, into);
+            FfiConverterOptionalFloat64.write(value.arcFlow, into);
+            FfiConverterOptionalFloat64.write(value.spring, into);
+            FfiConverterOptionalFloat64.write(value.glideDurationMs, into);
+            FfiConverterOptionalFloat64.write(value.dwellAfterClickMs, into);
+            FfiConverterOptionalFloat64.write(value.idleHideMs, into);
+            FfiConverterOptionalFloat64.write(value.turnRadius, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterOptionalFloat64.allocationSize(value.startHandle) +
+             FfiConverterOptionalFloat64.allocationSize(value.endHandle) +
+             FfiConverterOptionalFloat64.allocationSize(value.arcSize) +
+             FfiConverterOptionalFloat64.allocationSize(value.arcFlow) +
+             FfiConverterOptionalFloat64.allocationSize(value.spring) +
+             FfiConverterOptionalFloat64.allocationSize(value.glideDurationMs) +
+             FfiConverterOptionalFloat64.allocationSize(value.dwellAfterClickMs) +
+             FfiConverterOptionalFloat64.allocationSize(value.idleHideMs) +
+             FfiConverterOptionalFloat64.allocationSize(value.turnRadius);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetAgentCursorMotionOutput = {
+    session: string,
+    motion: CursorMotionOutput
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorMotionOutput} record objects.
+ */
+export const SetAgentCursorMotionOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorMotionOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorMotionOutput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorMotionOutput = (() => {
+    type TypeName = SetAgentCursorMotionOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                motion: FfiConverterTypeCursorMotionOutput.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterTypeCursorMotionOutput.write(value.motion, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterTypeCursorMotionOutput.allocationSize(value.motion);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetAgentCursorThemeInput = {
+    session: string,
+    themeId: string,
+    reducedMotion: CursorReducedMotion
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorThemeInput} record objects.
+ */
+export const SetAgentCursorThemeInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorThemeInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorThemeInput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorThemeInput = (() => {
+    type TypeName = SetAgentCursorThemeInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                themeId: FfiConverterString.read(from),
+                reducedMotion: FfiConverterTypeCursorReducedMotion.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterString.write(value.themeId, into);
+            FfiConverterTypeCursorReducedMotion.write(value.reducedMotion, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterString.allocationSize(value.themeId) +
+             FfiConverterTypeCursorReducedMotion.allocationSize(value.reducedMotion);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetAgentCursorThemeOutput = {
+    session: string,
+    theme: CursorThemeOutput
+}
+
+/**
+ * Generated factory for {@link SetAgentCursorThemeOutput} record objects.
+ */
+export const SetAgentCursorThemeOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetAgentCursorThemeOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetAgentCursorThemeOutput>,
+    });
+})();
+
+const FfiConverterTypeSetAgentCursorThemeOutput = (() => {
+    type TypeName = SetAgentCursorThemeOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                session: FfiConverterString.read(from),
+                theme: FfiConverterTypeCursorThemeOutput.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterString.write(value.session, into);
+            FfiConverterTypeCursorThemeOutput.write(value.theme, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterString.allocationSize(value.session) +
+             FfiConverterTypeCursorThemeOutput.allocationSize(value.theme);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type SetWindowFrameInput = {
+    pid: number,
+    windowId: bigint,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
+     */
+    session?: string
+}
+
+/**
+ * Generated factory for {@link SetWindowFrameInput} record objects.
+ */
+export const SetWindowFrameInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<SetWindowFrameInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<SetWindowFrameInput>,
+    });
+})();
+
+const FfiConverterTypeSetWindowFrameInput = (() => {
+    type TypeName = SetWindowFrameInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterUInt32.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                x: FfiConverterFloat64.read(from),
+                y: FfiConverterFloat64.read(from),
+                width: FfiConverterFloat64.read(from),
+                height: FfiConverterFloat64.read(from),
+                session: FfiConverterOptionalString.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterUInt32.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterFloat64.write(value.x, into);
+            FfiConverterFloat64.write(value.y, into);
+            FfiConverterFloat64.write(value.width, into);
+            FfiConverterFloat64.write(value.height, into);
+            FfiConverterOptionalString.write(value.session, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterUInt32.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterFloat64.allocationSize(value.x) +
+             FfiConverterFloat64.allocationSize(value.y) +
+             FfiConverterFloat64.allocationSize(value.width) +
+             FfiConverterFloat64.allocationSize(value.height) +
+             FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type StartSessionInput = {
     /**
-     * Stable session id for this run (e.g. "research-run-1").
+     * Optional stable public label for this run (e.g. "research-run-1").
+     * When omitted, the authenticated transport lease's implicit session is
+     * created or returned.
      */
-    session: string,
+    session?: string,
     /**
-     * Per-session perception/action modality. auto starts window-only and requires explicit escalation before desktop tools; window and desktop are strict. Immutable for the live session.
+     * Deprecated compatibility policy. New callers select window or desktop
+     * modality on each action instead of storing it on the session.
      */
-    captureScope?: CaptureScope
+    captureScope?: CaptureScope,
+    /**
+     * Optional initial cursor theme. The host applies it before the cursor is
+     * first made visible, avoiding a flash of the default theme.
+     */
+    cursorTheme?: CursorThemeSelection
 }
 
 /**
@@ -1029,17 +3368,20 @@ const FfiConverterTypeStartSessionInput = (() => {
     class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
         read(from: RustBuffer): TypeName {
             return {
-                session: FfiConverterString.read(from),
-                captureScope: FfiConverterOptionalTypeCaptureScope.read(from)
+                session: FfiConverterOptionalString.read(from),
+                captureScope: FfiConverterOptionalTypeCaptureScope.read(from),
+                cursorTheme: FfiConverterOptionalTypeCursorThemeSelection.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
-            FfiConverterString.write(value.session, into);
+            FfiConverterOptionalString.write(value.session, into);
             FfiConverterOptionalTypeCaptureScope.write(value.captureScope, into);
+            FfiConverterOptionalTypeCursorThemeSelection.write(value.cursorTheme, into);
         }
         allocationSize(value: TypeName): number {
-            return FfiConverterString.allocationSize(value.session) +
-             FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope);
+            return FfiConverterOptionalString.allocationSize(value.session) +
+             FfiConverterOptionalTypeCaptureScope.allocationSize(value.captureScope) +
+             FfiConverterOptionalTypeCursorThemeSelection.allocationSize(value.cursorTheme);
 
         }
     };
@@ -1096,11 +3438,102 @@ const FfiConverterTypeStartSessionOutput = (() => {
     return new FFIConverter();
 })();
 
+export type WindowPredicate = {
+    exists?: boolean,
+    bounds?: BoundsExpectation
+}
+
+/**
+ * Generated factory for {@link WindowPredicate} record objects.
+ */
+export const WindowPredicate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<WindowPredicate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<WindowPredicate>,
+    });
+})();
+
+const FfiConverterTypeWindowPredicate = (() => {
+    type TypeName = WindowPredicate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                exists: FfiConverterOptionalBoolean.read(from),
+                bounds: FfiConverterOptionalTypeBoundsExpectation.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalBoolean.write(value.exists, into);
+            FfiConverterOptionalTypeBoundsExpectation.write(value.bounds, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalBoolean.allocationSize(value.exists) +
+             FfiConverterOptionalTypeBoundsExpectation.allocationSize(value.bounds);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type StatePredicate = {
+    window?: WindowPredicate,
+    element?: ElementPredicate
+}
+
+/**
+ * Generated factory for {@link StatePredicate} record objects.
+ */
+export const StatePredicate = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<StatePredicate, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<StatePredicate>,
+    });
+})();
+
+const FfiConverterTypeStatePredicate = (() => {
+    type TypeName = StatePredicate;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                window: FfiConverterOptionalTypeWindowPredicate.read(from),
+                element: FfiConverterOptionalTypeElementPredicate.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterOptionalTypeWindowPredicate.write(value.window, into);
+            FfiConverterOptionalTypeElementPredicate.write(value.element, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterOptionalTypeWindowPredicate.allocationSize(value.window) +
+             FfiConverterOptionalTypeElementPredicate.allocationSize(value.element);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
 export type TypeTextInput = {
     text: string,
-    scope: DesktopScope,
+    target?: ActionTarget,
     /**
-     * Optional session id.
+     * Deprecated flat desktop target retained for wire compatibility.
+     */
+    scope?: DesktopScope,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session.
      */
     session?: string
 }
@@ -1127,19 +3560,164 @@ const FfiConverterTypeTypeTextInput = (() => {
         read(from: RustBuffer): TypeName {
             return {
                 text: FfiConverterString.read(from),
-                scope: FfiConverterTypeDesktopScope.read(from),
+                target: FfiConverterOptionalTypeActionTarget.read(from),
+                scope: FfiConverterOptionalTypeDesktopScope.read(from),
                 session: FfiConverterOptionalString.read(from)
             };
         }
         write(value: TypeName, into: RustBuffer): void {
             FfiConverterString.write(value.text, into);
-            FfiConverterTypeDesktopScope.write(value.scope, into);
+            FfiConverterOptionalTypeActionTarget.write(value.target, into);
+            FfiConverterOptionalTypeDesktopScope.write(value.scope, into);
             FfiConverterOptionalString.write(value.session, into);
         }
         allocationSize(value: TypeName): number {
             return FfiConverterString.allocationSize(value.text) +
-             FfiConverterTypeDesktopScope.allocationSize(value.scope) +
+             FfiConverterOptionalTypeActionTarget.allocationSize(value.target) +
+             FfiConverterOptionalTypeDesktopScope.allocationSize(value.scope) +
              FfiConverterOptionalString.allocationSize(value.session);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type VerifyStateInput = {
+    /**
+     * Exact process whose window may be observed.
+     */
+    pid: bigint,
+    /**
+     * Exact native window identifier.
+     */
+    windowId: bigint,
+    /**
+     * One to eight predicates, combined with logical AND.
+     */
+    expect: Array<StatePredicate>,
+    /**
+     * For multi-call work, prefer a short public session label and repeat it on every call that
+     * accepts it. Omit it to use the authenticated transport's implicit lifecycle session. This
+     * field never selects capture modality or authorization.
+     */
+    session?: string,
+    /**
+     * Bounded wait. Zero performs one sample.
+     */
+    timeoutMs?: bigint,
+    /**
+     * Consecutive satisfied samples required before returning success.
+     */
+    stableSamples?: bigint,
+    /**
+     * Return the final window screenshot as image content for a multimodal
+     * caller. The driver does not interpret that image.
+     */
+    includeScreenshot?: boolean
+}
+
+/**
+ * Generated factory for {@link VerifyStateInput} record objects.
+ */
+export const VerifyStateInput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<VerifyStateInput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<VerifyStateInput>,
+    });
+})();
+
+const FfiConverterTypeVerifyStateInput = (() => {
+    type TypeName = VerifyStateInput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                pid: FfiConverterInt64.read(from),
+                windowId: FfiConverterUInt64.read(from),
+                expect: FfiConverterSequenceTypeStatePredicate.read(from),
+                session: FfiConverterOptionalString.read(from),
+                timeoutMs: FfiConverterOptionalUInt64.read(from),
+                stableSamples: FfiConverterOptionalUInt64.read(from),
+                includeScreenshot: FfiConverterOptionalBoolean.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterInt64.write(value.pid, into);
+            FfiConverterUInt64.write(value.windowId, into);
+            FfiConverterSequenceTypeStatePredicate.write(value.expect, into);
+            FfiConverterOptionalString.write(value.session, into);
+            FfiConverterOptionalUInt64.write(value.timeoutMs, into);
+            FfiConverterOptionalUInt64.write(value.stableSamples, into);
+            FfiConverterOptionalBoolean.write(value.includeScreenshot, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterInt64.allocationSize(value.pid) +
+             FfiConverterUInt64.allocationSize(value.windowId) +
+             FfiConverterSequenceTypeStatePredicate.allocationSize(value.expect) +
+             FfiConverterOptionalString.allocationSize(value.session) +
+             FfiConverterOptionalUInt64.allocationSize(value.timeoutMs) +
+             FfiConverterOptionalUInt64.allocationSize(value.stableSamples) +
+             FfiConverterOptionalBoolean.allocationSize(value.includeScreenshot);
+
+        }
+    };
+    return new FFIConverter();
+})();
+
+export type VerifyStateOutput = {
+    status: VerificationStatus,
+    stable: boolean,
+    elapsedMs: bigint,
+    samples: bigint,
+    predicates: Array<PredicateOutcome>
+}
+
+/**
+ * Generated factory for {@link VerifyStateOutput} record objects.
+ */
+export const VerifyStateOutput = (() => {
+    const defaults = () => ({
+    });
+    const create = (() => {
+        return uniffiCreateRecord<VerifyStateOutput, ReturnType<typeof defaults>>(defaults);
+    })();
+    return Object.freeze({
+        create,
+        new: create,
+        defaults: () => Object.freeze(defaults()) as Partial<VerifyStateOutput>,
+    });
+})();
+
+const FfiConverterTypeVerifyStateOutput = (() => {
+    type TypeName = VerifyStateOutput;
+    class FFIConverter extends AbstractFfiConverterByteArray<TypeName> {
+        read(from: RustBuffer): TypeName {
+            return {
+                status: FfiConverterTypeVerificationStatus.read(from),
+                stable: FfiConverterBool.read(from),
+                elapsedMs: FfiConverterUInt64.read(from),
+                samples: FfiConverterUInt64.read(from),
+                predicates: FfiConverterSequenceTypePredicateOutcome.read(from)
+            };
+        }
+        write(value: TypeName, into: RustBuffer): void {
+            FfiConverterTypeVerificationStatus.write(value.status, into);
+            FfiConverterBool.write(value.stable, into);
+            FfiConverterUInt64.write(value.elapsedMs, into);
+            FfiConverterUInt64.write(value.samples, into);
+            FfiConverterSequenceTypePredicateOutcome.write(value.predicates, into);
+        }
+        allocationSize(value: TypeName): number {
+            return FfiConverterTypeVerificationStatus.allocationSize(value.status) +
+             FfiConverterBool.allocationSize(value.stable) +
+             FfiConverterUInt64.allocationSize(value.elapsedMs) +
+             FfiConverterUInt64.allocationSize(value.samples) +
+             FfiConverterSequenceTypePredicateOutcome.allocationSize(value.predicates);
 
         }
     };
@@ -1178,23 +3756,56 @@ const FfiConverterTypePlatform = (() => {
     return new FFIConverter();
 })();
 
+// FfiConverter for number | undefined
+const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
+
+// FfiConverter for ActionDelivery | undefined
+const FfiConverterOptionalTypeActionDelivery = new FfiConverterOptional(FfiConverterTypeActionDelivery);
+
+// FfiConverter for Array<ActionEvidence>
+const FfiConverterSequenceTypeActionEvidence = new FfiConverterArray(FfiConverterTypeActionEvidence);
+
+// FfiConverter for Array<ActionEvidence> | undefined
+const FfiConverterOptionalSequenceTypeActionEvidence = new FfiConverterOptional(FfiConverterSequenceTypeActionEvidence);
+
+// FfiConverter for ActionEscalation | undefined
+const FfiConverterOptionalTypeActionEscalation = new FfiConverterOptional(FfiConverterTypeActionEscalation);
+
+// FfiConverter for number | undefined
+const FfiConverterOptionalFloat64 = new FfiConverterOptional(FfiConverterFloat64);
+
+// FfiConverter for ActionTarget | undefined
+const FfiConverterOptionalTypeActionTarget = new FfiConverterOptional(FfiConverterTypeActionTarget);
+
+// FfiConverter for DesktopScope | undefined
+const FfiConverterOptionalTypeDesktopScope = new FfiConverterOptional(FfiConverterTypeDesktopScope);
+
 // FfiConverter for string | undefined
 const FfiConverterOptionalString = new FfiConverterOptional(FfiConverterString);
 
 // FfiConverter for ClickButton | undefined
 const FfiConverterOptionalTypeClickButton = new FfiConverterOptional(FfiConverterTypeClickButton);
 
-// FfiConverter for number | undefined
-const FfiConverterOptionalUInt32 = new FfiConverterOptional(FfiConverterUInt32);
+// FfiConverter for Array<string>
+const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
 
 // FfiConverter for bigint | undefined
 const FfiConverterOptionalUInt64 = new FfiConverterOptional(FfiConverterUInt64);
 
-// FfiConverter for Array<string>
-const FfiConverterSequenceString = new FfiConverterArray(FfiConverterString);
-
 // FfiConverter for Array<string> | undefined
 const FfiConverterOptionalSequenceString = new FfiConverterOptional(FfiConverterSequenceString);
+
+// FfiConverter for boolean | undefined
+const FfiConverterOptionalBoolean = new FfiConverterOptional(FfiConverterBool);
+
+// FfiConverter for CursorPointOutput | undefined
+const FfiConverterOptionalTypeCursorPointOutput = new FfiConverterOptional(FfiConverterTypeCursorPointOutput);
+
+// FfiConverter for Array<SessionOutput>
+const FfiConverterSequenceTypeSessionOutput = new FfiConverterArray(FfiConverterTypeSessionOutput);
+
+// FfiConverter for UnknownReason | undefined
+const FfiConverterOptionalTypeUnknownReason = new FfiConverterOptional(FfiConverterTypeUnknownReason);
 
 // FfiConverter for ScrollBy | undefined
 const FfiConverterOptionalTypeScrollBy = new FfiConverterOptional(FfiConverterTypeScrollBy);
@@ -1204,6 +3815,24 @@ const FfiConverterOptionalTypeEscalationReason = new FfiConverterOptional(FfiCon
 
 // FfiConverter for CaptureScope | undefined
 const FfiConverterOptionalTypeCaptureScope = new FfiConverterOptional(FfiConverterTypeCaptureScope);
+
+// FfiConverter for CursorThemeSelection | undefined
+const FfiConverterOptionalTypeCursorThemeSelection = new FfiConverterOptional(FfiConverterTypeCursorThemeSelection);
+
+// FfiConverter for BoundsExpectation | undefined
+const FfiConverterOptionalTypeBoundsExpectation = new FfiConverterOptional(FfiConverterTypeBoundsExpectation);
+
+// FfiConverter for WindowPredicate | undefined
+const FfiConverterOptionalTypeWindowPredicate = new FfiConverterOptional(FfiConverterTypeWindowPredicate);
+
+// FfiConverter for ElementPredicate | undefined
+const FfiConverterOptionalTypeElementPredicate = new FfiConverterOptional(FfiConverterTypeElementPredicate);
+
+// FfiConverter for Array<StatePredicate>
+const FfiConverterSequenceTypeStatePredicate = new FfiConverterArray(FfiConverterTypeStatePredicate);
+
+// FfiConverter for Array<PredicateOutcome>
+const FfiConverterSequenceTypePredicateOutcome = new FfiConverterArray(FfiConverterTypePredicateOutcome);
 
 
 /**
@@ -1230,30 +3859,79 @@ function uniffiEnsureInitialized() {
 export default Object.freeze({
   initialize: uniffiEnsureInitialized,
   converters: {
+    FfiConverterTypeActionDelivery,
+    FfiConverterTypeActionDeliveryMode,
+    FfiConverterTypeActionEffect,
+    FfiConverterTypeActionEscalation,
+    FfiConverterTypeActionEscalationReason,
+    FfiConverterTypeActionEscalationTarget,
+    FfiConverterTypeActionEvidence,
+    FfiConverterTypeActionEvidenceKind,
+    FfiConverterTypeActionResult,
+    FfiConverterTypeActionRoute,
+    FfiConverterTypeActionTarget,
+    FfiConverterTypeBoundsExpectation,
     FfiConverterTypeCaptureScope,
     FfiConverterTypeClickButton,
     FfiConverterTypeClickInput,
+    FfiConverterTypeClipboardReadInput,
+    FfiConverterTypeClipboardReadOutput,
+    FfiConverterTypeClipboardWriteInput,
+    FfiConverterTypeClipboardWriteOutput,
+    FfiConverterTypeCursorAction,
+    FfiConverterTypeCursorMotionOutput,
+    FfiConverterTypeCursorPointOutput,
+    FfiConverterTypeCursorReducedMotion,
+    FfiConverterTypeCursorThemeOutput,
+    FfiConverterTypeCursorThemeSelection,
+    FfiConverterTypeCursorVisualOutput,
     FfiConverterTypeDesktopScope,
     FfiConverterTypeDragInput,
     FfiConverterTypeEffectiveScope,
+    FfiConverterTypeElementPredicate,
+    FfiConverterTypeElementSelector,
     FfiConverterTypeEndSessionInput,
     FfiConverterTypeEndSessionOutput,
     FfiConverterTypeEscalateSessionInput,
     FfiConverterTypeEscalationReason,
+    FfiConverterTypeGetAgentCursorStateInput,
+    FfiConverterTypeGetAgentCursorStateOutput,
     FfiConverterTypeGetCursorPositionInput,
     FfiConverterTypeGetDesktopStateInput,
     FfiConverterTypeGetScreenSizeInput,
+    FfiConverterTypeGetSessionInput,
     FfiConverterTypeGetSessionStateInput,
     FfiConverterTypeHotkeyInput,
+    FfiConverterTypeInvokeMenuInput,
+    FfiConverterTypeListSessionsInput,
+    FfiConverterTypeListSessionsOutput,
     FfiConverterTypeMoveCursorInput,
     FfiConverterTypePlatform,
+    FfiConverterTypePredicateOutcome,
     FfiConverterTypePressKeyInput,
     FfiConverterTypeScrollBy,
     FfiConverterTypeScrollDirection,
     FfiConverterTypeScrollInput,
+    FfiConverterTypeSessionClientKindOutput,
+    FfiConverterTypeSessionLifecycleState,
+    FfiConverterTypeSessionOutput,
     FfiConverterTypeSessionStateOutput,
+    FfiConverterTypeSessionTransportOutput,
+    FfiConverterTypeSetAgentCursorEnabledInput,
+    FfiConverterTypeSetAgentCursorEnabledOutput,
+    FfiConverterTypeSetAgentCursorMotionInput,
+    FfiConverterTypeSetAgentCursorMotionOutput,
+    FfiConverterTypeSetAgentCursorThemeInput,
+    FfiConverterTypeSetAgentCursorThemeOutput,
+    FfiConverterTypeSetWindowFrameInput,
     FfiConverterTypeStartSessionInput,
     FfiConverterTypeStartSessionOutput,
+    FfiConverterTypeStatePredicate,
     FfiConverterTypeTypeTextInput,
+    FfiConverterTypeUnknownReason,
+    FfiConverterTypeVerificationStatus,
+    FfiConverterTypeVerifyStateInput,
+    FfiConverterTypeVerifyStateOutput,
+    FfiConverterTypeWindowPredicate,
   }
 });

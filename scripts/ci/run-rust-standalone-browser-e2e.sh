@@ -107,6 +107,8 @@ if [[ "${HOST_OS}" == Linux && "${CUA_E2E_WAYLAND_SESSION:-}" == generic ]]; the
 else
   tests=(
     standalone_browser_background_type
+    standalone_browser_type_replace
+    standalone_browser_owned_permission_prompt
     standalone_browser_dialogs
   )
   if [[ "${HOST_OS}" == Linux ]]; then
@@ -114,6 +116,11 @@ else
   fi
   tests+=(
     standalone_browser_download
+  )
+  if [[ "${HOST_OS}" != Darwin ]]; then
+    tests+=(standalone_browser_existing_profile_standard_refusal)
+  fi
+  tests+=(
     standalone_browser_existing_profile
     standalone_browser_existing_profile_setup
     standalone_browser_frames
@@ -123,6 +130,7 @@ else
     standalone_browser_roundtrip
     standalone_browser_semantic_state
     standalone_browser_stale_ref
+    standalone_browser_trust_gated_dom_click
     standalone_browser_trusted_click
     standalone_browser_upload
     standalone_browser_window_collision

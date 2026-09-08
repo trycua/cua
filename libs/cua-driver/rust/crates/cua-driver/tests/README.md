@@ -81,9 +81,10 @@ external-app suites remain separate.
 
 The canonical macOS E2E entrypoint is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It runs in a disposable
-clone of the private maintainer seed, requires a logged-in user session, and
-verifies the installed driver's Accessibility and Screen Recording grants
-before delegating to `scripts/ci/macos/run-rust-e2e.sh`.
+clone of the private maintainer seed, or in a SIP-off worker prepared with the
+checked-in macOS consent seed helper. It requires a logged-in user session and
+verifies the installed driver's Accessibility and Screen Recording grants before
+delegating to `scripts/ci/macos/run-rust-e2e.sh`.
 
 For focused macOS runs on a workstation shared with other driver clients,
 start a TCC-authorized daemon on a dedicated socket and set
@@ -143,5 +144,7 @@ desktop state outside the repo-local fixtures:
   handoff behavior. Run it through the cross-platform
   `scripts/ci/run-rust-standalone-browser-e2e.sh`, which stages the Electron
   foreground sentinel when needed and opts pure Wayland runs into the native
-  backend. macOS Lume maintainers can add it to the VM acceptance run with
-  `run-all.sh --standalone-browser`.
+  backend. Non-macOS runs prove that standard mode refuses existing-profile
+  attachment before running the authorized success rows with a disposable
+  unrestricted daemon. macOS Lume maintainers can add the success rows to the
+  VM acceptance run with `run-all.sh --standalone-browser`.

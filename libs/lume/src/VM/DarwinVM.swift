@@ -9,13 +9,15 @@ final class DarwinVM: VM {
         vmDirContext: VMDirContext,
         virtualizationServiceFactory: @escaping (VMVirtualizationServiceContext) throws -> VMVirtualizationService = { try DarwinVirtualizationService(configuration: $0) },
         vncServiceFactory: @escaping (VMDirectory) -> VNCService = { DefaultVNCService(vmDirectory: $0) },
+        displayPresenterFactory: @escaping @MainActor (DisplayMode, VNCService) -> VMDisplayPresenter = defaultDisplayPresenter,
         imageLoader: ImageLoader
     ) {
         self.imageLoader = imageLoader
         super.init(
             vmDirContext: vmDirContext,
             virtualizationServiceFactory: virtualizationServiceFactory,
-            vncServiceFactory: vncServiceFactory
+            vncServiceFactory: vncServiceFactory,
+            displayPresenterFactory: displayPresenterFactory
         )
     }
 

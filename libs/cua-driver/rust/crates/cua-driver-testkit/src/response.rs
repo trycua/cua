@@ -72,24 +72,27 @@ impl ToolResponse {
         self.is_error
     }
 
-    // ── Best-effort-background ladder accessors ──────────────────────────────
-    // Action tools (type_text / click / drag / scroll) report which rung
-    // delivered (`path`) and whether the driver could confirm the effect
-    // (`verified`). These let the modality matrix assert per (surface, rung)
-    // outcomes instead of scraping result text.
+    // ── Action-result accessors ───────────────────────────────────────────────
+    // Action tools expose only the narrow public truth contract. Tests assert
+    // the stable semantic route/effect instead of depending on platform
+    // transport names or a lossy verification boolean.
 
-    /// The delivery rung that ran: `"ax" | "cgevent" | "cgevent_fg" |
-    /// "key_events" | "key_events_fg"`. `None` when the tool reports no `path`.
-    pub fn path(&self) -> Option<&str> {
-        self.structured.get("path").and_then(Value::as_str)
+    /// The strongest effect the driver can substantiate for an action.
+    pub fn action_effect(&self) -> Option<&str> {
+        self.structured.get("effect").and_then(Value::as_str)
     }
 
-    /// Whether the driver confirmed the effect via read-back. `Some(true)` only
-    /// when verified; `Some(false)` = dispatched-but-unconfirmed (the caller
-    /// must confirm via screenshot — e.g. a click, or a Catalyst type); `None`
-    /// when the tool doesn't carry the field.
-    pub fn verified(&self) -> Option<bool> {
-        self.structured.get("verified").and_then(Value::as_bool)
+    /// The stable semantic route used by the action.
+    pub fn action_route(&self) -> Option<&str> {
+        self.structured.get("route").and_then(Value::as_str)
+    }
+
+    /// The delivery mode the driver actually used, when applicable.
+    pub fn action_delivery_mode(&self) -> Option<&str> {
+        self.structured
+            .get("delivery")
+            .and_then(|delivery| delivery.get("mode"))
+            .and_then(Value::as_str)
     }
 
     /// `get_window_state` degraded flag: an AX walk that ran but returned zero
@@ -99,6 +102,15 @@ impl ToolResponse {
             .get("degraded")
             .and_then(Value::as_bool)
             .unwrap_or(false)
+    }
+
+    /// Snapshot handle paired with numeric element indices. Element-targeted
+    /// calls in the 0.17 contract must send this value with `element_index`.
+    pub fn snapshot_id(&self) -> &str {
+        self.structured
+            .get("snapshot_id")
+            .and_then(Value::as_str)
+            .expect("get_window_state response must carry snapshot_id")
     }
 }
 

@@ -13,14 +13,16 @@ use async_trait::async_trait;
 use serde_json::{json, Value};
 
 use crate::protocol::ToolResult;
-use crate::tool::{Tool, ToolDef};
+use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef};
 use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::engine::{BrowserEngine, ValidatedTab};
 use super::platform::BrowserVisualActionKind;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
+use super::required_session_schema;
 use super::store::{BrowserActionKind, FrameKind, FrameRef};
+use super::tools::{browser_protected_resource_scope, browser_resource_ownership};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum PointerAction {
@@ -298,7 +300,7 @@ impl BrowserPointerTool {
                     "properties": {
                         "target_id": { "type": "string", "description": "Opaque target id minted by get_browser_state." },
                         "tab_id": { "type": "string", "description": "Opaque tab id minted by get_browser_state." },
-                        "session": { "type": "string", "description": "Explicit caller session owning the browser capabilities." },
+                        "session": required_session_schema(),
                         "action": { "type": "string", "enum": ["hover", "right_click", "double_click", "scroll", "drag"] },
                         "input_route": { "type": "string", "enum": ["trusted", "dom_event"], "default": "trusted" },
                         "ref": { "type": "string", "description": "Origin page ref. Alternative to x/y." },
@@ -727,6 +729,30 @@ impl BrowserPointerTool {
 impl Tool for BrowserPointerTool {
     fn def(&self) -> &ToolDef {
         &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_pointer").await
+        } else {
+            Ok(None)
+        }
     }
 
     async fn invoke(&self, args: Value) -> ToolResult {

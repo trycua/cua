@@ -50,14 +50,6 @@
         },
         {
           "type": "generic",
-          "path": "scripts/_install-rust.sh"
-        },
-        {
-          "type": "generic",
-          "path": "scripts/install.ps1"
-        },
-        {
-          "type": "generic",
           "path": "rust/Skills/cua-driver/SKILL.md"
         }
       ]

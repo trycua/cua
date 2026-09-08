@@ -120,6 +120,7 @@ ruby_method_names() {
   source_file="$1"
   method_prefix="$2"
   case "$method_prefix" in
+    alloc) pattern='alloc_from_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
     read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
@@ -131,6 +132,7 @@ ruby_defined_method_names() {
   source_file="$1"
   method_prefix="$2"
   case "$method_prefix" in
+    alloc) pattern='alloc_from_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     check_lower) pattern='check_lower_[A-Za-z0-9_]+' ;;
     read) pattern='read(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
     write) pattern='write_(Type|OptionalType|SequenceType|MapType)[A-Za-z0-9_]+' ;;
@@ -154,7 +156,7 @@ write_ruby_facade() {
   sdk_file="$1"
   schema_file="$2"
   facade_file="$3"
-  for method_prefix in check_lower read write; do
+  for method_prefix in alloc check_lower read write; do
     references="$temporary_output/ruby-$method_prefix-references"
     definitions="$temporary_output/ruby-$method_prefix-definitions"
     schema_definitions="$temporary_output/ruby-schema-$method_prefix-definitions"
@@ -180,11 +182,12 @@ write_ruby_facade() {
 require_relative "cyclops_sdk/schema"
 require_relative "cyclops_sdk/sdk"
 
-module CyclopsSdk
+module FleetSdk
   CyclopsSdkSchema.constants(false).each do |name|
     const_set(name, CyclopsSdkSchema.const_get(name)) unless const_defined?(name, false)
   end
 RUBY_FACADE_HEADER
+  write_ruby_method_array "SCHEMA_ALLOC_METHODS" "$temporary_output/ruby-alloc-external" "$facade_file"
   write_ruby_method_array "SCHEMA_CHECK_LOWER_METHODS" "$temporary_output/ruby-check_lower-external" "$facade_file"
   write_ruby_method_array "SCHEMA_READ_METHODS" "$temporary_output/ruby-read-external" "$facade_file"
   write_ruby_method_array "SCHEMA_WRITE_METHODS" "$temporary_output/ruby-write-external" "$facade_file"
@@ -192,6 +195,20 @@ RUBY_FACADE_HEADER
 
   schema_rust_buffer = CyclopsSdkSchema::RustBuffer
   schema_stream = CyclopsSdkSchema.const_get(:RustBufferStream, false)
+
+  SCHEMA_ALLOC_METHODS.each do |method_name|
+    RustBuffer.define_singleton_method(method_name) do |value|
+      buffer = schema_rust_buffer.public_send(method_name, value)
+      begin
+        RustBuffer.allocWithBuilder do |builder|
+          builder.write(buffer.data.read_bytes(buffer.len))
+          builder.finalize
+        end
+      ensure
+        buffer.free
+      end
+    end
+  end
 
   SCHEMA_CHECK_LOWER_METHODS.each do |method_name|
     RustBuffer.define_singleton_method(method_name) do |value|
@@ -221,7 +238,8 @@ RUBY_FACADE_HEADER
     end
   end
 
-  private_constant :SCHEMA_CHECK_LOWER_METHODS, :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
+  private_constant :SCHEMA_ALLOC_METHODS, :SCHEMA_CHECK_LOWER_METHODS,
+                   :SCHEMA_READ_METHODS, :SCHEMA_WRITE_METHODS
 end
 RUBY_FACADE_FOOTER
 }
@@ -231,9 +249,11 @@ write_python_facade() {
   schema_file="$2"
   facade_file="$3"
   private_exports="$temporary_output/python-schema-private-exports"
+  converter_adapters="$temporary_output/python-schema-converter-adapters"
 
-  grep_matches_or_empty 'cyclops_sdk\._[A-Za-z_][A-Za-z0-9_]*' "$sdk_file" \
-    | sed 's/^cyclops_sdk\.//' | LC_ALL=C sort -u > "$private_exports"
+  grep_matches_or_empty 'fleet_sdk\._[A-Za-z_][A-Za-z0-9_]*' "$sdk_file" \
+    | sed 's/^fleet_sdk\.//' | LC_ALL=C sort -u > "$private_exports"
+  : > "$converter_adapters"
 
   cat > "$facade_file" <<'PYTHON_FACADE_HEADER'
 from . import _schema as _schema_component
@@ -245,18 +265,33 @@ PYTHON_FACADE_HEADER
       echo "error: generated Python SDK references missing schema symbol: $symbol" >&2
       return 1
     fi
-    printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file"
+    case "$symbol" in
+      _UniffiFfiConverterType*)
+        cat >> "$converter_adapters" <<PYTHON_CONVERTER_ADAPTER
+class $symbol(_sdk_component._UniffiConverterRustBuffer):
+    check_lower = staticmethod(_schema_component.$symbol.check_lower)
+    read = staticmethod(_schema_component.$symbol.read)
+    write = staticmethod(_schema_component.$symbol.write)
+
+PYTHON_CONVERTER_ADAPTER
+        ;;
+      *) printf '%s = _schema_component.%s\n' "$symbol" "$symbol" >> "$facade_file" ;;
+    esac
   done < "$private_exports"
-  cat >> "$facade_file" <<'PYTHON_FACADE_FOOTER'
+  {
+    cat <<'PYTHON_SDK_IMPORT'
 
 from . import _sdk as _sdk_component
 from ._sdk import *
-
+PYTHON_SDK_IMPORT
+    cat "$converter_adapters"
+    cat <<'PYTHON_FACADE_FOOTER'
 __all__ = [*_schema_component.__all__, *_sdk_component.__all__]
 
 del _schema_component
 del _sdk_component
 PYTHON_FACADE_FOOTER
+  } >> "$facade_file"
 }
 
 normalize_generated_text() {
@@ -593,19 +628,19 @@ fi
 
 raw_output="$temporary_output/raw"
 generated_root="$temporary_output/generated"
-mkdir -p "$raw_output" "$generated_root/python/cyclops_sdk" "$generated_root/kotlin" \
+mkdir -p "$raw_output" "$generated_root/python/fleet_sdk" "$generated_root/kotlin" \
   "$generated_root/swift" "$generated_root/ruby/cyclops_sdk"
 "$cargo_bin" run --locked --manifest-path "$workspace" -p cyclops-sdk-bindgen --target "$host_triple" -- \
   generate --library "$library" \
   --language python --language kotlin --language swift --language ruby \
   --out-dir "$raw_output" --no-format
 
-mv "$raw_output/cyclops_sdk.py" "$generated_root/python/cyclops_sdk/_sdk.py"
-mv "$raw_output/cyclops_sdk_schema.py" "$generated_root/python/cyclops_sdk/_schema.py"
+mv "$raw_output/fleet_sdk.py" "$generated_root/python/fleet_sdk/_sdk.py"
+mv "$raw_output/cyclops_sdk_schema.py" "$generated_root/python/fleet_sdk/_schema.py"
 write_python_facade \
-  "$generated_root/python/cyclops_sdk/_sdk.py" \
-  "$generated_root/python/cyclops_sdk/_schema.py" \
-  "$generated_root/python/cyclops_sdk/__init__.py"
+  "$generated_root/python/fleet_sdk/_sdk.py" \
+  "$generated_root/python/fleet_sdk/_schema.py" \
+  "$generated_root/python/fleet_sdk/__init__.py"
 
 mv "$raw_output/ai" "$generated_root/kotlin/"
 mv "$raw_output/CyclopsSdk.swift" "$generated_root/swift/"
@@ -615,8 +650,16 @@ mv "$raw_output/CyclopsSdkFFI.modulemap" "$generated_root/swift/"
 mv "$raw_output/CyclopsSdkSchemaFFI.h" "$generated_root/swift/"
 mv "$raw_output/CyclopsSdkSchemaFFI.modulemap" "$generated_root/swift/"
 cat "$generated_root/swift/CyclopsSdkFFI.modulemap" "$generated_root/swift/CyclopsSdkSchemaFFI.modulemap" > "$generated_root/swift/CyclopsSdk.modulemap"
+# UniFFI 0.31.0 assumes cross-crate external record types conform to
+# Equatable/Hashable. OsGymSandboxTemplateSpec transitively holds a
+# PreservedJson object, which is not Hashable in the schema module — drop the
+# synthesized conformance uniffi claims for every sdk record embedding it.
+for template_struct in Template CreateTemplateRequest; do
+  sed -i.bak "s/^public struct $template_struct: Equatable, Hashable {/public struct $template_struct {/" "$generated_root/swift/CyclopsSdk.swift"
+  rm "$generated_root/swift/CyclopsSdk.swift.bak"
+done
 
-mv "$raw_output/cyclops_sdk.rb" "$generated_root/ruby/cyclops_sdk/sdk.rb"
+mv "$raw_output/fleet_sdk.rb" "$generated_root/ruby/cyclops_sdk/sdk.rb"
 mv "$raw_output/cyclops_sdk_schema.rb" "$generated_root/ruby/cyclops_sdk/schema.rb"
 # UniFFI 0.31.0 emits `OsGym` in cross-crate Ruby helper references while the
 # schema component exports `OSGym`; normalize the generated helper calls.
@@ -788,31 +831,35 @@ if future_runtime_anchor not in text:
     raise SystemExit("expected Ruby error helper declaration not found")
 text = text.replace(future_runtime_anchor, future_runtime, 1)
 
-buffer_pattern = r"(?m)^(\s*)result = CyclopsSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
+buffer_pattern = r"(?m)^(\s*)result = FleetSdk\.rust_call_with_error\(([^,]+),:((?![a-z0-9_]*builder_build\b)[a-z0-9_]+),(.*)\)$"
 def replace_buffer(match):
     indent, error_module, function, arguments = match.groups()
+    arguments = arguments.rstrip().removesuffix(",")
     return (
-        f"{indent}result = CyclopsSdk.uniffi_rust_future_rust_buffer(\n"
+        f"{indent}result = FleetSdk.uniffi_rust_future_rust_buffer(\n"
         f"{indent}  {error_module},\n"
         f"{indent}  UniFFILib.{function}({arguments},RustCallStatus.new),\n"
         f"{indent})"
     )
 text, buffer_replacements = re.subn(buffer_pattern, replace_buffer, text)
-if buffer_replacements != 11:
-    raise SystemExit(f"expected 11 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if buffer_replacements != 25:
+    raise SystemExit(f"expected 25 Ruby Rust-buffer future wrappers, found {buffer_replacements}")
+if len(re.findall(r"result = FleetSdk\.rust_call_with_error\(SdkBuildError,:uniffi_[a-z0-9_]*builder_build,", text)) != 8:
+    raise SystemExit("expected eight synchronous Ruby SDK builder build calls")
 
-void_pattern = r"(?m)^(\s*)CyclopsSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
+void_pattern = r"(?m)^(\s*)FleetSdk\.rust_call_with_error\(([^,]+),:([a-z0-9_]+),(.*)\)$"
 def replace_void(match):
     indent, error_module, function, arguments = match.groups()
+    arguments = arguments.rstrip().removesuffix(",")
     return (
-        f"{indent}CyclopsSdk.uniffi_rust_future_void(\n"
+        f"{indent}FleetSdk.uniffi_rust_future_void(\n"
         f"{indent}  {error_module},\n"
         f"{indent}  UniFFILib.{function}({arguments},RustCallStatus.new),\n"
         f"{indent})"
     )
 text, void_replacements = re.subn(void_pattern, replace_void, text)
-if void_replacements != 2:
-    raise SystemExit(f"expected 2 Ruby void future wrappers, found {void_replacements}")
+if void_replacements != 6:
+    raise SystemExit(f"expected 6 Ruby void future wrappers, found {void_replacements}")
 
 handle_map_anchor = """def self.uniffi_bytes(v)
   raise TypeError, \"no implicit conversion of #{v} into String\" unless v.respond_to?(:to_str)
@@ -922,7 +969,7 @@ old_http_client = """  # A private helper for lowering instances into a raw hand
   end
 
   def uniffi_clone_handle()
-    return CyclopsSdk.rust_call(
+    return FleetSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_httpclient,
       @handle
     )
@@ -945,7 +992,7 @@ new_http_client = """  @uniffi_handle_map = UniffiHandleMap.new
   end
 
   def uniffi_clone_handle()
-    return CyclopsSdk.rust_call(
+    return FleetSdk.rust_call(
       :uniffi_cyclops_sdk_fn_clone_httpclient,
       @handle
     )
@@ -974,12 +1021,12 @@ module UniffiCallbackInterfaceHttpClient
     dropped_callback[:free] = UNIFFI_DROPPED_CALLBACK
     result = UniFFILib::ForeignFutureResultRustBuffer.new
     status = RustCallStatus.new
-    CyclopsSdk.uniffi_trait_interface_call(
+    FleetSdk.uniffi_trait_interface_call(
       status,
       Proc.new { HttpClient.uniffi_handle_map.get(uniffi_handle).execute(request.consumeIntoTypeHttpRequest) },
       Proc.new { |response| result[:return_value] = RustBuffer.alloc_from_TypeHttpResponse(response) },
       HttpError,
-      Proc.new { |error| CyclopsSdk.uniffi_lower_http_error(error) }
+      Proc.new { |error| FleetSdk.uniffi_lower_http_error(error) }
     )
     result[:call_status] = status
     future_callback.call(callback_data, result)

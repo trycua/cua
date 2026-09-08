@@ -44,6 +44,24 @@ const targetIndex = process.argv.indexOf("--target")
 const target = targetIndex < 0 ? undefined : process.argv[targetIndex + 1]
 if (targetIndex >= 0 && !target) throw new Error("missing --target value")
 
+function cargoEnvironment() {
+  const environment = { ...process.env }
+  const buildsWindowsMsvc = target
+    ? target.endsWith("-pc-windows-msvc")
+    : process.platform === "win32"
+  if (!buildsWindowsMsvc) return environment
+
+  // Native npm packages must load on a clean Windows installation. The
+  // upstream N-API runtime includes C++ objects, so MSVC's default dynamic
+  // CRT linkage otherwise leaves VCRUNTIME140.dll as an undeclared system
+  // prerequisite before any Cua code can run.
+  environment.RUSTFLAGS = [
+    environment.RUSTFLAGS?.trim(),
+    "-C target-feature=+crt-static",
+  ].filter(Boolean).join(" ")
+  return environment
+}
+
 const manifest = JSON.parse(readFileSync(join(typescriptRoot, "package.json"), "utf8"))
 const expectedVersion = manifest.devDependencies?.["uniffi-bindgen-react-native"]
 const upstreamManifestPath = join(upstreamRoot, "package.json")
@@ -142,7 +160,10 @@ try {
 
   const args = ["build", "--release", "--manifest-path", join(runtimeRoot, "napi", "Cargo.toml")]
   if (target) args.push("--target", target)
-  const result = spawnSync("cargo", args, { stdio: "inherit" })
+  const result = spawnSync("cargo", args, {
+    env: cargoEnvironment(),
+    stdio: "inherit",
+  })
   if (result.error) throw result.error
   if (result.status !== 0) throw new Error(`cargo exited with status ${result.status}`)
 

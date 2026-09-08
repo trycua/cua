@@ -1,0 +1,60 @@
+name: "CI: cua-cli Fleets WIF smoke"
+
+on:
+  schedule:
+    - cron: "23 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: cua-cli-fleets-wif-smoke
+  cancel-in-progress: false
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out Cua
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@d0cc045d04ccac9d8b7881df0226f9e82c39688e
+
+      - name: Install cua-cli from the locked dependency set
+        working-directory: libs/python/cua-cli
+        run: uv sync --frozen
+
+      - name: Claim, execute, and release a Fleet sandbox
+        working-directory: libs/python/cua-cli
+        shell: bash
+        run: |
+          set -euo pipefail
+          pool_name="cua-cli-wif-smoke"
+          claim_name="wif-smoke-$(tr -d '-' < /proc/sys/kernel/random/uuid | cut -c1-20)"
+          token="$(uv run cua wif-token github)"
+          export FLEETS_TOKEN="$token"
+
+          cleanup() {
+            status=$?
+            trap - EXIT
+            set +e
+            uv run cua sb delete "$claim_name" --force
+            delete_status=$?
+            uv run cua sb suspend "$pool_name"
+            suspend_status=$?
+            unset FLEETS_TOKEN token
+            if [ "$status" -eq 0 ] && [ "$delete_status" -ne 0 ]; then
+              status=$delete_status
+            fi
+            if [ "$status" -eq 0 ] && [ "$suspend_status" -ne 0 ]; then
+              status=$suspend_status
+            fi
+            exit "$status"
+          }
+          trap cleanup EXIT
+
+          uv run cua sb launch --name "$claim_name" --pool "$pool_name"
+          uv run cua sb exec "$claim_name" "uname -a && id && pwd"

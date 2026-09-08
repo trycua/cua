@@ -75,10 +75,6 @@ for elem in result.elements:
         print(f"Text: '{elem.content}', confidence={elem.confidence:.3f}")
 ```
 
-## Docs
-
-- [Configuration](http://localhost:8090/docs/libraries/som/configuration)
-
 ## License
 
 MIT License - See LICENSE file for details.

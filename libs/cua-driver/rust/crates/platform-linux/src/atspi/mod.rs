@@ -24,6 +24,10 @@ pub struct AtspiNode {
     pub value: Option<String>,
     /// Checked state when the accessibility backend exposes one for a toggle.
     pub checked: Option<bool>,
+    /// Enabled state when the accessibility backend returned a state set.
+    pub enabled: Option<bool>,
+    /// Toggle/selection state for selectable controls.
+    pub selected: Option<bool>,
     pub description: Option<String>,
     pub actions: Vec<String>,
     /// For AT-SPI: element_key = element_index as u64.
@@ -44,6 +48,18 @@ pub struct AtspiTreeResult {
     pub tree_markdown: String,
     pub nodes: Vec<AtspiNode>,
     pub bounds: Vec<(usize, i32, i32, u32, u32)>,
+    /// True only for a native AT-SPI walk. The X11 property fallback is a
+    /// partial discovery aid and must not prove verification predicates.
+    pub trusted: bool,
+    /// Machine-readable reason when a native walk failed in a way that is more
+    /// specific than ordinary AT-SPI unavailability.
+    pub degraded_reason: Option<String>,
+    /// True when a caller-supplied `xid` was proven to correspond to exactly one
+    /// of the application's top-levels, so these nodes are that window's and no
+    /// other's. AT-SPI publishes one tree per process, so an application-scoped
+    /// snapshot of a multi-window app carries every window's controls; callers
+    /// that act on behalf of an exact native window must require this.
+    pub window_scoped: bool,
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -63,14 +79,16 @@ pub(crate) fn walk_tree_for_recording(
     xid: u64,
     timeout: std::time::Duration,
 ) -> AtspiTreeResult {
-    if let Ok(Some((tree_markdown, nodes, bounds))) =
-        native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
+    if let Ok(Some(walked)) = native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
     {
-        if !tree_markdown.is_empty() {
+        if !walked.markdown.is_empty() {
             return AtspiTreeResult {
-                tree_markdown,
-                nodes,
-                bounds,
+                tree_markdown: walked.markdown,
+                nodes: walked.nodes,
+                bounds: walked.bounds,
+                trusted: true,
+                degraded_reason: None,
+                window_scoped: walked.window_scoped,
             };
         }
     }
@@ -96,26 +114,34 @@ pub fn walk_tree_bounded(
     // while the tree is suspiciously root-only, so the first get_window_state
     // after launch returns the real tree instead of an empty one. See #1927.
     const MAX_ATTEMPTS: usize = 4;
+    let mut native_failure = None;
     for attempt in 0..MAX_ATTEMPTS {
-        if let Ok(Some((raw_md, nodes, bounds))) =
-            native::walk_tree_bounded(pid, xid, max_elements, max_depth)
-        {
-            // `nodes.len() <= 1` == only the root window resolved: the
-            // cold-registry symptom. Accept any real tree immediately; only
-            // keep waiting on the degenerate case, and accept it anyway on the
-            // final attempt rather than discarding a (minimal) valid result.
-            if !raw_md.is_empty() && (nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1) {
-                let md = if let Some(q) = query {
-                    filter_tree(&raw_md, q)
-                } else {
-                    raw_md
-                };
-                return AtspiTreeResult {
-                    tree_markdown: md,
-                    nodes,
-                    bounds,
-                };
+        match native::walk_tree_bounded(pid, xid, max_elements, max_depth) {
+            Ok(Some(walked)) => {
+                // `nodes.len() <= 1` == only the root window resolved: the
+                // cold-registry symptom. Accept any real tree immediately; only
+                // keep waiting on the degenerate case, and accept it anyway on the
+                // final attempt rather than discarding a (minimal) valid result.
+                if !walked.markdown.is_empty()
+                    && (walked.nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1)
+                {
+                    let md = if let Some(q) = query {
+                        filter_tree(&walked.markdown, q)
+                    } else {
+                        walked.markdown
+                    };
+                    return AtspiTreeResult {
+                        tree_markdown: md,
+                        nodes: walked.nodes,
+                        bounds: walked.bounds,
+                        trusted: true,
+                        degraded_reason: None,
+                        window_scoped: walked.window_scoped,
+                    };
+                }
             }
+            Ok(None) => {}
+            Err(error) => native_failure = Some(error.to_string()),
         }
         if attempt < MAX_ATTEMPTS - 1 {
             std::thread::sleep(std::time::Duration::from_millis(150));
@@ -123,7 +149,9 @@ pub fn walk_tree_bounded(
     }
 
     // Fallback: X11 window properties as minimal tree.
-    walk_via_x11_properties(xid, query)
+    let mut fallback = walk_via_x11_properties(xid, query);
+    fallback.degraded_reason = native_failure.map(|error| format!("atspi_walk_failed: {error}"));
+    fallback
 }
 
 /// Perform the first advertised action on element `idx` within pid's app tree.
@@ -140,8 +168,16 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     native::focus_element(pid, idx)
 }
 
-pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
-    native::scroll_element(pid, idx, direction, amount)
+pub use native::ScrollProgress;
+
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    native::scroll_element(pid, idx, direction, amount, by)
 }
 
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing
@@ -218,6 +254,14 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
     native::get_element_bounds(pid, idx)
 }
 
+pub fn get_element_bounds_for_window(
+    pid: u32,
+    xid: u64,
+    idx: usize,
+) -> Result<(i32, i32, u32, u32)> {
+    native::get_element_bounds_for_window(pid, xid, idx)
+}
+
 // ── Internal helpers ─────────────────────────────────────────────────────────
 
 /// Minimal X11 property-based tree (fallback when AT-SPI is unavailable).
@@ -231,6 +275,9 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 tree_markdown: String::new(),
                 nodes: vec![],
                 bounds: vec![],
+                trusted: false,
+                degraded_reason: None,
+                window_scoped: false,
             }
         }
     };
@@ -256,6 +303,8 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         },
         value: None,
         checked: None,
+        enabled: None,
+        selected: None,
         description: if wm_class.is_empty() {
             None
         } else {
@@ -284,6 +333,12 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         tree_markdown,
         nodes,
         bounds: vec![],
+        trusted: false,
+        // Built by reading this exact window's X11 properties, so it describes
+        // one window by construction — but `trusted: false` still bars it from
+        // proving anything a caller acts on.
+        window_scoped: true,
+        degraded_reason: None,
     }
 }
 

@@ -15,30 +15,50 @@ mints session-scoped tab and element capabilities.
 The canonical loop is:
 
 ```text
-start_session
+start_session(session?)                                  # optional; can name before acting
 list_windows or launch_app
-get_browser_state(pid, window_id, session)       # bind
-get_browser_state(target_id, tab_id, session,
-                  snapshot_format=semantic_v2)  # snapshot
+get_browser_state(pid, window_id, session?)               # bind
+get_browser_state(target_id, tab_id, session?,
+                  snapshot_format=semantic_v2)            # snapshot
 browser_navigate / browser_click / browser_type / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
-get_browser_state(target_id, tab_id, session,
-                  snapshot_format=semantic_v2)  # verify and refresh refs
-end_session
+get_browser_state(target_id, tab_id, session?,
+                  snapshot_format=semantic_v2)            # verify and refresh refs
+end_session(session?)                                     # optional cleanup
 ```
 
-Use one explicit `session` value throughout. Never substitute a raw CDP
-target id, tab ordinal, URL match, or remembered ref for a capability returned
-by `get_browser_state`.
+For a multi-call browser workflow, prefer a short `session` label and pass the
+same value on every call that accepts it. Passing it once is not sticky; a later
+omitted value uses the transport's implicit session. One long-lived MCP or SDK
+transport may omit `session` for one-off or deliberately unlabeled work; its
+first admitted call creates one implicit session and later unnamed calls reuse
+it. Direct one-shot CLI calls use disposable transports. Never substitute a raw
+CDP target id, tab ordinal, URL match, or remembered ref for a capability
+returned by `get_browser_state`.
 
-### macOS recording feedback
+### Copy page content to the system clipboard
 
-On macOS, ref- and coordinate-targeted browser mutations now drive the same
-session-scoped agent cursor overlay as native window actions. `browser_click`
-and click-like pointer actions glide to the live page target and pulse;
-`browser_type` glides to and pulses the editable target; hover and scroll glide
-without a click pulse. This feedback is visual-only: it never moves the user's
-physical pointer, changes focus or z-order, or substitutes for CDP delivery.
+If the requested outcome is exact page content on the system clipboard—not a
+literal text-selection gesture—read the content from a fresh semantic browser
+snapshot, call `clipboard_write` with the exact observed value, and verify it
+with `clipboard_read`. This path is background-safe and does not require a
+clickable ref: passive headings and text nodes are evidence sources, not
+controls that must be clicked before their value can be copied.
+
+Fall back to visual text selection and the platform copy hotkey only when the
+user explicitly requires that gesture or clipboard tools are unavailable.
+That fallback is native input, not a typed page mutation, and may require the
+foreground escalation rules in `SKILL.md`.
+
+### Browser recording feedback
+
+On macOS and Windows, ref- and coordinate-targeted browser mutations drive the
+same session-scoped agent cursor overlay as native window actions.
+`browser_click` and click-like pointer actions glide to the live page target
+and pulse; `browser_type` glides to and pulses the editable target; hover and
+scroll glide without a click pulse. This feedback is visual-only: it never
+moves the user's physical pointer, changes focus or z-order, or substitutes for
+CDP delivery.
 
 The driver rechecks the live page visibility over CDP before every visual
 action. An unselected tab remains fully addressable, but its session cursor is
@@ -75,11 +95,13 @@ geometry, a moved tab, process restart, endpoint-owner mismatch, or any other
 ambiguity must be re-bound or refused. Do not pick another window because its
 title looks close.
 
-## 2. Prepare only when the bind requests setup
+## 2. Prepare only when the bind requests approval or setup
 
 `get_browser_state` is strictly read-only. It never launches a browser,
 changes a profile, enables remote debugging, or accepts a consent prompt. If
-it returns `browser_requires_setup`, choose one explicit preparation flow.
+it returns `browser_requires_setup` or `browser_consent_required`, choose one
+explicit preparation flow. A standalone consumer browser cannot bind through
+a DevTools listener merely because the listener belongs to that process.
 
 ### Driver-owned isolated profile
 
@@ -87,26 +109,38 @@ Prefer an isolated profile when the task does not need the user's existing
 cookies or login state:
 
 ```bash
-# Direct CLI/raw clients mint this token interactively. MCP hosts can use their
-# destructive-tool approval flow instead.
-cua-driver browser-approve --pid 4242 --profile-mode isolated_new
-
 cua-driver browser_prepare \
-  '{"pid":4242,"session":"browser-run-1","allow_launch":true,
-    "profile":{"mode":"isolated_new"},"approval_token":"<token>"}'
+  '{"session":"browser-run-1","allow_launch":true,
+    "profile":{"mode":"isolated_new"}}'
 ```
+
+Isolated preparation follows the runtime permission mode and optional
+capability manifest. Standard mode treats it as routine, bounded mode requires
+a matching manifest, and unrestricted mode requires the launcher's dangerous
+acknowledgement. `allow_launch: true` states that this call may create the
+separate process; it does not widen runtime authorization.
+
+When `pid` is omitted, the driver uses only a platform-attested installation.
+On macOS and Windows it accepts vendor-signed system installations in this
+order: Google Chrome, then Microsoft Edge. On Linux it accepts exact
+root-owned, non-group/world-writable package payloads in this order: Google
+Chrome, Chromium, then Microsoft Edge. User application directories, `PATH`
+entries, redirected paths, and unsigned or mismatched products fail closed.
+Supply a Chromium-family browser pid when the isolated launch must use that
+process's exact executable, including Chromium on macOS or Windows. The pid
+remains required for existing-profile attachment.
 
 Use `isolated_named` with a path-safe `name` for a reusable driver-managed
 profile. Preparation launches a separate browser and never copies, modifies,
-or terminates the requested personal profile. The result returns a
+or terminates an existing personal profile. The result returns a
 `prepared_pid`; list that process's windows and bind the new `(pid,
 window_id)`.
 
 ### Existing profile
 
-Attaching to an authenticated profile requires a separate interactive grant
-bound to the exact process, native window, and caller session. Ordinary MCP
-approval is not enough:
+Attaching to an authenticated profile requires explicit trusted launch or host
+authorization bound to the exact process, native window, and caller session.
+Ordinary MCP approval is not enough:
 
 CDP exposes broad authority over the profile's live pages, cookies, storage,
 runtime, and network state. Loopback prevents remote-host access but is not
@@ -115,14 +149,19 @@ route only on a trusted machine and only when an isolated profile cannot
 satisfy the task.
 
 ```bash
-cua-driver browser-approve --strategy existing_profile \
-  --pid 4242 --window-id 991 --session browser-run-1
+# Start the runtime with the trusted standard-mode launch grant.
+cua-driver mcp --grant existing-profile
 
 cua-driver browser_prepare \
   '{"pid":4242,"window_id":991,"session":"browser-run-1",
-    "strategy":{"kind":"existing_profile"},
-    "approval_token":"<token>"}'
+    "strategy":{"kind":"existing_profile"}}'
 ```
+
+For long-running service use, place `--grant existing-profile` on
+`cua-driver serve`. An embedding application may instead provide
+`DriverAuthorizationHost`. Bounded mode uses a reviewed manifest with
+`resources.browser.profiles: [{kind: existing_profile}]`. Unrestricted mode
+requires `--dangerously-bypass-approvals`.
 
 On supported Chrome, Chromium, and Edge combinations, the approved operation
 may open that product's fixed remote-debugging page in the exact approved
@@ -130,18 +169,55 @@ window, toggle its uniquely labelled per-instance checkbox, prove that the
 loopback endpoint belongs to the approved process, and close the temporary
 tab. The result reports all visible `side_effects`. Missing, localized, or
 ambiguous controls are refused; never click a similar-looking prompt yourself.
+On current macOS Chrome, the internal page may omit its web AX subtree. The
+driver's bounded fallback is limited to a temporary tab it created and
+navigated. It requires the committed fixed URL, expected selected-tab title,
+no active omnibox edit, one unique checkbox-shaped control in the setup-page
+region, an unchanged target window, PID-routed input, and a verified state
+transition on that same control. Unsupported appearance, scale, zoom,
+window-size, or toolbar geometry refuses without a click; the fallback does not
+authorize generic pixel interaction.
 
-The grant lives only in the daemon, is scoped and expiring, and is discarded
-when the daemon restarts. A bounded reconnect can reuse it only while the same
+Chrome 144 and later can expose its agent auto-connect bridge from the running
+profile. After approval, Cua reads the exact port and browser WebSocket path
+from that process's `DevToolsActivePort` file, cross-checks the loopback socket
+owner, and connects without restarting Chrome. Cookies, extensions, tabs, and
+other browser state remain in the original profile. A custom user-data path is
+discovery evidence only and never grants profile access. See Chrome's
+[agent auto-connect guide](https://developer.chrome.com/docs/devtools/agents/use-cases/auto-connect).
+
+The bind result reports `endpoint_transport` and `endpoint_access_class`
+without exposing a port, WebSocket path, or profile path. Existing-profile
+sockets enforce a fixed CDP method policy. The policy permits the commands
+used internally by typed browser tools and refuses caller-directed raw target access,
+`Runtime.enable`, persistent page scripts, request interception, and browser
+identity overrides.
+
+The grant lives only in the runtime, is scoped and expiring, and is discarded
+when the runtime shuts down. A bounded reconnect can reuse it only while the same
 process/profile proof remains valid. After preparation or reconnect, discard
 all previous target, tab, and ref values, list windows again when the pid
 changed, and bind again.
+
+When Cua enabled a Chromium browser's remote-debugging setting, ending the last
+Cua session for that browser process restores the setting through the same
+exact, bounded setup-page route and dismisses any exact browser-owned
+remote-debugging consent prompt. A session that attached to a
+setting already enabled by the user does not claim ownership or turn it off. An
+abrupt daemon or browser crash can prevent cleanup; the user can disable the
+setting from the browser's fixed remote-debugging page.
+
+On the attached path tested during development, `navigator.webdriver` remained
+`false`. Treat that as an observation, since browser releases may change it.
+Websites also use network reputation, account history, session behavior,
+browser state, and interaction signals. Existing-profile attachment cannot
+promise fewer CAPTCHAs or bypass a site's checks.
 
 Never:
 
 - pass remote-debugging flags through `launch_app` for a personal profile;
 - edit Chromium `Preferences`, `Local State`, or profile files;
-- invent, log, persist, or reuse an approval token;
+- invent, log, persist, or reuse an authorization artifact;
 - copy a personal profile into a driver-owned directory;
 - terminate or restart the user's browser as a hidden setup step.
 
@@ -268,9 +344,11 @@ cua-driver browser_click \
 
 `dom_event` calls the page element's click behavior without pretending that a
 trusted pointer event occurred. It requires a ref and is the full-background
-alternative where supported. Never silently change trust class after a
-refusal. Coordinate clicks accept viewport CSS `x` and `y`, but only on the
-trusted route; prefer refs.
+alternative where supported. Dispatch is not proof that the control activated:
+trust-gated controls can ignore synthetic events, so refresh page state and
+verify the expected postcondition. Never silently change trust class or
+foreground the browser after a refusal. Coordinate clicks accept viewport CSS
+`x` and `y`, but only on the trusted route; prefer refs.
 
 ### Type
 
@@ -283,8 +361,11 @@ cua-driver browser_type \
 ```
 
 `insert_text` is the default bulk insertion route. Use `keystrokes` only when
-the page requires per-character key events. Inspect the live schema when in
-doubt:
+the page requires per-character key events. Both modes insert at the current
+selection. When a field already contains text, pass `"replace":true` to select
+its complete value first. Passing an empty `text` with `replace:true` clears
+the field while preserving normal input events. Inspect the live schema when
+in doubt:
 
 ```bash
 cua-driver describe browser_type
@@ -391,8 +472,12 @@ result from the current host, process, window, session, and tab.
 
 - `browser_requires_setup`: obtain explicit approval and call
   `browser_prepare`; never make setup a hidden read side effect.
-- `browser_consent_required`: use the exact interactive approval flow; do not
-  automate a generic approval dialog.
+- `browser_consent_required`: restart standard mode with the trusted launch
+  grant, use a capability manifest that admits the exact resource while the
+  selected profile remains independently binding, or let the embedding host
+  decide the attested request. When detail contains
+  `next_action: browser_prepare`, run that explicit operation for the exact pid
+  and window. Do not automate a generic approval dialog.
 - `browser_binding_ambiguous` or heuristic binding: resolve the native-window
   ambiguity and bind again; do not mutate.
 - `browser_ref_stale`: snapshot again and use a new ref.

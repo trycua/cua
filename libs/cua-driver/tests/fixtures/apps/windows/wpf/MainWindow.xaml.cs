@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text.Json;
 using System.Windows;
@@ -54,6 +55,10 @@ public partial class MainWindow : Window
         // PostMessage actually arrived and was actionable.
         var source = HwndSource.FromHwnd(new WindowInteropHelper(this).Handle);
         source?.AddHook(OnWindowMessage);
+        // Start with the deliberate decoy focused. Foreground element-addressed
+        // keyboard tests must move focus to their exact UIA target after the
+        // top-level activation; inheriting startup focus would hide that race.
+        Keyboard.Focus(TxtDeferredInput);
         PublishFixtureState();
     }
 
@@ -150,6 +155,11 @@ public partial class MainWindow : Window
     private void OnInputChanged(object sender, TextChangedEventArgs e)
     {
         LblInputMirror.Text = $"mirror={TxtInput.Text}";
+    }
+
+    private void OnDeferredInputChanged(object sender, TextChangedEventArgs e)
+    {
+        LblDeferredInputMirror.Text = $"deferred_mirror={TxtDeferredInput.Text}";
     }
 
     private void OnTargetLeftDown(object sender, MouseButtonEventArgs e)
@@ -267,15 +277,17 @@ public partial class MainWindow : Window
     private void OnListChanged(object sender, SelectionChangedEventArgs e)
     {
         if (LblListValue is null) return;
-        if (LstItems?.SelectedItem is ListBoxItem item)
-        {
-            LblListValue.Text = $"selected={item.Content}";
-        }
+        var selected = LstItems?.SelectedItems
+            .OfType<ListBoxItem>()
+            .Select(item => item.Content?.ToString() ?? "")
+            .Where(value => value.Length > 0);
+        LblListValue.Text = $"selected={string.Join(",", selected ?? Enumerable.Empty<string>())}";
     }
 
     private void OnMenuFileNew(object sender, RoutedEventArgs e)  => LblMenuAction.Text = "menu_action=file_new";
     private void OnMenuFileOpen(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=file_open";
     private void OnMenuEditCopy(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=edit_copy";
+    private void OnMenuWindowArrangeLeft(object sender, RoutedEventArgs e) => LblMenuAction.Text = "menu_action=window_arrange_left";
 
     private void OnCtxAction(object sender, RoutedEventArgs e)
     {

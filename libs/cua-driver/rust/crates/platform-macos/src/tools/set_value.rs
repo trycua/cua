@@ -64,14 +64,15 @@ fn def() -> &'static ToolDef {
             "type": "object",
             "required": ["pid", "value"],
             "properties": {
-                "session": { "type": "string", "description": "Optional session id: declares/uses the agent cursor and per-session state for this run. The same id works over MCP, the CLI, or the raw socket, and follows the run across apps/windows. Omit to run cursor-less." },
+                "session": { "type": "string", "description": "For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session." },
                 "pid": { "type": "integer" },
                 "window_id": {
                     "type": "integer",
                     "description": "CGWindowID for the window whose get_window_state produced the element_index. Required when element_index is used; optional when element_token is supplied (the token carries it)."
                 },
-                "element_index": { "type": "integer", "description": "Element index from last get_window_state. Must be supplied unless element_token is provided. REQUIRES `pid` and `window_id` to be passed alongside it — element_index alone (no pid) fails fast with \"Missing required integer field: pid\"; it is not a silent no-op." },
-                "element_token": { "type": "string",  "description": "Opaque per-snapshot element handle from `structuredContent.elements[].element_token`. Takes precedence over element_index when both supplied. Returns an explicit \"stale\" error if the snapshot has been superseded." },
+                "element_index": cua_driver_core::tool_schema::element_index_schema(),
+                "element_token": cua_driver_core::tool_schema::element_token_schema(),
+                "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
                 "value": {
                     "type": "string",
                     "description": "New value. AX will coerce to the element's native type."
@@ -113,6 +114,7 @@ impl Tool for SetValueTool {
             pid,
             element_index_arg,
             element_token_arg.as_deref(),
+            args.opt_str("snapshot_id").as_deref(),
             window_id_arg,
             "set_value",
         ) {
@@ -159,6 +161,49 @@ impl Tool for SetValueTool {
             };
         let element_ptr = element_guard.as_ptr();
 
+        // set_value is an always-background semantic AX mutation. Re-prove
+        // that the retained element still belongs to the requested exact
+        // window immediately before any cursor or AX work; a cache hit alone
+        // is not delivery proof after a window lifecycle or Space change.
+        let _mutation_lease = match super::gate_background_window_action(
+            pid,
+            window_id,
+            Some(element_ptr),
+            cua_driver_core::background_input::BackgroundAction::AxSemantic,
+        )
+        .await
+        {
+            Ok(lease) => lease,
+            Err(refusal_result) => return refusal_result,
+        };
+
+        let cursor_key = super::cursor_tools::resolve_cursor_key(&args);
+        let center_ptr = element_ptr as usize;
+        if let Ok(Some((screen_x, screen_y))) = tokio::task::spawn_blocking(move || unsafe {
+            crate::ax::bindings::element_screen_center(center_ptr as AXUIElementRef)
+        })
+        .await
+        {
+            crate::cursor::overlay::send_command(
+                cursor_key.clone(),
+                cursor_overlay::OverlayCommand::PinAbove(window_id as u64),
+            );
+            crate::cursor::overlay::animate_cursor_to(cursor_key.clone(), screen_x, screen_y).await;
+            self.state
+                .cursor_registry
+                .update_position(&cursor_key, screen_x, screen_y);
+        }
+        // An AXValue read-back is not ground truth for web content. Chromium,
+        // WebKit, and Electron can echo the write through accessibility while
+        // the renderer never observes it. Reuse type_text's bounded ancestor
+        // check so native browser chrome stays trusted but rendered content is
+        // always reported as unverified.
+        let ax_echo_surface = super::type_text::target_in_web_area(
+            pid,
+            Some((element_ptr, Some(element_index))),
+            Some(window_id),
+        );
+
         // ── Focus-suppression wrap (Swift WindowChangeDetector + FocusGuard) ──
         // AXValue writes on popups / sliders can cause reflex activations
         // in Chromium-based apps; the AXPopUpButton path also AXPresses a
@@ -182,9 +227,26 @@ impl Tool for SetValueTool {
         let changes = snapshot.detect_async().await;
 
         match result {
-            Ok(Ok(mut msg)) => {
+            Ok(Ok(mut outcome)) => {
+                apply_surface_trust(&mut outcome, ax_echo_surface);
+                apply_verification_label(&mut outcome);
+                let mut msg = outcome.detail;
                 msg.push_str(&changes.result_suffix());
-                ToolResult::text(msg)
+                let verified = outcome.verified.unwrap_or(false);
+                let mut structured = serde_json::json!({
+                    "path": "ax",
+                    "verified": verified,
+                    "effect": if verified { "confirmed" } else { "unverifiable" },
+                });
+                if ax_echo_surface {
+                    structured["escalation"] = serde_json::json!({
+                        "recommended": "px",
+                        "reason": "AXValue read-back is not trusted for web content. Verify \
+                                   through the renderer; use browser page tools for a tab or \
+                                   manipulate the control through its pixel action."
+                    });
+                }
+                ToolResult::text(msg).with_structured(structured)
             }
             Ok(Err(e)) => ToolResult::error(format!("set_value failed: {e}")),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
@@ -194,19 +256,62 @@ impl Tool for SetValueTool {
 
 // ── Blocking implementation (runs on spawn_blocking thread) ─────────────────
 
+/// Outcome of a `set_value` write.
+///
+/// `verified` is `None` for paths that do not perform a value read-back (the
+/// AXPopUpButton path drives menu items rather than writing AXValue), and
+/// `Some(false)` when a read-back ran but could not confirm the write. A
+/// successful `AXUIElementSetAttributeValue` return code is not by itself
+/// evidence that the value landed: web content behind an AXWebArea accepts the
+/// write and echoes it back through AXValue while the renderer never observes
+/// it — the same trap `type_text` already documents.
+struct SetValueOutcome {
+    detail: String,
+    verified: Option<bool>,
+    /// `Some(false)` when the element already held the requested value, so the
+    /// write was a no-op. Lets callers distinguish "idempotent" from "applied".
+    changed: Option<bool>,
+}
+
+fn apply_surface_trust(outcome: &mut SetValueOutcome, ax_echo_surface: bool) {
+    if ax_echo_surface && outcome.verified == Some(true) {
+        outcome.verified = Some(false);
+        outcome.changed = None;
+        outcome.detail.push_str(
+            " AXValue read-back is not trusted for web content; verify the \
+             renderer via screenshot or use the browser page tools.",
+        );
+    }
+}
+
+fn apply_verification_label(outcome: &mut SetValueOutcome) {
+    if outcome.verified != Some(true) {
+        if let Some(rest) = outcome.detail.strip_prefix("✅ Set") {
+            outcome.detail = format!("📨 Sent (unverified){rest}");
+        }
+    }
+}
+
 fn set_value_blocking(
     element_ptr: usize,
     element_index: usize,
     pid: i32,
     value: &str,
-) -> anyhow::Result<String> {
+) -> anyhow::Result<SetValueOutcome> {
     let element = element_ptr as AXUIElementRef;
 
     let role = unsafe { copy_string_attr(element, "AXRole") }.unwrap_or_default();
 
     if role == "AXPopUpButton" {
         let element_title = unsafe { copy_string_attr(element, "AXTitle") }.unwrap_or_default();
-        select_popup_option(element, element_index, pid, value, &element_title)
+        // Menu-item selection, not an AXValue write — no read-back to report.
+        select_popup_option(element, element_index, pid, value, &element_title).map(|detail| {
+            SetValueOutcome {
+                detail,
+                verified: None,
+                changed: None,
+            }
+        })
     } else {
         // Default path: write AXValue directly. Numeric controls (AXSlider /
         // AXStepper) reject a CFString with -25201 and need a CFNumber; text
@@ -217,6 +322,9 @@ fn set_value_blocking(
         // write with -25200 yet exposes a readable AXValue + increment/decrement
         // actions).
         let numeric_target = value.trim().parse::<f64>().ok();
+        // Read the value before writing so an unchanged field can be reported as
+        // idempotent rather than silently indistinguishable from a fresh write.
+        let before = unsafe { copy_string_attr(element, "AXValue") };
         let err = match numeric_target {
             Some(n) => {
                 let e = unsafe { set_number_attr(element, "AXValue", n) };
@@ -229,14 +337,38 @@ fn set_value_blocking(
             None => unsafe { set_string_attr(element, "AXValue", value) },
         };
         if err == kAXErrorSuccess {
-            Ok(format!("✅ Set AXValue on [{element_index}] {role}."))
+            let after = unsafe { copy_string_attr(element, "AXValue") };
+            let (verified, changed) = classify_write(
+                before.as_deref(),
+                after.as_deref(),
+                value,
+                numeric_target.is_some(),
+            );
+            let suffix = match (verified, changed) {
+                (Some(true), Some(false)) => " Value already matched; write was idempotent.",
+                (Some(true), _) => "",
+                (Some(false), _) => " Read-back did not confirm the value; verify via screenshot.",
+                (None, _) => " Value is not readable through AX; could not confirm.",
+            };
+            Ok(SetValueOutcome {
+                detail: format!("✅ Set AXValue on [{element_index}] {role}.{suffix}"),
+                verified,
+                changed,
+            })
         } else if let Some(target) = numeric_target {
             // Both direct writes failed for a numeric target — fall back to
             // stepping the control via AXIncrement / AXDecrement actions.
             if step_to_value(element, target) {
-                Ok(format!(
-                    "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
-                ))
+                let after = unsafe { copy_string_attr(element, "AXValue") };
+                let (verified, changed) =
+                    classify_write(before.as_deref(), after.as_deref(), value, true);
+                Ok(SetValueOutcome {
+                    detail: format!(
+                        "✅ Set AXValue on [{element_index}] {role} via AXIncrement/AXDecrement stepping."
+                    ),
+                    verified,
+                    changed,
+                })
             } else {
                 anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
             }
@@ -244,6 +376,50 @@ fn set_value_blocking(
             anyhow::bail!("AXUIElementSetAttributeValue(AXValue) failed with error {err}")
         }
     }
+}
+
+/// Decide what a post-write AXValue read proves.
+///
+/// Returns `(verified, changed)`:
+/// - `verified = None` when AXValue is not readable at all, so the write can be
+///   neither confirmed nor denied.
+/// - `verified = Some(true)` when the read-back equals the requested value.
+///   Numeric controls are compared numerically so `"25"` matches a slider that
+///   reports `"25.0"`.
+/// - `changed = Some(false)` when the read-back equals what was there before,
+///   i.e. the element's value did not move. Combined with `verified` this
+///   separates "already had the requested value" (verified + unchanged) from
+///   "the write did not take" (unverified + unchanged).
+fn classify_write(
+    before: Option<&str>,
+    after: Option<&str>,
+    requested: &str,
+    numeric: bool,
+) -> (Option<bool>, Option<bool>) {
+    let Some(after) = after else {
+        return (None, None);
+    };
+    let matches = |observed: &str, expected: &str| -> bool {
+        if observed == expected {
+            return true;
+        }
+        if !numeric {
+            return false;
+        }
+        match (
+            observed.trim().parse::<f64>(),
+            expected.trim().parse::<f64>(),
+        ) {
+            (Ok(a), Ok(b)) => {
+                let scale = a.abs().max(b.abs()).max(1.0);
+                (a - b).abs() <= 1e-9 * scale
+            }
+            _ => false,
+        }
+    };
+    let verified = matches(after, requested);
+    let changed = before.map(|before| !matches(after, before));
+    (Some(verified), changed)
 }
 
 // ── AXIncrement / AXDecrement stepping fallback ──────────────────────────────
@@ -496,5 +672,112 @@ fn hex_digit(n: u8) -> char {
         0..=9 => (b'0' + n) as char,
         10..=15 => (b'A' + n - 10) as char,
         _ => '0',
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{apply_surface_trust, apply_verification_label, classify_write, SetValueOutcome};
+
+    #[test]
+    fn unreadable_value_reports_neither_verified_nor_changed() {
+        // AXValue is not exposed: the write can be neither confirmed nor denied,
+        // so the tool must not claim success on the return code alone.
+        assert_eq!(
+            classify_write(Some("old"), None, "new", false),
+            (None, None)
+        );
+    }
+
+    #[test]
+    fn matching_read_back_verifies_the_write() {
+        assert_eq!(
+            classify_write(Some("old"), Some("new"), "new", false),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn echoed_but_wrong_value_fails_verification() {
+        // Web content behind an AXWebArea accepts the write and echoes a value
+        // the renderer never took. A success return code must not be reported
+        // as a verified write.
+        assert_eq!(
+            classify_write(Some("old"), Some("old"), "new", false),
+            (Some(false), Some(false))
+        );
+    }
+
+    #[test]
+    fn idempotent_write_is_verified_but_unchanged() {
+        assert_eq!(
+            classify_write(Some("same"), Some("same"), "same", false),
+            (Some(true), Some(false))
+        );
+    }
+
+    #[test]
+    fn numeric_controls_compare_numerically() {
+        // AXSlider reports "25.0" for a requested "25".
+        assert_eq!(
+            classify_write(Some("10"), Some("25.000000001"), "25", true),
+            (Some(true), Some(true))
+        );
+    }
+
+    #[test]
+    fn numeric_text_is_not_normalised_on_a_text_target() {
+        assert_eq!(
+            classify_write(Some("old"), Some("7"), "007", false),
+            (Some(false), Some(true))
+        );
+    }
+
+    #[test]
+    fn missing_before_still_verifies_numeric_after() {
+        assert_eq!(
+            classify_write(None, Some("25.0"), "25", true),
+            (Some(true), None)
+        );
+    }
+
+    #[test]
+    fn web_content_ax_echo_is_never_reported_as_verified() {
+        let mut outcome = SetValueOutcome {
+            detail: "Set value.".to_owned(),
+            verified: Some(true),
+            changed: Some(true),
+        };
+        apply_surface_trust(&mut outcome, true);
+        assert_eq!(outcome.verified, Some(false));
+        assert_eq!(outcome.changed, None);
+        assert!(outcome.detail.contains("not trusted for web content"));
+    }
+
+    #[test]
+    fn native_read_back_remains_trusted() {
+        let mut outcome = SetValueOutcome {
+            detail: "Set value.".to_owned(),
+            verified: Some(true),
+            changed: Some(true),
+        };
+        apply_surface_trust(&mut outcome, false);
+        assert_eq!(outcome.verified, Some(true));
+        assert_eq!(outcome.changed, Some(true));
+        assert_eq!(outcome.detail, "Set value.");
+    }
+
+    #[test]
+    fn unverified_result_does_not_keep_a_success_checkmark() {
+        let mut outcome = SetValueOutcome {
+            detail: "✅ Set AXValue on [4] AXTextField.".to_owned(),
+            verified: Some(false),
+            changed: Some(false),
+        };
+        apply_verification_label(&mut outcome);
+        assert_eq!(
+            outcome.detail,
+            "📨 Sent (unverified) AXValue on [4] AXTextField."
+        );
     }
 }

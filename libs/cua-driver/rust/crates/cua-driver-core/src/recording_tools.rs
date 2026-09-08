@@ -13,7 +13,7 @@
 //! stop|status`) and removes the "is this a setting write?" ambiguity of
 //! the old `set_*` name.
 
-use std::sync::{Arc, OnceLock, Weak};
+use std::sync::{Arc, Mutex, OnceLock, Weak};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
@@ -24,20 +24,7 @@ use crate::{
     tool::{Tool, ToolDef, ToolRegistry},
 };
 
-// ── Process-global weak reference to the registry (for replay) ───────────────
-//
-// Set once by `ToolRegistry::init_replay(weak)` after `Arc::new(registry)`.
-
-static REPLAY_REGISTRY: OnceLock<Weak<ToolRegistry>> = OnceLock::new();
-
-/// Called from `main.rs` after wrapping the registry in `Arc`.
-pub fn init_replay_registry(weak: Weak<ToolRegistry>) {
-    let _ = REPLAY_REGISTRY.set(weak);
-}
-
-fn get_replay_registry() -> Option<Arc<ToolRegistry>> {
-    REPLAY_REGISTRY.get()?.upgrade()
-}
+pub type ReplayRegistrySlot = Arc<Mutex<Weak<ToolRegistry>>>;
 
 // ── start_recording ──────────────────────────────────────────────────────────
 
@@ -69,10 +56,12 @@ impl Tool for StartRecordingTool {
                   expected artifact could not be captured.\n\
                 - `app_state.json` — post-action AX/UIA snapshot for the target pid.\n\
                 - `screenshot.png` — compatibility alias of `after.png`.\n\
-                - `action.json` — tool name, full input arguments, result summary, pid, \
-                  click point (when applicable), ISO-8601 timestamp.\n\
-                - `click.png` — for click-family actions only, `before.png` with a red \
-                  marker at the click point.\n\n\
+                - `action.json` — tool name, full input arguments, result summary, \
+                  result-error flag, pid, click point (when applicable), ISO-8601 \
+                  timestamp.\n\
+                - `click.png` — for dispatched click-family actions only, `before.png` \
+                  with a red marker at the click point. A call refused before target \
+                  resolution is explicitly not applicable instead.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
                 **Video is off by default.** Pass `record_video: true` to also \
@@ -197,9 +186,9 @@ impl Tool for StopRecordingTool {
                 `last_video_path` pointing at the finalized mp4 (when video was on).\n\n\
                 A manual `stop_recording` is **unconditional** — it stops whatever \
                 recording is active regardless of which session started it. \
-                Ownership-scoped teardown (so one MCP client disconnecting can't stop a \
-                recording a later client started) is handled by the daemon's \
-                `session_end` lifecycle signal, not by this tool."
+                Ownership-scoped teardown (so one client disconnecting can't stop a \
+                recording a later client started) is handled by the registry's \
+                `session_end` lifecycle hook, not by this tool."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -216,7 +205,7 @@ impl Tool for StopRecordingTool {
     async fn invoke(&self, _args: Value) -> ToolResult {
         // Manual stop is unconditional — `None` requester tears down whatever
         // recording is active. Session-scoped teardown is driven by the
-        // daemon's `session_end` arm (serve.rs), which calls `stop_owner(sid)`.
+        // registry-owned session-end hook, which calls `stop_owner(sid)`.
         match self.session.stop_owner(None) {
             Ok(()) => {
                 let state = self.session.current_state();
@@ -287,7 +276,15 @@ impl Tool for GetRecordingStateTool {
 
 // ── replay_trajectory ─────────────────────────────────────────────────────────
 
-pub struct ReplayTrajectoryTool;
+pub struct ReplayTrajectoryTool {
+    registry: ReplayRegistrySlot,
+}
+
+impl ReplayTrajectoryTool {
+    pub fn new(registry: ReplayRegistrySlot) -> Self {
+        Self { registry }
+    }
+}
 
 static REPLAY_DEF: OnceLock<ToolDef> = OnceLock::new();
 
@@ -388,7 +385,7 @@ impl Tool for ReplayTrajectoryTool {
             ));
         }
 
-        let registry = match get_replay_registry() {
+        let registry = match self.registry.lock().unwrap().upgrade() {
             Some(r) => r,
             None => {
                 return ToolResult::error("Replay not available: registry not initialised yet.")

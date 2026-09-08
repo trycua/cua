@@ -13,6 +13,7 @@ harnessDir="$(dirname "$appsDir")"
 cuaDriverDir="$(cd "$harnessDir/../.." && pwd)"
 outDir="$cuaDriverDir/rust/test-apps/harness-tauri"
 platform="$(uname -s)"
+tauriTargetDir="${CARGO_TARGET_DIR:-$tauriDir/src-tauri/target}"
 
 if ! command -v cargo >/dev/null 2>&1; then
   echo "[ERROR] cargo not on PATH. Install Rust first." >&2
@@ -23,7 +24,7 @@ mkdir -p "$tauriDir/web"
 cp -r "$harnessDir/shared/web/." "$tauriDir/web/"
 
 echo "[BUILD] cargo build --release --features custom-protocol ..."
-CARGO_TARGET_DIR="$tauriDir/src-tauri/target" \
+CARGO_TARGET_DIR="$tauriTargetDir" \
   cargo build --release --features custom-protocol \
     --manifest-path "$tauriDir/src-tauri/Cargo.toml"
 
@@ -31,7 +32,7 @@ rm -rf "$outDir"
 mkdir -p "$outDir"
 
 if [ "$platform" = "Darwin" ]; then
-  srcBin="$tauriDir/src-tauri/target/release/cua-test-harness-tauri"
+  srcBin="$tauriTargetDir/release/cua-test-harness-tauri"
   [ -x "$srcBin" ] || { echo "[ERROR] Tauri binary missing after build" >&2; exit 1; }
 
   bundle="$outDir/CuaTestHarness.Tauri.app"
@@ -59,9 +60,16 @@ if [ "$platform" = "Darwin" ]; then
 </plist>
 PLIST
   xattr -cr "$bundle" 2>/dev/null || true
+  # Cargo's Mach-O is linker-signed, but copying it into a hand-built bundle
+  # leaves the bundle without a valid CodeResources envelope. In the macOS E2E
+  # VM this Tauri bundle produced a blank window and errSecCSUnsigned (-67062)
+  # while launching its sandboxed content process. An ad-hoc deep signature is
+  # sufficient for this disposable test fixture; the driver under test retains
+  # its separate stable signing identity.
+  codesign --force --deep --sign - "$bundle"
   echo "[OK]    Staged: $bundle"
 else
-  srcBin="$tauriDir/src-tauri/target/release/cua-test-harness-tauri"
+  srcBin="$tauriTargetDir/release/cua-test-harness-tauri"
   [ -x "$srcBin" ] || { echo "[ERROR] Tauri binary missing after build" >&2; exit 1; }
 
   cp "$srcBin" "$outDir/CuaTestHarness.Tauri"

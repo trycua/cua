@@ -19,6 +19,7 @@ class _Config:
     token_url: str = _DEFAULT_TOKEN_URL
     client_id: Optional[str] = None
     client_secret: Optional[str] = None
+    fleet_token: Optional[str] = None
 
 
 _global_config = _Config()
@@ -32,6 +33,7 @@ def configure(
     token_url: Optional[str] = None,
     client_id: Optional[str] = None,
     client_secret: Optional[str] = None,
+    fleet_token: Optional[str] = None,
 ) -> None:
     """Set global configuration for cloud sandboxes.
 
@@ -50,6 +52,8 @@ def configure(
         _global_config.client_id = client_id
     if client_secret is not None:
         _global_config.client_secret = client_secret
+    if fleet_token is not None:
+        _global_config.fleet_token = fleet_token
 
 
 def get_api_key(override: Optional[str] = None) -> Optional[str]:
@@ -71,6 +75,21 @@ def get_base_url() -> str:
 def get_fleet_base_url() -> str:
     """Return the Fleet API endpoint without changing legacy VM API routing."""
     return os.environ.get("CUA_FLEET_BASE_URL") or _global_config.fleet_base_url
+
+
+def get_fleet_token() -> Optional[str]:
+    """Resolve a configured or environment-supplied Fleet workload token."""
+    for token in (_global_config.fleet_token, os.environ.get("FLEETS_TOKEN")):
+        if token:
+            token = token.strip()
+            if token:
+                return token
+    return None
+
+
+def has_fleet_auth() -> bool:
+    """Return whether static Fleet token or client credential auth is available."""
+    return bool(get_fleet_token() or (get_client_id() and get_client_secret()))
 
 
 def get_token_url() -> str:

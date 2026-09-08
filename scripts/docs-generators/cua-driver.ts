@@ -11,10 +11,11 @@
  *   npx tsx scripts/docs-generators/cua-driver.ts --check  # Check for drift (CI mode)
  */
 
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import config from './config.json';
 
 // ============================================================================
 // Types
@@ -73,11 +74,19 @@ export interface MCPInputSchema {
 }
 
 export interface MCPPropertyDoc {
-  type: string;
-  description: string;
+  type?: string | string[];
+  description?: string;
   items?: { type: string };
   enum?: string[];
+  const?: unknown;
+  anyOf?: MCPPropertyDoc[];
+  oneOf?: MCPPropertyDoc[];
+  properties?: Record<string, MCPPropertyDoc>;
   minItems?: number;
+  maxItems?: number;
+  minimum?: number;
+  maximum?: number;
+  default?: unknown;
 }
 
 export interface MCPDocumentation {
@@ -104,6 +113,8 @@ const CUA_DRIVER_BIN = path.join(
 );
 const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'reference', 'cua-driver');
 const TAG_PREFIX = 'cua-driver-rs-v';
+
+export type GitRunner = (command: string, args: readonly string[]) => string;
 
 // ============================================================================
 // Version Discovery
@@ -133,22 +144,59 @@ function resolveCargoCommand(): string {
   throw new Error('cargo not found on PATH; install Rust or set CARGO=/path/to/cargo');
 }
 
+function runGit(command: string, args: readonly string[]): string {
+  return execFileSync(command, [...args], {
+    encoding: 'utf-8',
+    cwd: ROOT_DIR,
+  });
+}
+
 /**
- * Get the latest released version from git tags.
+ * Select the highest stable semantic version from Cua Driver release tags.
+ * Nightlies use their own `nightly-cua-driver-rs-v` prefix and must not affect
+ * the version recorded in stable reference docs.
  */
-export function getLatestReleasedVersion(): string {
-  try {
-    const output = execSync(`git tag | grep "^${TAG_PREFIX}" | sort -V | tail -1`, {
-      encoding: 'utf-8',
-      cwd: ROOT_DIR,
-    }).trim();
-    if (output) {
-      return output.replace(TAG_PREFIX, '');
+export function selectLatestReleasedVersion(tags: readonly string[]): string | undefined {
+  const versions = tags.flatMap((tag) => {
+    const match = tag.match(/^cua-driver-rs-v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
+    if (!match) return [];
+
+    return [
+      {
+        version: tag.slice(TAG_PREFIX.length),
+        parts: [BigInt(match[1]), BigInt(match[2]), BigInt(match[3])] as const,
+      },
+    ];
+  });
+
+  versions.sort((a, b) => {
+    for (let index = 0; index < a.parts.length; index += 1) {
+      if (a.parts[index] < b.parts[index]) return -1;
+      if (a.parts[index] > b.parts[index]) return 1;
     }
-  } catch {
-    // Fall through
+    return 0;
+  });
+
+  return versions.at(-1)?.version;
+}
+
+/** Get the latest stable released version from git tags. */
+export function getLatestReleasedVersion(git: GitRunner = runGit): string {
+  let output: string;
+  try {
+    output = git('git', ['tag', '--list', `${TAG_PREFIX}*`]);
+  } catch (error) {
+    const detail = error instanceof Error ? `: ${error.message}` : '';
+    throw new Error(`Failed to list Cua Driver release tags with git${detail}`);
   }
-  return '0.0.0';
+
+  const version = selectLatestReleasedVersion(output.split(/\r?\n/).filter(Boolean));
+  if (!version) {
+    throw new Error(
+      `No stable Cua Driver release tag matching ${TAG_PREFIX}<major>.<minor>.<patch> was found`
+    );
+  }
+  return version;
 }
 
 // ============================================================================
@@ -158,6 +206,7 @@ export function getLatestReleasedVersion(): string {
 async function main() {
   const args = process.argv.slice(2);
   const checkOnly = args.includes('--check') || args.includes('--check-only');
+  const platform = referencePlatform(process.platform);
 
   console.log('Cua Driver Documentation Generator');
   console.log('===================================\n');
@@ -178,11 +227,7 @@ async function main() {
   // Step 2: Extract all docs in a single invocation
   console.log('\nExtracting documentation...');
   const binary = process.env.CUA_DRIVER_BINARY || CUA_DRIVER_BIN;
-  const dumpDocsJson = execFileSync(binary, ['dump-docs', '--type', 'all', '--pretty'], {
-    cwd: CUA_DRIVER_DIR,
-    encoding: 'utf-8',
-  });
-  const dumpDocs: DumpDocsOutput = JSON.parse(dumpDocsJson);
+  const dumpDocs = extractDocumentation(binary);
   console.log(`   Found ${dumpDocs.cli.commands.length} CLI commands`);
   console.log(`   Found ${dumpDocs.mcp.tools.length} MCP tools`);
 
@@ -196,64 +241,66 @@ async function main() {
   // binary reports an empty/missing version.
   const currentVersion = dumpDocs.cli.version || dumpDocs.mcp.version || releasedVersion;
 
-  const cliMdx = generateCLIReferenceMDX(dumpDocs.cli, currentVersion);
-  const mcpMdx = generateMCPToolsMDX(dumpDocs.mcp, currentVersion);
-
-  const cliPath = path.join(DOCS_OUTPUT_DIR, 'cli-reference.mdx');
-  const mcpPath = path.join(DOCS_OUTPUT_DIR, 'mcp-tools.mdx');
-
-  if (checkOnly) {
-    // Check mode: compare with existing files
-    console.log('\nChecking for documentation drift...');
-
-    let hasDrift = false;
-
-    if (fs.existsSync(cliPath)) {
-      const existingCli = fs.readFileSync(cliPath, 'utf-8');
-      if (existingCli !== cliMdx) {
-        console.error('cli-reference.mdx is out of sync with source code');
-        hasDrift = true;
-      } else {
-        console.log('cli-reference.mdx is up to date');
-      }
-    } else {
-      console.error('cli-reference.mdx does not exist');
-      hasDrift = true;
-    }
-
-    if (fs.existsSync(mcpPath)) {
-      const existingMcp = fs.readFileSync(mcpPath, 'utf-8');
-      if (existingMcp !== mcpMdx) {
-        console.error('mcp-tools.mdx is out of sync with source code');
-        hasDrift = true;
-      } else {
-        console.log('mcp-tools.mdx is up to date');
-      }
-    } else {
-      console.error('mcp-tools.mdx does not exist');
-      hasDrift = true;
-    }
-
-    if (hasDrift) {
-      console.error(
-        "\nRun 'npx tsx scripts/docs-generators/cua-driver.ts' to update documentation"
-      );
-      process.exit(1);
-    }
-
-    console.log('\nAll cua-driver documentation is up to date!');
-  } else {
-    // Generate mode: write files
-    fs.mkdirSync(DOCS_OUTPUT_DIR, { recursive: true });
-
-    fs.writeFileSync(cliPath, cliMdx);
-    console.log(`   Generated ${path.relative(ROOT_DIR, cliPath)}`);
-
-    fs.writeFileSync(mcpPath, mcpMdx);
-    console.log(`   Generated ${path.relative(ROOT_DIR, mcpPath)}`);
-
-    console.log('\ncua-driver documentation generated successfully!');
+  const drift = syncReferences(DOCS_OUTPUT_DIR, dumpDocs, currentVersion, platform, checkOnly);
+  if (checkOnly && drift.length > 0) {
+    for (const file of drift) console.error(`${file} is missing or out of sync with source code`);
+    console.error(
+      "Run 'pnpm --dir docs docs:generate:cua-driver' on the same platform to update documentation"
+    );
+    process.exit(1);
   }
+  console.log(
+    checkOnly
+      ? 'Native and shared references are up to date.'
+      : 'Native and shared references generated.'
+  );
+}
+
+type DocumentationRunner = (
+  binary: string,
+  args: string[],
+  options: { cwd: string; encoding: 'utf-8'; env: NodeJS.ProcessEnv }
+) => string;
+
+export function extractDocumentation(
+  binary: string,
+  environment: NodeJS.ProcessEnv = process.env,
+  run: DocumentationRunner = (command, args, options) => execFileSync(command, args, options)
+): DumpDocsOutput {
+  const policyVariables = new Set(['CUA_DRIVER_POLICY_FILE', 'CUA_DRIVER_MANAGED_POLICY_FILE']);
+  const env = Object.fromEntries(
+    Object.entries(environment).filter(([key]) => !policyVariables.has(key.toUpperCase()))
+  );
+  return JSON.parse(
+    run(binary, ['dump-docs', '--type', 'all', '--pretty'], {
+      cwd: CUA_DRIVER_DIR,
+      encoding: 'utf-8',
+      env,
+    })
+  );
+}
+
+export function syncReferences(
+  outputDirectory: string,
+  docs: DumpDocsOutput,
+  version: string,
+  platform: ReferencePlatform,
+  checkOnly: boolean
+): string[] {
+  const files = new Map([
+    ['cli-reference.mdx', generateCLIReferenceMDX(docs.cli, version)],
+    [platform.outputFile, generateMCPToolsMDX(docs.mcp, version, platform)],
+  ]);
+  const drift: string[] = [];
+  if (!checkOnly) fs.mkdirSync(outputDirectory, { recursive: true });
+  for (const [name, content] of files) {
+    const destination = path.join(outputDirectory, name);
+    if (!fs.existsSync(destination) || fs.readFileSync(destination, 'utf-8') !== content) {
+      drift.push(name);
+    }
+    if (!checkOnly) fs.writeFileSync(destination, content);
+  }
+  return drift;
 }
 
 // ============================================================================
@@ -281,9 +328,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation, releasedVersion:
   lines.push(escapeMdxText(docs.abstract) + ' Install via the official script:');
   lines.push('');
   lines.push('```sh');
-  lines.push(
-    'curl -fsSL https://cua.ai/driver/install.sh | bash'
-  );
+  lines.push('curl -fsSL https://cua.ai/driver/install.sh | bash');
   lines.push('```');
   lines.push('');
   lines.push(
@@ -555,13 +600,36 @@ export function generateCommandDoc(cmd: CommandDoc): string[] {
 // MCP Tools Generator
 // ============================================================================
 
-export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: string): string {
+export interface ReferencePlatform {
+  host: string;
+  name: string;
+  outputFile: string;
+}
+
+export const referencePlatforms: ReferencePlatform[] = config.generators[
+  'cua-driver'
+].outputs.flatMap((output) =>
+  output.platform ? [{ ...output.platform, outputFile: output.outputFile }] : []
+);
+
+export function referencePlatform(host: string): ReferencePlatform {
+  const platform = referencePlatforms.find((candidate) => candidate.host === host);
+  if (!platform) throw new Error(`Native MCP reference generation is not implemented for ${host}`);
+  return platform;
+}
+
+export function generateMCPToolsMDX(
+  docs: MCPDocumentation,
+  releasedVersion: string,
+  platform: ReferencePlatform
+): string {
   const lines: string[] = [];
 
   // Frontmatter — must be at the very beginning of the file
   lines.push('---');
-  lines.push('title: MCP Tools');
-  lines.push('description: Reference for every MCP tool Cua Driver exposes');
+  const platformName = platform.name;
+  lines.push(`title: MCP Tools (${platformName})`);
+  lines.push(`description: Reference for MCP tools Cua Driver exposes on ${platformName}`);
   lines.push('---');
   lines.push('');
   lines.push(`{/*
@@ -572,6 +640,17 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
 */}`);
   lines.push('');
   lines.push("import { Callout } from 'fumadocs-ui/components/callout';");
+  lines.push('');
+
+  const otherPlatforms = referencePlatforms
+    .filter((candidate) => candidate.host !== platform.host)
+    .map(
+      (candidate) =>
+        `[${candidate.name} MCP tools](/reference/cua-driver/${candidate.outputFile.replace(/\.mdx$/, '')})`
+    );
+  lines.push(`This reference describes the **${platformName}** native tool registry.`);
+  if (otherPlatforms.length > 0) lines.push(`Other platforms: ${otherPlatforms.join(', ')}.`);
+  lines.push('See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.');
   lines.push('');
 
   // Introduction — mirror the existing hand-written header prose
@@ -595,7 +674,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
   lines.push('');
   lines.push('<Callout type="info">');
   lines.push(
-    "  **Daemon delegation.** `cua-driver mcp` is always a stdio proxy to a `cua-driver serve` daemon. On macOS it can auto-launch the daemon via `open -n -g -a CuaDriver --args serve` so AX and Screen Recording grants attach to the app bundle. On Windows and Linux the daemon must already be running. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance."
+    '  **Runtime ownership.** On Windows and Linux, bare `cua-driver mcp` owns its SDK runtime directly and shuts it down on stdin EOF. On macOS it proxies to the installed `CuaDriver.app` daemon so AX and Screen Recording grants retain the app-bundle identity. Passing `--socket` selects an explicit daemon/service endpoint on every platform. See the [process model](/reference/cua-driver/process-model) for the full lifecycle and wrapper-author guidance.'
   );
   lines.push('</Callout>');
   lines.push('');
@@ -622,6 +701,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
         'launch_app',
         'kill_app',
         'bring_to_front',
+        'set_window_frame',
         'click',
         'double_click',
         'right_click',
@@ -640,6 +720,10 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
       tools: ['page'],
     },
     {
+      title: 'Clipboard tools',
+      tools: ['clipboard_read', 'clipboard_write'],
+    },
+    {
       title: 'Recording tools',
       tools: ['start_recording', 'stop_recording', 'replay_trajectory'],
     },
@@ -656,12 +740,7 @@ export function generateMCPToolsMDX(docs: MCPDocumentation, releasedVersion: str
     },
     {
       title: 'Maintenance tools',
-      tools: [
-        'check_permissions',
-        'health_report',
-        'check_for_update',
-        'install_ffmpeg',
-      ],
+      tools: ['check_permissions', 'health_report', 'check_for_update', 'install_ffmpeg'],
     },
   ];
 
@@ -717,8 +796,17 @@ export function generateMCPToolDoc(tool: MCPToolDoc): string[] {
       const isRequired = required.has(propName);
       const requiredLabel = isRequired ? 'required' : 'optional';
       const typeLabel = formatPropertyType(prop);
-      const description = escapeMdxText(prop.description ?? '');
-      const suffix = description ? `: ${description}` : '';
+      const description = escapeMdxText(propertyDescription(prop));
+      const details: string[] = [];
+      if (prop.default !== undefined) details.push(`default: \`${JSON.stringify(prop.default)}\``);
+      if (prop.minimum !== undefined || prop.maximum !== undefined) {
+        details.push(`range: ${prop.minimum ?? 'unbounded'}–${prop.maximum ?? 'unbounded'}`);
+      }
+      if (prop.minItems !== undefined || prop.maxItems !== undefined) {
+        details.push(`items: ${prop.minItems ?? 0}–${prop.maxItems ?? 'unbounded'}`);
+      }
+      const prose = [description, details.join('; ')].filter(Boolean).join(' ');
+      const suffix = prose ? `: ${prose}` : '';
       lines.push(`- \`${propName}\` (${typeLabel}, ${requiredLabel})${suffix}`);
     }
     lines.push('');
@@ -767,11 +855,37 @@ function escapeMdxText(value: string): string {
 }
 
 function formatPropertyType(prop: MCPPropertyDoc): string {
+  const alternatives = prop.anyOf ?? prop.oneOf;
+  if (alternatives?.length) {
+    const labels = alternatives
+      .filter((alternative) => alternative.type !== 'null')
+      .flatMap((alternative) => {
+        if (alternative.oneOf?.length) {
+          return alternative.oneOf.map(discriminatedObjectLabel);
+        }
+        return [discriminatedObjectLabel(alternative)];
+      });
+    if (labels.length > 0) return [...new Set(labels)].join(' or ');
+  }
   if (prop.type === 'array') {
     const itemType = prop.items?.type ?? 'unknown';
     return `array of ${itemType}`;
   }
-  return prop.type;
+  return Array.isArray(prop.type) ? prop.type.join(' or ') : (prop.type ?? 'unknown');
+}
+
+function discriminatedObjectLabel(schema: MCPPropertyDoc): string {
+  const kind = schema.properties?.kind?.const;
+  return typeof kind === 'string' ? `${kind} target` : (schema.type ?? 'object');
+}
+
+function propertyDescription(prop: MCPPropertyDoc): string {
+  if (prop.description) return prop.description;
+  for (const alternative of prop.anyOf ?? prop.oneOf ?? []) {
+    const nested = propertyDescription(alternative);
+    if (nested) return nested;
+  }
+  return '';
 }
 
 function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
@@ -793,12 +907,14 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
         return 100;
       if (name === 'y' || name === 'y1' || name === 'y2' || name === 'from_y' || name === 'to_y')
         return 200;
+      if (prop.minimum !== undefined && prop.minimum > 0.5) return prop.minimum;
       return 0.5;
     case 'boolean':
       return false;
     case 'array':
       if (name === 'keys') return ['cmd', 'c'];
       if (name === 'modifiers') return ['cmd'];
+      if (name === 'expect') return [{ window: { exists: true } }];
       if (name === 'files' || (prop.minItems ?? 0) > 0) return ['example'];
       return [];
     case 'string':
@@ -820,7 +936,9 @@ function syntheticExampleValue(name: string, prop: MCPPropertyDoc): unknown {
 // Run
 // ============================================================================
 
-main().catch((error) => {
-  console.error('Error:', error);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error('Error:', error);
+    process.exit(1);
+  });
+}

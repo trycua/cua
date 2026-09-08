@@ -6,12 +6,14 @@ final class LinuxVM: VM {
     override init(
         vmDirContext: VMDirContext,
         virtualizationServiceFactory: @escaping (VMVirtualizationServiceContext) throws -> VMVirtualizationService = { try LinuxVirtualizationService(configuration: $0) },
-        vncServiceFactory: @escaping (VMDirectory) -> VNCService = { DefaultVNCService(vmDirectory: $0) }
+        vncServiceFactory: @escaping (VMDirectory) -> VNCService = { DefaultVNCService(vmDirectory: $0) },
+        displayPresenterFactory: @escaping @MainActor (DisplayMode, VNCService) -> VMDisplayPresenter = defaultDisplayPresenter
     ) {
         super.init(
             vmDirContext: vmDirContext,
             virtualizationServiceFactory: virtualizationServiceFactory,
-            vncServiceFactory: vncServiceFactory
+            vncServiceFactory: vncServiceFactory,
+            displayPresenterFactory: displayPresenterFactory
         )
     }
 

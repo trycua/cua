@@ -13,6 +13,48 @@ pub struct ProcessInfo {
     pub cmdline: String,
 }
 
+fn is_process_live_state(status: &str) -> bool {
+    status
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("State:")
+                .and_then(|state| state.trim().chars().next())
+        })
+        .is_some_and(|state| !matches!(state, 'Z' | 'X'))
+}
+
+/// Return whether a PID still represents a live process.
+///
+/// A zombie remains visible under `/proc` until its parent reaps it, so an
+/// existence check alone is not enough for callers that may query AT-SPI or
+/// X11 state for the process. Treat zombies and dead processes as gone.
+pub fn is_process_live(pid: u32) -> bool {
+    let status = match fs::read_to_string(format!("/proc/{pid}/status")) {
+        Ok(status) => status,
+        Err(_) => return false,
+    };
+
+    is_process_live_state(&status)
+}
+
+fn process_start_time_from_stat(stat: &str) -> Option<u64> {
+    // `comm` is parenthesized and may contain spaces. Fields after its closing
+    // parenthesis begin with state (field 3); starttime is field 22.
+    stat.rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
+/// Kernel start-time token for one PID. Unlike the numeric PID alone, this
+/// distinguishes a live process from a later process that reused its PID.
+pub fn process_instance_id(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    process_start_time_from_stat(&stat)
+}
+
 /// Return all running processes by reading /proc/<pid>/status.
 pub fn list_processes() -> Vec<ProcessInfo> {
     let mut result = Vec::new();
@@ -35,6 +77,10 @@ pub fn list_processes() -> Vec<ProcessInfo> {
             Ok(s) => s,
             Err(_) => continue,
         };
+
+        if !is_process_live_state(&status) {
+            continue;
+        }
 
         let proc_name = status
             .lines()
@@ -61,4 +107,63 @@ pub fn list_processes() -> Vec<ProcessInfo> {
 
     result.sort_by_key(|p| p.pid);
     result
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn process_start_time_handles_spaces_in_comm() {
+        let mut fields = vec!["S".to_owned()];
+        fields.extend((4..=21).map(|field| field.to_string()));
+        fields.push("987654".to_owned());
+        let stat = format!("42 (fixture with spaces) {}", fields.join(" "));
+        assert_eq!(super::process_start_time_from_stat(&stat), Some(987654));
+    }
+
+    #[test]
+    fn process_states_fail_closed() {
+        assert!(super::is_process_live_state(
+            "Name:\ttest\nState:\tR (running)\n"
+        ));
+        assert!(super::is_process_live_state("State:\tS (sleeping)"));
+        assert!(!super::is_process_live_state("State:\tZ (zombie)"));
+        assert!(!super::is_process_live_state("State:\tX (dead)"));
+        assert!(!super::is_process_live_state("Name:\ttest\n"));
+        assert!(!super::is_process_live_state("State:\t"));
+    }
+
+    #[test]
+    fn real_zombie_is_not_live_and_disappears_after_reaping() {
+        let child = unsafe { libc::fork() };
+        assert!(
+            child >= 0,
+            "fork failed: {}",
+            std::io::Error::last_os_error()
+        );
+        if child == 0 {
+            unsafe { libc::_exit(0) };
+        }
+
+        let pid = child as u32;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let mut observed_zombie = false;
+        while std::time::Instant::now() < deadline {
+            if std::fs::read_to_string(format!("/proc/{pid}/status"))
+                .ok()
+                .is_some_and(|status| status.contains("State:\tZ"))
+            {
+                observed_zombie = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let live_while_zombie = super::is_process_live(pid);
+        let mut status = 0;
+        let reaped = unsafe { libc::waitpid(child, &mut status, 0) };
+
+        assert!(observed_zombie, "child never entered zombie state");
+        assert!(!live_while_zombie, "zombie pid was reported live");
+        assert_eq!(reaped, child, "failed to reap child");
+        assert!(!super::is_process_live(pid), "reaped pid was reported live");
+    }
 }

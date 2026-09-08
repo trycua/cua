@@ -1,0 +1,154 @@
+---
+title: 'Choose a Cua Driver integration'
+description: 'Choose between MCP, the SDK, a private worker, and an app-hosted service based on who owns the runtime.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Most agent harnesses should connect to Cua Driver through MCP. Embed the SDK
+when computer use is part of your product, and use an app-hosted service when a
+desktop application must own the operating-system permissions.
+
+## Start with who owns the runtime
+
+The runtime is the process that owns Cua Driver's permissions, browser
+connections, recordings, and lifecycle state. Choose its owner before choosing
+the transport:
+
+| You are building                                   | Start with                                                              | Runtime owner                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------- | ------------------------------------------------- |
+| An agent or harness                                | [MCP](/how-to-guides/driver/connect-your-agent)                         | The MCP process, or an explicitly selected daemon |
+| An application with built-in computer use          | [Same-process SDK](/how-to-guides/driver/use-sdk-in-process)            | Your application process                          |
+| A signed desktop app that serves an external agent | [App-hosted service](/how-to-guides/driver/expose-mcp-from-desktop-app) | The permission-owning desktop app                 |
+
+These are starting points. Add a private worker or shared daemon only when you
+need the process boundary it provides.
+
+## Connect an agent through MCP
+
+Use MCP when an existing agent or harness needs Cua Driver's tool catalog.
+
+```text
+Agent or harness -> cua-driver mcp -> Cua runtime -> desktop
+```
+
+The MCP client starts `cua-driver mcp` and keeps its standard input and output
+open. That authenticated transport receives a private implicit lifecycle
+session. Closing the transport releases its session state.
+
+This is the normal route for Codex, Claude Code, Cursor, and a standard
+OpenClaw gateway. Hermes's built-in `computer_use` toolset also uses MCP
+internally, but owns the connection and presents a smaller Hermes-native tool
+surface. Generate configuration for clients that require direct registration
+with `cua-driver mcp-config --client <client>`.
+
+On Windows and Linux, bare `cua-driver mcp` owns its runtime. On macOS, it
+normally proxies to the installed `CuaDriver.app` daemon so Accessibility and
+Screen Recording remain attached to the app identity.
+
+## Embed the SDK in an application
+
+Use the Python or TypeScript SDK when your product owns computer use as a
+feature and wants a typed API instead of an agent protocol.
+
+```text
+Your application -> CuaDriver.create() -> desktop
+```
+
+The application owns runtime startup, permissions, sessions, cancellation, and
+shutdown. It can expose Cua operations directly or map them into a smaller
+product-owned tool.
+
+Use a private worker when the application needs the same SDK contract in a
+supervised child process:
+
+```text
+Your application -> inherited pipes -> private Cua worker -> desktop
+```
+
+The worker has no listener or reconnect path. Closing its private channel ends
+the runtime. This gives one host process isolation without creating a shared
+desktop service.
+
+## Host Cua Driver from a desktop app
+
+Use an app-hosted service when a signed desktop app owns Accessibility and
+Screen Recording permissions while a backend or external agent needs MCP.
+
+```text
+Desktop app -> private Cua service -> generated MCP connection -> agent
+```
+
+The desktop app starts `EmbeddedCuaDriverHost` and passes its returned MCP
+connection to the backend. The backend launches that connection unchanged. It
+must not start a second host.
+
+This distinction matters on macOS. The permission-owning app must start the
+private service directly so the child stays in the app's TCC responsibility
+chain. Starting it from a gateway or backend gives the service that process's
+identity instead.
+
+## Less common variants
+
+Use one-shot CLI calls when an agent can run shell commands but cannot keep an
+MCP transport open:
+
+```text
+Agent -> cua-driver call <tool> -> Cua Driver daemon -> desktop
+```
+
+Use an explicit shared daemon when several clients must reconnect to one
+long-lived desktop service or when the MCP process cannot reach the interactive
+desktop:
+
+```text
+Trusted launcher -> cua-driver serve --socket <endpoint>
+Agent A ---------> cua-driver mcp --socket <endpoint>
+Agent B ---------> cua-driver mcp --socket <endpoint>
+```
+
+The daemon owns the runtime. Each MCP transport still receives its own private
+lifecycle session.
+
+## Permissions belong to the runtime
+
+<Callout type="info">
+  The trusted host fixes the permission mode, capability manifest, launch grants, and authorization
+  callbacks when it starts the runtime. An agent can request actions, but it cannot widen the
+  runtime's permissions.
+</Callout>
+
+The optional public session name is a label for display and explicit lifecycle
+control. It is not a credential and does not carry permission. Two MCP
+transports that use the same public label still have separate private lifecycle
+sessions.
+
+## Existing browser sessions
+
+A driver-owned isolated browser profile is the default. Attaching to an
+existing Chrome or Edge profile is more sensitive because it exposes signed-in
+tabs, cookies, and storage through CDP.
+
+Browser integrations that depend on launching Chromium with a remote debugging
+flag cannot attach that way to a profile already running without the flag. Cua
+Driver can instead use the browser's per-instance remote debugging control in
+the exact approved window, complete the browser-owned consent flow, and bind
+the endpoint to that browser process and lifecycle session. It does not copy,
+edit, restart, or terminate the selected profile.
+
+Standard mode requires the trusted launcher to pass `--grant
+existing-profile`, or an embedding application to approve the exact request.
+The old `browser-approve` token is not part of this model, and an MCP tool
+argument cannot create the grant.
+
+See [Browser Profile Attachment](/reference/cua-driver/browser-profile-attachment)
+for the supported browsers, setup effects, grant lifetime, and refusal codes.
+
+## Go deeper
+
+- [Connect your agent](/how-to-guides/driver/connect-your-agent): configure an MCP client.
+- [Use Cua Driver in process](/how-to-guides/driver/use-sdk-in-process): embed the typed SDK.
+- [Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app): host a private service from a signed app.
+- [SDK, MCP, and process hosting](/concepts/sdk-mcp-and-hosting): understand the complete interface and topology grid.
+- [Process model](/reference/cua-driver/process-model): check platform-specific runtime ownership.
+- [Permission modes](/reference/cua-driver/permission-modes): check the authorization contract.

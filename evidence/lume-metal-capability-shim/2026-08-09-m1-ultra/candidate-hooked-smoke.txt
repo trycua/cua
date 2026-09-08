@@ -1,0 +1,6 @@
+| model                          |       size |     params | backend    | threads |            test |                  t/s |
+| ------------------------------ | ---------: | ---------: | ---------- | ------: | --------------: | -------------------: |
+| llama 1B Q4_K - Medium         | 636.18 MiB |     1.10 B | MTL,BLAS   |       8 |           pp512 |       4785.97 ± 0.00 |
+| llama 1B Q4_K - Medium         | 636.18 MiB |     1.10 B | MTL,BLAS   |       8 |           tg128 |        192.89 ± 0.00 |
+
+build: ee3d1b54c (10167)

@@ -16,7 +16,7 @@ use crate::tool_args::ArgsExt;
 
 use super::cdp_ws::CdpConnection;
 use super::download::BrowserDownloadTool;
-use super::engine::{BrowserEngine, BrowserTabScreenshot};
+use super::engine::{BrowserEngine, BrowserTabScreenshot, FrameSessionLease};
 use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
 use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
@@ -383,10 +383,12 @@ impl Tool for GetBrowserStateTool {
                         args.opt_str("scope_ref").as_deref(),
                         args.opt_str("query").as_deref(),
                         args.opt_str("continuation").as_deref(),
+                        include_screenshot,
                     )
                     .await
                 {
                     Ok(outcome) => {
+                        let screenshot = outcome.screenshot;
                         let refs = outcome
                             .refs
                             .iter()
@@ -397,7 +399,7 @@ impl Tool for GetBrowserStateTool {
                             .iter()
                             .map(semantic_ref_value)
                             .collect::<Vec<_>>();
-                        ToolResult::text(format!(
+                        let snapshot = ToolResult::text(format!(
                             "semantic snapshot p{} of {}: {} action ref(s), {} content ref(s)",
                             outcome.snapshot_id,
                             outcome.url,
@@ -440,20 +442,14 @@ impl Tool for GetBrowserStateTool {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),
                             },
-                        }))
+                        }));
+                        match screenshot {
+                            Some(screenshot) => with_tab_screenshot(snapshot, screenshot),
+                            None => snapshot,
+                        }
                     }
                     Err(refusal) => return refusal.to_tool_result(),
                 };
-                if include_screenshot {
-                    return match self
-                        .engine
-                        .capture_tab_screenshot(&session, &target_id, &tab_id)
-                        .await
-                    {
-                        Ok(screenshot) => with_tab_screenshot(snapshot, screenshot),
-                        Err(refusal) => refusal.to_tool_result(),
-                    };
-                }
                 return snapshot;
             }
             let snapshot = match self
@@ -1061,7 +1057,11 @@ impl Tool for BrowserClickTool {
                     frame_session,
                 )
             }
-            None => (None, None, validated.cdp_session.clone()),
+            None => (
+                None,
+                None,
+                FrameSessionLease::tab(validated.cdp_session.clone()),
+            ),
         };
 
         let conn = &validated.conn;
@@ -2411,7 +2411,7 @@ impl Tool for BrowserSetInputFilesTool {
         let described = match validated
             .conn
             .call(
-                Some(&cdp_session),
+                Some(cdp_session.as_str()),
                 "DOM.describeNode",
                 json!({ "backendNodeId": entry.backend_node_id }),
             )
@@ -2449,7 +2449,7 @@ impl Tool for BrowserSetInputFilesTool {
         match validated
             .conn
             .call(
-                Some(&cdp_session),
+                Some(cdp_session.as_str()),
                 "DOM.setFileInputFiles",
                 json!({ "backendNodeId": entry.backend_node_id, "files": files }),
             )

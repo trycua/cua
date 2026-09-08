@@ -182,10 +182,18 @@ They do not expose CDP target IDs, backend node IDs, object IDs, or selectors.
 
 - A newer snapshot of the tab invalidates older refs and continuations.
 - Navigation invalidates every snapshot of the tab.
+- Collection and an optional tab screenshot are accepted only when the main
+  frame and every included child frame keep the same document identity across
+  the collection checks. A navigation or identity that becomes unprovable
+  between those checks returns a refusal without publishing refs or image
+  content. These checks detect document replacement; they do not freeze
+  same-document DOM, layout, and pixels at one instant.
 - Browser reconnect or process replacement invalidates the target generation.
 - Ending the driver session removes the complete capability namespace.
 - Continuations are single-use and resolve only in their owning session,
   target, tab, snapshot, and generation.
+- A requested screenshot failure, or cancellation before the operation
+  completes, does not consume its continuation.
 
 Every mutation re-proves the native binding, endpoint ownership, tab target,
 frame loader identity, and backend-node liveness.
@@ -197,6 +205,14 @@ layout snapshot, viewport metrics, and frame tree. They include the main frame,
 author shadow roots, proven same-process frames, and capability-tested
 out-of-process frames. User-agent shadow roots and unprovable frame content are
 omitted.
+
+Cross-process child-frame collection has a bounded frame count and aggregate
+deadline. Content beyond either bound is omitted, reported through
+`omitted.unprovable_frame`, and makes `snapshot.complete` false.
+
+`semantic_v2` refuses when the endpoint cannot report a main-frame document
+identity. The unproven main-frame compatibility path remains limited to
+`dom_refs_v1`.
 
 CSS-hidden retained state is removed before ranking. Active dialogs and focused
 context rank first, followed by visible actions, visible content,

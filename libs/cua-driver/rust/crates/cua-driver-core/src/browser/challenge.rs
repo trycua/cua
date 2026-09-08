@@ -51,7 +51,7 @@ impl<'a> BrowserChallengeLabel<'a> {
 /// Bounded public classification attached to `semantic_v2` snapshots.
 ///
 /// Optional fields remain present as `null` so callers can handle one stable
-/// object shape. `origin` is absent for opaque URLs such as `about:blank`.
+/// object shape. `origin` is `null` for opaque URLs such as `about:blank`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub(crate) struct BrowserChallengeReport {
     pub(crate) status: BrowserChallengeStatus,

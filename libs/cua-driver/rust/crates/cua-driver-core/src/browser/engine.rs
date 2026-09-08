@@ -25,6 +25,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, Weak};
+use std::time::Duration;
 
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde_json::{json, Value};
@@ -37,7 +38,7 @@ use super::binding::{
     cardinality_exact_candidate, correlate, selected_tab_target_id, BindingOutcome,
     CdpWindowCandidate,
 };
-use super::cdp_ws::{CdpConnection, CdpPool};
+use super::cdp_ws::{CdpConnection, CdpEvent, CdpPool};
 use super::challenge::{browser_challenge_report, BrowserChallengeReport};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
@@ -55,7 +56,7 @@ use super::semantic::{
 };
 use super::store::{
     format_ref, BrowserStore, FrameIdentity, FrameKind, FrameRef, RefEntry, SemanticContinuation,
-    SnapshotRecord, TabRecord, TargetRecord,
+    SemanticScope, SnapshotRecord, TabRecord, TargetRecord,
 };
 use super::types::{
     BindingQuality, BrowserClassification, BrowserEngineFamily, BrowserProcessRole,
@@ -72,6 +73,19 @@ pub const MAX_REFS_PER_SNAPSHOT: usize = 300;
 /// Hard cap for decoded tab screenshots returned through MCP. This bounds a
 /// compromised or malformed endpoint before its response reaches consumers.
 const MAX_BROWSER_SCREENSHOT_BYTES: usize = 16 * 1024 * 1024;
+/// Semantic reads inspect only a bounded number of cross-process child frames;
+/// every attached session is still owned and cleaned up even when its content
+/// is omitted from the result.
+pub(crate) const MAX_SEMANTIC_OOPIF_FRAMES: usize = 16;
+/// Aggregate wall-clock budget for semantic work across the bounded child set.
+const SEMANTIC_OOPIF_COLLECTION_TIMEOUT: Duration = Duration::from_secs(8);
+/// A dropped semantic read gets one short, best-effort opportunity to undo
+/// the child-target attachment state it owned before releasing the socket.
+const OOPIF_DROP_CLEANUP_TIMEOUT: Duration = Duration::from_secs(2);
+/// A failed auto-attach shutdown falls back to per-session detach, but a bad
+/// endpoint must not multiply the command timeout by the number of children.
+const OOPIF_FALLBACK_DETACH_TIMEOUT: Duration = Duration::from_secs(5);
+const OOPIF_FALLBACK_DETACH_CONCURRENCY: usize = 8;
 
 pub struct BrowserEngine {
     pub(crate) platform: Arc<dyn BrowserPlatform>,
@@ -400,6 +414,7 @@ pub(crate) struct SemanticSnapshotOutcome {
     pub omissions: OmissionCounts,
     pub continuation: Option<String>,
     pub oopif: OopifStatus,
+    pub screenshot: Option<BrowserTabScreenshot>,
 }
 
 pub(crate) struct BrowserTabScreenshot {
@@ -571,11 +586,307 @@ pub(crate) enum FrameTreeError {
 }
 
 /// One OOPIF child target attached (flattened) beneath a tab session.
+#[derive(Debug, Clone)]
 pub(crate) struct AttachedChildFrame {
     pub session_id: String,
     pub target_id: String,
     #[allow(dead_code)]
     pub url: String,
+}
+
+struct OopifAttachmentCleanup {
+    conn: Arc<CdpConnection>,
+    tab_session: String,
+    events: Option<tokio::sync::mpsc::UnboundedReceiver<CdpEvent>>,
+    children: Vec<AttachedChildFrame>,
+    auto_attach_maybe_enabled: bool,
+}
+
+impl OopifAttachmentCleanup {
+    fn drain_children(&mut self) {
+        let Some(events) = self.events.as_mut() else {
+            return;
+        };
+        while let Ok(event) = events.try_recv() {
+            if event.method != "Target.attachedToTarget"
+                || event.session_id.as_deref() != Some(self.tab_session.as_str())
+            {
+                continue;
+            }
+            let info = &event.params["targetInfo"];
+            if info["type"].as_str() != Some("iframe") {
+                continue;
+            }
+            let (Some(session_id), Some(target_id)) = (
+                event.params["sessionId"].as_str(),
+                info["targetId"].as_str(),
+            ) else {
+                continue;
+            };
+            if self
+                .children
+                .iter()
+                .any(|child| child.session_id == session_id)
+            {
+                continue;
+            }
+            self.children.push(AttachedChildFrame {
+                session_id: session_id.to_owned(),
+                target_id: target_id.to_owned(),
+                url: info["url"].as_str().unwrap_or("").to_owned(),
+            });
+        }
+    }
+
+    async fn stop_discovery(&mut self) -> anyhow::Result<()> {
+        if !self.auto_attach_maybe_enabled {
+            self.events = None;
+            return Ok(());
+        }
+        let result = self
+            .conn
+            .call(
+                Some(&self.tab_session),
+                "Target.setAutoAttach",
+                json!({
+                    "autoAttach": false,
+                    "waitForDebuggerOnStart": false,
+                    "flatten": true
+                }),
+            )
+            .await;
+        // A reply, including an error reply, orders after earlier event frames
+        // on this socket. Retain every announced child even when shutdown
+        // failed so detach is still attempted below and on the Drop retry.
+        self.drain_children();
+        if result.is_ok() {
+            self.auto_attach_maybe_enabled = false;
+            self.events = None;
+            // CDP defines disabling auto-attach to detach every target that
+            // setting attached. Do not issue redundant per-session detaches
+            // after the successful acknowledgement.
+            self.children.clear();
+        }
+        result.map(|_| ())
+    }
+
+    async fn detach_children(&mut self) -> anyhow::Result<()> {
+        let conn = self.conn.clone();
+        let tab_session = self.tab_session.clone();
+        let mut attempts = tokio::task::JoinSet::new();
+        let spawn = |attempts: &mut tokio::task::JoinSet<_>, session_id: String| {
+            let conn = conn.clone();
+            let tab_session = tab_session.clone();
+            attempts.spawn(async move {
+                let result = conn
+                    .call(
+                        Some(&tab_session),
+                        "Target.detachFromTarget",
+                        json!({ "sessionId": session_id }),
+                    )
+                    .await;
+                (session_id, result)
+            });
+        };
+        let mut next_index = 0;
+        while next_index < self.children.len() && attempts.len() < OOPIF_FALLBACK_DETACH_CONCURRENCY
+        {
+            spawn(&mut attempts, self.children[next_index].session_id.clone());
+            next_index += 1;
+        }
+
+        // Keep both work and time bounded. Normally every observed child gets
+        // an individual attempt; if the endpoint stalls or the list is too
+        // large for this deadline, cleanup tears down the owned parent session
+        // below rather than allocating one task per child.
+        let mut detached = HashSet::new();
+        let mut first_error = None;
+        let deadline = tokio::time::Instant::now() + OOPIF_FALLBACK_DETACH_TIMEOUT;
+        let completed = tokio::time::timeout_at(deadline, async {
+            while let Some(attempt) = attempts.join_next().await {
+                match attempt {
+                    Ok((session_id, Ok(_))) => {
+                        detached.insert(session_id);
+                    }
+                    Ok((_, Err(error))) => {
+                        if first_error.is_none() {
+                            first_error = Some(error);
+                        }
+                    }
+                    Err(error) => {
+                        if first_error.is_none() {
+                            first_error = Some(anyhow::Error::from(error));
+                        }
+                    }
+                }
+                if next_index < self.children.len() {
+                    spawn(&mut attempts, self.children[next_index].session_id.clone());
+                    next_index += 1;
+                }
+            }
+        })
+        .await;
+        if completed.is_err() {
+            attempts.abort_all();
+            first_error = Some(anyhow::anyhow!(
+                "child detach cleanup timed out after {OOPIF_FALLBACK_DETACH_TIMEOUT:?}"
+            ));
+        }
+        self.children
+            .retain(|child| !detached.contains(&child.session_id));
+        match first_error {
+            Some(error) => Err(error),
+            None => Ok(()),
+        }
+    }
+
+    /// The tab session is minted for this operation. Tearing it down is the
+    /// bounded backstop when child-by-child cleanup cannot be completed; its
+    /// nested auto-attached sessions cannot outlive it.
+    async fn detach_parent_session(&mut self) -> anyhow::Result<()> {
+        tokio::time::timeout(
+            OOPIF_DROP_CLEANUP_TIMEOUT,
+            self.conn.call(
+                None,
+                "Target.detachFromTarget",
+                json!({ "sessionId": self.tab_session }),
+            ),
+        )
+        .await
+        .map_err(|_| {
+            anyhow::anyhow!("parent-session detach timed out after {OOPIF_DROP_CLEANUP_TIMEOUT:?}")
+        })??;
+        self.auto_attach_maybe_enabled = false;
+        self.events = None;
+        self.children.clear();
+        Ok(())
+    }
+
+    async fn cleanup(&mut self) -> anyhow::Result<()> {
+        let stop_error = self.stop_discovery().await.err();
+        // A successful shutdown already detached every auto-attached target.
+        // When shutdown fails, still try to detach every session we observed.
+        let detach_error = self.detach_children().await.err();
+        let parent_error = if stop_error.is_some() {
+            self.detach_parent_session().await.err()
+        } else {
+            None
+        };
+        let errors = [stop_error, detach_error, parent_error]
+            .into_iter()
+            .flatten()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>();
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(errors.join("; ")))
+        }
+    }
+}
+
+/// Owns the temporary auto-attach setting and every child session announced
+/// under it. Explicit cleanup is the normal path; Drop covers cancellation and
+/// does not forget a child unless its detach call succeeds.
+struct OopifAttachmentGuard {
+    cleanup: Option<OopifAttachmentCleanup>,
+}
+
+impl OopifAttachmentGuard {
+    fn new(conn: Arc<CdpConnection>, tab_session: &str) -> Self {
+        let events = conn.subscribe();
+        Self {
+            cleanup: Some(OopifAttachmentCleanup {
+                conn,
+                tab_session: tab_session.to_owned(),
+                events: Some(events),
+                children: Vec::new(),
+                // Arm before the enabling await. If that future is cancelled
+                // after its command is sent, Drop must still send the ordered
+                // disabling command.
+                auto_attach_maybe_enabled: true,
+            }),
+        }
+    }
+
+    fn disarm(&mut self) {
+        self.cleanup = None;
+    }
+
+    fn drain_children(&mut self) {
+        if let Some(cleanup) = self.cleanup.as_mut() {
+            cleanup.drain_children();
+        }
+    }
+
+    fn children(&self) -> &[AttachedChildFrame] {
+        &self
+            .cleanup
+            .as_ref()
+            .expect("live OOPIF attachment guard")
+            .children
+    }
+
+    fn child_for_target(&self, target_id: &str) -> Option<&AttachedChildFrame> {
+        self.children()
+            .iter()
+            .find(|child| child.target_id == target_id)
+    }
+
+    async fn cleanup(&mut self) -> anyhow::Result<()> {
+        let cleanup = self.cleanup.as_mut().expect("live OOPIF attachment guard");
+        cleanup.cleanup().await?;
+        self.cleanup = None;
+        Ok(())
+    }
+}
+
+impl Drop for OopifAttachmentGuard {
+    fn drop(&mut self) {
+        let Some(mut cleanup) = self.cleanup.take() else {
+            return;
+        };
+        let Ok(runtime) = tokio::runtime::Handle::try_current() else {
+            tracing::warn!("unable to schedule dropped OOPIF attachment cleanup");
+            return;
+        };
+        runtime.spawn(async move {
+            match tokio::time::timeout(OOPIF_DROP_CLEANUP_TIMEOUT, cleanup.cleanup()).await {
+                Ok(Ok(())) => {}
+                Ok(Err(_)) => tracing::warn!("dropped OOPIF attachment cleanup failed"),
+                Err(_) => tracing::warn!("dropped OOPIF attachment cleanup timed out"),
+            }
+        });
+    }
+}
+
+/// A CDP frame session together with any temporary child attachment that
+/// keeps it usable. The lease must stay live until the caller's operation has
+/// finished; dropping it schedules bounded cleanup for attached child frames.
+#[derive(Clone)]
+pub(crate) struct FrameSessionLease {
+    session_id: String,
+    _attachment: Option<Arc<OopifAttachmentGuard>>,
+}
+
+impl FrameSessionLease {
+    pub(crate) fn tab(session_id: String) -> Self {
+        Self {
+            session_id,
+            _attachment: None,
+        }
+    }
+
+    fn child(session_id: String, attachment: OopifAttachmentGuard) -> Self {
+        Self {
+            session_id,
+            _attachment: Some(Arc::new(attachment)),
+        }
+    }
+
+    pub(crate) fn as_str(&self) -> &str {
+        &self.session_id
+    }
 }
 
 pub(crate) enum AttachError {
@@ -1764,6 +2075,122 @@ impl BrowserEngine {
         }
     }
 
+    /// Semantic output is useful for later mutation, so it must be tied to
+    /// one main-frame document rather than the unproven compatibility path
+    /// retained by `dom_refs_v1`.
+    async fn semantic_frame_tree(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+        failure_context: &'static str,
+    ) -> Result<LocalFrameTree, BrowserRefusal> {
+        self.local_frame_tree(conn, cdp_session)
+            .await
+            .map_err(|error| match error {
+                FrameTreeError::Unsupported => refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "the browser does not report main-frame document identity, so the semantic snapshot cannot be proven",
+                ),
+                FrameTreeError::Failed(error) => route_err(failure_context, error),
+            })
+    }
+
+    fn semantic_frames(document: &SemanticDocument) -> Vec<FrameRef> {
+        let mut frames = Vec::new();
+        for node in &document.nodes {
+            if !frames.contains(&node.frame) {
+                frames.push(node.frame.clone());
+            }
+        }
+        frames
+    }
+
+    async fn reprove_semantic_frames(
+        &self,
+        conn: &Arc<CdpConnection>,
+        local_tree: &LocalFrameTree,
+        attachment: Option<&OopifAttachmentGuard>,
+        frames: &[FrameRef],
+        failure_context: &'static str,
+    ) -> Result<(), BrowserRefusal> {
+        for frame in frames
+            .iter()
+            .filter(|frame| frame.oopif_target_id.is_none())
+        {
+            let identity = frame.identity.as_ref().ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "semantic frame data has no proven document identity; re-run get_browser_state",
+                )
+            })?;
+            if !local_tree.proves(identity) {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "an included same-process frame navigated while semantic state was being collected; re-run get_browser_state",
+                ));
+            }
+        }
+
+        let mut checked_targets = HashSet::new();
+        let deadline = tokio::time::Instant::now() + SEMANTIC_OOPIF_COLLECTION_TIMEOUT;
+        for target_id in frames
+            .iter()
+            .filter_map(|frame| frame.oopif_target_id.as_deref())
+        {
+            if !checked_targets.insert(target_id) {
+                continue;
+            }
+            if checked_targets.len() > MAX_SEMANTIC_OOPIF_FRAMES {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "the semantic snapshot contains more child frames than can be revalidated safely",
+                ));
+            }
+            let child = attachment
+                .and_then(|attachment| attachment.child_for_target(target_id))
+                .ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserRefStale,
+                        "an included out-of-process frame is no longer attached beneath this tab; re-run get_browser_state",
+                    )
+                })?;
+            let tree =
+                tokio::time::timeout_at(deadline, self.local_frame_tree(conn, &child.session_id))
+                    .await
+                    .map_err(|_| {
+                        route_err(
+                            failure_context,
+                            "the child-frame identity revalidation deadline elapsed",
+                        )
+                    })?;
+            let tree = tree.map_err(|error| match error {
+                FrameTreeError::Unsupported => refuse(
+                    BrowserRefusalCode::BrowserRouteUnavailable,
+                    "the browser no longer reports an included child frame's document identity",
+                ),
+                FrameTreeError::Failed(error) => route_err(failure_context, error),
+            })?;
+            for frame in frames
+                .iter()
+                .filter(|frame| frame.oopif_target_id.as_deref() == Some(target_id))
+            {
+                let identity = frame.identity.as_ref().ok_or_else(|| {
+                    refuse(
+                        BrowserRefusalCode::BrowserRefStale,
+                        "semantic child-frame data has no proven document identity; re-run get_browser_state",
+                    )
+                })?;
+                if !tree.proves(identity) {
+                    return Err(refuse(
+                        BrowserRefusalCode::BrowserRefStale,
+                        "an included out-of-process frame navigated while semantic state was being collected; re-run get_browser_state",
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Capability-tested OOPIF discovery: enable flattened auto-attach
     /// on `tab_session` and collect the iframe children Chromium
     /// announces for existing targets *before* the setAutoAttach ack.
@@ -1774,14 +2201,19 @@ impl BrowserEngine {
     /// page target) is ignored. Each operation attaches its own fresh
     /// tab session, so the parent-session filter is per-operation
     /// unique even on the shared pooled connection.
+    ///
+    /// The returned guard keeps auto-attach enabled while the caller uses the
+    /// child sessions. CDP detaches those sessions when auto-attach is disabled,
+    /// so shutdown belongs at the end of the guarded operation, not here.
     async fn attached_iframe_children(
         &self,
-        conn: &CdpConnection,
+        conn: &Arc<CdpConnection>,
         tab_session: &str,
-    ) -> Result<Vec<AttachedChildFrame>, AttachError> {
-        // Subscribe BEFORE issuing the command so pre-ack events are
-        // guaranteed to be queued when the call returns.
-        let mut events = conn.subscribe();
+    ) -> Result<OopifAttachmentGuard, AttachError> {
+        // Arm cleanup and subscribe BEFORE issuing the command. This owns both
+        // pre-ack child events and the uncertain command state if the caller is
+        // cancelled while awaiting the acknowledgement.
+        let mut attachment = OopifAttachmentGuard::new(conn.clone(), tab_session);
         match conn
             .call(
                 Some(tab_session),
@@ -1791,34 +2223,14 @@ impl BrowserEngine {
             .await
         {
             Ok(_) => {}
-            Err(e) if is_method_unsupported(&e) => return Err(AttachError::Unsupported),
+            Err(e) if is_method_unsupported(&e) => {
+                attachment.disarm();
+                return Err(AttachError::Unsupported);
+            }
             Err(e) => return Err(AttachError::Failed(e)),
         }
-        let mut out = Vec::new();
-        while let Ok(event) = events.try_recv() {
-            if event.method != "Target.attachedToTarget" {
-                continue;
-            }
-            if event.session_id.as_deref() != Some(tab_session) {
-                continue; // not contained beneath the proven tab session
-            }
-            let info = &event.params["targetInfo"];
-            if info["type"].as_str() != Some("iframe") {
-                continue; // OOPIF slice covers iframes only, never popups/workers
-            }
-            let (Some(session_id), Some(target_id)) = (
-                event.params["sessionId"].as_str(),
-                info["targetId"].as_str(),
-            ) else {
-                continue;
-            };
-            out.push(AttachedChildFrame {
-                session_id: session_id.to_owned(),
-                target_id: target_id.to_owned(),
-                url: info["url"].as_str().unwrap_or("").to_owned(),
-            });
-        }
-        Ok(out)
+        attachment.drain_children();
+        Ok(attachment)
     }
 
     /// Re-prove a ref's frame/document identity and return the CDP
@@ -1833,7 +2245,7 @@ impl BrowserEngine {
         tab_id: &str,
         validated: &ValidatedTab,
         frame: &FrameRef,
-    ) -> Result<String, BrowserRefusal> {
+    ) -> Result<FrameSessionLease, BrowserRefusal> {
         let conn = &validated.conn;
         let stale = |message: &str| {
             self.store
@@ -1857,14 +2269,14 @@ impl BrowserEngine {
                 // carry no identity to re-check; node liveness (box
                 // model / focus failures map to stale) is the backstop.
                 let Some(identity) = &frame.identity else {
-                    return Ok(validated.cdp_session.clone());
+                    return Ok(FrameSessionLease::tab(validated.cdp_session.clone()));
                 };
                 let tree = self
                     .local_frame_tree(conn, &validated.cdp_session)
                     .await
                     .map_err(tree_err)?;
                 if tree.proves(identity) {
-                    Ok(validated.cdp_session.clone())
+                    Ok(FrameSessionLease::tab(validated.cdp_session.clone()))
                 } else {
                     Err(stale(
                         "the ref's frame navigated or was removed since the snapshot — \
@@ -1881,7 +2293,7 @@ impl BrowserEngine {
                         "the OOPIF ref carries no provable frame identity",
                     ));
                 };
-                let children = self
+                let attachment = self
                     .attached_iframe_children(conn, &validated.cdp_session)
                     .await
                     .map_err(|e| match e {
@@ -1894,8 +2306,7 @@ impl BrowserEngine {
                             route_err("Target.setAutoAttach failed during frame revalidation", err)
                         }
                     })?;
-                let Some(child) = children.into_iter().find(|c| c.target_id == *oopif_target)
-                else {
+                let Some(child) = attachment.child_for_target(oopif_target).cloned() else {
                     return Err(stale(
                         "the ref's cross-process frame is no longer attached beneath the \
                          bound tab — re-run get_browser_state to re-snapshot",
@@ -1906,7 +2317,7 @@ impl BrowserEngine {
                     .await
                     .map_err(tree_err)?;
                 if tree.proves(identity) {
-                    Ok(child.session_id)
+                    Ok(FrameSessionLease::child(child.session_id, attachment))
                 } else {
                     Err(stale(
                         "the ref's cross-process frame navigated since the snapshot — \
@@ -1938,14 +2349,23 @@ impl BrowserEngine {
         })?;
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
+        self.capture_tab_screenshot_on_session(&conn, &cdp_session)
+            .await
+    }
+
+    async fn capture_tab_screenshot_on_session(
+        &self,
+        conn: &CdpConnection,
+        cdp_session: &str,
+    ) -> Result<BrowserTabScreenshot, BrowserRefusal> {
         let metrics = conn
-            .call(Some(&cdp_session), "Page.getLayoutMetrics", json!({}))
+            .call(Some(cdp_session), "Page.getLayoutMetrics", json!({}))
             .await
             .map_err(|error| route_err("Page.getLayoutMetrics failed", error))?;
         let viewport = browser_screenshot_viewport(&metrics)?;
         let response = conn
             .call(
-                Some(&cdp_session),
+                Some(cdp_session),
                 "Page.captureScreenshot",
                 json!({
                     "format": "png",
@@ -2108,9 +2528,9 @@ impl BrowserEngine {
         // session. Anything unprovable is omitted, never guessed.
         let oopif = if local_tree.is_some() {
             match self.attached_iframe_children(&conn, &cdp_session).await {
-                Ok(children) => {
+                Ok(mut attachment) => {
                     let mut attached = 0usize;
-                    for child in &children {
+                    for child in attachment.children() {
                         let Ok(child_tree) = self.local_frame_tree(&conn, &child.session_id).await
                         else {
                             continue; // identity unprovable → omit this frame
@@ -2162,28 +2582,10 @@ impl BrowserEngine {
                         }
                         attached += 1;
                     }
-                    // Contain the child sessions this read minted:
-                    // stop auto-attaching (best effort).
-                    let _ = conn
-                        .call(
-                            Some(&cdp_session),
-                            "Target.setAutoAttach",
-                            json!({
-                                "autoAttach": false,
-                                "waitForDebuggerOnStart": false,
-                                "flatten": true
-                            }),
-                        )
-                        .await;
-                    for child in &children {
-                        let _ = conn
-                            .call(
-                                Some(&cdp_session),
-                                "Target.detachFromTarget",
-                                json!({ "sessionId": child.session_id }),
-                            )
-                            .await;
-                    }
+                    attachment
+                        .cleanup()
+                        .await
+                        .map_err(|error| route_err("Target child-session cleanup failed", error))?;
                     OopifStatus::Attached(attached)
                 }
                 Err(AttachError::Unsupported) => OopifStatus::Unsupported,
@@ -2480,6 +2882,7 @@ impl BrowserEngine {
                 omissions: page.omissions,
                 continuation: page.next_offset.map(|_| format!("bc-{}", Uuid::new_v4())),
                 oopif,
+                screenshot: None,
             },
             stored_refs,
         )
@@ -2493,15 +2896,21 @@ impl BrowserEngine {
         scope_ref: Option<&str>,
         query: Option<&str>,
         continuation: Option<&str>,
+        include_screenshot: bool,
     ) -> Result<SemanticSnapshotOutcome, BrowserRefusal> {
+        if continuation.is_some() && (scope_ref.is_some() || query.is_some()) {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserRefStale,
+                "continuation cannot be combined with a new scope_ref or query",
+            ));
+        }
+        // Semantic collection, optional pixels, and publication share the
+        // existing real-tab gate. Besides excluding mutations, this makes a
+        // continuation a single atomic operation even when separate public
+        // capabilities address the same CDP target.
+        let _tab_guard = self.lock_mutation(session, target_id, tab_id).await?;
         if let Some(token) = continuation {
-            if scope_ref.is_some() || query.is_some() {
-                return Err(refuse(
-                    BrowserRefusalCode::BrowserRefStale,
-                    "continuation cannot be combined with a new scope_ref or query",
-                ));
-            }
-            let (snapshot, continuation) = self
+            let (snapshot, continuation_state) = self
                 .store
                 .resolve_semantic_continuation(session, target_id, tab_id, token)?;
             let record = self.store.get_target(session, target_id)?;
@@ -2511,32 +2920,27 @@ impl BrowserEngine {
                     format!("tab {tab_id} is not known for target {target_id}"),
                 )
             })?;
-            if let Some(identity) = &snapshot.semantic_root_identity {
-                let conn = self.connection_for_record(session, &record).await?;
-                let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-                let tree = self
-                    .local_frame_tree(&conn, &cdp_session)
-                    .await
-                    .map_err(|error| match error {
-                        FrameTreeError::Unsupported => refuse(
-                            BrowserRefusalCode::BrowserRouteUnavailable,
-                            "the browser no longer reports its frame tree, so the semantic \
-                             continuation's document identity cannot be re-proven",
-                        ),
-                        FrameTreeError::Failed(error) => route_err(
-                            "Page.getFrameTree failed during semantic continuation revalidation",
-                            error,
-                        ),
-                    })?;
-                if !tree.proves(identity) {
-                    self.store
-                        .invalidate_tab_snapshots(session, target_id, tab_id);
-                    return Err(refuse(
-                        BrowserRefusalCode::BrowserRefStale,
-                        "the page navigated since this semantic continuation was minted; \
-                         re-run get_browser_state to start a fresh snapshot",
-                    ));
-                }
+            let conn = self.connection_for_record(session, &record).await?;
+            let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
+            let initial_tree = self
+                .semantic_frame_tree(
+                    &conn,
+                    &cdp_session,
+                    "Page.getFrameTree failed before semantic continuation collection",
+                )
+                .await?;
+            let initial_identity = initial_tree.main_identity();
+            let snapshot_identity = snapshot.semantic_root_identity.as_ref().ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the continuation has no proven main-frame document identity; re-run get_browser_state to start a fresh snapshot",
+                )
+            })?;
+            if &initial_identity != snapshot_identity {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the page navigated since this semantic continuation was minted; re-run get_browser_state to start a fresh snapshot",
+                ));
             }
             let document = snapshot.semantic.clone().ok_or_else(|| {
                 refuse(
@@ -2544,16 +2948,47 @@ impl BrowserEngine {
                     "the continuation no longer has semantic snapshot state",
                 )
             })?;
+            let semantic_frames = Self::semantic_frames(&document);
+            let mut attachment = if semantic_frames
+                .iter()
+                .any(|frame| frame.oopif_target_id.is_some())
+            {
+                match self.attached_iframe_children(&conn, &cdp_session).await {
+                    Ok(attachment) => Some(attachment),
+                    Err(AttachError::Unsupported) => {
+                        return Err(refuse(
+                            BrowserRefusalCode::BrowserRouteUnavailable,
+                            "the browser cannot re-prove the continuation's child-frame document identities",
+                        ));
+                    }
+                    Err(AttachError::Failed(error)) => {
+                        return Err(route_err(
+                            "Target.setAutoAttach failed during semantic continuation revalidation",
+                            error,
+                        ));
+                    }
+                }
+            } else {
+                None
+            };
+            self.reprove_semantic_frames(
+                &conn,
+                &initial_tree,
+                attachment.as_ref(),
+                &semantic_frames,
+                "Page.getFrameTree failed while revalidating semantic continuation child frames",
+            )
+            .await?;
             let challenge = browser_challenge_report(
                 &snapshot.url,
                 document.visible_challenge_labels(),
-                document.complete && continuation.oopif_supported,
+                document.complete && continuation_state.oopif_supported,
             );
             let page = document.page(
-                continuation.offset,
+                continuation_state.offset,
                 DEFAULT_SEMANTIC_NODE_BUDGET,
-                continuation.query.as_deref(),
-                continuation.scope_backend_node_id,
+                continuation_state.query.as_deref(),
+                continuation_state.scope.as_ref(),
             );
             let start_index = snapshot
                 .refs
@@ -2561,13 +2996,13 @@ impl BrowserEngine {
                 .max()
                 .copied()
                 .map_or(0, |value| value.saturating_add(1));
-            let oopif = if continuation.oopif_supported {
-                OopifStatus::Attached(continuation.oopif_frames)
+            let oopif = if continuation_state.oopif_supported {
+                OopifStatus::Attached(continuation_state.oopif_frames)
             } else {
                 OopifStatus::Unsupported
             };
             let next_offset = page.next_offset;
-            let (outcome, new_refs) = self.semantic_outcome(
+            let (mut outcome, new_refs) = self.semantic_outcome(
                 snapshot.id,
                 snapshot.url.clone(),
                 tab.title,
@@ -2578,40 +3013,74 @@ impl BrowserEngine {
                 oopif,
                 start_index,
             );
-            let next_token = outcome.continuation.clone();
-            self.store.update_target(session, target_id, |record| {
-                if let Some(stored) = record
-                    .tabs
-                    .get_mut(tab_id)
-                    .and_then(|tab| tab.snapshots.get_mut(&snapshot.id))
-                {
-                    stored.continuations.remove(token);
-                    stored.refs.extend(new_refs);
-                    if let (Some(token), Some(offset)) = (next_token, next_offset) {
-                        stored.continuations.insert(
-                            token,
-                            SemanticContinuation {
-                                offset,
-                                query: continuation.query.clone(),
-                                scope_backend_node_id: continuation.scope_backend_node_id,
-                                oopif_supported: continuation.oopif_supported,
-                                oopif_frames: continuation.oopif_frames,
-                            },
-                        );
-                    }
-                }
-            });
+            let screenshot = if include_screenshot {
+                Some(
+                    self.capture_tab_screenshot_on_session(&conn, &cdp_session)
+                        .await?,
+                )
+            } else {
+                None
+            };
+            let final_tree = self
+                .semantic_frame_tree(
+                    &conn,
+                    &cdp_session,
+                    "Page.getFrameTree failed after semantic continuation collection",
+                )
+                .await?;
+            let final_identity = final_tree.main_identity();
+            if final_identity != initial_identity {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "the page navigated while the semantic continuation was being collected; re-run get_browser_state to start a fresh snapshot",
+                ));
+            }
+            self.reprove_semantic_frames(
+                &conn,
+                &final_tree,
+                attachment.as_ref(),
+                &semantic_frames,
+                "Page.getFrameTree failed after semantic continuation child-frame collection",
+            )
+            .await?;
+            if let Some(attachment) = attachment.as_mut() {
+                attachment
+                    .cleanup()
+                    .await
+                    .map_err(|error| route_err("Target child-session cleanup failed", error))?;
+            }
+            let next = match (outcome.continuation.clone(), next_offset) {
+                (Some(token), Some(offset)) => Some((
+                    token,
+                    SemanticContinuation {
+                        offset,
+                        query: continuation_state.query.clone(),
+                        scope: continuation_state.scope.clone(),
+                        oopif_supported: continuation_state.oopif_supported,
+                        oopif_frames: continuation_state.oopif_frames,
+                    },
+                )),
+                _ => None,
+            };
+            self.store.commit_semantic_continuation(
+                session,
+                target_id,
+                tab_id,
+                snapshot.id,
+                token,
+                new_refs,
+                next,
+            )?;
+            outcome.screenshot = screenshot;
             return Ok(outcome);
         }
 
-        let scope_backend_node_id = match scope_ref {
-            Some(external) => Some(
-                self.store
-                    .resolve_ref(session, target_id, tab_id, external)?
-                    .backend_node_id,
-            ),
-            None => None,
-        };
+        // Keep the complete stored entry until its frame/document identity is
+        // re-proven. A backend node id alone can collide with a node in a
+        // replacement document after navigation.
+        let scope_entry = scope_ref
+            .map(|external| self.store.resolve_ref(session, target_id, tab_id, external))
+            .transpose()?;
         let record = self.store.get_target(session, target_id)?;
         let tab = record.tabs.get(tab_id).cloned().ok_or_else(|| {
             refuse(
@@ -2621,6 +3090,34 @@ impl BrowserEngine {
         })?;
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
+        let initial_tree = self
+            .semantic_frame_tree(
+                &conn,
+                &cdp_session,
+                "Page.getFrameTree failed before semantic snapshot collection",
+            )
+            .await?;
+        let semantic_root_identity = initial_tree.main_identity();
+        if let Some(scope) = scope_entry
+            .as_ref()
+            .filter(|scope| scope.frame.oopif_target_id.is_none())
+        {
+            let identity = scope.frame.identity.as_ref().ok_or_else(|| {
+                refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "scope_ref has no proven frame document identity; re-run get_browser_state to start a fresh snapshot",
+                )
+            })?;
+            if !initial_tree.proves(identity) {
+                return Err(refuse(
+                    BrowserRefusalCode::BrowserRefStale,
+                    "scope_ref is stale because its frame navigated; re-run get_browser_state to start a fresh snapshot",
+                ));
+            }
+        }
+        let mut scope_frame_proven = scope_entry
+            .as_ref()
+            .is_none_or(|scope| scope.frame.oopif_target_id.is_none());
         let (document, document_complete) = self.semantic_document(&conn, &cdp_session).await?;
         let root = document.get("root").cloned().unwrap_or(Value::Null);
         let url = root
@@ -2628,43 +3125,30 @@ impl BrowserEngine {
             .and_then(Value::as_str)
             .unwrap_or(&tab.url)
             .to_owned();
-        let local_tree = match self.local_frame_tree(&conn, &cdp_session).await {
-            Ok(tree) => Some(tree),
-            Err(FrameTreeError::Unsupported) => None,
-            Err(FrameTreeError::Failed(error)) => {
-                return Err(route_err("Page.getFrameTree failed", error))
-            }
-        };
-        let semantic_root_identity = local_tree.as_ref().map(LocalFrameTree::main_identity);
         let mut semantic = self
-            .collect_semantic_session(&conn, &cdp_session, &document, local_tree.as_ref(), None)
+            .collect_semantic_session(&conn, &cdp_session, &document, Some(&initial_tree), None)
             .await?;
         semantic.complete &= document_complete;
 
-        let oopif = if local_tree.is_some() {
-            match self.attached_iframe_children(&conn, &cdp_session).await {
-                Ok(children) => {
-                    let mut attached = 0;
-                    for child in &children {
-                        let child_tree = match self.local_frame_tree(&conn, &child.session_id).await
-                        {
-                            Ok(tree) => tree,
-                            Err(_) => {
-                                semantic.unprovable_frame_count += 1;
-                                semantic.complete = false;
-                                continue;
-                            }
-                        };
-                        let (child_document, child_complete) =
-                            match self.semantic_document(&conn, &child.session_id).await {
-                                Ok(document) => document,
-                                Err(_) => {
-                                    semantic.unprovable_frame_count += 1;
-                                    semantic.complete = false;
-                                    continue;
-                                }
-                            };
-                        match self
+        let (oopif, mut attachment) = match self.attached_iframe_children(&conn, &cdp_session).await
+        {
+            Ok(attachment) => {
+                let mut attached = 0;
+                let children = attachment.children().to_vec();
+                let child_limit = children.len().min(MAX_SEMANTIC_OOPIF_FRAMES);
+                let deadline = tokio::time::Instant::now() + SEMANTIC_OOPIF_COLLECTION_TIMEOUT;
+                let mut omitted = children.len().saturating_sub(child_limit);
+                for (index, child) in children.iter().take(child_limit).enumerate() {
+                    let collected = tokio::time::timeout_at(deadline, async {
+                        let child_tree = self
+                            .local_frame_tree(&conn, &child.session_id)
+                            .await
+                            .map_err(|_| ())?;
+                        let (child_document, child_complete) = self
+                            .semantic_document(&conn, &child.session_id)
+                            .await
+                            .map_err(|_| ())?;
+                        let document = self
                             .collect_semantic_session(
                                 &conn,
                                 &child.session_id,
@@ -2673,49 +3157,54 @@ impl BrowserEngine {
                                 Some(&child.target_id),
                             )
                             .await
-                        {
-                            Ok(document) => {
-                                let mut document = document;
-                                document.complete &= child_complete;
-                                semantic.extend(document);
-                                attached += 1;
-                            }
-                            Err(_) => {
-                                semantic.unprovable_frame_count += 1;
-                                semantic.complete = false;
-                            }
+                            .map_err(|_| ())?;
+                        Ok::<_, ()>((child_tree, document, child_complete))
+                    })
+                    .await;
+                    let (child_tree, mut document, child_complete) = match collected {
+                        Ok(Ok(collected)) => collected,
+                        Ok(Err(())) => {
+                            semantic.unprovable_frame_count += 1;
+                            semantic.complete = false;
+                            continue;
                         }
-                    }
-                    let _ = conn
-                        .call(
-                            Some(&cdp_session),
-                            "Target.setAutoAttach",
-                            json!({
-                                "autoAttach": false,
-                                "waitForDebuggerOnStart": false,
-                                "flatten": true
-                            }),
-                        )
-                        .await;
-                    for child in &children {
-                        let _ = conn
-                            .call(
-                                Some(&cdp_session),
-                                "Target.detachFromTarget",
-                                json!({ "sessionId": child.session_id }),
-                            )
-                            .await;
-                    }
-                    OopifStatus::Attached(attached)
+                        Err(_) => {
+                            omitted += child_limit - index;
+                            break;
+                        }
+                    };
+                    let scoped_child_identity_proven = scope_entry.as_ref().is_some_and(|scope| {
+                        scope.frame.oopif_target_id.as_deref() == Some(child.target_id.as_str())
+                            && scope
+                                .frame
+                                .identity
+                                .as_ref()
+                                .is_some_and(|identity| child_tree.proves(identity))
+                    });
+                    document.complete &= child_complete;
+                    semantic.extend(document);
+                    scope_frame_proven |= scoped_child_identity_proven;
+                    attached += 1;
                 }
-                Err(AttachError::Unsupported) => OopifStatus::Unsupported,
-                Err(AttachError::Failed(error)) => {
-                    return Err(route_err("Target.setAutoAttach failed", error))
+                if omitted > 0 {
+                    semantic.unprovable_frame_count += omitted;
+                    semantic.complete = false;
                 }
+                (OopifStatus::Attached(attached), Some(attachment))
             }
-        } else {
-            OopifStatus::Unsupported
+            Err(AttachError::Unsupported) => (OopifStatus::Unsupported, None),
+            Err(AttachError::Failed(error)) => {
+                return Err(route_err("Target.setAutoAttach failed", error))
+            }
         };
+        if !scope_frame_proven {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserRefStale,
+                "scope_ref is stale because its frame navigated or was removed; re-run get_browser_state to start a fresh snapshot",
+            ));
+        }
+        let semantic_scope = scope_entry.as_ref().map(SemanticScope::from);
+        let semantic_frames = Self::semantic_frames(&semantic);
 
         let challenge = browser_challenge_report(
             &url,
@@ -2726,7 +3215,7 @@ impl BrowserEngine {
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
             query,
-            scope_backend_node_id,
+            semantic_scope.as_ref(),
         );
         let next_offset = page.next_offset;
         let snapshot_id = self.store.mint_snapshot_id();
@@ -2737,7 +3226,7 @@ impl BrowserEngine {
         } else {
             "viewport"
         };
-        let (outcome, refs) = self.semantic_outcome(
+        let (mut outcome, refs) = self.semantic_outcome(
             snapshot_id,
             url.clone(),
             tab.title.clone(),
@@ -2748,38 +3237,71 @@ impl BrowserEngine {
             oopif,
             0,
         );
+        let screenshot = if include_screenshot {
+            Some(
+                self.capture_tab_screenshot_on_session(&conn, &cdp_session)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let final_tree = self
+            .semantic_frame_tree(
+                &conn,
+                &cdp_session,
+                "Page.getFrameTree failed after semantic snapshot collection",
+            )
+            .await?;
+        let final_identity = final_tree.main_identity();
+        if final_identity != semantic_root_identity {
+            return Err(refuse(
+                BrowserRefusalCode::BrowserRefStale,
+                "the page navigated while the semantic snapshot was being collected; re-run get_browser_state to start a fresh snapshot",
+            ));
+        }
+        self.reprove_semantic_frames(
+            &conn,
+            &final_tree,
+            attachment.as_ref(),
+            &semantic_frames,
+            "Page.getFrameTree failed after semantic child-frame collection",
+        )
+        .await?;
+        if let Some(attachment) = attachment.as_mut() {
+            attachment
+                .cleanup()
+                .await
+                .map_err(|error| route_err("Target child-session cleanup failed", error))?;
+        }
         let continuation_token = outcome.continuation.clone();
-        self.store
-            .update_target(session, target_id, |stored_target| {
-                if let Some(stored_tab) = stored_target.tabs.get_mut(tab_id) {
-                    let mut continuations = HashMap::new();
-                    if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
-                        continuations.insert(
-                            token,
-                            SemanticContinuation {
-                                offset,
-                                query: query.map(str::to_owned),
-                                scope_backend_node_id,
-                                oopif_supported: matches!(oopif, OopifStatus::Attached(_)),
-                                oopif_frames: oopif.frames(),
-                            },
-                        );
-                    }
-                    stored_tab.snapshots.clear();
-                    stored_tab.snapshots.insert(
-                        snapshot_id,
-                        SnapshotRecord {
-                            id: snapshot_id,
-                            generation: record.generation,
-                            url,
-                            refs,
-                            semantic: Some(semantic),
-                            semantic_root_identity,
-                            continuations,
-                        },
-                    );
-                }
-            });
+        let mut continuations = HashMap::new();
+        if let (Some(token), Some(offset)) = (continuation_token, next_offset) {
+            continuations.insert(
+                token,
+                SemanticContinuation {
+                    offset,
+                    query: query.map(str::to_owned),
+                    scope: semantic_scope,
+                    oopif_supported: matches!(oopif, OopifStatus::Attached(_)),
+                    oopif_frames: oopif.frames(),
+                },
+            );
+        }
+        self.store.publish_semantic_snapshot(
+            session,
+            target_id,
+            tab_id,
+            SnapshotRecord {
+                id: snapshot_id,
+                generation: record.generation,
+                url,
+                refs,
+                semantic: Some(semantic),
+                semantic_root_identity: Some(semantic_root_identity),
+                continuations,
+            },
+        )?;
+        outcome.screenshot = screenshot;
         Ok(outcome)
     }
 }

@@ -2984,6 +2984,13 @@ fn run_recording_render(args: &[String]) {
 /// installer script — see [`crate::updater`] for why we go through the script
 /// instead of re-implementing the asset resolution + atomic swap + GC in Rust.
 pub fn run_update_cmd(apply: bool, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        print_check_update_state(
+            crate::version_check::check_update_state_with_ownership(false, true),
+            json,
+        );
+        return;
+    }
     if apply && crate::bundle::is_local_installation() {
         eprintln!(
             "cua-driver-local is managed by scripts/install-local.sh (or install-local.ps1); \
@@ -3723,6 +3730,10 @@ fn run_permissions_grant() {
 /// the payload.
 pub fn run_check_update_cmd(json: bool, no_cache: bool) {
     let state = crate::version_check::check_update_state(no_cache);
+    print_check_update_state(state, json);
+}
+
+fn print_check_update_state(state: crate::version_check::UpdateState, json: bool) {
     crate::version_check::capture_update_state(&state, crate::telemetry::UpdateCheckSource::Cli);
 
     if json {
@@ -3748,7 +3759,7 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
             (None, Some(err)) => {
                 println!("Latest:  <unavailable>");
                 println!();
-                println!("Could not reach GitHub: {err}");
+                println!("Update check unavailable: {err}");
             }
             (None, None) => {
                 // Network failed AND no cache existed — `error` should be set;
@@ -3766,6 +3777,24 @@ pub fn run_check_update_cmd(json: bool, no_cache: bool) {
 /// Inspect or persist the release channel. Selection never installs by itself;
 /// replacement remains explicit through `cua-driver update --apply`.
 pub fn run_channel_cmd(subcommand: &str, value: Option<&str>, json: bool) {
+    if crate::updater::is_pacman_managed() {
+        if json {
+            let current =
+                crate::release_channel::ReleaseChannel::from_version(env!("CARGO_PKG_VERSION"));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "selected_channel": null,
+                    "current_channel": current.map(|channel| channel.as_str()),
+                    "current_version": env!("CARGO_PKG_VERSION"),
+                    "error": crate::updater::PACMAN_UPDATE_GUIDANCE,
+                })
+            );
+        } else {
+            eprintln!("{}", crate::updater::PACMAN_UPDATE_GUIDANCE);
+        }
+        process::exit(1);
+    }
     let result = match subcommand {
         "status" => crate::release_channel::selected(),
         "set" => {

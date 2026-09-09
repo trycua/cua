@@ -14,6 +14,7 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+mod mpx_owner;
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -149,6 +150,11 @@ fn uinput_pointers() -> &'static Mutex<HashMap<String, Arc<Mutex<VirtualDevice>>
 
 fn master_pointer_name(cursor_id: &str) -> String {
     let nonce = MPX_NAME_COUNTER.fetch_add(1, Ordering::Relaxed);
+    if let Ok(owner) = mpx_owner::Owner::current() {
+        return owner.master_name(nonce);
+    }
+    // Unknown procfs identity cannot safely participate in automatic recovery.
+    // Preserve ordinary operation, with the legacy name and cleanup behavior.
     let prefix = "CUA ";
     let suffix = format!(" mp-{}-{nonce}", std::process::id());
     let max_cursor_bytes = EVDEV_UINPUT_NAME_MAX_BYTES
@@ -390,8 +396,77 @@ fn real_pointer_capabilities_available(
     server_supported: bool,
     xvfb: bool,
     uinput_accessible: bool,
+    unsafe_hotplug_session: bool,
 ) -> bool {
-    server_supported && !xvfb && uinput_accessible
+    server_supported && !xvfb && uinput_accessible && !unsafe_hotplug_session
+}
+
+fn nonempty(value: Option<&str>) -> bool {
+    value.is_some_and(|value| !value.trim().is_empty())
+}
+
+fn desktop_value_is_kde(value: Option<&str>) -> bool {
+    value.is_some_and(|value| {
+        value
+            .split([':', ';', ','])
+            .map(str::trim)
+            .any(|token| token.eq_ignore_ascii_case("kde") || token.eq_ignore_ascii_case("plasma"))
+    })
+}
+
+/// KDE Plasma 6 / Qt 6.11 applications on X11 can crash session-wide when an
+/// ephemeral uinput pointer is hotplugged into Xorg. Foreground input does not
+/// need that device: the click, drag, scroll, and keyboard tools already use
+/// XTEST after activating the target window. Disable only the MPX/uinput
+/// capability here so callers retain their existing foreground escalation and
+/// XSendEvent fallback behavior.
+fn kde_x11_uinput_hotplug_is_unsafe(
+    session_type: Option<&str>,
+    current_desktop: Option<&str>,
+    session_desktop: Option<&str>,
+    desktop_session: Option<&str>,
+    kde_full_session: Option<&str>,
+    display: Option<&str>,
+    wayland_display: Option<&str>,
+) -> bool {
+    let explicit_x11 = session_type.is_some_and(|value| value.eq_ignore_ascii_case("x11"));
+    let explicit_wayland = session_type.is_some_and(|value| value.eq_ignore_ascii_case("wayland"));
+    if explicit_wayland || (!explicit_x11 && nonempty(wayland_display)) {
+        return false;
+    }
+
+    let x11 = explicit_x11 || nonempty(display);
+    let kde = desktop_value_is_kde(current_desktop)
+        || desktop_value_is_kde(session_desktop)
+        || desktop_value_is_kde(desktop_session)
+        || kde_full_session.is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes"
+            )
+        });
+
+    x11 && kde
+}
+
+fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
+    let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+    let current_desktop = std::env::var("XDG_CURRENT_DESKTOP").ok();
+    let session_desktop = std::env::var("XDG_SESSION_DESKTOP").ok();
+    let desktop_session = std::env::var("DESKTOP_SESSION").ok();
+    let kde_full_session = std::env::var("KDE_FULL_SESSION").ok();
+    let display = std::env::var("DISPLAY").ok();
+    let wayland_display = std::env::var("WAYLAND_DISPLAY").ok();
+
+    kde_x11_uinput_hotplug_is_unsafe(
+        session_type.as_deref(),
+        current_desktop.as_deref(),
+        session_desktop.as_deref(),
+        desktop_session.as_deref(),
+        kde_full_session.as_deref(),
+        display.as_deref(),
+        wayland_display.as_deref(),
+    )
 }
 
 fn uinput_accessible() -> bool {
@@ -403,6 +478,13 @@ fn uinput_accessible() -> bool {
 }
 
 pub fn real_pointer_input_available() -> bool {
+    // Do not even probe /dev/uinput on an affected KDE/X11 session. Creating
+    // the device is itself the dangerous operation; a later fallback is too
+    // late once Xorg has announced the hotplug to Qt clients.
+    if kde_x11_uinput_hotplug_is_unsafe_from_env() {
+        return false;
+    }
+
     // `ensure_master_pointer` creates an XI2 master before attaching the
     // uinput slave. If this process cannot open /dev/uinput, attempting that
     // path on every click/scroll would create and abandon an XInput master
@@ -418,12 +500,26 @@ pub fn real_pointer_input_available() -> bool {
         supports_parallel_pointer_injection(display).is_ok(),
         is_xvfb_process_running(),
         true,
+        false,
     );
     unsafe { x11::xlib::XCloseDisplay(display) };
     supported
 }
 
 fn ensure_master_pointer(cursor_id: &str) -> Result<MasterPointerIds> {
+    ensure_master_pointer_for_session(cursor_id, kde_x11_uinput_hotplug_is_unsafe_from_env())
+}
+
+fn ensure_master_pointer_for_session(
+    cursor_id: &str,
+    unsafe_hotplug_session: bool,
+) -> Result<MasterPointerIds> {
+    if unsafe_hotplug_session {
+        return Err(uinput_unavailable(
+            "disabled on KDE Plasma X11; retry with delivery_mode='foreground'",
+        ));
+    }
+
     if let Some(ids) = mpx_pointers().lock().unwrap().get(cursor_id).copied() {
         return Ok(ids);
     }
@@ -520,11 +616,12 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let Ok(display) = open_display() else {
         return;
     };
+    let _ = remove_master_pointer(display, ids.pointer_id);
+    unsafe { x11::xlib::XCloseDisplay(display) };
+}
 
-    let Ok(devices) = xi2_query_devices(display) else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
-    };
+fn remove_master_pointer(display: *mut x11::xlib::Display, pointer_id: i32) -> Result<()> {
+    let devices = xi2_query_devices(display)?;
 
     let mut virtual_core_pointer = None;
     let mut virtual_core_keyboard = None;
@@ -539,21 +636,66 @@ pub fn forget_master_pointer(cursor_id: &str) {
     let (Some(return_pointer), Some(return_keyboard)) =
         (virtual_core_pointer, virtual_core_keyboard)
     else {
-        unsafe { x11::xlib::XCloseDisplay(display) };
-        return;
+        bail!("cannot remove MPX master without its virtual core return devices");
     };
 
     let mut change = x11::xinput2::XIAnyHierarchyChangeInfo::default();
     unsafe {
         let remove = change.remove();
         (*remove)._type = x11::xinput2::XIRemoveMaster;
-        (*remove).deviceid = ids.pointer_id;
+        (*remove).deviceid = pointer_id;
         (*remove).return_mode = x11::xinput2::XIAttachToMaster;
         (*remove).return_pointer = return_pointer;
         (*remove).return_keyboard = return_keyboard;
-        let _ = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        let rc = x11::xinput2::XIChangeHierarchy(display, &mut change, 1);
+        x11::xlib::XSync(display, 0);
+        if rc != 0 {
+            bail!("XIChangeHierarchy(XIRemoveMaster) failed with status {rc}");
+        }
+    }
+    Ok(())
+}
+
+/// Recover only versioned masters whose local owner is provably gone. A PID
+/// alone cannot identify an owner on a shared/remote X server or across restarts.
+pub(crate) fn reap_orphaned_master_pointers() {
+    if std::env::var_os("WAYLAND_DISPLAY").is_some() {
+        return;
+    }
+    let Ok(owner) = mpx_owner::Owner::current() else {
+        return;
+    };
+    let Ok(display) = open_display() else {
+        return;
+    };
+    // Prevent an ID from being removed/reused by another X client between our
+    // enumeration and removal. No network or arbitrary filesystem reads occur
+    // under this grab: owner checks inspect local procfs and kill(pid, 0).
+    unsafe {
+        x11::xlib::XGrabServer(display);
+    }
+    let result = (|| -> Result<()> {
+        for (id, use_, name) in xi2_query_devices(display)? {
+            if use_ != x11::xinput2::XIMasterPointer {
+                continue;
+            }
+            let Some(candidate) = mpx_owner::Owner::from_pointer_name(&name) else {
+                continue;
+            };
+            if candidate.stale_in(&owner) {
+                remove_master_pointer(display, id)?;
+                tracing::info!(device_id = id, "removed orphaned Cua MPX master pair");
+            }
+        }
+        Ok(())
+    })();
+    unsafe {
+        x11::xlib::XUngrabServer(display);
         x11::xlib::XSync(display, 0);
         x11::xlib::XCloseDisplay(display);
+    }
+    if let Err(error) = result {
+        tracing::warn!("MPX orphan recovery incomplete: {error}");
     }
 }
 
@@ -2817,7 +2959,8 @@ exit 0"#,
 #[cfg(test)]
 mod path_tests {
     use super::{
-        create_uinput_pointer, guarded_uinput_creation, is_uinput_unavailable, master_pointer_name,
+        create_uinput_pointer, ensure_master_pointer_for_session, guarded_uinput_creation,
+        is_uinput_unavailable, kde_x11_uinput_hotplug_is_unsafe, master_pointer_name,
         modifiers_to_state, normalize_uinput_device_name, path_cumulative, point_on_path,
         real_pointer_capabilities_available, sample_function, slave_pointer_name,
         EVDEV_UINPUT_NAME_MAX_BYTES, UINPUT_POINTER_SUFFIX,
@@ -2929,10 +3072,76 @@ mod path_tests {
 
     #[test]
     fn real_pointer_capabilities_require_uinput_access() {
-        assert!(real_pointer_capabilities_available(true, false, true));
-        assert!(!real_pointer_capabilities_available(true, false, false));
-        assert!(!real_pointer_capabilities_available(false, false, true));
-        assert!(!real_pointer_capabilities_available(true, true, true));
+        assert!(real_pointer_capabilities_available(
+            true, false, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, false, false, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            false, false, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, true, true, false
+        ));
+        assert!(!real_pointer_capabilities_available(
+            true, false, true, true
+        ));
+    }
+
+    #[test]
+    fn kde_x11_sessions_disable_uinput_pointer_hotplug() {
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("KDE"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            None,
+        ));
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("KDE"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            Some("wayland-0"),
+        ));
+        assert!(kde_x11_uinput_hotplug_is_unsafe(
+            None,
+            None,
+            Some("plasma"),
+            None,
+            Some("true"),
+            Some(":1"),
+            None,
+        ));
+
+        assert!(!kde_x11_uinput_hotplug_is_unsafe(
+            Some("wayland"),
+            Some("KDE"),
+            None,
+            None,
+            Some("true"),
+            Some(":0"),
+            Some("wayland-0"),
+        ));
+        assert!(!kde_x11_uinput_hotplug_is_unsafe(
+            Some("x11"),
+            Some("GNOME"),
+            None,
+            None,
+            None,
+            Some(":0"),
+            None,
+        ));
+
+        let error = ensure_master_pointer_for_session("regression-test", true)
+            .expect_err("the creation choke point must refuse before opening X11 or uinput");
+        assert!(is_uinput_unavailable(&error));
+        assert!(error.to_string().contains("delivery_mode='foreground'"));
     }
 
     #[test]

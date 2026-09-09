@@ -25,7 +25,12 @@ from cua_sandbox.localhost import Localhost as _AsyncLocalhost
 from cua_sandbox.pool import Pool as _AsyncPool
 from cua_sandbox.pool import Template as _AsyncTemplate
 from cua_sandbox.sandbox import Sandbox as _AsyncSandbox
-from fleet_sdk import ClaimSpec, CreatePoolRequest, CreateTemplateRequest
+from fleet_sdk import (
+    ClaimSpec,
+    CreatePoolRequest,
+    CreateTemplateRequest,
+    WarmPoolAutoscaling,
+)
 
 
 def _get_or_create_loop() -> asyncio.AbstractEventLoop:
@@ -121,11 +126,13 @@ class Pool:
         cls,
         image: Image,
         *,
-        name: str | None = None,
+        name: str,
         replicas: int = 1,
         cpu: int | None = None,
         memory_mb: int | None = None,
         services: dict[str, int] | None = None,
+        autoscaling: WarmPoolAutoscaling | None = None,
+        ttl_seconds_after_created: int | None = None,
     ) -> "Pool":
         """Synchronously apply an image-backed Fleet pool."""
         return cls(
@@ -137,6 +144,8 @@ class Pool:
                     cpu=cpu,
                     memory_mb=memory_mb,
                     services=services,
+                    autoscaling=autoscaling,
+                    ttl_seconds_after_created=ttl_seconds_after_created,
                 )
             )
         )
@@ -153,10 +162,15 @@ class Pool:
         name: str | None = None,
         service: str = "server",
         time_to_start: float | None = None,
+        ttl_seconds_after_created: int | None = None,
     ) -> Iterator[_SyncProxy]:
         """Synchronously claim a sandbox and release it on exit."""
         context = self._async_pool.claim(
-            spec=spec, name=name, service=service, time_to_start=time_to_start
+            spec=spec,
+            name=name,
+            service=service,
+            time_to_start=time_to_start,
+            ttl_seconds_after_created=ttl_seconds_after_created,
         )
         sandbox = _run(context.__aenter__())
         try:

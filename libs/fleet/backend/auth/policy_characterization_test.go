@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -43,7 +44,7 @@ import (
 //     error, the three values the plan can produce.
 //   - Anything downstream of the policy. An "allow" in this table means "the
 //     policy stage let it through", never "the request succeeds". It used to
-//     mean considerably less than that on /api/svc, /api/orch and GET
+//     mean considerably less than that on /api/svc and GET
 //     /api/namespaces/{name}, where the namespace-ownership boundary was a Go
 //     check in the handler and invisible here; those routes now carry it as a
 //     policy conjunct, and this table records it.
@@ -151,6 +152,19 @@ type routeCase struct {
 // characterizationCases lists the parameter cases for every route. A route with
 // no entry fails the test rather than being skipped — an unlisted route is one
 // whose verdicts nobody recorded.
+func TestChatConversationPatchUsesExistingAuthorizationSurface(t *testing.T) {
+	const route = "/api/chat/conversations/{id}"
+	if surface, ok := RouteSurface(route); !ok || surface != "chat" {
+		t.Fatalf("RouteSurface(%q) = (%q, %t), want (chat, true)", route, surface, ok)
+	}
+	if !slices.Contains(characterizationMethods, http.MethodPatch) {
+		t.Fatalf("characterizationMethods = %v, missing PATCH", characterizationMethods)
+	}
+	if len(characterizationCases()[route]) == 0 {
+		t.Fatalf("characterizationCases missing %q", route)
+	}
+}
+
 func characterizationCases() map[string][]routeCase {
 	cases := map[string][]routeCase{}
 
@@ -158,14 +172,26 @@ func characterizationCases() map[string][]routeCase {
 		cases[route] = []routeCase{{name: "plain", params: map[string]string{}, path: path}}
 	}
 	simple("/api/config", "/api/config")
+	simple("/api/analytics/session", "/api/analytics/session")
+	simple("/api/analytics/attribution", "/api/analytics/attribution")
+	simple("/api/analytics/payment-gate", "/api/analytics/payment-gate")
 	simple("/api/state/query", "/api/state/query")
+	simple("/api/usage/overview", "/api/usage/overview")
+	simple("/api/usage/pool", "/api/usage/pool")
+	simple("/api/usage/browser-timings", "/api/usage/browser-timings")
+	simple("/api/chat/conversations", "/api/chat/conversations")
 	simple("/api/billing/summary", "/api/billing/summary")
+	simple("/api/billing/usage", "/api/billing/usage")
 	simple("/api/billing/setup-session", "/api/billing/setup-session")
+	simple("/api/billing/setup-session/complete", "/api/billing/setup-session/complete")
 	simple("/api/billing/portal-session", "/api/billing/portal-session")
 	simple("/api/keys", "/api/keys")
 	simple("/api/namespaces", "/api/namespaces")
 	simple("/api/user-keys", "/api/user-keys")
 	simple("/api/github-trust-policies", "/api/github-trust-policies")
+	simple("/api/admin/feature-flags", "/api/admin/feature-flags")
+	simple("/api/admin/account-lookup", "/api/admin/account-lookup")
+	cases["/api/admin/feature-flags/{key}"] = []routeCase{{name: "key", params: map[string]string{"key": "example"}, path: "/api/admin/feature-flags/example"}}
 
 	withID := func(route, prefix string) {
 		cases[route] = []routeCase{{
@@ -175,8 +201,14 @@ func characterizationCases() map[string][]routeCase {
 		}}
 	}
 	withID("/api/keys/{id}", "/api/keys")
+	withID("/api/chat/conversations/{id}", "/api/chat/conversations")
 	withID("/api/user-keys/{id}", "/api/user-keys")
 	withID("/api/github-trust-policies/{id}", "/api/github-trust-policies")
+	cases["/api/chat/conversations/{id}/turns"] = []routeCase{{
+		name:   "id",
+		params: map[string]string{"id": "id-1"},
+		path:   "/api/chat/conversations/id-1/turns",
+	}}
 
 	// /api/namespaces/{name} needs all three fact answers, and only on GET: the
 	// ownership conjunct binds to that one method, and DELETE sharing the route
@@ -200,7 +232,7 @@ func characterizationCases() map[string][]routeCase {
 		},
 	}
 
-	// /api/svc and /api/orch gate on the DNS-label shape of their parameters,
+	// /api/svc gates on the DNS-label shape of its parameters,
 	// on the namespace claim matching the path for per-key and GitHub tokens,
 	// and on the RBAC fact for everyone else. owned-ns / other-ns / unreachable-ns
 	// are the three answers the fact provider gives.
@@ -228,18 +260,22 @@ func characterizationCases() map[string][]routeCase {
 	cases["/api/svc/{namespace}/{service}"] = proxyCases(false)
 	cases["/api/svc/{namespace}/{service}/{path...}"] = proxyCases(true)
 
-	orchCase := func(name, namespace string) routeCase {
-		return routeCase{
-			name:   name,
-			params: map[string]string{"namespace": namespace, "service": "svc-a", "path": "catalog"},
-			path:   "/api/orch/" + namespace + "/svc-a/catalog",
-		}
+	// /api/signed-service-urls mirrors the /api/svc parameter logic: DNS-label shape,
+	// the per-key namespace binding, and the RBAC fact for everyone else —
+	// its handler acts with the pod ServiceAccount, so the ownership conjunct
+	// is the boundary and all three fact answers matter here too.
+	cases["/api/signed-service-urls/{namespace}"] = []routeCase{
+		{name: "owned-ns", params: map[string]string{"namespace": characterizationOwnedNamespace}, path: "/api/signed-service-urls/ns-a"},
+		{name: "other-ns", params: map[string]string{"namespace": characterizationUnownedNamespace}, path: "/api/signed-service-urls/ns-b"},
+		{name: "unreachable-ns", params: map[string]string{"namespace": characterizationUnreachableNamespace}, path: "/api/signed-service-urls/ns-err"},
+		{name: "invalid-ns", params: map[string]string{"namespace": "Not_A_Label"}, path: "/api/signed-service-urls/Not_A_Label"},
+		{name: "empty-ns", params: map[string]string{"namespace": ""}, path: "/api/signed-service-urls/"},
 	}
-	cases["/api/orch/{namespace}/{service}/{path...}"] = []routeCase{
-		orchCase("owned-ns", characterizationOwnedNamespace),
-		orchCase("other-ns", characterizationUnownedNamespace),
-		orchCase("unreachable-ns", characterizationUnreachableNamespace),
-		orchCase("invalid-ns", "Not_A_Label"),
+	cases["/api/signed-service-urls/{namespace}/{id}"] = []routeCase{
+		{name: "owned-ns", params: map[string]string{"namespace": characterizationOwnedNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-a/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "other-ns", params: map[string]string{"namespace": characterizationUnownedNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-b/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "unreachable-ns", params: map[string]string{"namespace": characterizationUnreachableNamespace, "id": "5cd7f3e4-5390-4c0c-a93b-dd18116d367c"}, path: "/api/signed-service-urls/ns-err/5cd7f3e4-5390-4c0c-a93b-dd18116d367c"},
+		{name: "empty-id", params: map[string]string{"namespace": characterizationOwnedNamespace, "id": ""}, path: "/api/signed-service-urls/ns-a/"},
 	}
 
 	// /api/k8s carries the richest parameter logic in the policy: the infra-path
@@ -302,6 +338,31 @@ func characterizationCases() map[string][]routeCase {
 			name: "pool-create-disallowed-image",
 			path: "apis/cua.ai/v1/namespaces/ns-a/osgymworkspacepools",
 			body: `{"spec":{"template":{"containerDiskImage":"evil.example/workspace:latest","imagePullSecret":"ecr-credentials"}}}`,
+		},
+
+		// Bound-sandbox service exposure. PATCH on a Sandbox item is the one
+		// Sandbox write on the allowlist, and only with a body that touches
+		// nothing but spec.vmTemplate.services — the two bodies record the
+		// sandbox-services admission conjunct's answer alongside the
+		// allowlist's. Every other verb on the item, and every write on the
+		// collection, stays denied.
+		{
+			name: "sandbox-item-services-patch",
+			path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1",
+			body: `{"spec":{"vmTemplate":{"services":[{"name":"source-mcp","targetPort":3100}]}}}`,
+		},
+		{
+			name: "sandbox-item-image-patch",
+			path: "apis/osgym.cua.ai/v1alpha1/namespaces/ns-a/osgymsandboxes/sandbox-1",
+			body: `{"spec":{"vmTemplate":{"containerDiskImage":"evil.example/workspace:latest"}}}`,
+		},
+		// The field report's exact attempt: writing a core Service directly.
+		// Denied on every write verb (with a guidance message this table does
+		// not record); the read stays open.
+		{
+			name: "namespaced-services",
+			path: "api/v1/namespaces/ns-a/services",
+			body: `{"apiVersion":"v1","kind":"Service","spec":{"selector":{"app":"sandbox-1"},"ports":[{"port":80,"targetPort":3100}]}}`,
 		},
 	}
 	k8s := make([]routeCase, 0, len(k8sPaths))

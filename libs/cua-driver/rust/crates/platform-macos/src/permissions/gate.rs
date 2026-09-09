@@ -41,6 +41,9 @@ use crate::permissions::status::{
     current_status, request_accessibility, request_screen_recording, PermissionsStatus,
 };
 
+const PERMISSION_PROBE_ARG: &str = "--cua-internal-permission-probe";
+const PERMISSION_PROBE_REQUEST_ARG: &str = "--cua-internal-permission-probe-request";
+
 /// Which TCC grant is missing.  Each variant maps 1:1 to a System Settings
 /// pane URL via [`MissingPermission::settings_url`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -100,10 +103,72 @@ pub fn missing_from_status(status: PermissionsStatus) -> Vec<MissingPermission> 
     out
 }
 
-/// Inspect live TCC state and return whatever is missing.  Convenience
-/// wrapper around `missing_from_status(current_status())`.
+/// Run the hidden, finite TCC probe before normal CLI startup.
+///
+/// The serving daemon must never perform a negative preflight itself: macOS
+/// caches that result in the process which later executes desktop tools. Each
+/// gate poll therefore starts this fresh copy of the signed app executable.
+pub fn run_permission_probe_if_requested() -> Option<i32> {
+    let request = if has_internal_arg(PERMISSION_PROBE_REQUEST_ARG) {
+        true
+    } else if has_internal_arg(PERMISSION_PROBE_ARG) {
+        false
+    } else {
+        return None;
+    };
+    if request {
+        let initial = current_status();
+        if !initial.accessibility {
+            let _ = request_accessibility();
+        }
+        if !initial.screen_recording {
+            let _ = request_screen_recording();
+        }
+    }
+    match serde_json::to_string(&current_status()) {
+        Ok(status) => {
+            println!("{status}");
+            Some(0)
+        }
+        Err(error) => {
+            eprintln!("cua-driver permission probe: {error}");
+            Some(1)
+        }
+    }
+}
+
+fn fresh_status_with_request(request: bool) -> Result<PermissionsStatus> {
+    let executable = std::env::current_exe()?;
+    let output = std::process::Command::new(executable)
+        .arg(if request {
+            PERMISSION_PROBE_REQUEST_ARG
+        } else {
+            PERMISSION_PROBE_ARG
+        })
+        .output()?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "permission probe exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    serde_json::from_slice(&output.stdout).map_err(Into::into)
+}
+
+pub(crate) fn fresh_status() -> PermissionsStatus {
+    fresh_status_with_request(false).unwrap_or_else(|error| {
+        tracing::warn!("fresh permission probe failed; keeping the daemon gated: {error}");
+        PermissionsStatus {
+            accessibility: false,
+            screen_recording: false,
+        }
+    })
+}
+
+/// Inspect fresh TCC state and return whatever is missing.
 pub fn check_required_permissions() -> Vec<MissingPermission> {
-    missing_from_status(current_status())
+    missing_from_status(fresh_status())
 }
 
 /// Open the System Settings pane for a single permission via `open(1)`.
@@ -144,8 +209,9 @@ pub struct GateOpts {
     /// rare enough not to spam the terminal.
     pub status_interval: Duration,
     /// When `true` and a required permission is missing, also raise the
-    /// macOS TCC prompts (`AXIsProcessTrustedWithOptions` /
-    /// `CGRequestScreenCaptureAccess`).  Helpful on first launch when
+    /// macOS TCC prompts from a fresh helper process
+    /// (`AXIsProcessTrustedWithOptions` / `CGRequestScreenCaptureAccess`).
+    /// Helpful on first launch when
     /// the process has never asked before.  Default: true.
     pub also_raise_prompts: bool,
     /// When `true` (default), `open` the System Settings pane for the
@@ -194,22 +260,8 @@ impl GateOpts {
     }
 }
 
-/// Set by `reexec_self` on the restarted process so its `run_if_needed`
-/// polls SILENTLY instead of re-raising the TCC prompts on every ~25s
-/// re-exec (which otherwise spams the user with "Cua Driver" dialogs).
-const GATE_REEXEC_ENV: &str = "CUA_DRIVER_RS_GATE_REEXEC";
-
-/// Persists the gate's original start time (unix seconds) across re-execs
-/// so the `deadline` is cumulative. Without it each re-exec'd process resets
-/// `start`, and since a re-exec fires (~25s) well before the deadline
-/// (~10min) the deadline never triggers and the daemon re-execs forever.
 const GATE_START_ENV: &str = "CUA_DRIVER_RS_GATE_START_UNIX";
 const GATE_TELEMETRY_START_MILLIS_ENV: &str = "CUA_DRIVER_RS_GATE_TELEMETRY_START_MILLIS";
-const GATE_ENGAGED_ARG: &str = "--cua-internal-gate-engaged";
-const GATE_MISSING_ACCESSIBILITY_ARG: &str = "--cua-internal-gate-missing-accessibility";
-const GATE_MISSING_SCREEN_RECORDING_ARG: &str = "--cua-internal-gate-missing-screen-recording";
-const GATE_PANEL_SHOWN_ARG: &str = "--cua-internal-gate-panel-shown";
-const GATE_PANEL_DISMISSED_ARG: &str = "--cua-internal-gate-panel-dismissed";
 
 static GATE_ENGAGED: AtomicBool = AtomicBool::new(false);
 static GATE_MISSING_ACCESSIBILITY: AtomicBool = AtomicBool::new(false);
@@ -238,23 +290,15 @@ pub enum GateProgress {
     Dismissed,
 }
 
-pub fn is_gate_reexec() -> bool {
-    std::env::var_os(GATE_REEXEC_ENV).is_some()
-}
-
 fn has_internal_arg(value: &str) -> bool {
     std::env::args_os().any(|arg| arg == value)
 }
 
-/// Return only the bounded state needed by the binary's telemetry layer. The
-/// start time plus bounded hidden argv flags survive the TCC cache-clearing
-/// re-exec loop, allowing one terminal event for the whole gate episode.
+/// Return only the bounded state needed by the binary's telemetry layer.
 pub fn telemetry_context() -> GateTelemetryContext {
-    let engaged = GATE_ENGAGED.load(Ordering::Relaxed) || has_internal_arg(GATE_ENGAGED_ARG);
-    let missing_accessibility = GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed)
-        || has_internal_arg(GATE_MISSING_ACCESSIBILITY_ARG);
-    let missing_screen_recording = GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed)
-        || has_internal_arg(GATE_MISSING_SCREEN_RECORDING_ARG);
+    let engaged = GATE_ENGAGED.load(Ordering::Relaxed);
+    let missing_accessibility = GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed);
+    let missing_screen_recording = GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed);
     let started = std::env::var(GATE_START_ENV)
         .ok()
         .and_then(|value| value.parse::<u64>().ok());
@@ -275,17 +319,14 @@ pub fn telemetry_context() -> GateTelemetryContext {
             && (missing_accessibility || missing_screen_recording),
         missing_accessibility,
         missing_screen_recording,
-        panel_shown: GATE_PANEL_SHOWN.load(Ordering::Relaxed)
-            || has_internal_arg(GATE_PANEL_SHOWN_ARG),
-        dismissed: GATE_PANEL_DISMISSED.load(Ordering::Relaxed)
-            || has_internal_arg(GATE_PANEL_DISMISSED_ARG),
+        panel_shown: GATE_PANEL_SHOWN.load(Ordering::Relaxed),
+        dismissed: GATE_PANEL_DISMISSED.load(Ordering::Relaxed),
         elapsed,
     }
 }
 
 fn begin_gate_episode(initial: PermissionsStatus) {
-    let already_engaged =
-        GATE_ENGAGED.swap(true, Ordering::Relaxed) || has_internal_arg(GATE_ENGAGED_ARG);
+    let already_engaged = GATE_ENGAGED.swap(true, Ordering::Relaxed);
     if !already_engaged {
         GATE_MISSING_ACCESSIBILITY.store(!initial.accessibility, Ordering::Relaxed);
         GATE_MISSING_SCREEN_RECORDING.store(!initial.screen_recording, Ordering::Relaxed);
@@ -299,15 +340,13 @@ fn begin_gate_episode(initial: PermissionsStatus) {
 }
 
 /// Initialize the environment-backed gate timestamps before the daemon starts
-/// any background threads. Later panel state is held in atomics and copied to
-/// bounded hidden argv flags only at re-exec time. A returned `Started`
-/// transition belongs to this first probe and should be delivered before the
-/// caller performs other startup work.
+/// any background threads. A returned `Started` transition belongs to this
+/// first probe and should be delivered before the caller performs other startup work.
 pub fn prepare_telemetry_context(opt_out: bool) -> Option<(GateProgress, GateTelemetryContext)> {
-    if opt_out || is_gate_reexec() || std::env::var_os(GATE_START_ENV).is_some() {
+    if opt_out || std::env::var_os(GATE_START_ENV).is_some() {
         return None;
     }
-    let initial = current_status();
+    let initial = fresh_status();
     if !initial.all_granted() {
         begin_gate_episode(initial);
         GATE_STARTED_REPORTED.store(true, Ordering::Relaxed);
@@ -337,7 +376,6 @@ pub fn run_if_needed(opts: GateOpts) -> Result<()> {
 }
 
 /// Run the gate while reporting bounded progress transitions to `observer`.
-/// The first process reports `Started`; TCC cache-refresh re-execs skip it.
 /// `Dismissed` is reported as soon as the native panel returns that outcome.
 pub fn run_if_needed_with_observer<F>(opts: GateOpts, mut observer: F) -> Result<()>
 where
@@ -348,7 +386,7 @@ where
         return Ok(());
     }
 
-    let initial = current_status();
+    let initial = fresh_status();
     if initial.all_granted() {
         // Fast path: everything already green.  No banner, no polling —
         // the user sees nothing different from before this gate existed.
@@ -356,25 +394,9 @@ where
     }
     begin_gate_episode(initial);
 
-    let gate_reexec = is_gate_reexec();
-    if should_report_started(
-        initial,
-        gate_reexec,
-        GATE_STARTED_REPORTED.load(Ordering::Relaxed),
-    ) {
+    if should_report_started(initial, GATE_STARTED_REPORTED.load(Ordering::Relaxed)) {
         GATE_STARTED_REPORTED.store(true, Ordering::Relaxed);
         observer(GateProgress::Started, telemetry_context());
-    }
-
-    // A gate re-exec (`wait_for_grants` restarts the daemon ~every 25s to
-    // refresh the per-process TCC trust cache) re-runs this function. The
-    // FIRST process already raised the TCC prompts + showed the panel;
-    // re-doing that on every re-exec spams a fresh "Cua Driver" dialog at the
-    // user (forever, since a stale/never-granted state keeps re-execing). A
-    // re-exec'd process polls SILENTLY instead — skip the prompts + panel and
-    // go straight to the wait loop, which re-checks the grant and re-execs.
-    if gate_reexec {
-        return wait_for_grants(&opts);
     }
 
     let missing = missing_from_status(initial);
@@ -399,11 +421,8 @@ where
     // These calls are no-ops when the grant is already active so the
     // happy-path (both green) sees no UI from this block.
     if opts.also_raise_prompts {
-        if missing.contains(&MissingPermission::Accessibility) {
-            let _ = request_accessibility();
-        }
-        if missing.contains(&MissingPermission::ScreenRecording) {
-            let _ = request_screen_recording();
+        if let Err(error) = fresh_status_with_request(true) {
+            tracing::warn!("permission request probe failed: {error}");
         }
     }
 
@@ -465,12 +484,8 @@ where
     wait_for_grants(&opts)
 }
 
-fn should_report_started(
-    initial: PermissionsStatus,
-    gate_reexec: bool,
-    already_reported: bool,
-) -> bool {
-    !initial.all_granted() && !gate_reexec && !already_reported
+fn should_report_started(initial: PermissionsStatus, already_reported: bool) -> bool {
+    !initial.all_granted() && !already_reported
 }
 
 fn progress_for_presentation(presentation: PanelPresentation) -> Option<GateProgress> {
@@ -527,50 +542,14 @@ fn present_panel_if_available(initial: PermissionsStatus) -> PanelPresentation {
 /// Exposed separately from [`run_if_needed`] for callers that want to
 /// drive the wait phase manually (e.g. tests that pre-skip the banner).
 ///
-/// macOS quirk: `AXIsProcessTrusted()` and `CGPreflightScreenCaptureAccess()`
-/// cache their results per-process. The cache survives both
-/// `tccutil reset` and live `System Settings` toggle flips — once a
-/// process has seen `false`, polling will keep returning `false`
-/// forever for that process even after the user grants the permission.
-///
-/// Pumping the AppKit run loop (which we tried first) does not flush
-/// the cache. The only reliable fix is to **re-execute the binary**
-/// (`execvp` the current image with the same argv): the new process
-/// image gets a fresh TCC client and re-queries tccd cleanly.
-///
-/// Strategy: after every `EXEC_AFTER_POLLS` polls without progress,
-/// we exec ourselves. Light enough (process start is fast) that this
-/// is invisible to the user — they just see a "rechecking" status
-/// line. If the grant has been given the new process picks it up
-/// instantly; otherwise it falls back into the same wait loop.
+/// macOS caches negative `AXIsProcessTrusted()` and
+/// `CGPreflightScreenCaptureAccess()` results per process. Every poll runs in a
+/// short-lived copy of the signed executable, so the long-lived daemon never
+/// caches a negative preflight and never needs to replace its process image.
 pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
-    // Anchor the deadline to the ORIGINAL gate start, persisted across
-    // re-execs via GATE_START_ENV. A re-exec'd process shifts `start` back by
-    // the elapsed wall time so `start.elapsed()` keeps growing across
-    // restarts and the deadline is cumulative — otherwise each restart resets
-    // the clock, re-exec fires before the deadline, and the gate (and the
-    // daemon + cursor overlay it restarts) churns forever when ungranted.
-    let start = {
-        let now_unix = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
-        match std::env::var(GATE_START_ENV)
-            .ok()
-            .and_then(|s| s.parse::<u64>().ok())
-        {
-            Some(orig) => Instant::now()
-                .checked_sub(Duration::from_secs(now_unix.saturating_sub(orig)))
-                .unwrap_or_else(Instant::now),
-            None => {
-                std::env::set_var(GATE_START_ENV, now_unix.to_string());
-                Instant::now()
-            }
-        }
-    };
+    let start = Instant::now();
     let mut last_status_print = start;
     let mut last_missing: Vec<MissingPermission> = check_required_permissions();
-    let mut polls_without_change: u32 = 0;
 
     loop {
         if last_missing.is_empty() {
@@ -589,36 +568,6 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             }
         }
 
-        // On macOS, when polling has gone several iterations without
-        // any change, re-exec the binary to invalidate the per-process
-        // TCC cache. See the function-level doc for the rationale.
-        //
-        // Since #1761 the serve loop runs concurrently with this gate on
-        // a background thread, so every `reexec_self()` restarts the whole
-        // daemon — including re-binding the Unix socket. A tight re-exec
-        // cadence would therefore make the socket flap (clients see brief
-        // connection failures on each restart). We trade grant-detection
-        // latency (fine for the grant flow — the user is clicking through
-        // System Settings on a human timescale) for socket stability:
-        // ~25 polls (~25s) between re-execs instead of ~5s.
-        #[cfg(target_os = "macos")]
-        {
-            const EXEC_AFTER_POLLS: u32 = 25;
-            if polls_without_change >= EXEC_AFTER_POLLS {
-                println!(
-                    "[cua-driver] rechecking permissions — restarting daemon \
-                     (still missing: {})",
-                    fmt_missing(&last_missing)
-                );
-                let _ = std::io::stdout().flush();
-                reexec_self();
-                // `reexec_self` only returns on failure; if it does,
-                // continue the loop with a reset counter so we don't
-                // spin-exec.
-                polls_without_change = 0;
-            }
-        }
-
         std::thread::sleep(opts.poll_interval);
 
         let new_missing = check_required_permissions();
@@ -634,10 +583,8 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
             }
             last_status_print = Instant::now();
             last_missing = new_missing;
-            polls_without_change = 0;
             continue;
         }
-        polls_without_change = polls_without_change.saturating_add(1);
 
         if last_status_print.elapsed() >= opts.status_interval {
             println!(
@@ -651,103 +598,13 @@ pub fn wait_for_grants(opts: &GateOpts) -> Result<()> {
     }
 }
 
-/// Replace the current process image with a fresh copy of the same
-/// binary + argv via `execvp(2)`. Used by [`wait_for_grants`] on
-/// macOS to invalidate the per-process TCC trust cache after the
-/// user has granted permissions in System Settings — `AXIsProcessTrusted`
-/// won't see the grant inside the original process otherwise.
-///
-/// `execvp` only returns on failure; on success, control transfers to
-/// the new process image at the C `main` entry and the rest of this
-/// function is never executed. Caller continues if the call fails so
-/// the gate keeps polling rather than aborting hard.
-#[cfg(target_os = "macos")]
-fn reexec_self() {
-    use std::ffi::CString;
-    use std::os::unix::ffi::OsStringExt;
-
-    // Resolve the path to ourselves. `current_exe` returns the actual
-    // binary path (e.g. /Applications/CuaDriver.app/Contents/MacOS/
-    // cua-driver) which is what we want — execvp searches PATH for
-    // bare names, and we don't want a stale `~/.local/bin/cua-driver`
-    // symlink to win.
-    let Ok(exe) = std::env::current_exe() else {
-        eprintln!("[cua-driver] re-exec failed: cannot resolve current_exe");
-        return;
-    };
-    let mut raw_argv: Vec<std::ffi::OsString> = std::env::args_os().collect();
-    for (enabled, flag) in [
-        (GATE_ENGAGED.load(Ordering::Relaxed), GATE_ENGAGED_ARG),
-        (
-            GATE_MISSING_ACCESSIBILITY.load(Ordering::Relaxed),
-            GATE_MISSING_ACCESSIBILITY_ARG,
-        ),
-        (
-            GATE_MISSING_SCREEN_RECORDING.load(Ordering::Relaxed),
-            GATE_MISSING_SCREEN_RECORDING_ARG,
-        ),
-        (
-            GATE_PANEL_SHOWN.load(Ordering::Relaxed),
-            GATE_PANEL_SHOWN_ARG,
-        ),
-        (
-            GATE_PANEL_DISMISSED.load(Ordering::Relaxed),
-            GATE_PANEL_DISMISSED_ARG,
-        ),
-    ] {
-        if enabled && !raw_argv.iter().any(|arg| arg == flag) {
-            raw_argv.push(flag.into());
-        }
-    }
-    let argv: Vec<CString> = raw_argv
-        .into_iter()
-        .filter_map(|a| CString::new(a.into_vec()).ok())
-        .collect();
-    if argv.is_empty() {
-        eprintln!("[cua-driver] re-exec failed: empty argv");
-        return;
-    }
-
-    // execvp takes a NULL-terminated argv. Build pointers + sentinel.
-    let mut argv_ptrs: Vec<*const libc::c_char> = argv.iter().map(|s| s.as_ptr()).collect();
-    argv_ptrs.push(std::ptr::null());
-
-    let exe_c = match CString::new(exe.into_os_string().into_vec()) {
-        Ok(c) => c,
-        Err(e) => {
-            eprintln!("[cua-driver] re-exec failed: exe path contains NUL ({e})");
-            return;
-        }
-    };
-
-    // Mark the restarted process as a gate re-exec so its `run_if_needed`
-    // polls silently (no re-prompt), and anchor the original gate start so
-    // the deadline is cumulative across re-execs. execvp inherits the
-    // environment, so the new image sees these.
-    std::env::set_var(GATE_REEXEC_ENV, "1");
-    if std::env::var(GATE_START_ENV).is_err() {
-        if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
-            std::env::set_var(GATE_START_ENV, d.as_secs().to_string());
-        }
-    }
-
-    // execvp returns -1 on failure; on success it does not return.
-    // SAFETY: argv_ptrs is NULL-terminated; exe_c outlives the call.
-    unsafe {
-        libc::execvp(exe_c.as_ptr(), argv_ptrs.as_ptr());
-    }
-    // If we get here the exec failed.
-    let err = std::io::Error::last_os_error();
-    eprintln!("[cua-driver] re-exec failed: {err}");
-}
-
 fn print_banner(missing: &[MissingPermission], open_settings: bool) {
     println!();
     println!("──────────────────────────────────────────────────────────────");
-    println!(" cua-driver needs your permission before `serve` can start");
+    println!(" cua-driver needs your permission before desktop tools can run");
     println!("──────────────────────────────────────────────────────────────");
     println!();
-    println!(" Missing TCC grant(s) for this process:");
+    println!(" Missing TCC grant(s) for the Cua Driver app identity:");
     for m in missing {
         println!("   • {}", m.label());
         println!("       {}", m.rationale());
@@ -793,11 +650,7 @@ mod tests {
     }
 
     fn clear_telemetry_env() {
-        for name in [
-            GATE_REEXEC_ENV,
-            GATE_START_ENV,
-            GATE_TELEMETRY_START_MILLIS_ENV,
-        ] {
+        for name in [GATE_START_ENV, GATE_TELEMETRY_START_MILLIS_ENV] {
             std::env::remove_var(name);
         }
         GATE_ENGAGED.store(false, Ordering::Relaxed);
@@ -809,7 +662,7 @@ mod tests {
     }
 
     #[test]
-    fn telemetry_context_is_bounded_and_survives_reexec_state() {
+    fn telemetry_context_is_bounded_for_one_gate_episode() {
         let _guard = env_lock();
         clear_telemetry_env();
         std::env::set_var(GATE_START_ENV, "1");
@@ -818,7 +671,6 @@ mod tests {
         GATE_MISSING_ACCESSIBILITY.store(true, Ordering::Relaxed);
         GATE_PANEL_SHOWN.store(true, Ordering::Relaxed);
         GATE_PANEL_DISMISSED.store(true, Ordering::Relaxed);
-        std::env::set_var(GATE_REEXEC_ENV, "1");
 
         let context = telemetry_context();
         assert!(context.engaged);
@@ -826,7 +678,6 @@ mod tests {
         assert!(!context.missing_screen_recording);
         assert!(context.panel_shown);
         assert!(context.dismissed);
-        assert!(is_gate_reexec());
         clear_telemetry_env();
     }
 
@@ -869,13 +720,9 @@ mod tests {
                 screen_recording: false,
             },
         ] {
-            assert!(should_report_started(initial, false, false));
+            assert!(should_report_started(initial, false));
             assert!(
-                !should_report_started(initial, true, false),
-                "re-exec must not repeat start"
-            );
-            assert!(
-                !should_report_started(initial, false, true),
+                !should_report_started(initial, true),
                 "an already reported episode must not repeat start"
             );
         }
@@ -884,7 +731,6 @@ mod tests {
                 accessibility: true,
                 screen_recording: true,
             },
-            false,
             false,
         ));
     }

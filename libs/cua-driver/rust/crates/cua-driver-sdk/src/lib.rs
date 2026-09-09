@@ -277,6 +277,20 @@ enum DriverBackend {
     Remote(Arc<RemoteDriverClient>),
 }
 
+impl CuaDriver {
+    /// Trusted Rust-host access to the daemon-owned local history controller.
+    /// This is intentionally absent from UniFFI and public agent protocols.
+    #[doc(hidden)]
+    pub fn local_history_manager(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
+        match &self.backend {
+            DriverBackend::Embedded(runtime) => runtime.history(),
+            DriverBackend::Daemon(_)
+            | DriverBackend::PrivateWorker(_)
+            | DriverBackend::Remote(_) => None,
+        }
+    }
+}
+
 struct DaemonBackend {
     socket_path: String,
     transport_session: String,
@@ -2800,6 +2814,7 @@ mod tests {
                     "session": "run-2",
                     "capture_scope": "auto",
                     "effective_scope": "window",
+                    "desktop_capture_authorized": false,
                     "desktop_unlocked": false,
                     "escalation_reason": null,
                     "escalation_detail": null,

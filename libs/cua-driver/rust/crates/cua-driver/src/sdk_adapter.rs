@@ -106,6 +106,10 @@ impl SdkAdapter {
         self.tools_list.clone()
     }
 
+    pub fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
+        self.driver.local_history_manager()
+    }
+
     pub fn is_known_tool(&self, name: &str) -> bool {
         name == "type_text_chars"
             || self

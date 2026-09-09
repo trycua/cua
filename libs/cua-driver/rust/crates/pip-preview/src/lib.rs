@@ -155,7 +155,7 @@ pub struct PipConfig {
     pub enabled: bool,
     pub geometry: PipGeometry,
     /// Window title — kept here so the "experimental" label stays in
-    /// one place. Defaults to "cua-driver — agent view (experimental)".
+    /// one place. Defaults to "cua-driver — PiP preview (experimental)".
     pub title: String,
 }
 
@@ -164,7 +164,7 @@ impl Default for PipConfig {
         Self {
             enabled: false,
             geometry: PipGeometry::default(),
-            title: "cua-driver — agent view (experimental)".to_owned(),
+            title: "cua-driver — PiP preview (experimental)".to_owned(),
         }
     }
 }

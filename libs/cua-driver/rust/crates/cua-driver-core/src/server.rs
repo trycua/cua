@@ -918,14 +918,6 @@ async fn handle_request_inner(
                         );
                     }
                 }
-                if call.name == "browser_prepare" {
-                    if let Some(arguments) = call.args.as_object_mut() {
-                        arguments.insert(
-                            crate::browser::approval::MCP_HOST_APPROVAL_ARG.to_owned(),
-                            serde_json::Value::Bool(true),
-                        );
-                    }
-                }
                 if call.name == "browser_download" {
                     if let Some(arguments) = call.args.as_object_mut() {
                         arguments.insert(
@@ -1216,8 +1208,7 @@ mod observation_tests {
             (
                 "browser_prepare",
                 serde_json::json!({
-                    "strategy": {"kind": "existing_profile"},
-                    "approval_token": "private-token"
+                    "strategy": {"kind": "existing_profile"}
                 }),
                 ToolOperation::BrowserPrepareExistingProfile,
             ),

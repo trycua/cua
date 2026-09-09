@@ -149,10 +149,7 @@ def unique_release(api: GitHubApi, repository: str, tag: str) -> dict[str, Any]:
 
 
 def validate_registered_nightly_tag(tag: str) -> None:
-    # Driver publication runs after its exact nightly version has been staged
-    # into the checkout. Tag validation needs registry shape and namespaces,
-    # not the stable source-state invariant enforced by planning and builds.
-    registry = release_channels.load_registry(require_stable_state=False)
+    registry = release_channels.load_registry()
     matches = []
     for name, component in registry["components"].items():
         try:

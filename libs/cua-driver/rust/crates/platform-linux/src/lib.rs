@@ -30,6 +30,9 @@ pub mod tty;
 pub mod proc_fs;
 
 #[cfg(target_os = "linux")]
+pub mod history;
+
+#[cfg(target_os = "linux")]
 pub mod browser_platform;
 
 #[cfg(target_os = "linux")]
@@ -48,6 +51,9 @@ mod clipboard;
 
 #[cfg(target_os = "linux")]
 pub mod atspi;
+
+#[cfg(any(target_os = "linux", test))]
+mod snapshot_queries;
 
 #[cfg(target_os = "linux")]
 pub mod a11y;
@@ -146,12 +152,19 @@ pub fn register_tools_with_cursor_and_provider(
     #[cfg(target_os = "linux")]
     wayland::ensure_nested_session();
     #[cfg(target_os = "linux")]
-    wayland::overlay::set_config_enabled(cfg.enabled);
+    wayland::overlay::set_config(cfg.clone());
     if cfg.enabled {
         overlay::init(cfg.clone());
         overlay::run_on_thread();
     }
     tools::build_registry_with_provider(compat, provider)
+}
+
+/// Standalone daemon startup recovery. Keep this out of registry construction:
+/// read-only commands such as describe/list-tools must not mutate X11 devices.
+#[cfg(target_os = "linux")]
+pub fn recover_orphaned_mpx_devices() {
+    input::reap_orphaned_master_pointers();
 }
 
 #[cfg(test)]

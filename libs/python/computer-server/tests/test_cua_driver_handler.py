@@ -1,10 +1,14 @@
 import json
+import sys
 from enum import Enum
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
-from computer_server.handlers.cua_driver import CuaDriverAutomationHandler
+from computer_server.handlers.cua_driver import (
+    CuaDriverAccessibilityHandler,
+    CuaDriverAutomationHandler,
+)
 
 
 class _Record:
@@ -20,6 +24,12 @@ class _CaptureScope(Enum):
 
 class _DesktopScope(Enum):
     DESKTOP = "desktop"
+
+
+class _ActionTarget:
+    class DESKTOP:
+        def __init__(self, *, display_id):
+            self.display_id = display_id
 
 
 class _EffectiveScope(Enum):
@@ -72,6 +82,30 @@ class _Driver:
         self.calls.append(("start_session", input))
         return SimpleNamespace(active=True)
 
+    async def call_tool(self, name, arguments_json):
+        self.calls.append(("call_tool", (name, json.loads(arguments_json))))
+        if name == "clipboard_read":
+            return _Result(
+                {
+                    "supported": True,
+                    "types": ["text"],
+                    "text": "driver clipboard",
+                    "privacy_sensitive": True,
+                    "content_redacted_from_telemetry": True,
+                }
+            )
+        if name == "clipboard_write":
+            return _Result(
+                {
+                    "supported": True,
+                    "written_type": "text",
+                    "types": ["text"],
+                    "privacy_sensitive": True,
+                    "content_redacted_from_telemetry": True,
+                }
+            )
+        return _Result(error=f"unsupported tool: {name}")
+
     async def end_session(self, input):
         self.ended.append(input)
         return SimpleNamespace(active=False)
@@ -82,6 +116,7 @@ class _Driver:
             session=input.session,
             capture_scope=_CaptureScope.AUTO,
             effective_scope=_EffectiveScope.WINDOW,
+            desktop_capture_authorized=False,
             desktop_unlocked=False,
             escalation_reason=None,
             escalation_detail=None,
@@ -93,6 +128,7 @@ class _Driver:
             session=input.session,
             capture_scope=_CaptureScope.AUTO,
             effective_scope=_EffectiveScope.DESKTOP,
+            desktop_capture_authorized=True,
             desktop_unlocked=True,
             escalation_reason=input.reason,
             escalation_detail=input.detail,
@@ -166,6 +202,7 @@ def sdk():
     return SimpleNamespace(
         CaptureScope=_CaptureScope,
         DesktopScope=_DesktopScope,
+        ActionTarget=_ActionTarget,
         EffectiveScope=_EffectiveScope,
         EscalationReason=_EscalationReason,
         ClickButton=_ClickButton,
@@ -202,7 +239,7 @@ def fallback():
 
 
 @pytest.mark.asyncio
-async def test_desktop_actions_share_one_typed_session(sdk, fallback):
+async def test_desktop_actions_redeclare_one_typed_session(sdk, fallback):
     driver = _Driver()
     handler = CuaDriverAutomationHandler(
         fallback,
@@ -223,13 +260,31 @@ async def test_desktop_actions_share_one_typed_session(sdk, fallback):
     assert click["effect"] == "unverifiable"
     assert click["verified"] is False
     assert scroll["success"] is True
-    assert [name for name, _ in driver.calls].count("start_session") == 1
-    start = next(value for name, value in driver.calls if name == "start_session")
-    assert start.session == "server-a"
-    assert start.capture_scope is _CaptureScope.DESKTOP
+    starts = [value for name, value in driver.calls if name == "start_session"]
+    assert len(starts) == 5
+    assert {start.session for start in starts} == {"server-a"}
+    assert {start.capture_scope for start in starts} == {_CaptureScope.DESKTOP}
+    assert all(start.cursor_theme is None for start in starts)
     clicked = next(value for name, value in driver.calls if name == "click")
     assert (clicked.x, clicked.y) == (12.0, 34.0)
-    assert clicked.scope is _DesktopScope.DESKTOP
+    assert clicked.target.display_id == "primary"
+    assert clicked.scope is None
+
+
+@pytest.mark.asyncio
+async def test_each_call_redeclares_the_session_after_possible_idle_expiry(sdk, fallback):
+    driver = _Driver()
+    handler = CuaDriverAutomationHandler(fallback, driver=driver, sdk=sdk, session_id="idle-server")
+
+    assert (await handler.get_screen_size())["success"] is True
+    assert (await handler.get_screen_size())["success"] is True
+
+    assert [name for name, _ in driver.calls] == [
+        "start_session",
+        "get_screen_size",
+        "start_session",
+        "get_screen_size",
+    ]
 
 
 @pytest.mark.asyncio
@@ -266,13 +321,38 @@ async def test_adapter_uses_the_generated_python_contract(fallback):
     )
 
     result = await handler.get_screen_size()
+    await handler.move_cursor(20, 30)
+    await handler.left_click(20, 30)
+    await handler.drag([(20, 30), (40, 50)])
+    await handler.scroll_down()
+    await handler.type_text("hello")
+    await handler.press_key("enter")
+    await handler.hotkey(["ctrl", "a"])
+    await handler.copy_to_clipboard()
+    await handler.set_clipboard("updated")
 
     assert result == {"success": True, "size": {"width": 1280, "height": 720}}
     start = next(value for name, value in driver.calls if name == "start_session")
     assert isinstance(start, cua_driver.StartSessionInput)
     assert start.capture_scope is cua_driver.CaptureScope.DESKTOP
+    assert start.cursor_theme is None
     request = next(value for name, value in driver.calls if name == "get_screen_size")
     assert isinstance(request, cua_driver.GetScreenSizeInput)
+    expected_types = {
+        "move_cursor": cua_driver.MoveCursorInput,
+        "click": cua_driver.ClickInput,
+        "drag": cua_driver.DragInput,
+        "scroll": cua_driver.ScrollInput,
+        "type_text": cua_driver.TypeTextInput,
+        "press_key": cua_driver.PressKeyInput,
+        "hotkey": cua_driver.HotkeyInput,
+    }
+    for name, expected_type in expected_types.items():
+        request = next(value for call, value in driver.calls if call == name)
+        assert isinstance(request, expected_type)
+        if hasattr(request, "target"):
+            assert request.target.display_id == "primary"
+            assert request.scope is None
 
 
 @pytest.mark.asyncio
@@ -292,8 +372,10 @@ async def test_auto_scope_escalation_is_explicit_and_typed(sdk, fallback):
     )
 
     assert before["effective_scope"] == "window"
+    assert before["desktop_capture_authorized"] is False
     assert before["desktop_unlocked"] is False
     assert escalated["effective_scope"] == "desktop"
+    assert escalated["desktop_capture_authorized"] is True
     assert escalated["desktop_unlocked"] is True
     assert escalated["escalation_reason"] == "no_window_target"
     request = next(value for name, value in driver.calls if name == "escalate_session")
@@ -322,22 +404,48 @@ async def test_close_ends_owned_session_and_shuts_down_once(sdk, fallback):
 
     await handler.close()
     await handler.close()
+    closed = await handler.get_cursor_position()
 
     assert [value.session for value in driver.ended] == ["owned-session"]
     assert driver.shutdown_count == 1
+    assert closed["success"] is False
+    assert "closed" in closed["error"]
 
 
 @pytest.mark.asyncio
-async def test_non_portable_actions_remain_on_legacy_handler(sdk, fallback):
-    handler = CuaDriverAutomationHandler(fallback, driver=_Driver(), sdk=sdk)
+async def test_foreground_actions_never_fall_back_to_legacy_input(sdk, fallback):
+    driver = _Driver()
+    handler = CuaDriverAutomationHandler(fallback, driver=driver, sdk=sdk, session_id="foreground")
 
-    assert await handler.mouse_down(1, 2, "left") == {"success": True}
-    assert await handler.key_down("shift") == {"success": True}
-    assert await handler.copy_to_clipboard() == {"success": True, "content": "x"}
+    mouse_down = await handler.mouse_down(1, 2, "left")
+    key_down = await handler.key_down("shift")
+    clipboard = await handler.copy_to_clipboard()
+    clipboard_write = await handler.set_clipboard("updated")
 
-    fallback.mouse_down.assert_awaited_once_with(1, 2, "left")
-    fallback.key_down.assert_awaited_once_with("shift")
-    fallback.copy_to_clipboard.assert_awaited_once_with()
+    assert mouse_down["success"] is False
+    assert "separate mouse-down" in mouse_down["error"]
+    assert key_down["success"] is False
+    assert "separate key-down" in key_down["error"]
+    assert clipboard == {"success": True, "content": "driver clipboard"}
+    assert clipboard_write["success"] is True
+    fallback.mouse_down.assert_not_awaited()
+    fallback.key_down.assert_not_awaited()
+    fallback.copy_to_clipboard.assert_not_awaited()
+    fallback.set_clipboard.assert_not_awaited()
+    calls = [value for name, value in driver.calls if name == "call_tool"]
+    assert calls[0] == (
+        "clipboard_read",
+        {"include_text": True, "session": "foreground"},
+    )
+    assert calls[1] == (
+        "clipboard_write",
+        {
+            "text": "updated",
+            "image_path": None,
+            "file_path": None,
+            "session": "foreground",
+        },
+    )
 
 
 def test_invalid_driver_configuration_is_rejected(sdk, fallback):
@@ -345,6 +453,30 @@ def test_invalid_driver_configuration_is_rejected(sdk, fallback):
         CuaDriverAutomationHandler(fallback, driver=_Driver(), sdk=sdk, mode="rpc")
     with pytest.raises(ValueError, match="CUA_DRIVER_CAPTURE_SCOPE"):
         CuaDriverAutomationHandler(fallback, driver=_Driver(), sdk=sdk, capture_scope="everything")
+
+
+def test_factory_selects_driver_without_constructing_native_automation(monkeypatch):
+    monkeypatch.setenv("CUA_BACKEND", "cua-driver")
+    monkeypatch.setenv("PYNPUT_BACKEND", "dummy")
+
+    from computer_server.handlers import cua_driver as driver_module
+    from computer_server.handlers import factory
+
+    driver = SimpleNamespace(mode="embedded")
+
+    monkeypatch.setattr(factory, "OS_TYPE", "linux")
+    monkeypatch.setattr(factory, "BaseDioramaHandler", object)
+    monkeypatch.setattr(factory, "GenericFileHandler", object)
+    monkeypatch.setattr(factory, "GenericDesktopHandler", object)
+    monkeypatch.setattr(factory, "GenericWindowHandler", object)
+    monkeypatch.setattr(driver_module, "CuaDriverAutomationHandler", lambda: driver)
+    sys.modules.pop("computer_server.handlers.linux", None)
+
+    handlers = factory.HandlerFactory.create_handlers()
+
+    assert handlers[1] is driver
+    assert isinstance(handlers[0], CuaDriverAccessibilityHandler)
+    assert "computer_server.handlers.linux" not in sys.modules
 
 
 @pytest.mark.asyncio

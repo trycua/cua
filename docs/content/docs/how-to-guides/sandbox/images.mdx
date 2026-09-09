@@ -1,15 +1,36 @@
 ---
-title: Choose and build a sandbox image
-description: Select a sandbox base image and add packages, files, setup commands, ports, and inspection.
+title: Build a local sandbox image
+description: Select a local sandbox base image and add packages, files, setup commands, and ports for execution on your own hardware.
 ---
 
 import { Callout } from 'fumadocs-ui/components/callout';
 
-Use an **Image** to define the OS and software environment for a sandbox before you start it.
+This guide uses the Sandbox SDK on your own hardware with `local=True`. Use an
+**Image** to define the guest OS and setup steps before starting a local sandbox.
+Start with [Choose a base image](#choose-a-base-image).
+
+For hosted execution, follow [Choose a Fleet image](/how-to-guides/sandbox/choose-an-image).
+The local builder steps below do not publish a Fleet artifact or run during a claim.
+
+<Callout type="warn">
+  **SDK builder customization is local-only in `cua-sandbox` 0.4.3.** `apt_install()`,
+  `pip_install()`, `env()`, `run()`, `copy()` and the other builder methods are applied when you
+  boot the image locally (`local=True`). Fleet runs a prebuilt registry artifact and rejects a
+  customized one with `NotImplementedError: Fleet cloud supports registry images with optional
+  exposed services only`. For Fleet customization, [prepare and publish the guest image
+  first](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image). See [Sandbox runtime
+  support](/reference/sandbox-sdk/runtime-support) for versioned acceptance and verification limits.
+</Callout>
+
+## Choose a published Fleet image
+
+The hosted procedure is now in [Choose a Fleet image](/how-to-guides/sandbox/choose-an-image#choose-a-published-fleet-image).
+Use that guide for published artifacts, guest-service requirements, and Windows
+licensing requirements. Continue below only for local execution.
 
 ## Choose a base image
 
-An Image describes the OS and software environment. Images are *immutable* and *chainable*. Each builder method returns a new Image.
+An Image describes the OS and software environment. Images are _immutable_ and _chainable_. Each builder method returns a new Image.
 
 Start with the built-in constructor that matches the operating system and isolation level you need.
 
@@ -19,19 +40,49 @@ from cua import Image
 Image.linux()                        # Ubuntu 24.04 VM (default, QEMU)
 Image.linux(kind='container')        # Ubuntu 24.04 container (lighter, Docker/XFCE)
 Image.linux('ubuntu', '22.04')       # Older Ubuntu
-Image.macos()                        # macOS Tahoe (version '26', latest)
+Image.macos()                        # macOS Tahoe (version '26')
 Image.macos('15')                    # macOS Sequoia
-Image.windows()                      # Windows 11
+Image.windows()                      # Windows Server 2022
+Image.windows('11')                  # Windows 11 (local ISO install only)
 Image.android()                      # Android 14
 ```
 
-| Image | Kind | Notes |
-|-------|------|-------|
-| Image.linux() | VM | Default (QEMU), supports /dev/kvm |
-| Image.linux(kind='container') | container | Lighter, Docker/XFCE |
-| Image.macos() | VM | Apple Virtualization / Lume |
-| Image.windows() | VM | QEMU or Hyper-V |
-| Image.android() | VM | QEMU Android emulator |
+Choose a constructor using the [OS and runtime table](/reference/sandbox-sdk/runtime-support#operating-systems-and-image-kinds).
+A constructor returning an `Image` does not verify that its guest can boot on
+your host. Check local runtime requirements before selecting it.
+
+If a local Docker image times out on readiness, check the guest server's listening
+address. An earlier `trycua/cua-xfce:latest` recipe reported the server bound to
+`127.0.0.1:8000` inside the container, which Docker's published port could not reach.
+That observation does not establish the state of every later mutable image tag.
+
+### How a Linux image runs locally
+
+`Image.linux()` is a VM. Locally it boots the same pinned containerDisk that Cua
+Fleet references, under QEMU on the host. Sharing an artifact does not make host
+networking, firmware, resources, or available SDK operations identical:
+
+```python
+from cua import Image, Sandbox
+
+async with Sandbox.ephemeral(Image.linux(), local=True) as sb:
+    print((await sb.shell.run('uname -a')).stdout)
+```
+
+That path needs `qemu-system-x86_64` on the host, and uses `/dev/kvm` when it is
+available. Without QEMU the call raises rather than quietly starting something else:
+
+```
+RuntimeError: Image.linux() is a VM and needs QEMU, which was not found on this host.
+```
+
+`Image.linux(kind='container')` is the Docker path instead, and needs no QEMU.
+
+<Callout type="warn">
+  Passing `runtime=QEMURuntime()` explicitly selects `mode='docker'`, which wraps QEMU in a
+  container and does **not** boot the pinned containerDisk. Use `QEMURuntime(mode='bare-metal')` if
+  you are naming a runtime by hand, or leave `runtime=` off and let the default pick it.
+</Callout>
 
 ## Install packages
 
@@ -60,8 +111,18 @@ Set non-sensitive environment variables with `.env()`.
 Image.linux().env(DATABASE_URL='postgres://localhost/mydb', LOG_LEVEL='debug')
 ```
 
+Variables are baked in as `/etc/profile.d/cua-env.sh` on Linux and macOS, and as
+machine-scoped `setx` variables on Windows. On Linux that file is read by _login_
+shells, so a bare `sb.shell.run()` does not see them — ask for a login shell:
+
+```python
+await sb.shell.run("echo $MY_TOKEN")            # empty
+await sb.shell.run("bash -lc 'echo $MY_TOKEN'") # abc123
+```
+
 <Callout type="warn">
-  Avoid putting real secrets in .env() because anyone who can read the Image spec can see the values.
+  Avoid putting real secrets in .env() because anyone who can read the Image spec can see the
+  values.
 </Callout>
 
 ## Run setup commands
@@ -87,6 +148,13 @@ Expose every port the sandbox workload must listen on.
 ```python
 Image.linux().expose(8080).expose(5432)
 ```
+
+<Callout type="warn">
+  In 0.4.3, bare-metal QEMU forwards exposed ports at startup and reports their host ports in
+  `sb.exposed_ports`. Other local backends can differ. Fleet creates named services instead.
+  `expose()` does not make `tunnel.forward()` available on every transport; see [ports and
+  transports](/reference/sandbox-sdk/runtime-support#ports-and-transports).
+</Callout>
 
 ## Chain builder calls
 
@@ -115,12 +183,38 @@ prod = base.pip_install('gunicorn').run('useradd -m appuser')
 
 Use `Image.from_registry()` when your base image already exists in a registry.
 
+The reference must be a **KubeVirt containerDisk** — an image carrying a bootable
+disk at `/disk/disk.img`. An ordinary OCI application image such as `ubuntu:22.04`
+is not one, and fails with
+`FileNotFoundError: OCI image 'ubuntu:22.04' does not contain /disk/disk.img`.
+
 ```python
-Image.from_registry('ghcr.io/trycua/macos-tahoe-cua:latest')
-Image.from_registry('ubuntu:22.04')
-# chain builder on top
-img = Image.from_registry('ubuntu:22.04').apt_install('curl')
+img = Image.from_registry(
+    'registry.example/workspace@sha256:...',
+    os_type='linux',
+    kind='vm',
+)
+# Local setup only; Fleet rejects builder layers.
+img = img.run('echo hi')
 ```
+
+A registry image defaults to `kind=None`, so the SDK cannot automatically select
+a runtime unless you set the kind. For local use, select a runtime compatible
+with the actual guest disk. The Linux VM example uses bare-metal QEMU:
+
+```python
+from cua import QEMURuntime, Sandbox
+
+async with Sandbox.ephemeral(img, local=True, runtime=QEMURuntime(mode='bare-metal')) as sb:
+    ...
+```
+
+<Callout type="warn">
+  Replace the example reference with an artifact you published. `Image.from_registry()` defaults to
+  `os_type='linux'`; set `os_type='windows', kind='vm'` for a Windows VM disk. The registry
+  reference does not prove that the artifact is accessible or bootable. Local pull authentication
+  and Fleet registry access are separate requirements.
+</Callout>
 
 ## Use a local disk image
 
@@ -132,7 +226,11 @@ Image.from_file('/path/to/windows.vhdx', os_type='windows')
 Image.from_file('https://example.com/disk.qcow2', os_type='linux')
 ```
 
-Images are cached in `~/.cua/cua-sandbox/image-cache/`.
+Disk images downloaded from a URL are cached in `~/.cua/cua-sandbox/image-cache/`,
+keyed by a hash of the URL. This is a different cache from the one used for
+registry containerDisks, which land in
+`~/.cua/cua-sandbox/images/container-disks/<sha256-of-ref>/disk.qcow2`. Delete
+either directory to force a re-download.
 
 ## Inspect an image
 
@@ -141,5 +239,16 @@ Call `.to_dict()` to inspect the final image spec before using it.
 ```python
 img = Image.linux().apt_install('curl').pip_install('requests')
 print(img.to_dict())
-# {'os_type': 'linux', 'distro': 'ubuntu', 'version': '24.04', 'kind': 'container', 'layers': [...]}
+# {'os_type': 'linux', 'distro': 'ubuntu', 'version': '24.04', 'kind': 'vm',
+#  'layers': [{'type': 'apt_install', 'packages': ['curl']},
+#             {'type': 'pip_install', 'packages': ['requests']}]}
+```
+
+`env`, `ports` and `files` keys appear only when you have set them:
+
+```python
+img = Image.linux().env(DEBUG='1').expose(8080).copy('./a.json', '/app/a.json')
+print(img.to_dict())
+# {..., 'kind': 'vm', 'layers': [], 'env': {'DEBUG': '1'},
+#  'ports': [8080], 'files': [['./a.json', '/app/a.json']]}
 ```

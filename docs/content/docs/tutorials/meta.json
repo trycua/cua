@@ -1,10 +1,10 @@
 {
-  "title": "Get Started",
+  "title": "Start here",
   "icon": "GraduationCap",
   "pages": [
     "index",
+    "your-first-cloud-fleet",
     "drive-your-first-app",
-    "your-first-local-sandbox",
     "create-your-first-lume-vm",
     "your-first-cua-bench-task"
   ]

@@ -1,11 +1,6 @@
 {
   "version": 1,
   "metadata": {
-    "protocols": ["6.0"],
-    "os_arch": {
-      "darwin": ["amd64", "arm64"],
-      "linux": ["amd64", "arm64"],
-      "windows": ["amd64", "arm64"]
-    }
+    "protocol_versions": ["6.0"]
   }
 }

@@ -105,27 +105,6 @@ enum NativeDisplayAttachService {
   }
 
   private nonisolated static func lockOwnerPID(for configURL: URL) -> Int32? {
-    let process = Process()
-    process.executableURL = URL(fileURLWithPath: "/usr/sbin/lsof")
-    process.arguments = ["-t", configURL.path]
-    let output = Pipe()
-    process.standardOutput = output
-    process.standardError = FileHandle.nullDevice
-
-    do {
-      try process.run()
-      process.waitUntilExit()
-      guard process.terminationStatus == 0,
-        let data = try output.fileHandleForReading.readToEnd(),
-        let value = String(data: data, encoding: .utf8)?
-          .split(whereSeparator: \.isNewline).first,
-        let pid = Int32(value)
-      else {
-        return nil
-      }
-      return pid
-    } catch {
-      return nil
-    }
+    LsofRunLockProbe(timeout: 10).lockOwnerPID(ofFileAt: configURL.path)
   }
 }

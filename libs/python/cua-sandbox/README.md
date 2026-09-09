@@ -96,6 +96,22 @@ Fleet is the OAuth cloud backend. Configure OAuth credentials once; Fleet uses `
 
 Fleet does not support snapshots or custom disks, and currently supports only `us-east-1`. `await sb.tunnel.forward(3000)` returns the authenticated Fleet service URL for an exposed port; it does not open a local SSH tunnel.
 
+Fleet sandboxes can also create time-limited, revocable public URLs for an
+exposed service. Treat each URL as a bearer credential and revoke it as soon as
+the recipient no longer needs access.
+
+```python
+signed_url = await sb.services.create_signed_url(
+    "mcp",
+    label="Customer demo",
+    expires_in_seconds=3600,
+)
+print(signed_url.url)
+
+active_urls = await sb.services.list_signed_urls()
+await sb.services.revoke_signed_url(signed_url)
+```
+
 ## Fleet pools and durable claims
 
 For production workloads, claim from an existing pool. Supplying `pool=` never changes its configuration; `name=` names the claim, while `sb.name` is the separately bound sandbox resource.
@@ -119,7 +135,7 @@ await sb.keep_alive(minutes=30)
 await sb.close()  # idempotently releases the claim
 ```
 
-If `pool=` is omitted, a registry image is required. `Sandbox.create(image)` applies a deterministic reusable pool and claims from it. `Sandbox.ephemeral(image)` instead creates an isolated temporary pool and deletes it after releasing the claim, preserving teardown-by-default semantics.
+Fleet pool names are globally unique across accounts, so `Sandbox.create` requires an explicitly named pool for registry images: apply one with `Pool.apply(image, name=...)` and pass it as `pool=`. `Sandbox.ephemeral(image)` instead creates an isolated temporary pool under a random name and deletes it after releasing the claim, preserving teardown-by-default semantics. If a chosen pool name is already owned by another account, Fleet refuses it and the SDK raises `PoolAccessDeniedError` — pick a different name.
 
 ```python
 from cua_sandbox import Image, Sandbox
@@ -136,10 +152,10 @@ async with Sandbox.ephemeral(
     await sb.shell.run("uname -a")
 ```
 
-To deliberately retain deterministic warm capacity for later calls, opt in with `keep_pool=True`:
+To deliberately retain warm capacity for later calls, opt in with `keep_pool=True`. It requires `name=` so later runs can find the kept pool:
 
 ```python
-async with Sandbox.ephemeral(image, keep_pool=True) as sb:
+async with Sandbox.ephemeral(image, name="shared-pool", keep_pool=True) as sb:
     await sb.shell.run("uname -a")
 ```
 
@@ -150,6 +166,7 @@ from cua_sandbox import Image, Pool
 
 pool = await Pool.apply(
     Image.from_registry("registry.example/desktop-workspace@sha256:..."),
+    name="desktop-workspace",
     replicas=1,
     cpu=4,
     memory_mb=4096,
@@ -167,9 +184,30 @@ async with pool.claim(name="job-123") as sb:
     await sb.shell.run("echo hello")
 ```
 
+Instead of a static `replicas` count, a pool can scale with claim demand by
+passing `autoscaling=`. The pool then grows toward `max_pool_size` while claims
+are pending and shrinks back to `min_pool_size` as they are released;
+`initial_pool_size` seeds a one-time warm head start at creation:
+
+```python
+from cua_sandbox import Image, Pool, WarmPoolAutoscaling
+
+pool = await Pool.apply(
+    Image.from_registry("registry.example/desktop-workspace@sha256:..."),
+    name="desktop-workspace",
+    cpu=4,
+    memory_mb=4096,
+    autoscaling=WarmPoolAutoscaling(
+        min_pool_size=0,
+        initial_pool_size=2,
+        max_pool_size=10,
+    ),
+)
+```
+
 `Pool.reconcile(CreatePoolRequest(...))` and `Template.reconcile(CreateTemplateRequest(...))` remain available for advanced generated-schema configuration. The public generated builders should be used instead of constructing builder-enabled Fleet records directly.
 
 The image must run the CUA computer-server `/cmd` API on the configured `server_port`.
 Windows computer-server images continue to use the default port `8000`.
 
-Fleet currently supports registry images, CPU, memory, replica count, and named TCP services. Local image builds, layers, injected files or environment, snapshots, custom disks, unsupported regions, and provider-crossing serialization raise `NotImplementedError`.
+Fleet currently supports registry images, CPU, memory, replica count, claim-demand autoscaling, and named TCP services. Local image builds, layers, injected files or environment, snapshots, custom disks, unsupported regions, and provider-crossing serialization raise `NotImplementedError`.

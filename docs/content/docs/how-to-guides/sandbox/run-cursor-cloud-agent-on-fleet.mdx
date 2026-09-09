@@ -1,0 +1,321 @@
+---
+title: Run a Cursor Cloud Agent worker on Cua Cloud Fleet
+description: Start a Cursor self-hosted Team Pool worker inside a claimed Cua Cloud Fleet Linux desktop.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+Use this guide to run one Cursor self-hosted Cloud Agent worker inside a Cua
+Cloud Fleet VM. A local Python controller creates a reusable Cua pool, claims a
+VM, starts the Cursor worker in that VM, and keeps the claim alive until you
+stop the controller.
+
+```text
+Cursor Cloud Agent control plane
+          |
+          | outbound worker connection
+          v
+Cursor worker in a claimed Cua Fleet VM
+          |
+          +-- repository checkout and terminal tools
+          +-- XFCE/X11 desktop and browser
+          +-- private services reachable from the VM
+```
+
+<Callout type="warn">
+  This is a manual integration path, not a built-in Cursor provider. The controller must remain
+  running because the Cua claim owns the VM used by the Cursor worker. Scaling Cua capacity from
+  Cursor's pending-request queue requires an additional controller and is not covered here.
+</Callout>
+
+## Prerequisites
+
+You need:
+
+- Python `>=3.11,<3.14` and [`uv`](https://docs.astral.sh/uv/);
+- Cua Fleet credentials that can create pools and claims;
+- a Cursor Enterprise plan with Self-Hosted Agents enabled;
+- a Cursor service-account API key for Team Pool workers; and
+- a globally unique, lowercase DNS-label name for the Cua pool.
+
+This guide uses the public Cua Ubuntu 24.04 desktop image:
+
+```text
+public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57
+```
+
+The image provides a glibc-based Linux VM, an XFCE/X11 desktop, and the Cua
+computer server on port `8000`. The Cursor CLI and worker are third-party
+software installed at runtime from Cursor's official installer.
+
+## Configure credentials and names
+
+Authenticate to Cua Fleet with an access token:
+
+```bash
+export FLEETS_TOKEN="<your-cua-access-token>"
+```
+
+Or use Cua OAuth client credentials:
+
+```bash
+export CUA_CLIENT_ID="<your-cua-client-id>"
+export CUA_CLIENT_SECRET="<your-cua-client-secret>"
+```
+
+Set the Cua pool name, Cursor Team Pool name, and Cursor service-account key:
+
+```bash
+export CUA_POOL_NAME="<globally-unique-cua-pool-name>"
+export CURSOR_WORKER_POOL_NAME="cua-linux"
+export CURSOR_API_KEY="<cursor-service-account-api-key>"
+```
+
+The two pool names identify different resources:
+
+| Variable | Meaning |
+| --- | --- |
+| `CUA_POOL_NAME` | The Cua Fleet pool that supplies VMs |
+| `CURSOR_WORKER_POOL_NAME` | The Cursor Team Pool that receives Cloud Agent requests |
+
+Keep both providers' credentials in environment variables or a secret manager.
+Do not store them in an image definition or commit them to source control.
+
+## Start the Fleet-backed worker
+
+Save this script as `run_cursor_worker.py`:
+
+```python title="run_cursor_worker.py"
+# /// script
+# requires-python = ">=3.11,<3.14"
+# dependencies = [
+#   "cua-sandbox",
+# ]
+# ///
+
+import asyncio
+import os
+import shlex
+
+from cua_sandbox import Image, Pool
+
+
+IMAGE = (
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:c1e601dbb748fdc467c663136f7592e308a91a3c19c309b75261544432826a57"
+)
+CUA_POOL_NAME = os.environ["CUA_POOL_NAME"]
+CURSOR_POOL_NAME = os.environ["CURSOR_WORKER_POOL_NAME"]
+CURSOR_API_KEY = os.environ["CURSOR_API_KEY"]
+
+
+async def checked(sandbox, command: str, timeout: int = 300) -> str:
+    result = await sandbox.shell.run(command, timeout=timeout)
+    if not result.success:
+        raise RuntimeError(f"{command}\n{result.stderr}")
+    return result.stdout.strip()
+
+
+async def main() -> None:
+    pool = await Pool.apply(
+        Image.from_registry(IMAGE, os_type="linux", kind="vm"),
+        name=CUA_POOL_NAME,
+        replicas=1,
+        cpu=4,
+        memory_mb=8192,
+        services={"server": 8000},
+    )
+
+    async with pool.claim(service="server", time_to_start=1800) as sandbox:
+        print(f"Cua pool: {sandbox.pool_name}")
+        print(f"Cua claim: {sandbox.claim_name}")
+        print(f"Sandbox: {sandbox.name}")
+
+        await checked(sandbox, "curl -fsSL https://cursor.com/install -o /tmp/cursor-install.sh")
+        await checked(sandbox, "bash /tmp/cursor-install.sh")
+        await checked(sandbox, "test -x /root/.local/bin/agent")
+
+        await checked(
+            sandbox,
+            "mkdir -p /root/.config /root/cursor-workspaces/default",
+        )
+
+        # Write the credential through the file API so it is not interpolated
+        # into a shell command or printed by the controller.
+        env_file = (
+            f"CURSOR_API_KEY={shlex.quote(CURSOR_API_KEY)}\n"
+            f"CURSOR_WORKER_POOL_NAME={shlex.quote(CURSOR_POOL_NAME)}\n"
+        )
+        await sandbox.files.write_bytes(
+            "/root/.config/cursor-worker.env",
+            env_file.encode(),
+        )
+        await checked(
+            sandbox,
+            "chmod 600 /root/.config/cursor-worker.env",
+        )
+
+        command = """bash -lc '
+set -a
+. /root/.config/cursor-worker.env
+set +a
+export PATH=/root/.local/bin:$PATH
+exec agent worker \\
+  --pool "$CURSOR_WORKER_POOL_NAME" \\
+  --worker-dir /root/cursor-workspaces/default \\
+  --clone-git-repos \\
+  start > /root/cursor-worker.log 2>&1
+'"""
+        worker = await sandbox.shell.run(command, background=True)
+        if not worker.success:
+            raise RuntimeError(worker.stderr)
+
+        try:
+            print(f"Cursor worker process: {worker.stdout or 'started'}")
+            print("The Cua claim is active. Press Ctrl-C to release it.")
+
+            while True:
+                await asyncio.sleep(15)
+                status = await sandbox.shell.run(
+                    "pgrep -af '[a]gent worker'",
+                    timeout=15,
+                )
+                if not status.success:
+                    raise RuntimeError(
+                        "Cursor worker exited; inspect /root/cursor-worker.log"
+                    )
+        finally:
+            await sandbox.shell.run("pkill -f '[a]gent worker' || true")
+            await sandbox.shell.run("rm -f /root/.config/cursor-worker.env")
+
+
+try:
+    asyncio.run(main())
+except KeyboardInterrupt:
+    print("Releasing the Cua claim; the reusable pool remains available")
+```
+
+Run the controller:
+
+```bash
+uv run run_cursor_worker.py
+```
+
+The first run can take several minutes while Fleet provisions the VM. The
+script then installs the Cursor CLI, starts an any-repository Team Pool worker,
+and checks every 15 seconds that the worker process remains present.
+
+The `--clone-git-repos` option lets Cursor prepare the assigned repository in
+the otherwise empty worker directory. Use this option only for a named
+any-repository Team Pool, as described in Cursor's Team Pools documentation.
+
+<Callout type="info">
+  The script keeps the Cua pool after you stop it. Later runs can claim its warm capacity without
+  rebuilding the pool, but the runtime Cursor CLI installation is not part of the immutable base
+  image. For repeated production use, publish a private worker image with a pinned Cursor CLI and
+  use that image digest in `Image.from_registry()`.
+</Callout>
+
+## Verify the worker
+
+In the Cursor dashboard, open **Cloud Agents → Self-Hosted Agents** and confirm
+that an idle worker appears in the Team Pool named by
+`CURSOR_WORKER_POOL_NAME`.
+
+Start a Cloud Agent run and select that Team Pool. Ask the agent to perform a
+small, reversible check, such as:
+
+```text
+Report the operating system, current working directory, and git remote. Do not edit files.
+```
+
+Confirm that:
+
+1. Cursor assigns the run to the registered worker.
+2. The reported operating system is Linux.
+3. The repository is cloned under the worker's workspace.
+4. The local controller continues to report a live claim.
+
+If you intend to use graphical tools, add Cursor's `--computer-use` worker
+option and follow Cursor's Linux computer-use dependency and display checks.
+The Cua image already provides an X11 desktop, but Cursor's computer-use helper
+is separate from Cua Driver and must pass Cursor's own preflight.
+
+## Stop and clean up
+
+Press `Ctrl-C` in the local controller. The script stops the worker and removes
+its credential file before exiting the claim context. Exiting the context then
+releases the claim. The Cua pool and its warm replica remain for the next run.
+
+Delete the pool only when you no longer need it. Add the following after the
+claim context, or use a separate cleanup script that resolves the same named
+pool:
+
+```python
+await pool.delete()
+```
+
+Deleting the pool removes its warm capacity and same-named Fleet namespace.
+
+## Production hardening
+
+Before using this integration for production workloads:
+
+- build and pin a private worker image instead of downloading the CLI at each start;
+- run the worker as a dedicated non-root user;
+- restrict outbound access to the endpoints required by Cursor and your source provider;
+- decide whether Cursor artifact uploads are allowed by your data-handling policy;
+- prevent secrets from appearing in terminal output, screenshots, diffs, and artifacts;
+- set claim and pool TTLs appropriate for abandoned-controller recovery;
+- collect worker logs without recording API keys or repository contents; and
+- test claim loss, worker failure, cancellation, and controller restart behavior.
+
+Cursor documents that the worker sends agent-required content to Cursor,
+including file contents, terminal output, diffs, screenshots, local MCP
+results, and routing metadata. Cursor also documents that Cloud Agent artifacts
+may be uploaded to Cursor-managed storage. Running the worker on Cua Fleet
+keeps execution in the Fleet VM; it does not make the Cursor agent loop or its
+data plane self-hosted.
+
+## Understand the scaling boundary
+
+Cursor and Cua each use a pool, but at different layers:
+
+```text
+Cursor Team Pool pending request
+          |
+          | needs an idle Cursor worker
+          v
+integration controller
+          |
+          | creates and holds a Cua claim
+          v
+Cua Fleet pool -> VM -> Cursor worker process
+```
+
+The script in this guide maintains one warm Cua VM and one Cursor worker. A
+production autoscaler must observe Cursor pending requests, create or release
+Cua claims, start exactly one Team Pool worker per claimed VM, and reconcile
+both systems after failures. Do not configure independent autoscalers on both
+sides without defining ownership; they can otherwise disagree about desired
+capacity or leave workers and claims orphaned.
+
+## Troubleshooting
+
+| Symptom | Check |
+| --- | --- |
+| No worker appears in Cursor | Confirm Self-Hosted Agents is enabled and `CURSOR_API_KEY` belongs to a Cursor service account |
+| Worker exits immediately | Run Cursor's `agent worker ... debug --json` command in the claimed VM and inspect the result |
+| Repository is not cloned | Confirm the worker uses a named pool and `--clone-git-repos`, and that Cursor can access the source repository |
+| Fleet claim never becomes ready | Verify Cua credentials, pool-name uniqueness, image access, and the `server` service on port `8000` |
+| Agent cannot reach an internal service | Test DNS, routing, and outbound policy from inside the Fleet VM |
+| Cursor shows no screenshots or artifacts | Review Cursor's required artifact-storage endpoint and your outbound network policy |
+| Controller stops and the worker disappears | Expected: the controller owns the Cua claim; run it under a supervised service for persistent use |
+
+## Related documentation
+
+- [Create a sandbox pool with Python](/how-to-guides/sandbox/create-pool-with-python)
+- [Pass secrets into a sandbox](/how-to-guides/sandbox/secrets)
+- [Run sandboxes in parallel](/how-to-guides/sandbox/scale-out)
+- [Cursor Self-Hosted Machines](https://cursor.com/docs/cloud-agent/self-hosted)
+- [Cursor Team Pools](https://cursor.com/docs/cloud-agent/self-hosted/pool)

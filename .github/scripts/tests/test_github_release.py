@@ -225,13 +225,13 @@ def test_nightly_can_create_a_private_draft_at_the_exact_sha():
     ]
 
 
-def test_nightly_creation_validates_registry_namespaces_after_artifact_staging(
+def test_nightly_creation_validates_registry_with_stable_authority(
     monkeypatch: pytest.MonkeyPatch,
 ):
     calls = []
 
-    def fake_registry(*, require_stable_state: bool):
-        calls.append(require_stable_state)
+    def fake_registry():
+        calls.append(True)
         return {
             "components": {
                 "cua-driver-rs": {
@@ -252,7 +252,7 @@ def test_nightly_creation_validates_registry_namespaces_after_artifact_staging(
         channel="nightly",
         create_if_missing=True,
     )
-    assert calls == [False]
+    assert calls == [True]
 
 
 def test_stable_and_unregistered_tags_cannot_create_drafts():

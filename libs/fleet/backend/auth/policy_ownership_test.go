@@ -297,6 +297,8 @@ func reverseChildren(n Node) Node {
 		return AllNode{Children: reverse(node.Children)}
 	case AnyNode:
 		return AnyNode{Children: reverse(node.Children)}
+	case BecauseNode:
+		return BecauseNode{Child: reverseChildren(node.Child), Reason: node.Reason}
 	default:
 		return n
 	}
@@ -470,6 +472,8 @@ func allLeaves(n Node) []Leaf {
 			leaves = append(leaves, allLeaves(child)...)
 		}
 		return leaves
+	case BecauseNode:
+		return allLeaves(node.Child)
 	}
 	return nil
 }

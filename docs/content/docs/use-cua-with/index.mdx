@@ -6,6 +6,7 @@ description: Choose a model provider, agent harness, or local runtime for Cua Dr
 import { Card, Cards } from 'fumadocs-ui/components/card';
 import { SiAnthropic, SiGooglegemini, SiMeta, SiOllama, SiOpenai } from 'react-icons/si';
 import {
+  AudioWaveform,
   Bot,
   BrainCircuit,
   Cpu,
@@ -34,7 +35,7 @@ These pages show the verified harnesses and local runtimes that can put each mod
     Use Antigravity CLI as the MCP-capable harness.
   </Card>
   <Card icon={<Orbit />} title="xAI / Grok" href="/use-cua-with/xai">
-    Connect Grok Build to Cua Driver as a local MCP server.
+    Connect Grok Build or Grok Bot to Cua Driver.
   </Card>
   <Card icon={<SiMeta />} title="Meta" href="/use-cua-with/meta">
     Run Muse Glimmer locally with a harness such as Claude Code.
@@ -44,6 +45,9 @@ These pages show the verified harnesses and local runtimes that can put each mod
   </Card>
   <Card icon={<MoonStar />} title="Kimi" href="/use-cua-with/kimi">
     Connect Kimi Code CLI through its MCP support.
+  </Card>
+  <Card icon={<AudioWaveform />} title="MiniMax" href="/use-cua-with/minimax">
+    Use MiniMax M-series models through Codex or Claude Code.
   </Card>
 </Cards>
 
@@ -56,6 +60,7 @@ Harnesses own the agent loop and invoke Cua Driver. Some are tied to a model pro
   <Card icon={<SiOpenai />} title="OpenAI Codex" href="/use-cua-with/codex" />
   <Card icon={<Rocket />} title="Antigravity CLI" href="/use-cua-with/antigravity-cli" />
   <Card icon={<TerminalSquare />} title="Grok Build" href="/use-cua-with/grok-build" />
+  <Card icon={<Bot />} title="Grok Bot" href="/use-cua-with/grok-bot" />
   <Card icon={<Waypoints />} title="Hermes" href="/use-cua-with/hermes" />
   <Card icon={<Bot />} title="OpenClaw" href="/use-cua-with/openclaw" />
   <Card icon={<PanelsTopLeft />} title="T3 Code" href="/use-cua-with/t3-code" />

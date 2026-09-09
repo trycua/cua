@@ -3,11 +3,13 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log/slog"
 	"mime"
 	"net/http"
 
+	"cyclops-cs-backend/auth"
 	"cyclops-cs-backend/identity"
 	"cyclops-cs-backend/statequery"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -63,7 +65,12 @@ func (writer *stateQueryStreamWriter) WriteRow(values []any) error {
 
 func (writer *stateQueryStreamWriter) Finish(err error) error {
 	if err != nil {
-		return writer.write(stateQueryErrorEvent{Type: "error", Error: err.Error()})
+		if auth.IsDatabaseUnavailable(err) {
+			return errors.Join(writer.write(stateQueryErrorEvent{Type: "error", Error: "state query unavailable"}), err)
+
+		}
+		return errors.Join(writer.write(stateQueryErrorEvent{Type: "error", Error: err.Error()}), err)
+
 	}
 	return writer.write(stateQueryDoneEvent{Type: "done"})
 }
@@ -83,7 +90,8 @@ func (writer *stateQueryStreamWriter) write(event any) error {
 func (h Handlers) QueryState(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Accept-Query", "application/sql")
 	w.Header().Set("Cache-Control", "private, no-store")
-	if h.StateQueryExecutor == nil {
+	executor := h.Features.StateQuery()
+	if executor == nil {
 		writeErr(w, http.StatusServiceUnavailable, "state query unavailable")
 		return
 	}
@@ -106,9 +114,14 @@ func (h Handlers) QueryState(w http.ResponseWriter, r *http.Request) {
 
 	user := currentUser(r)
 	stream := newStateQueryStreamWriter(w)
-	err = stream.Finish(h.StateQueryExecutor.Execute(
-		r.Context(), identity.PersonalGroup(r.Context(), user.ID), string(body), stream,
-	))
+	ctx, cancel := databaseContext(r.Context())
+	defer cancel()
+	err = executor.Execute(ctx, identity.PersonalGroup(r.Context(), user.ID), string(body), stream)
+	if err != nil && !stream.started {
+		writeErr(w, http.StatusServiceUnavailable, "state query unavailable")
+		return
+	}
+	err = stream.Finish(err)
 	if err != nil {
 		slog.Debug("state query stream failed", "err", err)
 	}

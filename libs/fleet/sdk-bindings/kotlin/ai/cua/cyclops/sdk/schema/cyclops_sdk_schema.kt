@@ -664,6 +664,8 @@ internal object IntegrityCheckingUniffiLib {
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory(
     ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization(
+    ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_oidc(
@@ -691,6 +693,8 @@ internal object IntegrityCheckingUniffiLib {
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_replicas(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
+    ): Short
+    external fun uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
     ): Short
     external fun uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build(
     ): Short
@@ -778,6 +782,8 @@ external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_image_pull_se
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(`ptr`: Long,`value`: Byte,uniffi_out_err: UniffiRustCallStatus,
+): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_oidc(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
@@ -823,6 +829,8 @@ external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_replicas(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(`ptr`: Long,`value`: RustBuffer.ByValue,uniffi_out_err: UniffiRustCallStatus,
+): Long
+external fun uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(`ptr`: Long,`value`: Int,uniffi_out_err: UniffiRustCallStatus,
 ): Long
 external fun uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder(`handle`: Long,uniffi_out_err: UniffiRustCallStatus,
 ): Long
@@ -999,6 +1007,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory() != 55615.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization() != 23834.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector() != 45280.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
@@ -1039,6 +1050,9 @@ private fun uniffiCheckApiChecksums(lib: IntegrityCheckingUniffiLib) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref() != 7198.toShort()) {
+        throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    }
+    if (lib.uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() != 44516.toShort()) {
         throw RuntimeException("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     }
     if (lib.uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build() != 17132.toShort()) {
@@ -1737,6 +1751,8 @@ public interface OsGymSandboxWarmPoolSpecBuilderInterface {
 
     fun `sandboxTemplateRef`(`value`: SandboxTemplateRef): OsGymSandboxWarmPoolSpecBuilder
 
+    fun `ttlSecondsAfterCreated`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder
+
     companion object
 }
 
@@ -1891,6 +1907,19 @@ open class OsGymSandboxWarmPoolSpecBuilder: Disposable, AutoCloseable, OsGymSand
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref(
         it,
         FfiConverterTypeSandboxTemplateRef.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `ttlSecondsAfterCreated`(`value`: kotlin.UInt): OsGymSandboxWarmPoolSpecBuilder {
+            return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
+        it,
+        FfiConverterUInt.lower(`value`),_status)
 }
     }
     )
@@ -2887,6 +2916,8 @@ public interface VmTemplateBuilderInterface {
 
     fun `memory`(`value`: kotlin.String): VmTemplateBuilder
 
+    fun `nestedVirtualization`(`value`: kotlin.Boolean): VmTemplateBuilder
+
     fun `nodeSelector`(`value`: Map<kotlin.String, kotlin.String>): VmTemplateBuilder
 
     fun `oidc`(`value`: OidcConfig): VmTemplateBuilder
@@ -3107,6 +3138,19 @@ open class VmTemplateBuilder: Disposable, AutoCloseable, VmTemplateBuilderInterf
     UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
         it,
         FfiConverterString.lower(`value`),_status)
+}
+    }
+    )
+    }
+
+
+    override fun `nestedVirtualization`(`value`: kotlin.Boolean): VmTemplateBuilder {
+            return FfiConverterTypeVmTemplateBuilder.lift(
+    callWithHandle {
+    uniffiRustCall() { _status ->
+    UniffiLib.uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(
+        it,
+        FfiConverterBoolean.lower(`value`),_status)
 }
     }
     )
@@ -3599,6 +3643,8 @@ data class ClaimSpec (
     var `bindDeadline`: kotlin.UInt?
     ,
     var `lifecycle`: ClaimLifecycle?
+    ,
+    var `ttlSecondsAfterCreated`: kotlin.UInt? = null
 
 ){
 
@@ -3619,6 +3665,7 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalTypeClaimLifecycle.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
@@ -3626,7 +3673,8 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterTypeSandboxTemplateRef.allocationSize(value.`sandboxTemplateRef`) +
             FfiConverterOptionalString.allocationSize(value.`warmpool`) +
             FfiConverterOptionalUInt.allocationSize(value.`bindDeadline`) +
-            FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.`lifecycle`)
+            FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.`lifecycle`) +
+            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`)
     )
 
     override fun write(value: ClaimSpec, buf: ByteBuffer) {
@@ -3634,6 +3682,7 @@ public object FfiConverterTypeClaimSpec: FfiConverterRustBuffer<ClaimSpec> {
             FfiConverterOptionalString.write(value.`warmpool`, buf)
             FfiConverterOptionalUInt.write(value.`bindDeadline`, buf)
             FfiConverterOptionalTypeClaimLifecycle.write(value.`lifecycle`, buf)
+            FfiConverterOptionalUInt.write(value.`ttlSecondsAfterCreated`, buf)
     }
 }
 
@@ -3929,6 +3978,8 @@ data class OsGymSandboxWarmPoolSpec (
     var `sandboxTemplateRef`: SandboxTemplateRef
     ,
     var `autoscaling`: WarmPoolAutoscaling?
+    ,
+    var `ttlSecondsAfterCreated`: kotlin.UInt? = null
 
 ){
 
@@ -3948,19 +3999,22 @@ public object FfiConverterTypeOSGymSandboxWarmPoolSpec: FfiConverterRustBuffer<O
             FfiConverterUInt.read(buf),
             FfiConverterTypeSandboxTemplateRef.read(buf),
             FfiConverterOptionalTypeWarmPoolAutoscaling.read(buf),
+            FfiConverterOptionalUInt.read(buf),
         )
     }
 
     override fun allocationSize(value: OsGymSandboxWarmPoolSpec) = (
             FfiConverterUInt.allocationSize(value.`replicas`) +
             FfiConverterTypeSandboxTemplateRef.allocationSize(value.`sandboxTemplateRef`) +
-            FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.`autoscaling`)
+            FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(value.`autoscaling`) +
+            FfiConverterOptionalUInt.allocationSize(value.`ttlSecondsAfterCreated`)
     )
 
     override fun write(value: OsGymSandboxWarmPoolSpec, buf: ByteBuffer) {
             FfiConverterUInt.write(value.`replicas`, buf)
             FfiConverterTypeSandboxTemplateRef.write(value.`sandboxTemplateRef`, buf)
             FfiConverterOptionalTypeWarmPoolAutoscaling.write(value.`autoscaling`, buf)
+            FfiConverterOptionalUInt.write(value.`ttlSecondsAfterCreated`, buf)
     }
 }
 
@@ -4161,6 +4215,8 @@ data class VmTemplate (
     ,
     var `firmware`: Firmware?
     ,
+    var `nestedVirtualization`: kotlin.Boolean?
+    ,
     var `probes`: PreservedJson?
     ,
     var `services`: List<SandboxService>?
@@ -4188,6 +4244,7 @@ data class VmTemplate (
         this.`cpuCores`,
         this.`memory`,
         this.`firmware`,
+        this.`nestedVirtualization`,
         this.`probes`,
         this.`services`,
         this.`oidc`
@@ -4214,6 +4271,7 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalUInt.read(buf),
             FfiConverterOptionalString.read(buf),
             FfiConverterOptionalTypeFirmware.read(buf),
+            FfiConverterOptionalBoolean.read(buf),
             FfiConverterOptionalTypePreservedJson.read(buf),
             FfiConverterOptionalSequenceTypeSandboxService.read(buf),
             FfiConverterOptionalTypeOidcConfig.read(buf),
@@ -4232,6 +4290,7 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalUInt.allocationSize(value.`cpuCores`) +
             FfiConverterOptionalString.allocationSize(value.`memory`) +
             FfiConverterOptionalTypeFirmware.allocationSize(value.`firmware`) +
+            FfiConverterOptionalBoolean.allocationSize(value.`nestedVirtualization`) +
             FfiConverterOptionalTypePreservedJson.allocationSize(value.`probes`) +
             FfiConverterOptionalSequenceTypeSandboxService.allocationSize(value.`services`) +
             FfiConverterOptionalTypeOidcConfig.allocationSize(value.`oidc`)
@@ -4249,6 +4308,7 @@ public object FfiConverterTypeVmTemplate: FfiConverterRustBuffer<VmTemplate> {
             FfiConverterOptionalUInt.write(value.`cpuCores`, buf)
             FfiConverterOptionalString.write(value.`memory`, buf)
             FfiConverterOptionalTypeFirmware.write(value.`firmware`, buf)
+            FfiConverterOptionalBoolean.write(value.`nestedVirtualization`, buf)
             FfiConverterOptionalTypePreservedJson.write(value.`probes`, buf)
             FfiConverterOptionalSequenceTypeSandboxService.write(value.`services`, buf)
             FfiConverterOptionalTypeOidcConfig.write(value.`oidc`, buf)

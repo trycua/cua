@@ -50,6 +50,7 @@ pub struct SessionManifest {
     writable_roots: Vec<PathGrant>,
     terminable_pids: HashSet<i64>,
     configuration_changes: Vec<(String, serde_json::Value)>,
+    computer_history_operations: HashSet<String>,
     last_authorized_dispatch: Arc<Mutex<Instant>>,
     idle_expired: Arc<AtomicBool>,
 }
@@ -180,6 +181,23 @@ impl SessionManifest {
             ))
         };
         match adapter_id {
+            "computer_history" => {
+                if kind != "computer_history" {
+                    return refused();
+                }
+                let operation = resource
+                    .get("operation")
+                    .and_then(serde_json::Value::as_str)
+                    .ok_or_else(|| "computer history did not attest an operation".to_owned())?;
+                self.computer_history_operations
+                    .contains(operation)
+                    .then_some(())
+                    .ok_or_else(|| {
+                        format!(
+                            "computer history operation '{operation}' is outside the capability manifest"
+                        )
+                    })
+            }
             "private_observation" => match kind {
                 "window" => self.authorize_desktop_window(resource),
                 "application" => self.authorize_desktop_application(resource),
@@ -537,6 +555,8 @@ struct RawResources {
     processes: RawProcessResources,
     #[serde(default)]
     driver_configuration: RawDriverConfigurationResources,
+    #[serde(default)]
+    computer_history: RawComputerHistoryResources,
 }
 
 #[cfg(feature = "yaml")]
@@ -638,6 +658,14 @@ struct RawProcessResources {
 struct RawDriverConfigurationResources {
     #[serde(default)]
     changes: Vec<RawConfigurationChange>,
+}
+
+#[cfg(feature = "yaml")]
+#[derive(Debug, Default, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RawComputerHistoryResources {
+    #[serde(default)]
+    operations: Vec<String>,
 }
 
 #[cfg(feature = "yaml")]
@@ -745,6 +773,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             files,
             processes,
             driver_configuration,
+            computer_history,
         } = resources;
         let RawBrowserResources {
             existing_profiles: raw_existing_profiles,
@@ -766,6 +795,9 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
         let RawDriverConfigurationResources {
             changes: raw_configuration_changes,
         } = driver_configuration;
+        let RawComputerHistoryResources {
+            operations: raw_computer_history_operations,
+        } = computer_history;
 
         if !matches!(version, 1..=3) {
             return Err(format!(
@@ -924,6 +956,23 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             }
             configuration_changes.push((key.to_owned(), change.value));
         }
+        if version < 3 && !raw_computer_history_operations.is_empty() {
+            return Err(
+                "computer_history resources require capability manifest version 3".to_owned(),
+            );
+        }
+        let mut computer_history_operations = HashSet::new();
+        for operation in raw_computer_history_operations {
+            let operation = operation.trim();
+            if !matches!(operation, "status" | "query") {
+                return Err(format!(
+                    "unsupported computer_history operation '{operation}'; expected status or query"
+                ));
+            }
+            if !computer_history_operations.insert(operation.to_owned()) {
+                return Err(format!("computer_history operations repeats '{operation}'"));
+            }
+        }
         if !browser_origins.is_empty() {
             const ORIGIN_BYPASS_TOOLS: &[&str] = &[
                 "page",
@@ -984,6 +1033,7 @@ pub fn load_manifest(path: &Path) -> Result<SessionManifest, String> {
             writable_roots,
             terminable_pids,
             configuration_changes,
+            computer_history_operations,
             last_authorized_dispatch: Arc::new(Mutex::new(Instant::now())),
             idle_expired: Arc::new(AtomicBool::new(false)),
         })
@@ -1809,6 +1859,41 @@ allow:
                     "kind": "driver_configuration",
                     "exact_changes": {"max_image_dimension": 800}
                 }),
+            )
+            .is_err());
+    }
+
+    #[cfg(feature = "yaml")]
+    #[test]
+    fn computer_history_resources_are_operation_scoped() {
+        let loaded = manifest(
+            r#"
+version: 3
+resources:
+  computer_history:
+    operations: [status]
+allow:
+  tools: [history_status, history_query]
+"#,
+        )
+        .unwrap();
+
+        loaded
+            .authorize_protected_resource(
+                "computer_history",
+                &serde_json::json!({"kind": "computer_history", "operation": "status"}),
+            )
+            .unwrap();
+        assert!(loaded
+            .authorize_protected_resource(
+                "computer_history",
+                &serde_json::json!({"kind": "computer_history", "operation": "query"}),
+            )
+            .is_err());
+        assert!(loaded
+            .authorize_protected_resource(
+                "computer_history",
+                &serde_json::json!({"kind": "display", "operation": "status"}),
             )
             .is_err());
     }

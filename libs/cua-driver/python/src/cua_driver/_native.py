@@ -2993,7 +2993,7 @@ class _UniffiFfiConverterOptionalTypeEmbeddedPermissionMode(_UniffiConverterRust
 
 @dataclass
 class EmbeddedDriverHostOptions:
-    def __init__(self, *, binary_path:str, host_bundle_id:str, socket_path:typing.Optional[str], startup_timeout_ms:typing.Optional[int], shutdown_timeout_ms:typing.Optional[int], permission_mode:typing.Optional[EmbeddedPermissionMode], capability_manifest_path:typing.Optional[str] = _DEFAULT, approve_capability_manifest:bool = False, session_policy_path:typing.Optional[str], approve_session_policy:bool, dangerously_bypass_approvals:bool, environment:typing.List[EmbeddedEnvironmentVariable], inherit_stderr:bool):
+    def __init__(self, *, binary_path:str, host_bundle_id:str, socket_path:typing.Optional[str], startup_timeout_ms:typing.Optional[int], shutdown_timeout_ms:typing.Optional[int], permission_mode:typing.Optional[EmbeddedPermissionMode], capability_manifest_path:typing.Optional[str] = _DEFAULT, approve_capability_manifest:bool = False, session_policy_path:typing.Optional[str], approve_session_policy:bool, dangerously_bypass_approvals:bool, environment:typing.List[EmbeddedEnvironmentVariable], inherit_stderr:bool, no_overlay:bool = False):
         self.binary_path = binary_path
         self.host_bundle_id = host_bundle_id
         self.socket_path = socket_path
@@ -3010,12 +3010,13 @@ class EmbeddedDriverHostOptions:
         self.dangerously_bypass_approvals = dangerously_bypass_approvals
         self.environment = environment
         self.inherit_stderr = inherit_stderr
+        self.no_overlay = no_overlay
 
 
 
 
     def __str__(self):
-        return "EmbeddedDriverHostOptions(binary_path={}, host_bundle_id={}, socket_path={}, startup_timeout_ms={}, shutdown_timeout_ms={}, permission_mode={}, capability_manifest_path={}, approve_capability_manifest={}, session_policy_path={}, approve_session_policy={}, dangerously_bypass_approvals={}, environment={}, inherit_stderr={})".format(self.binary_path, self.host_bundle_id, self.socket_path, self.startup_timeout_ms, self.shutdown_timeout_ms, self.permission_mode, self.capability_manifest_path, self.approve_capability_manifest, self.session_policy_path, self.approve_session_policy, self.dangerously_bypass_approvals, self.environment, self.inherit_stderr)
+        return "EmbeddedDriverHostOptions(binary_path={}, host_bundle_id={}, socket_path={}, startup_timeout_ms={}, shutdown_timeout_ms={}, permission_mode={}, capability_manifest_path={}, approve_capability_manifest={}, session_policy_path={}, approve_session_policy={}, dangerously_bypass_approvals={}, environment={}, inherit_stderr={}, no_overlay={})".format(self.binary_path, self.host_bundle_id, self.socket_path, self.startup_timeout_ms, self.shutdown_timeout_ms, self.permission_mode, self.capability_manifest_path, self.approve_capability_manifest, self.session_policy_path, self.approve_session_policy, self.dangerously_bypass_approvals, self.environment, self.inherit_stderr, self.no_overlay)
     def __eq__(self, other):
         if self.binary_path != other.binary_path:
             return False
@@ -3043,6 +3044,8 @@ class EmbeddedDriverHostOptions:
             return False
         if self.inherit_stderr != other.inherit_stderr:
             return False
+        if self.no_overlay != other.no_overlay:
+            return False
         return True
 
 class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffer):
@@ -3062,6 +3065,7 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffe
             dangerously_bypass_approvals=_UniffiFfiConverterBoolean.read(buf),
             environment=_UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.read(buf),
             inherit_stderr=_UniffiFfiConverterBoolean.read(buf),
+            no_overlay=_UniffiFfiConverterBoolean.read(buf),
         )
 
     @staticmethod
@@ -3079,6 +3083,7 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffe
         _UniffiFfiConverterBoolean.check_lower(value.dangerously_bypass_approvals)
         _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.check_lower(value.environment)
         _UniffiFfiConverterBoolean.check_lower(value.inherit_stderr)
+        _UniffiFfiConverterBoolean.check_lower(value.no_overlay)
 
     @staticmethod
     def write(value, buf):
@@ -3095,6 +3100,7 @@ class _UniffiFfiConverterTypeEmbeddedDriverHostOptions(_UniffiConverterRustBuffe
         _UniffiFfiConverterBoolean.write(value.dangerously_bypass_approvals, buf)
         _UniffiFfiConverterSequenceTypeEmbeddedEnvironmentVariable.write(value.environment, buf)
         _UniffiFfiConverterBoolean.write(value.inherit_stderr, buf)
+        _UniffiFfiConverterBoolean.write(value.no_overlay, buf)
 
 @dataclass
 class ImageContent:

@@ -110,6 +110,11 @@ pub struct SessionStateOutput {
     pub session: String,
     pub capture_scope: CaptureScope,
     pub effective_scope: EffectiveScope,
+    /// Whether this session is authorized to use desktop-scope capture and
+    /// actions. This does not report the operating system's lock-screen state.
+    pub desktop_capture_authorized: bool,
+    /// Compatibility field: this reports whether this session has unlocked
+    /// desktop capture scope. It is not an operating-system lock-screen probe.
     pub desktop_unlocked: bool,
     #[schemars(required, schema_with = "nullable_escalation_reason_schema")]
     pub escalation_reason: Option<EscalationReason>,

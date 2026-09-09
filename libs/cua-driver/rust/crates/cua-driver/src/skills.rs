@@ -49,9 +49,10 @@
 //! - Antigravity: `~/.gemini/skills/` — shared between Antigravity CLI
 //!   (`agy`) and Antigravity IDE; same dir Google Gemini CLI used before the
 //!   May-2026 transition, so existing installs migrate forward unchanged.
-//! - Hermes: `~/.hermes/skills/` — NousResearch/hermes-agent. The user-level
-//!   skill space Hermes resolves at agent load time (separate from the
-//!   repo-bundled `hermes-agent/skills/` tree, which is read-only and
+//! - Hermes: `$HERMES_HOME/skills/` when set, otherwise `~/.hermes/skills/` on
+//!   macOS/Linux or `%LOCALAPPDATA%\hermes\skills\` on Windows. This is the
+//!   user-level skill space Hermes resolves at agent load time (separate from
+//!   the repo-bundled `hermes-agent/skills/` tree, which is read-only and
 //!   version-controlled). Hermes' own `computer-use` skill teaches its wrapper
 //!   vocabulary; the cua-driver pack provides the platform deep dives.
 //!
@@ -181,6 +182,10 @@ struct Agent {
 enum AgentParent {
     /// `<HOME or USERPROFILE>/<segment>`.
     Home(&'static str),
+    /// Hermes' effective user skill directory. Unlike the other agents,
+    /// Hermes supports an explicit `HERMES_HOME` and uses a native-Windows
+    /// default outside `USERPROFILE`.
+    Hermes,
     /// `<APPDATA>/<segment>` (Windows roaming app config).
     ///
     /// `#[allow(dead_code)]`: constructed only inside `#[cfg(windows)]`
@@ -227,19 +232,72 @@ const AGENTS: &[Agent] = &[
         label: "Antigravity",
         parent: AgentParent::Home(".gemini/skills"),
     },
-    // Hermes (NousResearch/hermes-agent) resolves user skills from
-    // `~/.hermes/skills/` at agent load time — the same directory its
-    // `/skills install …` slash command and `hermes skills install`
-    // CLI write to. Hermes' bundled `skills/computer-use/SKILL.md`
-    // teaches the Hermes `computer_use` action vocabulary; the
-    // cua-driver pack symlinked here adds the platform-specific deep
-    // dives (MACOS.md / WINDOWS.md / LINUX.md / RECORDING.md /
-    // BROWSER.md) that Hermes deliberately doesn't clone.
+    // Hermes (NousResearch/hermes-agent) resolves user skills from its
+    // effective home at agent load time. `HERMES_HOME` can select a custom
+    // home or profile; otherwise Hermes uses `~/.hermes` on macOS/Linux and
+    // `%LOCALAPPDATA%\hermes` on native Windows. Hermes' bundled
+    // `skills/computer-use/SKILL.md` teaches the wrapper vocabulary; this
+    // pack adds the platform-specific deep dives.
     Agent {
         label: "Hermes",
-        parent: AgentParent::Home(".hermes/skills"),
+        parent: AgentParent::Hermes,
     },
 ];
+
+fn hermes_skills_dir_from_env() -> Result<PathBuf> {
+    resolve_hermes_skills_dir(
+        std::env::var("HERMES_HOME").ok().as_deref(),
+        default_hermes_home,
+    )
+}
+
+fn resolve_hermes_skills_dir(
+    override_home: Option<&str>,
+    default_home: impl FnOnce() -> Result<PathBuf>,
+) -> Result<PathBuf> {
+    let home = match override_home.map(str::trim).filter(|path| !path.is_empty()) {
+        Some(path) => PathBuf::from(path),
+        None => default_home()?,
+    };
+    Ok(home.join("skills"))
+}
+
+#[cfg(not(windows))]
+fn default_hermes_home() -> Result<PathBuf> {
+    unix_hermes_home(std::env::var("HOME").ok().as_deref())
+}
+
+#[cfg(any(not(windows), test))]
+fn unix_hermes_home(home: Option<&str>) -> Result<PathBuf> {
+    let home = home
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| anyhow!("HOME not set"))?;
+    Ok(PathBuf::from(home).join(".hermes"))
+}
+
+#[cfg(windows)]
+fn default_hermes_home() -> Result<PathBuf> {
+    windows_hermes_home(
+        std::env::var("LOCALAPPDATA").ok().as_deref(),
+        std::env::var("USERPROFILE").ok().as_deref(),
+    )
+}
+
+#[cfg(any(windows, test))]
+fn windows_hermes_home(local_appdata: Option<&str>, userprofile: Option<&str>) -> Result<PathBuf> {
+    if let Some(path) = local_appdata.map(str::trim).filter(|path| !path.is_empty()) {
+        return Ok(PathBuf::from(path).join("hermes"));
+    }
+    let profile = userprofile
+        .map(str::trim)
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| anyhow!("LOCALAPPDATA and USERPROFILE not set"))?;
+    Ok(PathBuf::from(profile)
+        .join("AppData")
+        .join("Local")
+        .join("hermes"))
+}
 
 impl Agent {
     fn parent_path(&self) -> Result<PathBuf> {
@@ -252,6 +310,7 @@ impl Agent {
                 let base = std::env::var("HOME").map_err(|_| anyhow!("HOME not set"))?;
                 Ok(PathBuf::from(base).join(seg.replace('/', std::path::MAIN_SEPARATOR_STR)))
             }
+            AgentParent::Hermes => hermes_skills_dir_from_env(),
             AgentParent::AppData(seg) => {
                 #[cfg(windows)]
                 let base = std::env::var("APPDATA").map_err(|_| anyhow!("APPDATA not set"))?;
@@ -808,7 +867,10 @@ fn print_path() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{extract_tar_gz, skill_release_url, AgentParent, AGENTS, SKILL_FILES};
+    use super::{
+        extract_tar_gz, resolve_hermes_skills_dir, skill_release_url, unix_hermes_home,
+        windows_hermes_home, AgentParent, AGENTS, SKILL_FILES,
+    };
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -823,6 +885,76 @@ mod tests {
             target.parent,
             AgentParent::Home(".prime/agent/skills")
         ));
+    }
+
+    #[test]
+    fn hermes_target_prefers_hermes_home() {
+        let path = resolve_hermes_skills_dir(Some("/profiles/work"), || {
+            panic!("the fallback must not be read")
+        })
+        .unwrap();
+        assert_eq!(path, PathBuf::from("/profiles/work/skills"));
+    }
+
+    #[test]
+    fn hermes_target_ignores_empty_or_whitespace_override() {
+        for override_home in [None, Some(""), Some("  \t  ")] {
+            let path =
+                resolve_hermes_skills_dir(override_home, || Ok(PathBuf::from("/fallback/hermes")))
+                    .unwrap();
+            assert_eq!(path, PathBuf::from("/fallback/hermes/skills"));
+        }
+    }
+
+    #[test]
+    fn hermes_target_uses_unix_default_home() {
+        assert_eq!(
+            unix_hermes_home(Some("/home/test")).unwrap(),
+            PathBuf::from("/home/test/.hermes")
+        );
+    }
+
+    #[test]
+    fn hermes_target_uses_native_windows_local_appdata() {
+        let home = windows_hermes_home(Some("C:/Users/test/AppData/Local"), None).unwrap();
+        assert_eq!(home, PathBuf::from("C:/Users/test/AppData/Local/hermes"));
+    }
+
+    #[test]
+    fn hermes_target_uses_windows_userprofile_fallback() {
+        let expected = PathBuf::from("C:/Users/test")
+            .join("AppData")
+            .join("Local")
+            .join("hermes");
+        for local_appdata in [None, Some(""), Some("  \t  ")] {
+            assert_eq!(
+                windows_hermes_home(local_appdata, Some("C:/Users/test")).unwrap(),
+                expected
+            );
+        }
+    }
+
+    #[test]
+    fn hermes_defaults_report_missing_required_environment() {
+        for home in [None, Some(""), Some("  \t  ")] {
+            assert_eq!(
+                unix_hermes_home(home).unwrap_err().to_string(),
+                "HOME not set"
+            );
+        }
+        for (local_appdata, userprofile) in [
+            (None, None),
+            (Some(""), None),
+            (None, Some("  \t  ")),
+            (Some("  "), Some("")),
+        ] {
+            assert_eq!(
+                windows_hermes_home(local_appdata, userprofile)
+                    .unwrap_err()
+                    .to_string(),
+                "LOCALAPPDATA and USERPROFILE not set"
+            );
+        }
     }
 
     #[test]
@@ -957,6 +1089,70 @@ mod tests {
         }
     }
 
+    const HISTORY_CONSULTATION_POLICY: &[&str] = &[
+        "continue, resume, or recall prior Cua work",
+        "call `history_status` first",
+        "one bounded initial",
+        "before broad application or window discovery",
+        "metadata only as a lead",
+        "verify current state",
+        "Content, geometry, arguments, results, and user intent",
+        "remain unknown",
+        "session or sequence boundary",
+        "never broaden a query to reconstruct excluded fields",
+        "either tool is absent",
+        "access is denied",
+        "query is empty",
+        "history is unhealthy",
+        "unrelated tasks merely because the tools are advertised",
+        "never mutate history",
+        "lifecycle or settings",
+    ];
+
+    fn assert_history_consultation_policy(skill: &str, source: &str) {
+        let normalized = skill.split_whitespace().collect::<Vec<_>>().join(" ");
+        for required in HISTORY_CONSULTATION_POLICY {
+            assert!(
+                normalized.contains(required),
+                "{source} lost required history consultation guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_skill_keeps_conditional_history_consultation_policy() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+
+        assert!(
+            skill.lines().any(|line| {
+                line.starts_with("description:")
+                    && line.contains("continue, resume, or recall recent Cua activity")
+            }),
+            "skill frontmatter must trigger for recent Cua activity continuation"
+        );
+        assert_history_consultation_policy(&skill, "canonical skill");
+    }
+
+    #[test]
+    fn extracted_skill_pack_keeps_history_consultation_policy() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let canonical = std::fs::read(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let bytes = build_tarball(&[(
+            "cua-driver-rs-v0.19.3-skills/SKILL.md",
+            canonical.as_slice(),
+        )]);
+        let dest = tempdir().unwrap();
+
+        extract_tar_gz(&bytes, dest.path(), false).unwrap();
+
+        let packaged = std::fs::read_to_string(dest.path().join("SKILL.md"))
+            .expect("extracted skill must be readable");
+        assert_history_consultation_policy(&packaged, "extracted skill pack");
+    }
+
     #[test]
     fn bundled_skill_keeps_sessions_and_authorization_as_separate_concepts() {
         let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
@@ -1003,6 +1199,38 @@ mod tests {
             assert!(
                 browser.contains(required),
                 "browser skill lost required session guidance: {required}"
+            );
+        }
+    }
+
+    #[test]
+    fn bundled_skill_keeps_agent_control_non_interfering_by_default() {
+        let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        let skill = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/SKILL.md"))
+            .expect("canonical skill must be readable");
+        let linux = std::fs::read_to_string(crate_dir.join("../../Skills/cua-driver/LINUX.md"))
+            .expect("canonical Linux skill must be readable");
+
+        for required in [
+            "`delivery_mode:\"foreground\"` is a user-visible takeover boundary",
+            "ordinary `move_cursor({x,y})` moves only this synthetic cursor",
+            "must not be used unless the user asked for",
+            "do not retry automatically",
+            "stop with the driver's refusal instead of silently escalating",
+        ] {
+            assert!(
+                skill.contains(required),
+                "skill lost required agent-control safety guidance: {required}"
+            );
+        }
+        for required in [
+            "keyboard actions re-show it automatically",
+            "Never select it automatically",
+            "explicitly authorized `delivery_mode:\"foreground\"`",
+        ] {
+            assert!(
+                linux.contains(required),
+                "Linux skill lost required non-interference guidance: {required}"
             );
         }
     }

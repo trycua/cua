@@ -56,12 +56,24 @@ func TestListUserKeysSerializesEmptyScopeAsArray(t *testing.T) {
 
 func TestCreateUserKeyReturnsConfiguredPublicTokenURL(t *testing.T) {
 	var keycloakServer *httptest.Server
+	createdClaims := map[string]string{}
 	keycloakServer = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/realms/cyclops-cs/protocol/openid-connect/token":
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"access_token":"admin-token","token_type":"Bearer","expires_in":300}`))
 		case "/admin/realms/cyclops-cs/clients":
+			var request struct {
+				ProtocolMappers []struct {
+					Config map[string]string `json:"config"`
+				} `json:"protocolMappers"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode Keycloak client: %v", err)
+			}
+			for _, mapper := range request.ProtocolMappers {
+				createdClaims[mapper.Config["claim.name"]] = mapper.Config["claim.value"]
+			}
 			w.Header().Set("Location", keycloakServer.URL+"/admin/realms/cyclops-cs/clients/user-key-client")
 			w.WriteHeader(http.StatusCreated)
 		case "/admin/realms/cyclops-cs/clients/user-key-client/client-secret":
@@ -79,7 +91,7 @@ func TestCreateUserKeyReturnsConfiguredPublicTokenURL(t *testing.T) {
 		KC:    config.KeycloakConfiguration{TokenURL: publicTokenURL},
 	}
 	r := httptest.NewRequest(http.MethodPost, "/api/user-keys", bytes.NewBufferString(`{"name":"ci-key"}`))
-	r = withUser(r, &auth.User{ID: "user-123"})
+	r = withUser(r, &auth.User{ID: "user-123", Email: "person@example.test", EmailVerified: true})
 	w := httptest.NewRecorder()
 
 	h.CreateUserKey(w, r)
@@ -93,5 +105,8 @@ func TestCreateUserKeyReturnsConfiguredPublicTokenURL(t *testing.T) {
 	}
 	if got := response.TokenURL; got != publicTokenURL {
 		t.Fatalf("token_url = %q, want %q", got, publicTokenURL)
+	}
+	if createdClaims["user_email"] != "person@example.test" || createdClaims["user_email_verified"] != "true" {
+		t.Fatalf("verified owner claims = %#v", createdClaims)
 	}
 }

@@ -2,10 +2,6 @@ package githubtrust
 
 // Postgres-backed persistence for GitHub Actions OIDC trust policies.
 //
-// Schema is derived from the Policy struct via GORM AutoMigrate — no manual
-// DDL. Queries use pgx directly (the GORM postgres driver also uses pgx
-// under the hood, so there is no driver conflict).
-//
 // Listing is indexed by owner_sub (List); ResolveByRepository (the per-request
 // auth hot path) is indexed by repository. Every read takes the owner so the
 // storage layer enforces the same tenant isolation the HTTP layer does —
@@ -21,8 +17,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"gorm.io/driver/postgres"
-	"gorm.io/gorm"
 )
 
 // ErrNotFound is returned by Update when the policy no longer exists for the
@@ -42,9 +36,8 @@ type Store interface {
 
 type pgStore struct{ pool *pgxpool.Pool }
 
-// New opens a connection pool against url (a Postgres DSN or URL) and ensures
-// the schema exists by running GORM AutoMigrate against the Policy struct. An
-// empty url disables the feature (returns nil, nil) so the handlers reply
+// New opens and verifies a connection pool against url (a Postgres DSN or URL).
+// An empty url disables the feature (returns nil, nil) so the handlers reply
 // 503, mirroring the previous Redis behaviour. A startup connectivity blip is
 // non-fatal to the process: initialization returns an error so the caller can
 // leave the routes disabled rather than exposing a store without its table.
@@ -57,8 +50,6 @@ func New(ctx context.Context, url string) (Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("connect postgres: %w", err)
 	}
-	s := &pgStore{pool: pool}
-
 	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
@@ -67,27 +58,7 @@ func New(ctx context.Context, url string) (Store, error) {
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	// AutoMigrate derives the table schema from the Policy struct — no manual
-	// DDL. GORM creates the table, columns, and indexes based on struct tags.
-	// We open a throwaway gorm.DB from the same URL for migration only; pgx
-	// is used for all queries.
-	gormDB, err := gorm.Open(postgres.Open(url), &gorm.Config{})
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("open postgres migrator: %w", err)
-	}
-	gormSQLDB, err := gormDB.DB()
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("get postgres migrator connection: %w", err)
-	}
-	defer gormSQLDB.Close()
-	if err := gormDB.WithContext(initCtx).AutoMigrate(&Policy{}); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("auto-migrate github trust policies: %w", err)
-	}
-
-	return s, nil
+	return &pgStore{pool: pool}, nil
 }
 
 func (s *pgStore) List(ctx context.Context, ownerSub string) ([]*Policy, error) {

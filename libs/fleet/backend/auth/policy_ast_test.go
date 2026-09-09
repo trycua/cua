@@ -258,3 +258,54 @@ func TestMultiSourceKeyIsInjective(t *testing.T) {
 		t.Fatalf("multi keys collide across different groupings: %q", left)
 	}
 }
+
+func TestBecauseRejectsInvalidAnnotations(t *testing.T) {
+	deny := Policy(Inline("deny.rego", `package deny
+default allow = false
+`), Query("data.deny.allow"))
+
+	for _, testCase := range []struct {
+		name   string
+		child  Node
+		reason string
+	}{
+		{name: "nil child", reason: "denied"},
+		{name: "empty reason", child: deny},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			defer func() {
+				if recover() == nil {
+					t.Fatal("Because did not panic")
+				}
+			}()
+			Because(testCase.child, testCase.reason)
+		})
+	}
+}
+
+func TestCompileRejectsMalformedBecauseNode(t *testing.T) {
+	deny := Policy(Inline("deny.rego", `package deny
+default allow = false
+`), Query("data.deny.allow"))
+
+	for _, node := range []Node{
+		BecauseNode{Reason: "denied"},
+		BecauseNode{Child: deny},
+	} {
+		if _, err := Compile(node); err == nil {
+			t.Fatalf("Compile(%#v) succeeded", node)
+		}
+	}
+}
+
+func TestExplainRendersBecauseNode(t *testing.T) {
+	node := Because(
+		Policy(Registered("policy"), Query("data.policy.allow")),
+		"payment method required",
+	)
+	want := "Because reason=\"payment method required\"\n" +
+		"  Leaf query=data.policy.allow source=registered:policy\n"
+	if got := Explain(node); got != want {
+		t.Fatalf("Explain output:\n%s\nwant:\n%s", got, want)
+	}
+}

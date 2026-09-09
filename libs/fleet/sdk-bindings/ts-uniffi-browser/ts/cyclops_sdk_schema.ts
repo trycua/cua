@@ -174,13 +174,16 @@ export type ClaimSpec = {
   warmpool?: string;
   bindDeadline?: number;
   lifecycle?: ClaimLifecycle;
+  ttlSecondsAfterCreated?: number;
 };
 
 /**
  * Generated factory for {@link ClaimSpec} record objects.
  */
 export const ClaimSpec = (() => {
-  const defaults = () => ({});
+  const defaults = () => ({
+    ttlSecondsAfterCreated: undefined,
+  });
   const create = (() => {
     return uniffiCreateRecord<ClaimSpec, ReturnType<typeof defaults>>(defaults);
   })();
@@ -200,6 +203,7 @@ const FfiConverterTypeClaimSpec = (() => {
         warmpool: FfiConverterOptionalString.read(from),
         bindDeadline: FfiConverterOptionalUInt32.read(from),
         lifecycle: FfiConverterOptionalTypeClaimLifecycle.read(from),
+        ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
@@ -207,6 +211,7 @@ const FfiConverterTypeClaimSpec = (() => {
       FfiConverterOptionalString.write(value.warmpool, into);
       FfiConverterOptionalUInt32.write(value.bindDeadline, into);
       FfiConverterOptionalTypeClaimLifecycle.write(value.lifecycle, into);
+      FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
     }
     allocationSize(value: TypeName): number {
       return (
@@ -215,7 +220,8 @@ const FfiConverterTypeClaimSpec = (() => {
         ) +
         FfiConverterOptionalString.allocationSize(value.warmpool) +
         FfiConverterOptionalUInt32.allocationSize(value.bindDeadline) +
-        FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle)
+        FfiConverterOptionalTypeClaimLifecycle.allocationSize(value.lifecycle) +
+        FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated)
       );
     }
   }
@@ -807,6 +813,7 @@ export type VmTemplate = {
   cpuCores?: number;
   memory?: string;
   firmware?: Firmware;
+  nestedVirtualization?: boolean;
   probes?: PreservedJsonLike;
   services?: Array<SandboxService>;
   oidc?: OidcConfig;
@@ -845,6 +852,7 @@ const FfiConverterTypeVmTemplate = (() => {
         cpuCores: FfiConverterOptionalUInt32.read(from),
         memory: FfiConverterOptionalString.read(from),
         firmware: FfiConverterOptionalTypeFirmware.read(from),
+        nestedVirtualization: FfiConverterOptionalBoolean.read(from),
         probes: FfiConverterOptionalTypePreservedJson.read(from),
         services: FfiConverterOptionalSequenceTypeSandboxService.read(from),
         oidc: FfiConverterOptionalTypeOidcConfig.read(from),
@@ -868,6 +876,7 @@ const FfiConverterTypeVmTemplate = (() => {
       FfiConverterOptionalUInt32.write(value.cpuCores, into);
       FfiConverterOptionalString.write(value.memory, into);
       FfiConverterOptionalTypeFirmware.write(value.firmware, into);
+      FfiConverterOptionalBoolean.write(value.nestedVirtualization, into);
       FfiConverterOptionalTypePreservedJson.write(value.probes, into);
       FfiConverterOptionalSequenceTypeSandboxService.write(
         value.services,
@@ -892,6 +901,7 @@ const FfiConverterTypeVmTemplate = (() => {
         FfiConverterOptionalUInt32.allocationSize(value.cpuCores) +
         FfiConverterOptionalString.allocationSize(value.memory) +
         FfiConverterOptionalTypeFirmware.allocationSize(value.firmware) +
+        FfiConverterOptionalBoolean.allocationSize(value.nestedVirtualization) +
         FfiConverterOptionalTypePreservedJson.allocationSize(value.probes) +
         FfiConverterOptionalSequenceTypeSandboxService.allocationSize(
           value.services,
@@ -1105,13 +1115,16 @@ export type OsGymSandboxWarmPoolSpec = {
   replicas: number;
   sandboxTemplateRef: SandboxTemplateRef;
   autoscaling?: WarmPoolAutoscaling;
+  ttlSecondsAfterCreated?: number;
 };
 
 /**
  * Generated factory for {@link OsGymSandboxWarmPoolSpec} record objects.
  */
 export const OsGymSandboxWarmPoolSpec = (() => {
-  const defaults = () => ({});
+  const defaults = () => ({
+    ttlSecondsAfterCreated: undefined,
+  });
   const create = (() => {
     return uniffiCreateRecord<
       OsGymSandboxWarmPoolSpec,
@@ -1134,6 +1147,7 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
         replicas: FfiConverterUInt32.read(from),
         sandboxTemplateRef: FfiConverterTypeSandboxTemplateRef.read(from),
         autoscaling: FfiConverterOptionalTypeWarmPoolAutoscaling.read(from),
+        ttlSecondsAfterCreated: FfiConverterOptionalUInt32.read(from),
       };
     }
     write(value: TypeName, into: RustBuffer): void {
@@ -1143,6 +1157,7 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
         value.autoscaling,
         into,
       );
+      FfiConverterOptionalUInt32.write(value.ttlSecondsAfterCreated, into);
     }
     allocationSize(value: TypeName): number {
       return (
@@ -1152,7 +1167,8 @@ const FfiConverterTypeOSGymSandboxWarmPoolSpec = (() => {
         ) +
         FfiConverterOptionalTypeWarmPoolAutoscaling.allocationSize(
           value.autoscaling,
-        )
+        ) +
+        FfiConverterOptionalUInt32.allocationSize(value.ttlSecondsAfterCreated)
       );
     }
   }
@@ -1595,6 +1611,7 @@ export interface OsGymSandboxWarmPoolSpecBuilderLike {
   sandboxTemplateRef(
     value: SandboxTemplateRef,
   ): OsGymSandboxWarmPoolSpecBuilderLike;
+  ttlSecondsAfterCreated(value: number): OsGymSandboxWarmPoolSpecBuilderLike;
 }
 /**
  * @deprecated Use `OsGymSandboxWarmPoolSpecBuilderLike` instead.
@@ -1700,6 +1717,23 @@ export class OsGymSandboxWarmPoolSpecBuilder
               value,
               nativeModule().rustbuffer_alloc,
             ),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  ttlSecondsAfterCreated(value: number): OsGymSandboxWarmPoolSpecBuilderLike {
+    return FfiConverterTypeOSGymSandboxWarmPoolSpecBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created(
+            uniffiTypeOsGymSandboxWarmPoolSpecBuilderObjectFactory.clonePointer(
+              this,
+            ),
+            FfiConverterUInt32.lower(value, nativeModule().rustbuffer_alloc),
             callStatus,
           );
         },
@@ -2184,6 +2218,7 @@ export interface VmTemplateBuilderLike {
   imagePullPolicy(value: ImagePullPolicy): VmTemplateBuilderLike;
   imagePullSecret(value: string): VmTemplateBuilderLike;
   memory(value: string): VmTemplateBuilderLike;
+  nestedVirtualization(value: boolean): VmTemplateBuilderLike;
   nodeSelector(value: Map<string, string>): VmTemplateBuilderLike;
   oidc(value: OidcConfig): VmTemplateBuilderLike;
   probes(value: PreservedJsonLike): VmTemplateBuilderLike;
@@ -2348,6 +2383,21 @@ export class VmTemplateBuilder
           return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory(
             uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
             FfiConverterString.lower(value, nativeModule().rustbuffer_alloc),
+            callStatus,
+          );
+        },
+        /*liftString:*/ FfiConverterString.lift.bind(FfiConverterString),
+      ),
+    );
+  }
+
+  nestedVirtualization(value: boolean): VmTemplateBuilderLike {
+    return FfiConverterTypeVmTemplateBuilder.lift(
+      uniffiCaller.rustCall(
+        /*caller:*/ (callStatus) => {
+          return nativeModule().ubrn_uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization(
+            uniffiTypeVmTemplateBuilderObjectFactory.clonePointer(this),
+            FfiConverterBool.lower(value, nativeModule().rustbuffer_alloc),
             callStatus,
           );
         },
@@ -2967,6 +3017,14 @@ function uniffiEnsureInitialized() {
     );
   }
   if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created() !==
+    44516
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created",
+    );
+  }
+  if (
     nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_constructor_preservedjson_from_json() !==
     24064
   ) {
@@ -3116,6 +3174,14 @@ function uniffiEnsureInitialized() {
   ) {
     throw new UniffiInternalError.ApiChecksumMismatch(
       "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory",
+    );
+  }
+  if (
+    nativeModule().ubrn_uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization() !==
+    23834
+  ) {
+    throw new UniffiInternalError.ApiChecksumMismatch(
+      "uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization",
     );
   }
   if (

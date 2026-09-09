@@ -11,6 +11,7 @@ import (
 
 	"go.opentelemetry.io/otel"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -76,5 +77,61 @@ func TestTraceMiddleware_StartsSpanAndStoresRoute(t *testing.T) {
 	}
 	if !hasSpan {
 		t.Fatal("expected valid span context")
+	}
+}
+
+func TestSignedServiceTraceAndLogUseRouteTemplate(t *testing.T) {
+	const (
+		token = "signed-capability-token-must-not-leak"
+		route = "/api/signed-svc/{token}/{path...}"
+	)
+	spanRecorder := tracetest.NewSpanRecorder()
+	tracerProvider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(spanRecorder))
+	previousTracerProvider := otel.GetTracerProvider()
+	otel.SetTracerProvider(tracerProvider)
+	t.Cleanup(func() {
+		otel.SetTracerProvider(previousTracerProvider)
+		_ = tracerProvider.Shutdown(context.Background())
+	})
+
+	var logs bytes.Buffer
+	var gotToken string
+	handler := TraceMiddleware(route, LogMiddlewareWithLogger(slog.New(slog.NewJSONHandler(&logs, nil)))(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotToken = r.PathValue("token")
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	request := httptest.NewRequest(http.MethodGet, "/api/signed-svc/"+token+"/"+token+"?cursor=next", nil)
+	request.SetPathValue("token", token)
+	request.SetPathValue("path", token)
+
+	handler.ServeHTTP(httptest.NewRecorder(), request)
+
+	if gotToken != token {
+		t.Fatalf("handler PathValue(token) = %q, want %q", gotToken, token)
+	}
+	if strings.Contains(logs.String(), token) {
+		t.Fatalf("logs leaked signed capability token: %s", logs.String())
+	}
+	if !strings.Contains(logs.String(), `"url":"`+route+`"`) {
+		t.Fatalf("logs did not use route template: %s", logs.String())
+	}
+	spans := spanRecorder.Ended()
+	if len(spans) != 1 {
+		t.Fatalf("ended spans = %d, want 1", len(spans))
+	}
+	foundTarget := false
+	for _, attribute := range spans[0].Attributes() {
+		if attribute.Key == "http.target" {
+			foundTarget = true
+			if attribute.Value.AsString() != route {
+				t.Fatalf("http.target = %q, want %q", attribute.Value.AsString(), route)
+			}
+		}
+		if strings.Contains(attribute.Value.Emit(), token) {
+			t.Fatalf("span attribute %s leaked signed capability token: %s", attribute.Key, attribute.Value.Emit())
+		}
+	}
+	if !foundTarget {
+		t.Fatalf("span attributes missing http.target: %v", spans[0].Attributes())
 	}
 }

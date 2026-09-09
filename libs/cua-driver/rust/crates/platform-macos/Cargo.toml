@@ -14,6 +14,7 @@ base64 = { workspace = true }
 image = { workspace = true }
 async-trait = "0.1"
 uuid = { workspace = true }
+time = { workspace = true }
 # Insertion-ordered map for the keyed per-session cursor render collection.
 # IndexMap gives deterministic iteration order = stable cursor z-order frame
 # to frame (a plain HashMap would flicker overlapping cursors).
@@ -60,6 +61,9 @@ objc2-quartz-core = { version = "0.2", features = ["CALayer"] }
 # convenience that finalises an mp4 in-process, removing the per-binary
 # Screen Recording TCC prompt that subprocess capture would otherwise trip.
 screencapturekit = { version = "6", features = ["macos_15_0"] }
+security-framework = { version = "3.7.0", default-features = false, features = ["OSX_10_15"] }
+zeroize = { workspace = true }
+getrandom = { workspace = true }
 
 # tiny-skia for cursor rendering
 tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
@@ -67,3 +71,6 @@ tiny-skia = { version = "0.11", default-features = false, features = ["std"] }
 # WebSocket CDP client (used by browser/cdp_client.rs for the page tool)
 tokio-tungstenite = { version = "0.24", features = ["native-tls"] }
 futures-util = "0.3"
+
+[dev-dependencies]
+tempfile = "3"

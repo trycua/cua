@@ -44,7 +44,8 @@ impl CyclopsClient {
             .await;
         let namespace_created = matches!(
             self.create_namespace_if_missing(&pool.metadata.namespace)
-                .await?,
+                .await
+                .map_err(|error| SdkError::deny_pool_access(&pool.metadata.namespace, error))?,
             NamespaceOwnership::Created
         );
         let result = self
@@ -63,7 +64,7 @@ impl CyclopsClient {
                         .delete_namespace(pool.metadata.namespace.clone())
                         .await;
                 }
-                Err(error)
+                Err(SdkError::deny_pool_access(&pool.metadata.namespace, error))
             }
         }
     }
@@ -111,6 +112,7 @@ impl CyclopsClient {
             &[200],
         )
         .await
+        .map_err(|error| SdkError::deny_pool_access(&pool.metadata.namespace, error))
     }
 
     pub async fn delete_pool(self: Arc<Self>, pool: Pool) -> Result<(), SdkError> {
@@ -124,10 +126,12 @@ impl CyclopsClient {
             json_request("DELETE", item_url, None),
             &[200, 202, 204, 404],
         )
-        .await?;
+        .await
+        .map_err(|error| SdkError::deny_pool_access(&pool.metadata.namespace, error))?;
         Arc::clone(&self)
             .delete_namespace(pool.metadata.namespace.clone())
             .await
+            .map_err(|error| SdkError::deny_pool_access(&pool.metadata.namespace, error))
     }
 }
 

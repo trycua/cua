@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import Any, Dict, Optional
+import math
+from typing import Any, Dict, List, Optional
 
 import httpx
 from cua_sandbox.transport.base import Transport
@@ -13,10 +14,38 @@ from cua_sandbox.transport.computer_server import (
     normalize_screen_size,
     parse_command_response,
 )
-from fleet_sdk import HttpHeader, HttpRequest
+from fleet_sdk import HttpHeader, HttpRequest, HttpRequestBuilder
 
 _CMD_MAX_RETRIES = 3
 _CMD_RETRY_BACKOFF_S = 0.5
+
+
+def build_http_request(
+    *,
+    method: str,
+    url: str,
+    headers: Optional[List[Any]] = None,
+    body: Optional[bytes] = None,
+    timeout_secs: Optional[int] = None,
+) -> HttpRequest:
+    """Construct ``fleet_sdk.HttpRequest`` through the builder API.
+
+    The builder treats optional record fields as skippable, so request
+    construction keeps working when the Fleet SDK adds fields. An absent
+    ``timeout_secs`` falls back to the native client's 30-second default.
+    """
+    builder = HttpRequestBuilder().method(method).url(url).headers(headers or [])
+    if body is not None:
+        builder = builder.body(body)
+    if timeout_secs is not None:
+        builder = builder.timeout_secs(timeout_secs)
+    return builder.build()
+
+
+def _whole_seconds(timeout: Optional[float]) -> Optional[int]:
+    if timeout is None or timeout <= 0:
+        return None
+    return math.ceil(timeout)
 
 
 class FleetTransport(Transport):
@@ -69,6 +98,29 @@ class FleetTransport(Transport):
             method, path, json_body=json_body, service_name=name, extra_headers=headers
         )
 
+    async def create_signed_service_url(
+        self,
+        name: str,
+        *,
+        label: str | None,
+        expires_in_seconds: int,
+    ) -> Any:
+        assert self._connected, "Transport not connected"
+        return await self._sdk.create_signed_service_url(
+            self._bound,
+            name,
+            label=label,
+            expires_in_seconds=expires_in_seconds,
+        )
+
+    async def list_signed_service_urls(self) -> list[Any]:
+        assert self._connected, "Transport not connected"
+        return await self._sdk.list_signed_service_urls(self._bound)
+
+    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
+        assert self._connected, "Transport not connected"
+        await self._sdk.revoke_signed_service_url(signed_service_url)
+
     async def _request(
         self,
         method: str,
@@ -89,8 +141,12 @@ class FleetTransport(Transport):
             self._bound,
             service_name or self._service_name,
             path,
-            HttpRequest(
-                method=method, url=f"https://service.invalid{path}", headers=headers, body=body
+            build_http_request(
+                method=method,
+                url=f"https://service.invalid{path}",
+                headers=headers,
+                body=body,
+                timeout_secs=_whole_seconds(self._timeout),
             ),
         )
         request = httpx.Request(method, f"https://service.invalid{path}")

@@ -4,7 +4,6 @@
 import { useEffect, useMemo, useState } from "react"
 import Alert from "@cloudscape-design/components/alert"
 import Box from "@cloudscape-design/components/box"
-import Button from "@cloudscape-design/components/button"
 import Container from "@cloudscape-design/components/container"
 import CopyToClipboard from "@cloudscape-design/components/copy-to-clipboard"
 import ExpandableSection from "@cloudscape-design/components/expandable-section"
@@ -16,19 +15,29 @@ import Modal from "@cloudscape-design/components/modal"
 import Multiselect, {
   type MultiselectProps,
 } from "@cloudscape-design/components/multiselect"
+import Select from "@cloudscape-design/components/select"
 import SpaceBetween from "@cloudscape-design/components/space-between"
 import Table from "@cloudscape-design/components/table"
 import Toggle from "@cloudscape-design/components/toggle"
 import { userInfo } from "../auth/keycloak"
+import { errorMessage } from "../error-message"
+import { CuaButton } from "../components/CuaButton"
 import { useFeatureFlags } from "../components/FeatureFlagContext"
+import { useFlash } from "../components/FlashContext"
+import { PageEmpty, PageError } from "../components/PageState"
+import { PageShell } from "../components/PageShell"
 import {
   type GitHubTrustPolicy,
   githubTrustPoliciesApi,
   namespacesApi,
-} from "../sdk/githubTrustPolicies"
+} from "../api/githubTrustPolicies"
 import { BillingSettings } from "./Billing"
+import { useI18n } from "../i18n/I18nProvider"
+import { localeLabels, supportedLocales, type Locale } from "../i18n/translations"
 
 export function Settings() {
+  const flash = useFlash()
+  const { formatDateTime, locale, setLocale, t } = useI18n()
   const { sub, name } = userInfo()
   const { billing } = useFeatureFlags()
   const [policies, setPolicies] = useState<GitHubTrustPolicy[]>([])
@@ -45,7 +54,7 @@ export function Settings() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [busyId, setBusyId] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [confirmDelete, setConfirmDelete] = useState<GitHubTrustPolicy | null>(null)
 
   const allNamespaceOptions = useMemo(() => {
@@ -76,9 +85,9 @@ export function Settings() {
           value: ns.name,
         })),
       )
-      setError(null)
+      setLoadError(null)
     } catch (e) {
-      setError(String(e))
+      setLoadError(errorMessage(e))
     } finally {
       setLoading(false)
     }
@@ -116,10 +125,21 @@ export function Settings() {
       } else {
         await githubTrustPoliciesApi.create(payload)
       }
+      flash.push({
+        type: "success",
+        header: editingId ? "Trust policy saved" : "Trust policy created",
+        content: "The change is stored remotely and applies immediately.",
+      })
       resetForm()
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: editingId
+          ? "Failed to save trust policy"
+          : "Failed to create trust policy",
+        content: errorMessage(e),
+      })
     } finally {
       setSaving(false)
     }
@@ -141,9 +161,18 @@ export function Settings() {
       await githubTrustPoliciesApi.update(policy.id, {
         enabled: !policy.enabled,
       })
+      flash.push({
+        type: "success",
+        header: policy.enabled ? "Trust policy disabled" : "Trust policy enabled",
+        content: "The change is stored remotely and applies immediately.",
+      })
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: "Failed to update trust policy",
+        content: errorMessage(e),
+      })
     } finally {
       setBusyId(null)
     }
@@ -154,11 +183,20 @@ export function Settings() {
     setBusyId(confirmDelete.id)
     try {
       await githubTrustPoliciesApi.remove(confirmDelete.id)
+      flash.push({
+        type: "success",
+        header: "Trust policy deleted",
+        content: "GitHub workflows using it can no longer authenticate.",
+      })
       setConfirmDelete(null)
       if (editingId === confirmDelete.id) resetForm()
       await refresh()
     } catch (e) {
-      setError(String(e))
+      flash.push({
+        type: "error",
+        header: "Failed to delete trust policy",
+        content: errorMessage(e),
+      })
     } finally {
       setBusyId(null)
     }
@@ -201,58 +239,91 @@ steps:
       trap cleanup EXIT
 
       cua sb launch \\
-        296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace:latest \\
+        public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest \\
         --name "$sandbox"
       cua sb exec "$sandbox" sh -lc 'uname -a; id; pwd'`
   return (
-    <SpaceBetween size="l">
-      {error && (
-        <Alert type="error" dismissible onDismiss={() => setError(null)}>
-          {error}
-        </Alert>
-      )}
-
-      <Container header={<Header variant="h2">Account</Header>}>
-        <SpaceBetween size="m">
-          <FormField label="Username">
-            {name ? (
-              <CopyToClipboard
-                variant="inline"
-                textToCopy={name}
-                textToDisplay={<code>{name}</code>}
-                copyButtonAriaLabel="Copy username"
-                copySuccessText="Username copied"
-                copyErrorText="Failed to copy username"
-              />
-            ) : (
-              <Box color="text-status-inactive">Unknown</Box>
-            )}
+    <PageShell
+      eyebrow={t("account.heading")}
+      title={t("page.settings")}
+    >
+      <SpaceBetween size="l">
+        <Container
+          header={
+            <Header variant="h2" description={t("i18n.description")}>
+              {t("i18n.heading")}
+            </Header>
+          }
+        >
+          <FormField label={t("i18n.displayLanguage")}>
+            <Select
+              selectedOption={{ label: localeLabels[locale], value: locale }}
+              onChange={({ detail }) => setLocale(detail.selectedOption.value as Locale)}
+              options={supportedLocales.map(value => ({
+                label: localeLabels[value],
+                value,
+              }))}
+              placeholder={t("i18n.selectPlaceholder")}
+            />
           </FormField>
-          <FormField label="Subject (sub)">
-            {sub ? (
-              <CopyToClipboard
-                variant="inline"
-                textToCopy={sub}
-                textToDisplay={<code>{sub}</code>}
-                copyButtonAriaLabel="Copy subject"
-                copySuccessText="Subject copied"
-                copyErrorText="Failed to copy subject"
-              />
-            ) : (
-              <Box color="text-status-inactive">Unknown</Box>
-            )}
-          </FormField>
-        </SpaceBetween>
-      </Container>
+        </Container>
+        <ExpandableSection
+          variant="container"
+          defaultExpanded={false}
+          headerText={t("account.heading")}
+          headerDescription={t("account.description")}
+        >
+          <SpaceBetween size="m">
+            <FormField label={t("account.username")}>
+              {name ? (
+                <CopyToClipboard
+                  variant="inline"
+                  textToCopy={name}
+                  textToDisplay={<code>{name}</code>}
+                  copyButtonAriaLabel={t("account.copyUsername")}
+                  copySuccessText={t("account.usernameCopied")}
+                  copyErrorText={t("account.usernameCopyFailed")}
+                />
+              ) : (
+                <Box color="text-status-inactive">{t("account.unknown")}</Box>
+              )}
+            </FormField>
+            <FormField label={t("account.subject")}>
+              {sub ? (
+                <CopyToClipboard
+                  variant="inline"
+                  textToCopy={sub}
+                  textToDisplay={<code>{sub}</code>}
+                  copyButtonAriaLabel={t("account.copySubject")}
+                  copySuccessText={t("account.subjectCopied")}
+                  copyErrorText={t("account.subjectCopyFailed")}
+                />
+              ) : (
+                <Box color="text-status-inactive">{t("account.unknown")}</Box>
+              )}
+            </FormField>
+          </SpaceBetween>
+        </ExpandableSection>
 
       {billing && <BillingSettings />}
 
       <ExpandableSection
         variant="container"
+        defaultExpanded={false}
         headerText="GitHub Actions OIDC"
-        headerDescription="Trust GitHub repositories to call Fleets directly with GitHub Actions OIDC tokens."
+        headerDescription={loadError
+          ? "GitHub Actions settings are unavailable. Expand to retry."
+          : "Trust GitHub repositories to call Fleets with short-lived tokens. Policies are stored remotely and apply immediately."}
       >
-        <SpaceBetween size="l">
+        {loadError ? (
+          <PageError
+            title="GitHub Actions settings are unavailable"
+            action={<CuaButton onClick={refresh}>Retry</CuaButton>}
+          >
+            {loadError}
+          </PageError>
+        ) : (
+          <SpaceBetween size="l">
           <Form
             header={
               <Header
@@ -264,15 +335,15 @@ steps:
             }
             actions={
               <SpaceBetween direction="horizontal" size="xs">
-                {editingId && <Button onClick={resetForm}>Cancel</Button>}
-                <Button
-                  variant="primary"
+                {editingId && <CuaButton onClick={resetForm}>Cancel</CuaButton>}
+                <CuaButton
+                  tone="primary"
                   loading={saving}
                   disabled={!policyName || !repository}
                   onClick={submit}
                 >
                   {editingId ? "Save policy" : "Create policy"}
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             }
           >
@@ -320,7 +391,9 @@ steps:
           </Form>
 
           <Table
+            variant="borderless"
             loading={loading}
+            loadingText="Loading GitHub trust policies"
             items={policies}
             columnDefinitions={[
               { id: "name", header: "Name", cell: policy => policy.name },
@@ -342,31 +415,41 @@ steps:
               {
                 id: "updated",
                 header: "Updated",
-                cell: policy => new Date(policy.updated_at).toLocaleString(),
+                cell: policy => formatDateTime(policy.updated_at),
               },
               {
                 id: "actions",
                 header: "",
                 cell: policy => (
                   <SpaceBetween direction="horizontal" size="xs">
-                    <Button onClick={() => startEdit(policy)}>Edit</Button>
-                    <Button
+                    <CuaButton
+                      disabled={busyId !== null}
+                      onClick={() => startEdit(policy)}
+                    >
+                      Edit
+                    </CuaButton>
+                    <CuaButton
                       loading={busyId === policy.id}
+                      disabled={busyId !== null}
                       onClick={() => togglePolicy(policy)}
                     >
                       {policy.enabled ? "Disable" : "Enable"}
-                    </Button>
-                    <Button onClick={() => setConfirmDelete(policy)}>
+                    </CuaButton>
+                    <CuaButton
+                      tone="danger"
+                      disabled={busyId !== null}
+                      onClick={() => setConfirmDelete(policy)}
+                    >
                       Delete
-                    </Button>
+                    </CuaButton>
                   </SpaceBetween>
                 ),
               },
             ]}
             empty={
-              <Box textAlign="center">
-                No GitHub trust policies yet.
-              </Box>
+              <PageEmpty title="No GitHub trust policies">
+                Create a policy when a repository needs short-lived access to Fleets.
+              </PageEmpty>
             }
             header={<Header variant="h3">Configured policies</Header>}
           />
@@ -416,7 +499,8 @@ steps:
               </Alert>
             </SpaceBetween>
           </Container>
-        </SpaceBetween>
+          </SpaceBetween>
+        )}
       </ExpandableSection>
 
       {confirmDelete && (
@@ -427,14 +511,14 @@ steps:
           footer={
             <Box float="right">
               <SpaceBetween direction="horizontal" size="xs">
-                <Button onClick={() => setConfirmDelete(null)}>Cancel</Button>
-                <Button
-                  variant="primary"
+                <CuaButton onClick={() => setConfirmDelete(null)}>Cancel</CuaButton>
+                <CuaButton
+                  tone="danger"
                   loading={busyId === confirmDelete.id}
                   onClick={removePolicy}
                 >
                   Delete
-                </Button>
+                </CuaButton>
               </SpaceBetween>
             </Box>
           }
@@ -444,6 +528,7 @@ steps:
           this policy will lose access immediately.
         </Modal>
       )}
-    </SpaceBetween>
+      </SpaceBetween>
+    </PageShell>
   )
 }

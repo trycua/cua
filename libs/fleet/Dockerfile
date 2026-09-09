@@ -9,7 +9,7 @@ RUN apt-get update \
 
 ENV PATH="/root/.cargo/bin:${PATH}"
 
-COPY . .
+COPY cyclops-cs/ .
 RUN ./scripts/build-browser-sdk-binding.sh
 
 # Build stage — produces /app/dist (Vite output).
@@ -19,16 +19,26 @@ WORKDIR /app
 # pnpm via corepack (matches the repo's pnpm-based workflow).
 RUN corepack enable && corepack prepare pnpm@10.12.3 --activate
 
+# Build the runtime-neutral design dependency from its canonical source. The
+# root Docker context is required because this package is a sibling of the app.
+COPY packages/cua-design/package.json /packages/cua-design/package.json
+COPY packages/cua-design/assets /packages/cua-design/assets
+COPY packages/cua-design/src /packages/cua-design/src
+COPY packages/cua-design/scripts /packages/cua-design/scripts
+RUN node /packages/cua-design/scripts/build.mjs
+
 # Install deps first (better layer caching). patches/ must be present before
 # install so pnpm can apply pnpm.patchedDependencies (e.g. the @novnc BGR fix).
-COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
-COPY patches ./patches
+COPY cyclops-cs/package.json cyclops-cs/pnpm-lock.yaml cyclops-cs/pnpm-workspace.yaml ./
+COPY cyclops-cs/patches ./patches
 RUN pnpm install --frozen-lockfile
 
 # Build.
-COPY . .
+COPY cyclops-cs/ .
 COPY --from=sdk-builder /workspace/cyclops-cs/sdk-bindings/ts-uniffi-browser/ts/index.web.ts ./sdk-bindings/ts-uniffi-browser/ts/index.web.ts
 COPY --from=sdk-builder /workspace/cyclops-cs/sdk-bindings/ts-uniffi-browser/ts/wasm-bindgen ./sdk-bindings/ts-uniffi-browser/ts/wasm-bindgen
+ARG VITE_CUA_REVIEW_VISUAL_PREVIEW=false
+ENV VITE_CUA_REVIEW_VISUAL_PREVIEW=${VITE_CUA_REVIEW_VISUAL_PREVIEW}
 RUN pnpm build:app
 
 # Runtime stage — nginx serves static files and proxies /api to the backend.
@@ -50,5 +60,5 @@ ENV CYCLOPS_CS_BACKEND=http://cyclops-cs-backend:8080
 # loads before the React bundle (window.__CYCLOPS_CS_CFG__).
 ENV CYCLOPS_CS_CONFIG_JSON='{"kcUrl":"https://auth.cua.ai","kcRealm":"cyclops-cs","kcClientId":"cyclops-cs-spa"}'
 
-COPY nginx.conf /etc/nginx/templates/default.conf.template
+COPY cyclops-cs/nginx.conf /etc/nginx/templates/default.conf.template
 COPY --from=builder /app/dist /usr/share/nginx/html

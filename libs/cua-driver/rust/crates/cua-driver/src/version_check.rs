@@ -34,14 +34,15 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// Disk-resident cache file (sibling of the telemetry artifacts under
-/// `~/.cua-driver-rs/`). Holds the last-seen latest version plus the list
+/// `~/.cua-driver/`). Holds the last-seen latest version plus the list
 /// of versions the user has actively dismissed.
 const CACHE_FILE_NAME: &str = "version_check.json";
 
-/// `~/.cua-driver-rs/` — same subdirectory the telemetry client uses,
-/// kept separate from the `~/.cua-driver/` config tree that the Swift
-/// reference owns.
-const HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
+/// The pre-rename home. [`migrate_legacy_cache`] moves a cache written
+/// there by an older build into the canonical home and drops the directory
+/// once it is empty — same shape as the telemetry and skill-pack
+/// migrations. Nothing in this module writes here.
+const LEGACY_HOME_SUBDIRECTORY: &str = ".cua-driver-rs";
 
 /// Single-invocation opt-out env var. Recognised values mirror the
 /// telemetry opt-out: `0|false|no|off` disables the check, everything
@@ -119,7 +120,7 @@ pub struct UpdateState {
     pub current_version: String,
     pub current_channel: Option<&'static str>,
     pub selected_channel: Option<&'static str>,
-    /// `None` when the network fetch failed and no usable cache existed —
+    /// `None` when upstream checking is unavailable or failed without a cache —
     /// the `error` field carries the human-readable reason.
     pub latest_version: Option<String>,
     pub update_available: bool,
@@ -130,8 +131,7 @@ pub struct UpdateState {
     /// ISO-8601 UTC timestamp of when this check ran (NOT when the cached
     /// result was originally fetched — see `cache_hit`).
     pub checked_at: String,
-    /// `true` when we short-circuited via the on-disk cache (no network
-    /// round-trip this invocation). `false` when we actually hit GitHub.
+    /// `true` when the result came from the on-disk cache.
     pub cache_hit: bool,
     /// Shell one-liner to apply the update. `None` when already up-to-date
     /// or the check failed.
@@ -139,8 +139,8 @@ pub struct UpdateState {
     /// URL of the release notes page on GitHub. `None` when already
     /// up-to-date or the check failed.
     pub release_notes_url: Option<String>,
-    /// Human-readable error string when the network fetch failed AND no
-    /// cache was available. `None` on success / cache fallback.
+    /// Human-readable reason an upstream check is unavailable or failed
+    /// without a cache. `None` on success / cache fallback.
     pub error: Option<String>,
 }
 
@@ -193,11 +193,30 @@ fn install_one_liner() -> String {
 /// `UpdateState.error` with a non-empty `current_version` so consumers
 /// always get a well-formed payload they can branch on.
 pub fn check_update_state(no_cache: bool) -> UpdateState {
+    check_update_state_with_ownership(no_cache, crate::updater::is_pacman_managed())
+}
+
+pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -> UpdateState {
     let current = env!("CARGO_PKG_VERSION").to_owned();
     let now = unix_now();
     let checked_at = iso8601(now);
 
     let current_channel = crate::release_channel::ReleaseChannel::from_version(&current);
+    if managed {
+        return UpdateState {
+            current_version: current,
+            current_channel: current_channel.map(|channel| channel.as_str()),
+            selected_channel: None,
+            latest_version: None,
+            update_available: false,
+            source: "github_releases",
+            checked_at,
+            cache_hit: false,
+            install_command: None,
+            release_notes_url: None,
+            error: Some(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned()),
+        };
+    }
     let selected_channel = match crate::release_channel::selected() {
         Ok(channel) => channel,
         Err(error) => {
@@ -338,6 +357,28 @@ where
     F: FnOnce() -> Result<String, String>,
     W: std::io::Write,
 {
+    run_check_and_announce_with_ownership(
+        current,
+        fetch,
+        &mut writer,
+        capture_telemetry,
+        crate::updater::is_pacman_managed(),
+    );
+}
+
+fn run_check_and_announce_with_ownership<F, W>(
+    current: &str,
+    fetch: F,
+    mut writer: W,
+    capture_telemetry: bool,
+    managed: bool,
+) where
+    F: FnOnce() -> Result<String, String>,
+    W: std::io::Write,
+{
+    if managed {
+        return;
+    }
     let now = unix_now();
     let Ok(selected_channel) = crate::release_channel::selected() else {
         return;
@@ -535,7 +576,7 @@ pub fn update_is_available(
 
 // ── On-disk cache ────────────────────────────────────────────────────────
 
-/// Serialised shape of `~/.cua-driver-rs/version_check.json`.
+/// Serialised shape of `~/.cua-driver/version_check.json`.
 ///
 /// `last_checked_unix` is the source of truth for cache-age decisions;
 /// `last_checked_at` is the same instant rendered as ISO-8601 for human
@@ -558,6 +599,7 @@ pub(crate) struct VersionCache {
 /// Read the cache file. Returns `None` when missing / unreadable / not
 /// valid JSON — callers fall back to the default (empty) shape.
 fn read_cache() -> Option<VersionCache> {
+    migrate_legacy_cache();
     let path = cache_path()?;
     let raw = std::fs::read_to_string(&path).ok()?;
     serde_json::from_str(&raw).ok()
@@ -581,17 +623,62 @@ fn write_cache(cache: &VersionCache) -> std::io::Result<()> {
     std::fs::write(&path, json)
 }
 
-fn cache_path() -> Option<PathBuf> {
+fn home_root() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"))?;
+    Some(PathBuf::from(home))
+}
+
+fn cache_path() -> Option<PathBuf> {
     Some(
-        PathBuf::from(home)
-            .join(if crate::bundle::is_local_installation() {
-                ".cua-driver-local"
-            } else {
-                HOME_SUBDIRECTORY
-            })
+        home_root()?
+            .join(crate::bundle::user_home_subdirectory())
             .join(CACHE_FILE_NAME),
     )
+}
+
+/// Pre-rename cache location. `None` for the source-build product, which
+/// has always used its own `~/.cua-driver-local/` home and never wrote here.
+fn legacy_cache_path() -> Option<PathBuf> {
+    if crate::bundle::is_local_installation() {
+        return None;
+    }
+    Some(
+        home_root()?
+            .join(LEGACY_HOME_SUBDIRECTORY)
+            .join(CACHE_FILE_NAME),
+    )
+}
+
+/// Move a pre-rename cache into the canonical home, then remove the legacy
+/// directory if nothing else is left in it.
+///
+/// Best-effort and idempotent: every step is allowed to fail silently, and
+/// the caller falls back to an empty cache exactly as it would for a missing
+/// file. Keeping the dismissed-version list is the only reason to bother —
+/// losing it would re-nag the user about a release they already dismissed.
+fn migrate_legacy_cache() {
+    let (Some(legacy), Some(current)) = (legacy_cache_path(), cache_path()) else {
+        return;
+    };
+    if !legacy.is_file() {
+        return;
+    }
+    if !current.is_file() {
+        if let Some(parent) = current.parent() {
+            if std::fs::create_dir_all(parent).is_err() {
+                return;
+            }
+        }
+        if std::fs::rename(&legacy, &current).is_err() {
+            return;
+        }
+    }
+    // The rename already took the source, or a canonical cache was already
+    // present and wins. Only the latter path still has a stale copy to remove.
+    let _ = std::fs::remove_file(&legacy);
+    if let Some(parent) = legacy.parent() {
+        let _ = std::fs::remove_dir(parent);
+    }
 }
 
 // ── HTTP fetch (shared with the `update` subcommand) ─────────────────────
@@ -620,6 +707,9 @@ pub fn fetch_latest_version() -> Result<String, String> {
 pub fn fetch_latest_version_for(
     channel: crate::release_channel::ReleaseChannel,
 ) -> Result<String, String> {
+    if crate::updater::is_pacman_managed() {
+        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    }
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()
@@ -744,6 +834,50 @@ mod tests {
     use super::*;
     use std::sync::Mutex;
 
+    #[test]
+    fn pacman_managed_check_ignores_upstream_cache_and_channel() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            write_cache(&VersionCache {
+                latest_version: Some("999.0.0".into()),
+                last_checked_unix: Some(unix_now()),
+                ..Default::default()
+            })
+            .unwrap();
+            std::fs::write(
+                home.join(crate::bundle::user_home_subdirectory())
+                    .join("release-channel"),
+                "invalid-channel\n",
+            )
+            .unwrap();
+            let before = std::fs::read(cache_path().unwrap()).unwrap();
+            for no_cache in [false, true] {
+                let state = check_update_state_with_ownership(no_cache, true);
+                assert!(!state.update_available);
+                assert!(!state.cache_hit);
+                assert!(state.latest_version.is_none());
+                assert!(state.selected_channel.is_none());
+                assert!(state.install_command.is_none());
+                assert!(state.release_notes_url.is_none());
+                assert!(state.error.unwrap().contains("sudo pacman -Syu"));
+                assert_eq!(std::fs::read(cache_path().unwrap()).unwrap(), before);
+            }
+        });
+    }
+
+    #[test]
+    fn pacman_managed_startup_never_fetches_or_prints_banner() {
+        let mut banner = Vec::new();
+        run_check_and_announce_with_ownership(
+            "0.24.0",
+            || panic!("managed startup must not fetch"),
+            &mut banner,
+            false,
+            true,
+        );
+        assert!(banner.is_empty());
+    }
+
     /// All env-mutating tests serialise on this lock — `std::env::set_var`
     /// is process-global, parallel tests would race.
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -751,7 +885,7 @@ mod tests {
     /// Redirect `HOME` / `USERPROFILE` to a fresh temp dir for the body
     /// of `f`, then restore. Ensures the cache file lives in an isolated
     /// directory and never touches the developer's real
-    /// `~/.cua-driver-rs/version_check.json`.
+    /// `~/.cua-driver/version_check.json`.
     fn with_isolated_home<R>(f: impl FnOnce(&std::path::Path) -> R) -> R {
         let tmp = tempfile::tempdir().expect("tempdir");
         let saved_home = std::env::var_os("HOME");
@@ -880,6 +1014,87 @@ mod tests {
             assert_eq!(read_back.last_checked_unix, Some(1_700_000_000));
             assert_eq!(read_back.latest_version.as_deref(), Some("0.1.4"));
             assert_eq!(read_back.dismissed_versions, vec!["0.1.3".to_owned()]);
+        });
+    }
+
+    #[test]
+    fn cache_lands_in_the_canonical_home() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            write_cache(&VersionCache::default()).expect("write_cache");
+            assert!(home
+                .join(crate::bundle::user_home_subdirectory())
+                .join(CACHE_FILE_NAME)
+                .is_file());
+            // The pre-rename home must not be re-created behind the
+            // installer's back — sweeping it is what the installer does.
+            assert!(!home.join(LEGACY_HOME_SUBDIRECTORY).exists());
+        });
+    }
+
+    #[test]
+    fn legacy_cache_is_migrated_and_its_home_removed() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
+            std::fs::create_dir_all(&legacy_home).unwrap();
+            std::fs::write(
+                legacy_home.join(CACHE_FILE_NAME),
+                r#"{"latest_version":"0.1.4","dismissed_versions":["0.1.4"]}"#,
+            )
+            .unwrap();
+
+            let migrated = read_cache().expect("read_cache");
+            assert_eq!(migrated.latest_version.as_deref(), Some("0.1.4"));
+            assert_eq!(migrated.dismissed_versions, vec!["0.1.4".to_owned()]);
+            assert!(home
+                .join(crate::bundle::user_home_subdirectory())
+                .join(CACHE_FILE_NAME)
+                .is_file());
+            assert!(!legacy_home.exists());
+        });
+    }
+
+    #[test]
+    fn migration_leaves_a_legacy_home_that_still_holds_other_files() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
+            std::fs::create_dir_all(&legacy_home).unwrap();
+            std::fs::write(legacy_home.join(CACHE_FILE_NAME), "{}").unwrap();
+            std::fs::write(legacy_home.join(".telemetry_id"), "not-ours").unwrap();
+
+            let _ = read_cache();
+
+            // Our file is gone, somebody else's is untouched: the empty-dir
+            // removal must never turn into a recursive delete.
+            assert!(!legacy_home.join(CACHE_FILE_NAME).exists());
+            assert!(legacy_home.join(".telemetry_id").is_file());
+        });
+    }
+
+    #[test]
+    fn failed_migration_preserves_the_legacy_cache() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            let legacy_home = home.join(LEGACY_HOME_SUBDIRECTORY);
+            let legacy_cache = legacy_home.join(CACHE_FILE_NAME);
+            let legacy_json = r#"{"latest_version":"0.1.4","dismissed_versions":["0.1.4"]}"#;
+            std::fs::create_dir_all(&legacy_home).unwrap();
+            std::fs::write(&legacy_cache, legacy_json).unwrap();
+
+            // A regular file at the canonical home prevents parent-directory
+            // creation, making migration fail deterministically on every platform.
+            std::fs::write(
+                home.join(crate::bundle::user_home_subdirectory()),
+                "not a directory",
+            )
+            .unwrap();
+
+            assert!(read_cache().is_none());
+            assert!(legacy_cache.is_file());
+            let preserved = std::fs::read_to_string(legacy_cache).unwrap();
+            assert_eq!(preserved, legacy_json);
         });
     }
 

@@ -539,6 +539,144 @@ async fn reconcile_returns_create_error_after_named_pool_is_forbidden() {
 }
 
 #[tokio::test]
+async fn create_pool_403_maps_to_pool_access_denied_with_guidance() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(409, b"already exists")),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client
+        .create_pool(CreatePoolRequest {
+            namespace: NAMESPACE.into(),
+            spec: pool_spec(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ref body,
+        } if operation == "create pool"
+            && namespace == NAMESPACE
+            && body == "k8s request is not allowed"
+    ));
+    let message = error.to_string();
+    assert!(message.contains("globally unique"));
+    assert!(message.contains("try a new pool name"));
+    assert!(message.contains("https://discord.gg/mVnXXpdE85"));
+}
+
+#[tokio::test]
+async fn namespace_create_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"cannot create namespace")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client
+        .create_pool(CreatePoolRequest {
+            namespace: NAMESPACE.into(),
+            spec: pool_spec(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "create namespace" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn reconcile_update_403_maps_to_pool_access_denied() {
+    let existing = pool();
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(200, &existing)),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client
+        .reconcile_pool(CreatePoolRequest {
+            namespace: NAMESPACE.into(),
+            spec: pool_spec(),
+        })
+        .await
+        .unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "update pool" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn delete_pool_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(403, b"k8s request is not allowed")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client.delete_pool(pool()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "delete pool" && namespace == NAMESPACE
+    ));
+}
+
+#[tokio::test]
+async fn delete_pool_namespace_cleanup_403_maps_to_pool_access_denied() {
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(response(204, b"")),
+        Ok(response(403, b"cannot delete namespace")),
+    ]));
+    let client = client(Arc::clone(&http));
+
+    let error = client.delete_pool(pool()).await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        SdkError::PoolAccessDenied {
+            ref operation,
+            ref namespace,
+            status: 403,
+            ..
+        } if operation == "delete namespace" && namespace == NAMESPACE
+    ));
+
+    let requests = resource_requests(&http).await;
+    assert_eq!(requests.len(), 2);
+    assert_request(&requests[0], "DELETE", ITEM, None);
+    assert_request(&requests[1], "DELETE", NAMESPACE_ITEM, None);
+}
+
+#[tokio::test]
 async fn reconcile_returns_unrelated_named_pool_read_error_without_creating() {
     let http = Arc::new(ScriptedHttpClient::new([
         Ok(token()),

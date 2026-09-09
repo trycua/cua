@@ -784,13 +784,23 @@ impl SessionAuthorizationRegistry {
     }
 }
 
-static CONFIGURED_REGISTRY: OnceLock<Result<SessionAuthorizationRegistry, String>> =
-    OnceLock::new();
+static CONFIGURED_REGISTRY: OnceLock<
+    Mutex<Option<Result<Arc<SessionAuthorizationRegistry>, String>>>,
+> = OnceLock::new();
 
-pub fn configured_registry() -> Result<&'static SessionAuthorizationRegistry, String> {
-    match CONFIGURED_REGISTRY.get_or_init(SessionAuthorizationRegistry::process) {
-        Ok(registry) => Ok(registry),
-        Err(error) => Err(error.clone()),
+pub fn configured_registry() -> Result<Arc<SessionAuthorizationRegistry>, String> {
+    CONFIGURED_REGISTRY
+        .get_or_init(|| Mutex::new(None))
+        .lock()
+        .unwrap()
+        .get_or_insert_with(|| SessionAuthorizationRegistry::process().map(Arc::new))
+        .clone()
+}
+
+#[doc(hidden)]
+pub fn release_configured_registry_for_shutdown() {
+    if let Some(registry) = CONFIGURED_REGISTRY.get() {
+        *registry.lock().unwrap() = None;
     }
 }
 

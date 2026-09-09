@@ -4,7 +4,7 @@ use cyclops_sdk::{
     Claim, CreateClaimRequest, CyclopsClient, CyclopsConfiguration, CyclopsCredentials, HttpHeader,
     HttpResponse, Pool, ResourceMetadata, SdkError, Template,
 };
-use cyclops_sdk_schema::ClaimSpec;
+use cyclops_sdk_schema::{ClaimSpec, DEFAULT_CLAIM_BIND_DEADLINE_SECONDS};
 use std::sync::Arc;
 use support::ScriptedHttpClient;
 
@@ -43,6 +43,58 @@ async fn creates_pending_demand_immediately_for_a_nonzero_unavailable_pool() {
     let requests = http.authenticated_requests().await;
     assert_eq!(requests.len(), 1);
     assert_claim_post(&requests[0], &spec);
+}
+
+#[tokio::test]
+async fn create_claim_defaults_missing_bind_deadline_to_900_seconds() {
+    let expected = claim("claim-1", claim_spec("example-pool-template"), None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &expected)),
+    ]));
+
+    client(Arc::clone(&http), 2, 2)
+        .create_claim(CreateClaimRequest {
+            pool: pool(1),
+            spec: Some({
+                let mut spec = claim_spec("example-pool-template");
+                spec.bind_deadline = None;
+                spec
+            }),
+            name: None,
+        })
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let body: serde_json::Value =
+        serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["spec"]["bindDeadline"], 900);
+}
+
+#[tokio::test]
+async fn create_claim_preserves_explicit_bind_deadline() {
+    let mut spec = claim_spec("example-pool-template");
+    spec.bind_deadline = Some(123);
+    let expected = claim("claim-1", spec.clone(), None);
+    let http = Arc::new(ScriptedHttpClient::new([
+        Ok(token()),
+        Ok(json_response(201, &expected)),
+    ]));
+
+    client(Arc::clone(&http), 2, 2)
+        .create_claim(CreateClaimRequest {
+            pool: pool(1),
+            spec: Some(spec),
+            name: None,
+        })
+        .await
+        .unwrap();
+
+    let requests = http.authenticated_requests().await;
+    let body: serde_json::Value =
+        serde_json::from_slice(requests[0].body.as_deref().unwrap()).unwrap();
+    assert_eq!(body["spec"]["bindDeadline"], 123);
 }
 
 #[tokio::test]
@@ -471,9 +523,13 @@ fn assert_claim_post(request: &cyclops_sdk::HttpRequest, spec: &ClaimSpec) {
     assert_eq!(body.api_version, "osgym.cua.ai/v1alpha1");
     assert_eq!(body.kind, "OSGymSandboxClaim");
     assert_eq!(body.metadata.namespace, NAMESPACE);
+    let mut expected_spec = spec.clone();
+    if expected_spec.bind_deadline.is_none() {
+        expected_spec.bind_deadline = Some(DEFAULT_CLAIM_BIND_DEADLINE_SECONDS);
+    }
     assert_eq!(
         serde_json::to_value(&body.spec).unwrap(),
-        serde_json::to_value(spec).unwrap()
+        serde_json::to_value(expected_spec).unwrap()
     );
     let name = &body.metadata.name;
     assert!(name.starts_with("claim-"), "unexpected claim name {name:?}");

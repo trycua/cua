@@ -54,7 +54,7 @@ func poolResourceSchema() schema.Schema {
 			"id":                   schema.StringAttribute{Computed: true},
 			"name":                 schema.StringAttribute{Required: true, Description: "DNS label used for both pool and namespace.", Validators: []validator.String{stringvalidator.LengthBetween(1, 63), stringvalidator.RegexMatches(dnsLabelRegex, "must be a lowercase DNS label")}, PlanModifiers: []planmodifier.String{stringplanmodifier.RequiresReplace()}},
 			"namespace":            schema.StringAttribute{Computed: true},
-			"replicas":             schema.Int64Attribute{Required: true, Description: "Desired number of pre-warmed OSGymSandboxes.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
+			"replicas":             schema.Int64Attribute{Optional: true, Computed: true, Description: "Desired number of pre-warmed OSGymSandboxes.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
 			"cpu_cores":            schema.Int64Attribute{Required: true, Validators: []validator.Int64{int64validator.AtLeast(1)}},
 			"memory":               schema.StringAttribute{Required: true},
 			"container_disk_image": schema.StringAttribute{Required: true, Description: "KubeVirt containerDisk OCI image (runtime=kubevirt) or the sandbox pod image ref (runtime=macos/gvisor)."},
@@ -76,7 +76,7 @@ func poolResourceSchema() schema.Schema {
 			"autoscaling": schema.SingleNestedBlock{Attributes: map[string]schema.Attribute{
 				"min_pool_size":     schema.Int64Attribute{Optional: true, Computed: true, Description: "ScaledObject minReplicaCount — the durable warm\nfloor kept while the extension is enabled. 0 lets\nthe pool scale to zero when there are no claims.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
 				"initial_pool_size": schema.Int64Attribute{Optional: true, Computed: true, Description: "One-time warm head-start: the pool-operator seeds\nspec.replicas to this when the pool is created so\nthe first claims bind without a cold start. KEDA\nthen owns spec.replicas; the value decays toward\nthe live claim demand (floored at minPoolSize)\nonce KEDA begins polling.", Validators: []validator.Int64{int64validator.AtLeast(0)}},
-				"max_pool_size":     schema.Int64Attribute{Required: true, Description: "ScaledObject maxReplicaCount — hard ceiling.", Validators: []validator.Int64{int64validator.AtLeast(1)}},
+				"max_pool_size":     schema.Int64Attribute{Optional: true, Computed: true, Description: "ScaledObject maxReplicaCount — hard ceiling.", Validators: []validator.Int64{int64validator.AtLeast(1)}},
 			}},
 		},
 	}

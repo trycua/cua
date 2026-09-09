@@ -1,0 +1,595 @@
+---
+title: CLI reference
+description: 'Command reference for the cua CLI: authentication, sandboxes, images, platforms, one-shot automation, skills, and trajectories.'
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+`cua` is the unified command-line interface for Cua. It authenticates against
+Cua cloud, manages sandboxes and images, drives a running machine one command at
+a time, and serves an MCP endpoint for AI assistants.
+
+Documented against `cua-cli` **0.1.14**. Run `cua --version` for your installed
+version, and `cua <command> --help` for the options your build accepts.
+
+## Install
+
+The CLI is published to Cua's own wheel index, so the index must be passed on
+the install command:
+
+```bash
+pip install --extra-index-url https://wheels.cua.ai/simple cua-cli
+```
+
+Optional extras add the MCP server (`mcp`), skill recording with VLM captioning
+(`skills`), or both (`all`):
+
+```bash
+pip install --extra-index-url https://wheels.cua.ai/simple "cua-cli[all]"
+```
+
+To keep the CLI isolated from your project environments, install it as a tool:
+
+```bash
+uv tool install cua-cli --index https://wheels.cua.ai/simple
+```
+
+<Callout type="warn">
+  On a headless Linux host, add a keyring backend at install time or the first
+  authenticated command will fail. See
+  [Authentication](/reference/cua-cli/authentication#headless-hosts).
+</Callout>
+
+## Conventions
+
+Several command groups have short aliases, and some subcommands have their own:
+
+| Canonical | Alias |
+|-----------|-------|
+| `cua sandbox` | `cua sb` |
+| `cua image` | `cua img` |
+| `cua trajectory` | `cua traj` |
+| `cua sb ls` | `cua sb list` |
+| `cua sb info` | `cua sb get` |
+| `cua image list` | `cua image ls` |
+| `cua skills list` | `cua skills ls` |
+
+Most commands that produce structured data accept `--json`. Two take
+`--format json` instead: `cua platform list`, and `cua image list` when it is
+listing local images. Commands that act on a machine take `--local` to target a
+local sandbox rather than a cloud one.
+
+Exit codes:
+
+| Code | Meaning |
+|------|---------|
+| `0` | Success. Also returned by bare `cua`, which prints help. |
+| `1` | The command ran and failed. The reason is printed as `Error: ...`. |
+| `2` | Argument parsing failed. `argparse` prints the usage line and the offending value. |
+
+## Global options
+
+| Option | Description |
+|--------|-------------|
+| `-h, --help` | Show help for the CLI or for any subcommand. |
+| `-v, --version` | Print the installed `cua-cli` version and exit. |
+
+## `cua auth`
+
+Manage the Cua cloud session. Tokens are stored in the operating system
+credential vault, never in a file the CLI writes itself.
+
+| Command | Description |
+|---------|-------------|
+| `cua auth login` | Log in through OAuth device authorization. |
+| `cua auth logout` | Revoke the refresh token and remove local credentials. |
+| `cua auth status` | Report whether a session exists and when its access token expires. |
+
+`cua auth login` takes one flag:
+
+| Option | Description |
+|--------|-------------|
+| `--no-browser` | Print the verification URL instead of trying to open a browser. |
+
+```console
+$ cua auth status
+Logged in to run.cua.ai. Access token expires 2026-08-12T22:36:31.604247+00:00.
+```
+
+See [Authentication](/reference/cua-cli/authentication) for the device flow, the
+headless-host workaround, and the environment variables the SDK reads.
+
+## `cua sandbox`
+
+Create and control sandboxes, cloud or local. Aliased as `cua sb`.
+
+<Callout type="warn">
+  **There are two different cloud paths behind these commands, and only one of
+  them is current.** Passing `--pool` claims a sandbox from a Fleet pool, which
+  is the supported cloud path. Passing an image without `--pool` goes through
+  the older VM API, whose host `api.cua.ai` has been retired; those routes now
+  live elsewhere and the CLI has not been repointed at them, so image-based
+  cloud launches do not work today. Use `--pool` for cloud work, or `--local`
+  for a sandbox on your own machine.
+</Callout>
+
+### `cua sb launch`
+
+Launch a new sandbox. Exactly one of the positional image or `--pool` is
+required; passing both, or neither, is an error.
+
+**Arguments:**
+
+| Name | Required | Description |
+|------|----------|-------------|
+| `<image>` | No | Image to launch, for example `macos`, `ubuntu:24.04`, `windows:11`, or a registry reference such as `ghcr.io/trycua/mini-swe:latest`. |
+
+**Options:**
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `--pool` | — | Claim the named pre-created Fleet pool instead of launching an image. Requires `--name`. |
+| `--local` | false | Launch a local sandbox. Requires a working local runtime. |
+| `--name` | generated | Sandbox name. |
+| `--vm` | false | Force VM kind for Linux images. Linux defaults to a container. |
+| `--cpu` | — | Number of vCPUs. |
+| `--memory` | — | Memory, as `8GB` or `4096MB`. A bare number is read as GB. |
+| `--disk` | — | Disk size, as `50GB`. A bare number is read as GB. |
+| `--region` | — | Cloud region. |
+| `--json` | false | Print `{"name": ..., "status": "ready"}` instead of a status line. |
+
+Bare image names are expanded before the request is made:
+
+| You write | You get |
+|-----------|---------|
+| `linux`, `ubuntu`, `debian`, `fedora` | Linux container, defaulting to Ubuntu 24.04 |
+| `windows`, `win` | Windows, defaulting to `2022` |
+| `macos`, `mac`, `osx` | macOS, defaulting to `26` |
+| `android` | Android, defaulting to `14` |
+| Anything with a registry host, such as `ghcr.io/org/image` | Pulled from that registry |
+
+A tag after a colon overrides the default version, so `ubuntu:22.04`,
+`windows:11`, and `macos:sequoia` all work.
+
+<Callout type="warn">
+  **`--pool` needs Fleet credentials in the environment; logging in is not
+  enough.** Every other cloud command reuses your `cua auth login` session, but
+  the Fleet path does not pass that session through. Without either
+  `FLEETS_TOKEN` or a `CUA_CLIENT_ID` and `CUA_CLIENT_SECRET` pair exported,
+  `cua sb launch --pool` fails with:
+
+  ```
+  Error: Fleet cloud sandboxes require CUA_CLIENT_ID and CUA_CLIENT_SECRET, or cua.configure(client_id=..., client_secret=...).
+  ```
+
+  This is easy to misread as "you are not logged in" when `cua auth status`
+  cheerfully reports a valid session. Export the credentials, or use
+  `cua wif-token github` in CI, before reaching for `--pool`.
+</Callout>
+
+### `cua sb ls`
+
+List sandboxes. With no flags, lists cloud sandboxes.
+
+| Name | Description |
+|------|-------------|
+| `--local` | List local sandboxes. |
+| `--all` | List both local and cloud sandboxes. |
+| `--json` | Output as JSON. |
+
+```console
+$ cua sb ls --local
+┏━━━━━━━━━━━━━┳━━━━━━━━━┳━━━━━━━━━━━━━━━━┓
+┃ NAME        ┃ STATUS  ┃ SOURCE         ┃
+┡━━━━━━━━━━━━━╇━━━━━━━━━╇━━━━━━━━━━━━━━━━┩
+│ mc-win      │ running │ qemu-baremetal │
+│ linux-demo  │ running │ docker         │
+└─────────────┴─────────┴────────────────┘
+```
+
+The `SOURCE` column names the runtime backing each sandbox — `docker`,
+`qemu-baremetal`, `lume`, or `cloud`.
+
+<Callout type="warn">
+  **There is no way to list cloud sandboxes, and no configuration that enables
+  it.** Fleet has no list operation at all — with `FLEETS_TOKEN` set, `cua sb ls`
+  refuses outright with `Listing Fleet sandboxes is not supported; use 'cua sb
+  info NAME'.` Without it, the listing falls to the retired VM API described
+  above and cannot succeed either. Address cloud sandboxes by name with
+  `cua sb info`. `--local` is unaffected and lists normally.
+</Callout>
+
+Older versions report this as `No sandboxes found.` rather than as an error,
+because the cloud listing swallowed its exception — so on those versions an
+empty cloud list is indistinguishable from a failure. Either way, an empty cloud
+list is not evidence that the account has no sandboxes.
+
+### `cua sb info`
+
+Show a sandbox's name, status, and — when the provider reports them — OS, host,
+region, and creation time. Aliased as `cua sb get`.
+
+| Name | Description |
+|------|-------------|
+| `<name>` | Sandbox name. Required. |
+| `--local` | Target a local sandbox. |
+| `--json` | Output as JSON. |
+
+### Lifecycle commands
+
+Each takes a sandbox name and an optional `--local`:
+
+| Command | Description |
+|---------|-------------|
+| `cua sb suspend <name>` | Suspend the sandbox, preserving memory state. |
+| `cua sb resume <name>` | Resume a suspended sandbox. |
+| `cua sb restart <name>` | Restart the sandbox. |
+| `cua sb vnc <name>` | Open the sandbox's display in a browser. |
+
+### `cua sb delete`
+
+Delete a sandbox.
+
+| Name | Description |
+|------|-------------|
+| `<name>` | Sandbox name. Required. |
+| `--local` | Target a local sandbox. |
+| `--force` | Skip the confirmation prompt. |
+
+The prompt is also skipped automatically when stdin is not a terminal, so a
+piped or CI invocation deletes without `--force`. Pass it anyway to make the
+intent explicit.
+
+### `cua sb shell`
+
+Open an interactive shell in the sandbox, or run a single command with a TTY
+attached. Everything after the sandbox name is passed through.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `<name>` | — | Sandbox name. Required. |
+| `<command…>` | — | Command to run. Omit for an interactive shell. |
+| `--local` | false | Target a local sandbox. |
+| `--cols` | auto-detect | Terminal width. |
+| `--rows` | auto-detect | Terminal height. |
+
+### `cua sb exec`
+
+Run a command non-interactively and exit. Use `--` before the command so its
+own flags are not parsed by `cua`.
+
+```bash
+cua sb exec my-sandbox -- pwd
+```
+
+| Name | Description |
+|------|-------------|
+| `<name>` | Sandbox name. Required. |
+| `<command…>` | Command to execute. |
+| `--local` | Target a local sandbox. |
+| `--json` | Output as JSON. |
+
+## `cua image`
+
+Manage images. Cloud images live in your Cua workspace; local images live under
+`~/.local/share/cua/images/`. Aliased as `cua img`.
+
+### `cua image list`
+
+List images. Cloud is the default. Aliased as `cua image ls`.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `--cloud` | true | List cloud images. |
+| `--local` | false | List local images. |
+| `--platform` | — | Filter local images by platform. |
+| `--format` | `table` | Output format for local images: `table` or `json`. |
+| `--json` | false | Output cloud images as JSON. |
+
+### `cua image push`
+
+Upload a local image file to cloud storage.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `<name>` | — | Image name. Required. |
+| `--file`, `-f` | `~/.local/share/cua/images/<name>/data.img` | Path to the image file. |
+| `--tag` | `latest` | Image tag. |
+| `--type` | `qcow2` | Image type: `qcow2`, `raw`, or `vmdk`. |
+
+### `cua image pull`
+
+Download an image from cloud storage.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `<name>` | — | Image name. Required. |
+| `--tag` | `latest` | Image tag. |
+| `--output`, `-o` | — | Output file path. |
+
+### `cua image delete`
+
+Delete an image. Cloud by default.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `<name>` | — | Image name. Required. |
+| `--tag` | `latest` | Image tag, for cloud images. |
+| `--local` | false | Delete a local image instead. |
+| `--force` | false | Skip confirmation. |
+
+### `cua image create`
+
+Build a local image from a platform definition. See
+[`cua platform`](#cua-platform) for the platform list and each one's
+requirements.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `<platform>` | — | Platform name, for example `linux-docker` or `windows-qemu`. Required. |
+| `--name` | same as platform | Image name. |
+| `--iso` | — | Path to an ISO, for QEMU platforms. |
+| `--download-iso` | false | Download the Windows 11 ISO (~6 GB). |
+| `--docker-image` | platform default | Override the Docker image. |
+| `--distro` | `ubuntu` | Linux distribution: `ubuntu` or `fedora`. |
+| `--version` | `14` | OS version, for example `14` for Android or `sonoma` for macOS. |
+| `--disk` | `64G` | Disk size. |
+| `--memory` | `8G` | Memory. |
+| `--cpus` | `8` | CPU cores. |
+| `--winarena-apps` | false | Install the WinArena benchmark apps. |
+| `--detach`, `-d` | false | Run in the background. |
+| `--force` | false | Recreate an existing image. |
+| `--skip-pull` | false | Do not pull the Docker image. |
+| `--no-kvm` | false | Disable KVM acceleration. |
+| `--vnc-port` | auto from 8006 | VNC port. |
+| `--api-port` | auto from 5000 | API port. |
+
+### Local image commands
+
+| Command | Description |
+|---------|-------------|
+| `cua image info <name>` | Show a local image's details. |
+| `cua image clone <source> <target>` | Clone a local image. Add `--force` to overwrite the target. |
+| `cua image shell <name>` | Boot the image and open a shell in it. |
+
+`cua image shell` writes to a disposable overlay by default:
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `--writable` | false | Modify the golden image directly. Destructive. |
+| `--detach`, `-d` | false | Run in the background. |
+| `--memory` | `8G` | Memory. |
+| `--cpus` | `8` | CPU cores. |
+| `--no-kvm` | false | Disable KVM acceleration. |
+| `--vnc-port` | auto from 8006 | VNC port. |
+| `--api-port` | auto from 5000 | API port. |
+
+## `cua platform`
+
+Inspect the platform definitions `cua image create` can build from, and whether
+this host meets their requirements.
+
+| Command | Description |
+|---------|-------------|
+| `cua platform list` | List platforms with their status on this host. Accepts `--format table\|json`. Also the default when `cua platform` is run bare. |
+| `cua platform info <platform>` | Show a platform's Docker image, ports, KVM requirement, and boot timeout. |
+
+```console
+$ cua platform list
+
+Platforms
+================================================================================
+
+System:
+  Docker:  ✗ Not running
+  KVM:     ✓ Available
+
+--------------------------------------------------------------------------------
+
+PLATFORM           DESCRIPTION                                   STATUS
+--------------------------------------------------------------------------------
+linux-docker       Linux GUI container (no KVM required)         no Docker
+linux-qemu         Linux VM with QEMU/KVM (OSWorld)              no Docker
+windows-qemu       Windows VM with QEMU/KVM (Windows Arena)      no Docker
+android-qemu       Android VM with QEMU/KVM                      no Docker
+macos-lume         macOS VM with Apple Virtualization (Lume, Ap  macOS only
+```
+
+Every platform except `macos-lume` runs through Docker, so a host without Docker
+reports `no Docker` for all of them regardless of KVM. `macos-lume` requires an
+Apple Silicon Mac running [Lume](/reference/lume/cli-reference).
+
+## `cua do`
+
+Send one automation command to a target machine and exit. `cua do` keeps a
+selected target in `~/.cua/do_target.json`, so the target survives between
+invocations.
+
+Output is a single line beginning with `✅` or `❌`, followed by a context line
+showing the current machine and zoom state. Coordinates are in screenshot-image
+space; when a zoom is active the CLI translates them for you.
+
+| Option | Description |
+|--------|-------------|
+| `--no-record` | Disable trajectory recording for this command. Goes before the action: `cua do --no-record status`. |
+
+### Target selection
+
+| Command | Description |
+|---------|-------------|
+| `cua do switch <provider> [name]` | Select the target. Providers: `cloud`, `cloudv2`, `local`, `lume`, `lumier`, `docker`, `winsandbox`, `host`. |
+| `cua do ls [provider]` | List machines for one provider. With no provider, lists the host plus every local and cloud sandbox. |
+| `cua do status` | Show the current target and zoom state. |
+| `cua do-host-consent` | Grant consent for `cua do switch host` and switch to it. |
+
+`host` means your own desktop. Selecting it is refused until consent is granted:
+
+```console
+$ cua do switch host
+❌ Warning: you are about to allow an AI to control your host PC directly.
+   This grants full keyboard, mouse, and screen access to your local desktop.
+   To continue, please run: cua do-host-consent
+```
+
+<Callout type="warn">
+  `cua do-host-consent` is a top-level command, not a subcommand of `cua do`, and
+  it writes a persistent marker at `~/.cua/host_consented`. Consent stays granted
+  until that file is removed.
+</Callout>
+
+### Screen and framing
+
+| Command | Description |
+|---------|-------------|
+| `cua do screenshot [--save PATH]` | Capture the screen. Saved to a temp directory unless `--save`/`-s` is given. |
+| `cua do snapshot [instructions…]` | Screenshot plus an AI summary of the screen and its interactive elements. Requires `ANTHROPIC_API_KEY`. |
+| `cua do zoom <window-name>` | Crop every subsequent screenshot to that window and translate coordinates into it. |
+| `cua do unzoom` | Return to full-screen screenshots. |
+
+### Input
+
+| Command | Description |
+|---------|-------------|
+| `cua do click <x> <y> [left\|right\|middle]` | Click. Defaults to `left`. |
+| `cua do dclick <x> <y>` | Double-click. |
+| `cua do move <x> <y>` | Move the cursor. |
+| `cua do drag <x1> <y1> <x2> <y2>` | Drag between two points. |
+| `cua do type <text>` | Type text. |
+| `cua do key <key>` | Press one key, such as `enter`, `escape`, or `tab`. |
+| `cua do hotkey <combo>` | Press a shortcut, such as `cmd+c` or `ctrl+shift+s`. |
+| `cua do scroll <up\|down\|left\|right> [amount]` | Scroll. Amount defaults to `3`. |
+
+### Shell and files
+
+| Command | Description |
+|---------|-------------|
+| `cua do shell [command…]` | Run a shell command in the target, or open an interactive terminal when no command is given. Accepts `--cols` and `--rows`. |
+| `cua do open <path-or-url>` | Open a file or URL in the target. |
+
+### Windows
+
+| Command | Description |
+|---------|-------------|
+| `cua do window ls [app]` | List windows, optionally filtered by application. |
+| `cua do window focus <id>` | Focus a window. `activate` is accepted as well. |
+| `cua do window unfocus` | Remove focus from the current window. |
+| `cua do window minimize\|maximize\|close <id>` | Change a window's state. |
+| `cua do window resize <id> <width> <height>` | Resize a window. |
+| `cua do window move <id> <x> <y>` | Move a window. |
+| `cua do window info <id>` | Show a window's details. |
+
+## `cua skills`
+
+Record demonstrations on a sandbox and keep them as skills for agents to follow.
+Skills are stored in `~/.cua/skills/`.
+
+| Command | Description |
+|---------|-------------|
+| `cua skills list` | List saved skills. Accepts `--json`. Aliased as `cua skills ls`. |
+| `cua skills read <name>` | Print a skill. `--format`/`-f` selects `md` (default) or `json`. |
+| `cua skills replay <name>` | Open the skill's video recording. |
+| `cua skills delete <name>` | Delete one skill. |
+| `cua skills clean` | Delete every skill, after confirmation. |
+
+### `cua skills record`
+
+Connect to a machine, record what you do, and caption the result with a vision
+model. Requires the `skills` extra.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `--sandbox`, `-s` | — | Sandbox name to connect to. |
+| `--vnc-url`, `-u` | — | Connect to a VNC URL directly instead. |
+| `--provider`, `-p` | `anthropic` | Captioning provider: `anthropic` or `openai`. |
+| `--model`, `-m` | provider default | Captioning model. |
+| `--api-key`, `-k` | from environment | API key for the captioning provider. |
+| `--name`, `-n` | prompted | Skill name. Supplying it skips the prompt. |
+| `--description`, `-d` | prompted | Skill description. Supplying it skips the prompt. |
+
+## `cua trajectory`
+
+Every `cua do` command is recorded into a trajectory session under
+`~/.cua/trajectories/<machine>/<YYYYMMDD-HHMMSS>/` unless `--no-record` was
+passed. Aliased as `cua traj`.
+
+| Command | Description |
+|---------|-------------|
+| `cua trajectory ls [machine]` | List sessions, optionally for one machine. Accepts `--json`. |
+| `cua trajectory view [target]` | Zip the session, serve it locally, and open it in the hosted trajectory viewer. Defaults to the newest session. |
+| `cua trajectory stop` | Stop the local file server started by `view`. |
+| `cua trajectory clean` | Delete sessions. |
+
+```console
+$ cua trajectory ls
+Machine              Session            Turns  Created
+----------------------------------------------------------------------
+my-container         20260812-224500        1  2026-08-12T22:45:00
+```
+
+`view` accepts a machine name, a session timestamp, or a path, and takes
+`--port`/`-p` to move the local file server off its default port `8089`. It
+starts a background HTTP server on `127.0.0.1` and prints a
+`https://cua.ai/trajectory-viewer?zip=...` URL that points back at it, so the
+viewer only works while that server is running. Stop it with
+`cua trajectory stop`.
+
+`clean` takes `--older-than DAYS`, `--machine NAME`, and `-y`/`--yes` to skip
+the confirmation prompt.
+
+## `cua serve-mcp`
+
+Start a Model Context Protocol server over stdio so an AI assistant can drive
+Cua directly.
+
+| Name | Default | Description |
+|------|---------|-------------|
+| `--permissions` | `CUA_MCP_PERMISSIONS`, else all | Comma-separated permission list. |
+| `--sandbox` | `CUA_SANDBOX` | Default sandbox for computer tools. |
+
+See [MCP server](/reference/cua-cli/mcp-server) for the permission grammar and
+the full tool catalogue.
+
+## `cua wif-token`
+
+Request a workload identity federation token for Fleets from a CI provider.
+`cua wif-token github` requests a GitHub Actions OIDC token with the `fleets`
+audience and prints only the raw token; it does not use the interactive session.
+
+It only runs inside GitHub Actions:
+
+```console
+$ cua wif-token github
+Error: ACTIONS_ID_TOKEN_REQUEST_URL is missing; run in GitHub Actions with permissions: id-token: write.
+```
+
+See [Authentication](/reference/cua-cli/authentication#github-actions) for the
+workflow snippet.
+
+## Files the CLI writes
+
+| Path | Written by |
+|------|------------|
+| OS credential vault, service `run.cua.ai`, account `cua-cli` | `cua auth login` |
+| `~/.cua/do_target.json` | `cua do switch`, `cua do zoom` |
+| `~/.cua/host_consented` | `cua do-host-consent` |
+| `~/.cua/skills/` | `cua skills record` |
+| `~/.cua/trajectories/` | `cua do` |
+| `~/.cua/sandboxes/` | local sandbox state, written when a local launch completes |
+| `~/.cua/cua-sandbox/` | disk images and overlays for local sandboxes |
+| `~/.local/share/cua/images/` | `cua image create`, `cua image pull` |
+| `~/.local/state/cua/images.json` | the local image registry |
+
+Local sandboxes and local images are stored in two separate trees, which is
+worth knowing when you are reclaiming disk space. `cua sb launch --local` works
+under `~/.cua/cua-sandbox/`:
+
+| Path | Contents |
+|------|----------|
+| `images/container-disks/<digest>/disk.qcow2` | pulled container disks, content-addressed, reused across launches |
+| `images/<name>-<hash>/disk.qcow2` | built base images |
+| `images/sessions/<sandbox>.qcow2` | per-sandbox overlay for a running sandbox, plus `<sandbox>.efivars.fd` for EFI guests |
+| `image-cache/` | downloaded image files, keyed by hash and original filename |
+
+`cua image create` and `cua image pull` write to `~/.local/share/cua/images/`
+instead. That path and `~/.local/state/cua/` follow the XDG base directory spec
+and move with `XDG_DATA_HOME` and `XDG_STATE_HOME`; `~/.cua/` does not.

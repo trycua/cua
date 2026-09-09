@@ -183,7 +183,7 @@ pub fn set_window_frame(
     }
 
     let atom = get_atom(&conn, "_NET_MOVERESIZE_WINDOW")?;
-    let fields = (1_u32 << 8) | (1 << 9) | (1 << 10) | (1 << 11);
+    let fields = moveresize_window_flags();
     let source_indication = 1_u32 << 12; // normal application (EWMH §4.1.5)
     let event = ClientMessageEvent::new(
         32,
@@ -226,6 +226,19 @@ pub fn set_window_frame(
         .as_ref()
         .is_some_and(|window| (window.x, window.y, window.width, window.height) == requested);
     Ok((observed, confirmed, mutation_error))
+}
+
+/// EWMH §4.2 requires an explicit StaticGravity when a pager-style client
+/// wants the requested geometry to include server-side window decorations.
+/// A zero gravity delegates to WM_NORMAL_HINTS and makes the same request land
+/// at different client offsets under window managers such as Xfwm.
+fn moveresize_window_flags() -> u32 {
+    const STATIC_GRAVITY: u32 = 10;
+    const X_PRESENT: u32 = 1 << 8;
+    const Y_PRESENT: u32 = 1 << 9;
+    const WIDTH_PRESENT: u32 = 1 << 10;
+    const HEIGHT_PRESENT: u32 = 1 << 11;
+    STATIC_GRAVITY | X_PRESENT | Y_PRESENT | WIDTH_PRESENT | HEIGHT_PRESENT
 }
 
 fn get_window_pid(conn: &RustConnection, window: Window) -> Result<Option<u32>> {
@@ -334,5 +347,13 @@ mod tests {
         let indices: Vec<_> = (0..3).map(z_index_from_bottom_to_top).collect();
         assert_eq!(indices, vec![0, 1, 2]);
         assert!(indices[2] > indices[0]);
+    }
+
+    #[test]
+    fn moveresize_requests_static_gravity_and_all_frame_fields() {
+        let flags = moveresize_window_flags();
+        assert_eq!(flags & 0xff, 10);
+        assert_eq!(flags & 0x0f00, 0x0f00);
+        assert_eq!(flags & !0x0fff, 0);
     }
 }

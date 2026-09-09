@@ -133,6 +133,8 @@ func emptyCompositeIn(n Node) Node {
 		children = node.Children
 	case AnyNode:
 		children = node.Children
+	case BecauseNode:
+		return emptyCompositeIn(node.Child)
 	default:
 		return nil
 	}
@@ -145,6 +147,14 @@ func emptyCompositeIn(n Node) Node {
 		}
 	}
 	return nil
+}
+
+func TestEmptyCompositeInFindsAnnotatedChild(t *testing.T) {
+	got := emptyCompositeIn(Because(AllNode{}, "payment method required"))
+	empty, ok := got.(AllNode)
+	if !ok || len(empty.Children) != 0 {
+		t.Fatalf("emptyCompositeIn = %#v, want empty AllNode", got)
+	}
 }
 
 func childrenOf(t *testing.T, n Node) []Node {
@@ -163,6 +173,87 @@ func childrenOf(t *testing.T, n Node) []Node {
 // ---------------------------------------------------------------------------
 // Flatten
 // ---------------------------------------------------------------------------
+
+func TestOptimizersPreserveBecauseAnnotations(t *testing.T) {
+	t.Run("flatten rewrites the annotated child", func(t *testing.T) {
+		got := Optimize(Because(All(allowLeaf("a"), All(allowLeaf("b"), allowLeaf("c"))), "payment method required"), []string{"flatten"})
+
+		because, ok := got.(BecauseNode)
+		if !ok || because.Reason != "payment method required" {
+			t.Fatalf("flatten = %#v, want payment-method annotation", got)
+		}
+		if want := Explain(All(allowLeaf("a"), allowLeaf("b"), allowLeaf("c"))); Explain(because.Child) != want {
+			t.Fatalf("flattened child:\n%s\nwant:\n%s", Explain(because.Child), want)
+		}
+	})
+
+	t.Run("collapse keeps annotations with different reasons nested", func(t *testing.T) {
+		got := Optimize(Because(Because(All(allowLeaf("a")), "account inactive"), "payment method required"), []string{"collapse"})
+
+		outer, ok := got.(BecauseNode)
+		if !ok || outer.Reason != "payment method required" {
+			t.Fatalf("collapse outer = %#v, want payment-method annotation", got)
+		}
+		inner, ok := outer.Child.(BecauseNode)
+		if !ok || inner.Reason != "account inactive" {
+			t.Fatalf("collapse child = %#v, want nested account annotation", outer.Child)
+		}
+		if want := Explain(allowLeaf("a")); Explain(inner.Child) != want {
+			t.Fatalf("collapsed child:\n%s\nwant:\n%s", Explain(inner.Child), want)
+		}
+	})
+
+	t.Run("dedupe keeps annotated siblings with different reasons", func(t *testing.T) {
+		got := Optimize(All(Because(allowLeaf("a"), "account inactive"), Because(allowLeaf("a"), "payment method required")), []string{"dedupe"})
+
+		children := childrenOf(t, got)
+		if len(children) != 2 {
+			t.Fatalf("dedupe children = %d, want 2\n%s", len(children), Explain(got))
+		}
+		for index, wantReason := range []string{"account inactive", "payment method required"} {
+			because, ok := children[index].(BecauseNode)
+			if !ok || because.Reason != wantReason {
+				t.Fatalf("dedupe child %d = %#v, want annotation %q", index, children[index], wantReason)
+			}
+			if want := Explain(allowLeaf("a")); Explain(because.Child) != want {
+				t.Fatalf("dedupe child %d policy:\n%s\nwant:\n%s", index, Explain(because.Child), want)
+			}
+		}
+	})
+}
+
+func TestSinkFactsPricesBecauseByItsChild(t *testing.T) {
+	annotatedFacts := Because(
+		All(
+			factLeaf("annotated-facts", &testFactProvider{cacheKey: "annotated-facts"}),
+			allowLeaf("annotated-pure"),
+		),
+		"fact denial",
+	)
+	got := Optimize(All(factLeaf("sibling-facts", &testFactProvider{cacheKey: "sibling-facts"}), annotatedFacts), []string{"sink-facts"})
+
+	all := got.(AllNode)
+	because, ok := all.Children[0].(BecauseNode)
+	if !ok {
+		t.Fatalf("first child = %T, want BecauseNode\n%s", all.Children[0], Explain(got))
+	}
+	if because.Reason != "fact denial" {
+		t.Fatalf("reason = %q, want fact denial", because.Reason)
+	}
+	annotatedChild, ok := because.Child.(AllNode)
+	if !ok {
+		t.Fatalf("annotated child = %T, want AllNode\n%s", because.Child, Explain(got))
+	}
+	if query := annotatedChild.Children[0].(Leaf).Query; query != "data.annotated-pure.allow" {
+		t.Fatalf("first annotated query = %q, want data.annotated-pure.allow\n%s", query, Explain(got))
+	}
+	if query := annotatedChild.Children[1].(Leaf).Query; query != "data.annotated-facts.allow" {
+		t.Fatalf("second annotated query = %q, want data.annotated-facts.allow\n%s", query, Explain(got))
+	}
+	if query := all.Children[1].(Leaf).Query; query != "data.sibling-facts.allow" {
+		t.Fatalf("second parent query = %q, want data.sibling-facts.allow\n%s", query, Explain(got))
+	}
+}
 
 func TestFlattenCollapsesNestedSameKindNodes(t *testing.T) {
 	node := All(allowLeaf("a"), All(allowLeaf("b"), allowLeaf("c")))

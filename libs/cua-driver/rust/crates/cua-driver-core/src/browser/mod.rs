@@ -35,7 +35,6 @@
 //! is re-proven before any mutation; frames whose identity or
 //! capability cannot be proven are omitted or refused, never guessed.
 
-pub mod approval;
 pub mod binding;
 pub mod cdp_ws;
 pub mod download;
@@ -61,8 +60,8 @@ pub use engine::BrowserEngine;
 pub use platform::{
     BrowserConsentOutcome, BrowserConsentRequest, BrowserPlatform, BrowserVisualAction,
     BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
-    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareAuthorization, PrepareOutcome,
-    PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
+    PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareOutcome, PrepareProfile,
+    PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{

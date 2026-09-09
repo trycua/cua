@@ -1,4 +1,5 @@
 from cua_sandbox.registry.cache import ImageCache
+from cua_sandbox.registry.container_disk import pull_container_disk
 from cua_sandbox.registry.manifest import (
     ImageFormat,
     detect_format,
@@ -21,6 +22,7 @@ __all__ = [
     "resolve_image_kind",
     "pull_image",
     "ImageCache",
+    "pull_container_disk",
     "QEMUImageConfig",
     "push_qemu_image",
     "pull_qemu_image",

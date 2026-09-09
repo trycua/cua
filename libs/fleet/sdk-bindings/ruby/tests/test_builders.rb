@@ -39,3 +39,17 @@ begin
   raise 'missing claim pool did not fail'
 rescue FleetSdk::SdkBuildError::MissingRequiredField
 end
+http_request = FleetSdk::HttpRequestBuilder.new.method('GET').url('https://run.cua.ai/v1/pools').headers([]).build
+raise 'wrong http request type' unless http_request.instance_of?(FleetSdk::HttpRequest)
+raise 'optional body was not omitted' unless http_request.body.nil?
+raise 'optional timeout was not omitted' unless http_request.timeout_secs.nil?
+bounded = FleetSdk::HttpRequestBuilder.new.method('GET').url('https://run.cua.ai/v1/pools').headers([]).timeout_secs(30).build
+raise 'wrong bounded timeout' unless bounded.timeout_secs == 30
+begin
+  FleetSdk::HttpRequestBuilder.new.method('GET').headers([]).build
+  raise 'missing http request url did not fail'
+rescue FleetSdk::SdkBuildError::MissingRequiredField => error
+  raise 'wrong http request error' unless error.record_type == 'HttpRequest' && error.field == 'url'
+end
+legacy_http_request = FleetSdk::HttpRequest.new(method: 'GET', url: 'https://run.cua.ai/v1/pools', headers: [], body: nil)
+raise 'constructor timeout default changed' unless legacy_http_request.timeout_secs.nil?

@@ -35,6 +35,14 @@ type AnyNode struct{ Children []Node }
 
 func (AnyNode) node() {}
 
+// BecauseNode associates one public denial reason with a policy subtree.
+type BecauseNode struct {
+	Child  Node
+	Reason string
+}
+
+func (BecauseNode) node() {}
+
 func All(children ...Node) Node {
 	if len(children) == 0 {
 		panic("OPA All requires at least one policy")
@@ -47,6 +55,16 @@ func Any(children ...Node) Node {
 		panic("OPA Any requires at least one policy")
 	}
 	return AnyNode{Children: children}
+}
+
+func Because(child Node, reason string) Node {
+	if child == nil {
+		panic("OPA Because requires a policy")
+	}
+	if reason == "" {
+		panic("OPA Because requires a denial reason")
+	}
+	return BecauseNode{Child: child, Reason: reason}
 }
 
 // Policy builds a leaf. It performs no I/O and no compilation; both happen in
@@ -142,6 +160,9 @@ func explainInto(builder *strings.Builder, n Node, depth int) {
 		for _, child := range node.Children {
 			explainInto(builder, child, depth+1)
 		}
+	case BecauseNode:
+		fmt.Fprintf(builder, "%sBecause reason=%q\n", indent, node.Reason)
+		explainInto(builder, node.Child, depth+1)
 	default:
 		fmt.Fprintf(builder, "%s<unknown %T>\n", indent, n)
 	}

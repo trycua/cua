@@ -523,6 +523,7 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
             if directory:
                 try:
                     write_json(directory / "error.json", {"request_id": request_id, "error": "Inference unavailable",
+                        "validation": str(error),
                         "rejected_attempts": getattr(error, "rejected_attempts", [])})
                 except OSError:
                     pass

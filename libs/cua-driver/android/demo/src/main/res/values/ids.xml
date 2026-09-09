@@ -1,0 +1,7 @@
+<resources>
+    <item name="human_editor" type="id" />
+    <item name="status" type="id" />
+    <item name="preview" type="id" />
+    <item name="start" type="id" />
+    <item name="stop" type="id" />
+</resources>

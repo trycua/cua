@@ -23,9 +23,10 @@ remains under review and is not implied by the experiment.
 An explicitly started development runtime runs under Android's authorized shell
 identity. It owns one virtual display, an ImageReader capture path, session
 lifecycle, admission, and action evidence. Host requests arrive through ADB and
-an on-device client; Android app clients use authenticated local IPC. Local
-socket peer credentials identify callers and the runtime; a session ID is never
-a credential. The first app client is admitted by installed signing identity.
+an on-device client over a local socket with peer UID checks. Android app clients
+obtain a shell-registered Binder through a provider with signing identity checks;
+the runtime independently admits the demo UID. Response pipes bound frame IPC.
+A session ID is never a credential.
 The same runtime executes both routes. No control TCP listener is exposed.
 
 Use Kotlin for Android framework access. The initial wire extension is
@@ -70,6 +71,6 @@ passing experiment alone.
 
 A new `android` CLI verb was rejected. A framework fork, full desktop daemon port,
 and multiple public display streams are deferred. Validate virtual-display flags,
-focus/IME behavior, app/service lifetime, Binder versus native client transport,
+focus/IME behavior, app/service lifetime, Binder transport lifecycle,
 shared schema generation, and preview frame IPC cost before declaring stable
 capabilities. Runtime reconnection must not imply exactly-once effects.

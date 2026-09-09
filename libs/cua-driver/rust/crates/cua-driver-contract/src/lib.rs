@@ -13,6 +13,7 @@ use serde_json::Value;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::OnceLock;
 
+pub mod android;
 pub mod compatibility;
 pub mod cursor;
 mod cursor_tools;

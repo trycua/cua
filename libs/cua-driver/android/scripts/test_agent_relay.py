@@ -312,6 +312,89 @@ class ModelTests(unittest.TestCase):
 
 
 class RecoveryTests(unittest.TestCase):
+    def native_events(self, first=None, second=None):
+        first = first or {"type": "tap", "x": 1, "y": 0, "reason": "Original explanation"}
+        second = second or dict(first, reason="Reworded explanation")
+        events = structured_events(first)
+        events[1]["message"]["id"] = "message-first"
+        events[1]["message"]["content"][0]["input"]["reason"] = "Redundant outer explanation"
+        repaired = structured_events(second)
+        repaired[1]["message"]["id"] = "message-second"
+        repaired[1]["message"]["content"][0]["id"] = "format-2"
+        return events[:2] + repaired[1:]
+
+    def test_native_repair_accepts_only_same_operation_and_records_rejection(self):
+        action, metadata = relay.parse_model_output("\n".join(map(json.dumps, self.native_events())), request())
+        self.assertEqual(action, {"type": "tap", "x": 1, "y": 0, "reason": "Reworded explanation"})
+        self.assertEqual(metadata["formatting_repairs"], 1)
+        self.assertEqual(metadata["rejected_attempts"][0]["source"], "native_formatter")
+        self.assertIn("Redundant outer explanation", metadata["rejected_attempts"][0]["model_response"])
+
+    def test_native_repair_rejects_changed_operational_fields(self):
+        cases = [(None, {"type": "tap", "x": 0, "y": 0, "reason": "Changed coordinate"}),
+                 (None, {"type": "done", "reason": "Changed type"}),
+                 ({"type": "launch", "package": "ai.cua.fixture", "reason": "Original"},
+                  {"type": "launch", "package": "ai.cua.other", "reason": "Changed package"})]
+        for first, second in cases:
+            req = dict(request(), allowed_apps=["ai.cua.fixture", "ai.cua.other"])
+            with self.subTest(second=second), self.assertRaises(relay.Invalid) as caught:
+                relay.parse_model_output("\n".join(map(json.dumps, self.native_events(first, second))), req)
+            self.assertNotIsInstance(caught.exception, relay.MalformedResponse)
+
+    def test_native_repair_rejects_third_calls_policy_errors_and_mismatched_result(self):
+        for kind in ("third", "host_tool", "policy", "mismatch", "first_valid"):
+            events = self.native_events()
+            if kind == "third":
+                events.insert(-1, events[-2])
+            elif kind == "host_tool":
+                events[-2]["message"]["content"][0]["name"] = "Bash"
+            elif kind == "policy":
+                events.append({"type": "error", "error": "Policy failure"})
+            elif kind == "mismatch":
+                events[-1]["structured_output"] = {"action": {"type": "done", "reason": "Different result"}}
+            else:
+                del events[1]["message"]["content"][0]["input"]["reason"]
+            with self.subTest(kind=kind), self.assertRaises((relay.Invalid, relay.InferenceError)):
+                relay.parse_model_output("\n".join(map(json.dumps, events)), request())
+
+    @mock.patch.object(relay, "infer_once")
+    def test_second_malformed_native_call_never_triggers_outer_retry(self, once):
+        events = self.native_events()
+        events[-2]["message"]["content"][0]["input"]["reason"] = "Still malformed"
+        once.side_effect = lambda *args, **kwargs: relay.parse_model_output("\n".join(map(json.dumps, events)), request())
+        with self.assertRaises(relay.Invalid) as caught:
+            relay.infer(request(), "/test/claude")
+        self.assertNotIsInstance(caught.exception, relay.MalformedResponse)
+        self.assertEqual(once.call_count, 1)
+        self.assertEqual(len(caught.exception.rejected_attempts), 1)
+
+    @mock.patch.object(relay, "infer_once")
+    def test_outer_retry_cannot_also_use_native_repair(self, once):
+        native = "\n".join(map(json.dumps, self.native_events()))
+        count = [0]
+
+        def inference(*args, **kwargs):
+            count[0] += 1
+            if count[0] == 1:
+                raise self.malformed_error()
+            return relay.parse_model_output(native, request(), allow_native_repair=kwargs["correction"] is None)
+
+        once.side_effect = inference
+        with self.assertRaises(relay.Invalid) as caught:
+            relay.infer(request(), "/test/claude")
+        self.assertEqual(once.call_count, 2)
+        self.assertIn("budget", str(caught.exception))
+        self.assertEqual(len(caught.exception.rejected_attempts), 2)
+
+    @mock.patch.object(relay, "infer_once")
+    def test_outer_retry_allows_reworded_reason(self, once):
+        original = self.malformed_error()
+        repaired = dict(original.action, reason="Reworded explanation")
+        once.side_effect = [original, (repaired, {})]
+        action, metadata = relay.infer(request(), "/test/claude")
+        self.assertEqual(action, repaired)
+        self.assertEqual(metadata["formatting_repairs"], 1)
+
     def malformed_events(self):
         events = structured_events()
         events[1]["message"]["content"][0]["input"]["reason"] = "Redundant outer explanation"

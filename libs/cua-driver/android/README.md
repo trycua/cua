@@ -288,9 +288,11 @@ Disconnecting a request cancels its model subprocess and releases the relay
 slot. Clients must keep their sending half of the connection open while waiting;
 the relay treats a TCP half-close as cancellation too.
 An extra outer `reason` around an otherwise valid structured action permits one
-formatting retry within the original timeout. The corrected response must retain
-the exact action. Other schema failures, tool-policy errors, and uncertain driver
-actions are not retried. Rejected responses remain in the local evidence.
+formatting repair within the original timeout, either inside Claude Code's
+formatter flow or through one further inference attempt. The corrected response
+must retain every operational action field; only its explanatory `reason` may
+change. A second repair, other schema failures, tool-policy errors, and uncertain
+driver actions are refused. Rejected responses remain in the local evidence.
 
 From another terminal, pass a task file and the two allowed apps to the harness:
 

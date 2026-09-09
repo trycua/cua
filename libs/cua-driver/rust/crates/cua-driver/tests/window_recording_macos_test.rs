@@ -129,7 +129,7 @@ fn descriptor_count(pid: u64) -> usize {
     count
 }
 
-fn verify_video(output_dir: &Path, identity: &Value, state: &Value) {
+fn verify_video(output_dir: &Path, identity: &Value, state: &Value, ending: &str) {
     let mut files: Vec<_> = fs::read_dir(output_dir)
         .unwrap()
         .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
@@ -202,6 +202,8 @@ fn verify_video(output_dir: &Path, identity: &Value, state: &Value) {
             "scale=32:24",
             "-fps_mode",
             "passthrough",
+            "-enc_time_base",
+            "demux",
             "-f",
             "rawvideo",
             "-pix_fmt",
@@ -221,23 +223,55 @@ fn verify_video(output_dir: &Path, identity: &Value, state: &Value) {
     assert_eq!(decoded.stdout.len() / FRAME, timestamps.len());
     let distinct: std::collections::HashSet<_> = decoded.stdout.chunks_exact(FRAME).collect();
     assert!(distinct.len() > 1, "recording contains only a frozen frame");
-    for frame in decoded.stdout.chunks_exact(FRAME) {
+    let mut bright_timestamps = Vec::new();
+    for (index, frame) in decoded.stdout.chunks_exact(FRAME).enumerate() {
+        let terminal_fade = matches!(ending, "close" | "minimize")
+            && timestamps[index] - timestamps[0] >= 1.5
+            && timestamps.last().unwrap() - timestamps[index] <= 0.5;
         let green = frame
             .chunks_exact(3)
             .filter(|p| p[1] > 170 && p[0] < 80 && p[2] < 80)
             .count();
         let red = frame
             .chunks_exact(3)
-            .filter(|p| p[0] > 170 && p[1] < 80 && p[2] < 80)
+            .filter(|p| p[0] > 20 && u16::from(p[0]) > 2 * u16::from(p[1].max(p[2])))
             .count();
-        assert!(green > 600, "target green field absent: {green}");
         assert_eq!(red, 0, "sibling/desktop pixels leaked into window video");
+        // AppKit can fade the source before WindowServer marks it removed.
+        // Permit only a bounded terminal fade, never unrelated or missing body frames.
+        if terminal_fade && frame.iter().all(|channel| *channel <= 8) {
+            continue;
+        }
+        let green_present = if terminal_fade {
+            frame
+                .chunks_exact(3)
+                .filter(|p| p[1] > 8 && u16::from(p[1]) > 2 * u16::from(p[0].max(p[2])))
+                .count()
+        } else {
+            green
+        };
+        assert!(
+            green_present > 600,
+            "target green field absent: {green_present}"
+        );
         let center = &frame[(12 * 32 + 16) * 3..][..3];
         assert!(
-            center[2] > 170 && center[0] < 80 && center[1] < 80,
+            if terminal_fade {
+                center[2] > 8 && u16::from(center[2]) > 2 * u16::from(center[0].max(center[1]))
+            } else {
+                center[2] > 170 && center[0] < 80 && center[1] < 80
+            },
             "blue target marker absent: {center:?}"
         );
+        if green > 600 && center[2] > 170 {
+            bright_timestamps.push(timestamps[index]);
+        }
     }
+    assert!(
+        bright_timestamps.len() >= 3,
+        "too few full-brightness target frames"
+    );
+    assert!(bright_timestamps.last().unwrap() - bright_timestamps[0] >= 1.5);
 }
 
 fn host_run_authorized(vm: Option<&str>, host: Option<&str>) -> Result<bool, &'static str> {
@@ -458,7 +492,7 @@ fn exact_window_recording_isolation_and_lifecycle() {
             "stop" | "disconnect" => assert_eq!(reason, "stopped"),
             _ => unreachable!(),
         }
-        verify_video(&output, &fixture.identity, &state);
+        verify_video(&output, &fixture.identity, &state, ending);
         eprintln!("verified native window recording: {case} ({reason})");
         let stopped_again = call(&mut driver, "stop_recording", json!({}));
         assert_eq!(stopped_again["status"]["finalized"], true);

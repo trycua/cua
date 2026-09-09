@@ -70,8 +70,11 @@ a capture implementation or substitute for native video proof.
 
 The 321-by-241-point green target has a blue center marker and a pulsing white
 bar. A larger red sibling starts visible beside it, then fully covers it before
-both windows move. Every decoded frame must retain the target colors
-without red contamination, and at least two frames must differ. Frame timestamps
+both windows move. Every decoded frame must exclude red contamination, and at
+least two frames must differ. At least three full-brightness target frames must
+span 1.5 seconds. Only close/minimize cases may include a hue-preserving fade or
+black frames in the final half-second, after at least 1.5 seconds of video.
+All other frames must retain the full-brightness target colors. Frame timestamps
 must increase and span at least 1.5 seconds. The fixture acknowledges minimization
 after AppKit completes the asynchronous transition, with a three-second deadline.
 Minimize and close animations may expose changing bounds before invisibility or

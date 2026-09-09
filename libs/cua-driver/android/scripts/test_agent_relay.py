@@ -132,7 +132,7 @@ class ModelTests(unittest.TestCase):
         popen.return_value = process
         cancelled = mock.Mock(side_effect=[False, True])
         with self.assertRaises(relay.InferenceCancelled):
-            relay.infer(request(), "/test/claude", cancelled=cancelled)
+            relay.infer_once(request(), "/test/claude", cancelled=cancelled)
         killpg.assert_called_once_with(12345, signal.SIGKILL)
         process.wait.assert_called_once_with(timeout=5)
 
@@ -281,7 +281,7 @@ class ModelTests(unittest.TestCase):
         process.poll.return_value = None
         popen.return_value = process
         with self.assertRaises(TimeoutError):
-            relay.infer(request(), "/test/claude", timeout=0)
+            relay.infer_once(request(), "/test/claude", timeout=0)
         killpg.assert_called_once_with(12345, signal.SIGKILL)
         process.wait.assert_called_once_with(timeout=5)
 
@@ -309,6 +309,124 @@ class ModelTests(unittest.TestCase):
         with self.assertRaises(relay.InferenceError):
             relay.infer(request(), "/test/claude")
         killpg.assert_called_once_with(12345, signal.SIGKILL)
+
+
+class RecoveryTests(unittest.TestCase):
+    def malformed_events(self):
+        events = structured_events()
+        events[1]["message"]["content"][0]["input"]["reason"] = "Redundant outer explanation"
+        return events
+
+    def malformed_error(self):
+        try:
+            relay.parse_model_output("\n".join(map(json.dumps, self.malformed_events())), request())
+        except relay.MalformedResponse as error:
+            return error
+        self.fail("Expected recoverable formatting error")
+
+    @mock.patch.object(relay.os, "killpg")
+    @mock.patch.object(relay.subprocess, "Popen")
+    def test_two_subprocesses_preserve_action_evidence_and_cleanup(self, popen, killpg):
+        processes = []
+
+        def start(argv, **kwargs):
+            index = len(processes)
+            process = mock.Mock(pid=12345 + index, returncode=0)
+            process.poll.return_value = 0
+            if index:
+                killpg.assert_called_once_with(12345, signal.SIGKILL)
+                processes[0].wait.assert_called_once_with(timeout=5)
+                self.assertIn("Formatting correction", argv[argv.index("--system-prompt") + 1])
+                content = json.loads(kwargs["stdin"].read())["message"]["content"]
+                self.assertIn("Previously rejected action data", content[-1]["text"])
+            events = self.malformed_events() if index == 0 else structured_events()
+            kwargs["stdout"].write("\n".join(map(json.dumps, events)).encode())
+            processes.append(process)
+            return process
+
+        popen.side_effect = start
+        action, metadata = relay.infer(request(), "/test/claude")
+        self.assertEqual(action, structured_events()[-1]["structured_output"]["action"])
+        self.assertEqual(popen.call_count, 2)
+        self.assertEqual(killpg.call_args_list, [mock.call(12345, signal.SIGKILL), mock.call(12346, signal.SIGKILL)])
+        processes[1].wait.assert_called_once_with(timeout=5)
+        self.assertIn("Redundant outer explanation", metadata["rejected_attempts"][0]["model_response"])
+
+    @mock.patch.object(relay, "infer_once")
+    def test_only_one_retry_and_rejected_evidence_on_failure(self, once):
+        once.side_effect = [self.malformed_error(), self.malformed_error()]
+        with self.assertRaises(relay.MalformedResponse) as caught:
+            relay.infer(request(), "/test/claude")
+        self.assertEqual(once.call_count, 2)
+        self.assertEqual(len(caught.exception.rejected_attempts), 2)
+
+    @mock.patch.object(relay, "infer_once")
+    def test_uncertain_semantic_policy_and_cancellation_failures_never_retry(self, once):
+        for error in (relay.Invalid("Invalid x"), relay.Invalid("Unknown action"),
+                      relay.InferenceError("Host tool"), relay.InferenceCancelled("Disconnected"),
+                      TimeoutError("Timeout")):
+            once.reset_mock()
+            once.side_effect = error
+            with self.subTest(error=error), self.assertRaises(type(error)):
+                relay.infer(request(), "/test/claude")
+            self.assertEqual(once.call_count, 1)
+
+    def test_late_host_tool_error_overrides_early_formatting_error(self):
+        for late in ({"type": "error", "error": "Policy failure"},
+                     {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]}}):
+            with self.subTest(late=late), self.assertRaises(relay.InferenceError):
+                relay.parse_model_output("\n".join(map(json.dumps, self.malformed_events() + [late])), request())
+        events = self.malformed_events()
+        events[1]["message"]["content"][0]["input"]["action"]["x"] = 900
+        with self.assertRaises(relay.Invalid) as caught:
+            relay.parse_model_output("\n".join(map(json.dumps, events)), request())
+        self.assertNotIsInstance(caught.exception, relay.MalformedResponse)
+
+    @mock.patch.object(relay, "infer_once")
+    def test_retry_cannot_change_action(self, once):
+        once.side_effect = [self.malformed_error(), ({"type": "done", "reason": "Changed decision"}, {})]
+        with self.assertRaises(relay.Invalid) as caught:
+            relay.infer(request(), "/test/claude")
+        self.assertIn("changed", str(caught.exception))
+        self.assertEqual(len(caught.exception.rejected_attempts), 1)
+
+    @mock.patch.object(relay.time, "monotonic")
+    @mock.patch.object(relay, "infer_once")
+    def test_retry_shares_original_deadline(self, once, monotonic):
+        now = [0]
+        monotonic.side_effect = lambda: now[0]
+
+        def inference(*args, **kwargs):
+            if now[0] == 0:
+                self.assertEqual(kwargs["timeout"], 120)
+                now[0] = 75
+                raise self.malformed_error()
+            self.assertEqual(kwargs["timeout"], 45)
+            now[0] = 90
+            return structured_events()[-1]["structured_output"]["action"], {}
+
+        once.side_effect = inference
+        relay.infer(request(), "/test/claude")
+        self.assertEqual(once.call_count, 2)
+
+    @mock.patch.object(relay.time, "monotonic")
+    @mock.patch.object(relay, "infer_once")
+    def test_expired_budget_prevents_retry(self, once, monotonic):
+        monotonic.side_effect = [0, 0, 121]
+        once.side_effect = self.malformed_error()
+        with self.assertRaises(TimeoutError) as caught:
+            relay.infer(request(), "/test/claude")
+        self.assertEqual(once.call_count, 1)
+        self.assertEqual(len(caught.exception.rejected_attempts), 1)
+
+    @mock.patch.object(relay, "infer_once")
+    def test_disconnect_between_attempts_prevents_retry(self, once):
+        once.side_effect = self.malformed_error()
+        cancelled = mock.Mock(side_effect=[False, True])
+        with self.assertRaises(relay.InferenceCancelled) as caught:
+            relay.infer(request(), "/test/claude", cancelled=cancelled)
+        self.assertEqual(once.call_count, 1)
+        self.assertEqual(len(caught.exception.rejected_attempts), 1)
 
 
 class ServerTests(unittest.TestCase):
@@ -387,6 +505,24 @@ class ServerTests(unittest.TestCase):
     def test_invalid_returned_action(self):
         self.inference.return_value = ({"type": "tap", "x": 50, "y": 0, "reason": "Out of bounds"}, {})
         self.assertEqual(self.post()[0], 502)
+
+    def test_rejected_attempt_evidence_is_private_on_success_and_failure(self):
+        rejected = [{"attempt": 1, "model_response": "Private rejected formatting"}]
+        action = {"type": "done", "reason": "Visible completion"}
+        self.inference.return_value = (action, {"model": "test", "rejected_attempts": rejected})
+        status, body = self.post()
+        self.assertEqual(status, 200)
+        self.assertNotIn("Private rejected formatting", json.dumps(body))
+        result = json.loads(next(self.evidence.glob("*/result.json")).read_text())
+        self.assertEqual(result["inference"]["rejected_attempts"], rejected)
+        error = TimeoutError("Timed out after rejected response")
+        error.rejected_attempts = rejected
+        self.inference.side_effect = error
+        status, body = self.post()
+        self.assertEqual(status, 504)
+        self.assertNotIn("Private rejected formatting", json.dumps(body))
+        evidence = json.loads(next(self.evidence.glob("*/error.json")).read_text())
+        self.assertEqual(evidence["rejected_attempts"], rejected)
 
     def test_duplicate_auth_and_lengths(self):
         for duplicate in ("Authorization", "Content-Length"):

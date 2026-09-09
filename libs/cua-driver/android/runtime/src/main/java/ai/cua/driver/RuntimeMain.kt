@@ -132,16 +132,17 @@ object RuntimeMain {
     }
 }
 
-private class Refusal(val reason: String, val code: Int = 3) : Exception(reason)
-
 private data class Session(
-    val id: String, val owner: Int, val display: VirtualDisplay, val reader: ImageReader,
+    val id: String, val owner: Int, val display: VirtualDisplay, var reader: ImageReader,
     val width: Int, val height: Int, val allowed: Set<String>, var expires: Long,
     var target: String? = null, var packageName: String? = null, var taskId: Int? = null,
     var snapshot: String? = null, var observed: Long = 0, var snapshotFrameTime: Long = 0,
-    var bitmap: Bitmap? = null, var frameTime: Long = 0, var launchAttempted: Boolean = false,
+    var bitmap: Bitmap? = null, var frameTime: Long = 0, var launchUncertain: Boolean = false,
+    var targetGeneration: Long = 0, var captureAfter: Long = 0, var captureMethod: String = "image_reader",
     val label: String? = null,
-)
+) {
+    val tasks = SessionTasks(allowed, display.display.displayId)
+}
 
 private class Runtime(private val context: Context) {
     private val generation = UUID.randomUUID().toString()
@@ -151,6 +152,7 @@ private class Runtime(private val context: Context) {
     private var session: Session? = null
     private val stopped = LinkedHashMap<String, Int>()
     private val pendingCleanup = mutableSetOf<Int>()
+    private val pendingTaskCleanup = mutableSetOf<Int>()
     private val dedup = LinkedHashMap<String, Pair<String, JSONObject>>()
 
     fun serve(socket: LocalSocket) {
@@ -302,6 +304,8 @@ private class Runtime(private val context: Context) {
         .put("display_generation", s.id).put("width", s.width).put("height", s.height)
         .put("lease_remaining_ms", (s.expires - SystemClock.elapsedRealtime()).coerceAtLeast(0))
         .put("lease_owner", "caller").put("target_id", s.target ?: JSONObject.NULL)
+        .put("target_generation", s.targetGeneration).put("package", s.packageName ?: JSONObject.NULL)
+        .put("task_id", s.taskId ?: JSONObject.NULL).put("owned_task_count", s.tasks.size)
         .put("label", s.label ?: JSONObject.NULL)
 
     private fun action(transport: String, effect: String = "unverifiable", detail: String) = JSONObject()
@@ -363,6 +367,11 @@ private class Runtime(private val context: Context) {
         if (session != null) throw Refusal("device_session_busy")
         pendingCleanup.removeAll { displays.getDisplay(it) == null }
         if (pendingCleanup.isNotEmpty()) throw Refusal("previous_display_cleanup_pending")
+        if (pendingTaskCleanup.isNotEmpty()) {
+            val live = inventory().map { it.id }.toSet()
+            pendingTaskCleanup.retainAll(live)
+            if (pendingTaskCleanup.isNotEmpty()) throw Refusal("previous_task_cleanup_pending")
+        }
         val width = p.optInt("width", 1080); val height = p.optInt("height", 1920)
         val density = p.optInt("density", 320)
         if (width !in 320..1920 || height !in 320..2400 || density !in 120..640) throw Refusal("invalid_geometry", 2)
@@ -385,13 +394,22 @@ private class Runtime(private val context: Context) {
         } catch (error: Exception) { reader.close(); throw error }
     }
 
-    private fun task(s: Session): ActivityManager.RunningTaskInfo {
-        val displayId = s.display.display.displayId
+    private fun inventory(): List<TaskPlacement> {
         val tasks = activity.getRunningTasks(100)
+        if (tasks.size >= 100) throw Refusal("task_inventory_incomplete")
+        return tasks.map { TaskPlacement(it.taskId, it.javaClass.getField("displayId").getInt(it),
+            it.baseActivity?.packageName, it.topActivity?.packageName) }
+    }
+
+    private fun task(s: Session): TaskPlacement {
+        val displayId = s.display.display.displayId
+        val tasks = inventory()
         val task = tasks.firstOrNull {
-            it.javaClass.getField("displayId").getInt(it) == displayId
+            it.display == displayId
         } ?: throw Refusal("target_not_observable")
-        if (task.topActivity?.packageName != s.packageName || (s.taskId != null && task.taskId != s.taskId)) {
+        if (task.topPackage != s.packageName || task.basePackage != s.packageName ||
+            task.id != s.taskId || task.id !in s.tasks.ids ||
+            tasks.any { it.display == displayId && it.id !in s.tasks.ids }) {
             throw Refusal("target_placement_changed")
         }
         return task
@@ -401,35 +419,82 @@ private class Runtime(private val context: Context) {
         validate(p, setOf("package"))
         val pkg = p.getString("package")
         if (pkg !in s.allowed) throw Refusal("app_not_allowed")
-        if (s.launchAttempted) throw Refusal("one_launch_per_session_in_initial_slice")
+        if (s.launchUncertain) throw Refusal("previous_launch_uncertain_stop_required")
         val intent = context.packageManager.getLaunchIntentForPackage(pkg) ?: throw Refusal("app_not_launchable")
-        s.snapshot = null; s.target = null; s.packageName = pkg; s.taskId = null
         val component = intent.component ?: throw Refusal("app_component_unavailable")
-        s.launchAttempted = true
-        // The framework's system Context is attributed to android; am supplies the shell identity.
-        val launch = ProcessBuilder("/system/bin/am", "start", "--display", s.display.display.displayId.toString(),
-            "-n", component.flattenToString(), "-f", "0x18000000").redirectErrorStream(true).start()
-        if (!launch.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
-            launch.destroyForcibly(); throw IllegalStateException("Activity launch timed out")
+        val before = inventory()
+        val existing = s.tasks.prepare(pkg, before)
+        s.snapshot = null; s.target = null; s.packageName = pkg; s.taskId = null
+        s.bitmap?.recycle(); s.bitmap = null; s.frameTime = 0
+        s.targetGeneration++
+        s.launchUncertain = true
+        if (existing != null) {
+            // The system Context's ActivityManager supplies package=android, which is not
+            // owned by shell UID 2000. Attribute this Binder call to the actual caller.
+            // No display ID or task-reparenting option: only raise the verified owned task.
+            val manager = Class.forName("android.app.ActivityTaskManager").getMethod("getService").invoke(null)
+            Class.forName("android.app.IActivityTaskManager").getMethod("moveTaskToFront",
+                Class.forName("android.app.IApplicationThread"), String::class.java,
+                Int::class.javaPrimitiveType, Int::class.javaPrimitiveType, Bundle::class.java)
+                .invoke(manager, null, "com.android.shell", existing, 0, null)
+        } else {
+            // NEW_TASK | MULTIPLE_TASK requests a new task, never reuse of a main-display task.
+            val launch = ProcessBuilder("/system/bin/am", "start", "--display", s.display.display.displayId.toString(),
+                "-n", component.flattenToString(), "-f", "0x18000000").redirectErrorStream(true).start()
+            if (!launch.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                launch.destroyForcibly(); throw IllegalStateException("Activity launch timed out")
+            }
+            val launchOutput = launch.inputStream.bufferedReader().readText()
+            check(launch.exitValue() == 0 && !launchOutput.contains("Error:")) { "Activity launch failed" }
         }
-        val launchOutput = launch.inputStream.bufferedReader().readText()
-        check(launch.exitValue() == 0 && !launchOutput.contains("Error:")) { "Activity launch failed" }
-        var actual: ActivityManager.RunningTaskInfo? = null
+        var actual: TaskPlacement? = null
         for (attempt in 0..19) {
-            try { actual = task(s); break } catch (_: Refusal) { Thread.sleep(100) }
+            val top = inventory().firstOrNull { it.display == s.display.display.displayId }
+            if (top != null && top.basePackage == pkg && top.topPackage == pkg &&
+                (existing == null || top.id == existing)) { actual = top; break }
+            Thread.sleep(100)
         }
         val observed = actual ?: throw IllegalStateException("Launch placement unverified after dispatch")
-        s.taskId = observed.taskId; s.target = UUID.randomUUID().toString()
+        if (existing == null) {
+            try { s.tasks.admit(pkg, before.map { it.id }.toSet(), observed) }
+            catch (error: Refusal) { throw IllegalStateException("Launch task ownership unverified after dispatch", error) }
+        }
+        s.taskId = observed.id
+        try { task(s) }
+        catch (error: Refusal) { throw IllegalStateException("Launch placement changed after dispatch", error) }
+        reconnectCapture(s)
+        s.target = UUID.randomUUID().toString(); s.launchUncertain = false
         return JSONObject().put("target_id", s.target).put("task_id", s.taskId)
+            .put("target_generation", s.targetGeneration).put("owned_task_count", s.tasks.size)
             .put("display_id", s.display.display.displayId).put("package", pkg)
-            .put("action", action("android_activity_manager_shell", detail = "Launch placement read back from task service"))
+            .put("action", action(if (existing == null) "android_activity_manager_shell" else "android_activity_manager",
+                detail = "Owned task placement read back from task service"))
+    }
+
+    private fun reconnectCapture(s: Session) {
+        s.snapshot = null
+        val replacement = ImageReader.newInstance(s.width, s.height, PixelFormat.RGBA_8888, 3)
+        val old = s.reader
+        try {
+            // A new output queue requests real composition even when the app's buffers are static.
+            // Reusing the same surface could coalesce into a no-op during display traversal.
+            s.captureAfter = System.nanoTime()
+            s.display.surface = replacement.surface
+            s.reader = replacement
+            s.bitmap?.recycle(); s.bitmap = null; s.frameTime = 0
+            s.captureMethod = "surface_replacement"
+        } catch (error: Exception) { replacement.close(); throw error }
+        old.close()
     }
 
     private fun frame(s: Session): Bitmap {
         var image = s.reader.acquireLatestImage()
+        if (image != null && image.timestamp < s.captureAfter) { image.close(); image = null }
         if (image == null && s.bitmap == null) {
             for (attempt in 0..19) {
-                Thread.sleep(50); image = s.reader.acquireLatestImage(); if (image != null) break
+                Thread.sleep(50); image = s.reader.acquireLatestImage()
+                if (image != null && image.timestamp < s.captureAfter) { image.close(); image = null }
+                if (image != null) break
             }
         }
         image?.use {
@@ -448,7 +513,12 @@ private class Runtime(private val context: Context) {
         validate(p, setOf("target_id"))
         if (p.getString("target_id") != s.target) throw Refusal("stale_target")
         task(s)
-        val image = frame(s)
+        var image = frame(s)
+        if (actionable && (s.frameTime <= 0 || (System.nanoTime() - s.frameTime) / 1_000_000 !in 0..5000)) {
+            reconnectCapture(s)
+            image = frame(s)
+        }
+        task(s)
         val age = (System.nanoTime() - s.frameTime) / 1_000_000
         if (actionable && (s.frameTime <= 0 || age !in 0..5000)) throw Refusal("frame_stale")
         val bitmap = if (actionable) image else Bitmap.createScaledBitmap(image, 270, 270 * s.height / s.width, true)
@@ -460,6 +530,7 @@ private class Runtime(private val context: Context) {
         }
         return JSONObject().put("snapshot_id", if (actionable) s.snapshot else JSONObject.NULL)
             .put("target_id", s.target).put("display_id", s.display.display.displayId)
+            .put("target_generation", s.targetGeneration).put("capture_method", s.captureMethod)
             .put("width", if (actionable) s.width else 270).put("height", if (actionable) s.height else 270 * s.height / s.width)
             .put("rotation", s.display.display.rotation).put("frame_age_ms", age)
             .put("frame_time_source", "producer_monotonic_ns")
@@ -526,6 +597,7 @@ private class Runtime(private val context: Context) {
         s.snapshot = null
         val displayId = s.display.display.displayId
         pendingCleanup.add(displayId)
+        pendingTaskCleanup.addAll(s.tasks.ids)
         session = null
         try { s.display.release() }
         finally { s.reader.close(); s.bitmap?.recycle() }
@@ -535,6 +607,12 @@ private class Runtime(private val context: Context) {
         }
         if (displays.getDisplay(displayId) != null) throw IllegalStateException("Display release not observed")
         pendingCleanup.remove(displayId)
+        for (attempt in 0..9) {
+            pendingTaskCleanup.retainAll(inventory().map { it.id }.toSet())
+            if (pendingTaskCleanup.isEmpty()) break
+            Thread.sleep(50)
+        }
+        if (pendingTaskCleanup.isNotEmpty()) throw IllegalStateException("Owned task cleanup not observed")
         stopped[s.id] = s.owner
         while (stopped.size > 128) stopped.remove(stopped.keys.first())
         session = null

@@ -28,6 +28,14 @@ data class DemoSessionState(
     val preview: DisplayFrame? = null,
     val previewFrames: Int = 0,
     val renewals: Int = 0,
+    val mode: String = "fixture",
+    val phase: String = "idle",
+    val lastReason: String = "",
+    val agentSteps: Int = 0,
+    val modelStatus: String = "idle",
+    val currentPackage: String? = null,
+    val previewLabel: String = "Live preview",
+    val finalFrameFile: String? = null,
 )
 
 internal interface SessionOperations {

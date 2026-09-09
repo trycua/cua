@@ -198,8 +198,14 @@ def main():
         assert send_raw(request).returncode == 2
         assert state("ai.cua.fixture.notes")["counter"] == 2
         time.sleep(6)
-        stale = local("--session", sid, "snapshot", "--target", target, expected=3)
-        assert stale["error"]["reason"] == "frame_stale", stale
+        refreshed = local("--session", sid, "snapshot", "--target", target)["data"]
+        assert refreshed["capture_method"] == "surface_replacement", refreshed
+        assert 0 <= refreshed["frame_age_ms"] <= 5000, refreshed
+        assert refreshed["frame_time_source"] == "producer_monotonic_ns", refreshed
+        stale = local("--session", sid, "tap", "--snapshot", snap,
+                      "--x", str(point["x"]), "--y", str(point["y"]), expected=3)
+        assert stale["error"]["reason"] == "stale_snapshot", stale
+        assert state("ai.cua.fixture.notes")["counter"] == 2
     finally:
         local("--session", sid, "session", "stop")
     print("Phone-local geometry/swipe/PNG and duplicate-request checks passed", flush=True)

@@ -85,6 +85,10 @@ class MainActivity : Activity() {
                 id = R.id.start; text = "Start"
                 setOnClickListener { startForegroundService(Intent(this@MainActivity, SessionService::class.java).setAction(SessionService.ACTION_START)) }
             })
+            if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) addView(Button(this@MainActivity).apply {
+                id = R.id.run_agent; text = "Run agent"
+                setOnClickListener { runAgent() }
+            })
             addView(Button(this@MainActivity).apply {
                 id = R.id.stop
                 text = "Stop"
@@ -100,6 +104,7 @@ class MainActivity : Activity() {
         }
         record("created")
         window.decorView.post { record("layout") }
+        if (intent.action == SessionService.ACTION_AGENT) runAgent()
     }
 
     private suspend fun render(value: DemoSessionState) {
@@ -107,7 +112,9 @@ class MainActivity : Activity() {
             withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(frame.png, 0, frame.png.size) }
         }
         sessionState = value
-        status.text = value.status
+        status.text = if (value.mode == "agent") "${value.status} | ${value.phase} | step ${value.agentSteps}/40\nModel: ${value.modelStatus} | renewals ${value.renewals}\n${value.currentPackage ?: ""}\n${value.lastReason.take(180)}" else value.status
+        if (value.mode == "agent" && value.preview != null && value.phase == "done") status.append("\n${value.previewLabel}")
+        preview.contentDescription = value.previewLabel
         preview.setImageBitmap(bitmap)
         previewFrames = value.previewFrames
         record("controller_state")
@@ -126,8 +133,14 @@ class MainActivity : Activity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        if (intent.action == SessionService.ACTION_AGENT) runAgent()
         // Debug fixture hook exercises real Activity recreation without restarting the owner.
         if (intent.action == "ai.cua.android.demo.RECREATE" && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) recreate()
+    }
+
+    private fun runAgent() {
+        if (applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
+            startForegroundService(Intent(this, SessionService::class.java).setAction(SessionService.ACTION_AGENT))
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -167,7 +180,7 @@ class MainActivity : Activity() {
             .put("preview_frames", previewFrames)
             .put("activity_generation", activityGeneration).put("controller", sessionState.evidence())
         val controls = JSONObject()
-        for ((name, id) in listOf("editor" to R.id.human_editor, "start" to R.id.start, "stop" to R.id.stop)) {
+        for ((name, id) in listOf("editor" to R.id.human_editor, "start" to R.id.start, "stop" to R.id.stop, "run_agent" to R.id.run_agent)) {
             val view = findViewById<android.view.View>(id) ?: continue
             val xy = IntArray(2); view.getLocationOnScreen(xy)
             controls.put(name, JSONObject().put("x", xy[0] + view.width / 2).put("y", xy[1] + view.height / 2))

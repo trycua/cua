@@ -222,75 +222,57 @@ func (h Handlers) ListNamespaces(w http.ResponseWriter, r *http.Request) {
 		attribute.String("user.id", user.ID),
 	))
 	defer span.End()
-
-	// Scope the list to the caller's own Tenant. Every namespace owned by a
-	// Tenant carries capsule.clastix.io/tenant=<tenant> (set on create — see
-	// CreateNamespace — and enforced by Capsule). Selecting on it makes this
-	// fail-closed: even if Capsule Proxy isn't filtering (e.g. while
-	// CapsuleConfiguration.userGroups is being reconciled, or right after a
-	// capsule-proxy restart with a cold cache), the apiserver only returns the
-	// caller's namespaces. The Tenant name follows the standalone controller
-	// convention "user-<sub>" and is derived from the authenticated subject,
-	// so a caller can never widen it to another tenant.
-	selector := "capsule.clastix.io/tenant=" + identity.PersonalGroup(ctx, user.ID)
-	path := "/api/v1/namespaces?labelSelector=" + url.QueryEscape(selector)
-	resp, err := h.k8sImpersonate(ctx, "GET", path, nil, user.ID)
-	if err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "namespace list request failed")
-		slog.Warn("namespace list: k8s request failed", "err", err)
-		writeErr(w, http.StatusBadGateway, "kubectl-proxy unavailable")
-		return
+	enabled := namespacePostgresEnabled(ctx, user.ID)
+	tenant := namespaceTenant(ctx, user.ID)
+	span.SetAttributes(attribute.Bool("feature_flag.ff-list-ns-read-pg", enabled), attribute.Bool("read.fallback", false))
+	var items []namespaceObject
+	var err error
+	backend := "kubernetes"
+	if enabled {
+		items, err = h.readNamespacesPostgres(ctx, tenant)
+		if err == nil {
+			backend = "postgres"
+		} else {
+			span.SetAttributes(attribute.Bool("read.fallback", true), attribute.String("read.fallback.reason", "postgres_error"))
+			span.AddEvent("namespaces.read.fallback", trace.WithAttributes(attribute.String("read.fallback.reason", "postgres_error")))
+			slog.ErrorContext(ctx, "namespace PostgreSQL read failed; falling back to Kubernetes", "err", err, "trace_id", span.SpanContext().TraceID().String())
+		}
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		span.SetStatus(codes.Error, "namespace list returned non-200")
-		span.SetAttributes(attribute.Int("http.status_code", resp.StatusCode))
-		slog.Warn("namespace list: k8s error", "status", resp.StatusCode, "body", string(body))
-		writeErr(w, resp.StatusCode, "k8s: "+string(body))
-		return
+	span.SetAttributes(attribute.String("read.backend", backend))
+	if backend == "kubernetes" {
+		var status int
+		items, status, err = h.readNamespacesK8s(ctx, tenant, user.ID)
+		if err != nil {
+			span.SetAttributes(attribute.String("error.type", fmt.Sprintf("%T", err)))
+			span.SetStatus(codes.Error, "namespace list failed")
+			span.SetAttributes(attribute.Int("http.status_code", status))
+			writeErr(w, status, err.Error())
+			return
+		}
 	}
-
-	// Parse K8s NamespaceList.
-	var nsList struct {
-		Items []struct {
-			Metadata struct {
-				Name              string            `json:"name"`
-				Labels            map[string]string `json:"labels"`
-				CreationTimestamp string            `json:"creationTimestamp"`
-			} `json:"metadata"`
-			Status struct {
-				Phase string `json:"phase"`
-			} `json:"status"`
-		} `json:"items"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&nsList); err != nil {
-		span.RecordError(err)
-		span.SetStatus(codes.Error, "namespace list decode failed")
-		slog.Warn("namespace list: decode error", "err", err)
-		writeErr(w, http.StatusBadGateway, "bad response from k8s")
-		return
-	}
-
-	out := make([]NamespaceResponse, 0, len(nsList.Items))
-	for _, ns := range nsList.Items {
+	_, filterSpan := handlerTracer().Start(ctx, "namespaces.filter")
+	out := make([]NamespaceResponse, 0, len(items))
+	for _, ns := range items {
 		if isGitHubPrincipal(user) && !namespaceAllowed(user, ns.Metadata.Name) {
 			continue
 		}
 		out = append(out, NamespaceResponse{
-			Name:      ns.Metadata.Name,
-			Status:    ns.Status.Phase,
-			CreatedAt: ns.Metadata.CreationTimestamp,
-			Labels:    ns.Metadata.Labels,
+			Name: ns.Metadata.Name, Status: ns.Status.Phase,
+			CreatedAt: ns.Metadata.CreationTimestamp, Labels: ns.Metadata.Labels,
 		})
 	}
-	span.SetAttributes(
-		attribute.Int("http.status_code", http.StatusOK),
-		attribute.Int("namespaces.count", len(out)),
-	)
-	writeJSON(w, http.StatusOK, out)
+	filterSpan.SetAttributes(attribute.Int("namespaces.input_count", len(items)), attribute.Int("namespaces.count", len(out)), attribute.Int("namespaces.excluded_count", len(items)-len(out)))
+	filterSpan.End()
+	span.SetAttributes(attribute.Int("http.status_code", http.StatusOK), attribute.Int("namespaces.count", len(out)))
+	_, responseSpan := handlerTracer().Start(ctx, "response.encode_write")
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err = json.NewEncoder(w).Encode(out)
+	finishNamespaceSpan(responseSpan, err)
+	if err != nil {
+		span.RecordError(err)
+		span.SetStatus(codes.Error, "namespace response write failed")
+	}
 }
 
 // GetNamespace godoc

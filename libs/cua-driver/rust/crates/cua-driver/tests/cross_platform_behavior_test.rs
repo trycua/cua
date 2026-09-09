@@ -977,19 +977,29 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
             .await
             .expect("typed background element click");
         assert_fixture_contains(fixture, "last_action=left_click");
-        let after = sdk
-            .get_window_state(sdk_window_input(fixture))
-            .await
-            .expect("typed post-action window state");
-        assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
-        assert!(
-            after
+        // Browser accessibility updates can lag the fixture's DOM journal.
+        // Observe until the effect arrives, without dispatching another click.
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let after = sdk
+                .get_window_state(sdk_window_input(fixture))
+                .await
+                .expect("typed post-action window state");
+            assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
+            if after
                 .tree_markdown
                 .as_deref()
                 .unwrap_or_default()
-                .contains("last_action=left_click"),
-            "fresh typed state must independently expose the click effect"
-        );
+                .contains("last_action=left_click")
+            {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "fresh typed state must independently expose the click effect: {after:?}"
+            );
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
         sdk.shutdown().await.expect("shut down typed SDK client");
     });
     delivered_observation()

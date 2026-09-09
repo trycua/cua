@@ -120,7 +120,7 @@ pub struct UpdateState {
     pub current_version: String,
     pub current_channel: Option<&'static str>,
     pub selected_channel: Option<&'static str>,
-    /// `None` when the network fetch failed and no usable cache existed —
+    /// `None` when upstream checking is unavailable or failed without a cache —
     /// the `error` field carries the human-readable reason.
     pub latest_version: Option<String>,
     pub update_available: bool,
@@ -131,8 +131,7 @@ pub struct UpdateState {
     /// ISO-8601 UTC timestamp of when this check ran (NOT when the cached
     /// result was originally fetched — see `cache_hit`).
     pub checked_at: String,
-    /// `true` when we short-circuited via the on-disk cache (no network
-    /// round-trip this invocation). `false` when we actually hit GitHub.
+    /// `true` when the result came from the on-disk cache.
     pub cache_hit: bool,
     /// Shell one-liner to apply the update. `None` when already up-to-date
     /// or the check failed.
@@ -140,8 +139,8 @@ pub struct UpdateState {
     /// URL of the release notes page on GitHub. `None` when already
     /// up-to-date or the check failed.
     pub release_notes_url: Option<String>,
-    /// Human-readable error string when the network fetch failed AND no
-    /// cache was available. `None` on success / cache fallback.
+    /// Human-readable reason an upstream check is unavailable or failed
+    /// without a cache. `None` on success / cache fallback.
     pub error: Option<String>,
 }
 
@@ -194,11 +193,30 @@ fn install_one_liner() -> String {
 /// `UpdateState.error` with a non-empty `current_version` so consumers
 /// always get a well-formed payload they can branch on.
 pub fn check_update_state(no_cache: bool) -> UpdateState {
+    check_update_state_with_ownership(no_cache, crate::updater::is_pacman_managed())
+}
+
+pub(crate) fn check_update_state_with_ownership(no_cache: bool, managed: bool) -> UpdateState {
     let current = env!("CARGO_PKG_VERSION").to_owned();
     let now = unix_now();
     let checked_at = iso8601(now);
 
     let current_channel = crate::release_channel::ReleaseChannel::from_version(&current);
+    if managed {
+        return UpdateState {
+            current_version: current,
+            current_channel: current_channel.map(|channel| channel.as_str()),
+            selected_channel: None,
+            latest_version: None,
+            update_available: false,
+            source: "github_releases",
+            checked_at,
+            cache_hit: false,
+            install_command: None,
+            release_notes_url: None,
+            error: Some(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned()),
+        };
+    }
     let selected_channel = match crate::release_channel::selected() {
         Ok(channel) => channel,
         Err(error) => {
@@ -339,6 +357,28 @@ where
     F: FnOnce() -> Result<String, String>,
     W: std::io::Write,
 {
+    run_check_and_announce_with_ownership(
+        current,
+        fetch,
+        &mut writer,
+        capture_telemetry,
+        crate::updater::is_pacman_managed(),
+    );
+}
+
+fn run_check_and_announce_with_ownership<F, W>(
+    current: &str,
+    fetch: F,
+    mut writer: W,
+    capture_telemetry: bool,
+    managed: bool,
+) where
+    F: FnOnce() -> Result<String, String>,
+    W: std::io::Write,
+{
+    if managed {
+        return;
+    }
     let now = unix_now();
     let Ok(selected_channel) = crate::release_channel::selected() else {
         return;
@@ -667,6 +707,9 @@ pub fn fetch_latest_version() -> Result<String, String> {
 pub fn fetch_latest_version_for(
     channel: crate::release_channel::ReleaseChannel,
 ) -> Result<String, String> {
+    if crate::updater::is_pacman_managed() {
+        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    }
     let agent = ureq::Agent::config_builder()
         .timeout_global(Some(std::time::Duration::from_secs(HTTP_TIMEOUT_SECONDS)))
         .build()
@@ -790,6 +833,50 @@ fn civil_from_unix(unix_secs: u64) -> (i32, u32, u32, u32, u32, u32) {
 mod tests {
     use super::*;
     use std::sync::Mutex;
+
+    #[test]
+    fn pacman_managed_check_ignores_upstream_cache_and_channel() {
+        let _g = ENV_LOCK.lock().unwrap();
+        with_isolated_home(|home| {
+            write_cache(&VersionCache {
+                latest_version: Some("999.0.0".into()),
+                last_checked_unix: Some(unix_now()),
+                ..Default::default()
+            })
+            .unwrap();
+            std::fs::write(
+                home.join(crate::bundle::user_home_subdirectory())
+                    .join("release-channel"),
+                "invalid-channel\n",
+            )
+            .unwrap();
+            let before = std::fs::read(cache_path().unwrap()).unwrap();
+            for no_cache in [false, true] {
+                let state = check_update_state_with_ownership(no_cache, true);
+                assert!(!state.update_available);
+                assert!(!state.cache_hit);
+                assert!(state.latest_version.is_none());
+                assert!(state.selected_channel.is_none());
+                assert!(state.install_command.is_none());
+                assert!(state.release_notes_url.is_none());
+                assert!(state.error.unwrap().contains("sudo pacman -Syu"));
+                assert_eq!(std::fs::read(cache_path().unwrap()).unwrap(), before);
+            }
+        });
+    }
+
+    #[test]
+    fn pacman_managed_startup_never_fetches_or_prints_banner() {
+        let mut banner = Vec::new();
+        run_check_and_announce_with_ownership(
+            "0.24.0",
+            || panic!("managed startup must not fetch"),
+            &mut banner,
+            false,
+            true,
+        );
+        assert!(banner.is_empty());
+    }
 
     /// All env-mutating tests serialise on this lock — `std::env::set_var`
     /// is process-global, parallel tests would race.

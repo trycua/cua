@@ -287,12 +287,13 @@ credentials are not copied into Android. The private demo config is
 Disconnecting a request cancels its model subprocess and releases the relay
 slot. Clients must keep their sending half of the connection open while waiting;
 the relay treats a TCP half-close as cancellation too.
-An extra outer `reason` around an otherwise valid structured action permits one
-formatting repair within the original timeout, either inside Claude Code's
-formatter flow or through one further inference attempt. The corrected response
-must retain every operational action field; only its explanatory `reason` may
-change. A second repair, other schema failures, tool-policy errors, and uncertain
-driver actions are refused. Rejected responses remain in the local evidence.
+The inference-only formatter may revise a proposal at most twice within one
+model request. Earlier proposals have no input side effects. Only the final
+response, exactly matching the last formatter proposal, passes the strict action
+schema, package allowlist, and coordinate bounds before returning to Android.
+Other tools, excess formatter calls, invalid final responses, and policy errors
+are refused. There is no automatic inference retry or retry of uncertain driver
+input. Formatter revisions and rejections remain in the local evidence.
 
 From another terminal, pass a task file and the two allowed apps to the harness:
 

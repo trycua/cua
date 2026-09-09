@@ -77,6 +77,7 @@ from cua_sandbox.interfaces import (
     Tunnel,
     Window,
 )
+from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
@@ -375,6 +376,7 @@ class Sandbox:
         self.mobile = Mobile(transport)
         self.tunnel = Tunnel(transport)
         self.services = Services(transport)
+        self.driver = Driver(transport)
         _os = _runtime_info.environment if _runtime_info and _runtime_info.environment else "linux"
         self.apps = Apps(transport, os_type=_os)
 
@@ -386,6 +388,7 @@ class Sandbox:
 
     async def disconnect(self) -> None:
         """Drop the transport connection. The sandbox keeps running."""
+        await self.driver.close()
         await self._transport.disconnect()
 
     @property
@@ -461,6 +464,7 @@ class Sandbox:
             return
         if self._claim_handle is None:
             raise NotImplementedError("close is only supported for Fleet claims")
+        await self.driver.close()
         claim_name = self.claim_name
         try:
             await self._claim_handle.release()
@@ -526,7 +530,7 @@ class Sandbox:
         # Run each cleanup step independently so a failure in one
         # (e.g. disconnect timeout) doesn't prevent the VM from being deleted.
         try:
-            await self._transport.disconnect()
+            await self.disconnect()
         except Exception:
             logger.warning("Failed to disconnect transport for sandbox %r", self.name)
         if isinstance(self._transport, (CloudTransport, FleetCloudTransport)):

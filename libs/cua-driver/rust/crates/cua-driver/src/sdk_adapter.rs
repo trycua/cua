@@ -59,6 +59,7 @@ pub struct SdkAdapter {
 impl SdkAdapter {
     pub fn create_envelope_receiver(
         &self,
+        mode: cua_driver_sdk::SessionPermissionMode,
     ) -> Result<
         (
             Arc<cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver>,
@@ -66,12 +67,12 @@ impl SdkAdapter {
         ),
         String,
     > {
-        // The private HTTP slice requests only Standard; the runtime's immutable
-        // ceiling rejects incompatible hosts rather than widening their policy.
+        // Only the trusted launcher selects this mode. The runtime's immutable
+        // ceiling still rejects incompatible sessions.
         let public_session = format!("http-{}", uuid::Uuid::new_v4());
         let options = TrustedSessionOptions {
             public_session: public_session.clone(),
-            mode: cua_driver_sdk::SessionPermissionMode::Standard,
+            mode,
             ttl_seconds: 3600,
             idle_ttl_seconds: 300,
             capability_manifest_path: None,

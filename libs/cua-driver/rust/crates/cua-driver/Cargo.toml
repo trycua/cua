@@ -21,6 +21,7 @@ cua-driver-sdk = { path = "../cua-driver-sdk" }
 cursor-overlay = { path = "../cursor-overlay" }
 pip-preview = { path = "../pip-preview" }
 async-trait = "0.1"
+httparse = "1.10.1"
 base64 = { workspace = true }
 uuid = { workspace = true }
 zeroize = { workspace = true }

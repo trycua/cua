@@ -22,6 +22,7 @@ mod bundle;
 mod check_update_tool;
 mod cli;
 mod doctor;
+mod driver_service_http;
 mod history_runtime;
 mod mcp_http;
 mod private_worker;

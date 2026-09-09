@@ -1153,6 +1153,7 @@ dependencies = [
  "embed-resource",
  "flate2",
  "futures-util",
+ "httparse",
  "image",
  "libc",
  "pip-preview",

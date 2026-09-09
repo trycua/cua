@@ -568,6 +568,18 @@ provides-extras = ["otel", "telemetry"]
 dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
+name = "cua-driver"
+version = "0.25.0"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/eb/ce/5bab14083ccdc3f09db61407bd6201e252b5f0ae890b772f56871fb79874/cua_driver-0.25.0-py3-none-macosx_13_0_universal2.whl", hash = "sha256:8a37aeadd8bee3354ca5f659b4b5e4ee1a22f9ac689cdd39146e0d2cf4d422b9", size = 39345544, upload-time = "2026-09-09T07:47:07.918Z" },
+    { url = "https://files.pythonhosted.org/packages/1f/14/e2fcabc9ba413fd68198d4b7bc8ebd369d95fa4674b8943c16cad784548d/cua_driver-0.25.0-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:87ab081c00ef49467071ed690ff19976f9e7117c0840fbb0e1f49e5219588221", size = 28335568, upload-time = "2026-09-09T07:47:11.556Z" },
+    { url = "https://files.pythonhosted.org/packages/fa/6e/cdd76d455a19c239d6faee4543677621ce4853a1e5e60b52076d7436359b/cua_driver-0.25.0-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:5b03042e4b668fdb6d1d4c85deec95c690961dc18cd08068e5f6cedecae6838d", size = 28168423, upload-time = "2026-09-09T07:47:14.85Z" },
+    { url = "https://files.pythonhosted.org/packages/c2/3a/72f5a21fb78801b4f540497b9857477514c9048db44a1cb1d409672ea9ba/cua_driver-0.25.0-py3-none-win_amd64.whl", hash = "sha256:1f652d348b3338f052d377078afffa29860e2a071262e9f2b1c3a058c40a7c8c", size = 25728886, upload-time = "2026-09-09T07:47:18.845Z" },
+    { url = "https://files.pythonhosted.org/packages/07/dc/f1c863f6a3a97115f5a62a3254ae15fab8a1f504d7e817a881f08f9f9e12/cua_driver-0.25.0-py3-none-win_arm64.whl", hash = "sha256:c5799032f0e3f8429558222e8d5befb6cef09d62384e89a8ab58350b9f433837", size = 23973769, upload-time = "2026-09-09T07:47:22.134Z" },
+]
+
+[[package]]
 name = "cua-fleet"
 version = "0.1.16"
 source = { registry = "https://wheels.cua.ai/simple" }
@@ -608,6 +620,9 @@ dev = [
     { name = "pytest-asyncio" },
     { name = "ruff" },
 ]
+driver = [
+    { name = "cua-driver" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -622,6 +637,7 @@ dev = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.25.0" },
     { name = "cua-fleet", specifier = "==0.1.16" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
@@ -638,7 +654,7 @@ requires-dist = [
     { name = "webbrowser-open", marker = "extra == 'auth'", specifier = ">=0.0.1" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["auth", "dev"]
+provides-extras = ["driver", "auth", "dev"]
 
 [package.metadata.requires-dev]
 dev = [

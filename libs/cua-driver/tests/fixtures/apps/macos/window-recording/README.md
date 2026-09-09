@@ -70,8 +70,9 @@ a capture implementation or substitute for native video proof.
 
 The 321-by-241-point green target has a blue center marker and a pulsing white
 bar. A larger red sibling starts visible beside it, then fully covers it before
-both windows move. Every decoded frame must exclude red contamination, and at
-least two frames must differ. At least three full-brightness target frames must
+both windows move. Every decoded frame is checked for red outside the fixture's
+palette (`R <= min(G, B)`, with eight levels of codec tolerance), including dim
+fades. At least two frames must differ. At least three full-brightness target frames must
 span 1.5 seconds. Only close/minimize cases may include a hue-preserving fade or
 black frames in the final half-second, after at least 1.5 seconds of video.
 All other frames must retain the full-brightness target colors. Frame timestamps

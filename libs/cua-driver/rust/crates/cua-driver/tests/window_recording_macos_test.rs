@@ -129,6 +129,21 @@ fn descriptor_count(pid: u64) -> usize {
     count
 }
 
+fn foreign_red(pixel: &[u8]) -> bool {
+    // The fixture palette has R <= min(G, B); allow only small codec noise.
+    u16::from(pixel[0]) > u16::from(pixel[1].min(pixel[2])) + 8
+}
+
+#[test]
+fn red_contamination_is_rejected_even_during_a_dim_fade() {
+    for pixel in [[255, 0, 0], [20, 41, 0], [20, 0, 41]] {
+        assert!(foreign_red(&pixel));
+    }
+    for pixel in [[0, 255, 0], [2, 0, 255], [40, 40, 40], [0, 0, 0]] {
+        assert!(!foreign_red(&pixel));
+    }
+}
+
 fn verify_video(output_dir: &Path, identity: &Value, state: &Value, ending: &str) {
     let mut files: Vec<_> = fs::read_dir(output_dir)
         .unwrap()
@@ -232,10 +247,7 @@ fn verify_video(output_dir: &Path, identity: &Value, state: &Value, ending: &str
             .chunks_exact(3)
             .filter(|p| p[1] > 170 && p[0] < 80 && p[2] < 80)
             .count();
-        let red = frame
-            .chunks_exact(3)
-            .filter(|p| p[0] > 20 && u16::from(p[0]) > 2 * u16::from(p[1].max(p[2])))
-            .count();
+        let red = frame.chunks_exact(3).filter(|p| foreign_red(p)).count();
         assert_eq!(red, 0, "sibling/desktop pixels leaked into window video");
         // AppKit can fade the source before WindowServer marks it removed.
         // Permit only a bounded terminal fade, never unrelated or missing body frames.

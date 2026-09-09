@@ -1,0 +1,229 @@
+---
+title: Run OSWorld on Fleet
+description: Bake the Cua Driver MCP into the official OSWorld Ubuntu image, publish it as a Fleet containerDisk, and claim it from the Sandbox SDK.
+---
+
+import { Callout } from 'fumadocs-ui/components/callout';
+
+This guide starts from the official [OSWorld](https://os-world.github.io/) Ubuntu
+disk, adds the Cua Driver MCP server to it, publishes the result as a Fleet
+containerDisk, and claims it with the Sandbox SDK. The same script boots the
+disk locally under QEMU when you set one environment variable.
+
+The steps below were run end to end on 2026-09-09 on `run.cua.ai` and on a
+WSL2 (KVM) host. Timings come from that run.
+
+<Callout type="info">
+  The Fleet side needs `Image.from_registry(..., agent_type="osworld")`, which
+  is in `cua-sandbox` on `main` after 0.5.0. Until it is released, run the
+  script with `uv run --with /path/to/cua/libs/python/cua-sandbox`.
+</Callout>
+
+## What you build
+
+| Piece | Source |
+| --- | --- |
+| OSWorld Ubuntu 22.04 desktop: auto-login user `user`, OSWorld control server on `:5000`, Chrome, LibreOffice, GIMP, VS Code, VLC, Thunderbird | Official `xlangai/ubuntu_osworld` `Ubuntu.qcow2.zip` (12.3 GB zip, 50 GiB virtual disk) |
+| `cua-driver` 0.25.0 with MCP Streamable HTTP on `:3000/mcp` | Patched in with `virt-customize` inside a Docker helper container; no root or nbd needed |
+| Fleet containerDisk (`/disk/disk.img`) | `FROM scratch` Dockerfile pushed to a registry Fleet can pull |
+| SDK access | `Image.from_registry(..., agent_type="osworld")` on Fleet, `Image.from_file(..., agent_type="osworld")` locally |
+
+The files referenced here live in the repo under
+[`samples/python/osworld-image/`](https://github.com/trycua/cua/tree/main/samples/python/osworld-image)
+and [`samples/python/3_osworld_fleet.py`](https://github.com/trycua/cua/blob/main/samples/python/3_osworld_fleet.py).
+
+## Before you start
+
+- Python `>=3.11,<3.14` and [`uv`](https://docs.astral.sh/uv/).
+- Docker for the image patch and containerDisk build. `/dev/kvm` makes
+  `virt-customize` faster but is optional.
+- About 60 GB free: the 12 GB zip, the 24 GB extracted qcow2, and the 12 GB
+  flattened image.
+- Fleet credentials from [Set up Fleet credentials](/how-to-guides/sandbox/set-up-fleet-credentials):
+
+```bash
+export CUA_CLIENT_ID="<client id>"
+export CUA_CLIENT_SECRET="<client secret>"
+export CUA_TOKEN_URL="https://auth.cua.ai/realms/cyclops-cs/protocol/openid-connect/token"
+unset FLEETS_TOKEN
+```
+
+## 1. Get the official OSWorld qcow2
+
+This is the artifact OSWorld's own Docker provider downloads:
+
+```bash
+mkdir -p ~/osworld-cua && cd ~/osworld-cua
+curl -fSL --retry 5 -o Ubuntu.qcow2.zip \
+  https://huggingface.co/datasets/xlangai/ubuntu_osworld/resolve/main/Ubuntu.qcow2.zip
+unzip Ubuntu.qcow2.zip && mv Ubuntu.qcow2 base.qcow2
+```
+
+Nothing inside that disk is changed by this guide; the OSWorld server, user
+account, and benchmark applications stay as shipped.
+
+## 2. Bake cua-driver MCP into the image
+
+Download the Linux release of cua-driver (0.25.0 links against glibc 2.30, so
+it runs on the image's Ubuntu 22.04 userland) and copy the `osworld-image/`
+folder from the repo next to it:
+
+```bash
+V=0.25.0
+curl -fsSL -o cua-driver-rs-$V-linux-x86_64-binary.tar.gz \
+  https://github.com/trycua/cua/releases/download/cua-driver-rs-v$V/cua-driver-rs-$V-linux-x86_64-binary.tar.gz
+cp -r /path/to/cua/samples/python/osworld-image .
+```
+
+`osworld-image/` contains:
+
+- `cua-driver-mcp.service` and `start-cua-mcp.sh`: a systemd unit that runs as
+  `user`, waits for the auto-login X session, and runs `cua-driver mcp` (stdio)
+  behind [supergateway](https://github.com/supercorp-ai/supergateway) as MCP
+  Streamable HTTP on `0.0.0.0:3000/mcp` with a health check at `/healthz`.
+- `99-cua-dhcp.yaml`: a netplan file that DHCPs any `en*` or `eth*` interface.
+  KubeVirt presents `enp1s0`, which the stock image's netplan does not match;
+  without this the Fleet VM never gets an address and the readiness probe never
+  passes.
+- `build-osworld-cua.sh`: the `virt-customize` recipe. It downloads Node 22 and
+  supergateway on the host side and copies them in, so the guest never needs
+  network access during the build. It then flattens the overlay into a
+  compressed `disk.img`.
+- `Dockerfile` and `guestfs/Dockerfile`: the containerDisk wrapper and the
+  libguestfs helper image.
+
+Build the helper and run the recipe. The base qcow2 is never modified; the
+recipe works on an overlay:
+
+```bash
+docker build -t osworld-guestfs:local osworld-image/guestfs
+docker run --rm --device /dev/kvm -v "$PWD:/work" osworld-guestfs:local \
+  bash /work/osworld-image/build-osworld-cua.sh
+```
+
+Drop `--device /dev/kvm` on hosts without KVM. The customize step takes a few
+minutes; the flatten and compress step took about 20 minutes for the 24 GB disk.
+The result is `disk.img`, an 11.9 GB compressed qcow2.
+
+## 3. Publish the containerDisk
+
+Fleet boots a KubeVirt containerDisk: an OCI image whose only content is the
+guest disk at `/disk/disk.img`. Build it from the `Dockerfile` in
+`osworld-image/`, push it, and record the digest:
+
+```bash
+mkdir ctx && cp disk.img osworld-image/Dockerfile ctx/
+REPO=<registry>/<repo>
+docker build -t $REPO:osworld-cua-driver-0.25.0 ctx
+docker push $REPO:osworld-cua-driver-0.25.0
+docker inspect --format '{{index .RepoDigests 0}}' $REPO:osworld-cua-driver-0.25.0
+```
+
+Public registries (`public.ecr.aws`, `ghcr.io`, Docker Hub) are pulled
+anonymously. Private registries other than the ones on Fleet's admission
+allowlist are refused at `Pool.apply` with
+`PoolAccessDenied ... HTTP 403: {"error":"k8s request is not allowed"}`.
+See [Prepare and reference a Fleet image](/how-to-guides/sandbox/prepare-and-reference-a-fleet-image).
+
+## 4. Claim it from the Sandbox SDK
+
+`samples/python/3_osworld_fleet.py` does the round trip:
+
+1. `Sandbox.ephemeral(image)` creates a throwaway `cua-eph-*` pool and claim,
+   waits for the OSWorld server, and deletes the pool on exit.
+2. It reads the screen size, runs a shell command, and saves a screenshot
+   through the normal Sandbox surface. With `agent_type="osworld"` these go to
+   the OSWorld server on `:5000` instead of computer-server on `:8000`.
+3. It talks MCP to cua-driver over the `port-3000` Fleet service: `initialize`,
+   `tools/list`, then `start_session`, `get_screen_size`, `list_apps`,
+   `launch_app`, `bring_to_front`, and `list_windows`.
+
+```bash
+export OSWORLD_IMAGE="<registry>/<repo>@sha256:<digest>"
+uv run samples/python/3_osworld_fleet.py
+```
+
+The only line that differs between Fleet and local is how the image is built:
+
+```python
+image = (
+    Image.from_file(QCOW2, os_type="linux", agent_type="osworld")            # local QEMU
+    if LOCAL else
+    Image.from_registry(IMAGE_REF, os_type="linux", kind="vm", agent_type="osworld")  # Fleet
+).expose(3000)
+
+async with Sandbox.ephemeral(image, local=LOCAL, cpu=4, memory_mb=8192) as sb:
+    ...
+```
+
+MCP requests differ in one place: on Fleet they go through
+`sb.services.request("port-3000", ...)`; locally the exposed port is on
+`sb.exposed_ports[3000]`. The sample wraps that in a ten-line helper.
+
+Output from the Fleet run:
+
+```text
+[97s] sandbox cua-eph-9eba3c4db992-caef8375 ready (fleet)
+screen: (1920, 1080)
+shell: user | user-virtual-machine | cua-driver 0.25.0 rc 0
+saved osworld.png
+mcp server: {'name': 'cua-driver', 'version': '0.25.0'}
+mcp tools: 60 e.g. ['list_apps', 'list_windows', 'get_window_state', 'verify_state', 'launch_app', ...]
+screen size via MCP: Main display: 1920x1080 points @ 1x
+apps via MCP: Found 302 app(s): 246 running, 56 installed-not-running.
+launch_app: Launched gnome-calculator (pid 2412) in background.
+bring_to_front: Brought window 54525960 to front (X11 _NET_ACTIVE_WINDOW).
+windows via MCP: Found 2 windows:
+  [xid=46137347] pid=Some(1758) "@!0,0;BDHF" 1920x1080+0+0
+  [xid=54525960] pid=Some(2412) "Calculator" 412x541+66+36
+saved osworld-after.png
+[108s] released; pool deleted
+```
+
+The first claim on a fresh node took 401 s because of the 12.7 GB pull; later
+claims took about 100 s.
+
+### Run the same thing locally
+
+You need `qemu-system-x86_64` on a Linux or macOS host; on Windows run it in
+WSL2, where `/dev/kvm` is available. Use an overlay so `disk.img` stays clean:
+
+```bash
+qemu-img create -f qcow2 -F qcow2 -b "$PWD/disk.img" osworld-local.qcow2
+OSWORLD_LOCAL=1 OSWORLD_QCOW2="$PWD/osworld-local.qcow2" uv run samples/python/3_osworld_fleet.py
+```
+
+Locally the SDK selects bare-metal QEMU, forwards guest `5000` and the exposed
+`3000` to localhost ports listed in `sb.exposed_ports`, and polls
+`/screenshot` for readiness. The local run reported ready after 18 s. The guest
+has no outbound network under the local runtime, which is why the driver is
+baked into the disk rather than installed at boot.
+
+## What `agent_type="osworld"` changes
+
+- `Pool.apply` and `Sandbox.ephemeral` default the `server` service to port
+  `5000` for OSWorld images; `server_port=` still overrides it.
+- Fleet claims use an OSWorld-aware transport, so `sb.screenshot()`,
+  `sb.get_dimensions()`, `sb.shell.run()` (via `/execute`), and the raw OSWorld
+  actions (`execute`, `accessibility`, `terminal`) work the same as they do with
+  the local `OSWorldTransport`.
+- Claim handles remember the agent type. For a pool created elsewhere, pass
+  `Pool.get(name).claim(agent_type="osworld")`.
+- `sb.mouse` and `sb.keyboard` are not mapped onto the OSWorld API. Use the MCP
+  tools, or the OSWorld `execute` action with `pyautogui`, for input.
+
+## Troubleshooting
+
+- **Claim never binds and the pool reports `ready_replicas: 0`.** The readiness
+  probe is a TCP check on the `server` port (5000). Either the image is still
+  pulling on that node, or the guest has no network lease; check that
+  `99-cua-dhcp.yaml` made it into `/etc/netplan`.
+- **`NotImplementedError: Fleet cloud supports registry images ...`.** Builder
+  layers such as `apt_install` are local-only; bake changes into the disk in
+  step 2.
+- **`bring_to_front` succeeds but the OSWorld screenshot does not show the
+  window.** `launch_app` starts the application in background delivery mode.
+  `list_windows` still reports it, and the driver's `get_window_state` reads it;
+  use foreground delivery if you need it on the OSWorld screenshot.
+- **Port 3000 returns 502.** `cua-driver-mcp.service` waits up to 120 s for an X
+  socket; read `journalctl -u cua-driver-mcp` with `sb.shell.run()`.

@@ -411,3 +411,54 @@ boundary while retaining existing native guards. A whole-record lease abstractio
 or broader scheduling rewrite still does not follow from the evidence. Retention
 policy and cancellation drain findings remain separate. Before making a candidate
 claim, build/identify the exact production source and rerun this test there.
+
+## Final product review — 2026-09-09
+
+The implementation and source-identified evidence now supersede the
+pre-implementation status above. Reviewed product candidate:
+`2a8b170609abc0cd9eb5bda0feae5f95bf0bb75c`, against main
+`6c0348b059595e63d1df96e6df2047ca7dbbbf1c`.
+
+The final pass checked the authority boundary, lifecycle, platform adapters,
+recording hooks, and the Windows integration conflict:
+
+- Identity, exact membership, and native payload publish together under the
+  runtime-owned cache lock. Empty and sparse membership no longer become a
+  permissive range; full-width window identities remain intact.
+- Admission retains the selected native target under the same authority, then
+  actions and payload destruction run outside the storage lock. Windows keeps
+  the admitted guard inside its blocking closure and retains upstream typed
+  provider refusal behavior. No late latest-cache lookup substitutes a target.
+- Native capture workers prepare private payloads; publication follows the
+  awaited result in the producer future. A cancelled producer cannot publish
+  merely because its detached native preparation eventually returns. This is
+  not a general promise that SDK shutdown drains every cancelled native worker.
+- Weak runtime discovery does not own payloads or decide successful validity.
+  Pointer-identity cleanup cannot unregister a newer same-scope binding;
+  directory locking and cache clearing do not move native destruction under
+  the cache storage lock.
+- The final path list does not migrate browser snapshots, typed action APIs,
+  authorization, general scheduling, or Windows geometry freshness. Linux still
+  performs its existing live AT-SPI lookup after validated sparse admission;
+  no new native lease contract is claimed there.
+
+No additional blocking snapshot-ownership finding was identified in this local
+review. This is not an independent maintainer approval. Exact-source mandatory
+desktop runs pass all 424 rows across Windows, Linux X11, and macOS, including
+the original native pending-publication/fresh-token control. The pinned
+production projection removes 137 lines and 61 complexity points.
+
+The updated bounded AppKit/MCP native comparison passes the four predeclared
+95% upper bounds for excluding a slowdown greater than 5%; its largest upper
+bound is 1.02746. It does not establish meaningful native speedup or certify
+raw physical, browser, other-platform latency, native-read counts, or native
+memory high-water behavior.
+
+The optional browser extension remains 17/18, with an unexplained exact-window
+setup refusal before its last ambiguity assertion. A focused baseline-only
+probe passed and did not reproduce that failure. Keep #3681 visible; neither
+this review nor that probe converts the failed candidate run into a pass.
+The [worklog](rfc-3473-worklog.md#final-selected-slice-evidence--2026-09-09)
+contains exact run links, provenance, cleanup, deferred scope, and the final
+supplementary-evidence diff accounting. Review handoff concerns only the
+maintainer-selected slice, not completion of RFC #3473.

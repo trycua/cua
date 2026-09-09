@@ -497,14 +497,141 @@ cache behavior; its freshness change is separate and contributor credit must be
 preserved. Snapshot-related #3005, #3377 and #3573 were identified during initial
 planning; refresh their actual state/diffs before any production change.
 
-## Maintenance
+## Final selected-slice evidence — 2026-09-09
 
-Update status, exact tested SHA, evidence, gaps and next action after each
-substantive step, and keep the PR description aligned. Record decisions in #3473,
-not only locally. No end-to-end latency improvement, native candidate E2E pass,
-or cross-platform certification is claimed.
+This section supersedes the earlier environment blocker and draft-next-action
+notes above; those notes describe the evidence available at their timestamps.
+The selected scope remains the maintainer reply on
+[#3473](https://github.com/trycua/cua/issues/3473#issuecomment-5573495529),
+not acceptance or implementation of the full RFC.
 
-Next action: obtain an eligible prepared macOS test environment, run the original
-native regression against the source-identified implementation, then measure
-end-to-end latency and certify the stable candidate with the canonical harnesses. Keep the excluded cancelled-worker drain failure visible; this draft
-is not ready. Do not silently expand the slice to make that test green.
+### Integration and bounded corrections
+
+- Published the tests-first implementation as `b1a74850e`.
+- At the user's explicit direction, `126414a08` removed only our newly authored,
+  out-of-scope cancelled-native-worker shutdown-drain diagnostic and its unused
+  signal. The finding remains deferred, not fixed or counted as a pass; its
+  original source is recoverable at `b1a74850e`. In-scope assertions remain.
+- Integrated main while preserving upstream behavior and contributor history;
+  excluded inherited browser changes outside this slice.
+- `17c2fecd3` unregisters a dying weak-directory binding by pointer identity,
+  preserving a newer same-scope binding and freeing empty directory capacity.
+  The unchanged Memcheck gate passes without suppressions. Native payload
+  destruction remains outside the cache lock.
+- The installed trusted Lume workflow can execute with its configured,
+  provenance-labelled local baseline. The earlier assertion that no such
+  execution was available was incorrect; successful execution does not turn
+  that worker-derived baseline into a certified immutable private seed.
+- The first complete macOS run passed 158 behavioral rows but failed strict
+  evidence validation for a semantic SwiftUI popover action without a drawable
+  point. Cherry-picked only `4c8b9ff20867de6e0398ef6de7a3a2a3413cdbd2`
+  from #2907 with `-x`, as `c1f8010a8`, preserving credit and linking the landing
+  location on the source PR. No fabricated point, fixture movement, or relaxed
+  pixel evidence was introduced. Main subsequently incorporated that PR.
+- At `c1f8010a8`, macOS desktop and standalone-browser suites passed. A Windows
+  background pixel row failed identically on main `84340731`; both failures
+  remain recorded on #3621. They were not retried into passes.
+- Integrated main `6c0348b059595e63d1df96e6df2047ca7dbbbf1c`, including
+  the upstream Windows fix #3671 and SDK maintenance, producing final product
+  candidate `2a8b170609abc0cd9eb5bda0feae5f95bf0bb75c`. The Windows merge
+  resolution retains the admitted native target inside the blocking worker
+  while preserving upstream typed UIA unavailability/refusal handling.
+
+### Exact-product desktop evidence
+
+All mandatory desktop lanes were rerun on `2a8b17060` after that integration:
+
+| Platform | Evidence | Result |
+| --- | --- | --- |
+| Windows | [34350875905](https://github.com/trycua/cua/actions/runs/34350875905) | 136/136 rows; all lanes and installer passed |
+| Linux X11 | [34350878655](https://github.com/trycua/cua/actions/runs/34350878655) | 129/129 rows; all lanes and installer passed |
+| macOS | Lume `20260909T122704Z-8a66cb28` | 159/159 desktop rows, including original AppKit pending-publication regression and strict evidence/video validation |
+
+Local merged-tree tests passed: 604 core, 71 SDK, 368 macOS platform tests
+(2 existing ignored), and all 10 shared/dispatch invariants. Ordinary PR CI,
+including release metadata, Nix, Memcheck, and platform checks passed on the
+product candidate. No mandatory desktop row was filtered or waived.
+
+The requested optional standalone-browser extension passed **17/18** rows,
+not 18/18. Its final Chrome collision case failed during exact-window posture
+setup, before the ambiguity assertion: AX focused window `3035` while the
+frontmost ordinary window remained `72`. The driver refused the unverified
+posture. [#3681](https://github.com/trycua/cua/issues/3681) retains this failure,
+its unknown cause, and the distinction from wrong-target input.
+
+A single baseline-only diagnostic, `paired-20260909T142514Z`, ran that focused
+case against product source `6c0348b05` using the existing `2a8b17060` harness;
+the browser test, testkit, and standalone runner sources are identical between
+those commits. It passed the expected ambiguity refusal and strict video
+validation. This does **not** reproduce the original failure, prove a baseline
+failure, certify unrun baseline lanes, or repair the failed candidate full run.
+No automatic candidate retry or assertion relaxation was performed.
+
+### Deletion, complexity, and latency
+
+The pinned parser reports zero parse errors. Comparing identical changed-file
+production scope against main `6c0348b05`:
+
+- 1,395 additions / 1,532 deletions: **137 fewer production lines**;
+- normalized production NLOC: 28,987 → 28,850;
+- disclosed source complexity: 4,514 → 4,453 (**−61**);
+- decision surplus: 3,762 → 3,711 (**−51**).
+
+These are production projections, excluding tests/comments, not a claim that
+the entire PR diff is smaller. Historical integer-payload cache measurements
+show substantial internal reductions but do not establish native task speedups.
+
+The updated native comparison uses main `6c0348b05` and product `2a8b17060`.
+Run `paired-20260909T131409Z` completed all 3,200 rows: 16 AB/BA paired blocks,
+20 measured samples plus five warmups per version/workload/block. The estimator,
+20,000-resample paired bootstrap, seed 3473, and 1.05 upper-bound gate were fixed
+before collection. No samples were replayed or discarded after observing results.
+
+| Native workload | Paired ratio | 95% ratio interval |
+| --- | ---: | --- |
+| Snapshot + screenshot | 1.00393 | 0.97532–1.02746 |
+| Semantic press + observed counter | 0.99555 | 0.98906–1.00183 |
+| Background pixel address + observed counter | 1.00230 | 0.98663–1.01686 |
+| Set value + observed text | 0.99957 | 0.99818–1.00082 |
+
+All four upper bounds exclude a slowdown greater than 5% in this measured scope.
+Native latency is essentially flat, not meaningfully faster. The complete compact
+receipt, byte-identical measured client, analyzer, integrity checks, and commands
+are checked in under [`tests/metrics`](../tests/metrics/README.md).
+
+The workload is macOS AppKit over persistent daemon-backed MCP, with a visible
+target, screenshots and native state confirmation, and no video recording. Its
+pixel-addressed background action uses the AX hit-test bridge, not raw physical
+delivery. It does not measure browser tasks, Windows/Linux native task latency,
+native-read counts, or native memory high-water marks. The broader performance
+matrix in the full RFC/spec is **not certified** by these results.
+
+The guest completed despite an interrupted host monitoring connection; the
+supervised controller collected the original samples, restored the standard
+daemon, and verified the owned worker stopped. The baseline-only browser probe
+also restored standard mode and stopped the worker. No credential changes, TCC
+repair, baseline deletion, or repeated sampling were needed.
+
+### Review handoff and remaining limits
+
+The selected desktop ownership correction has exact-product mandatory desktop
+and focused invariant evidence, demonstrated production deletion/complexity
+reduction, and bounded native latency evidence. Handoff is for review of that
+slice, not a claim that the whole RFC or optional browser matrix is certified.
+The PR remains `Refs #3473`, not an issue-closing claim.
+
+Keep #3681, local-seed provenance, unmeasured native performance/resource scopes,
+Wayland compositor limits, Linux live AT-SPI lookup without new native leases,
+Windows geometry freshness #2075, and the explicitly deferred general SDK drain
+finding visible. Do not convert them into green evidence or silently expand
+this implementation to resolve them.
+
+The final evidence-only follow-up adds documentation, measurements, and the
+already-executed supplementary benchmark client/analyzer; it does not change
+Rust product code, native fixtures, canonical runners, or their environment.
+The client digest and reconstructed raw-data digest are tested, and published
+statistics exactly match the original raw-row analysis. Account for that final
+diff against `2a8b17060` rather than repeat unrelated desktop rows. Recheck final
+PR title/release metadata and ordinary CI before marking review-ready. Do not
+merge automatically; after an eventual merge, run the short main/release-path
+smoke required by the selected scope.

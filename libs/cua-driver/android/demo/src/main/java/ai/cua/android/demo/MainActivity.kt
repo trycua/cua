@@ -1,31 +1,57 @@
 package ai.cua.android.demo
 
 import android.app.Activity
+import android.content.ComponentName
+import android.content.Intent
+import android.content.ServiceConnection
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
 import android.os.Bundle
+import android.os.IBinder
 import android.text.Editable
 import android.text.TextWatcher
-import android.util.Base64
 import android.view.KeyEvent
 import android.view.MotionEvent
+import android.view.WindowInsets
+import android.view.WindowInsetsController
 import android.widget.Button
 import android.widget.EditText
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import ai.cua.driver.sdk.DriverClient
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.util.concurrent.Executors
+import java.util.UUID
 
 class MainActivity : Activity() {
     private lateinit var humanEditor: EditText
     private lateinit var status: TextView
     private lateinit var preview: ImageView
-    private val worker = Executors.newSingleThreadExecutor()
-    @Volatile private var running = false
-    @Volatile private var busy = false
-    @Volatile private var destroyed = false
+    private val uiScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    private var observation: Job? = null
+    private var bound = false
+    private var sessionState = DemoSessionState(ownerGeneration = "unbound")
+    private val activityGeneration = UUID.randomUUID().toString()
+    private val connection = object : ServiceConnection {
+        override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+            val service = (binder as SessionService.LocalBinder).service
+            observation?.cancel()
+            observation = uiScope.launch { service.state.collect { render(it) } }
+        }
+        override fun onServiceDisconnected(name: ComponentName) {
+            observation?.cancel()
+            status.text = "Controller disconnected"
+            record("controller_disconnected")
+        }
+    }
     private val events = ArrayDeque<JSONObject>()
     private var previewFrames = 0
 
@@ -47,72 +73,61 @@ class MainActivity : Activity() {
         preview = ImageView(this).apply { id = R.id.preview; contentDescription = "Read-only agent display preview"; scaleType = ImageView.ScaleType.FIT_CENTER }
         setContentView(LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(24, 48, 24, 24)
+            setOnApplyWindowInsetsListener { view, insets ->
+                val bars = insets.getInsets(WindowInsets.Type.systemBars() or WindowInsets.Type.displayCutout())
+                view.setPadding(24 + bars.left, 24 + bars.top, 24 + bars.right, 24 + bars.bottom)
+                insets
+            }
             addView(TextView(this@MainActivity).apply { text = "Cua Android Demo"; textSize = 24f })
             addView(humanEditor)
             addView(status)
-            addView(Button(this@MainActivity).apply { id = R.id.start; text = "Start"; setOnClickListener { startSession() } })
+            addView(Button(this@MainActivity).apply {
+                id = R.id.start; text = "Start"
+                setOnClickListener { startForegroundService(Intent(this@MainActivity, SessionService::class.java).setAction(SessionService.ACTION_START)) }
+            })
             addView(Button(this@MainActivity).apply {
                 id = R.id.stop
                 text = "Stop"
-                setOnClickListener { running = false; showStatus(if (busy) "Stopping" else "Stopped") }
+                setOnClickListener { startService(Intent(this@MainActivity, SessionService::class.java).setAction(SessionService.ACTION_STOP)) }
             })
             addView(preview, LinearLayout.LayoutParams(-1, 0, 1f))
         })
+        window.insetsController?.setSystemBarsAppearance(
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS,
+            WindowInsetsController.APPEARANCE_LIGHT_STATUS_BARS or WindowInsetsController.APPEARANCE_LIGHT_NAVIGATION_BARS)
+        if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        }
         record("created")
         window.decorView.post { record("layout") }
     }
 
-    private fun startSession() {
-        if (busy || destroyed) return
-        busy = true
-        running = true
-        showStatus("Starting")
-        worker.execute {
-            val client = DriverClient(this@MainActivity)
-            var sessionId: String? = null
-            try {
-                sessionId = data(client.call("session.create", params = JSONObject()
-                    .put("width", 1080).put("height", 1920).put("density", 320)
-                    .put("allowed_apps", JSONArray().put("ai.cua.fixture.notes")))).getString("session_id")
-                val targetId = data(client.call("app.launch", sessionId, JSONObject().put("package", "ai.cua.fixture.notes"))).getString("target_id")
-                showStatus("Running")
-                var lastRenew = android.os.SystemClock.uptimeMillis()
-                while (running && !destroyed) {
-                    val snapshot = data(client.call("preview", sessionId, JSONObject().put("target_id", targetId)))
-                    val bytes = Base64.decode(snapshot.getString("image_base64"), Base64.DEFAULT)
-                    val bitmap = BitmapFactory.decodeByteArray(bytes, 0, bytes.size)
-                        ?: error("Preview image could not be decoded")
-                    runOnUiThread {
-                        if (!destroyed) { preview.setImageBitmap(bitmap); previewFrames++; record("preview") }
-                    }
-                    if (android.os.SystemClock.uptimeMillis() - lastRenew >= 10_000) {
-                        data(client.call("session.renew", sessionId))
-                        lastRenew = android.os.SystemClock.uptimeMillis()
-                    }
-                    Thread.sleep(1000)
-                }
-                showStatus("Stopping")
-            } catch (error: Exception) {
-                showStatus("Error: ${error.message ?: error.javaClass.simpleName}")
-            } finally {
-                if (sessionId != null) {
-                    try { data(client.call("session.stop", sessionId)); showStatus("Stopped") }
-                    catch (error: Exception) { showStatus("Stop failed: ${error.message}") }
-                }
-                running = false
-                busy = false
-            }
+    private suspend fun render(value: DemoSessionState) {
+        val bitmap = value.preview?.let { frame ->
+            withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(frame.png, 0, frame.png.size) }
         }
+        sessionState = value
+        status.text = value.status
+        preview.setImageBitmap(bitmap)
+        previewFrames = value.previewFrames
+        record("controller_state")
     }
 
-    private fun data(response: JSONObject): JSONObject {
-        check(response.optString("status") == "ok") { response.optJSONObject("error")?.optString("message") ?: "Runtime request failed" }
-        return response.getJSONObject("data")
+    override fun onStart() {
+        super.onStart()
+        bound = bindService(Intent(this, SessionService::class.java), connection, BIND_AUTO_CREATE)
     }
 
-    private fun showStatus(message: String) = runOnUiThread {
-        if (!destroyed) { status.text = message; record("status") }
+    override fun onStop() {
+        observation?.cancel()
+        if (bound) { unbindService(connection); bound = false }
+        super.onStop()
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        // Debug fixture hook exercises real Activity recreation without restarting the owner.
+        if (intent.action == "ai.cua.android.demo.RECREATE" && applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0) recreate()
     }
 
     override fun onSaveInstanceState(outState: Bundle) {
@@ -121,9 +136,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
-        destroyed = true
-        running = false
-        worker.shutdown()
+        uiScope.cancel()
         super.onDestroy()
     }
 
@@ -152,6 +165,7 @@ class MainActivity : Activity() {
             .put("text", humanEditor.text.toString()).put("status", status.text.toString())
             .put("window_focus", hasWindowFocus()).put("editor_focus", humanEditor.hasFocus()).put("events", JSONArray(events.toList()))
             .put("preview_frames", previewFrames)
+            .put("activity_generation", activityGeneration).put("controller", sessionState.evidence())
         val controls = JSONObject()
         for ((name, id) in listOf("editor" to R.id.human_editor, "start" to R.id.start, "stop" to R.id.stop)) {
             val view = findViewById<android.view.View>(id) ?: continue

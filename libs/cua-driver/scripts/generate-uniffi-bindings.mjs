@@ -51,6 +51,87 @@ function normalizeWhitespace(source) {
   return output.endsWith("\n") ? output : `${output}\n`
 }
 
+function normalizePython(source) {
+  const output = normalizeWhitespace(source)
+  const unsafe = "eventloop.call_soon(_uniffi_cancel_task, task)"
+  const safe = "eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)"
+  if (!output.includes("def _uniffi_future_dropped_callback(handle):")) return output
+  const matches = output.split(unsafe).length - 1
+  const corrected = output.split(safe).length - 1
+  if (matches + corrected !== 1) {
+    throw new Error("expected one UniFFI Python foreign-future cancellation scheduler")
+  }
+  // UniFFI 0.31 can drop a foreign future on a Rust worker thread.
+  return normalizePythonRemoteChannels(output.replace(unsafe, safe))
+}
+
+function normalizePythonRemoteChannels(source) {
+  if (!source.includes("class ForeignDriverEnvelopeChannel():")) return source
+  if (source.includes("def _uniffi_remote_channel_call_async(")) {
+    if (source.split("def _uniffi_remote_channel_call_async(").length !== 2
+        || source.split("        _uniffi_remote_channel_call_async(").length !== 6
+        || source.split("            with _UNIFFI_REMOTE_CHANNEL_LOOP_LOCK:").length !== 2) {
+      throw new Error("unexpected normalized UniFFI remote callback template")
+    }
+    return source
+  }
+  const replaceExact = (text, before, after, count = 1) => {
+    if (text.split(before).length - 1 !== count) {
+      throw new Error(`unexpected UniFFI Python remote callback template: ${before}`)
+    }
+    return text.replaceAll(before, after)
+  }
+  // Each foreign carrier belongs to the loop on which it enters Rust. Rust
+  // lifecycle threads must not depend on the process-global callback loop.
+  let output = replaceExact(source,
+    "            return _UniffiFfiConverterTypeForeignDriverEnvelopeChannel._handle_map.insert(value)",
+    `            eventloop = asyncio.get_running_loop()
+            with _UNIFFI_REMOTE_CHANNEL_LOOP_LOCK:
+                owner = getattr(value, "_uniffi_foreign_driver_event_loop", eventloop)
+                if owner is not eventloop:
+                    raise RuntimeError("remote Driver channel belongs to a different asyncio event loop")
+                value._uniffi_foreign_driver_event_loop = eventloop
+            return _UniffiFfiConverterTypeForeignDriverEnvelopeChannel._handle_map.insert(value)`)
+  const start = output.indexOf("def _uniffi_trait_interface_call_async_with_error(")
+  const end = output.indexOf("\n_UNIFFI_FOREIGN_FUTURE_HANDLE_MAP =", start)
+  if (start < 0 || end < 0) throw new Error("missing UniFFI async callback helper")
+  let helper = output.slice(start, end)
+  helper = replaceExact(helper,
+    "def _uniffi_trait_interface_call_async_with_error(make_call,",
+    "def _uniffi_remote_channel_call_async(eventloop, make_call,")
+  helper = replaceExact(helper,
+    "    eventloop = _uniffi_get_event_loop()\n    task = asyncio.run_coroutine_threadsafe(make_call_and_call_callback(), eventloop)",
+    `    coroutine = make_call_and_call_callback()
+    try:
+        task = asyncio.run_coroutine_threadsafe(coroutine, eventloop)
+    except RuntimeError:
+        coroutine.close()
+        handle = _UNIFFI_FOREIGN_FUTURE_HANDLE_MAP.insert((None, None))
+        uniffi_out_dropped_callback[0] = _UniffiForeignFutureDroppedCallbackStruct(handle, _uniffi_future_dropped_callback)
+        handle_error(
+            _UniffiRustCallStatus.CALL_ERROR,
+            lower_error(error_type.Failed("remote Driver channel asyncio event loop is closed")),
+        )
+        return`)
+  output = output.slice(0, end) + "\n_UNIFFI_REMOTE_CHANNEL_LOOP_LOCK = threading.Lock()\n\n" + helper + output.slice(end)
+  const vtableStart = output.indexOf("class _UniffiTraitImplForeignDriverEnvelopeChannelImpl:")
+  const vtableEnd = output.indexOf("class _UniffiFfiConverterTypeForeignDriverEnvelopeChannel:", vtableStart)
+  if (vtableStart < 0 || vtableEnd < 0) throw new Error("missing remote channel vtable")
+  const vtable = replaceExact(output.slice(vtableStart, vtableEnd),
+    "        _uniffi_trait_interface_call_async_with_error(\n            make_call,",
+    "        _uniffi_remote_channel_call_async(\n            uniffi_obj._uniffi_foreign_driver_event_loop,\n            make_call,", 5)
+  output = output.slice(0, vtableStart) + vtable + output.slice(vtableEnd)
+  return replaceExact(output,
+    "    eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)",
+    `    if eventloop is None:
+        return
+    try:
+        eventloop.call_soon_threadsafe(_uniffi_cancel_task, task)
+    except RuntimeError:
+        # The loop owner may have closed it after the callback completed.
+        pass`)
+}
+
 function normalizeTypeScript(name, source) {
   let output = normalizeWhitespace(source)
   // NodeNext requires emitted relative ESM imports to carry their .js suffix.
@@ -202,10 +283,10 @@ try {
   )
 
   applyGroup(pythonRoot, ".cua-driver-uniffi-generated-files", {
-    "src/cua_driver/_native.py": normalizeWhitespace(
+    "src/cua_driver/_native.py": normalizePython(
       readFileSync(join(pythonOutput, "cua_driver_sdk.py"), "utf8"),
     ),
-    "src/cua_driver/_native_contract.py": normalizeWhitespace(
+    "src/cua_driver/_native_contract.py": normalizePython(
       readFileSync(join(pythonOutput, "cua_driver_contract.py"), "utf8"),
     ),
   })

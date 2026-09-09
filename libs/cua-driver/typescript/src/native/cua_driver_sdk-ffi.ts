@@ -313,6 +313,16 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: true,
     },
+    "uniffi_cua_driver_sdk_fn_clone_foreigndriverenvelopechannel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_free_foreigndriverenvelopechannel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: true,
+    },
     "uniffi_cua_driver_sdk_fn_init_callback_vtable_driveractivityobserver": {
       args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkDriverActivityObserver"))],
       ret: FfiType.Void,
@@ -321,6 +331,21 @@ const DEFINITIONS = {
     "uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost": {
       args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost"))],
       ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_init_callback_vtable_foreigndriverenvelopechannel": {
+      args: [FfiType.Reference(FfiType.Struct("VTableCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannel"))],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_func_connect_remote_channel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_func_create_remote_trusted_session": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_fn_func_create_trusted_session": {
@@ -768,9 +793,49 @@ const DEFINITIONS = {
       ret: FfiType.Handle,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_identity": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+    },
+    "uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_negotiate": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_exchange": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_bind_session": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_cancel": {
+      args: [FfiType.Handle, FfiType.RustBuffer],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_close": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
     "ffi_cua_driver_sdk_uniffi_contract_version": {
       args: [],
       ret: FfiType.UInt32,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_connect_remote_channel": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_func_create_remote_trusted_session": {
+      args: [],
+      ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
     "uniffi_cua_driver_sdk_checksum_func_create_trusted_session": {
@@ -1218,6 +1283,36 @@ const DEFINITIONS = {
       ret: FfiType.UInt16,
       hasRustCallStatus: false,
     },
+    "uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_identity": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_negotiate": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_exchange": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_bind_session": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_cancel": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
+    "uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_close": {
+      args: [],
+      ret: FfiType.UInt16,
+      hasRustCallStatus: false,
+    },
   },
   callbacks: {
     "RustFutureContinuationCallback": {
@@ -1267,6 +1362,57 @@ const DEFINITIONS = {
       ret: FfiType.Void,
       hasRustCallStatus: false,
     },
+    "CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod0": {
+      args: [FfiType.Handle],
+      ret: FfiType.RustBuffer,
+      hasRustCallStatus: true,
+      outReturn: true,
+    },
+    "CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod1": {
+      args: [FfiType.Handle, FfiType.Callback("ForeignFutureCompleterust_buffer"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod2": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompleterust_buffer"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod3": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompleterust_buffer"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "ForeignFutureCompletevoid": {
+      args: [FfiType.Handle, FfiType.Struct("ForeignFutureResultVoid")],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod4": {
+      args: [FfiType.Handle, FfiType.RustBuffer, FfiType.Callback("ForeignFutureCompletevoid"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod5": {
+      args: [FfiType.Handle, FfiType.Callback("ForeignFutureCompletevoid"), FfiType.Handle],
+      ret: FfiType.Struct("ForeignFutureDroppedCallbackStruct"),
+      hasRustCallStatus: false,
+      outReturn: true,
+    },
+    "CallbackInterfaceCloneCuaDriverSdk_ForeignDriverEnvelopeChannel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Handle,
+      hasRustCallStatus: false,
+    },
+    "CallbackInterfaceFreeCuaDriverSdk_ForeignDriverEnvelopeChannel": {
+      args: [FfiType.Handle],
+      ret: FfiType.Void,
+      hasRustCallStatus: false,
+    },
   },
   structs: {
     "ForeignFutureDroppedCallbackStruct": [
@@ -1286,6 +1432,19 @@ const DEFINITIONS = {
       { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaDriverSdk_DriverAuthorizationHost") },
       { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaDriverSdk_DriverAuthorizationHost") },
       { name: "authorize", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkDriverAuthorizationHostMethod0") },
+    ],
+    "ForeignFutureResultVoid": [
+      { name: "call_status", type: FfiType.RustCallStatus },
+    ],
+    "VTableCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannel": [
+      { name: "uniffi_free", type: FfiType.Callback("CallbackInterfaceFreeCuaDriverSdk_ForeignDriverEnvelopeChannel") },
+      { name: "uniffi_clone", type: FfiType.Callback("CallbackInterfaceCloneCuaDriverSdk_ForeignDriverEnvelopeChannel") },
+      { name: "identity", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod0") },
+      { name: "negotiate", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod1") },
+      { name: "exchange", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod2") },
+      { name: "bind_session", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod3") },
+      { name: "cancel", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod4") },
+      { name: "close", type: FfiType.Callback("CallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod5") },
     ],
   },
 } as const;
@@ -1349,8 +1508,13 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_free_driverauthorizationhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_clone_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_free_embeddedcuadriverhost(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
+    uniffi_cua_driver_sdk_fn_clone_foreigndriverenvelopechannel(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_free_foreigndriverenvelopechannel(ptr: bigint, uniffi_out_err: UniffiRustCallStatus): void;
     uniffi_cua_driver_sdk_fn_init_callback_vtable_driveractivityobserver(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverActivityObserver): void;
     uniffi_cua_driver_sdk_fn_init_callback_vtable_driverauthorizationhost(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost): void;
+    uniffi_cua_driver_sdk_fn_init_callback_vtable_foreigndriverenvelopechannel(vtable: UniffiVTableCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannel): void;
+    uniffi_cua_driver_sdk_fn_func_connect_remote_channel(channel: bigint, uniffi_out_err: UniffiRustCallStatus): bigint;
+    uniffi_cua_driver_sdk_fn_func_create_remote_trusted_session(driver: bigint, options: Uint8Array): bigint;
     uniffi_cua_driver_sdk_fn_func_create_trusted_session(driver: bigint, options: Uint8Array, uniffi_out_err: UniffiRustCallStatus): bigint;
     uniffi_cua_driver_sdk_fn_func_current_mac_os_permission_status(uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_func_open_mac_os_screen_recording_settings(uniffi_out_err: UniffiRustCallStatus): void;
@@ -1440,7 +1604,15 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_state(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_stop(uniffiSelf: bigint): bigint;
     uniffi_cua_driver_sdk_fn_method_embeddedcuadriverhost_wait_for_exit(uniffiSelf: bigint, generation: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_identity(uniffiSelf: bigint, uniffi_out_err: UniffiRustCallStatus): Uint8Array;
+    uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_negotiate(uniffiSelf: bigint): bigint;
+    uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_exchange(uniffiSelf: bigint, request: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_bind_session(uniffiSelf: bigint, options: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_cancel(uniffiSelf: bigint, requestId: Uint8Array): bigint;
+    uniffi_cua_driver_sdk_fn_method_foreigndriverenvelopechannel_close(uniffiSelf: bigint): bigint;
     ffi_cua_driver_sdk_uniffi_contract_version(): number;
+    uniffi_cua_driver_sdk_checksum_func_connect_remote_channel(): number;
+    uniffi_cua_driver_sdk_checksum_func_create_remote_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_create_trusted_session(): number;
     uniffi_cua_driver_sdk_checksum_func_current_mac_os_permission_status(): number;
     uniffi_cua_driver_sdk_checksum_func_open_mac_os_screen_recording_settings(): number;
@@ -1530,6 +1702,12 @@ interface NativeModuleInterface {
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_state(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_stop(): number;
     uniffi_cua_driver_sdk_checksum_method_embeddedcuadriverhost_wait_for_exit(): number;
+    uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_identity(): number;
+    uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_negotiate(): number;
+    uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_exchange(): number;
+    uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_bind_session(): number;
+    uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_cancel(): number;
+    uniffi_cua_driver_sdk_checksum_method_foreigndriverenvelopechannel_close(): number;
     // Codegen call sites use these via `nativeModule().rustbuffer_alloc(...)`
     // and `nativeModule().rustbuffer_free(...)`. The runtime's registered
     // module exposes them as method properties.
@@ -1580,4 +1758,26 @@ export type UniffiVTableCallbackInterfaceCuaDriverSdkDriverAuthorizationHost = {
   uniffi_free: UniffiCallbackInterfaceFreeCuaDriverSdkDriverAuthorizationHost;
   uniffi_clone: UniffiCallbackInterfaceCloneCuaDriverSdkDriverAuthorizationHost;
   authorize: UniffiCallbackInterfaceCuaDriverSdkDriverAuthorizationHostMethod0;
+};
+type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod0 = (uniffiHandle: bigint) => Uint8Array;
+type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod1 = (uniffiHandle: bigint, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod2 = (uniffiHandle: bigint, request: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod3 = (uniffiHandle: bigint, options: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompleterustBuffer, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+export type UniffiForeignFutureResultVoid = {
+  call_status: UniffiRustCallStatus;
+};
+export type UniffiForeignFutureCompletevoid = (callbackData: bigint, result: UniffiForeignFutureResultVoid) => void;
+type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod4 = (uniffiHandle: bigint, requestId: Uint8Array, uniffiFutureCallback: UniffiForeignFutureCompletevoid, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod5 = (uniffiHandle: bigint, uniffiFutureCallback: UniffiForeignFutureCompletevoid, uniffiCallbackData: bigint) => UniffiForeignFutureDroppedCallbackStruct;
+type UniffiCallbackInterfaceCloneCuaDriverSdkForeignDriverEnvelopeChannel = (handle: bigint) => UniffiResult<void>;
+type UniffiCallbackInterfaceFreeCuaDriverSdkForeignDriverEnvelopeChannel = (handle: bigint) => void;
+export type UniffiVTableCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannel = {
+  uniffi_free: UniffiCallbackInterfaceFreeCuaDriverSdkForeignDriverEnvelopeChannel;
+  uniffi_clone: UniffiCallbackInterfaceCloneCuaDriverSdkForeignDriverEnvelopeChannel;
+  identity: UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod0;
+  negotiate: UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod1;
+  exchange: UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod2;
+  bind_session: UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod3;
+  cancel: UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod4;
+  close: UniffiCallbackInterfaceCuaDriverSdkForeignDriverEnvelopeChannelMethod5;
 };

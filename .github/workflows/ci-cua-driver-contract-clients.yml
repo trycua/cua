@@ -279,7 +279,7 @@ jobs:
         working-directory: libs/cua-driver/python
         run: |
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
-            python -m unittest tests/test_uniffi_loader.py -v
+            python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py -v
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
             "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"
 

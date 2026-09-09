@@ -191,6 +191,8 @@ const HEALTH_INTERVAL: Duration = Duration::from_millis(250);
 struct WindowFingerprint {
     pid: i32,
     layer: i32,
+    native_width: f64,
+    native_height: f64,
     width: f64,
     height: f64,
     content_width: f64,
@@ -202,6 +204,7 @@ impl WindowFingerprint {
     fn new(
         pid: i32,
         layer: i32,
+        native_size: (f64, f64),
         frame: screencapturekit::cg::CGRect,
         content: screencapturekit::cg::CGRect,
         scale: f64,
@@ -209,6 +212,8 @@ impl WindowFingerprint {
         Self {
             pid,
             layer,
+            native_width: native_size.0,
+            native_height: native_size.1,
             width: frame.size.width,
             height: frame.size.height,
             content_width: content.size.width,
@@ -311,20 +316,23 @@ impl WindowPlan {
             .ok_or_else(|| anyhow::anyhow!("window_owner_changed"))?;
         anyhow::ensure!(owner.process_id() == target.pid, "window_owner_changed");
         let frame = window.frame();
-        tracing::debug!(
-            native_layer = native.layer,
-            capture_layer = window.window_layer(),
-            native_width = native.bounds.width,
-            native_height = native.bounds.height,
-            capture_width = frame.size.width,
-            capture_height = frame.size.height,
-            "window recording geometry attestation"
-        );
         anyhow::ensure!(
-            window.window_layer() == native.layer
-                && frame.size.width == native.bounds.width
-                && frame.size.height == native.bounds.height,
+            window.window_layer() == native.layer,
             "window_identity_changed"
+        );
+        // WindowServer and ScreenCaptureKit can expose different bounds for the
+        // same window. Keep both sizes in the fingerprint, but compare each
+        // only against later readings from its own API.
+        anyhow::ensure!(
+            [
+                native.bounds.width,
+                native.bounds.height,
+                frame.size.width,
+                frame.size.height
+            ]
+            .into_iter()
+            .all(|dimension| dimension.is_finite() && dimension > 0.0),
+            "window_geometry_invalid"
         );
         let filter = SCContentFilter::create().with_window(&window).build();
         let rect = filter.content_rect();
@@ -349,7 +357,14 @@ impl WindowPlan {
                 height,
                 backend: "screencapturekit_window".into(),
             },
-            fingerprint: WindowFingerprint::new(target.pid, native.layer, frame, rect, scale),
+            fingerprint: WindowFingerprint::new(
+                target.pid,
+                native.layer,
+                (native.bounds.width, native.bounds.height),
+                frame,
+                rect,
+                scale,
+            ),
             filter,
         })
     }
@@ -722,6 +737,8 @@ mod window_video_tests {
         WindowFingerprint {
             pid: 42,
             layer: 0,
+            native_width: 803.0,
+            native_height: 603.0,
             width: 801.0,
             height: 601.0,
             content_width: 801.0,
@@ -764,6 +781,12 @@ mod window_video_tests {
             Some("window_scale_changed")
         );
         current = original.clone();
+        current.native_width += 1.0;
+        assert_eq!(original.changed_reason(&current), Some("window_resized"));
+        current = original.clone();
+        current.native_height += 1.0;
+        assert_eq!(original.changed_reason(&current), Some("window_resized"));
+        current = original.clone();
         current.width += 1.0;
         assert_eq!(original.changed_reason(&current), Some("window_resized"));
         current = original.clone();
@@ -788,8 +811,8 @@ mod window_video_tests {
             },
             ..frame
         };
-        let original = WindowFingerprint::new(42, 0, frame, frame, 2.0);
-        let current = WindowFingerprint::new(42, 0, moved, moved, 2.0);
+        let original = WindowFingerprint::new(42, 0, (803.0, 603.0), frame, frame, 2.0);
+        let current = WindowFingerprint::new(42, 0, (803.0, 603.0), moved, moved, 2.0);
         assert_eq!(original.changed_reason(&current), None);
     }
 

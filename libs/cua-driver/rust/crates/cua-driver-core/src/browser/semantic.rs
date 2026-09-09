@@ -187,17 +187,23 @@ impl SemanticDocument {
         };
     }
 
-    /// Visible accessible labels available to page-level classification.
+    /// Accessible labels available to page-level classification.
     ///
-    /// Only accessible names contribute page content. Roles establish whether
-    /// a matching name belongs to a challenge surface; mutable control values
-    /// and offscreen retained state are excluded.
+    /// Ordinary copy must be in the viewport. A checkbox can also participate
+    /// when it is actionable and accessibility exposes it without layout
+    /// geometry, as happens for some native browser checkbox renderings.
+    /// Mutable values and known hidden/offscreen state remain excluded.
     pub(crate) fn visible_challenge_labels(
         &self,
     ) -> impl Iterator<Item = BrowserChallengeLabel<'_>> {
         self.nodes
             .iter()
-            .filter(|node| node.visibility == BrowserVisibility::InViewport)
+            .filter(|node| {
+                node.visibility == BrowserVisibility::InViewport
+                    || (node.visibility == BrowserVisibility::NoLayout
+                        && node.role.eq_ignore_ascii_case("checkbox")
+                        && node.actions.contains(&BrowserActionKind::Click))
+            })
             .filter_map(|node| {
                 node.name
                     .as_deref()
@@ -1510,6 +1516,14 @@ mod tests {
             actions: Vec::new(),
             document_order: 0,
         };
+        let mut actionable_checkbox = node(
+            "checkbox",
+            Some("Verify you are human"),
+            None,
+            BrowserVisibility::NoLayout,
+        );
+        actionable_checkbox.role = "checkbox".to_owned();
+        actionable_checkbox.actions = vec![BrowserActionKind::Click];
         let document = SemanticDocument {
             nodes: vec![
                 node(
@@ -1530,13 +1544,23 @@ mod tests {
                     None,
                     BrowserVisibility::CssHidden,
                 ),
+                node(
+                    "no-layout-copy",
+                    Some("Complete the security check"),
+                    None,
+                    BrowserVisibility::NoLayout,
+                ),
+                actionable_checkbox,
             ],
             ..SemanticDocument::default()
         };
 
         assert_eq!(
             document.visible_challenge_labels().collect::<Vec<_>>(),
-            vec![BrowserChallengeLabel::new("textbox", "Draft excerpt")]
+            vec![
+                BrowserChallengeLabel::new("textbox", "Draft excerpt"),
+                BrowserChallengeLabel::new("checkbox", "Verify you are human"),
+            ]
         );
     }
 }

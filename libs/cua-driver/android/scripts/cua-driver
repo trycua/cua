@@ -1,0 +1,2 @@
+#!/system/bin/sh
+CLASSPATH=/data/local/tmp/cua-driver/runtime.apk exec app_process / ai.cua.driver.LocalCliMain "$@"

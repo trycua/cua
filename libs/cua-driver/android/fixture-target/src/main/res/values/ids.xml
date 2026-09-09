@@ -1,0 +1,5 @@
+<resources>
+    <item name="editor" type="id" />
+    <item name="increment" type="id" />
+    <item name="counter" type="id" />
+</resources>

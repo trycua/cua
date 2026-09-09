@@ -6,8 +6,8 @@
 //! Connection IDs and generations are routing/lifecycle markers, not credentials.
 //! Each connection already has a host-bound root session; independent bound
 //! sessions are unsupported. No request supplies permission options or paths.
-//! This first slice requests Standard sessions only; incompatible runtime
-//! ceilings refuse creation. It does not inherit or widen the runtime mode.
+//! Standard is the default. Unrestricted sessions require a separate trusted
+//! launcher opt-in and an already acknowledged unrestricted runtime.
 
 use cua_driver_sdk::remote::DriverRequestEnvelope;
 use cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver;
@@ -348,11 +348,53 @@ impl Drop for Server {
     }
 }
 
+fn select_session_mode(
+    requested: Option<&str>,
+    host: cua_driver_core::authorization::PermissionMode,
+    has_manifest: bool,
+) -> anyhow::Result<cua_driver_sdk::SessionPermissionMode> {
+    use cua_driver_core::authorization::PermissionMode;
+    use cua_driver_sdk::SessionPermissionMode;
+    // This carrier cannot propagate a host manifest into its bound session.
+    anyhow::ensure!(
+        !has_manifest,
+        "envelope sessions with a host capability manifest are unsupported"
+    );
+    match requested {
+        None | Some("standard") => Ok(SessionPermissionMode::Standard),
+        Some("unrestricted") => {
+            anyhow::ensure!(
+                host == PermissionMode::Unrestricted,
+                "unrestricted envelope sessions require an acknowledged unrestricted host"
+            );
+            Ok(SessionPermissionMode::Unrestricted)
+        }
+        Some(_) => {
+            anyhow::bail!("CUA_DRIVER_ENVELOPE_PERMISSION_MODE must be standard or unrestricted")
+        }
+    }
+}
+
+fn configured_session_mode() -> anyhow::Result<cua_driver_sdk::SessionPermissionMode> {
+    let requested = match std::env::var("CUA_DRIVER_ENVELOPE_PERMISSION_MODE") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(error.into()),
+    };
+    let host =
+        cua_driver_core::authorization::configured_permission_mode().map_err(anyhow::Error::msg)?;
+    let has_manifest = cua_driver_core::session_manifest::configured_capability_manifest()
+        .map_err(anyhow::Error::msg)?
+        .is_some();
+    select_session_mode(requested.as_deref(), host, has_manifest)
+}
+
 pub async fn start(sdk: Arc<crate::sdk_adapter::SdkAdapter>, port: u16) -> anyhow::Result<Server> {
+    let mode = configured_session_mode()?;
     let listener = TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port)).await?;
     let service = Arc::new(Service {
         entries: Mutex::new(HashMap::new()),
-        factory: Arc::new(move || sdk.create_envelope_receiver()),
+        factory: Arc::new(move || sdk.create_envelope_receiver(mode)),
         exchanges: tokio::sync::Semaphore::new(MAX_EXCHANGES),
     });
     let task = tokio::spawn(async move {
@@ -392,6 +434,124 @@ mod tests {
     use super::*;
     use cua_driver_sdk::{remote_receiver::DriverEnvelopeExecutor, DriverError};
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn envelope_mode_never_implicitly_inherits_unrestricted() {
+        use cua_driver_core::authorization::PermissionMode as Host;
+        for host in [Host::Standard, Host::Bounded, Host::Unrestricted] {
+            for requested in [None, Some("standard")] {
+                assert_eq!(
+                    select_session_mode(requested, host, false).unwrap(),
+                    cua_driver_sdk::SessionPermissionMode::Standard
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn envelope_unrestricted_requires_matching_host_and_no_manifest() {
+        use cua_driver_core::authorization::PermissionMode as Host;
+        assert_eq!(
+            select_session_mode(Some("unrestricted"), Host::Unrestricted, false).unwrap(),
+            cua_driver_sdk::SessionPermissionMode::Unrestricted
+        );
+        for host in [Host::Standard, Host::Bounded] {
+            assert!(select_session_mode(Some("unrestricted"), host, false).is_err());
+        }
+        assert!(select_session_mode(Some("unrestricted"), Host::Unrestricted, true).is_err());
+        assert!(select_session_mode(None, Host::Standard, true).is_err());
+        assert!(select_session_mode(Some("standard"), Host::Standard, true).is_err());
+    }
+
+    #[test]
+    fn envelope_mode_rejects_unknown_and_bounded_values() {
+        use cua_driver_core::authorization::PermissionMode;
+        for value in ["", "bounded", "UNRESTRICTED", " unrestricted", "inherit"] {
+            assert!(select_session_mode(Some(value), PermissionMode::Unrestricted, false).is_err());
+        }
+    }
+
+    #[test]
+    fn envelope_startup_mode_requires_explicit_acknowledgement() {
+        const CHILD: &str = "CUA_TEST_ENVELOPE_MODE_CHILD";
+        if let Ok(expected) = std::env::var(CHILD) {
+            let selected = configured_session_mode();
+            match expected.as_str() {
+                "standard" => assert_eq!(
+                    selected.unwrap(),
+                    cua_driver_sdk::SessionPermissionMode::Standard
+                ),
+                "unrestricted" => assert_eq!(
+                    selected.unwrap(),
+                    cua_driver_sdk::SessionPermissionMode::Unrestricted
+                ),
+                "error" => assert!(selected.is_err()),
+                "manifest_error" => {
+                    assert!(
+                        cua_driver_core::session_manifest::configured_capability_manifest()
+                            .unwrap()
+                            .is_some()
+                    );
+                    assert!(selected.is_err());
+                }
+                _ => panic!("unknown synthetic test expectation"),
+            }
+            return;
+        }
+        // Startup mode is process-cached; each case must get a fresh process.
+        for (requested, host, acknowledged, manifest, expected) in [
+            (None, "standard", false, false, "standard"),
+            (None, "unrestricted", true, false, "standard"),
+            (Some("unrestricted"), "standard", false, false, "error"),
+            (Some("unrestricted"), "unrestricted", false, false, "error"),
+            (
+                Some("unrestricted"),
+                "unrestricted",
+                true,
+                false,
+                "unrestricted",
+            ),
+            (Some("bounded"), "unrestricted", true, false, "error"),
+            (None, "standard", false, true, "manifest_error"),
+            (
+                Some("unrestricted"),
+                "unrestricted",
+                true,
+                true,
+                "manifest_error",
+            ),
+        ] {
+            use std::io::Write;
+            let mut file = tempfile::NamedTempFile::new().unwrap();
+            file.write_all(b"version: 3\nallow:\n  tools: [get_config]\n")
+                .unwrap();
+            let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+            command
+                .args([
+                    "--exact",
+                    "driver_service_http::tests::envelope_startup_mode_requires_explicit_acknowledgement",
+                    "--nocapture",
+                ])
+                .env(CHILD, expected)
+                .env("CUA_DRIVER_PERMISSION_MODE", host)
+                .env("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", if acknowledged { "1" } else { "0" })
+                .env_remove("CUA_DRIVER_ENVELOPE_PERMISSION_MODE")
+                .env_remove("CUA_DRIVER_CAPABILITY_MANIFEST_FILE")
+                .env_remove("CUA_DRIVER_SESSION_POLICY_FILE");
+            if manifest {
+                command.env("CUA_DRIVER_CAPABILITY_MANIFEST_FILE", file.path());
+            }
+            if let Some(requested) = requested {
+                command.env("CUA_DRIVER_ENVELOPE_PERMISSION_MODE", requested);
+            }
+            let output = command.output().unwrap();
+            assert!(
+                output.status.success(),
+                "startup mode case failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 
     struct Fake(Arc<AtomicUsize>);
     #[async_trait::async_trait]

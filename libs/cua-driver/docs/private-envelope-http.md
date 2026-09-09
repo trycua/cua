@@ -30,12 +30,27 @@ value returned at creation. Missing generations fail with HTTP 400, absent
 connections with 404, and mismatches with 409. A client must not reopen a
 connection automatically after those failures.
 
-Creation binds a Standard session with a one-hour maximum lifetime and a
-five-minute idle lifetime. The immutable runtime ceiling still applies:
-incompatible runtimes refuse creation. This slice does not inherit unrestricted
-mode or accept permission modes, manifests, or arbitrary session options from
-the wire. Ordinary typed calls use `session=None`; operations requiring a
-session label use the returned `public_session`.
+Creation binds a Standard session by default, with a one-hour maximum lifetime
+and a five-minute idle lifetime. The immutable runtime ceiling still applies:
+incompatible runtimes refuse creation. This slice does not implicitly inherit
+unrestricted mode or accept permission modes, manifests, or arbitrary session
+options from the wire. Ordinary typed calls use `session=None`; operations
+requiring a session label use the returned `public_session`.
+
+For an explicitly authorized disposable or trusted environment, the launcher
+can set `CUA_DRIVER_ENVELOPE_PERMISSION_MODE=unrestricted` and launch the daemon
+with `--permission-mode unrestricted --dangerously-bypass-approvals`. Both the
+carrier opt-in and the existing runtime risk acknowledgement are required.
+The carrier reads the setting once at startup; clients cannot change it.
+The default remains `standard`, even on an unrestricted daemon. Other values,
+including `bounded`, fail startup. A carrier with a host capability manifest
+also fails startup: this first slice does not support manifest configuration.
+The SDK treats compatibility-call and trusted-session manifests separately;
+this carrier neither inherits the former nor exposes the latter. This is a
+carrier limitation, not a change to the SDK's per-session manifest contract.
+Managed and user policies remain binding.
+This option does not authorize public exposure, alter Fleet authorization,
+or change existing computer-server sessions.
 
 `capabilities` contains `minimum_envelope_version`, `maximum_envelope_version`,
 and `supports_cancellation`. This carrier supports envelope version 1 and

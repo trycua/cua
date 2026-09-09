@@ -11,7 +11,7 @@ The public `Image` type is the sandbox API's immutable environment specification
 
 A Fleet image is the guest boot artifact referenced by a pool definition. A pool can keep multiple replicas running from the same artifact, and later workloads claim those replicas. The Fleet image is therefore an input to capacity management and replica compatibility rather than a step in one sandbox's SDK setup sequence.
 
-The public SDK model is documented in [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts), [Choose and build a sandbox image](/how-to-guides/sandbox/images), and the [Image reference](/reference/sandbox-sdk/image).
+The public SDK model is documented in [How sandboxes work](/concepts/how-sandboxes-work#images-as-starting-state-contracts) and the [Image reference](/reference/sandbox-sdk/image). For hosted image selection, use [Choose a Fleet image](/how-to-guides/sandbox/choose-an-image). [Build a local sandbox image](/how-to-guides/sandbox/images) covers the separate local builder workflow.
 
 ## Fleet uses a constrained subset of the SDK image surface
 
@@ -60,5 +60,5 @@ Changing the referenced image version requires publishing the corresponding arti
 ## Related pages
 
 - [How sandboxes work](/concepts/how-sandboxes-work)
-- [Choose and build a sandbox image](/how-to-guides/sandbox/images)
+- [Choose a Fleet image](/how-to-guides/sandbox/choose-an-image)
 - [Image reference](/reference/sandbox-sdk/image)

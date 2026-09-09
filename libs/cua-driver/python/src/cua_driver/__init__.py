@@ -4,7 +4,7 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.23.2"  # x-release-please-version
+__version__ = "0.25.0"  # x-release-please-version
 
 from ._native import (
     ActionCompletion,
@@ -25,6 +25,14 @@ from ._native import (
     DriverExecutionMode,
     DriverMetadata,
     DriverOptions,
+    ForeignDriverChannelCapabilities,
+    ForeignDriverBoundChannel,
+    ForeignDriverChannelError,
+    ForeignDriverChannelIdentity,
+    ForeignDriverEnvelopeChannel,
+    ForeignDriverEnvelopeChannelImpl,
+    ForeignDriverRequestEnvelope,
+    ForeignDriverResponseEnvelope,
     EmbeddedCuaDriverHost,
     EmbeddedDriverConnection,
     EmbeddedDriverError,
@@ -43,6 +51,8 @@ from ._native import (
     ToolResult,
     TrustedSessionOptions,
     create_trusted_session,
+    connect_remote_channel,
+    create_remote_trusted_session,
     current_mac_os_permission_status,
     open_mac_os_screen_recording_settings,
     request_mac_os_permissions,
@@ -58,6 +68,7 @@ from ._native_contract import (
     ActionEvidenceKind,
     ActionResult,
     ActionRoute,
+    ActionTarget,
     BoundsExpectation,
     CaptureScope,
     ClickButton,
@@ -180,6 +191,7 @@ __all__ = [
     "ActionEvidenceKind",
     "ActionResult",
     "ActionRoute",
+    "ActionTarget",
     "BoundsExpectation",
     "CaptureScope",
     "ClickButton",
@@ -208,6 +220,14 @@ __all__ = [
     "DriverExecutionMode",
     "DriverMetadata",
     "DriverOptions",
+    "ForeignDriverChannelCapabilities",
+    "ForeignDriverBoundChannel",
+    "ForeignDriverChannelError",
+    "ForeignDriverChannelIdentity",
+    "ForeignDriverEnvelopeChannel",
+    "ForeignDriverEnvelopeChannelImpl",
+    "ForeignDriverRequestEnvelope",
+    "ForeignDriverResponseEnvelope",
     "EmbeddedCuaDriverHost",
     "EmbeddedDriverConnection",
     "EmbeddedDriverError",
@@ -259,6 +279,8 @@ __all__ = [
     "WindowPredicate",
     "__version__",
     "create_trusted_session",
+    "connect_remote_channel",
+    "create_remote_trusted_session",
     "current_mac_os_permission_status",
     "get_binary_path",
     "open_mac_os_screen_recording_settings",

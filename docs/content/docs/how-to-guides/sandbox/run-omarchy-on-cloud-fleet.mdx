@@ -22,6 +22,17 @@ applications inside that VM.
   does not run on Fleet.
 </Callout>
 
+<VideoDemo
+  src="https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2"
+  poster=""
+  title="Two agent cursors in an Omarchy desktop"
+>
+  Two Cua Driver sessions select cells in LibreOffice Calc and objects in Inkscape
+  while a terminal stays in the foreground. Recorded with Cua Driver and the
+  Hyprland plugin 0.24.0. This 50-second clip demonstrates background selections,
+  not data edits or continuous foreground-isolation testing.
+</VideoDemo>
+
 ## Before you start
 
 You need:
@@ -34,7 +45,7 @@ You need:
 The Fleet-verified public image reference is:
 
 ```text
-public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab
+public.ecr.aws/k5j5w0x5/cua-omarchy-workspace@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342
 ```
 
 The image is an amd64 KubeVirt containerDisk. It is not an ordinary OCI
@@ -89,7 +100,7 @@ from cua_sandbox import Image, Pool
 IMAGE = os.environ.get(
     "OMARCHY_IMAGE",
     "public.ecr.aws/k5j5w0x5/cua-omarchy-workspace"
-    "@sha256:d9b7be06beac425084eaa99eb912589b38b5cc86ae3e3ec45c9c5d59d4b3a7ab",
+    "@sha256:dc448dcc986f443980dfb3586f1b91d8699091ad96a74b369016535f0dbb0342",
 )
 POOL_NAME = os.environ["CUA_POOL_NAME"]
 

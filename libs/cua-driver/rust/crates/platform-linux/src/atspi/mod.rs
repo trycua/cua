@@ -168,8 +168,16 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
     native::focus_element(pid, idx)
 }
 
-pub fn scroll_element(pid: u32, idx: usize, direction: &str, amount: usize) -> Result<()> {
-    native::scroll_element(pid, idx, direction, amount)
+pub use native::ScrollProgress;
+
+pub fn scroll_element(
+    pid: u32,
+    idx: usize,
+    direction: &str,
+    amount: usize,
+    by: cua_driver_contract::ScrollBy,
+) -> Result<ScrollProgress> {
+    native::scroll_element(pid, idx, direction, amount, by)
 }
 
 /// Enumerate top-level windows from the AT-SPI registry. The window-listing

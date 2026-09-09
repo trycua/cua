@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       component:
-        description: "Component to prepare (automatic checks both)"
+        description: "Component to prepare (automatic checks all components)"
         required: true
         type: choice
         default: automatic
@@ -15,6 +15,7 @@ on:
           - automatic
           - cua-driver-rs
           - lume
+          - sandbox
       bump:
         description: "Version bump for the selected component"
         required: true
@@ -58,7 +59,7 @@ jobs:
           inputs.component == 'automatic' &&
           inputs.bump != 'automatic'
         run: |
-          echo "::error::Select cua-driver-rs or lume when forcing a bump type."
+          echo "::error::Select cua-driver-rs, lume, or sandbox when forcing a bump type."
           exit 1
 
       - name: Reject manifest tags outside main history
@@ -133,15 +134,17 @@ jobs:
               '.files | any(.path == "libs/cua-driver/rust/VERSION")')
             LUME=$(echo "$PR" | jq -r \
               '.files | any(.path == "libs/lume/VERSION")')
-            if [[ "$DRIVER" != "true" && "$LUME" != "true" ]]; then
+            SANDBOX=$(echo "$PR" | jq -r \
+              '.files | any(.path == "libs/python/cua-sandbox/VERSION")')
+            if [[ "$DRIVER" != "true" && "$LUME" != "true" && "$SANDBOX" != "true" ]]; then
               continue
             fi
 
             OWNER=$(echo "$PR" | jq -r '.headRepositoryOwner.login')
             BRANCH=$(echo "$PR" | jq -r '.headRefName')
             if [[ "$OWNER" != "${GITHUB_REPOSITORY%/*}" || "$BRANCH" != release-please--branches--* ]]; then
-              echo "Refusing to run release-branch code from $OWNER:$BRANCH"
-              exit 1
+              echo "Skipping non-release PR #$number; no branch code will run"
+              continue
             fi
 
             # Release Please can update an existing branch that predates the
@@ -176,6 +179,9 @@ jobs:
               if [[ "$LUME" == "true" ]]; then
                 COMPONENT_ARGS+=(--component lume)
               fi
+              if [[ "$SANDBOX" == "true" ]]; then
+                COMPONENT_ARGS+=(--component sandbox)
+              fi
               python3 .github/scripts/merge_release_please_manifests.py \
                 --main "$RUNNER_TEMP/main-release-manifest.json" \
                 --release "$RUNNER_TEMP/branch-release-manifest.json" \
@@ -195,15 +201,17 @@ jobs:
               python3 .github/scripts/sync_driver_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product driver
               git add libs/cua-driver/rust/Cargo.lock \
-                docs/content/docs/reference/cua-driver/cli-reference.mdx \
-                docs/content/docs/reference/cua-driver/mcp-tools.mdx
+                docs/content/docs/reference/cua-driver
               COMMIT_MESSAGE="chore(cua-driver-rs): synchronize generated release files"
-            else
+            elif [[ "$LUME" == "true" ]]; then
               python3 .github/scripts/sync_lume_release_docs.py
               python3 .github/scripts/validate_release_versions.py --product lume
               git add docs/content/docs/reference/lume/cli-reference.mdx \
                 docs/content/docs/reference/lume/http-api.mdx
               COMMIT_MESSAGE="chore(lume): synchronize release documentation"
+            else
+              python3 .github/scripts/validate_release_versions.py --product sandbox
+              COMMIT_MESSAGE="chore(sandbox): synchronize release metadata"
             fi
             if git diff --cached --quiet; then
               echo "Generated files already match release PR #$number"

@@ -8,6 +8,7 @@ on:
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
+      - "libs/python/cua-sandbox/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/include/**"
@@ -35,6 +36,7 @@ on:
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
+      - "libs/python/cua-sandbox/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/include/**"
@@ -279,13 +281,27 @@ jobs:
         working-directory: libs/cua-driver/python
         run: |
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
-            python -m unittest tests/test_uniffi_loader.py -v
+            python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py -v
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
             "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"
 
       - name: Test TypeScript SDK
         working-directory: libs/cua-driver/typescript
         run: npm run typecheck && CUA_DRIVER_REQUIRE_UNIFFI=1 npm test && npm audit --audit-level=high
+
+      - name: Test Sandbox typed Driver against the candidate native bridge
+        run: |
+          python -m pip install --extra-index-url https://wheels.cua.ai/simple './libs/python/cua-sandbox[dev]'
+          CUA_SANDBOX_REQUIRE_NATIVE_DRIVER=1 \
+          PYTHONPATH=libs/python/cua-sandbox:libs/cua-driver/python/src \
+            python -m pytest \
+              libs/python/cua-sandbox/tests/test_typed_driver_native.py \
+              libs/python/cua-sandbox/tests/test_typed_driver.py \
+              libs/python/cua-sandbox/tests/test_pool.py \
+              libs/python/cua-sandbox/tests/test_fleet_transport.py \
+              libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py \
+              libs/python/cua-sandbox/tests/test_sandbox_fleet_lifecycle.py \
+              libs/python/cua-sandbox/tests/test_vm_cleanup.py -q
 
       - name: Verify Python native package contents
         working-directory: libs/cua-driver

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that checked-in Driver and Lume release versions agree."""
+"""Verify that checked-in Driver, Lume, and Sandbox release versions agree."""
 
 from __future__ import annotations
 
@@ -14,6 +14,8 @@ try:
 except ModuleNotFoundError:  # Python 3.10 and earlier
     import tomli as tomllib
 from typing import Sequence
+
+from sync_driver_release_docs import driver_reference_paths
 
 
 class VersionError(RuntimeError):
@@ -84,16 +86,14 @@ def driver_versions(root: Path) -> tuple[str, dict[str, str]]:
             base / "rust/Skills/cua-driver/SKILL.md",
             r"^version:\s*([^\s#]+)",
         ),
-        "docs/cli-reference.mdx:metadata": read_match(
-            docs / "cli-reference.mdx", r"^  Version: (\S+)$"
-        ),
         "docs/cli-reference.mdx:body": read_match(
             docs / "cli-reference.mdx", r"Documented against Cua Driver \*\*(\S+)\*\*\."
         ),
-        "docs/mcp-tools.mdx:metadata": read_match(
-            docs / "mcp-tools.mdx", r"^  Version: (\S+)$"
-        ),
     }
+    for relative in driver_reference_paths(root):
+        values[f"docs/{Path(relative).name}:metadata"] = read_match(
+            root / relative, r"^  Version: (\S+)$"
+        )
 
     members = [base / "rust" / member for member in cargo["workspace"]["members"]]
     local_names = {
@@ -135,6 +135,24 @@ def lume_versions(root: Path) -> tuple[str, dict[str, str]]:
     }
 
 
+def sandbox_versions(root: Path) -> tuple[str, dict[str, str]]:
+    base = root / "libs/python/cua-sandbox"
+    expected = (base / "VERSION").read_text().strip()
+    project = tomllib.loads((base / "pyproject.toml").read_text())
+    lock = tomllib.loads((base / "uv.lock").read_text())
+    packages = [entry for entry in lock["package"] if entry["name"] == "cua-sandbox"]
+    if len(packages) != 1 or packages[0].get("source") != {"editable": "."}:
+        raise VersionError("Sandbox uv.lock must contain exactly one editable root package")
+    stable_version_tuple(expected)
+    return expected, {
+        "pyproject.toml": str(project["project"]["version"]),
+        "uv.lock": str(packages[0]["version"]),
+        "cua_sandbox/__init__.py": read_match(
+            base / "cua_sandbox/__init__.py", r'^__version__\s*=\s*"([^"]+)"'
+        ),
+    }
+
+
 def validate(root: Path, product: str) -> None:
     manifest = json.loads((root / ".release-please-manifest.json").read_text())
     if product in {"all", "driver"}:
@@ -153,12 +171,16 @@ def validate(root: Path, product: str) -> None:
         expected, values = lume_versions(root)
         values[".release-please-manifest.json"] = str(manifest["libs/lume"])
         require_equal("Lume", expected, values)
+    if product in {"all", "sandbox"}:
+        expected, values = sandbox_versions(root)
+        values[".release-please-manifest.json"] = str(manifest["libs/python/cua-sandbox"])
+        require_equal("Sandbox", expected, values)
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", type=Path, default=Path.cwd())
-    parser.add_argument("--product", choices=("all", "driver", "lume"), default="all")
+    parser.add_argument("--product", choices=("all", "driver", "lume", "sandbox"), default="all")
     args = parser.parse_args(argv)
     try:
         validate(args.repo_root.resolve(), args.product)

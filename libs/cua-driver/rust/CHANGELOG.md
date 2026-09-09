@@ -1,5 +1,49 @@
 # Changelog
 
+## [0.25.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.24.0...cua-driver-rs-v0.25.0) (2026-09-09)
+
+
+### Features
+
+* **cua-driver:** add bounded typed guest envelope receiver ([#3650](https://github.com/trycua/cua/issues/3650)) ([542c98f](https://github.com/trycua/cua/commit/542c98fafab2a75dfb8147493e0c12e65f8e7580))
+* **cua-driver:** add private loopback envelope HTTP carrier ([#3653](https://github.com/trycua/cua/issues/3653)) ([c5898ef](https://github.com/trycua/cua/commit/c5898ef4bf092f3a47bc80e226a0016923b4739b))
+* **cua-driver:** expose foreign remote envelope channels ([#3651](https://github.com/trycua/cua/issues/3651)) ([04559df](https://github.com/trycua/cua/commit/04559df66c0b9303c559fa575a78f036285bf7e7))
+* **cua-driver:** integrate typed Driver access with Fleet Sandbox ([#3654](https://github.com/trycua/cua/issues/3654)) ([c9c29dc](https://github.com/trycua/cua/commit/c9c29dcffea354e3ae0cf75927845e79c9d38028))
+
+
+### Bug Fixes
+
+* **cua-driver:** correct macos click delivery and recording evidence ([#2907](https://github.com/trycua/cua/issues/2907)) ([467c103](https://github.com/trycua/cua/commit/467c103be28384502cdd77b9edd5ea46da0b8ded))
+* **cua-driver:** leave pacman-managed updates to pacman ([#3636](https://github.com/trycua/cua/issues/3636)) ([00678fa](https://github.com/trycua/cua/commit/00678fa8ec8f0f371716993ae4a207df812ef667))
+* **cua-driver:** preserve unavailable Windows UIA clicks ([#3671](https://github.com/trycua/cua/issues/3671)) ([7b7db5f](https://github.com/trycua/cua/commit/7b7db5f42898ac4f96f49aba1d46016bceeed7af))
+* **cua-driver:** read macOS browser checkbox state ([#3404](https://github.com/trycua/cua/issues/3404)) ([b117093](https://github.com/trycua/cua/commit/b1170930589691fd1101f6943410f32e57bda8b6))
+* **cua-driver:** recover slow Windows UIA health probes ([#3109](https://github.com/trycua/cua/issues/3109)) ([27736b3](https://github.com/trycua/cua/commit/27736b3ab97d9aed8bebaa548c3b08892bcb8ec5))
+
+## [0.24.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.23.2...cua-driver-rs-v0.24.0) (2026-09-07)
+
+
+### Features
+
+* **cua-driver:** add qualified Hyprland isolated input ([#3572](https://github.com/trycua/cua/issues/3572)) ([c5a15f3](https://github.com/trycua/cua/commit/c5a15f3df3b29ffbe774de9f33d632fe75afec75))
+* **cua-driver:** expose action names in get_window_state elements ([#3617](https://github.com/trycua/cua/issues/3617)) ([7e89120](https://github.com/trycua/cua/commit/7e89120c062476a97bf3403363b3087a0cf0a74c))
+* **cua-driver:** let get_window_state skip the a11y tree and return capture metadata ([#3516](https://github.com/trycua/cua/issues/3516)) ([808c014](https://github.com/trycua/cua/commit/808c0142dc7c8c84cde3a0d1fc5118194898a7a3))
+
+
+### Bug Fixes
+
+* **cua-driver:** accept host identity in embedded health check ([#2170](https://github.com/trycua/cua/issues/2170)) ([8a3d79a](https://github.com/trycua/cua/commit/8a3d79aa79443ee3b821903c3e596463732ed18f))
+* **cua-driver:** authenticate history requests lazily ([#3505](https://github.com/trycua/cua/issues/3505)) ([50f54be](https://github.com/trycua/cua/commit/50f54be5ba7e2dfe09d3738fec00dd394e9c44cc))
+* **cua-driver:** drain daemon state on shutdown ([#3348](https://github.com/trycua/cua/issues/3348)) ([aabb208](https://github.com/trycua/cua/commit/aabb2082c170289256f0c8d9db4cce094c778578))
+* **cua-driver:** persist macOS direct capture verification ([#2904](https://github.com/trycua/cua/issues/2904)) ([605ce1a](https://github.com/trycua/cua/commit/605ce1aec80eb73e23ea4c3622b935147a80a572))
+* **cua-driver:** recover owned orphaned X11 master devices ([#3601](https://github.com/trycua/cua/issues/3601)) ([76e00c7](https://github.com/trycua/cua/commit/76e00c75e81b17f779d56e2aa6b5a27d691066a9))
+* **cua-driver:** support Bedrock browser prepare schema ([#3311](https://github.com/trycua/cua/issues/3311)) ([e05a5ca](https://github.com/trycua/cua/commit/e05a5caee9ec6e40e037e94b8996081eadd9d660))
+* **cua-driver:** verify native Hyprland capture and observation ([#3557](https://github.com/trycua/cua/issues/3557)) ([3513443](https://github.com/trycua/cua/commit/3513443c9df87468cabe85814a569150d41555cd))
+
+
+### Performance Improvements
+
+* **cua-driver:** read the macOS product version in-process in health_report ([#3491](https://github.com/trycua/cua/issues/3491)) ([936646b](https://github.com/trycua/cua/commit/936646b567ed21ed5e1e609458c0c2d226f361a6))
+
 ## [0.23.2](https://github.com/trycua/cua/compare/cua-driver-rs-v0.23.1...cua-driver-rs-v0.23.2) (2026-08-31)
 
 

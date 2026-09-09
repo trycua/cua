@@ -15,13 +15,55 @@ build checks its ELF dependencies and rejects a static C++ runtime; a compiler
 copied without its runtime libraries can otherwise silently select a static
 archive. Do not load a module from a failed build.
 
-The current foundation is discovery-only. It advertises protocol status and
-liveness, but it rejects every input mutation with the typed
-`background_unavailable` result. Target-addressed mutation remains gated on
-successful second-seat spikes and acceptance of the corresponding RFC.
-Neither stable Cua Driver `0.23.2` nor nightly provides isolated background
-input through this plugin. Here, discovery means negotiation, status, and
-liveness; it does not mean application target discovery or input delivery.
+The default build is discovery-only. It advertises protocol status and
+liveness, but rejects input mutation with the typed `background_unavailable`
+result. Here, discovery means negotiation, status, and liveness, not
+application target discovery or input delivery.
+
+This branch adds an opt-in [input v3 candidate](protocol/cua-input-v3.md) using
+Driver's existing per-action permission checks and two independent compositor
+seats. It does not require a signer or an Omarchy-specific approval panel.
+The candidate remains experimental and unreleased. A source version of
+`0.23.2` does not mean released Driver `0.23.2` contains these changes.
+[PR #3572](https://github.com/trycua/cua/pull/3572) records dated, exact-source
+validation results. Acceptance requires the unchanged complete Linux canonical
+runner on native Hyprland and separate bounded qualified-app proof. See the
+[shared admission boundary](protocol/host-authority-boundary.md) and
+[production proof preparation](tests/production-proof.md) for the native
+testing, packaging, and release requirements.
+
+Bounded instrumented app proof and an uninstrumented smoke are retained from
+source `f180e8828b8f31cc153e3c44eaa89a9c13c5bc68`, with an unchanged plugin
+tree and uninstrumented module hash at
+`1133a06e4f205cf80188a7ac9e41102f37611fea`. Raw background qualification is
+limited to native Calc from `libreoffice-fresh 26.2.5-3`, Inkscape `1.4.4-6`,
+the plain compiled `evdev`/`pc105`/`us` keymap, and the two seats `Cua-Agent`
+and `Cua-Agent-2`. The proof covers the recorded actions and observation
+intervals. Chromium, Electron, and XWayland raw background input remain
+unqualified; semantic AT-SPI actions are separate.
+
+The exact-target foreground route intentionally changes primary focus and,
+for pointer actions, cursor position, without restoration. The canonical native
+harness covers defined GTK3, Electron, and Tauri foreground cases. A background
+refusal never authorizes a hidden foreground fallback.
+
+This branch also contains a separate, opt-in
+[isolated-input compatibility experiment](protocol/input-experiment.md).
+It is not enabled by the normal build or package. Its test-only operator
+boundary and resident-module unload workaround are not a production contract.
+See the [input experiment validation](tests/input-validation.md) for the exact
+single-seat artifacts and the [concurrent real-app
+validation](tests/realapp-validation.md) for two-lane Calc/Inkscape evidence,
+event-level primary-cursor measurement, and Cancel/Stop results. Those
+historical candidates needed app restarts after plugin reload. The candidate
+keeps seats across config toggles and requires a desktop restart for plugin
+replacement; that lifecycle requires native acceptance evidence. This experiment
+does not establish production hot-reload support.
+
+The [desktop-state safety record](tests/desktop-state-validation.md) covers
+matched fault-only controls and background drags during target movement,
+resizing, destruction, real session lock, and display-off. It documents the
+tested artifacts and remaining gates, not production certification.
 
 This design builds on Dillon DuPont's Hyprland injection prototype. That credit
 records the prototype lineage; it does not claim that the prototype or input
@@ -38,6 +80,12 @@ mode. From this directory:
 cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
 cmake --build build
 ```
+
+To compile the production-protocol candidate in a disposable test environment,
+add `-DCUA_HYPRLAND_INPUT=ON`. This is separate from
+`CUA_HYPRLAND_TEST_INPUT`; selecting both refuses. Detailed event measurement
+also requires `-DCUA_HYPRLAND_INPUT_TRACE=ON`. Do not ship that instrumentation
+in the production package. Neither build option loads or enables the plugin.
 
 For a pinned acceptance build, also set
 `-DCUA_HYPRLAND_EXPECTED_VERSION=0.56.2` (or the exact intended pkg-config
@@ -118,8 +166,11 @@ does not start or stop it. To disable the transport, remove the setting or set
 it to false in the configuration and reload. Unloading the plugin also closes
 the socket and every connection immediately.
 
-This enables same-user status and liveness packets only. It does not enable
-pointer, keyboard, scroll, drag, target discovery, or another input route.
+For the default discovery build, this enables status and liveness only. For
+the opt-in v3 build, it also opens the two input endpoints. Enabling v3 is a
+trusted-local desktop configuration choice; Driver still checks each call
+under its normal permission policy. The candidate refuses clients, layouts,
+and operations outside its qualification scope.
 
 ## Security boundary
 
@@ -130,10 +181,11 @@ pointer, keyboard, scroll, drag, target discovery, or another input route.
 - The server verifies `SO_PEERCRED` and accepts only peers with the compositor
   user's UID. This authenticates only the local Unix user, not a particular Cua
   process. Filesystem permissions are defense in depth, not authorization.
-- Same-UID discovery is acceptable for this mutation-free foundation. Mutation
-  capabilities stay disabled until the RFC defines an operator authorization,
-  credential or lease lifetime, revocation, and replay-resistant binding to the
-  negotiated compositor epoch.
+- The default foundation remains mutation-free. The separate v3 candidate
+  uses normal Driver policy plus per-action compositor target binding. It does
+  not sandbox arbitrary native code running as the desktop user. An app
+  compatibility list, socket permissions, or cursor indicator is not such a
+  sandbox.
 - The transport is bounded, nonblocking Unix `SOCK_SEQPACKET`; oversized,
   truncated, malformed, or unsupported packets are rejected without mutation.
 - A client must complete `HELLO` within five seconds. A negotiated client must
@@ -166,6 +218,14 @@ application-state evidence. The host Hyprland/plugin ABI pair, plugin transport,
 opaque target binding, and isolated raw background input each require their
 own acceptance evidence on the exact host and candidate module.
 
+The input candidate resolves display-scoped manifest resources through a
+content-free Hyprland IPC geometry query, with the existing same-compositor
+peer check. This path requires one unscaled, unrotated output at the origin.
+It does not use a screenshot or an XWayland root as display identity, and it
+does not relax the manifest. Other layouts refuse this metadata query; native
+display metadata on other Wayland compositors remains a separate limitation.
+This source change is not evidence that the capability has been released.
+
 Compositor administration also remains explicit. Integrations may invoke
 `hyprctl` for an operator-requested workspace, monitor, window-rule, focus, or
 DPMS operation, but a Cua background action must never hide a target-delivery
@@ -176,8 +236,8 @@ delivery evidence; an all-black frame while DPMS is off is not success.
 plugin adds `hyprctl -j cua:status`, but it does not turn arbitrary `hyprctl`
 commands into application-targeted input or application-delivery proof. Tests
 must observe whether the stock foreground route explicitly activated a window
-and must keep that behavior separate from plugin mutation, which remains
-disabled.
+and must keep that behavior separate from the opt-in plugin routes. Mutation
+remains disabled in the default discovery-only build.
 
 Application enumeration and call authorization also stay in Cua Driver.
 Filtering `list_apps`, choosing a one-shot `cua-driver call` versus a long-lived
@@ -187,12 +247,17 @@ protocol; it does not replace the driver's tool policy or process lifecycle.
 
 ## Acceptance path
 
-Promotion beyond discovery requires focused protocol and security tests, Fleet
-image packaging and lifecycle tests, and the repository's representative Linux
-catalogs. The final gate is a physical Omarchy machine running the exact
-candidate Hyprland/plugin pair, with focus, z-order, cursor, input-isolation,
-and fixture-state evidence. VM or Fleet evidence supplements but does not
-replace that physical gate, which must run after the Fleet lane passes.
+The Fleet release path requires focused protocol and security tests, the
+repository's complete native Linux harness, bounded qualified-app compatibility
+and isolation evidence, review and merge, compatible release artifacts, and
+image packaging and lifecycle validation. Source-built proof does not establish
+that the released package or final image works.
+
+Physical-host support requires a separate acceptance run on the exact
+Hyprland/plugin pair, with focus, z-order, cursor, input-isolation, and
+fixture-state evidence. Fleet evidence does not establish physical-host parity;
+that separate support claim is not a prerequisite for publishing a validated
+Fleet image.
 
 The exact initial host acceptance baseline is:
 
@@ -207,7 +272,9 @@ The exact initial host acceptance baseline is:
 This baseline is an acceptance target, not a statement that the reported host
 or its Hyprland/plugin ABI pair has passed validation. It is also not a claim
 that isolated background input ships in stable `0.23.2` or nightly. The plugin
-remains discovery-only. The final physical run has explicit foreground
+remains discovery-only in its normal build. The separate physical run has explicit foreground
 activation observation, GTK3, GTK4, Qt6, LibreOffice, Chromium/Ozone, Electron,
 DPMS-off refusal, and one-shot and long-lived graphical-session client rows;
-see `tests/README.md` for the required evidence.
+see `tests/README.md` for the required evidence. Those broader application rows
+do not widen the raw-background qualification beyond the exact Calc/Inkscape
+packages, plain US keymap, and two seats documented in the input v3 contract.

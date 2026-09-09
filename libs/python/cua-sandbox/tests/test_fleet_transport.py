@@ -91,3 +91,18 @@ async def test_requests_are_bounded_by_the_transport_timeout():
 
     assert sdk.calls[0][3].timeout_secs == 30
     assert sdk.calls[1][3].timeout_secs == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("default_timeout", [30, 90])
+async def test_service_timeout_override_does_not_change_existing_callers(default_timeout):
+    sdk = FakeSDK([response(), response(), response(body=b'data: {"success":true}\n\n')])
+    transport = FleetTransport(sdk=sdk, bound=sandbox(), timeout=default_timeout)
+    await transport.connect()
+
+    await transport.request_service("api", method="POST", path="/exchange", timeout=119.25)
+    await transport.request_service("api", method="GET", path="/status")
+    await transport.send("shell.run", timeout=15)
+
+    assert [call[3].timeout_secs for call in sdk.calls] == [120, default_timeout, default_timeout]
+    assert transport._timeout == default_timeout

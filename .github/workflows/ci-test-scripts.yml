@@ -9,6 +9,8 @@ on:
       - ".github/release-backfill/**"
       - ".github/releases/**"
       - ".github/workflows/cd-rust-cua-driver.yml"
+      - ".github/workflows/cd-py-cua-driver.yml"
+      - ".github/workflows/cd-py-sandbox.yml"
       - ".github/workflows/ci-cua-driver-installer-compat.yml"
       - ".github/workflows/ci-release-metadata.yml"
       - ".github/workflows/cd-swift-lume.yml"
@@ -20,6 +22,10 @@ on:
       - ".github/workflows/release-on-merge.yml"
       - ".release-please-manifest.json"
       - "release-please-config.json"
+      - "libs/python/cua-sandbox/VERSION"
+      - "libs/python/cua-sandbox/pyproject.toml"
+      - "libs/python/cua-sandbox/uv.lock"
+      - "libs/python/cua-sandbox/cua_sandbox/__init__.py"
       - ".github/workflows/ci-test-scripts.yml"
       - ".github/workflows/periodic-cua-sandbox-live.yml"
       - ".github/workflows/ci-contributor-attribution.yml"
@@ -56,6 +62,22 @@ jobs:
 
       - name: Test Cua Driver uninstall scripts
         run: python -m pytest libs/cua-driver/scripts/tests/ -v
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Preview Sandbox releases offline
+        env:
+          NPM_CONFIG_IGNORE_SCRIPTS: "true"
+        run: |
+          set -euo pipefail
+          EXPECTED_INTEGRITY='sha512-dB7HsFUpAvU1Wj9RGCINUz8Zi2qQDZiGbDEEVnJ7baNfJmk5XdYhuUFL6RcuDGjReGhp1gzY8Tc2g7vHlM4zpg=='
+          test "$(npm view release-please@17.3.0 dist.integrity)" = "$EXPECTED_INTEGRITY"
+          npm install --prefix "$RUNNER_TEMP/sandbox-release-preview" \
+            --ignore-scripts --no-audit --no-fund release-please@17.3.0
+          NODE_PATH="$RUNNER_TEMP/sandbox-release-preview/node_modules" \
+            node .github/scripts/tests/release_please_sandbox_preview.cjs
 
       - name: Validate historical release backfill
         run: python3 .github/scripts/release_backfill.py validate

@@ -54,6 +54,30 @@
         }
       ]
     },
+    "libs/python/cua-sandbox": {
+      "release-type": "simple",
+      "component": "sandbox",
+      "package-name": "cua-sandbox",
+      "bump-minor-pre-major": true,
+      "version-file": "VERSION",
+      "changelog-path": "CHANGELOG.md",
+      "extra-files": [
+        {
+          "type": "toml",
+          "path": "pyproject.toml",
+          "jsonpath": "$.project.version"
+        },
+        {
+          "type": "generic",
+          "path": "cua_sandbox/__init__.py"
+        },
+        {
+          "type": "toml",
+          "path": "uv.lock",
+          "jsonpath": "$.package[?(@.name.value=='cua-sandbox')].version"
+        }
+      ]
+    },
     "libs/lume": {
       "release-type": "simple",
       "component": "lume",

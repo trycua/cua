@@ -1019,6 +1019,11 @@ pub async fn run_serve(
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
 
+    let _envelope_http = match crate::driver_service_http::configured_port()? {
+        Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+        None => None,
+    };
+
     loop {
         tokio::select! {
             result = listener.accept() => {
@@ -1730,6 +1735,11 @@ pub async fn run_serve(
     if let Some(port) = crate::mcp_http::configured_port()? {
         crate::mcp_http::spawn(sdk.clone(), port)?;
     }
+
+    let _envelope_http = match crate::driver_service_http::configured_port()? {
+        Some(port) => Some(crate::driver_service_http::start(sdk.clone(), port).await?),
+        None => None,
+    };
 
     let mut first_pipe = true;
     loop {

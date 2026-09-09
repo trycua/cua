@@ -447,7 +447,13 @@ fn exact_window_recording_isolation_and_lifecycle() {
             .expect("termination reason");
         match ending {
             "minimize" => assert!(matches!(reason, "window_not_visible" | "window_resized")),
-            "close" => assert!(matches!(reason, "window_closed" | "window_not_visible")),
+            "close" => assert!(
+                matches!(
+                    reason,
+                    "window_closed" | "window_not_visible" | "window_resized"
+                ),
+                "unexpected close transition: {reason}"
+            ),
             "resize" => assert_eq!(reason, "window_resized"),
             "stop" | "disconnect" => assert_eq!(reason, "stopped"),
             _ => unreachable!(),

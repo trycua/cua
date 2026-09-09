@@ -13,6 +13,7 @@ use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, BrowserVisualAction, BrowserVisualActionKind, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareOutcome, PrepareRequest,
+    SpawnedEndpointProcessScope,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -1042,9 +1043,15 @@ impl BrowserPlatform for MacOsBrowserPlatform {
 
     async fn discover_spawned_endpoint_on_port(
         &self,
-        pid: i64,
+        process_scope: &SpawnedEndpointProcessScope,
         port: u16,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(pid) = process_scope.root_process_pid() else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "macOS fixed-port discovery requires a launch-root process scope",
+            ));
+        };
         if !ipv4_loopback_ports_for_pid(pid).await?.contains(&port) {
             return Ok(None);
         }
@@ -1462,7 +1469,10 @@ mod tests {
 
         let platform = MacOsBrowserPlatform::new(Arc::new(crate::cursor::CursorRegistry::new()));
         let endpoint = platform
-            .discover_spawned_endpoint_on_port(unrelated_pid, port)
+            .discover_spawned_endpoint_on_port(
+                &SpawnedEndpointProcessScope::RootProcess(unrelated_pid),
+                port,
+            )
             .await
             .expect("foreign listener should remain an ordinary not-ready result");
 

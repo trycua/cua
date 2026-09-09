@@ -62,6 +62,7 @@ pub use platform::{
     BrowserVisualActionKind, ExistingProfileSetupOutcome, ExistingProfileSetupRequest,
     PrepareAction, PrepareAttachment, PrepareAttachmentKind, PrepareLaunchPosture, PrepareOutcome,
     PrepareProfile, PrepareProfileMode, PrepareRequest, PrepareSideEffects, PrepareStrategy,
+    SpawnedEndpointProcessScope,
 };
 pub use refusal::{BrowserRefusal, BrowserRefusalCode};
 pub use setup_descriptor::{

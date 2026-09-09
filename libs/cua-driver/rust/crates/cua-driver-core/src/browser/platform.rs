@@ -82,6 +82,45 @@ pub struct PrepareProfile {
     pub name: Option<String>,
 }
 
+/// Process ownership scope for fixed-port endpoint discovery after core
+/// launches an isolated browser.
+///
+/// Unix adapters receive the launch root and retain their native process-tree
+/// proof. Windows can instead receive the exact active members of core's
+/// per-launch Job Object. An exact scope is closed: adapters must not add
+/// descendants or fall back to a raw parent-pid walk when the launcher exits.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SpawnedEndpointProcessScope {
+    RootProcess(i64),
+    ExactOwnedProcesses {
+        launch_pid: i64,
+        process_ids: Vec<i64>,
+    },
+}
+
+impl SpawnedEndpointProcessScope {
+    pub fn launch_pid(&self) -> i64 {
+        match self {
+            Self::RootProcess(pid) => *pid,
+            Self::ExactOwnedProcesses { launch_pid, .. } => *launch_pid,
+        }
+    }
+
+    pub fn root_process_pid(&self) -> Option<i64> {
+        match self {
+            Self::RootProcess(pid) => Some(*pid),
+            Self::ExactOwnedProcesses { .. } => None,
+        }
+    }
+
+    pub fn exact_process_ids(&self) -> Option<&[i64]> {
+        match self {
+            Self::RootProcess(_) => None,
+            Self::ExactOwnedProcesses { process_ids, .. } => Some(process_ids),
+        }
+    }
+}
+
 /// Browser launch posture for a driver-owned isolated profile.
 ///
 /// This is intentionally not an existing-profile setting. Existing profiles
@@ -367,10 +406,11 @@ pub trait BrowserPlatform: Send + Sync {
     /// Discover and attest the browser-level endpoint on a driver-selected
     /// fixed port. Native adapters own the `/json/version` request and socket
     /// ownership proof so core does not grow a fourth platform-specific
-    /// endpoint-discovery path.
+    /// endpoint-discovery path. `process_scope` is authoritative: an exact
+    /// owned-process set must never be expanded through parent-pid discovery.
     async fn discover_spawned_endpoint_on_port(
         &self,
-        _pid: i64,
+        _process_scope: &SpawnedEndpointProcessScope,
         _port: u16,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
         Ok(None)
@@ -474,7 +514,31 @@ pub trait BrowserPlatform: Send + Sync {
 
 #[cfg(test)]
 mod tests {
-    use super::select_isolated_browser_executable;
+    use super::{select_isolated_browser_executable, SpawnedEndpointProcessScope};
+
+    #[test]
+    fn exact_spawned_process_scope_does_not_imply_root_or_descendants() {
+        let scope = SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid: 41,
+            process_ids: vec![42, 44],
+        };
+
+        assert_eq!(scope.launch_pid(), 41);
+        assert_eq!(scope.root_process_pid(), None);
+        let process_ids = scope.exact_process_ids().expect("exact member set");
+        assert!(!process_ids.contains(&41));
+        assert!(process_ids.contains(&42));
+        assert!(!process_ids.contains(&43));
+    }
+
+    #[test]
+    fn root_spawned_process_scope_never_claims_exact_membership() {
+        let scope = SpawnedEndpointProcessScope::RootProcess(41);
+
+        assert_eq!(scope.launch_pid(), 41);
+        assert_eq!(scope.root_process_pid(), Some(41));
+        assert_eq!(scope.exact_process_ids(), None);
+    }
 
     #[test]
     fn isolated_browser_selection_uses_first_installed_canonical_candidate() {

@@ -10,7 +10,7 @@ use cua_driver_core::browser::existing_profile_setup_descriptor;
 use cua_driver_core::browser::platform::{
     select_isolated_browser_executable, BrowserConsentOutcome, BrowserConsentRequest,
     BrowserPlatform, ExistingProfileSetupOutcome, ExistingProfileSetupRequest, PrepareAction,
-    PrepareOutcome, PrepareRequest,
+    PrepareOutcome, PrepareRequest, SpawnedEndpointProcessScope,
 };
 use cua_driver_core::browser::refusal::{BrowserRefusal, BrowserRefusalCode};
 use cua_driver_core::browser::types::{
@@ -923,9 +923,15 @@ impl BrowserPlatform for LinuxBrowserPlatform {
 
     async fn discover_spawned_endpoint_on_port(
         &self,
-        pid: i64,
+        process_scope: &SpawnedEndpointProcessScope,
         port: u16,
     ) -> Result<Option<OwnedEndpoint>, BrowserRefusal> {
+        let Some(pid) = process_scope.root_process_pid() else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "Linux fixed-port discovery requires a launch-root process scope",
+            ));
+        };
         if !inspect_ipv4_loopback_ports_for_pid(pid)
             .await?
             .contains(&port)
@@ -1408,7 +1414,10 @@ mod tests {
         let unrelated_pid = i64::from(unrelated.id().expect("unrelated process pid"));
 
         let endpoint = LinuxBrowserPlatform
-            .discover_spawned_endpoint_on_port(unrelated_pid, port)
+            .discover_spawned_endpoint_on_port(
+                &SpawnedEndpointProcessScope::RootProcess(unrelated_pid),
+                port,
+            )
             .await
             .expect("foreign listener should remain an ordinary not-ready result");
 

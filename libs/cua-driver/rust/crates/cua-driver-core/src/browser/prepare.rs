@@ -16,7 +16,7 @@ use super::platform::{
     BrowserConsentOutcome, BrowserConsentRequest, ExistingProfileSetupOutcome,
     ExistingProfileSetupRequest, PrepareAction, PrepareAttachment, PrepareAttachmentKind,
     PrepareLaunchPosture, PrepareOutcome, PrepareProfile, PrepareProfileMode, PrepareRequest,
-    PrepareSideEffects, PrepareStrategy,
+    PrepareSideEffects, PrepareStrategy, SpawnedEndpointProcessScope,
 };
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::types::{
@@ -272,6 +272,19 @@ impl PendingIsolatedBrowserLaunch {
             .expect("pending isolated browser always owns its child")
     }
 
+    fn discovery_owners(&mut self) -> (&mut Child, &BrowserProcessJob) {
+        (
+            self.child
+                .as_mut()
+                .expect("pending isolated browser always owns its child"),
+            &self.process_job,
+        )
+    }
+
+    fn process_job(&self) -> &BrowserProcessJob {
+        &self.process_job
+    }
+
     fn profile(&self) -> &PreparedProfile {
         self.profile
             .as_ref()
@@ -421,6 +434,51 @@ struct WindowsBrowserJob {
 }
 
 #[cfg(target_os = "windows")]
+const MAX_BROWSER_JOB_PROCESSES: usize = 1024;
+
+#[cfg(any(target_os = "windows", test))]
+fn decode_job_process_ids(
+    assigned_processes: u32,
+    returned_processes: u32,
+    process_ids: &[usize],
+) -> Result<Vec<i64>, BrowserRefusal> {
+    let returned_processes = usize::try_from(returned_processes).map_err(|_| {
+        refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the Windows browser job returned an invalid process count",
+        )
+    })?;
+    if usize::try_from(assigned_processes).ok() != Some(returned_processes)
+        || returned_processes > process_ids.len()
+    {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserRouteUnavailable,
+            "the Windows browser job exceeded the bounded process inventory",
+        ));
+    }
+
+    let mut decoded = Vec::with_capacity(returned_processes);
+    for raw_pid in process_ids.iter().copied().take(returned_processes) {
+        if raw_pid == 0 || raw_pid > u32::MAX as usize {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "the Windows browser job returned an invalid process id",
+            ));
+        }
+        let pid = i64::try_from(raw_pid).expect("a Windows u32 process id always fits i64");
+        if decoded.contains(&pid) {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                "the Windows browser job returned a duplicate process id",
+            ));
+        }
+        decoded.push(pid);
+    }
+    decoded.sort_unstable();
+    Ok(decoded)
+}
+
+#[cfg(target_os = "windows")]
 impl WindowsBrowserJob {
     fn new() -> Result<Self, BrowserRefusal> {
         use core::ffi::c_void;
@@ -536,6 +594,98 @@ impl WindowsBrowserJob {
             }
         }
         Ok(())
+    }
+
+    fn active_process_ids(&self) -> Result<Vec<i64>, BrowserRefusal> {
+        use core::ffi::c_void;
+        use windows::Win32::System::JobObjects::{
+            JobObjectBasicProcessIdList, QueryInformationJobObject,
+        };
+
+        #[repr(C)]
+        struct BoundedProcessIdList {
+            assigned_processes: u32,
+            returned_processes: u32,
+            process_ids: [usize; MAX_BROWSER_JOB_PROCESSES],
+        }
+
+        let mut inventory = BoundedProcessIdList {
+            assigned_processes: 0,
+            returned_processes: 0,
+            process_ids: [0; MAX_BROWSER_JOB_PROCESSES],
+        };
+        let queried = unsafe {
+            QueryInformationJobObject(
+                self.raw(),
+                JobObjectBasicProcessIdList,
+                &mut inventory as *mut _ as *mut c_void,
+                std::mem::size_of::<BoundedProcessIdList>() as u32,
+                None,
+            )
+        };
+        if let Err(error) = queried {
+            if inventory.assigned_processes > inventory.returned_processes
+                || usize::try_from(inventory.returned_processes)
+                    .is_ok_and(|count| count > inventory.process_ids.len())
+            {
+                return decode_job_process_ids(
+                    inventory.assigned_processes,
+                    inventory.returned_processes,
+                    &inventory.process_ids,
+                );
+            }
+            return Err(refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not inspect the isolated-browser Windows job: {error}"),
+            ));
+        }
+        decode_job_process_ids(
+            inventory.assigned_processes,
+            inventory.returned_processes,
+            &inventory.process_ids,
+        )
+    }
+
+    fn process_scope(
+        &self,
+        launch_pid: i64,
+    ) -> Result<SpawnedEndpointProcessScope, BrowserRefusal> {
+        Ok(SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid,
+            process_ids: self.active_process_ids()?,
+        })
+    }
+
+    fn contains_active_process(&self, pid: i64) -> Result<bool, BrowserRefusal> {
+        use core::ffi::c_void;
+        use std::os::windows::io::{FromRawHandle, OwnedHandle};
+        use windows::Win32::System::JobObjects::IsProcessInJob;
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
+
+        if !self.active_process_ids()?.contains(&pid) {
+            return Ok(false);
+        }
+        let Ok(pid) = u32::try_from(pid) else {
+            return Err(refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the spawned endpoint listener pid is outside the Windows process-id range",
+            ));
+        };
+        let process = match unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            Ok(process) => process,
+            // The member may exit after the inventory query. Treat that as an
+            // ordinary ownership miss so readiness can continue polling.
+            Err(_) => return Ok(false),
+        };
+        let _process = unsafe { OwnedHandle::from_raw_handle(process.0 as *mut c_void) };
+        let mut in_job = windows::Win32::Foundation::BOOL::default();
+        unsafe { IsProcessInJob(process, self.raw(), &mut in_job) }.map_err(|error| {
+            refusal(
+                BrowserRefusalCode::BrowserRouteUnavailable,
+                format!("could not reprove spawned browser job membership: {error}"),
+            )
+        })?;
+        Ok(in_job.as_bool())
     }
 
     fn terminate_and_wait(&self) -> bool {
@@ -826,6 +976,81 @@ enum SpawnedEndpointHint {
     FixedLoopbackPort(u16),
 }
 
+fn spawned_endpoint_process_scope(
+    launch_pid: i64,
+    endpoint_hint: SpawnedEndpointHint,
+    process_job: &BrowserProcessJob,
+) -> Result<SpawnedEndpointProcessScope, BrowserRefusal> {
+    #[cfg(not(target_os = "windows"))]
+    {
+        let _ = (endpoint_hint, process_job);
+        Ok(SpawnedEndpointProcessScope::RootProcess(launch_pid))
+    }
+    #[cfg(target_os = "windows")]
+    {
+        match endpoint_hint {
+            SpawnedEndpointHint::ProfilePortFile => {
+                Ok(SpawnedEndpointProcessScope::RootProcess(launch_pid))
+            }
+            SpawnedEndpointHint::FixedLoopbackPort(_) => process_job
+                .as_ref()
+                .ok_or_else(|| {
+                    refusal(
+                        BrowserRefusalCode::BrowserRouteUnavailable,
+                        "the selected-port browser launch has no Windows process owner",
+                    )
+                })?
+                .process_scope(launch_pid),
+        }
+    }
+}
+
+fn spawned_endpoint_listener_is_in_scope(
+    endpoint: &OwnedEndpoint,
+    process_scope: &SpawnedEndpointProcessScope,
+) -> Result<bool, BrowserRefusal> {
+    let Some(process_ids) = process_scope.exact_process_ids() else {
+        return Ok(true);
+    };
+    let listener_pid = endpoint.ownership.listener_pid.ok_or_else(|| {
+        refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the exact spawned-process scope requires a listener pid",
+        )
+    })?;
+    if endpoint.ownership.owner_pid != process_scope.launch_pid() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the spawned endpoint owner did not match its launch process scope",
+        ));
+    }
+    Ok(process_ids.contains(&listener_pid))
+}
+
+fn reprove_spawned_endpoint_process_scope(
+    launch_pid: i64,
+    endpoint_hint: SpawnedEndpointHint,
+    process_job: &BrowserProcessJob,
+    endpoint: &OwnedEndpoint,
+) -> Result<bool, BrowserRefusal> {
+    let process_scope = spawned_endpoint_process_scope(launch_pid, endpoint_hint, process_job)?;
+    if !spawned_endpoint_listener_is_in_scope(endpoint, &process_scope)? {
+        return Ok(false);
+    }
+    #[cfg(target_os = "windows")]
+    if matches!(endpoint_hint, SpawnedEndpointHint::FixedLoopbackPort(_)) {
+        let listener_pid = endpoint
+            .ownership
+            .listener_pid
+            .expect("exact spawned scope already required a listener pid");
+        return process_job
+            .as_ref()
+            .expect("fixed-port spawned scope already required a Windows job")
+            .contains_active_process(listener_pid);
+    }
+    Ok(true)
+}
+
 enum SpawnedEndpointWaitFailure {
     Terminal(BrowserRefusal),
     SelectedPortTimeout(BrowserRefusal),
@@ -922,6 +1147,30 @@ where
         .await
         .map_err(|_| spawned_endpoint_timeout_failure(endpoint_hint, observed_clean_launcher_exit))?
         .map_err(SpawnedEndpointWaitFailure::terminal)
+}
+
+async fn bounded_spawned_endpoint_attestation<F>(
+    deadline: Instant,
+    discovery: F,
+) -> Result<Option<OwnedEndpoint>, BrowserRefusal>
+where
+    F: Future<Output = Result<Option<OwnedEndpoint>, BrowserRefusal>>,
+{
+    let remaining = deadline.saturating_duration_since(Instant::now());
+    if remaining.is_zero() {
+        return Err(refusal(
+            BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+            "the isolated browser endpoint ownership probe exceeded its deadline",
+        ));
+    }
+    tokio::time::timeout(remaining, discovery)
+        .await
+        .map_err(|_| {
+            refusal(
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch,
+                "the isolated browser endpoint ownership probe exceeded its deadline",
+            )
+        })?
 }
 
 struct IsolatedBrowserCommand {
@@ -1140,6 +1389,7 @@ fn prepare_profile(profile: &PrepareProfile) -> Result<PreparedProfile, BrowserR
 async fn wait_for_spawned_endpoint(
     engine: &BrowserEngine,
     child: &mut Child,
+    process_job: &BrowserProcessJob,
     profile: &Path,
     endpoint_hint: SpawnedEndpointHint,
     timeout: Duration,
@@ -1198,17 +1448,30 @@ async fn wait_for_spawned_endpoint(
                 }
             }
             SpawnedEndpointHint::FixedLoopbackPort(port) => {
+                let launch_pid = i64::from(child.id());
+                let process_scope =
+                    spawned_endpoint_process_scope(launch_pid, endpoint_hint, process_job)
+                        .map_err(SpawnedEndpointWaitFailure::terminal)?;
                 let discovery = bounded_spawned_endpoint_discovery(
                     deadline,
                     endpoint_hint,
                     observed_clean_launcher_exit,
                     engine
                         .platform
-                        .discover_spawned_endpoint_on_port(i64::from(child.id()), port),
+                        .discover_spawned_endpoint_on_port(&process_scope, port),
                 )
                 .await?;
                 if let Some(endpoint) = discovery {
-                    return Ok(endpoint);
+                    if reprove_spawned_endpoint_process_scope(
+                        launch_pid,
+                        endpoint_hint,
+                        process_job,
+                        &endpoint,
+                    )
+                    .map_err(SpawnedEndpointWaitFailure::terminal)?
+                    {
+                        return Ok(endpoint);
+                    }
                 }
             }
         }
@@ -1225,26 +1488,42 @@ async fn wait_for_spawned_endpoint(
 async fn attest_spawned_endpoint(
     engine: &BrowserEngine,
     child_pid: i64,
+    process_job: &BrowserProcessJob,
     profile_endpoint: OwnedEndpoint,
     endpoint_hint: SpawnedEndpointHint,
 ) -> Result<OwnedEndpoint, BrowserRefusal> {
     let deadline = Instant::now() + Duration::from_secs(5);
     loop {
+        let process_scope = spawned_endpoint_process_scope(child_pid, endpoint_hint, process_job)?;
         let live = match endpoint_hint {
             SpawnedEndpointHint::ProfilePortFile => {
-                engine
-                    .platform
-                    .discover_spawned_endpoint(child_pid, &profile_endpoint.ws_url)
-                    .await?
+                bounded_spawned_endpoint_attestation(
+                    deadline,
+                    engine
+                        .platform
+                        .discover_spawned_endpoint(child_pid, &profile_endpoint.ws_url),
+                )
+                .await?
             }
             SpawnedEndpointHint::FixedLoopbackPort(port) => {
-                engine
-                    .platform
-                    .discover_spawned_endpoint_on_port(child_pid, port)
-                    .await?
+                bounded_spawned_endpoint_attestation(
+                    deadline,
+                    engine
+                        .platform
+                        .discover_spawned_endpoint_on_port(&process_scope, port),
+                )
+                .await?
             }
         };
         if let Some(live) = live {
+            if !reprove_spawned_endpoint_process_scope(
+                child_pid,
+                endpoint_hint,
+                process_job,
+                &live,
+            )? {
+                continue;
+            }
             if live.http_port == profile_endpoint.http_port
                 && live.ws_url == profile_endpoint.ws_url
             {
@@ -1444,9 +1723,11 @@ impl BrowserEngine {
                     } else {
                         SPAWNED_ENDPOINT_TIMEOUT
                     };
+                    let (child, process_job) = pending_browser.discovery_owners();
                     let endpoint = match wait_for_spawned_endpoint(
                         engine,
-                        pending_browser.child_mut(),
+                        child,
+                        process_job,
                         &profile_path,
                         launch.endpoint_hint,
                         timeout,
@@ -1467,6 +1748,7 @@ impl BrowserEngine {
                     let endpoint = match attest_spawned_endpoint(
                         engine,
                         child_pid,
+                        pending_browser.process_job(),
                         endpoint,
                         launch.endpoint_hint,
                     )
@@ -2067,6 +2349,17 @@ mod tests {
         unsafe { IsProcessInJob(descendant_raw, job.raw(), &mut in_job) }
             .expect("query descendant job ownership");
         assert!(in_job.as_bool());
+        let outsider_pid = std::process::id();
+        let active_process_ids = job.active_process_ids().expect("query active job members");
+        assert!(active_process_ids.contains(&i64::from(descendant_pid)));
+        assert!(!active_process_ids.contains(&i64::from(launcher.id())));
+        assert!(!active_process_ids.contains(&i64::from(outsider_pid)));
+        assert!(job
+            .contains_active_process(i64::from(descendant_pid))
+            .expect("reprove descendant job membership"));
+        assert!(!job
+            .contains_active_process(i64::from(outsider_pid))
+            .expect("reject process outside browser job"));
         assert_eq!(
             unsafe { WaitForSingleObject(descendant_raw, 0) },
             WAIT_TIMEOUT
@@ -2077,6 +2370,109 @@ mod tests {
             unsafe { WaitForSingleObject(descendant_raw, 5_000) },
             WAIT_OBJECT_0
         );
+    }
+
+    #[test]
+    fn job_process_id_decoder_requires_one_complete_bounded_inventory() {
+        assert_eq!(
+            decode_job_process_ids(3, 3, &[44, 42, 43]).expect("complete job inventory"),
+            vec![42, 43, 44]
+        );
+        assert!(decode_job_process_ids(0, 0, &[])
+            .expect("empty job inventory")
+            .is_empty());
+
+        for error in [
+            decode_job_process_ids(2, 1, &[42]),
+            decode_job_process_ids(2, 2, &[42]),
+        ] {
+            assert_eq!(
+                error
+                    .expect_err("truncated job inventory must fail closed")
+                    .code,
+                BrowserRefusalCode::BrowserRouteUnavailable
+            );
+        }
+    }
+
+    #[test]
+    fn job_process_id_decoder_rejects_invalid_or_duplicate_members() {
+        for process_ids in [vec![0], vec![42, 42]] {
+            assert_eq!(
+                decode_job_process_ids(
+                    u32::try_from(process_ids.len()).unwrap(),
+                    u32::try_from(process_ids.len()).unwrap(),
+                    &process_ids,
+                )
+                .expect_err("invalid job member must fail closed")
+                .code,
+                BrowserRefusalCode::BrowserRouteUnavailable
+            );
+        }
+    }
+
+    #[test]
+    fn fixed_port_endpoint_must_survive_a_fresh_exact_scope() {
+        let endpoint = OwnedEndpoint {
+            ws_url: "ws://127.0.0.1:9222/devtools/browser/exact".to_owned(),
+            http_port: Some(9222),
+            transport: super::super::types::EndpointTransport::SpawnedExact,
+            ownership: EndpointOwnershipProof {
+                method: EndpointOwnershipMethod::ListeningSocketPid,
+                owner_pid: 41,
+                listener_pid: Some(43),
+                detail: None,
+            },
+        };
+        let current = SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid: 41,
+            process_ids: vec![43],
+        };
+        assert!(spawned_endpoint_listener_is_in_scope(&endpoint, &current)
+            .expect("current exact member"));
+
+        let member_lost = SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid: 41,
+            process_ids: Vec::new(),
+        };
+        assert!(
+            !spawned_endpoint_listener_is_in_scope(&endpoint, &member_lost)
+                .expect("a departed member is an ownership miss")
+        );
+
+        let outsider = SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid: 41,
+            process_ids: vec![44],
+        };
+        assert!(!spawned_endpoint_listener_is_in_scope(&endpoint, &outsider)
+            .expect("an outsider is not accepted"));
+    }
+
+    #[test]
+    fn exact_scope_requires_listener_and_launch_identity() {
+        let scope = SpawnedEndpointProcessScope::ExactOwnedProcesses {
+            launch_pid: 41,
+            process_ids: vec![43],
+        };
+        for (owner_pid, listener_pid) in [(41, None), (42, Some(43))] {
+            let endpoint = OwnedEndpoint {
+                ws_url: "ws://127.0.0.1:9222/devtools/browser/exact".to_owned(),
+                http_port: Some(9222),
+                transport: super::super::types::EndpointTransport::SpawnedExact,
+                ownership: EndpointOwnershipProof {
+                    method: EndpointOwnershipMethod::ListeningSocketPid,
+                    owner_pid,
+                    listener_pid,
+                    detail: None,
+                },
+            };
+            assert_eq!(
+                spawned_endpoint_listener_is_in_scope(&endpoint, &scope)
+                    .expect_err("malformed exact-scope evidence must be terminal")
+                    .code,
+                BrowserRefusalCode::BrowserEndpointOwnerMismatch
+            );
+        }
     }
 
     #[tokio::test]
@@ -2320,6 +2716,34 @@ mod tests {
             failure,
             SpawnedEndpointWaitFailure::SelectedPortTimeout(_)
         ));
+        assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    #[tokio::test]
+    async fn spawned_endpoint_attestation_deadline_cancels_a_stalled_probe() {
+        struct DropMarker(std::sync::Arc<std::sync::atomic::AtomicBool>);
+
+        impl Drop for DropMarker {
+            fn drop(&mut self) {
+                self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            }
+        }
+
+        let dropped = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let marker = dropped.clone();
+        let stalled = async move {
+            let _marker = DropMarker(marker);
+            std::future::pending::<Result<Option<OwnedEndpoint>, BrowserRefusal>>().await
+        };
+
+        let error = bounded_spawned_endpoint_attestation(
+            Instant::now() + Duration::from_millis(20),
+            stalled,
+        )
+        .await
+        .expect_err("stalled spawned-endpoint attestation must time out");
+
+        assert_eq!(error.code, BrowserRefusalCode::BrowserEndpointOwnerMismatch);
         assert!(dropped.load(std::sync::atomic::Ordering::SeqCst));
     }
 

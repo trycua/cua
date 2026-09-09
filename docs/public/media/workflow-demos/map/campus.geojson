@@ -1,0 +1,149 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "C01",
+      "properties": {
+        "feature_id": "C01",
+        "name": "Morrow Field campus (fictional)",
+        "kind": "campus"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              0.001,
+              0.001
+            ],
+            [
+              0.007,
+              0.001
+            ],
+            [
+              0.007,
+              0.005
+            ],
+            [
+              0.001,
+              0.005
+            ],
+            [
+              0.001,
+              0.001
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "B01",
+      "properties": {
+        "feature_id": "B01",
+        "name": "Linen Hall",
+        "kind": "building"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              0.0018,
+              0.002
+            ],
+            [
+              0.003,
+              0.002
+            ],
+            [
+              0.003,
+              0.003
+            ],
+            [
+              0.0018,
+              0.003
+            ],
+            [
+              0.0018,
+              0.002
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "B02",
+      "properties": {
+        "feature_id": "B02",
+        "name": "Reed Studio",
+        "kind": "building"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              0.004,
+              0.0032
+            ],
+            [
+              0.0052,
+              0.0032
+            ],
+            [
+              0.0052,
+              0.0041
+            ],
+            [
+              0.004,
+              0.0041
+            ],
+            [
+              0.004,
+              0.0032
+            ]
+          ]
+        ]
+      }
+    },
+    {
+      "type": "Feature",
+      "id": "B03",
+      "properties": {
+        "feature_id": "B03",
+        "name": "Pebble Annex",
+        "kind": "building"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [
+          [
+            [
+              0.0052,
+              0.0016
+            ],
+            [
+              0.0063,
+              0.0016
+            ],
+            [
+              0.0063,
+              0.0026
+            ],
+            [
+              0.0052,
+              0.0026
+            ],
+            [
+              0.0052,
+              0.0016
+            ]
+          ]
+        ]
+      }
+    }
+  ]
+}

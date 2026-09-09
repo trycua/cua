@@ -1,9 +1,9 @@
 //! Conservative CAPTCHA / bot-challenge detection for semantic browser snapshots.
 //!
 //! The detector reports a bounded classification from known challenge URLs or
-//! a visible human-verification label bound directly to a checkbox. It does not
-//! copy page text into the report, act on a challenge, or treat page copy as
-//! proof.
+//! a human-verification label bound directly to an accessible, actionable
+//! checkbox. It does not copy page text into the report, act on a challenge, or
+//! treat page copy as proof.
 
 use std::time::Duration;
 

@@ -130,9 +130,10 @@ The same snapshot returns containment separately:
 ```
 
 `status` is one of `detected`, `not_detected`, or `unknown`. `source` is `url`
-for a known challenge endpoint or `semantic` for a visible human-verification
-label bound directly to a checkbox. `confidence` is `high` for the narrow URL
-classifications and `medium` for the control-bound semantic fallback.
+for a known challenge endpoint or `semantic` for a human-verification label
+bound directly to an accessible, actionable checkbox that is not known to be
+hidden or offscreen. `confidence` is `high` for the narrow URL classifications
+and `medium` for the control-bound semantic fallback.
 The remaining fields are `null` when no challenge is detected. `origin` is also
 `null` when the page URL has no web origin, such as `about:blank`.
 

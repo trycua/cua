@@ -7,6 +7,16 @@
 
 use serde::{Deserialize, Serialize};
 
+#[cfg(unix)]
+const DEFAULT_RESPONSE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
+#[cfg(unix)]
+const RESPONSE_TIMEOUT_ENV: &str = "CUA_DRIVER_DAEMON_RESPONSE_TIMEOUT_MS";
+
+#[cfg(target_os = "linux")]
+const LINUX_TYPE_TEXT_MILLIS_PER_CHAR: u64 = 10;
+#[cfg(target_os = "linux")]
+const LINUX_TYPE_TEXT_OVERHEAD: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// Versioned identity returned by the daemon before an imported SDK or an MCP
 /// proxy is allowed to treat an endpoint as ready.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -201,25 +211,29 @@ pub fn is_daemon_listening(socket_path: &str) -> bool {
 
 /// Send one newline-delimited request and read one response.
 ///
-/// Unix reads and writes retry transient timeouts until a 120-second overall
-/// deadline so slow accessibility walks and large screenshots are supported.
+/// Unix reads and writes retry transient timeouts until an action-aware overall
+/// deadline. Most calls retain the 120-second default; Linux `type_text` calls
+/// account for the platform's intentional per-character pacing. Applications
+/// can override the response deadline with
+/// `CUA_DRIVER_DAEMON_RESPONSE_TIMEOUT_MS`.
 #[cfg(unix)]
 pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Result<DaemonResponse> {
     use std::io::Read;
     use std::os::unix::net::UnixStream;
     use std::time::{Duration, Instant};
 
+    let response_timeout = response_timeout(request)?;
     let mut stream = UnixStream::connect(socket_path)
         .map_err(|error| anyhow::anyhow!("connect to {socket_path}: {error}"))?;
     stream.set_write_timeout(Some(Duration::from_secs(5)))?;
-    stream.set_read_timeout(Some(Duration::from_secs(10)))?;
+    stream.set_read_timeout(Some(response_timeout.min(Duration::from_secs(10))))?;
 
     let mut writer = stream.try_clone()?;
     let line = serde_json::to_string(request)? + "\n";
     let write_deadline = Instant::now() + Duration::from_secs(120);
     crate::socket_io::write_all_with_retry(&mut writer, line.as_bytes(), write_deadline)?;
 
-    let overall_deadline = Instant::now() + Duration::from_secs(120);
+    let overall_deadline = Instant::now() + response_timeout;
     let mut buffer = Vec::with_capacity(64 * 1024);
     let mut chunk = [0_u8; 64 * 1024];
     let response_line = loop {
@@ -241,7 +255,8 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
             {
                 if Instant::now() >= overall_deadline {
                     anyhow::bail!(
-                        "timed out after 120s waiting for daemon response (received {} bytes so far)",
+                        "timed out after {}ms waiting for daemon response (received {} bytes so far)",
+                        response_timeout.as_millis(),
                         buffer.len()
                     );
                 }
@@ -251,6 +266,49 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
     };
 
     Ok(serde_json::from_str(&response_line)?)
+}
+
+#[cfg(unix)]
+fn response_timeout(request: &DaemonRequest) -> anyhow::Result<std::time::Duration> {
+    response_timeout_with_override(request, std::env::var(RESPONSE_TIMEOUT_ENV).ok().as_deref())
+}
+
+#[cfg(unix)]
+fn response_timeout_with_override(
+    request: &DaemonRequest,
+    configured_timeout_ms: Option<&str>,
+) -> anyhow::Result<std::time::Duration> {
+    if let Some(raw_timeout_ms) = configured_timeout_ms {
+        let timeout_ms = raw_timeout_ms.parse::<u64>().map_err(|_| {
+            anyhow::anyhow!("{RESPONSE_TIMEOUT_ENV} must be a positive integer in milliseconds")
+        })?;
+        if timeout_ms == 0 {
+            anyhow::bail!("{RESPONSE_TIMEOUT_ENV} must be greater than zero");
+        }
+        return Ok(std::time::Duration::from_millis(timeout_ms));
+    }
+
+    #[cfg(target_os = "linux")]
+    if request.method == "call"
+        && matches!(
+            request.name.as_deref(),
+            Some("type_text" | "type_text_chars")
+        )
+    {
+        let char_count = request
+            .args
+            .as_ref()
+            .and_then(|args| args.get("text"))
+            .and_then(serde_json::Value::as_str)
+            .map(|text| text.chars().count() as u64)
+            .unwrap_or_default();
+        let pacing = std::time::Duration::from_millis(
+            char_count.saturating_mul(LINUX_TYPE_TEXT_MILLIS_PER_CHAR),
+        );
+        return Ok(DEFAULT_RESPONSE_TIMEOUT.max(LINUX_TYPE_TEXT_OVERHEAD.saturating_add(pacing)));
+    }
+
+    Ok(DEFAULT_RESPONSE_TIMEOUT)
 }
 
 #[cfg(not(unix))]
@@ -293,10 +351,14 @@ pub fn send_request(socket_path: &str, request: &DaemonRequest) -> anyhow::Resul
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use super::response_timeout_with_override;
     use super::{
         current_daemon_metadata, socket_path_for_namespace, DaemonClientKind, DaemonRequest,
         DaemonResponse, ToolObservationOrigin,
     };
+    #[cfg(unix)]
+    use std::time::Duration;
 
     #[test]
     fn socket_path_keeps_the_selected_namespace() {
@@ -364,6 +426,55 @@ mod tests {
         assert_eq!(
             metadata.mcp_protocol_version,
             cua_driver_contract::MCP_PROTOCOL_VERSION
+        );
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn response_timeout_override_is_explicit_and_validated() {
+        let request = DaemonRequest {
+            method: "list".into(),
+            name: None,
+            args: None,
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        assert_eq!(
+            response_timeout_with_override(&request, Some("300000")).unwrap(),
+            Duration::from_secs(300)
+        );
+        assert!(response_timeout_with_override(&request, Some("0")).is_err());
+        assert!(response_timeout_with_override(&request, Some("later")).is_err());
+    }
+
+    #[test]
+    #[cfg(target_os = "linux")]
+    fn long_linux_type_text_gets_a_pacing_aware_response_deadline() {
+        let request = DaemonRequest {
+            method: "call".into(),
+            name: Some("type_text".into()),
+            args: Some(serde_json::json!({"text": "x".repeat(16_000)})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        assert_eq!(
+            response_timeout_with_override(&request, None).unwrap(),
+            Duration::from_secs(220)
+        );
+
+        let ordinary_request = DaemonRequest {
+            method: "call".into(),
+            name: Some("click".into()),
+            args: Some(serde_json::json!({})),
+            session_id: None,
+            observation_origin: None,
+            client_kind: None,
+        };
+        assert_eq!(
+            response_timeout_with_override(&ordinary_request, None).unwrap(),
+            Duration::from_secs(120)
         );
     }
 }

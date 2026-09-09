@@ -311,6 +311,15 @@ impl WindowPlan {
             .ok_or_else(|| anyhow::anyhow!("window_owner_changed"))?;
         anyhow::ensure!(owner.process_id() == target.pid, "window_owner_changed");
         let frame = window.frame();
+        tracing::debug!(
+            native_layer = native.layer,
+            capture_layer = window.window_layer(),
+            native_width = native.bounds.width,
+            native_height = native.bounds.height,
+            capture_width = frame.size.width,
+            capture_height = frame.size.height,
+            "window recording geometry attestation"
+        );
         anyhow::ensure!(
             window.window_layer() == native.layer
                 && frame.size.width == native.bounds.width

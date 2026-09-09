@@ -41,14 +41,21 @@ impl Fixture {
                 }
             }
         });
-        let identity = replies
-            .recv_timeout(Duration::from_secs(10))
-            .expect("fixture ready");
-        Self {
+        let mut fixture = Self {
             child,
             replies,
-            identity,
-        }
+            identity: Value::Null,
+        };
+        fixture.identity = fixture
+            .replies
+            .recv_timeout(Duration::from_secs(10))
+            .expect("fixture ready");
+        assert_eq!(
+            fixture.identity["pid"].as_u64(),
+            Some(u64::from(fixture.child.id())),
+            "fixture must identify its own child process"
+        );
+        fixture
     }
 
     fn command(&mut self, command: &str) -> Value {
@@ -120,7 +127,7 @@ fn verify_video(output_dir: &Path, identity: &Value, state: &Value) {
         .args(["-v", "error", "-show_streams", "-of", "json"])
         .arg(&video)
         .output()
-        .expect("ffprobe must be installed in the disposable VM");
+        .expect("ffprobe must be installed in the authorized test environment");
     assert!(
         probe.status.success(),
         "{}",
@@ -181,14 +188,40 @@ fn verify_video(output_dir: &Path, identity: &Value, state: &Value) {
     }
 }
 
+fn host_run_authorized(vm: Option<&str>, host: Option<&str>) -> Result<bool, &'static str> {
+    match (vm, host) {
+        (Some("1"), None) => Ok(false),
+        (None, Some("1")) => Ok(true),
+        _ => Err("select exactly one: disposable VM or explicitly authorized host diagnostics"),
+    }
+}
+
 #[test]
-#[ignore = "requires disposable Lume GUI VM, authorized installed daemon, AppKit fixture and ffmpeg"]
+fn recording_environment_requires_one_explicit_opt_in() {
+    assert_eq!(host_run_authorized(Some("1"), None), Ok(false));
+    assert_eq!(host_run_authorized(None, Some("1")), Ok(true));
+    for (vm, host) in [
+        (None, None),
+        (Some("1"), Some("1")),
+        (Some("0"), None),
+        (None, Some("true")),
+    ] {
+        assert!(host_run_authorized(vm, host).is_err());
+    }
+}
+
+#[test]
+#[ignore = "requires explicitly authorized GUI environment, installed daemon, AppKit fixture and ffmpeg"]
 fn exact_window_recording_isolation_and_lifecycle() {
-    assert_eq!(
-        std::env::var("CUA_WINDOW_RECORDING_DISPOSABLE_VM").as_deref(),
-        Ok("1"),
-        "VM-only test"
-    );
+    let host = host_run_authorized(
+        std::env::var("CUA_WINDOW_RECORDING_DISPOSABLE_VM")
+            .ok()
+            .as_deref(),
+        std::env::var("CUA_WINDOW_RECORDING_HOST_AUTHORIZED")
+            .ok()
+            .as_deref(),
+    )
+    .expect("native recording environment must be explicitly selected");
     assert!(
         std::env::var_os("CUA_E2E_RECORDINGS_ROOT").is_none(),
         "unset legacy trajectory recording root"
@@ -196,9 +229,65 @@ fn exact_window_recording_isolation_and_lifecycle() {
     let root = PathBuf::from(
         std::env::var_os("CUA_WINDOW_RECORDING_OUTPUT_ROOT").expect("set fresh evidence root"),
     );
+    assert!(root.is_absolute(), "evidence root must be absolute");
     fs::create_dir_all(&root).unwrap();
+    for name in [
+        "test-environment.json",
+        "stop",
+        "minimize",
+        "close",
+        "resize",
+        "disconnect",
+    ] {
+        assert!(
+            fs::symlink_metadata(root.join(name))
+                .is_err_and(|error| error.kind() == std::io::ErrorKind::NotFound),
+            "use a fresh output root; never overwrite evidence"
+        );
+    }
+    let socket = PathBuf::from(
+        std::env::var_os("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("select an explicit test daemon socket; never use the released daemon default"),
+    );
+    assert!(socket.is_absolute(), "daemon socket must be absolute");
+    let expected_sha =
+        std::env::var("CUA_E2E_SOURCE_SHA").expect("set the exact candidate source SHA");
+    assert!(
+        expected_sha.len() == 40 && expected_sha.bytes().all(|b| b.is_ascii_hexdigit()),
+        "candidate source SHA must be a full commit"
+    );
+    if host {
+        assert_eq!(
+            fs::canonicalize(&socket).expect("test daemon socket must exist"),
+            fs::canonicalize(&root).unwrap().join("driver.sock"),
+            "host diagnostics require a dedicated driver.sock inside the evidence root"
+        );
+        let binary = std::env::var_os("CUA_TEST_DRIVER_BIN")
+            .expect("host diagnostics require the explicitly installed local Driver");
+        assert_eq!(
+            fs::canonicalize(binary).unwrap(),
+            Path::new("/Applications/CuaDriverLocal.app/Contents/MacOS/cua-driver-local"),
+            "do not connect the host recording test through the released Driver"
+        );
+    }
     let mut driver =
         McpDriver::spawn_macos_daemon_proxy().expect("installed authorized daemon must be running");
+    let config = call(&mut driver, "get_config", json!({}));
+    assert_eq!(config["source_sha"].as_str(), Some(expected_sha.as_str()));
+    assert_eq!(config["version"].as_str(), Some(env!("CARGO_PKG_VERSION")));
+    serde_json::to_writer_pretty(
+        fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(root.join("test-environment.json"))
+            .expect("never overwrite test-environment evidence"),
+        &json!({
+            "environment": if host { "explicitly-authorized-host" } else { "disposable-vm" },
+            "source_sha": expected_sha,
+            "version": config["version"],
+        }),
+    )
+    .unwrap();
     let initial = call(&mut driver, "get_recording_state", json!({}));
     assert_ne!(
         initial["enabled"], true,

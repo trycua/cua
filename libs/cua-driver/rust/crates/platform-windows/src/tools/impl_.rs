@@ -2956,6 +2956,46 @@ fn posted_pixel_click_result(pid: u32, click_word: &str) -> ToolResult {
     }))
 }
 
+/// Only a completed miss permits another transport. A provider may finish an
+/// activation after the deadline, so errors must not replay the click.
+fn finish_pixel_uia_attempt(
+    outcome: crate::uia::windows_enum::PointInvokeOutcome,
+    pid: u32,
+    sx: i32,
+    sy: i32,
+) -> Option<ToolResult> {
+    use crate::uia::windows_enum::PointInvokeOutcome;
+    let status = match outcome {
+        PointInvokeOutcome::Miss => return None,
+        PointInvokeOutcome::Invoked => {
+            return Some(
+                ToolResult::text(format!(
+                    "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
+                ))
+                .with_structured(json!({
+                    "path": "ax", "verified": false, "effect": "unverifiable"
+                })),
+            );
+        }
+        PointInvokeOutcome::Busy => "busy",
+        PointInvokeOutcome::Timeout => "timeout",
+        PointInvokeOutcome::Unavailable => "unavailable",
+    };
+    Some(
+        ToolResult::error(format!(
+            "UIA pixel click {status} for pid {pid}. No fallback input was sent. \
+         The click effect is unknown; inspect the target state before another action."
+        ))
+        .with_structured(json!({
+            "code": "background_unavailable",
+            "uia_status": status,
+            "path": "ax",
+            "verified": false,
+            "effect": "unverifiable"
+        })),
+    )
+}
+
 enum BackgroundElementClick {
     Semantic {
         message: String,
@@ -3850,7 +3890,7 @@ impl Tool for ClickTool {
             //      WebView2 / DirectComposition surfaces — those route
             //      input through `Windows.UI.Input`, not WM_LBUTTONDOWN.
             //
-            //   2. If UIA returns false (no Invokable element under the
+            //   2. If UIA completes with a miss (no Invokable element under the
             //      pixel inside `hwnd`, or `hwnd` has no useful UIA
             //      tree at all), fall through to
             //      `PostMessage(WM_LBUTTONDOWN/UP)` against the deepest
@@ -3968,7 +4008,7 @@ impl Tool for ClickTool {
             }
             let use_uia = (btn == "left" || btn == "middle") && count == 1;
             if use_uia {
-                let invoked = tokio::task::spawn_blocking(move || {
+                let outcome = tokio::task::spawn_blocking(move || {
                     crate::uia::windows_enum::try_invoke_in_window_at_point(
                         hwnd as isize,
                         sx as i32,
@@ -3976,18 +4016,13 @@ impl Tool for ClickTool {
                     )
                 })
                 .await
-                .unwrap_or(false);
-                if invoked {
-                    return ToolResult::text(format!(
-                        "✅ Performed UIA Invoke at ({sx},{sy}) for pid {pid}."
-                    ))
-                    .with_structured(
-                        json!({ "path": "ax", "verified": false, "effect": "unverifiable" }),
-                    );
+                .unwrap_or(crate::uia::windows_enum::PointInvokeOutcome::Unavailable);
+                if let Some(result) = finish_pixel_uia_attempt(outcome, pid, sx_i, sy_i) {
+                    return result;
                 }
             }
 
-            // UIA did not land. Known dropped surfaces other than direct
+            // UIA completed with a miss or was not applicable. Known dropped surfaces other than direct
             // Chromium (handled above) get one targeted injection attempt.
             if delivery == DeliveryMode::Background
                 && crate::input::delivery::would_be_silently_dropped(hwnd, EventKind::MouseClick)
@@ -4012,8 +4047,8 @@ impl Tool for ClickTool {
             }
 
             // delivery_mode:"background", non-dropped + non-UIA click. This
-            // includes plain Win32 targets and embedded Chromium when its UIA
-            // provider is temporarily unavailable. Attempt PostMessage without a
+            // includes plain Win32 targets with no invokable UIA element.
+            // Attempt PostMessage without a
             // foreground swap; the caller must verify the resulting fixture state.
             // Foreground was handled at the top, and known dropped surfaces use
             // the targeted-injection path above.
@@ -4046,10 +4081,55 @@ impl Tool for ClickTool {
 
 #[cfg(test)]
 mod pixel_click_transport_tests {
-    use super::posted_pixel_click_result;
+    use super::{finish_pixel_uia_attempt, posted_pixel_click_result};
+    use crate::uia::windows_enum::PointInvokeOutcome;
     use cua_driver_core::action_record::{
         ActionExecutionRecord, ActionTransport, ActualDelivery, RequestedDelivery,
     };
+
+    #[test]
+    fn pixel_uia_only_completed_miss_reaches_fallback_transport() {
+        for (outcome, status) in [
+            (PointInvokeOutcome::Invoked, None),
+            (PointInvokeOutcome::Busy, Some("busy")),
+            (PointInvokeOutcome::Timeout, Some("timeout")),
+            (PointInvokeOutcome::Unavailable, Some("unavailable")),
+        ] {
+            // Exercise the same early-return boundary used before either
+            // targeted injection or PostMessage in the pixel click route.
+            let mut fallback_calls = 0;
+            let result = finish_pixel_uia_attempt(outcome, 42, 10, 20).unwrap_or_else(|| {
+                fallback_calls += 1;
+                posted_pixel_click_result(42, "click")
+            });
+            assert_eq!(fallback_calls, 0, "{outcome:?}");
+            assert_eq!(result.is_error.unwrap_or(false), status.is_some());
+            let data = result.structured_content.unwrap();
+            assert_eq!(data["path"], "ax");
+            assert_eq!(data["effect"], "unverifiable");
+            if let Some(status) = status {
+                assert_eq!(data["uia_status"], status);
+                assert_eq!(data["code"], "background_unavailable");
+            }
+            let record = ActionExecutionRecord::from_legacy(
+                "click",
+                &serde_json::json!({ "delivery_mode": "background" }),
+                &data,
+            )
+            .expect("UIA outcome should normalize into the public action contract");
+            let public = serde_json::to_value(record.public_result().expect("valid ActionResult"))
+                .expect("serialize ActionResult");
+            assert_eq!(public["effect"], "unverifiable");
+        }
+        let mut fallback_calls = 0;
+        let result =
+            finish_pixel_uia_attempt(PointInvokeOutcome::Miss, 42, 10, 20).unwrap_or_else(|| {
+                fallback_calls += 1;
+                posted_pixel_click_result(42, "click")
+            });
+        assert_eq!(fallback_calls, 1);
+        assert_eq!(result.structured_content.unwrap()["path"], "post_message");
+    }
 
     #[test]
     fn post_message_pixel_click_reports_synthetic_transport() {

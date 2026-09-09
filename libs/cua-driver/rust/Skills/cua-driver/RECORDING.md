@@ -1,6 +1,6 @@
-# Recording & replaying trajectories
+# Recording video and replaying trajectories
 
-> **Cross-platform.** Recording is available on macOS (native
+> **Cross-platform legacy mode.** No-target recording is available on macOS (native
 > ScreenCaptureKit), Windows (ffmpeg + `gdigrab`), and Linux (ffmpeg +
 > `x11grab`). Replay is cross-platform as long as the recorded artifacts
 > are present.
@@ -9,7 +9,7 @@ Session-scoped capture of action sequences + pre/post state, suitable
 for demos, regression diffs, and training data. Invoked only when the
 user explicitly asks to record — the skill does not auto-enable this.
 
-`start_recording` turns on a session-scoped trajectory recorder. While
+Without a `target`, `start_recording` turns on a session-scoped trajectory recorder. While
 enabled, every action-tool call (`click`, `right_click`, `scroll`,
 `type_text`, `press_key`, `hotkey`, `set_value`) writes a numbered
 turn folder under a caller-chosen output directory. Read-only tools
@@ -17,10 +17,9 @@ turn folder under a caller-chosen output directory. Read-only tools
 permission probes, agent-cursor getters / setters, and the recording
 controls themselves) are not recorded.
 
-**Video on by default.** `start_recording` also captures the main
+**Video is off by default.** Pass `record_video: true` to also capture the main
 display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the
-lifetime of the session. The mp4 is finalized on `stop_recording`. Opt
-out with `record_video: false` when you don't want video.
+lifetime of the session. The MP4 is finalized on `stop_recording`.
 
 **macOS — native ScreenCaptureKit, zero-config.** On macOS the daemon's
 recorder uses `SCStream` + `SCRecordingOutput`, so it inherits the daemon's
@@ -43,9 +42,10 @@ tools, or the friendlier `cua-driver recording` subcommand group
 
 ```
 cua-driver recording start ~/cua-trajectories/run-1
+# To include main-display video, add --video.
 # … run the workflow …
 cua-driver recording status    # -> enabled / disabled, next_turn, output_dir
-cua-driver recording stop      # -> "Recording stopped. (video → recording.mp4)"
+cua-driver recording stop      # -> "Recording stopped."
 ```
 
 Raw-tool equivalent:
@@ -61,7 +61,82 @@ serve &`) because recording state is per-process. `output_dir` expands
 `~` and is created (with intermediates) if missing. Turn numbering
 starts at `1` every time recording is (re-)enabled, regardless of any
 existing contents in the directory. State lives in memory only — a
-daemon restart resets to disabled.
+daemon restart resets to disabled. These directory and turn-numbering rules
+describe no-target trajectory mode.
+
+## Window-only video (draft implementation)
+
+The accepted [window-recording RFC](../../../../../rfcs/3644-window-recording.md)
+defines the following opt-in contract. The implementation remains in
+[draft review](https://github.com/trycua/cua/pull/3667); these examples do not
+imply that a released Driver supports it.
+
+Use the PID and window ID from `list_windows` to select one native window.
+Both flags and `--video` are required:
+
+```sh
+cua-driver recording start /tmp/window-demo --video --pid PID --window-id WINDOW_ID
+cua-driver recording status
+cua-driver recording stop
+```
+
+Replace `PID` and `WINDOW_ID` with positive integer IDs. The PID must fit a
+signed 32-bit integer, and the window ID must fit an unsigned 64-bit integer.
+The CLI rejects incomplete, unknown, and duplicate flags.
+
+The equivalent MCP arguments are:
+
+```json
+{
+  "output_dir": "/tmp/window-demo",
+  "record_video": true,
+  "target": {"kind": "window", "pid": 1234, "window_id": 5678}
+}
+```
+
+The numeric IDs in this example are placeholders. With an initialized Python
+SDK client named `driver`, use its generic `call_tool` surface:
+
+```python
+import json
+
+result = await driver.call_tool("start_recording", json.dumps({
+    "output_dir": "/tmp/window-demo",
+    "record_video": True,
+    "target": {"kind": "window", "pid": 1234, "window_id": 5678},
+}))
+```
+
+Window-video mode writes `recording.mp4` and recording metadata only. It does
+not collect trajectory screenshots, accessibility trees, action arguments,
+`turn-*` folders, or `cursor.jsonl`. The stream excludes the system cursor,
+audio, and separate Driver overlay windows. A native browser window includes
+its browser chrome; selecting a window does not select or crop a browser tab.
+
+The macOS 15+ backend uses exact-window ScreenCaptureKit capture, subject to
+OS consent and window shareability. Windows, X11, and Wayland return
+`window_recording_unsupported`. An unsupported or failed window request does
+not fall back to display capture or trajectory recording.
+
+Output dimensions stay fixed. Moving the window is allowed. A detected resize,
+backing-scale change, close, minimize, loss of shareability, or loss of the
+attested owner stops capture and attempts finalization with a classified
+reason. Inspect recording state and `session.json` for mode, target,
+dimensions, backend, termination reason, and finalization outcome.
+
+After automatic termination, call `stop_recording` to join and release the
+retained recorder before starting another. Content queries and recording
+callback waits have deadlines, but the pinned ScreenCaptureKit binding's
+synchronous native start/stop calls do not have a cancellation API. A native
+transport hang can still delay startup or teardown.
+
+Use a new or empty output directory. Validation and
+backend preflight run before the window request creates output. Starting a
+window recording while any recorder is active, or starting another mode while
+a window recorder is active, returns `recording_busy`. There is one recorder:
+manual `stop_recording` remains daemon-wide, and an owning session's disconnect
+stops its recording. Window capture does not provide independent recorder
+control.
 
 ## What each turn folder contains
 
@@ -122,8 +197,8 @@ Each action writes to `turn-NNNNN/` (five-digit zero-padded counter):
 This skill does **not** auto-enable recording. The client invokes
 `start_recording` explicitly when the user asks to capture a session.
 If the user says "record this session" or similar, call
-`start_recording({output_dir:…})` before the first action (video on
-by default; pass `record_video: false` to opt out), and
+`start_recording({output_dir:…})` before the first action (video is off
+by default; pass `record_video: true` to include main-display video), and
 `stop_recording({})` when done.
 
 ## Replaying a recorded trajectory

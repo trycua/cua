@@ -73,6 +73,7 @@ pub mod protocol;
 pub mod recording;
 pub mod recording_loader;
 pub mod recording_render;
+pub mod recording_target;
 pub mod recording_tools;
 pub mod recording_zoom;
 pub mod server;

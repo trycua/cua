@@ -480,7 +480,10 @@ fn finite_tool_name_from_args(args: &[String]) -> Option<String> {
 /// independently; we only care about the first non-`--` arg here.
 pub fn parse_command() -> Command {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    parse_command_from(args)
+}
 
+fn parse_command_from(args: Vec<String>) -> Command {
     // Handle --version / -V before any other parsing so they are never
     // silently stripped as "bare flags" and swallowed by MCP mode.
     if args.iter().any(|a| a == "--version" || a == "-V") {
@@ -801,7 +804,11 @@ pub fn parse_command() -> Command {
         }
         Some("recording") => {
             let subcommand = pos.next().unwrap_or("status").to_string();
-            let rest: Vec<String> = pos.map(str::to_owned).collect();
+            let rest: Vec<String> = if subcommand == "start" {
+                recording_start_argv(&args)
+            } else {
+                pos.map(str::to_owned).collect()
+            };
             Command::Recording {
                 subcommand,
                 args: rest,
@@ -2726,12 +2733,111 @@ fn history_daemon_status(socket_path: &str) -> Option<serde_json::Value> {
         .result
 }
 
-/// `cua-driver recording <start|stop|status>` — wrapper around
-/// `start_recording` / `stop_recording` / `get_recording_state` tools
-/// on the running daemon.
-///
-/// Requires a running daemon (`cua-driver serve`) because recording
-/// state lives in the daemon.
+fn recording_start_argv(args: &[String]) -> Vec<String> {
+    // Locate the two command words using the global parser's rules, then keep
+    // recording flags intact. The generic positional scan discards their values.
+    let mut i = 0;
+    let mut command_indices = Vec::new();
+    while i < args.len() && command_indices.len() < 2 {
+        if VALUE_FLAGS.contains(&args[i].as_str()) {
+            i += 2;
+        } else {
+            if !args[i].starts_with('-') {
+                command_indices.push(i);
+            }
+            i += 1;
+        }
+    }
+    let mut tail = Vec::new();
+    i = 0;
+    while i < args.len() {
+        if args[i] == "--socket" {
+            i += 2;
+        } else {
+            if !command_indices.contains(&i) {
+                tail.push(args[i].clone());
+            }
+            i += 1;
+        }
+    }
+    tail
+}
+
+fn recording_start_arguments(args: &[String]) -> Result<serde_json::Value, String> {
+    let output_dir = args.first().filter(|arg| !arg.starts_with('-')).ok_or_else(|| {
+        "Usage: cua-driver recording start <output-dir> [--video [--pid PID --window-id WINDOW_ID]]".to_owned()
+    })?;
+    let mut video = false;
+    let mut pid = None;
+    let mut window_id = None;
+    let mut remaining = args[1..].iter();
+    while let Some(flag) = remaining.next() {
+        match flag.as_str() {
+            "--video" if !video => video = true,
+            "--pid" if pid.is_none() => {
+                pid = Some(
+                    remaining
+                        .next()
+                        .and_then(|value| value.parse::<i32>().ok())
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| "--pid requires a positive 32-bit integer".to_owned())?,
+                );
+            }
+            "--window-id" if window_id.is_none() => {
+                window_id = Some(
+                    remaining
+                        .next()
+                        .and_then(|value| value.parse::<u64>().ok())
+                        .filter(|value| *value > 0)
+                        .ok_or_else(|| {
+                            "--window-id requires a positive 64-bit integer".to_owned()
+                        })?,
+                );
+            }
+            _ => {
+                return Err(format!(
+                    "Unknown or duplicate recording start argument: {flag}"
+                ))
+            }
+        }
+    }
+    let mut arguments = serde_json::json!({"output_dir": output_dir});
+    if video {
+        arguments["record_video"] = serde_json::json!(true);
+    }
+    match (pid, window_id) {
+        (Some(pid), Some(window_id)) if video => {
+            arguments["target"] =
+                serde_json::json!({"kind": "window", "pid": pid, "window_id": window_id});
+        }
+        (None, None) => {}
+        _ => {
+            return Err(
+                "Window recording requires --video, --pid, and --window-id together".to_owned(),
+            )
+        }
+    }
+    Ok(arguments)
+}
+
+fn recording_tool_error(result: Option<&serde_json::Value>) -> Option<String> {
+    let result = result?;
+    if !result
+        .get("isError")
+        .or_else(|| result.get("is_error"))
+        .and_then(serde_json::Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    // Keep structured classifications and text diagnostics visible to CLI callers.
+    Some(
+        serde_json::to_string_pretty(result).unwrap_or_else(|_| "Recording tool failed".to_owned()),
+    )
+}
+
+/// `cua-driver recording <start|stop|status>` wraps recording tools on the
+/// running daemon, where recording state lives.
 pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>) {
     // `render` is pure file-to-file work that doesn't need the daemon;
     // dispatch it before the daemon-running check so it works without
@@ -2740,6 +2846,15 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
         run_recording_render(args);
         return;
     }
+
+    let start_arguments = if subcommand == "start" {
+        Some(recording_start_arguments(args).unwrap_or_else(|error| {
+            eprintln!("{error}");
+            process::exit(64);
+        }))
+    } else {
+        None
+    };
 
     let socket_path = socket
         .map(str::to_owned)
@@ -2756,6 +2871,7 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
 
     match subcommand {
         "start" => {
+            let mut arguments = start_arguments.expect("start arguments were validated");
             let output_dir = match args.first() {
                 Some(d) => {
                     // Expand ~ manually.
@@ -2772,18 +2888,19 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 }
             };
 
-            // Create the directory if it doesn't exist.
-            if let Err(e) = std::fs::create_dir_all(&output_dir) {
-                eprintln!("Failed to create output directory {output_dir}: {e}");
-                process::exit(1);
+            // Window mode defers output creation until core validation and preflight.
+            if arguments.get("target").is_none() {
+                if let Err(e) = std::fs::create_dir_all(&output_dir) {
+                    eprintln!("Failed to create output directory {output_dir}: {e}");
+                    process::exit(1);
+                }
             }
+            arguments["output_dir"] = serde_json::json!(output_dir);
 
             let req = crate::serve::DaemonRequest {
                 method: "call".into(),
                 name: Some("start_recording".into()),
-                args: Some(serde_json::json!({
-                    "output_dir": output_dir
-                })),
+                args: Some(arguments),
                 // CLI `recording start` is anonymous — the recording is owned by
                 // nobody, so only an unconditional stop (CLI / manual) reaps it.
                 session_id: None,
@@ -2792,6 +2909,10 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
+                    if let Some(error) = recording_tool_error(resp.result.as_ref()) {
+                        eprintln!("recording start: {error}");
+                        process::exit(1);
+                    }
                     println!("Recording started → {output_dir}");
                     // Query state to show next_turn.
                     let state_req = crate::serve::DaemonRequest {
@@ -2838,7 +2959,13 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                 client_kind: Some(cua_driver_core::daemon::DaemonClientKind::Cli),
             };
             match crate::serve::send_request(&socket_path, &req) {
-                Ok(resp) if resp.ok => println!("Recording stopped."),
+                Ok(resp) if resp.ok => {
+                    if let Some(error) = recording_tool_error(resp.result.as_ref()) {
+                        eprintln!("recording stop: {error}");
+                        process::exit(1);
+                    }
+                    println!("Recording stopped.");
+                }
                 Ok(resp) => {
                     if let Some(e) = resp.error {
                         eprintln!("{e}");
@@ -2863,6 +2990,10 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
             };
             match crate::serve::send_request(&socket_path, &req) {
                 Ok(resp) if resp.ok => {
+                    if let Some(error) = recording_tool_error(resp.result.as_ref()) {
+                        eprintln!("recording status: {error}");
+                        process::exit(1);
+                    }
                     if let Some(result) = resp.result {
                         let sc = result
                             .get("structuredContent")
@@ -2882,6 +3013,15 @@ pub fn run_recording_cmd(subcommand: &str, args: &[String], socket: Option<&str>
                         if enabled {
                             println!("  output_dir: {out_dir}");
                             println!("  next_turn:  {next_turn:05}");
+                        }
+                        if sc.get("mode").and_then(|value| value.as_str()) == Some("window_video") {
+                            println!("  mode: window_video");
+                            for key in ["target", "info", "status", "last_video_path", "last_error"]
+                            {
+                                if let Some(value) = sc.get(key).filter(|value| !value.is_null()) {
+                                    println!("  {key}: {value}");
+                                }
+                            }
                         }
                     }
                 }
@@ -3977,7 +4117,7 @@ fn cli_docs_json() -> serde_json::Value {
             },
             {
                 "name": "recording",
-                "abstract": "Control trajectory recording on a running daemon.",
+                "abstract": "Control trajectory or explicit window-video recording on a running daemon.",
                 "discussion": "Recording state lives in the required daemon and survives client reconnects.",
                 "arguments": no_args,
                 "options": [{"name":"socket","short_name":null,"help":"Override the daemon socket or named-pipe path.","type":"String","default_value":null,"is_optional":true}],
@@ -3985,17 +4125,20 @@ fn cli_docs_json() -> serde_json::Value {
                 "subcommands": [
                     {
                         "name":"start",
-                        "abstract":"Start trajectory recording to a directory.",
-                        "discussion":"",
-                        "arguments":[{"name":"output-dir","help":"Directory to write turn folders into.","type":"String","is_optional":false}],
-                        "options":[],
-                        "flags":[],
+                        "abstract":"Start recording to a directory.",
+                        "discussion":"Defaults to trajectory-only recording. --video adds display video unless both --pid and --window-id select exact window-video mode. Window mode requires --video and a new or empty output directory; it writes MP4 and metadata only. Supported on macOS 15+; other backends refuse without display fallback.",
+                        "arguments":[{"name":"output-dir","help":"Directory to write recording artifacts into.","type":"String","is_optional":false}],
+                        "options":[
+                            {"name":"pid","short_name":null,"help":"Positive window-owner PID; requires --window-id and --video.","type":"Int32","default_value":null,"is_optional":true},
+                            {"name":"window-id","short_name":null,"help":"Positive native window ID from list_windows; requires --pid and --video.","type":"UInt64","default_value":null,"is_optional":true}
+                        ],
+                        "flags":[{"name":"video","short_name":null,"help":"Enable video. Required for exact window mode.","default_value":false}],
                         "subcommands":[]
                     },
                     {
                         "name":"stop",
-                        "abstract":"Stop trajectory recording.",
-                        "discussion":"",
+                        "abstract":"Stop the active recorder and finalize video.",
+                        "discussion":"Manual stop is daemon-wide. After automatic window termination, call stop to release the retained recorder before starting another.",
                         "arguments":[],
                         "options":[],
                         "flags":[],
@@ -4752,6 +4895,189 @@ mod tests {
 
     fn args(values: &[&str]) -> Vec<String> {
         values.iter().map(|value| (*value).to_owned()).collect()
+    }
+
+    #[test]
+    fn recording_start_preserves_trajectory_default_and_display_opt_in() {
+        assert_eq!(
+            recording_start_arguments(&args(&["/tmp/recording"])).unwrap(),
+            serde_json::json!({"output_dir": "/tmp/recording"})
+        );
+        assert_eq!(
+            recording_start_arguments(&args(&["/tmp/recording", "--video"])).unwrap(),
+            serde_json::json!({"output_dir": "/tmp/recording", "record_video": true})
+        );
+    }
+
+    #[test]
+    fn recording_full_cli_keeps_window_flags_through_global_parsing() {
+        let command = parse_command_from(args(&[
+            "--socket",
+            "/tmp/synthetic.sock",
+            "recording",
+            "start",
+            "/tmp/recording",
+            "--video",
+            "--pid",
+            "42",
+            "--window-id",
+            "7",
+        ]));
+        let Command::Recording {
+            subcommand,
+            args: parsed,
+            socket,
+        } = command
+        else {
+            panic!("expected recording command");
+        };
+        assert_eq!(subcommand, "start");
+        assert_eq!(socket.as_deref(), Some("/tmp/synthetic.sock"));
+        assert_eq!(
+            recording_start_arguments(&parsed).unwrap(),
+            serde_json::json!({"output_dir": "/tmp/recording", "record_video": true,
+                "target": {"kind": "window", "pid": 42, "window_id": 7}})
+        );
+        let command = parse_command_from(args(&[
+            "recording",
+            "start",
+            "/tmp/recording",
+            "--socket",
+            "/tmp/synthetic.sock",
+            "--window-id",
+            "7",
+        ]));
+        let Command::Recording { args: parsed, .. } = command else {
+            panic!("expected recording command");
+        };
+        assert!(recording_start_arguments(&parsed).is_err());
+        let command = parse_command_from(args(&[
+            "--pid",
+            "42",
+            "recording",
+            "start",
+            "/tmp/recording",
+            "--video",
+        ]));
+        let Command::Recording { args: parsed, .. } = command else {
+            panic!("expected recording command");
+        };
+        assert!(recording_start_arguments(&parsed).is_err());
+    }
+
+    #[test]
+    fn recording_cli_reference_advertises_all_window_flags() {
+        let docs = cli_docs_json();
+        let recording = docs["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|command| command["name"] == "recording")
+            .unwrap();
+        let start = &recording["subcommands"][0];
+        assert_eq!(start["name"], "start");
+        assert_eq!(start["flags"][0]["name"], "video");
+        assert_eq!(start["options"][0]["name"], "pid");
+        assert_eq!(start["options"][1]["name"], "window-id");
+    }
+
+    #[test]
+    fn recording_start_accepts_exact_window_target_and_numeric_limits() {
+        assert_eq!(
+            recording_start_arguments(&args(&[
+                "/tmp/recording",
+                "--window-id",
+                "18446744073709551615",
+                "--video",
+                "--pid",
+                "2147483647"
+            ]))
+            .unwrap(),
+            serde_json::json!({
+                "output_dir": "/tmp/recording", "record_video": true,
+                "target": {"kind": "window", "pid": i32::MAX, "window_id": u64::MAX}
+            })
+        );
+    }
+
+    #[test]
+    fn recording_start_rejects_incomplete_unknown_and_duplicate_arguments() {
+        for values in [
+            vec![],
+            vec!["--video"],
+            vec!["/tmp/r", "--pid", "1"],
+            vec!["/tmp/r", "--video", "--window-id", "1"],
+            vec!["/tmp/r", "--pid", "1", "--window-id", "2"],
+            vec!["/tmp/r", "--video", "--video"],
+            vec!["/tmp/r", "--unknown"],
+            vec!["/tmp/r", "extra"],
+            vec!["/tmp/r", "--pid"],
+            vec!["/tmp/r", "--window-id"],
+            vec![
+                "/tmp/r",
+                "--video",
+                "--pid",
+                "1",
+                "--pid",
+                "2",
+                "--window-id",
+                "3",
+            ],
+            vec![
+                "/tmp/r",
+                "--video",
+                "--pid",
+                "1",
+                "--window-id",
+                "2",
+                "--window-id",
+                "3",
+            ],
+        ] {
+            assert!(
+                recording_start_arguments(&args(&values)).is_err(),
+                "{values:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn recording_start_rejects_invalid_and_overflowing_ids() {
+        for pid in ["0", "-1", "2147483648", "abc", "1.5"] {
+            assert!(recording_start_arguments(&args(&[
+                "/tmp/r",
+                "--video",
+                "--pid",
+                pid,
+                "--window-id",
+                "1"
+            ]))
+            .is_err());
+        }
+        for window_id in ["0", "-1", "18446744073709551616", "abc", "1.5"] {
+            assert!(recording_start_arguments(&args(&[
+                "/tmp/r",
+                "--video",
+                "--pid",
+                "1",
+                "--window-id",
+                window_id
+            ]))
+            .is_err());
+        }
+    }
+
+    #[test]
+    fn recording_tool_errors_preserve_structured_diagnostics() {
+        for key in ["isError", "is_error"] {
+            let mut result = serde_json::json!({"structuredContent": {"error": "recording_busy"}});
+            result[key] = serde_json::json!(true);
+            assert!(recording_tool_error(Some(&result))
+                .unwrap()
+                .contains("recording_busy"));
+        }
+        assert!(recording_tool_error(Some(&serde_json::json!({"isError": false}))).is_none());
+        assert!(recording_tool_error(None).is_none());
     }
 
     #[test]

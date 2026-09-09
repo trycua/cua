@@ -146,6 +146,11 @@ boundary, not independent recorder control. A foreign stop can end a recording
 but cannot widen its capture target. The broader ownership decision stays in
 #3644.
 
+After automatic termination, state reports `active: false`, but the singleton
+remains reserved until `stop_recording` or owner teardown joins the backend.
+Call `stop_recording` before starting another recording. This avoids overlapping
+resource teardown with a new stream.
+
 ### Native macOS behavior
 
 Resolve and validate the exact PID/window pair using the existing capture
@@ -169,10 +174,18 @@ stops capture. A missing, minimized, invalid, or unshareable initial target
 fails before recording starts. A changed or reused window identity never
 causes automatic retargeting.
 
-Capture has a bounded health check and retains the recording output until
-finalization completes. Native recording completion/error callbacks, rather
-than transport success alone, determine finalization. Stop, disconnect,
-startup failure, and health-check termination release owned stream resources.
+Capture checks health every 250 ms, with a two-second shareable-content query
+deadline. Recording-start and finalization callback waits have ten-second
+deadlines. Native recording completion/error callbacks, rather than transport
+success alone, determine finalization. Stop, disconnect, startup failure, and
+health-check termination release owned stream resources.
+
+The pinned `screencapturekit` 6.0.1 binding has synchronous, uncancellable
+attach/start/stop/detach calls. Those native transport waits can still delay
+startup or teardown indefinitely; the callback deadlines are not a hard
+end-to-end timeout. Resolving this requires a cancellable upstream binding or
+another reviewed transport implementation. Do not claim fully bounded teardown
+from this increment.
 
 ### Platform behavior
 

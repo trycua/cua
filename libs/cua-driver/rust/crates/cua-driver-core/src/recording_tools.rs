@@ -64,7 +64,16 @@ impl Tool for StartRecordingTool {
                   resolution is explicitly not applicable instead.\n\n\
                 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn \
                 numbering restarts at 1 each time recording is (re-)started.\n\n\
-                **Video is off by default.** Pass `record_video: true` to also \
+                With `target: {kind: window, pid, window_id}` and `record_video: true`, \
+                record only that native window, with video and bounded metadata only. \
+                Window mode requires a new or empty output directory, suppresses all \
+                trajectories and cursor sampling, and never falls back to display capture. \
+                Only macOS 15+ supports window video; other backends return \
+                window_recording_unsupported. Starts involving an active window recording \
+                return recording_busy. After automatic termination, call stop_recording \
+                to release the retained recorder before starting another. Manual stop \
+                remains daemon-wide.\n\n\
+                **Video is off by default.** Without `target`, pass `record_video: true` to also \
                 capture the main display to `<output_dir>/recording.mp4` (H.264 / \
                 30 fps) for the lifetime of the session. The recording is torn \
                 down automatically when the MCP client disconnects.\n\n\
@@ -88,17 +97,28 @@ impl Tool for StartRecordingTool {
                 "properties": {
                     "output_dir": {
                         "type": "string",
-                        "description": "Absolute or ~-rooted directory where turn folders \
-                            and (when enabled) the video file are written."
+                        "description": "Absolute or ~-rooted output directory. Window mode \
+                            requires a new or empty directory and writes only video and metadata. \
+                            Without target, writes trajectory folders and optional display video."
                     },
                     "record_video": {
                         "type": "boolean",
-                        "description": "Capture the main display to <output_dir>/recording.mp4. \
-                            Default: false. Set to true to also capture the main \
-                            display to recording.mp4 (otherwise only the per-turn \
-                            screenshots + JSON are recorded). On macOS this uses native \
-                            ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on \
-                            Windows + Linux it requires ffmpeg on PATH."
+                        "description": "Enable video at <output_dir>/recording.mp4. Default: false. \
+                            With an exact window target, true is required and only window video \
+                            plus metadata is recorded (macOS 15+). Without target, adds main-display \
+                            video to legacy trajectory recording. macOS uses ScreenCaptureKit; \
+                            Windows and Linux use ffmpeg for legacy display video."
+                    },
+                    "target": {
+                        "type": "object",
+                        "required": ["kind", "pid", "window_id"],
+                        "properties": {
+                            "kind": {"type": "string", "const": "window"},
+                            "pid": {"type": "integer", "minimum": 1, "maximum": 2147483647},
+                            "window_id": {"type": "integer", "minimum": 1}
+                        },
+                        "additionalProperties": false,
+                        "description": "Exact native window from list_windows. Requires record_video=true."
                     }
                 },
                 "additionalProperties": false
@@ -112,6 +132,11 @@ impl Tool for StartRecordingTool {
 
     async fn invoke(&self, args: Value) -> ToolResult {
         use crate::tool_args::ArgsExt;
+        let target = match crate::recording_target::parse_window_target(&args) {
+            Ok(target) => target,
+            Err(error) => return error,
+        };
+        let window_video = target.is_some();
         let output_dir = args.opt_str("output_dir");
         if output_dir.as_deref().map(str::is_empty).unwrap_or(true) {
             return ToolResult::error("`output_dir` is required.");
@@ -122,10 +147,11 @@ impl Tool for StartRecordingTool {
         // (session_end) only stops the recording its own session started.
         let owner = args.opt_str("_session_id");
 
-        match self.session.start(
+        match self.session.start_with_target(
             output_dir.as_deref().unwrap(),
             record_video,
             owner.as_deref(),
+            target,
         ) {
             Ok(()) => {
                 let state = self.session.current_state();
@@ -133,7 +159,7 @@ impl Tool for StartRecordingTool {
                 // ffmpeg TCC prompt deadlock), surface the actual error
                 // prominently — the per-turn capture still runs, but the
                 // caller deserves to know the mp4 won't materialize.
-                let video_failed = record_video && !state.video_active;
+                let video_failed = record_video && !state.video_active && !window_video;
                 let video_note = if record_video && state.video_active {
                     " (video → recording.mp4)".to_string()
                 } else if video_failed {
@@ -155,7 +181,16 @@ impl Tool for StartRecordingTool {
                 );
                 ToolResult::text(msg).with_structured(recording_state_json(&state))
             }
-            Err(e) => ToolResult::error(format!("Failed to start recording: {e}")),
+            Err(e) => {
+                let message = e.to_string();
+                let code = message
+                    .split(':')
+                    .next()
+                    .filter(|code| code.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+                    .unwrap_or("recording_start_failed");
+                ToolResult::error(format!("Failed to start recording: {message}"))
+                    .with_structured(json!({"code": code, "message": message}))
+            }
         }
     }
 }
@@ -179,9 +214,10 @@ impl Tool for StopRecordingTool {
     fn def(&self) -> &ToolDef {
         STOP_REC_DEF.get_or_init(|| ToolDef {
             name: "stop_recording".into(),
-            description: "Stop trajectory recording. Disables further per-turn capture \
-                and, when video was enabled, gracefully terminates the ffmpeg subprocess \
-                so the mp4's moov atom is finalized (the file is playable). Calling \
+            description: "Stop the active recorder and finalize its video when enabled. \
+                Legacy mode also disables further per-turn capture. Window-video mode \
+                joins the native backend, including after automatic termination. \
+                Finalization failures are reported as errors. Calling \
                 stop on an already-stopped session is a no-op. The response carries \
                 `last_video_path` pointing at the finalized mp4 (when video was on).\n\n\
                 A manual `stop_recording` is **unconditional** — it stops whatever \
@@ -496,6 +532,10 @@ fn recording_state_json(state: &RecordingState) -> Value {
     json!({
         // "recording" mirrors the Swift field name for parity.
         "recording": state.enabled,
+        "mode": state.mode,
+        "target": state.target,
+        "info": state.info,
+        "status": state.status,
         "enabled": state.enabled,
         "output_dir": state.output_dir,
         "next_turn": state.next_turn,

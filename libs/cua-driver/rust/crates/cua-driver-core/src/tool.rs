@@ -1748,6 +1748,11 @@ impl ToolRegistry {
             return Err(crate::consent::ConsentError::Provider(
                 "browser observation did not attest a live top-level origin".to_owned(),
             ));
+        } else if tool_name == "start_recording" && args.get("target").is_some() {
+            (
+                self.recording_window_resource(args).await?,
+                "Allow Cua to record only the selected native window".to_owned(),
+            )
         } else if tool_name == "escalate_session" {
             (
                 serde_json::json!({
@@ -1849,6 +1854,32 @@ impl ToolRegistry {
             )
             .await?;
         Ok(())
+    }
+
+    async fn recording_window_resource(
+        &self,
+        args: &Value,
+    ) -> Result<Value, crate::consent::ConsentError> {
+        use crate::consent::ConsentError;
+        let target = crate::recording_target::parse_window_target(args)
+            .map_err(|_| ConsentError::Provider("invalid window recording target".into()))?
+            .ok_or_else(|| ConsentError::Provider("window recording target is missing".into()))?;
+        let inventory = self
+            .tools
+            .get("list_windows")
+            .ok_or_else(|| ConsentError::Provider("window identity is unavailable".into()))?
+            .invoke(serde_json::json!({"pid": target.pid}))
+            .await;
+        if inventory.is_error == Some(true) {
+            return Err(ConsentError::Provider(
+                "window identity could not be read".into(),
+            ));
+        }
+        let inventory = inventory
+            .structured_content
+            .ok_or_else(|| ConsentError::Provider("window identity was not returned".into()))?;
+        crate::recording_target::attested_window_resource(&target, &inventory)
+            .map_err(ConsentError::Provider)
     }
 
     async fn authorize_desktop_input(
@@ -2093,15 +2124,23 @@ impl ToolRegistry {
             "start_recording" => {
                 let output = canonical_proposed_path(required_path_arg(args, "output_dir")?)?;
                 args["output_dir"] = Value::String(output.clone());
+                let mut resource = serde_json::json!({
+                    "kind": "recording_output",
+                    "direction": "driver_to_local",
+                    "canonical_output_directory": output,
+                    "record_video": args.get("record_video").and_then(Value::as_bool).unwrap_or(false),
+                });
+                if let Some(target) = args.get("target") {
+                    resource["target"] = target.clone();
+                }
                 (
-                    serde_json::json!({
-                        "kind": "recording_output",
-                        "direction": "driver_to_local",
-                        "canonical_output_directory": output,
-                        "record_video": args.get("record_video").and_then(Value::as_bool).unwrap_or(false),
-                    }),
-                    "Allow Cua to write trajectory evidence to the exact local directory"
-                        .to_owned(),
+                    resource,
+                    if args.get("target").is_some() {
+                        "Allow Cua to write window video and metadata to the exact local directory"
+                    } else {
+                        "Allow Cua to write trajectory evidence to the exact local directory"
+                    }
+                    .to_owned(),
                 )
             }
             "stop_recording" => {
@@ -2868,6 +2907,57 @@ mod runtime_isolation_tests {
         def: super::ToolDef,
     }
 
+    struct WindowInventoryProbe {
+        args: Arc<Mutex<Vec<serde_json::Value>>>,
+        inventory: serde_json::Value,
+        def: super::ToolDef,
+    }
+
+    #[async_trait::async_trait]
+    impl super::Tool for WindowInventoryProbe {
+        fn def(&self) -> &super::ToolDef {
+            &self.def
+        }
+
+        async fn invoke(&self, args: serde_json::Value) -> ToolResult {
+            self.args.lock().unwrap().push(args);
+            ToolResult::text("synthetic window inventory").with_structured(self.inventory.clone())
+        }
+    }
+
+    fn window_recording_registry(
+        provider: Option<Arc<dyn ProtectedConsentProvider>>,
+        recording_hits: Arc<AtomicUsize>,
+        display_hits: Arc<AtomicUsize>,
+        inventory_args: Arc<Mutex<Vec<serde_json::Value>>>,
+        inventory: serde_json::Value,
+    ) -> super::ToolRegistry {
+        let mut registry = super::ToolRegistry::new_with_protected_consent_provider(provider);
+        let definition = |name: &str| super::ToolDef {
+            name: name.into(),
+            description: "synthetic window recording probe".into(),
+            input_schema: serde_json::json!({"type": "object"}),
+            read_only: name != "start_recording",
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        registry.register(Box::new(ObservationProbe {
+            hits: recording_hits,
+            def: definition("start_recording"),
+        }));
+        registry.register(Box::new(ObservationProbe {
+            hits: display_hits,
+            def: definition("get_screen_size"),
+        }));
+        registry.register(Box::new(WindowInventoryProbe {
+            args: inventory_args,
+            inventory,
+            def: definition("list_windows"),
+        }));
+        registry
+    }
+
     struct ArgumentProbe {
         hits: Arc<AtomicUsize>,
         last_args: Arc<Mutex<Option<serde_json::Value>>>,
@@ -3605,6 +3695,141 @@ resources:
             0,
             "routine standard recording is promptless"
         );
+    }
+
+    #[tokio::test]
+    async fn window_recording_invalid_targets_fail_before_any_protected_or_platform_call() {
+        let recording_hits = Arc::new(AtomicUsize::new(0));
+        let display_hits = Arc::new(AtomicUsize::new(0));
+        let inventory_args = Arc::new(Mutex::new(Vec::new()));
+        let provider = Arc::new(AcceptingProvider {
+            requests: AtomicUsize::new(0),
+        });
+        let registry = window_recording_registry(
+            Some(provider.clone()),
+            recording_hits.clone(),
+            display_hits.clone(),
+            inventory_args.clone(),
+            serde_json::json!({"windows": [{"pid": 42, "window_id": 7}]}),
+        );
+        for target in [
+            serde_json::Value::Null,
+            serde_json::json!({"kind": "desktop"}),
+            serde_json::json!({"kind": "window", "pid": 0, "window_id": 7}),
+            serde_json::json!({"kind": "window", "pid": 42}),
+            serde_json::json!({"kind": "window", "pid": 42, "window_id": 7, "title": "extra"}),
+        ] {
+            let result = registry
+                .invoke_with_context(
+                    "start_recording",
+                    serde_json::json!({
+                        "record_video": true, "target": target,
+                        "output_dir": "/synthetic/recording", "session": "invalid-recording"
+                    }),
+                    standard_context(),
+                )
+                .await;
+            assert_eq!(result.is_error, Some(true), "accepted {target}");
+            assert_eq!(
+                result
+                    .structured_content
+                    .as_ref()
+                    .and_then(|value| value.get("code")),
+                Some(&serde_json::json!("invalid_recording_target"))
+            );
+        }
+        assert_eq!(recording_hits.load(Ordering::SeqCst), 0);
+        assert_eq!(display_hits.load(Ordering::SeqCst), 0);
+        assert!(inventory_args.lock().unwrap().is_empty());
+        assert_eq!(provider.requests.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn window_recording_resource_attests_exact_inventory_without_titles_or_display() {
+        for (inventory, allowed) in [
+            (
+                serde_json::json!({"windows": [
+                    {"pid": 42, "window_id": 7, "title": "private fixture title"},
+                    {"pid": 99, "window_id": 8, "title": "unrelated fixture"}
+                ]}),
+                true,
+            ),
+            (
+                serde_json::json!({"windows": [{"pid": 43, "window_id": 7}]}),
+                false,
+            ),
+            (
+                serde_json::json!({"windows": [{"pid": 42, "window_id": 8}]}),
+                false,
+            ),
+            (
+                serde_json::json!({"windows": [{"pid": 42, "window_id": 7}, {"pid": 42, "window_id": 7}]}),
+                false,
+            ),
+        ] {
+            let display_hits = Arc::new(AtomicUsize::new(0));
+            let inventory_args = Arc::new(Mutex::new(Vec::new()));
+            let registry = window_recording_registry(
+                None,
+                Arc::new(AtomicUsize::new(0)),
+                display_hits.clone(),
+                inventory_args.clone(),
+                inventory,
+            );
+            let result = registry
+                .recording_window_resource(&serde_json::json!({
+                    "record_video": true, "target": {"kind": "window", "pid": 42, "window_id": 7}
+                }))
+                .await;
+            assert_eq!(result.is_ok(), allowed);
+            if let Ok(resource) = result {
+                assert_eq!(
+                    resource,
+                    serde_json::json!({"kind": "window", "pid": 42, "window_id": 7})
+                );
+            }
+            assert_eq!(
+                *inventory_args.lock().unwrap(),
+                vec![serde_json::json!({"pid": 42})]
+            );
+            assert_eq!(display_hits.load(Ordering::SeqCst), 0);
+        }
+    }
+
+    #[tokio::test]
+    async fn window_recording_manifest_allows_only_the_exact_attested_window() {
+        let output = tempfile::tempdir().unwrap();
+        for (pid, window_id, allowed) in [(42, 7, true), (43, 7, false), (42, 8, false)] {
+            let recording_hits = Arc::new(AtomicUsize::new(0));
+            let display_hits = Arc::new(AtomicUsize::new(0));
+            let inventory_args = Arc::new(Mutex::new(Vec::new()));
+            let registry = window_recording_registry(
+                None,
+                recording_hits.clone(),
+                display_hits.clone(),
+                inventory_args.clone(),
+                serde_json::json!({"windows": [{"pid": pid, "window_id": window_id, "title": "private fixture title"}]}),
+            );
+            let context = bounded_context(&format!(
+                "version: 3\nexpires_after: 1h\nidle_timeout: 30m\nallow:\n  tools: [start_recording]\nresources:\n  desktop:\n    windows:\n      - pid: 42\n        window_id: 7\n  files:\n    write: [{}]\n",
+                serde_json::to_string(&output.path().to_string_lossy()).unwrap()
+            ));
+            let result = registry.invoke_with_context("start_recording", serde_json::json!({
+                "record_video": true, "target": {"kind": "window", "pid": pid, "window_id": window_id},
+                "output_dir": output.path(), "session": "bounded-window-recording"
+            }), context).await;
+            assert_eq!(
+                result.is_error != Some(true),
+                allowed,
+                "{pid}/{window_id}: {result:?}"
+            );
+            assert_eq!(recording_hits.load(Ordering::SeqCst), usize::from(allowed));
+            assert_eq!(display_hits.load(Ordering::SeqCst), 0);
+            assert_eq!(
+                *inventory_args.lock().unwrap(),
+                vec![serde_json::json!({"pid": pid})]
+            );
+        }
     }
 
     #[tokio::test]

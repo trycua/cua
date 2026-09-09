@@ -4,4 +4,5 @@
     <item name="preview" type="id" />
     <item name="start" type="id" />
     <item name="stop" type="id" />
+    <item name="run_agent" type="id" />
 </resources>

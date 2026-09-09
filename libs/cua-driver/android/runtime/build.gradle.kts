@@ -15,4 +15,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 }
-dependencies { implementation(project(":sdk")) }
+dependencies {
+    implementation(project(":sdk"))
+    testImplementation("junit:junit:4.13.2")
+}

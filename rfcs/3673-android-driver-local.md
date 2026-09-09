@@ -53,7 +53,7 @@ The first slice proves create/launch/capture/tap/stop with two synthetic apps.
 Use an expiring session and serialized bounded operations; publish lifecycle
 limits. Native event acceptance is an unverifiable effect until independent
 fixture evidence confirms the result. Raw text, accessibility refs, concurrent
-IME isolation, physical phone support, an autonomous agent loop, and general
+IME isolation, physical phone support, and general
 third-party app qualification remain separate acceptance gates. The experimental
 SDK uses typed coroutine operations over a synchronous transport. The demo's
 user-started foreground service owns renewal and cleanup across Activity
@@ -62,6 +62,18 @@ before honoring a queued Start. Deterministic tests cover the creation and
 cleanup races. Process death relies on runtime lease expiry;
 it never silently adopts or recreates a session. These experimental bindings
 remain separate from stable API adoption and complete SDK qualification.
+
+The follow-up local demo adds a device-owned visual agent loop for selected
+OpenCalc and Tasks.org releases. One virtual workspace can own a bounded set of
+app tasks and switch between them without adopting tasks from another display.
+Static capture requests a new compositor frame rather than extending a cached
+timestamp. Inference is relayed by a loopback-only, authenticated host service;
+the Android foreground service owns decisions, lease renewal, SDK input, and
+cleanup. The model can format actions but cannot run host commands. The agent
+rechecks exact screenshot pixels and target/runtime identity before acting, and
+distinguishes model-declared completion from a blocked task. Independent visual
+inspection remains required to establish the requested application outcome.
+This does not introduce a Fleet dependency or a stable Android API guarantee.
 
 ## Validation
 

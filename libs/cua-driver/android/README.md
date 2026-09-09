@@ -133,8 +133,11 @@ unverifiable application effect.
 
 ## Current constraints
 
-- One session and one launch attempt per session; stop and create a new session
-  after an interrupted launch. A second launch never adopts an old task.
+- One session with one owned task per allowlisted package (at most eight).
+  `app launch` creates a fresh task or switches to that session's existing task.
+  Every switch returns a new target ID and invalidates old snapshots. Existing
+  tasks outside the session are refused; an uncertain launch requires Stop.
+  Stop verifies display removal and destruction of every owned task.
 - Caller-owned 60-second lease; renew with `session renew`. CLI exit does not
   destroy the session, but no persistent host broker renews it automatically.
   The demo's user-started foreground service renews every 10 seconds, including
@@ -145,15 +148,17 @@ unverifiable application effect.
   the proposed 250 ms Stop-admission target is not implemented in this slice.
 - Rotation other than zero refuses input. Snapshot handles expire after five
   seconds. Input also requires the bound producer frame to be no older than
-  five seconds; an unchanged screen whose producer has stopped submitting frames
-  can therefore refuse input with `frame_stale`. Preview may show older frames
+  five seconds. For a static app, actionable capture replaces the ImageReader
+  output surface and requires a genuinely new compositor frame. It never
+  rewrites a cached frame's producer timestamp. Preview may show older frames
   with their reported age and does not refresh the actionable snapshot's age.
 - The runtime retains the last 128 mutation request IDs/outcomes, including
   uncertain results, until process death. Retention is bounded; no exactly-once
   guarantee survives eviction or restart. Do not blindly retry after either.
 - Semantic text, raw keyboard input, accessibility refs, target verification
   predicates, event subscriptions, general app support, and human IME concurrency
-  remain unsupported or unqualified. There is no model-driven agent loop yet.
+  remain unsupported or unqualified. The debug demo has a bounded visual agent
+  loop for the two real apps documented below; this is not general app support.
 - Frames currently use bounded base64 IPC; full-resolution capture is separate
   from downscaled preview. Streaming/Surface transport remains follow-up work.
 - Runtime installation requires Android 17/API 37. Framework calls and producer
@@ -234,3 +239,98 @@ Native Android evidence supplements rather than replaces the repository's
 canonical desktop E2E gates when shared desktop behavior is changed. Keep the
 implementation PR draft until the intended scope and remaining qualification
 gates are reviewed.
+
+### Run a visual model agent in two real apps
+
+The debug demo's **Run agent** button starts an Android foreground-service loop:
+snapshot, model decision, fresh-frame verification, then SDK action. It renews
+the lease independently of inference and updates the read-only preview. Stop
+cancels inference, drains admitted runtime requests, and releases the workspace.
+The loop is bounded to 40 decisions and 10 minutes. An uncertain input stops the
+run; it is never blindly retried. `blocked` is distinct from successful `done`.
+
+Inference is relayed through the host's authenticated Claude Code CLI. The
+relay has no shell, file, browser, or Driver tools available to the model. Its
+structured-response tool only formats a decision. Android owns the session,
+control loop, app switching, input, and cleanup. This prototype therefore needs
+the relay connection; it is not an offline language model running on the phone.
+The runtime is an explicitly authorized shell-UID helper, not a system-UID app.
+
+The selected APKs are unmodified upstream releases:
+
+| App | Package | Version | Source |
+| --- | --- | --- | --- |
+| OpenCalc | `com.darkempire78.opencalculator` | 3.2.1 | [GPL-3.0 source and APK](https://github.com/clementwzk/OpenCalc/releases/tag/v3.2.1) |
+| Tasks.org | `org.tasks` | 15.10, publisher's F-Droid variant | [GPL-3.0 source and APK](https://github.com/tasks/tasks/releases/tag/15.10) |
+
+Verify APK digests and signing certificates before installing in the disposable
+emulator. In Tasks.org, continue without sync and create synthetic tasks through
+its normal UI, for example **Order 42 snack packs** and **Book the venue**. These
+are demo setup data; no private database mutation or app modification is needed.
+Close both app tasks before starting a workspace. The runtime refuses to adopt
+an already running task from display 0, including a `singleTask` activity.
+
+Run the inference relay with an external evidence directory and a private token
+file containing 32–512 URL-safe random characters:
+
+```bash
+python3 scripts/agent-relay.py --token-file /tmp/android-agent/relay.token \
+  --evidence-dir /tmp/android-agent/inference --model opus
+```
+
+The server binds only `127.0.0.1:8788`, authenticates every request, validates
+PNG dimensions and bounded JSON, and admits one inference at a time. Raw
+screenshots, task/history data, model identity, and decisions stay in the chosen
+local evidence directory; keep them out of Git and public reports. Model API
+credentials are not copied into Android. The private demo config is
+`files/agent-config.json`; only debug builds accept this agent entry point.
+Disconnecting a request cancels its model subprocess and releases the relay
+slot. Clients must keep their sending half of the connection open while waiting;
+the relay treats a TCP half-close as cancellation too.
+
+From another terminal, pass a task file and the two allowed apps to the harness:
+
+```bash
+python3 scripts/agent-demo.py --device emulator-5554 \
+  --token-file /tmp/android-agent/relay.token \
+  --task-file /tmp/android-agent/task.txt \
+  --app com.darkempire78.opencalculator --app org.tasks \
+  --evidence-dir /tmp/android-agent/recording --record --background-seconds 12
+```
+
+Example task: use the calculator to work out six groups of seven snack packs,
+then complete only the matching existing snack-order item in Tasks.org. The
+model receives screenshots and its action history; it never receives fixture
+oracle data. After slow inference, Android compares a new frame's decoded
+pixels, target, display, rotation, and runtime identity. A changed observation
+gets up to four additional captures, 150 ms apart, to observe the same blinking
+caret phase. If none match exactly, the app requests a new decision. An exact
+match uses the new snapshot's input handle; no pixels are masked or ignored.
+The original five-second runtime freshness checks still apply.
+
+The harness configures `adb reverse`, presses Run agent, types synthetic text
+on display 0, optionally backgrounds/resumes the controller, and checks task
+cleanup. It does not choose or send target-app actions. Successful completion
+retains a verified PNG labeled **Last frame · workspace closed**. The raw MP4 is
+a continuous Android `screenrecord` capture. Use `--stop-during-inference` for
+the cancellation case and omit `--record` for ordinary qualification.
+The harness requires every requested app to have been visited. Its `done`
+status is the model's assertion; inspect the final image and action evidence
+independently before claiming that the application's task was completed.
+
+Additional focused checks:
+
+```bash
+python3 scripts/multiapp-smoke.py --device emulator-5554 \
+  --driver ../rust/target/debug/cua-driver \
+  --app com.darkempire78.opencalculator --app org.tasks \
+  --evidence-dir /tmp/android-multiapp-evidence
+python3 -m unittest discover -s scripts -p 'test_agent_relay.py'
+./gradlew :runtime:testDebugUnitTest :sdk:testDebugUnitTest :demo:testDebugUnitTest
+```
+
+The multi-app check exercises static capture, stale handles, repeated switching
+with stable task IDs, display-0 focus, and destruction of both tasks on Stop.
+The recording remains emulator qualification of these selected apps and touch
+operations. Physical phones, ordinary third-party app UIDs, human IME isolation,
+and Fleet integration remain follow-up work.

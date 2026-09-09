@@ -347,6 +347,7 @@ const LEGACY_PAGE_MUTATING_ACTIONS: &[&str] = &[
 ];
 
 const BROWSER_BOUND_INPUT_OPERATIONS: &[&str] = &[
+    "browser_resume",
     "browser_navigate",
     "browser_click",
     "browser_type",
@@ -917,6 +918,7 @@ pub fn advertised_risk_for(tool: &str) -> RiskAssessment {
         | "start_recording"
         | "get_browser_state"
         | "browser_prepare"
+        | "browser_resume"
         | "browser_navigate"
         | "browser_click"
         | "browser_type"

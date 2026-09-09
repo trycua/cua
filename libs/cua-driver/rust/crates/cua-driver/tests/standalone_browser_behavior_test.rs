@@ -1907,6 +1907,7 @@ fn run_challenge_article_false_positive(spec: &BrowserSpec) {
                 "a false detection source leaves callers unable to distinguish editorial copy: {}",
                 snapshot.raw
             );
+            assert_eq!(snapshot.structured()["blocker"], serde_json::Value::Null);
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
         },
@@ -1951,18 +1952,65 @@ fn run_challenge_positive(spec: &BrowserSpec) {
             assert_eq!(challenge["kind"], "anti_bot_challenge", "{}", snapshot.raw);
             assert_eq!(challenge["source"], "semantic", "{}", snapshot.raw);
             assert_eq!(challenge["confidence"], "medium", "{}", snapshot.raw);
-            let expected_origin = fixture
-                .server
-                .page_url()
-                .strip_suffix("/fixture")
-                .expect("fixture page URL suffix");
-            assert_eq!(challenge["origin"], expected_origin, "{}", snapshot.raw);
+            let challenge_origin = challenge["origin"]
+                .as_str()
+                .expect("challenge origin")
+                .to_owned();
             assert!(
                 challenge
                     .as_object()
                     .is_some_and(|report| report.len() == 5),
                 "challenge report must retain its closed shape: {}",
                 snapshot.raw
+            );
+            let blocker = &snapshot.structured()["blocker"];
+            let blocker_id = blocker["blocker_id"]
+                .as_str()
+                .expect("challenge blocker id")
+                .to_owned();
+            assert_eq!(
+                blocker["handling"], "explicit_resume_or_user_handoff",
+                "{}",
+                snapshot.raw
+            );
+            assert_eq!(blocker["detection_source"], "semantic", "{}", snapshot.raw);
+            let expected_origin = fixture
+                .server
+                .page_url()
+                .strip_suffix("/fixture")
+                .expect("fixture page URL suffix");
+            assert_eq!(challenge_origin, expected_origin, "{}", snapshot.raw);
+            let refused = fixture.driver.call(
+                "browser_navigate",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "url": fixture.server.page_url(),
+                    "session": session,
+                }),
+            );
+            assert_eq!(
+                refused.structured()["refusal"]["code"],
+                "browser_origin_blocked",
+                "{}",
+                refused.raw
+            );
+            let resumed = fixture.driver.call(
+                "browser_resume",
+                serde_json::json!({
+                    "target_id": target,
+                    "tab_id": tab,
+                    "origin": challenge_origin,
+                    "blocker_id": blocker_id,
+                    "session": session,
+                }),
+            );
+            assert_eq!(resumed.structured()["cleared"], true, "{}", resumed.raw);
+            assert_eq!(
+                resumed.structured()["action_dispatched"],
+                false,
+                "{}",
+                resumed.raw
             );
 
             Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())

@@ -24,6 +24,8 @@ browser_navigate / browser_click / browser_type / browser_pointer
 browser_dialog / browser_set_input_files / browser_download
 get_browser_state(target_id, tab_id, session?,
                   snapshot_format=semantic_v2)            # verify and refresh refs
+browser_resume(target_id, tab_id, origin, blocker_id,
+               session?)                                 # exact current blocker only
 end_session(session?)                                     # optional cleanup
 ```
 
@@ -263,13 +265,18 @@ viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`
 only to scope later reads. A content ref is not an action capability.
 
-`semantic_v2` snapshots include an advisory `challenge` object. When
+`semantic_v2` snapshots include a `challenge` object. When
 `challenge.status` is `detected`, the page looks like a CAPTCHA or
-bot-verification challenge. The report does not halt the session, provide a
-resume operation, or choose a policy. Choose whether to stop actions to that
-origin or request user handoff, then call `get_browser_state` again before
-continuing. The report contains a fixed source and confidence classification,
-not copied URL paths, queries, or page text.
+bot-verification challenge. The five-field challenge report remains advisory;
+a separate `blocker` object carries the action pause. The driver keeps read-only
+snapshots available but pauses navigation and mutations to that blocker's
+origin. Ask the user to take over, or call `browser_resume` with the exact
+`blocker.origin` and `blocker.blocker_id` only after an explicit caller decision.
+A stale id refuses. The same proven main document preserves its id; a reload or
+unproven document identity replaces it. When the blocker origin is null, leave
+the opaque page or end the session rather than inventing an origin. The report
+contains fixed source and confidence classifications rather than copied URL
+paths, queries, or page text.
 
 The snapshot ranks active dialogs and visible controls before near-viewport
 and offscreen content. It excludes CSS-hidden retained state before applying
@@ -320,8 +327,37 @@ cua-driver browser_navigate \
     "url":"https://example.com","session":"browser-run-1"}'
 ```
 
-Only `http:`, `https:`, and `about:` URLs are accepted. Navigation invalidates
-the tab's refs; snapshot again before the next ref-targeted action.
+Only `http:`, `https:`, and `about:` URLs are accepted. Once dispatch starts,
+navigation invalidates the tab's refs; snapshot again before the next
+ref-targeted action. For this explicit `browser_navigate` call on driver-owned
+and embedded browser endpoints, an observed main-document HTTP 429 returns
+`status: "ok"`, `input_delivered: true`, `page_blocked: true`, and a
+`rate_limited` blocker. `status` remains `ok` because the navigation was
+delivered; `page_blocked` reports the state reached afterward. The blocker does
+not expose a response body, full URL, path, or query. The driver refuses
+another mutation to that origin until `retry_after_ms` elapses or the caller
+explicitly invokes `browser_resume` with that blocker's exact `origin` and
+`blocker_id`; unrelated origins remain available. A stale blocker id refuses.
+A redirect that reaches an origin with a known active blocker also reports
+`page_blocked: true`. Otherwise `page_blocked` is null: a navigation response
+alone does not prove that the reached document is free of a page-level
+challenge. A server-directed retry window is capped at 24 hours so malformed
+input cannot create an indefinite pause.
+`server_retry_after_capped: true` reports when that cap was applied.
+If the bounded blocker store returns a session-wide `safety_capacity` blocker,
+end the session before performing more browser actions; the unrelated-origin
+exception does not apply.
+Existing-profile attachments preserve their narrower CDP privacy surface and
+report response observation as unavailable.
+
+Response observation here does not cover navigation caused by a click, form
+submission, reload, or page script. If an explicit navigation reaches the
+browser transport but its final document outcome cannot be proven, the exact
+tab receives a `navigation_outcome_unknown` blocker and `page_blocked` remains
+null. Refresh `get_browser_state`, then explicitly resume with the current
+blocker's exact non-null `origin` and `blocker_id`, or end the session.
+Cancellation before dispatch does not create this blocker or invalidate the
+current refs.
 
 ### Click
 
@@ -463,15 +499,15 @@ capabilities, or existing-profile consent.
 
 ## Support boundaries
 
-| Surface | Typed state and mutation | Important boundary |
-| --- | --- | --- |
-| Chrome / Edge on Windows | Exact binding, refs, navigation, typing, trusted or explicit DOM click | Must run in an interactive user session, not Session 0 |
-| Chrome / Edge on macOS | Exact binding, refs, navigation, typing, explicit DOM click | Trusted standalone click refuses to preserve background posture |
-| Chrome / Chromium on Linux X11 | Exact binding, refs, navigation, typing, explicit DOM click | Trusted standalone click refuses to preserve background posture |
-| Chromium on validated Wayland setups | Exact binding only when compositor identity is provable | Generic/ambiguous compositor identity refuses mutation |
-| Electron | Exact single-page routes where endpoint and host relationship are proven | Do not infer support for arbitrary embedded webviews |
-| Safari / Firefox | Native window state only | Typed page mutation is not supported yet |
-| WebView2 / Tauri / other embedded webviews | Native AX/PX fallback unless an exact route is reported | Host/renderer correlation may refuse |
+| Surface                                    | Typed state and mutation                                                 | Important boundary                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Chrome / Edge on Windows                   | Exact binding, refs, navigation, typing, trusted or explicit DOM click   | Must run in an interactive user session, not Session 0          |
+| Chrome / Edge on macOS                     | Exact binding, refs, navigation, typing, explicit DOM click              | Trusted standalone click refuses to preserve background posture |
+| Chrome / Chromium on Linux X11             | Exact binding, refs, navigation, typing, explicit DOM click              | Trusted standalone click refuses to preserve background posture |
+| Chromium on validated Wayland setups       | Exact binding only when compositor identity is provable                  | Generic/ambiguous compositor identity refuses mutation          |
+| Electron                                   | Exact single-page routes where endpoint and host relationship are proven | Do not infer support for arbitrary embedded webviews            |
+| Safari / Firefox                           | Native window state only                                                 | Typed page mutation is not supported yet                        |
+| WebView2 / Tauri / other embedded webviews | Native AX/PX fallback unless an exact route is reported                  | Host/renderer correlation may refuse                            |
 
 Product classification alone is not a capability claim. Trust the structured
 result from the current host, process, window, session, and tab.

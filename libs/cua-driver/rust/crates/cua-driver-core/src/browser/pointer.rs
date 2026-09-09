@@ -813,6 +813,14 @@ impl Tool for BrowserPointerTool {
             Ok(value) => value,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        let _origin_admission = match self
+            .engine
+            .admit_live_origin_action(&session, &validated)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
         if request.route == InputRoute::Trusted {
             if let Some(refusal) = self.trusted_background_refusal(&validated) {
                 return refusal;

@@ -181,6 +181,7 @@ pub enum ToolRefusalCode {
     BrowserInputIncomplete,
     BrowserActionUnavailable,
     BrowserOriginOutsideScope,
+    BrowserOriginBlocked,
     Other,
 }
 
@@ -204,6 +205,7 @@ impl ToolRefusalCode {
             Self::BrowserInputIncomplete => "browser_input_incomplete",
             Self::BrowserActionUnavailable => "browser_action_unavailable",
             Self::BrowserOriginOutsideScope => "browser_origin_outside_scope",
+            Self::BrowserOriginBlocked => "browser_origin_blocked",
             Self::Other => "other",
         }
     }
@@ -230,6 +232,7 @@ impl ToolRefusalCode {
             Some("browser_input_incomplete") => Self::BrowserInputIncomplete,
             Some("browser_action_unavailable") => Self::BrowserActionUnavailable,
             Some("browser_origin_outside_scope") => Self::BrowserOriginOutsideScope,
+            Some("browser_origin_blocked") => Self::BrowserOriginBlocked,
             Some(_) | None => Self::Other,
         }
     }
@@ -255,6 +258,7 @@ impl From<crate::browser::refusal::BrowserRefusalCode> for ToolRefusalCode {
             BrowserRefusalCode::BrowserInputIncomplete => Self::BrowserInputIncomplete,
             BrowserRefusalCode::BrowserActionUnavailable => Self::BrowserActionUnavailable,
             BrowserRefusalCode::BrowserOriginOutsideScope => Self::BrowserOriginOutsideScope,
+            BrowserRefusalCode::BrowserOriginBlocked => Self::BrowserOriginBlocked,
         }
     }
 }
@@ -717,6 +721,7 @@ fn structured_refusal_code(tool_name: &str, result: Option<&serde_json::Value>) 
         tool_name,
         "get_browser_state"
             | "browser_prepare"
+            | "browser_resume"
             | "browser_navigate"
             | "browser_click"
             | "browser_type"

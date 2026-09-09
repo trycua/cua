@@ -16,7 +16,7 @@ This reference describes the **Linux** native tool registry.
 Other platforms: [macOS MCP tools](/reference/cua-driver/mcp-tools), [Windows MCP tools](/reference/cua-driver/mcp-tools-windows).
 See [MCP tool notes](/reference/cua-driver/mcp-tool-notes) for shared guidance.
 
-`cua-driver` exposes 60 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
+`cua-driver` exposes 61 MCP tools through a single stdio server (`cua-driver mcp`). Every tool is also callable from the shell as `cua-driver <name> '<JSON-args>'`.
 
 Tool names are `snake_case`. Responses are MCP `CallTool.Result` envelopes: a text content block prefixed with a `✅` summary (or the error reason on failure), plus optional image or structured-content blocks on tools that produce them. See the [CLI reference](/reference/cua-driver/cli-reference) for CLI-specific options like `--socket` and `--screenshot-out-file`.
 
@@ -869,7 +869,7 @@ Select an already-installed cursor theme for a session.
 
 ### `get_browser_state`
 
-Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, an opaque continuation, and an advisory challenge report when page state conservatively indicates CAPTCHA or bot verification. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
+Read-only browser inspection. Mode 1 (bind): pass pid + window_id of a native browser window to classify it, correlate it to a CDP target (exact-or-refuse), and mint a session-scoped target id plus tab ids. Mode 2 (snapshot): pass target_id + tab_id. The dom_refs_v1 compatibility format returns composed DOM refs. semantic_v2 joins accessibility, DOM, layout, and viewport state; ranks visible content before retained/offscreen state; and returns a semantic outline, typed action refs, content refs, scoped reads, an opaque continuation, and a closed five-field challenge report. When that advisory report detects CAPTCHA or bot verification, a separate blocker pauses actions to its web origin until exact resume. The separate blocker also reports a retained rate-limit pause or an earlier browser_navigate whose final outcome could not be proven. An opaque-page blocker instead allows navigation away or session end. Never performs setup — a missing endpoint is a structured browser_requires_setup refusal pointing at browser_prepare.
 
 **Arguments:**
 
@@ -897,9 +897,25 @@ Explicitly prepare an owned DevTools endpoint for a browser. pid is required for
 - `strategy` (object, optional)
 - `window_id` (integer, optional): Exact native window approval anchor; required for strategy.kind=existing_profile.
 
+### `browser_resume`
+
+Explicitly clear one exact session-local challenge, rate-limit, or unknown-navigation blocker after the caller decides it is safe to continue. Requires the non-null origin and opaque blocker_id from the current blocker report, and refuses if either is stale or does not match the exact live tab. This records that decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot. Leave an opaque page instead of inventing an origin. A safety_capacity blocker can be cleared only by ending the session.
+
+**Arguments:**
+
+- `blocker_id` (string, required): Opaque id from the current blocker report.
+- `origin` (string, required): Exact origin from the current blocker report.
+- `session` (string, optional): For multi-call work, prefer a short public session label and repeat it on every call that accepts it. Omit it to use the authenticated transport's implicit lifecycle session. Browser targets, tabs, and refs belong to the resolved lifecycle session.
+- `tab_id` (string, required): Opaque tab id from get_browser_state (session-scoped).
+- `target_id` (string, required): Opaque browser target id minted by get_browser_state (session-scoped; never a CDP id).
+
+```json
+{"blocker_id":"blocker-example","origin":"https://example.com","tab_id":"example","target_id":"example"}
+```
+
 ### `browser_navigate`
 
-Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). Refused for heuristic bindings. Navigation invalidates all p&lt;snapshot&gt;:&lt;index&gt; refs for the tab.
+Navigate one tab of an exactly-bound browser target to a new URL (http/https/about only). Refused for heuristic bindings or a destination origin with an active challenge/rate-limit pause. Navigation invalidates all p&lt;snapshot&gt;:&lt;index&gt; refs for the tab once dispatch starts. For this explicit browser_navigate call, driver-owned and embedded endpoints report an observed main-document HTTP 429 with status ok, input_delivered true, and page_blocked true. If a dispatched navigation's final response cannot be proven, the exact tab remains paused with page_blocked unknown. The reviewed existing-profile surface does not observe response metadata.
 
 **Arguments:**
 

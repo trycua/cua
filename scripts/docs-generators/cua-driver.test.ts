@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { getLatestReleasedVersion, selectLatestReleasedVersion } from './cua-driver';
+import {
+  generateMCPToolDoc,
+  getLatestReleasedVersion,
+  selectLatestReleasedVersion,
+} from './cua-driver';
 
 test('lists matching tags through git argv without invoking a shell', () => {
   const calls: Array<{ command: string; args: readonly string[] }> = [];
@@ -54,5 +58,28 @@ test('reports when git returns no valid stable release tags', () => {
   assert.throws(
     () => getLatestReleasedVersion(() => 'nightly-cua-driver-rs-v0.21.0-nightly.20260816.1\n'),
     /No stable Cua Driver release tag matching cua-driver-rs-v<major>\.<minor>\.<patch> was found/
+  );
+});
+
+test('generates executable examples for exact browser blocker capabilities', () => {
+  const lines = generateMCPToolDoc({
+    name: 'browser_resume',
+    description: 'Resume one exact blocker.',
+    input_schema: {
+      type: 'object',
+      required: ['target_id', 'tab_id', 'origin', 'blocker_id'],
+      properties: {
+        target_id: { type: 'string' },
+        tab_id: { type: 'string' },
+        origin: { type: 'string' },
+        blocker_id: { type: 'string' },
+      },
+    },
+  });
+
+  assert.ok(
+    lines.includes(
+      '{"target_id":"example","tab_id":"example","origin":"https://example.com","blocker_id":"blocker-example"}'
+    )
   );
 });

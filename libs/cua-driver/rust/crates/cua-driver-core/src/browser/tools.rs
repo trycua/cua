@@ -5,16 +5,24 @@
 //! from [`super::engine`]. All structured outputs share the shape
 //! `{"status": "ok" | "refused", ...}`.
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use serde_json::{json, Value};
+use time::OffsetDateTime;
 
 use crate::protocol::{Content, ToolResult};
 use crate::tool::{ProtectedResourceOwnership, Tool, ToolDef, ToolRegistry};
 use crate::tool_args::ArgsExt;
 
-use super::cdp_ws::CdpConnection;
+use super::cdp_ws::{CdpConnection, CdpEvent};
+use super::challenge::{
+    browser_origin, navigation_response_observation, NavigationResponseObservation,
+};
 use super::download::BrowserDownloadTool;
 use super::engine::{BrowserEngine, BrowserTabScreenshot, FrameSessionLease};
 use super::platform::{BrowserVisualActionKind, PrepareProfile, PrepareRequest, PrepareStrategy};
@@ -22,7 +30,7 @@ use super::pointer::BrowserPointerTool;
 use super::refusal::{BrowserRefusal, BrowserRefusalCode};
 use super::session_schema as schema_session;
 use super::store::BrowserActionKind;
-use super::types::BindingQuality;
+use super::types::{BindingQuality, EndpointAccessClass};
 
 /// Register the complete browser surface against one shared engine. Platform
 /// crates call this from their `register_all` after constructing the
@@ -30,6 +38,7 @@ use super::types::BindingQuality;
 pub fn register_browser_tools(engine: &Arc<BrowserEngine>, registry: &mut ToolRegistry) {
     registry.register(Box::new(GetBrowserStateTool::new(engine.clone())));
     registry.register(Box::new(BrowserPrepareTool::new(engine.clone())));
+    registry.register(Box::new(BrowserResumeTool::new(engine.clone())));
     registry.register(Box::new(BrowserNavigateTool::new(engine.clone())));
     registry.register(Box::new(BrowserClickTool::new(engine.clone())));
     registry.register(Box::new(BrowserTypeTool::new(engine.clone())));
@@ -144,24 +153,40 @@ pub(crate) async fn browser_protected_resource_scope(
         .map_err(|error| error.message)?;
     let target = validated.record;
     let tab = validated.tab;
-    let requested_origin = if tool_name == "browser_navigate" {
-        let requested = args
-            .get("url")
-            .and_then(Value::as_str)
-            .ok_or_else(|| "browser_navigate requires a destination URL".to_owned())?;
-        if requested.to_ascii_lowercase().starts_with("about:") {
-            Some("about:".to_owned())
-        } else {
-            let parsed = url::Url::parse(requested)
-                .map_err(|_| "the destination URL is invalid".to_owned())?;
-            Some(parsed.origin().ascii_serialization())
+    let requested_origin = match tool_name {
+        "browser_navigate" => {
+            let requested = args
+                .get("url")
+                .and_then(Value::as_str)
+                .ok_or_else(|| "browser_navigate requires a destination URL".to_owned())?;
+            if requested.to_ascii_lowercase().starts_with("about:") {
+                Some("about:".to_owned())
+            } else {
+                let parsed = url::Url::parse(requested)
+                    .map_err(|_| "the destination URL is invalid".to_owned())?;
+                Some(parsed.origin().ascii_serialization())
+            }
         }
-    } else {
-        None
+        "browser_resume" => {
+            let origin = args
+                .get("origin")
+                .and_then(Value::as_str)
+                .filter(|origin| !origin.is_empty())
+                .ok_or_else(|| "browser_resume requires the exact blocker origin".to_owned())?;
+            if browser_origin(origin) != origin {
+                return Err(
+                    "browser_resume requires the canonical non-opaque origin from the blocker report"
+                        .to_owned(),
+                );
+            }
+            Some(origin.to_owned())
+        }
+        _ => None,
     };
     let action_class = match tool_name {
         "get_browser_state" => "page_observation",
         "browser_navigate" => "navigation",
+        "browser_resume" => "blocker_resume",
         "browser_dialog" => "page_dialog_resolution",
         _ => "page_input",
     };
@@ -189,6 +214,13 @@ pub(crate) async fn browser_protected_resource_scope(
         );
         resource["prompt_text_present"] =
             Value::Bool(args.get("prompt_text").and_then(Value::as_str).is_some());
+    } else if tool_name == "browser_resume" {
+        let blocker_id = args
+            .get("blocker_id")
+            .and_then(Value::as_str)
+            .filter(|blocker_id| !blocker_id.is_empty())
+            .ok_or_else(|| "browser_resume requires the exact blocker_id".to_owned())?;
+        resource["blocker_id"] = Value::String(blocker_id.to_owned());
     }
     Ok(Some(resource))
 }
@@ -232,6 +264,223 @@ fn with_tab_screenshot(mut result: ToolResult, screenshot: BrowserTabScreenshot)
     result
 }
 
+async fn wait_for_navigation_response(
+    events: &mut tokio::sync::mpsc::UnboundedReceiver<CdpEvent>,
+    cdp_session: &str,
+    loader_id: Option<&str>,
+    frame_id: Option<&str>,
+) -> Option<NavigationResponseObservation> {
+    let loader_id = loader_id?;
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let event = tokio::time::timeout_at(deadline, events.recv())
+            .await
+            .ok()??;
+        if event.method != "Network.responseReceived"
+            || event.session_id.as_deref() != Some(cdp_session)
+        {
+            continue;
+        }
+        if let Some(observation) = navigation_response_observation(
+            &event.params,
+            Some(loader_id),
+            frame_id,
+            OffsetDateTime::now_utc(),
+        ) {
+            // Chromium can report each main-document redirect under the same
+            // loader. Only the terminal response describes the page reached
+            // by this navigation.
+            if observation.is_redirect {
+                continue;
+            }
+            return Some(observation);
+        }
+    }
+}
+
+struct NavigationObservationGuard {
+    conn: Arc<CdpConnection>,
+    cdp_session: String,
+    active: bool,
+}
+
+impl NavigationObservationGuard {
+    async fn enable(conn: Arc<CdpConnection>, cdp_session: &str) -> anyhow::Result<Self> {
+        // Arm cleanup before sending Network.enable. The CDP call can be
+        // cancelled after Chromium receives it but before its reply arrives.
+        let guard = Self {
+            conn,
+            cdp_session: cdp_session.to_owned(),
+            active: true,
+        };
+        guard
+            .conn
+            .call(
+                Some(&guard.cdp_session),
+                "Network.enable",
+                json!({
+                    "maxTotalBufferSize": 0,
+                    "maxResourceBufferSize": 0,
+                    "maxPostDataSize": 0,
+                }),
+            )
+            .await?;
+        Ok(guard)
+    }
+
+    async fn disable(&mut self) -> anyhow::Result<()> {
+        if self.active {
+            self.conn
+                .call(Some(&self.cdp_session), "Network.disable", json!({}))
+                .await?;
+            self.active = false;
+        }
+        Ok(())
+    }
+}
+
+impl Drop for NavigationObservationGuard {
+    fn drop(&mut self) {
+        if !self.active {
+            return;
+        }
+        let conn = self.conn.clone();
+        let cdp_session = self.cdp_session.clone();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            runtime.spawn(async move {
+                // Explicit cleanup already failed or was cancelled. Retry a
+                // small fixed number of times; never leave an unbounded task.
+                for _ in 0..3 {
+                    if conn
+                        .call(Some(&cdp_session), "Network.disable", json!({}))
+                        .await
+                        .is_ok()
+                    {
+                        break;
+                    }
+                }
+            });
+        }
+    }
+}
+
+/// Cancellation-safe ownership of the interval after Page.navigate may have
+/// entered the transport and before its final document outcome is committed.
+///
+/// The real-tab mutation gate outlives this guard, so Drop installs the
+/// fail-closed marker before another mutation can enter the same tab.
+struct NavigationDispatchGuard {
+    engine: Arc<BrowserEngine>,
+    session: String,
+    target_id: String,
+    tab_id: String,
+    dispatch_started: Arc<AtomicBool>,
+    blocker_id: Option<String>,
+    resolved: bool,
+}
+
+impl NavigationDispatchGuard {
+    fn new(engine: Arc<BrowserEngine>, session: &str, target_id: &str, tab_id: &str) -> Self {
+        Self {
+            engine,
+            session: session.to_owned(),
+            target_id: target_id.to_owned(),
+            tab_id: tab_id.to_owned(),
+            dispatch_started: Arc::new(AtomicBool::new(false)),
+            blocker_id: None,
+            resolved: false,
+        }
+    }
+
+    fn dispatch_started_callback(&self) -> impl FnOnce() + Send + 'static {
+        let dispatch_started = self.dispatch_started.clone();
+        let engine = self.engine.clone();
+        let session = self.session.clone();
+        let target_id = self.target_id.clone();
+        let tab_id = self.tab_id.clone();
+        move || {
+            // Invalidate the old document's capabilities at the same staged
+            // boundary. Cancellation while waiting for the shared writer has
+            // neither dispatched input nor invalidated usable refs.
+            engine
+                .store
+                .invalidate_tab_snapshots(&session, &target_id, &tab_id);
+            dispatch_started.store(true, Ordering::Release);
+        }
+    }
+
+    fn started(&self) -> bool {
+        self.dispatch_started.load(Ordering::Acquire)
+    }
+
+    fn ensure_blocked(&mut self, observed_origin: &str) -> Option<super::store::OriginBlocker> {
+        if !self.dispatch_started.load(Ordering::Acquire) {
+            return None;
+        }
+        let blocker = self.engine.store.block_tab_for_unknown_navigation(
+            &self.session,
+            &self.target_id,
+            &self.tab_id,
+            observed_origin,
+        )?;
+        self.blocker_id = Some(blocker.blocker_id().to_owned());
+        Some(blocker)
+    }
+
+    fn resolve_known(&mut self, observed_origin: &str) {
+        if let Some(blocker_id) = self.blocker_id.take() {
+            let _ = self.engine.store.clear_tab_navigation_blocker_if_matches(
+                &self.session,
+                &self.target_id,
+                &self.tab_id,
+                observed_origin,
+                &blocker_id,
+            );
+        }
+        self.resolved = true;
+    }
+}
+
+impl Drop for NavigationDispatchGuard {
+    fn drop(&mut self) {
+        if !self.resolved {
+            let _ = self.ensure_blocked("");
+        }
+    }
+}
+
+fn blocker_navigation_result(
+    target_id: &str,
+    tab_id: &str,
+    http_status: u16,
+    blocker: super::store::OriginBlocker,
+) -> ToolResult {
+    let blocker = blocker.to_value(Instant::now());
+    let origin = blocker["origin"]
+        .as_str()
+        .unwrap_or("the destination origin");
+    let message = if blocker["kind"] == "safety_capacity" {
+        "navigation completed, but the session could not retain another exact blocker; end this session before performing more browser actions".to_owned()
+    } else if blocker["kind"] == "anti_bot_challenge" {
+        format!("navigation reached an already-detected challenge at {origin}; that origin remains paused")
+    } else if http_status == 429 {
+        format!("navigation reached a rate limit at {origin} and paused that origin")
+    } else {
+        format!("navigation reached {origin}, which already has an active rate-limit pause")
+    };
+    ToolResult::text(message).with_structured(json!({
+        "status": "ok",
+        "target_id": target_id,
+        "tab_id": tab_id,
+        "input_delivered": true,
+        "page_blocked": true,
+        "http_status": http_status,
+        "response_observation": "observed",
+        "refs_invalidated": true,
+        "blocker": blocker,
+    }))
+}
+
 // ── get_browser_state ────────────────────────────────────────────────────────
 
 pub struct GetBrowserStateTool {
@@ -251,8 +500,12 @@ impl GetBrowserStateTool {
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
                 semantic outline, typed action refs, content refs, scoped reads, an \
-                opaque continuation, and an advisory challenge report when page state \
-                conservatively indicates CAPTCHA or bot verification. Never performs setup — \
+                opaque continuation, and a closed five-field challenge report. When that \
+                advisory report detects CAPTCHA or bot verification, a separate blocker \
+                pauses actions to its web origin until exact resume. The separate blocker \
+                also reports a retained rate-limit pause or an earlier browser_navigate \
+                whose final outcome could not be proven. An opaque-page blocker instead \
+                allows navigation away or session end. Never performs setup — \
                 a missing endpoint is a structured browser_requires_setup refusal \
                 pointing at browser_prepare."
                 .into(),
@@ -438,6 +691,7 @@ impl Tool for GetBrowserStateTool {
                             "refs": refs,
                             "content_refs": content_refs,
                             "challenge": outcome.challenge,
+                            "blocker": outcome.blocker,
                             "oopif": {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),
@@ -728,6 +982,136 @@ impl Tool for BrowserPrepareTool {
     }
 }
 
+// ── browser_resume ───────────────────────────────────────────────────────────
+
+pub struct BrowserResumeTool {
+    def: ToolDef,
+    engine: Arc<BrowserEngine>,
+}
+
+impl BrowserResumeTool {
+    pub fn new(engine: Arc<BrowserEngine>) -> Self {
+        let def = ToolDef {
+            name: "browser_resume".into(),
+            description: "Explicitly clear one exact session-local challenge, rate-limit, or unknown-navigation blocker after the caller decides it is safe to continue. Requires the non-null origin and opaque blocker_id from the current blocker report, and refuses if either is stale or does not match the exact live tab. This records that decision only; it does not click, navigate, solve a challenge, or bypass a site's controls. A still-visible challenge is reported and paused again by the next semantic snapshot. Leave an opaque page instead of inventing an origin. A safety_capacity blocker can be cleared only by ending the session.".into(),
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "target_id": schema_target_id(),
+                    "tab_id": schema_tab_id(),
+                    "origin": { "type": "string", "description": "Exact origin from the current blocker report." },
+                    "blocker_id": { "type": "string", "description": "Opaque id from the current blocker report." },
+                    "session": schema_session(),
+                },
+                "required": ["target_id", "tab_id", "origin", "blocker_id"],
+                "additionalProperties": true,
+            }),
+            read_only: false,
+            destructive: false,
+            idempotent: false,
+            open_world: false,
+        };
+        Self { def, engine }
+    }
+}
+
+#[async_trait]
+impl Tool for BrowserResumeTool {
+    fn def(&self) -> &ToolDef {
+        &self.def
+    }
+
+    async fn protected_resource_ownership(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> ProtectedResourceOwnership {
+        if adapter_id == "browser_bound_input" {
+            browser_resource_ownership(&self.engine, args)
+        } else {
+            ProtectedResourceOwnership::UserOwned
+        }
+    }
+
+    async fn protected_resource_scope(
+        &self,
+        adapter_id: &str,
+        args: &Value,
+    ) -> Result<Option<Value>, String> {
+        if adapter_id == "browser_bound_input" {
+            browser_protected_resource_scope(&self.engine, args, "browser_resume").await
+        } else {
+            Ok(None)
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let (target_id, tab_id, origin, blocker_id) = match (
+            args.require_str("target_id"),
+            args.require_str("tab_id"),
+            args.require_str("origin"),
+            args.require_str("blocker_id"),
+        ) {
+            (Ok(target_id), Ok(tab_id), Ok(origin), Ok(blocker_id)) => {
+                (target_id, tab_id, origin, blocker_id)
+            }
+            (Err(error), _, _, _)
+            | (_, Err(error), _, _)
+            | (_, _, Err(error), _)
+            | (_, _, _, Err(error)) => return error,
+        };
+        if origin.is_empty() || browser_origin(&origin) != origin {
+            return ToolResult::error(
+                "browser_resume origin must exactly match the canonical non-opaque origin from the blocker report",
+            );
+        }
+        if blocker_id.is_empty() {
+            return ToolResult::error(
+                "browser_resume blocker_id must exactly match the opaque id from the blocker report",
+            );
+        }
+        let session = match require_explicit_session(&args) {
+            Ok(session) => session,
+            Err(error) => return error,
+        };
+        let _mutation = match self
+            .engine
+            .lock_mutation(&session, &target_id, &tab_id)
+            .await
+        {
+            Ok(guard) => guard,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let validated = match self
+            .engine
+            .revalidate_for_mutation(&session, &target_id, Some(&tab_id))
+            .await
+        {
+            Ok(validated) => validated,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        match self
+            .engine
+            .clear_live_origin_blocker(&session, &validated, &origin, &blocker_id)
+            .await
+        {
+            Ok(origin) => ToolResult::text(format!(
+                "resumed browser actions to {origin} for blocker {blocker_id}"
+            ))
+            .with_structured(json!({
+                "status": "ok",
+                "target_id": target_id,
+                "tab_id": tab_id,
+                "origin": origin,
+                "blocker_id": blocker_id,
+                "cleared": true,
+                "action_dispatched": false,
+            })),
+            Err(refusal) => refusal.to_tool_result(),
+        }
+    }
+}
+
 // ── browser_navigate ─────────────────────────────────────────────────────────
 
 pub struct BrowserNavigateTool {
@@ -740,8 +1124,14 @@ impl BrowserNavigateTool {
         let def = ToolDef {
             name: "browser_navigate".into(),
             description: "Navigate one tab of an exactly-bound browser target to a \
-                new URL (http/https/about only). Refused for heuristic bindings. \
-                Navigation invalidates all p<snapshot>:<index> refs for the tab."
+                new URL (http/https/about only). Refused for heuristic bindings or a \
+                destination origin with an active challenge/rate-limit pause. Navigation \
+                invalidates all p<snapshot>:<index> refs for the tab once dispatch starts. \
+                For this explicit browser_navigate call, driver-owned and embedded endpoints \
+                report an observed main-document HTTP 429 with status ok, input_delivered \
+                true, and page_blocked true. If a dispatched navigation's final response \
+                cannot be proven, the exact tab remains paused with page_blocked unknown. \
+                The reviewed existing-profile surface does not observe response metadata."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -807,10 +1197,8 @@ impl Tool for BrowserNavigateTool {
             Err(e) => return e,
         };
         let lower = url.to_ascii_lowercase();
-        if !(lower.starts_with("http://")
-            || lower.starts_with("https://")
-            || lower.starts_with("about:"))
-        {
+        let is_http_navigation = lower.starts_with("http://") || lower.starts_with("https://");
+        if !(is_http_navigation || lower.starts_with("about:")) {
             return ToolResult::error(format!(
                 "browser_navigate only accepts http/https/about URLs, got: {url}"
             ));
@@ -832,33 +1220,254 @@ impl Tool for BrowserNavigateTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        if let Err(refusal) = self
+            .engine
+            .require_known_navigation_outcome(&session, &validated)
+            .await
+        {
+            return refusal.to_tool_result();
+        }
+        let target_generation = validated.record.generation;
+        let destination_origin = browser_origin(&url);
+        if is_http_navigation && destination_origin.is_empty() {
+            return ToolResult::error("browser_navigate destination URL is invalid");
+        }
+        let mut destination_admission = Some(
+            match self
+                .engine
+                .admit_origin_action(&session, &destination_origin)
+                .await
+            {
+                Ok(admission) => admission,
+                Err(refusal) => return refusal.to_tool_result(),
+            },
+        );
 
-        match validated
+        // The reviewed existing-profile CDP surface intentionally excludes the
+        // Network domain. Keep that privacy boundary intact; exact response
+        // metadata is available for driver-owned and embedded endpoints only.
+        let mut network_observation = if is_http_navigation
+            && validated.record.endpoint_access_class
+                != EndpointAccessClass::ExistingProfileApproved
+        {
+            match NavigationObservationGuard::enable(
+                validated.conn.clone(),
+                &validated.cdp_session,
+            )
+            .await
+            {
+                Ok(observation) => Some(observation),
+                Err(error) => {
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserActionUnavailable,
+                        format!(
+                            "the exact tab could not enable required navigation response observation: {error}"
+                        ),
+                    )
+                    .to_tool_result()
+                }
+            }
+        } else {
+            None
+        };
+        let mut network_events = network_observation
+            .as_ref()
+            .map(|_| validated.conn.subscribe());
+        let mut dispatch =
+            NavigationDispatchGuard::new(self.engine.clone(), &session, &target_id, &tab_id);
+        let dispatch_started = dispatch.dispatch_started_callback();
+        let navigation = validated
             .conn
-            .call(
+            .call_with_dispatch_started(
                 Some(&validated.cdp_session),
                 "Page.navigate",
                 json!({ "url": url }),
+                dispatch_started,
             )
-            .await
-        {
+            .await;
+        match navigation {
             Ok(result) => {
                 if let Some(err_text) = result.get("errorText").and_then(Value::as_str) {
-                    return ToolResult::error(format!("navigation failed: {err_text}"));
+                    let blocker = dispatch
+                        .ensure_blocked("")
+                        .map(|blocker| blocker.to_value(Instant::now()));
+                    if let Some(observation) = network_observation.as_mut() {
+                        let _ = observation.disable().await;
+                    }
+                    return BrowserRefusal::new(
+                        BrowserRefusalCode::BrowserActionUnavailable,
+                        format!(
+                            "navigation reported an error after dispatch ({err_text}); the exact tab is paused because its final document outcome is unknown"
+                        ),
+                    )
+                    .with_detail(json!({
+                        "blocker": blocker,
+                        "refs_invalidated": true,
+                        "input_delivered": true,
+                        "page_blocked": Value::Null,
+                    }))
+                    .to_tool_result();
                 }
-                // Refs die with the old document.
-                self.engine
-                    .store
-                    .invalidate_tab_snapshots(&session, &target_id, &tab_id);
+                let (response, observed_blocker) = if network_observation.is_some() {
+                    let response = wait_for_navigation_response(
+                        network_events
+                            .as_mut()
+                            .expect("an enabled observation has an event receiver"),
+                        &validated.cdp_session,
+                        result.get("loaderId").and_then(Value::as_str),
+                        result.get("frameId").and_then(Value::as_str),
+                    )
+                    .await;
+                    let blocker = if let Some(response) = response.as_ref() {
+                        // Persist a tab-local fail-closed marker before the
+                        // cancellable read→write transition. If this task is
+                        // cancelled while waiting, the observed navigation
+                        // cannot disappear into an actionable unknown state.
+                        let _ = dispatch.ensure_blocked(&response.origin);
+                        drop(destination_admission.take());
+                        let engine = self.engine.clone();
+                        let commit_session = session.clone();
+                        let commit_target = target_id.clone();
+                        let commit_tab = tab_id.clone();
+                        let response_origin = response.origin.clone();
+                        let response_status = response.status;
+                        let response_retry_after = response.retry_after;
+                        // The task owns the temporary tab interlock as well as
+                        // the session transition. Cancellation of the tool can
+                        // no longer discard a proven 429 or reopen the tab in
+                        // the interval before the origin blocker is installed.
+                        let commit = tokio::spawn(async move {
+                            let response_transition = engine
+                                .lock_origin_transition(&commit_session, &response_origin)
+                                .await;
+                            let blocker = engine.apply_navigation_response_while_admitted(
+                                &response_transition,
+                                &commit_target,
+                                &commit_tab,
+                                target_generation,
+                                response_status,
+                                response_retry_after,
+                            );
+                            if blocker.is_ok() {
+                                dispatch.resolve_known(&response_origin);
+                            }
+                            blocker
+                        });
+                        match commit.await {
+                            Ok(Ok(blocker)) => blocker,
+                            Ok(Err(refusal)) => {
+                                if let Some(observation) = network_observation.as_mut() {
+                                    let _ = observation.disable().await;
+                                }
+                                return refusal.to_tool_result();
+                            }
+                            Err(error) => {
+                                let blocker = self
+                                    .engine
+                                    .store
+                                    .active_tab_navigation_blocker(
+                                        &session,
+                                        &target_id,
+                                        &tab_id,
+                                        &response.origin,
+                                    )
+                                    .map(|blocker| blocker.to_value(Instant::now()));
+                                if let Some(observation) = network_observation.as_mut() {
+                                    let _ = observation.disable().await;
+                                }
+                                return BrowserRefusal::new(
+                                    BrowserRefusalCode::BrowserActionUnavailable,
+                                    format!(
+                                        "the observed navigation response commit task failed: {error}"
+                                    ),
+                                )
+                                .with_detail(json!({
+                                    "blocker": blocker,
+                                    "input_delivered": true,
+                                    "page_blocked": Value::Null,
+                                }))
+                                .to_tool_result();
+                            }
+                        }
+                    } else {
+                        dispatch.ensure_blocked("")
+                    };
+                    if let Some(observation) = network_observation.as_mut() {
+                        let _ = observation.disable().await;
+                    }
+                    (response, blocker)
+                } else {
+                    dispatch.resolve_known(&destination_origin);
+                    (None, None)
+                };
+                if response.is_none() {
+                    if let Some(blocker) = observed_blocker.as_ref() {
+                        return ToolResult::text(format!(
+                            "navigation was delivered to {tab_id}, but its final document response could not be proven; the exact tab is paused"
+                        ))
+                        .with_structured(json!({
+                            "status": "ok",
+                            "target_id": target_id,
+                            "tab_id": tab_id,
+                            "url": url,
+                            "refs_invalidated": true,
+                            "input_delivered": true,
+                            "page_blocked": Value::Null,
+                            "http_status": Value::Null,
+                            "response_observation": "unavailable",
+                            "navigation_outcome": "unknown",
+                            "blocker": blocker.to_value(Instant::now()),
+                        }));
+                    }
+                }
+                if let Some(blocker) = observed_blocker {
+                    return blocker_navigation_result(
+                        &target_id,
+                        &tab_id,
+                        response.as_ref().map_or(429, |response| response.status),
+                        blocker,
+                    );
+                }
                 ToolResult::text(format!("navigated {tab_id} to {url}")).with_structured(json!({
                     "status": "ok",
                     "target_id": target_id,
                     "tab_id": tab_id,
                     "url": url,
                     "refs_invalidated": true,
+                    "input_delivered": true,
+                    // HTTP response metadata alone cannot prove that the
+                    // reached document is free of a page-level challenge.
+                    "page_blocked": Value::Null,
+                    "http_status": response.as_ref().map(|response| response.status),
+                    "response_observation": if response.is_some() { "observed" } else { "unavailable" },
                 }))
             }
-            Err(e) => ToolResult::error(format!("Page.navigate failed: {e}")),
+            Err(e) => {
+                let dispatch_started = dispatch.started();
+                let blocker = dispatch
+                    .ensure_blocked("")
+                    .map(|blocker| blocker.to_value(Instant::now()));
+                if let Some(observation) = network_observation.as_mut() {
+                    let _ = observation.disable().await;
+                }
+                BrowserRefusal::new(
+                    BrowserRefusalCode::BrowserActionUnavailable,
+                    if dispatch_started {
+                        format!(
+                            "Page.navigate failed after dispatch started ({e}); the exact tab is paused because its final document outcome is unknown"
+                        )
+                    } else {
+                        format!("Page.navigate failed before dispatch started: {e}")
+                    },
+                )
+                .with_detail(json!({
+                    "blocker": blocker,
+                    "refs_invalidated": dispatch_started,
+                    "input_delivered": Value::Null,
+                    "page_blocked": Value::Null,
+                }))
+                .to_tool_result()
+            }
         }
     }
 }
@@ -993,6 +1602,14 @@ impl Tool for BrowserClickTool {
             .await
         {
             Ok(v) => v,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let _origin_admission = match self
+            .engine
+            .admit_live_origin_action(&session, &validated)
+            .await
+        {
+            Ok(admission) => admission,
             Err(refusal) => return refusal.to_tool_result(),
         };
         if route == "trusted" && validated.record.cdp_window_id.is_some() {
@@ -1598,6 +2215,14 @@ impl Tool for BrowserTypeTool {
             Ok(v) => v,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        let _origin_admission = match self
+            .engine
+            .admit_live_origin_action(&session, &validated)
+            .await
+        {
+            Ok(admission) => admission,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
 
         let ext_ref = match args.require_str("ref") {
             Ok(value) => value,
@@ -2175,6 +2800,20 @@ impl Tool for BrowserDialogTool {
             Ok(validated) => validated,
             Err(refusal) => return refusal.to_tool_result(),
         };
+        let _origin_admission = if action != "inspect" {
+            Some(
+                match self
+                    .engine
+                    .admit_live_origin_action(&session, &validated)
+                    .await
+                {
+                    Ok(admission) => admission,
+                    Err(refusal) => return refusal.to_tool_result(),
+                },
+            )
+        } else {
+            None
+        };
         if cfg!(target_os = "linux") && action != "inspect" && delivery_mode == "background" {
             return BrowserRefusal::new(
                 BrowserRefusalCode::BrowserInputTrustUnavailable,
@@ -2383,6 +3022,14 @@ impl Tool for BrowserSetInputFilesTool {
             .await
         {
             Ok(validated) => validated,
+            Err(refusal) => return refusal.to_tool_result(),
+        };
+        let _origin_admission = match self
+            .engine
+            .admit_live_origin_action(&session, &validated)
+            .await
+        {
+            Ok(admission) => admission,
             Err(refusal) => return refusal.to_tool_result(),
         };
         let entry = match self
@@ -2637,6 +3284,10 @@ mod tests {
                 "browser_prepare",
             ),
             (
+                BrowserResumeTool::new(e.clone()).def().clone(),
+                "browser_resume",
+            ),
+            (
                 BrowserNavigateTool::new(e.clone()).def().clone(),
                 "browser_navigate",
             ),
@@ -2697,6 +3348,7 @@ mod tests {
             vec![
                 "get_browser_state",
                 "browser_prepare",
+                "browser_resume",
                 "browser_navigate",
                 "browser_click",
                 "browser_type",
@@ -3009,6 +3661,7 @@ mod tests {
                 url: "https://example.test".into(),
                 active: Some(true),
                 generation: 0,
+                navigation_blocker_id: None,
                 snapshots: HashMap::new(),
             },
         );
@@ -3069,6 +3722,7 @@ mod tests {
                 url: "https://example.test".into(),
                 active: Some(true),
                 generation: 0,
+                navigation_blocker_id: None,
                 snapshots: HashMap::new(),
             },
         );
@@ -3146,11 +3800,21 @@ mod tests {
             },
         );
         assert_eq!(e.store.target_count(sid), 1);
+        let admission = e
+            .lock_origin_admission(sid, "https://cleanup.example")
+            .await;
+        assert_eq!(e.origin_admission_registry_counts(), (1, 1));
         crate::session::fire_session_end(sid);
         assert_eq!(
             e.store.target_count(sid),
             0,
             "session end must clean the store"
         );
+        assert_eq!(
+            e.origin_admission_registry_counts(),
+            (0, 0),
+            "session end must prune admission registry keys"
+        );
+        drop(admission);
     }
 }

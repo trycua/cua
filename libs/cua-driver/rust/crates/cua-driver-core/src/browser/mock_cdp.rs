@@ -35,6 +35,7 @@ pub(crate) struct MockEvent {
 pub(crate) struct MockReply {
     pub events: Vec<MockEvent>,
     pub result: Result<Value, (i64, String)>,
+    reply_gate: Option<Arc<tokio::sync::Notify>>,
     pub delay: Option<Duration>,
 }
 
@@ -43,6 +44,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Ok(result),
+            reply_gate: None,
             delay: None,
         }
     }
@@ -51,6 +53,7 @@ impl MockReply {
         Self {
             events: Vec::new(),
             result: Err((code, message.to_owned())),
+            reply_gate: None,
             delay: None,
         }
     }
@@ -62,6 +65,12 @@ impl MockReply {
 
     pub fn with_events(mut self, events: Vec<MockEvent>) -> Self {
         self.events = events;
+        self
+    }
+
+    /// Hold the command response until the test releases this gate.
+    pub fn with_reply_gate(mut self, gate: Arc<tokio::sync::Notify>) -> Self {
+        self.reply_gate = Some(gate);
         self
     }
 
@@ -125,6 +134,9 @@ impl MockCdpServer {
                             if ws.send(Message::Text(frame.to_string())).await.is_err() {
                                 return;
                             }
+                        }
+                        if let Some(gate) = reply.reply_gate {
+                            gate.notified().await;
                         }
                         if let Some(delay) = reply.delay {
                             tokio::time::sleep(delay).await;

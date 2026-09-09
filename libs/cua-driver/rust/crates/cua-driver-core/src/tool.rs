@@ -403,6 +403,7 @@ pub fn default_capabilities_for(tool_name: &str) -> Vec<String> {
         // page via CDP, not on the OS input layer.
         "get_browser_state" => &["browser.state"],
         "browser_prepare" => &["browser.prepare"],
+        "browser_resume" => &["browser.resume"],
         "browser_navigate" => &["browser.navigate"],
         "browser_click" => &["browser.input.click"],
         "browser_type" => &["browser.input.type"],
@@ -5104,6 +5105,7 @@ mod capability_tests {
         // browser-tool v1
         "get_browser_state",
         "browser_prepare",
+        "browser_resume",
         "browser_navigate",
         "browser_click",
         "browser_type",
@@ -5189,6 +5191,7 @@ mod capability_tests {
         // browser-tool v1
         "browser.state",
         "browser.prepare",
+        "browser.resume",
         "browser.navigate",
         "browser.input.click",
         "browser.input.type",

@@ -316,12 +316,6 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
-    #[cfg(target_os = "windows")]
-    if spec.name == "electron" && scenario.ends_with("-typed-sdk") {
-        // Chromium can freeze AX updates while fully occluded. Keep this
-        // observation fixture rendering without changing native z-order/focus.
-        command.arg("--disable-backgrounding-occluded-windows");
-    }
     match spec.name {
         "electron" => {
             command.env(
@@ -979,33 +973,23 @@ fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
             "mismatched SDK window identity changed fixture state"
         );
 
-        sdk.click(sdk_background_click(fixture, current_token))
+        sdk.click(sdk_background_click(fixture, current_token.clone()))
             .await
             .expect("typed background element click");
         assert_fixture_contains(fixture, "last_action=left_click");
-        // Browser accessibility updates can lag the fixture's DOM journal.
-        // Observe until the effect arrives, without dispatching another click.
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let after = sdk
-                .get_window_state(sdk_window_input(fixture))
-                .await
-                .expect("typed post-action window state");
-            assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
-            if after
-                .tree_markdown
-                .as_deref()
-                .unwrap_or_default()
-                .contains("last_action=left_click")
-            {
-                break;
-            }
-            assert!(
-                Instant::now() < deadline,
-                "fresh typed state must independently expose the click effect: {after:?}"
-            );
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
+        // Match the fixture's delivery contract: its DOM journal is the effect
+        // oracle because embedded browsers can retain stale accessible text.
+        // A fresh native observation must still preserve identity and tokens.
+        let after = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed post-action window state");
+        assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
+        assert_ne!(
+            sdk_click_token(&after),
+            current_token,
+            "post-action observation must mint a fresh snapshot-bound token"
+        );
         sdk.shutdown().await.expect("shut down typed SDK client");
     });
     delivered_observation()

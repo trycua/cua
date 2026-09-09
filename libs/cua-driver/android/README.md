@@ -207,6 +207,29 @@ exercise Stop/Start races, repeat Start, cancel a queued restart, reject
 unconfirmed cleanup, and stop using a changed runtime. SDK tests cover typed
 responses, request correlation, refusals, uncertain results, and cancellation.
 
+### Record a scripted SDK demonstration
+
+The optional instrumentation harness runs real SDK snapshots and taps from the
+demo's UID, checking the synthetic counter after every tap. It waits up to
+60 seconds for Start, continues while the Activity is on Home, and exits after
+Stop. It is a scripted fixture, not a model-driven agent.
+
+```bash
+./gradlew :demo:assembleDebug :demo:assembleDebugAndroidTest -PcuaRecording=true
+adb -s emulator-5554 install -r demo/build/outputs/apk/debug/demo-debug.apk
+adb -s emulator-5554 install -r demo/build/outputs/apk/androidTest/debug/demo-debug-androidTest.apk
+adb -s emulator-5554 shell am instrument -w \
+  ai.cua.android.demo.test/ai.cua.android.demo.RecordingInstrumentation
+```
+
+Instrumentation restarts the demo process; stop any existing session first.
+While the command runs, open the demo, press Start, and let at least five taps
+complete before pressing Stop. The test retains the stopped UI for 10 seconds
+so a screen recorder can capture it before instrumentation exits. Debug builds
+declare visibility of the synthetic fixture provider for this test's oracle;
+release builds do not include that declaration. Record the main display with
+Android's `screenrecord` and label synthetic ADB text as synthetic input.
+
 Native Android evidence supplements rather than replaces the repository's
 canonical desktop E2E gates when shared desktop behavior is changed. Keep the
 implementation PR draft until the intended scope and remaining qualification

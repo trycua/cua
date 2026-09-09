@@ -21,20 +21,22 @@ mod inputs;
 mod outputs;
 mod session;
 mod verification;
+mod windows;
+pub use windows::*;
 
 pub use cursor::{
     classify_cursor_semantics, CursorAction, CursorDelivery, CursorPlayback, CursorReducedMotion,
     CursorSemantics, CursorTarget, CursorThemeSelection,
 };
 pub use inputs::{
-    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClipboardReadInput,
-    ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput, EscalateSessionInput,
-    EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput, InvokeMenuInput,
-    ListSessionsInput, MoveCursorInput, PressKeyInput, ScrollBy, ScrollDirection, ScrollInput,
-    SetAgentCursorEnabledInput, SetAgentCursorMotionInput, SetAgentCursorThemeInput,
-    SetWindowFrameInput, StartSessionInput, ToolInput, TypeTextInput,
-    MULTI_CALL_SESSION_DESCRIPTION,
+    action_target_schema, ActionTarget, CaptureScope, ClickButton, ClickInput, ClickPosition,
+    ClipboardReadInput, ClipboardWriteInput, DesktopScope, DragInput, EndSessionInput,
+    EscalateSessionInput, EscalationReason, GetAgentCursorStateInput, GetCursorPositionInput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
+    InputDeliveryMode, InvokeMenuInput, LegacyClickInput, ListSessionsInput, MoveCursorInput,
+    PressKeyInput, ScrollBy, ScrollDirection, ScrollInput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
+    ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
     advertised_output_schema, refusal_envelope_schema, ActionDelivery, ActionDeliveryMode,
@@ -60,7 +62,7 @@ pub const TOOLS_LIST_SCHEMA_VERSION: &str = "1";
 pub const CAPABILITY_VERSION: &str = "1";
 
 /// Shape version for the checked-in generated client contract.
-pub const CONTRACT_VERSION: &str = "0.7.0";
+pub const CONTRACT_VERSION: &str = "0.8.0";
 
 /// MCP protocol version used by current cua-driver clients.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
@@ -257,9 +259,6 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
 /// MCP tool. Runtime-only tools can define a narrow shared schema here without
 /// committing every generated SDK to their broader platform-specific shape.
 pub fn tool_success_output_schema(name: &str) -> Option<Value> {
-    if name == "list_windows" {
-        return Some(desktop::list_windows_success_output_schema());
-    }
     tool_contract(name).and_then(|contract| contract.success_output_schema)
 }
 
@@ -268,10 +267,6 @@ pub fn tool_success_output_schema(name: &str) -> Option<Value> {
 pub fn validate_success_output(name: &str, value: Value) -> Result<bool, String> {
     if is_action_result_tool(name) {
         validate_typed_output::<ActionResult>(value)?;
-        return Ok(true);
-    }
-    if name == "list_windows" {
-        desktop::validate_list_windows_output(value)?;
         return Ok(true);
     }
     if let Some(entry) = tool_index().get(name) {
@@ -297,7 +292,7 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
-        assert_eq!(manifest.contract_version, "0.7.0");
+        assert_eq!(manifest.contract_version, "0.8.0");
         assert!(manifest.experimental);
     }
 
@@ -473,7 +468,7 @@ mod tests {
 
     #[test]
     fn list_windows_defines_nullable_higher_is_frontmost_z_index() {
-        assert!(tool_contract("list_windows").is_none());
+        assert!(tool_contract("list_windows").is_some());
         let schema = tool_success_output_schema("list_windows").expect("runtime schema");
         let z_index = &schema["properties"]["windows"]["items"]["properties"]["z_index"];
         assert_eq!(z_index["type"], serde_json::json!(["integer", "null"]));
@@ -486,8 +481,7 @@ mod tests {
                 "list_windows",
                 serde_json::json!({
                     "windows": [
-                        {"z_index": 4, "platform_field": true},
-                        {"z_index": null}
+                        {"window_id":1,"pid":2,"app_name":"Example","title":"Doc","bounds":{"x":0,"y":0,"width":10,"height":10},"is_on_screen":true,"z_index":null,"platform_field":true}
                     ],
                     "current_space_id": null
                 }),

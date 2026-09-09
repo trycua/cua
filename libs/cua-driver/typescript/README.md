@@ -60,13 +60,15 @@ try {
 } finally {
   await driver.endSession(EndSessionInput.new({ session: "demo" }))
   await driver.shutdown()
-  driver.uniffiDestroy()
+  if ('uniffiDestroy' in driver && typeof driver.uniffiDestroy === 'function') {
+    driver.uniffiDestroy()
+  }
 }
 ```
 
 SDK operations are asynchronous and require a native library matching the host
 OS and architecture. The macOS native package requires macOS 13 or newer.
-Desktop calls return a typed `ToolResult` with text,
+Desktop observations return a typed `ToolResult` with text,
 images, verification/error metadata, and `structuredJson` / `rawJson` for
 platform-extensible results. Session lifecycle calls return dedicated generated
 records.
@@ -83,6 +85,30 @@ authoring workflow are documented in
 and installed with the local CLI; SDK and MCP tools select only an installed
 theme ID. The built-in cursor shows the sanitized public session name in a
 badge below the pointer.
+
+## Typed native-window migration
+
+The next breaking release adds typed app and window discovery, window snapshots,
+and token-based clicks. Version 0.25 supports native-window operations through
+the generic tool surface; it does not expose this typed window API. Upgrade the
+bindings and native library together.
+
+`listApps` returns `ListAppsOutput`, `listWindows` returns `ListWindowsOutput`,
+and `getWindowState` returns `WindowStateOutput`. `click` takes a required exact
+target, a coordinate or element-token position, and an explicit delivery mode.
+It returns `ActionResult` directly and raises `DriverError.Tool` on refusal.
+Other action methods retain `ToolResult`.
+
+Select a unique app and window, resolve an element from a fresh snapshot, request
+background delivery explicitly, then capture again to verify the intended UI
+change. An unsupported background route must not trigger an automatic foreground
+retry. Refresh stale tokens from the same exact window.
+
+Window IDs are `bigint`; do not convert them to `number`.
+
+See the [migration guide](../docs/native-window-sdk-migration.md) for input and
+return-type changes, and the [complete Python and TypeScript examples](https://cua.ai/docs/how-to-guides/driver/use-sdk-in-process)
+for discovery, token selection, verification, and shutdown.
 
 ## Authorization integrations
 
@@ -130,7 +156,9 @@ try {
   try {
     // Application calls use driver; an agent runtime uses connection.mcp.
   } finally {
-    driver.uniffiDestroy()
+    if ('uniffiDestroy' in driver && typeof driver.uniffiDestroy === 'function') {
+      driver.uniffiDestroy()
+    }
   }
 } finally {
   await embedded.stop()

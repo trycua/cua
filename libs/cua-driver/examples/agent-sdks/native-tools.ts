@@ -2,10 +2,13 @@
 
 import {
   ActionTarget,
+  ActionResult,
   ClickButton,
   ClickInput,
+  ClickPosition,
   CuaDriver,
   GetDesktopStateInput,
+  InputDeliveryMode,
   PressKeyInput,
   ToolResult,
   TypeTextInput,
@@ -32,7 +35,9 @@ export class NativeDesktopTools {
     } finally {
       // Generated UniFFI bindings expose deterministic handle release
       // separately from asynchronous runtime shutdown.
-      (this.driver as unknown as { uniffiDestroy(): void }).uniffiDestroy();
+      if ('uniffiDestroy' in this.driver && typeof this.driver.uniffiDestroy === 'function') {
+        this.driver.uniffiDestroy();
+      }
     }
   }
 
@@ -48,9 +53,9 @@ export class NativeDesktopTools {
     return await this.mutateThenObserve(() =>
       this.driver.click(
         ClickInput.new({
-          x,
-          y,
+          position: new ClickPosition.Coordinates({ x, y }),
           target: this.desktopTarget,
+          deliveryMode: InputDeliveryMode.Foreground,
           button: ClickButton.Left,
           count: 1,
         })
@@ -80,11 +85,13 @@ export class NativeDesktopTools {
     );
   }
 
-  private async mutateThenObserve(operation: () => Promise<ToolResult>): Promise<NativeToolResult> {
+  private async mutateThenObserve(
+    operation: () => Promise<ToolResult | ActionResult>
+  ): Promise<NativeToolResult> {
     let unknownDetail: string | undefined;
     try {
       const result = await this.bounded(operation(), 'desktop action');
-      if (result.isError) {
+      if ('isError' in result && result.isError) {
         unknownDetail =
           `Action reported an error and its outcome may be unknown (${result.text}). ` +
           'A fresh observation follows. Do not retry until the observation proves ' +

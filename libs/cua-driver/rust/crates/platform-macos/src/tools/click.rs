@@ -14,11 +14,11 @@
 //!   to full-window space using the most recent `zoom` context stored per-pid.
 
 use async_trait::async_trait;
-use cua_driver_contract::{ClickButton, ClickInput};
+use cua_driver_contract::ClickButton;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
-    tool_args::parse_typed_projection,
+    tool_args::parse_legacy_click_input,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -245,7 +245,7 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=\"desktop\"",
                 }));
             }
-            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+            let input = match parse_legacy_click_input(&args) {
                 Ok(input) => input,
                 Err(result) => return result,
             };

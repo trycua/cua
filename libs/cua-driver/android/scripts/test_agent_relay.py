@@ -132,7 +132,7 @@ class ModelTests(unittest.TestCase):
         popen.return_value = process
         cancelled = mock.Mock(side_effect=[False, True])
         with self.assertRaises(relay.InferenceCancelled):
-            relay.infer_once(request(), "/test/claude", cancelled=cancelled)
+            relay.infer(request(), "/test/claude", cancelled=cancelled)
         killpg.assert_called_once_with(12345, signal.SIGKILL)
         process.wait.assert_called_once_with(timeout=5)
 
@@ -281,7 +281,7 @@ class ModelTests(unittest.TestCase):
         process.poll.return_value = None
         popen.return_value = process
         with self.assertRaises(TimeoutError):
-            relay.infer_once(request(), "/test/claude", timeout=0)
+            relay.infer(request(), "/test/claude", timeout=0)
         killpg.assert_called_once_with(12345, signal.SIGKILL)
         process.wait.assert_called_once_with(timeout=5)
 
@@ -311,205 +311,104 @@ class ModelTests(unittest.TestCase):
         killpg.assert_called_once_with(12345, signal.SIGKILL)
 
 
-class RecoveryTests(unittest.TestCase):
-    def native_events(self, first=None, second=None):
-        first = first or {"type": "tap", "x": 1, "y": 0, "reason": "Original explanation"}
-        second = second or dict(first, reason="Reworded explanation")
-        events = structured_events(first)
-        events[1]["message"]["id"] = "message-first"
-        events[1]["message"]["content"][0]["input"]["reason"] = "Redundant outer explanation"
-        repaired = structured_events(second)
-        repaired[1]["message"]["id"] = "message-second"
-        repaired[1]["message"]["content"][0]["id"] = "format-2"
-        return events[:2] + repaired[1:]
-
-    def test_native_repair_accepts_only_same_operation_and_records_rejection(self):
-        action, metadata = relay.parse_model_output("\n".join(map(json.dumps, self.native_events())), request())
-        self.assertEqual(action, {"type": "tap", "x": 1, "y": 0, "reason": "Reworded explanation"})
-        self.assertEqual(metadata["formatting_repairs"], 1)
-        self.assertEqual(metadata["rejected_attempts"][0]["source"], "native_formatter")
-        self.assertIn("Redundant outer explanation", metadata["rejected_attempts"][0]["model_response"])
-
-    def test_native_repair_rejects_changed_operational_fields(self):
-        cases = [(None, {"type": "tap", "x": 0, "y": 0, "reason": "Changed coordinate"}),
-                 (None, {"type": "done", "reason": "Changed type"}),
-                 ({"type": "launch", "package": "ai.cua.fixture", "reason": "Original"},
-                  {"type": "launch", "package": "ai.cua.other", "reason": "Changed package"})]
-        for first, second in cases:
-            req = dict(request(), allowed_apps=["ai.cua.fixture", "ai.cua.other"])
-            with self.subTest(second=second), self.assertRaises(relay.Invalid) as caught:
-                relay.parse_model_output("\n".join(map(json.dumps, self.native_events(first, second))), req)
-            self.assertNotIsInstance(caught.exception, relay.MalformedResponse)
-
-    def test_native_repair_rejects_third_calls_policy_errors_and_mismatched_result(self):
-        for kind in ("third", "host_tool", "policy", "mismatch", "first_valid"):
-            events = self.native_events()
-            if kind == "third":
-                events.insert(-1, events[-2])
-            elif kind == "host_tool":
-                events[-2]["message"]["content"][0]["name"] = "Bash"
-            elif kind == "policy":
-                events.append({"type": "error", "error": "Policy failure"})
-            elif kind == "mismatch":
-                events[-1]["structured_output"] = {"action": {"type": "done", "reason": "Different result"}}
-            else:
-                del events[1]["message"]["content"][0]["input"]["reason"]
-            with self.subTest(kind=kind), self.assertRaises((relay.Invalid, relay.InferenceError)):
-                relay.parse_model_output("\n".join(map(json.dumps, events)), request())
-
-    @mock.patch.object(relay, "infer_once")
-    def test_second_malformed_native_call_never_triggers_outer_retry(self, once):
-        events = self.native_events()
-        events[-2]["message"]["content"][0]["input"]["reason"] = "Still malformed"
-        once.side_effect = lambda *args, **kwargs: relay.parse_model_output("\n".join(map(json.dumps, events)), request())
-        with self.assertRaises(relay.Invalid) as caught:
-            relay.infer(request(), "/test/claude")
-        self.assertNotIsInstance(caught.exception, relay.MalformedResponse)
-        self.assertEqual(once.call_count, 1)
-        self.assertEqual(len(caught.exception.rejected_attempts), 1)
-
-    @mock.patch.object(relay, "infer_once")
-    def test_outer_retry_cannot_also_use_native_repair(self, once):
-        native = "\n".join(map(json.dumps, self.native_events()))
-        count = [0]
-
-        def inference(*args, **kwargs):
-            count[0] += 1
-            if count[0] == 1:
-                raise self.malformed_error()
-            return relay.parse_model_output(native, request(), allow_native_repair=kwargs["correction"] is None)
-
-        once.side_effect = inference
-        with self.assertRaises(relay.Invalid) as caught:
-            relay.infer(request(), "/test/claude")
-        self.assertEqual(once.call_count, 2)
-        self.assertIn("budget", str(caught.exception))
-        self.assertEqual(len(caught.exception.rejected_attempts), 2)
-
-    @mock.patch.object(relay, "infer_once")
-    def test_outer_retry_allows_reworded_reason(self, once):
-        original = self.malformed_error()
-        repaired = dict(original.action, reason="Reworded explanation")
-        once.side_effect = [original, (repaired, {})]
-        action, metadata = relay.infer(request(), "/test/claude")
-        self.assertEqual(action, repaired)
-        self.assertEqual(metadata["formatting_repairs"], 1)
-
-    def malformed_events(self):
-        events = structured_events()
-        events[1]["message"]["content"][0]["input"]["reason"] = "Redundant outer explanation"
+class RevisionTests(unittest.TestCase):
+    def events(self, proposals):
+        events = [structured_events()[0]]
+        for index, proposal in enumerate(proposals):
+            events.append({"type": "assistant", "message": {"id": "message-" + str(index), "content": [
+                {"type": "tool_use", "id": "format-" + str(index), "name": "StructuredOutput", "input": proposal}]}})
+        events.append({"type": "result", "subtype": "success", "is_error": False,
+                       "structured_output": proposals[-1], "result": json.dumps(proposals[-1])})
         return events
 
-    def malformed_error(self):
-        try:
-            relay.parse_model_output("\n".join(map(json.dumps, self.malformed_events())), request())
-        except relay.MalformedResponse as error:
-            return error
-        self.fail("Expected recoverable formatting error")
+    def parse(self, events, req=None):
+        return relay.parse_model_output("\n".join(map(json.dumps, events)), req or request())
+
+    def test_invalid_and_different_proposals_admit_only_strict_final(self):
+        proposals = [{"invalid": "Unexecuted earlier envelope"},
+                     {"action": {"type": "tap", "x": 1, "y": 0, "reason": "Earlier proposal"}},
+                     {"action": {"type": "done", "reason": "Visible completion"}}]
+        action, metadata = self.parse(self.events(proposals))
+        self.assertEqual(action, proposals[-1]["action"])
+        self.assertEqual(metadata["formatter_count"], 3)
+        self.assertEqual(metadata["formatter_revisions"], [
+            {"id": "format-0", "input": proposals[0]}, {"id": "format-1", "input": proposals[1]}])
+
+    def test_valid_proposals_can_revise_coordinates_type_and_package(self):
+        cases = [({"type": "tap", "x": 0, "y": 0, "reason": "First"},
+                  {"type": "tap", "x": 1, "y": 1, "reason": "Final"}),
+                 ({"type": "tap", "x": 0, "y": 0, "reason": "First"},
+                  {"type": "done", "reason": "Final"}),
+                 ({"type": "launch", "package": "ai.cua.fixture", "reason": "First"},
+                  {"type": "launch", "package": "ai.cua.other", "reason": "Final"})]
+        for first, final in cases:
+            with self.subTest(final=final):
+                action, metadata = self.parse(self.events([{"action": first}, {"action": final}]),
+                                              dict(request(), allowed_apps=["ai.cua.fixture", "ai.cua.other"]))
+                self.assertEqual(action, final)
+                self.assertEqual(metadata["formatter_count"], 2)
+
+    def test_rejects_too_many_or_ambiguous_call_ids(self):
+        final = {"action": {"type": "done", "reason": "Final"}}
+        with self.assertRaises(relay.InferenceError) as caught:
+            self.parse(self.events([{}, {}, {}, final]))
+        self.assertEqual(len(caught.exception.formatter_inputs), 4)
+        for identity in ("format-0", "", None):
+            events = self.events([{}, final])
+            events[2]["message"]["content"][0]["id"] = identity
+            with self.subTest(identity=identity), self.assertRaises(relay.InferenceError):
+                self.parse(events)
+
+    def test_final_must_match_last_input_and_pass_all_admission_checks(self):
+        invalid = [{"action": {"type": "tap", "x": 2, "y": 0, "reason": "Outside"}},
+                   {"action": {"type": "launch", "package": "ai.other.app", "reason": "Disallowed"}},
+                   {"action": {"type": "shell", "reason": "Unknown type"}},
+                   {"action": {"type": "done", "reason": "Final"}, "reason": "Extra field"},
+                   {"action": {"type": "tap", "x": True, "y": 0, "reason": "Invalid integer"}}]
+        for final in invalid:
+            with self.subTest(final=final), self.assertRaises(relay.Invalid) as caught:
+                self.parse(self.events([{"earlier": "Preserve for diagnosis"}, final]))
+            self.assertEqual(len(caught.exception.formatter_inputs), 2)
+        events = self.events([{}, {"action": {"type": "done", "reason": "Final"}}])
+        events[-1]["structured_output"] = {"action": {"type": "blocked", "reason": "Mismatched"}}
+        with self.assertRaises(relay.Invalid):
+            self.parse(events)
+        for coordinate in (True, 1.0):
+            events = self.events([{"action": {"type": "tap", "x": coordinate, "y": 0, "reason": "Typed value"}}])
+            events[-1]["structured_output"] = {"action": {"type": "tap", "x": 1, "y": 0, "reason": "Typed value"}}
+            with self.subTest(coordinate=coordinate), self.assertRaises(relay.Invalid):
+                self.parse(events)
+
+    def test_complete_stream_rejects_host_tools_and_policy_errors(self):
+        for kind in ("host", "policy", "init"):
+            events = self.events([{}, {"action": {"type": "done", "reason": "Final"}}])
+            if kind == "host":
+                events.insert(-1, {"type": "assistant", "message": {"content": [
+                    {"type": "tool_use", "id": "host-1", "name": "Bash", "input": {}}]}})
+            elif kind == "policy":
+                events.append({"type": "error", "error": "Policy failure"})
+            else:
+                events[0]["tools"] = ["StructuredOutput", "Read"]
+            with self.subTest(kind=kind), self.assertRaises(relay.InferenceError) as caught:
+                self.parse(events)
+            self.assertEqual(len(caught.exception.formatter_inputs), 2)
 
     @mock.patch.object(relay.os, "killpg")
     @mock.patch.object(relay.subprocess, "Popen")
-    def test_two_subprocesses_preserve_action_evidence_and_cleanup(self, popen, killpg):
-        processes = []
+    def test_invalid_final_does_not_retry_subprocess(self, popen, killpg):
+        process = mock.Mock(pid=12345, returncode=0)
+        process.poll.return_value = 0
 
-        def start(argv, **kwargs):
-            index = len(processes)
-            process = mock.Mock(pid=12345 + index, returncode=0)
-            process.poll.return_value = 0
-            if index:
-                killpg.assert_called_once_with(12345, signal.SIGKILL)
-                processes[0].wait.assert_called_once_with(timeout=5)
-                self.assertIn("Formatting correction", argv[argv.index("--system-prompt") + 1])
-                content = json.loads(kwargs["stdin"].read())["message"]["content"]
-                self.assertIn("Previously rejected action data", content[-1]["text"])
-            events = self.malformed_events() if index == 0 else structured_events()
-            kwargs["stdout"].write("\n".join(map(json.dumps, events)).encode())
-            processes.append(process)
+        def start(*args, **kwargs):
+            kwargs["stdout"].write("\n".join(map(json.dumps, self.events([{}, {"invalid": "Final"}]))).encode())
             return process
 
         popen.side_effect = start
-        action, metadata = relay.infer(request(), "/test/claude")
-        self.assertEqual(action, structured_events()[-1]["structured_output"]["action"])
-        self.assertEqual(popen.call_count, 2)
-        self.assertEqual(killpg.call_args_list, [mock.call(12345, signal.SIGKILL), mock.call(12346, signal.SIGKILL)])
-        processes[1].wait.assert_called_once_with(timeout=5)
-        self.assertIn("Redundant outer explanation", metadata["rejected_attempts"][0]["model_response"])
-
-    @mock.patch.object(relay, "infer_once")
-    def test_only_one_retry_and_rejected_evidence_on_failure(self, once):
-        once.side_effect = [self.malformed_error(), self.malformed_error()]
-        with self.assertRaises(relay.MalformedResponse) as caught:
+        with self.assertRaises(relay.Invalid):
             relay.infer(request(), "/test/claude")
-        self.assertEqual(once.call_count, 2)
-        self.assertEqual(len(caught.exception.rejected_attempts), 2)
-
-    @mock.patch.object(relay, "infer_once")
-    def test_uncertain_semantic_policy_and_cancellation_failures_never_retry(self, once):
-        for error in (relay.Invalid("Invalid x"), relay.Invalid("Unknown action"),
-                      relay.InferenceError("Host tool"), relay.InferenceCancelled("Disconnected"),
-                      TimeoutError("Timeout")):
-            once.reset_mock()
-            once.side_effect = error
-            with self.subTest(error=error), self.assertRaises(type(error)):
-                relay.infer(request(), "/test/claude")
-            self.assertEqual(once.call_count, 1)
-
-    def test_late_host_tool_error_overrides_early_formatting_error(self):
-        for late in ({"type": "error", "error": "Policy failure"},
-                     {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {}}]}}):
-            with self.subTest(late=late), self.assertRaises(relay.InferenceError):
-                relay.parse_model_output("\n".join(map(json.dumps, self.malformed_events() + [late])), request())
-        events = self.malformed_events()
-        events[1]["message"]["content"][0]["input"]["action"]["x"] = 900
-        with self.assertRaises(relay.Invalid) as caught:
-            relay.parse_model_output("\n".join(map(json.dumps, events)), request())
-        self.assertNotIsInstance(caught.exception, relay.MalformedResponse)
-
-    @mock.patch.object(relay, "infer_once")
-    def test_retry_cannot_change_action(self, once):
-        once.side_effect = [self.malformed_error(), ({"type": "done", "reason": "Changed decision"}, {})]
-        with self.assertRaises(relay.Invalid) as caught:
-            relay.infer(request(), "/test/claude")
-        self.assertIn("changed", str(caught.exception))
-        self.assertEqual(len(caught.exception.rejected_attempts), 1)
-
-    @mock.patch.object(relay.time, "monotonic")
-    @mock.patch.object(relay, "infer_once")
-    def test_retry_shares_original_deadline(self, once, monotonic):
-        now = [0]
-        monotonic.side_effect = lambda: now[0]
-
-        def inference(*args, **kwargs):
-            if now[0] == 0:
-                self.assertEqual(kwargs["timeout"], 120)
-                now[0] = 75
-                raise self.malformed_error()
-            self.assertEqual(kwargs["timeout"], 45)
-            now[0] = 90
-            return structured_events()[-1]["structured_output"]["action"], {}
-
-        once.side_effect = inference
-        relay.infer(request(), "/test/claude")
-        self.assertEqual(once.call_count, 2)
-
-    @mock.patch.object(relay.time, "monotonic")
-    @mock.patch.object(relay, "infer_once")
-    def test_expired_budget_prevents_retry(self, once, monotonic):
-        monotonic.side_effect = [0, 0, 121]
-        once.side_effect = self.malformed_error()
-        with self.assertRaises(TimeoutError) as caught:
-            relay.infer(request(), "/test/claude")
-        self.assertEqual(once.call_count, 1)
-        self.assertEqual(len(caught.exception.rejected_attempts), 1)
-
-    @mock.patch.object(relay, "infer_once")
-    def test_disconnect_between_attempts_prevents_retry(self, once):
-        once.side_effect = self.malformed_error()
-        cancelled = mock.Mock(side_effect=[False, True])
-        with self.assertRaises(relay.InferenceCancelled) as caught:
-            relay.infer(request(), "/test/claude", cancelled=cancelled)
-        self.assertEqual(once.call_count, 1)
-        self.assertEqual(len(caught.exception.rejected_attempts), 1)
+        popen.assert_called_once()
+        killpg.assert_called_once_with(12345, signal.SIGKILL)
+        process.wait.assert_called_once_with(timeout=5)
 
 
 class ServerTests(unittest.TestCase):
@@ -589,23 +488,23 @@ class ServerTests(unittest.TestCase):
         self.inference.return_value = ({"type": "tap", "x": 50, "y": 0, "reason": "Out of bounds"}, {})
         self.assertEqual(self.post()[0], 502)
 
-    def test_rejected_attempt_evidence_is_private_on_success_and_failure(self):
+    def test_formatter_evidence_is_private_on_success_and_failure(self):
         rejected = [{"attempt": 1, "model_response": "Private rejected formatting"}]
         action = {"type": "done", "reason": "Visible completion"}
-        self.inference.return_value = (action, {"model": "test", "rejected_attempts": rejected})
+        self.inference.return_value = (action, {"model": "test", "formatter_revisions": rejected})
         status, body = self.post()
         self.assertEqual(status, 200)
         self.assertNotIn("Private rejected formatting", json.dumps(body))
         result = json.loads(next(self.evidence.glob("*/result.json")).read_text())
-        self.assertEqual(result["inference"]["rejected_attempts"], rejected)
+        self.assertEqual(result["inference"]["formatter_revisions"], rejected)
         error = TimeoutError("Timed out after rejected response")
-        error.rejected_attempts = rejected
+        error.formatter_inputs = rejected
         self.inference.side_effect = error
         status, body = self.post()
         self.assertEqual(status, 504)
         self.assertNotIn("Private rejected formatting", json.dumps(body))
         evidence = json.loads(next(self.evidence.glob("*/error.json")).read_text())
-        self.assertEqual(evidence["rejected_attempts"], rejected)
+        self.assertEqual(evidence["formatter_inputs"], rejected)
 
     def test_duplicate_auth_and_lengths(self):
         for duplicate in ("Authorization", "Content-Length"):

@@ -93,6 +93,9 @@ fn selected_at(path: &std::path::Path) -> Result<ReleaseChannel, String> {
 }
 
 pub fn set(channel: ReleaseChannel) -> Result<(), String> {
+    if crate::updater::is_pacman_managed() {
+        return Err(crate::updater::PACMAN_UPDATE_GUIDANCE.to_owned());
+    }
     let path = state_path()?;
     set_at(&path, channel)
 }

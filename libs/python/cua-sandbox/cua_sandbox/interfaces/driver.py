@@ -7,6 +7,7 @@ import importlib
 import json
 import logging
 import re
+import time
 import uuid
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any, AsyncIterator
@@ -23,15 +24,16 @@ _CLEANUP_TIMEOUT = 2.0
 logger = logging.getLogger(__name__)
 
 
+def _consume_result(done: asyncio.Future) -> None:
+    if not done.cancelled():
+        done.exception()
+
+
 async def _bounded_cleanup(awaitable: Any) -> bool:
     """Bound best-effort cleanup, including callbacks that ignore cancellation."""
     task = asyncio.ensure_future(awaitable)
 
-    def consume_result(done: asyncio.Future) -> None:
-        if not done.cancelled():
-            done.exception()
-
-    task.add_done_callback(consume_result)
+    task.add_done_callback(_consume_result)
     done, _ = await asyncio.wait({task}, timeout=_CLEANUP_TIMEOUT)
     if task not in done:
         task.cancel()
@@ -75,6 +77,8 @@ class Driver:
         self._principal = uuid.uuid4().hex
         self._lock = asyncio.Lock()
         self._connections: dict[Any, Any] = {}
+        self._opening: dict[Any, asyncio.Task] = {}
+        self._closing: dict[Any, asyncio.Task] = {}
         self._closed = False
         self._loop: asyncio.AbstractEventLoop | None = None
 
@@ -114,14 +118,26 @@ class Driver:
                 )
             sdk = _sdk()
             channel = _channel(sdk, self._transport, service, self._principal)
-            try:
-                await channel.open()
-                driver = sdk.connect_remote_channel(channel)
-            except BaseException:
-                await channel.close()
-                raise
-            self._connections[channel] = driver
+
+            async def open_channel():
+                try:
+                    await channel.open()
+                finally:
+                    # A cancelled carrier may still return an allocated session.
+                    if channel.closed:
+                        await channel.close()
+
+            opening = asyncio.create_task(open_channel())
+            opening.add_done_callback(_consume_result)
+            self._opening[channel] = opening
+            self._connections[channel] = None
         try:
+            await asyncio.shield(opening)
+            async with self._lock:
+                if self._closed or channel.closed:
+                    raise DriverConnectionError("Sandbox Driver accessor is disconnected")
+                driver = sdk.connect_remote_channel(channel)
+                self._connections[channel] = driver
             yield driver
         finally:
             await self._close_connection(channel)
@@ -129,11 +145,25 @@ class Driver:
     async def _close_connection(self, channel: Any) -> None:
         self._check_loop()
         async with self._lock:
-            driver = self._connections.pop(channel, None)
-            if driver is not None:
+            task = self._closing.get(channel)
+            if task is None and channel in self._connections:
+                driver = self._connections.pop(channel)
+                opening = self._opening.pop(channel)
                 channel.closed = True
-                await _bounded_cleanup(channel.close())
-                await _bounded_cleanup(driver.shutdown())
+
+                async def cleanup():
+                    if not opening.done():
+                        await _bounded_cleanup(opening)
+                    await channel.close()
+                    if driver is not None:
+                        await _bounded_cleanup(driver.shutdown())
+
+                task = asyncio.create_task(cleanup())
+                self._closing[channel] = task
+                task.add_done_callback(_consume_result)
+                task.add_done_callback(lambda done: self._closing.pop(channel, None))
+        if task is not None:
+            await asyncio.shield(task)
 
     async def close(self) -> None:
         """Invalidate all connections before the owning transport is closed."""
@@ -142,11 +172,16 @@ class Driver:
             self._closed = True
             for channel in self._connections:
                 channel.closed = True
-        for channel in list(self._connections):
+
+        async def close_channel(channel):
             try:
                 await self._close_connection(channel)
             except Exception:
                 logger.warning("Driver cleanup failed; remote session cleanup is unconfirmed")
+
+        await asyncio.gather(
+            *(close_channel(channel) for channel in set(self._connections) | set(self._closing))
+        )
 
 
 def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) -> Any:
@@ -164,7 +199,7 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
         def fail(self, reason: str):
             return sdk.ForeignDriverChannelError.Failed(reason)
 
-        async def request(self, method: str, suffix: str = "", body: Any = None):
+        async def request(self, method: str, suffix: str = "", body: Any = None, *, timeout=None):
             path = "/v1/connections"
             headers = None
             if self.connection_id is not None:
@@ -172,7 +207,12 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
                 headers = {"X-Cua-Driver-Generation": self.generation}
             try:
                 response = await transport.request_service(
-                    service, method=method, path=path, json_body=body, headers=headers
+                    service,
+                    method=method,
+                    path=path,
+                    json_body=body,
+                    headers=headers,
+                    **({"timeout": timeout} if timeout is not None else {}),
                 )
             except Exception as error:
                 if getattr(error, "status", None) in (401, 403):
@@ -250,6 +290,9 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
             if self.closed or request.request_id in self.cancelled:
                 raise self.fail("Driver connection is closed or request was cancelled")
             try:
+                deadline = request.deadline_unix_ms
+                if type(deadline) is not int or deadline < 0:
+                    raise ValueError
                 body = {
                     "envelope_version": request.envelope_version,
                     "request_id": request.request_id,
@@ -266,11 +309,19 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
                     raise ValueError
             except (ValueError, TypeError):
                 raise self.fail("Driver request is malformed or exceeds the size limit") from None
+            timeout = min(deadline - int(time.time() * 1000), 120000) / 1000
+            if timeout <= 0:
+                raise self.fail("Driver request deadline has expired")
+            exchange = asyncio.create_task(self.request("POST", "/exchange", body, timeout=timeout))
+            exchange.add_done_callback(_consume_result)
             try:
-                response = await self.request("POST", "/exchange", body)
-                return await self.decode_response(request, response)
+                done, _ = await asyncio.wait({exchange}, timeout=timeout)
+                if exchange not in done:
+                    raise TimeoutError("Driver request deadline has expired; completion is unknown")
+                return await self.decode_response(request, exchange.result())
             except BaseException:
-                self.closed = True
+                exchange.cancel()
+                await self.cancel(request.request_id)
                 await self.close()
                 raise
 
@@ -329,6 +380,9 @@ def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) 
 
         async def close(self):
             self.closed = True
+            # Do not memoize a no-op before an in-flight open reveals its ID.
+            if self.connection_id is None:
+                return
             if self._close_task is None:
 
                 async def cleanup():

@@ -41,9 +41,11 @@ class NativeTransport(Transport):
             }
         )
 
-    async def request_service(self, name, *, method, path, json_body=None, headers=None):
+    async def request_service(
+        self, name, *, method, path, json_body=None, headers=None, timeout=None
+    ):
         response = await super().request_service(
-            name, method=method, path=path, json_body=json_body, headers=headers
+            name, method=method, path=path, json_body=json_body, headers=headers, timeout=timeout
         )
         if path.endswith("/exchange"):
             return httpx.Response(

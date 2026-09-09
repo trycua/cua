@@ -91,11 +91,17 @@ class FleetTransport(Transport):
         path: str,
         json_body: Any = None,
         headers: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         if name not in self._bound.services:
             raise ValueError(f"Fleet sandbox does not expose service {name!r}")
         return await self._request(
-            method, path, json_body=json_body, service_name=name, extra_headers=headers
+            method,
+            path,
+            json_body=json_body,
+            service_name=name,
+            extra_headers=headers,
+            timeout=timeout,
         )
 
     async def create_signed_service_url(
@@ -129,6 +135,7 @@ class FleetTransport(Transport):
         json_body: Any = None,
         service_name: str | None = None,
         extra_headers: dict[str, str] | None = None,
+        timeout: float | None = None,
     ) -> httpx.Response:
         assert self._connected, "Transport not connected"
         body = None if json_body is None else json.dumps(json_body).encode()
@@ -146,7 +153,7 @@ class FleetTransport(Transport):
                 url=f"https://service.invalid{path}",
                 headers=headers,
                 body=body,
-                timeout_secs=_whole_seconds(self._timeout),
+                timeout_secs=_whole_seconds(self._timeout if timeout is None else timeout),
             ),
         )
         request = httpx.Request(method, f"https://service.invalid{path}")

@@ -25,6 +25,17 @@ async fn portable_inputs_match_the_in_process_native_registry() {
             &native["inputSchema"],
         );
         assert!(violations.is_empty(), "{}: {violations:?}", contract.name);
+        assert_eq!(
+            native["annotations"],
+            json!({
+                "readOnlyHint": contract.annotations.read_only,
+                "destructiveHint": contract.annotations.destructive,
+                "idempotentHint": contract.annotations.idempotent,
+                "openWorldHint": contract.annotations.open_world,
+            }),
+            "{} annotations differ from the portable contract",
+            contract.name
+        );
     }
     driver.shutdown().await.unwrap();
 }

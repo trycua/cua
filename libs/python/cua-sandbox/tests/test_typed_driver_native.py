@@ -106,23 +106,26 @@ async def test_real_canonical_action_target_serializes_over_fleet(
     await sandbox._connect()
     try:
         async with sandbox.driver.connect() as driver:
-            await driver.click(
-                sdk.ClickInput(
-                    x=12.5,
-                    y=34.5,
-                    target=getattr(sdk.ActionTarget, variant)(**fields),
-                    scope=None,
-                    session=sandbox.driver.session_name(driver),
-                    button=None,
-                    count=None,
+            with pytest.raises(sdk.DriverError.Tool) as error:
+                await driver.click(
+                    sdk.ClickInput(
+                        position=sdk.ClickPosition.COORDINATES(x=12.5, y=34.5),
+                        target=getattr(sdk.ActionTarget, variant)(**fields),
+                        delivery_mode=sdk.InputDeliveryMode.FOREGROUND,
+                        session=sandbox.driver.session_name(driver),
+                        button=None,
+                        count=None,
+                    )
                 )
-            )
+            assert error.value.tool == "click"
+            assert error.value.error_code == "foreground_required"
             request = transport.events[-1][3]
             assert request["name"] == "click"
             assert request["arguments"] == {
                 "x": 12.5,
                 "y": 34.5,
                 "target": expected,
+                "delivery_mode": "foreground",
                 "session": "session-1",
             }
     finally:

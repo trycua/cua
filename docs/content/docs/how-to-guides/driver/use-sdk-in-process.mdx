@@ -93,7 +93,9 @@ try {
 } finally {
   await driver.endSession(EndSessionInput.new({}));
   await driver.shutdown();
-  driver.uniffiDestroy();
+  if ('uniffiDestroy' in driver && typeof driver.uniffiDestroy === 'function') {
+    driver.uniffiDestroy();
+  }
 }
 ```
 
@@ -104,6 +106,186 @@ Keep one `CuaDriver` object for the application lifetime. Repeated unnamed calls
 reuse its implicit session. End it explicitly when useful; `shutdown()` also
 runs cleanup. `shutdown()` is idempotent and rejects new work after shutdown
 while allowing already-admitted operations to finish.
+
+## Discover and act on an exact native window
+
+This typed window API targets the next breaking release. Version 0.25 supports
+native-window operations through the generic tool surface, but does not expose
+these generated methods. Upgrade the bindings and native library together.
+
+The example expects a test application named `Window Demo`, a window titled
+`Counter`, a button labeled `Increment`, and an accessible counter labeled
+`Count` whose value changes when clicked. Replace those exact identities and the
+postcondition with ones you control. It requires exactly one match among the
+returned elements and refuses degraded or truncated snapshots. Accessibility
+results can be a projection: `elementsComplete` / `elements_complete` can be
+false even for a healthy snapshot, so a unique returned label does not prove
+that no matching element exists outside the projection. Use a known control
+identity and postcondition for your application.
+
+<Tabs groupId="language" persist items={['Python', 'TypeScript']}>
+  <Tab value="Python">
+
+```python
+import asyncio
+
+from cua_driver import (
+    ActionTarget, ClickButton, ClickInput, ClickPosition, CuaDriver,
+    GetWindowStateInput, InputDeliveryMode, ListAppsInput, ListWindowsInput,
+)
+
+
+def unique(items, description):
+    if len(items) != 1:
+        raise RuntimeError(f"Expected one {description}, found {len(items)}")
+    return items[0]
+
+
+async def main() -> None:
+    driver = CuaDriver.create()
+    try:
+        apps = await driver.list_apps(ListAppsInput())
+        app = unique([a for a in apps.apps if a.name == "Window Demo" and a.running], "app")
+        windows = await driver.list_windows(
+            ListWindowsInput(pid=app.pid, on_screen_only=True)
+        )
+        window = unique(
+            [w for w in windows.windows if w.pid == app.pid and w.title == "Counter"],
+            "window",
+        )
+        target = ActionTarget.WINDOW(pid=app.pid, window_id=window.window_id)
+        capture = GetWindowStateInput(
+            pid=app.pid, window_id=window.window_id, session=None, query=None,
+            include_accessibility_tree=True, include_screenshot=True,
+            screenshot_out_file=None, max_elements=None, max_depth=None,
+            max_dimension=None,
+        )
+
+        async def snapshot():
+            state = await driver.get_window_state(capture)
+            if state.degraded or state.truncated:
+                raise RuntimeError("Window snapshot is degraded or truncated")
+            return state
+
+        before = await snapshot()
+        button = unique([e for e in (before.elements or []) if e.label == "Increment"], "button")
+        counter = unique([e for e in (before.elements or []) if e.label == "Count"], "counter")
+        if not button.element_token or counter.value is None:
+            raise RuntimeError("Snapshot lacks the button token or counter value")
+        await driver.click(ClickInput(
+            target=target,
+            position=ClickPosition.ELEMENT(element_token=button.element_token),
+            delivery_mode=InputDeliveryMode.BACKGROUND,
+            session=None, button=ClickButton.LEFT, count=1,
+        ))
+        after = await snapshot()
+        updated = unique([e for e in (after.elements or []) if e.label == "Count"], "counter")
+        if updated.value is None or updated.value == counter.value:
+            raise RuntimeError("Click returned, but the counter change was not verified")
+        print("Verified counter change:", counter.value, "->", updated.value)
+        for image in after.images:
+            print(image.mime_type, len(image.data_base64))
+    finally:
+        await driver.shutdown()
+
+
+asyncio.run(main())
+```
+
+  </Tab>
+  <Tab value="TypeScript">
+
+```ts
+import {
+  ActionTarget, ClickButton, ClickInput, ClickPosition, CuaDriver,
+  GetWindowStateInput, InputDeliveryMode, ListAppsInput, ListWindowsInput,
+} from '@trycua/cua-driver';
+
+function unique<T>(items: T[], description: string): T {
+  if (items.length !== 1) {
+    throw new Error(`Expected one ${description}, found ${items.length}`);
+  }
+  return items[0]!;
+}
+
+const driver = CuaDriver.create(undefined);
+try {
+  const apps = await driver.listApps(ListAppsInput.new({}));
+  const app = unique(apps.apps.filter(a => a.name === 'Window Demo' && a.running), 'app');
+  const windows = await driver.listWindows(
+    ListWindowsInput.new({ pid: app.pid, onScreenOnly: true })
+  );
+  const window = unique(
+    windows.windows.filter(w => w.pid === app.pid && w.title === 'Counter'), 'window'
+  );
+  // Preserve windowId as bigint; converting to number can lose precision.
+  const target = new ActionTarget.Window({ pid: app.pid, windowId: window.windowId });
+  const capture = GetWindowStateInput.new({
+    pid: app.pid, windowId: window.windowId,
+    includeAccessibilityTree: true, includeScreenshot: true,
+  });
+  async function snapshot() {
+    const state = await driver.getWindowState(capture);
+    if (state.degraded || state.truncated) {
+      throw new Error('Window snapshot is degraded or truncated');
+    }
+    return state;
+  }
+  const before = await snapshot();
+  const button = unique((before.elements ?? []).filter(e => e.label === 'Increment'), 'button');
+  const counter = unique((before.elements ?? []).filter(e => e.label === 'Count'), 'counter');
+  if (!button.elementToken || counter.value === undefined) {
+    throw new Error('Snapshot lacks the button token or counter value');
+  }
+  await driver.click(ClickInput.new({
+    target,
+    position: new ClickPosition.Element({ elementToken: button.elementToken }),
+    deliveryMode: InputDeliveryMode.Background,
+    button: ClickButton.Left, count: 1,
+  }));
+  const after = await snapshot();
+  const updated = unique((after.elements ?? []).filter(e => e.label === 'Count'), 'counter');
+  if (updated.value === undefined || updated.value === counter.value) {
+    throw new Error('Click returned, but the counter change was not verified');
+  }
+  console.log('Verified counter change:', counter.value, '->', updated.value);
+  for (const image of after.images) {
+    console.log(image.mimeType, image.dataBase64.length);
+  }
+} finally {
+  try {
+    await driver.shutdown();
+  } finally {
+    if ('uniffiDestroy' in driver && typeof driver.uniffiDestroy === 'function') {
+      driver.uniffiDestroy();
+    }
+  }
+}
+```
+
+  </Tab>
+</Tabs>
+
+`click` returns `ActionResult` directly and raises `DriverError.Tool` on refusal.
+It does not return a `ToolResult` envelope. Other action methods retain their
+existing return types. A returned action result does not prove the intended UI
+change; the second snapshot checks that separately. For asynchronous UIs, poll
+fresh snapshots with a bounded deadline for your postcondition without repeating
+the click.
+
+Background delivery never authorizes an automatic foreground retry. Handle
+unsupported OS or application routes explicitly. If a token is stale, refresh
+the same window and resolve the element again. Do not reuse tokens after a
+snapshot, window, or session change.
+
+Inspect `snapshotId` / `snapshot_id`, degradation fields, and screenshot metadata
+when using a window capture. Window screenshots and desktop screenshots use
+different coordinate spaces. A window target takes coordinates from its fresh
+window screenshot; do not add the screen origin yourself. Inspect dimensions,
+scale, and frame validity, and account for any image resizing your application
+performs. The token example avoids pixel-coordinate conversion.
+See the [native-window migration guide](https://github.com/trycua/cua/blob/2c4f19d2aa455b6ae2f79d2bf982e9b3c2356fda/libs/cua-driver/docs/native-window-sdk-migration.md)
+for the complete compatibility changes.
 
 If an external agent must also connect to your signed desktop application, use
 [Expose MCP from a desktop app](/how-to-guides/driver/expose-mcp-from-desktop-app)

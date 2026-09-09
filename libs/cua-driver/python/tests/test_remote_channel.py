@@ -35,6 +35,7 @@ class Carrier(ForeignDriverEnvelopeChannel):
         self.cancelled_id = None
         self.bound = None
         self.response_mode = "ok"
+        self.result = None
         self.supports_cancellation = True
         self.identity_error = False
         self.minimum_version = 1
@@ -64,7 +65,7 @@ class Carrier(ForeignDriverEnvelopeChannel):
             await asyncio.Event().wait()
         if self.response_mode == "error":
             raise ForeignDriverChannelError.Failed("fixture disconnected")
-        result = {
+        result = self.result if self.result is not None else {
             "content": [{"type": "text", "text": "carrier response"}],
             "isError": False,
         }
@@ -241,6 +242,154 @@ class RemoteChannelTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(DriverError.Remote, "event loop is closed"):
             await driver.call_tool("health_report", "{}")
         with self.assertRaisesRegex(DriverError.Remote, "event loop is closed"):
+            await driver.shutdown()
+
+
+class NativeWindowTests(unittest.IsolatedAsyncioTestCase):
+    async def test_typed_discovery_snapshot_and_token_click_cross_ffi(self):
+        import cua_driver as sdk
+
+        carrier = Carrier()
+        driver = connect_remote_channel(carrier)
+
+        def respond(structured, *, images=False, error=False):
+            carrier.result = {
+                "content": [{"type": "text", "text": "native window fixture"}],
+                "structuredContent": structured,
+                "isError": error,
+            }
+            if images:
+                carrier.result["content"].append(
+                    {"type": "image", "mimeType": "image/png", "data": "cG5n"}
+                )
+
+        try:
+            respond({"apps": [{"pid": 42, "name": "Editor", "running": True, "active": False}]})
+            apps = await driver.list_apps(sdk.ListAppsInput())
+            self.assertIsInstance(apps, sdk.ListAppsOutput)
+            self.assertEqual(apps.apps[0].name, "Editor")
+            self.assertEqual(json.loads(carrier.requests[-1].arguments_json), {})
+
+            respond(
+                {
+                    "windows": [
+                        {
+                            "pid": 42,
+                            "window_id": 123,
+                            "app_name": "Editor",
+                            "title": "Document",
+                            "bounds": {"x": 0, "y": 0, "width": 800, "height": 600},
+                            "is_on_screen": True,
+                            "z_index": None,
+                        }
+                    ]
+                }
+            )
+            windows = await driver.list_windows(sdk.ListWindowsInput(pid=42, on_screen_only=True))
+            self.assertIsInstance(windows.windows[0], sdk.WindowInfo)
+            self.assertEqual(windows.windows[0].bounds.width, 800)
+            self.assertIsNone(windows.windows[0].z_index)
+            self.assertEqual(
+                json.loads(carrier.requests[-1].arguments_json), {"pid": 42, "on_screen_only": True}
+            )
+
+            respond(
+                {
+                    "pid": 42,
+                    "window_id": 123,
+                    "snapshot_id": "snapshot-1",
+                    "screenshot_width": 800,
+                    "screenshot_height": 600,
+                    "elements": [
+                        {
+                            "element_index": 0,
+                            "role": "button",
+                            "depth": 0,
+                            "element_token": "fresh-token",
+                            "label": "Save",
+                        }
+                    ],
+                },
+                images=True,
+            )
+            state = await driver.get_window_state(
+                sdk.GetWindowStateInput(
+                    pid=42,
+                    window_id=123,
+                    session="native-window",
+                    query="Save",
+                    include_screenshot=True,
+                    include_accessibility_tree=True,
+                    screenshot_out_file=None,
+                    max_elements=10,
+                    max_depth=3,
+                    max_dimension=800,
+                )
+            )
+            self.assertIsInstance(state, sdk.WindowStateOutput)
+            self.assertIsInstance(state.elements[0], sdk.WindowElement)
+            self.assertEqual(
+                state.images[0], sdk.SnapshotImage(mime_type="image/png", data_base64="cG5n")
+            )
+            self.assertEqual(
+                json.loads(carrier.requests[-1].arguments_json),
+                {
+                    "pid": 42,
+                    "window_id": 123,
+                    "session": "native-window",
+                    "query": "Save",
+                    "include_screenshot": True,
+                    "include_accessibility_tree": True,
+                    "max_elements": 10,
+                    "max_depth": 3,
+                    "max_dimension": 800,
+                },
+            )
+
+            respond(
+                {
+                    "effect": "unverifiable",
+                    "route": "global_input",
+                    "delivery": {"mode": "not_applicable"},
+                }
+            )
+            click = sdk.ClickInput(
+                target=sdk.ActionTarget.WINDOW(pid=42, window_id=123),
+                position=sdk.ClickPosition.ELEMENT(element_token=state.elements[0].element_token),
+                delivery_mode=sdk.InputDeliveryMode.BACKGROUND,
+                session="native-window",
+                button=None,
+                count=None,
+            )
+            action = await driver.click(click)
+            self.assertIsInstance(action, sdk.ActionResult)
+            self.assertEqual(action.effect, sdk.ActionEffect.UNVERIFIABLE)
+            self.assertEqual(
+                json.loads(carrier.requests[-1].arguments_json),
+                {
+                    "target": {"kind": "window", "pid": 42, "window_id": 123},
+                    "element_token": "fresh-token",
+                    "delivery_mode": "background",
+                    "session": "native-window",
+                },
+            )
+
+            # These service refusals test SDK error propagation, not native token validation.
+            for token, window_id, code in [
+                ("stale-token", 123, "stale_element_token"),
+                ("fresh-token", 124, "element_target_mismatch"),
+            ]:
+                respond({"code": code}, error=True)
+                click.position = sdk.ClickPosition.ELEMENT(element_token=token)
+                click.target = sdk.ActionTarget.WINDOW(pid=42, window_id=window_id)
+                with self.assertRaises(sdk.DriverError.Tool) as error:
+                    await driver.click(click)
+                self.assertEqual(error.exception.tool, "click")
+                self.assertEqual(error.exception.error_code, code)
+                request = json.loads(carrier.requests[-1].arguments_json)
+                self.assertEqual(request["element_token"], token)
+                self.assertEqual(request["target"]["window_id"], window_id)
+        finally:
             await driver.shutdown()
 
 

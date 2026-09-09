@@ -1,1 +1,12 @@
-{ "title": "Recipes", "pages": ["automate-a-legacy-windows-app-behind-a-vpn", "export-contacts-overnight", "build-a-report-in-a-native-app", "fill-a-form-from-a-local-file"] }
+{
+  "title": "Recipes",
+  "pages": [
+    "build-and-inspect-a-map",
+    "redact-and-annotate-a-pdf",
+    "prepare-an-exhibition-panel",
+    "automate-a-legacy-windows-app-behind-a-vpn",
+    "export-contacts-overnight",
+    "build-a-report-in-a-native-app",
+    "fill-a-form-from-a-local-file"
+  ]
+}

@@ -108,4 +108,32 @@ sudo apt install ffmpeg
   are separate from the built-in trajectory renderer.
 </VideoDemo>
 
+## Example: select interactions from several workflows
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/e9344780-e780-46e7-bcce-91f61eda9599"
+  poster="/media/workflow-demos/highlights-poster.jpg"
+  title="Selected desktop interactions with action captions"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Cua Driver recorded the source footage and actions. Selected cuts and the shader caption rail were
+  assembled separately in HyperFrames. The rail and action captions are separate from Cua Driver's
+  built-in trajectory renderer.
+</VideoDemo>
+
+Recorded on macOS with GPT-6 Astra + Cua Driver. Selected gestures play at 1x;
+setup, waits, retries and intervening edits are cut. These examples include
+foreground/desktop input and fictional data. Clip duration is not task
+completion time.
+
+Keep an editing disclosure beside your recording, preserve complete gestures
+where their timing matters, and verify the saved result independently of the
+clip. See the [map](/how-to-guides/recipes/build-and-inspect-a-map),
+[PDF](/how-to-guides/recipes/redact-and-annotate-a-pdf), and
+[exhibition-panel](/how-to-guides/recipes/prepare-an-exhibition-panel) recipes
+for the workflows shown here.
+
 For the complete recording schemas and render options, see [MCP recording tools](/reference/cua-driver/mcp-tools#recording-tools) and the [`cua-driver recording` CLI reference](/reference/cua-driver/cli-reference#trajectory-recording).

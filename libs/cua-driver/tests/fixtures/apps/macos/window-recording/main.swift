@@ -82,7 +82,7 @@ func replyWhenReady(until deadline: TimeInterval, stableSamples: Int = 0) {
         && (bounds?["Height"] as? Double) == frame.height
         && (windows?.first?[kCGWindowIsOnscreen as String] as? Bool) == true
     let samples = settled ? stableSamples + 1 : 0
-    if samples >= 3 {
+    if samples >= 20 {
         reply(["pid": ProcessInfo.processInfo.processIdentifier,
                "window_id": target.windowNumber, "sibling_id": sibling.windowNumber,
                "width": frame.width, "height": frame.height,

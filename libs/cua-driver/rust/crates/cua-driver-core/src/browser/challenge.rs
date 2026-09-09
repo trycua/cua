@@ -1,10 +1,9 @@
 //! Conservative CAPTCHA / bot-challenge detection for semantic browser snapshots.
 //!
 //! The detector reports a bounded classification from known challenge URLs or
-//! corroborating visible semantic labels. It does not copy page text into the
-//! report, act on a challenge, or treat a lone stock phrase as proof.
-
-use std::collections::HashSet;
+//! a visible human-verification label bound directly to a checkbox. It does not
+//! copy page text into the report, act on a challenge, or treat page copy as
+//! proof.
 
 use serde::Serialize;
 
@@ -91,14 +90,6 @@ impl BrowserChallengeReport {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-enum ChallengeCopyKind {
-    RobotPrompt,
-    HumanVerification,
-    SecurityCheck,
-    BrowserCheck,
-}
-
 pub(crate) fn browser_challenge_report<'a>(
     url: &str,
     labels: impl IntoIterator<Item = BrowserChallengeLabel<'a>>,
@@ -168,10 +159,6 @@ fn is_recaptcha_challenge_path(path: &str) -> bool {
 fn visible_labels_indicate_challenge<'a>(
     labels: impl IntoIterator<Item = BrowserChallengeLabel<'a>>,
 ) -> bool {
-    let mut copy_kinds = HashSet::new();
-    let mut matching_labels = 0_usize;
-    let mut seen_labels = HashSet::new();
-
     for label in labels {
         let role = normalize_text(label.role);
         let name = normalize_text(label.name);
@@ -179,55 +166,24 @@ fn visible_labels_indicate_challenge<'a>(
             continue;
         }
 
-        let mut label_kinds = HashSet::new();
-        for (kind, phrases) in [
-            (
-                ChallengeCopyKind::RobotPrompt,
-                &["i'm not a robot", "i’m not a robot"][..],
-            ),
-            (
-                ChallengeCopyKind::HumanVerification,
-                &[
-                    "verify you are human",
-                    "verify that you are human",
-                    "prove you are human",
-                ][..],
-            ),
-            (
-                ChallengeCopyKind::SecurityCheck,
-                &[
-                    "complete the security check",
-                    "complete this security check",
-                ][..],
-            ),
-            (
-                ChallengeCopyKind::BrowserCheck,
-                &[
-                    "checking your browser",
-                    "checking if the site connection is secure",
-                    "review the security of your connection",
-                ][..],
-            ),
-        ] {
-            if phrases.iter().any(|phrase| name.contains(phrase)) {
-                label_kinds.insert(kind);
-            }
-        }
-        if role == "checkbox"
-            && (label_kinds.contains(&ChallengeCopyKind::RobotPrompt)
-                || label_kinds.contains(&ChallengeCopyKind::HumanVerification))
-        {
+        let names_human_check = [
+            "i'm not a robot",
+            "i’m not a robot",
+            "verify you are human",
+            "verify that you are human",
+            "prove you are human",
+        ]
+        .iter()
+        .any(|phrase| name.contains(phrase));
+        if role == "checkbox" && names_human_check {
             return true;
-        }
-        if !label_kinds.is_empty() && seen_labels.insert(name) {
-            matching_labels += 1;
-            copy_kinds.extend(label_kinds);
         }
     }
 
-    // One quoted stock phrase is common in articles, messages, and control
-    // values. Require distinct labels that corroborate distinct copy classes.
-    copy_kinds.len() >= 2 && matching_labels >= 2
+    // Challenge phrases also occur in documentation, support copy, and
+    // articles. Without a challenge-specific control relationship, combining
+    // page-wide labels would turn unrelated prose into a positive report.
+    false
 }
 
 fn browser_origin(url: &str) -> Option<String> {
@@ -312,7 +268,7 @@ mod tests {
     }
 
     #[test]
-    fn detects_correlated_visible_challenge_copy() {
+    fn unrelated_visible_challenge_copy_does_not_classify_the_page() {
         let value = value(
             "https://example.test/login",
             &[
@@ -322,11 +278,9 @@ mod tests {
             true,
         );
 
-        assert_eq!(value["status"], "detected");
-        assert_eq!(value["kind"], "anti_bot_challenge");
-        assert_eq!(value["origin"], "https://example.test");
-        assert_eq!(value["source"], "semantic");
-        assert_eq!(value["confidence"], "medium");
+        assert_eq!(value["status"], "not_detected");
+        assert!(value["kind"].is_null());
+        assert!(value["source"].is_null());
     }
 
     #[test]
@@ -386,7 +340,7 @@ mod tests {
     }
 
     #[test]
-    fn challenge_copy_must_span_distinct_semantic_labels() {
+    fn challenge_phrases_in_static_copy_do_not_classify_the_page() {
         let value = value(
             "https://example.test/ordinary",
             &["This article quotes 'verify you are human' and 'I'm not a robot'."],
@@ -444,11 +398,15 @@ mod tests {
 
     #[test]
     fn report_has_a_stable_closed_shape() {
-        let present = value(
+        let present = to_value(browser_challenge_report(
             "https://example.test/login",
-            &["Complete the security check", "Verify you are human"],
+            [BrowserChallengeLabel::new(
+                "checkbox",
+                "Verify you are human",
+            )],
             true,
-        );
+        ))
+        .unwrap();
         let absent = value("https://example.test/", &["Example Domain"], true);
         let unknown = value("https://example.test/", &["Example Domain"], false);
 
@@ -472,11 +430,15 @@ mod tests {
 
     #[test]
     fn opaque_urls_report_an_unknown_origin() {
-        let value = value(
+        let value = to_value(browser_challenge_report(
             "about:blank",
-            &["Complete the security check", "Verify you are human"],
+            [BrowserChallengeLabel::new(
+                "checkbox",
+                "Verify you are human",
+            )],
             true,
-        );
+        ))
+        .unwrap();
 
         assert_eq!(value["status"], "detected");
         assert!(value["origin"].is_null());
@@ -484,14 +446,15 @@ mod tests {
 
     #[test]
     fn report_does_not_echo_page_content_or_url_details() {
-        let value = value(
+        let value = to_value(browser_challenge_report(
             "https://example.test/login?secret=do-not-copy",
-            &[
-                "Private account name: Alice. Complete the security check.",
-                "Verify you are human.",
-            ],
+            [BrowserChallengeLabel::new(
+                "checkbox",
+                "Private account name: Alice. Verify you are human.",
+            )],
             true,
-        );
+        ))
+        .unwrap();
         let serialized = serde_json::to_string(&value).unwrap();
 
         assert!(!serialized.contains("Alice"));

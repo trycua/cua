@@ -74,6 +74,8 @@ both windows move. Every decoded frame must retain the target colors
 without red contamination, and at least two frames must differ. Frame timestamps
 must increase and span at least 1.5 seconds. The fixture acknowledges minimization
 after AppKit completes the asynchronous transition, with a three-second deadline.
+Minimization may first expose changing bounds or invisibility; either
+`window_resized` or `window_not_visible` is a valid automatic stop reason.
 At launch, the fixture waits for 20 consecutive 50-ms WindowServer samples matching
 its intended borderless dimensions, with a five-second deadline, so a transient
 expanded launch frame does not become the capture baseline.

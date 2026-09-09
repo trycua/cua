@@ -344,11 +344,11 @@ impl WindowPlan {
             .ok_or_else(|| anyhow::anyhow!("window_closed"))?;
         anyhow::ensure!(latest.pid == target.pid, "window_owner_changed");
         anyhow::ensure!(latest.is_on_screen, "window_not_visible");
+        anyhow::ensure!(latest.layer == native.layer, "window_identity_changed");
         anyhow::ensure!(
-            latest.layer == native.layer
-                && latest.bounds.width == native.bounds.width
+            latest.bounds.width == native.bounds.width
                 && latest.bounds.height == native.bounds.height,
-            "window_identity_changed"
+            "window_resized"
         );
         Ok(Self {
             info: WindowVideoInfo {

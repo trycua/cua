@@ -98,9 +98,31 @@ change. `perf` and `revert` also produce releases.
 Use `docs`, `test`, `ci`, `chore`, `build`, `refactor`, or `style` only when the
 pull request has no user-facing release entry. A pull request that adds tests
 while changing production behavior must be titled for the production change,
-not the tests. If release-tracked Cua Driver or Lume files changed but the work
+not the tests. If release-tracked Cua Driver, Lume, or Sandbox files changed but the work
 is intentionally non-releasing, add the `no-release` label. The
 `CI: Release metadata` check enforces this contract before squash merge.
+
+### Sandbox releases
+
+Sandbox uses Release Please, with independent `sandbox-vX.Y.Z` tags. Use
+`fix(sandbox): ...` for a correction and `feat(sandbox): ...` for a capability.
+Release Please prepares a separate release PR from changes since the previous
+Sandbox tag. While Sandbox is pre-1.0, breaking changes advance the minor version.
+
+The release PR updates `libs/python/cua-sandbox/VERSION`, the package and runtime
+versions, the root package version in `uv.lock`, the release manifest, and
+`CHANGELOG.md`. Maintainers review the version
+and changelog before merging. Publishing the resulting GitHub release triggers
+the PyPI workflow, which builds the exact tagged commit, not moving `main`.
+
+To request a specific bump, use **Release: Prepare component releases** with
+component `sandbox` and the desired bump type. This prepares a release PR; it
+does not publish the package. The **CD: cua-sandbox (PyPI)** manual workflow is
+only a retry for an existing published stable Release Please-managed Sandbox
+release. Legacy tags without a Sandbox release-manifest entry cannot be retried
+through this workflow. The legacy
+`pypi/sandbox` bump workflow and `release:pypi/sandbox` auto-release label no
+longer manage this package. Sandbox Apps remains on its separate legacy path.
 
 ## Preserve Contributor Authorship
 

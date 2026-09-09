@@ -39,6 +39,7 @@ use super::binding::{
     CdpWindowCandidate,
 };
 use super::cdp_ws::{CdpConnection, CdpEvent, CdpPool};
+use super::challenge::{browser_challenge_report, BrowserChallengeReport};
 use super::grant::{ExistingProfileGrant, ExistingProfileGrants, GrantLookup};
 use super::mutation::{MutationGates, MutationKey};
 use super::platform::{
@@ -402,6 +403,7 @@ pub(crate) struct SemanticSnapshotOutcome {
     pub snapshot_id: u64,
     pub url: String,
     pub title: String,
+    pub challenge: BrowserChallengeReport,
     pub outline: String,
     pub refs: Vec<SemanticListedRef>,
     pub content_refs: Vec<SemanticListedRef>,
@@ -2836,6 +2838,7 @@ impl BrowserEngine {
         snapshot_id: u64,
         url: String,
         title: String,
+        challenge: BrowserChallengeReport,
         page: super::semantic::SemanticPage,
         document_complete: bool,
         scope: &'static str,
@@ -2868,6 +2871,7 @@ impl BrowserEngine {
                 snapshot_id,
                 url,
                 title,
+                challenge,
                 outline: page.outline,
                 refs,
                 content_refs,
@@ -2975,6 +2979,11 @@ impl BrowserEngine {
                 "Page.getFrameTree failed while revalidating semantic continuation child frames",
             )
             .await?;
+            let challenge = browser_challenge_report(
+                &snapshot.url,
+                document.visible_challenge_labels(),
+                document.complete && continuation_state.oopif_supported,
+            );
             let page = document.page(
                 continuation_state.offset,
                 DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -2997,6 +3006,7 @@ impl BrowserEngine {
                 snapshot.id,
                 snapshot.url.clone(),
                 tab.title,
+                challenge,
                 page,
                 document.complete,
                 "continuation",
@@ -3196,6 +3206,11 @@ impl BrowserEngine {
         let semantic_scope = scope_entry.as_ref().map(SemanticScope::from);
         let semantic_frames = Self::semantic_frames(&semantic);
 
+        let challenge = browser_challenge_report(
+            &url,
+            semantic.visible_challenge_labels(),
+            semantic.complete && matches!(oopif, OopifStatus::Attached(_)),
+        );
         let page = semantic.page(
             0,
             DEFAULT_SEMANTIC_NODE_BUDGET,
@@ -3215,6 +3230,7 @@ impl BrowserEngine {
             snapshot_id,
             url.clone(),
             tab.title.clone(),
+            challenge,
             page,
             semantic.complete,
             scope,

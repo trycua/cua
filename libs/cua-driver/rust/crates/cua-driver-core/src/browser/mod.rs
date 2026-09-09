@@ -37,6 +37,7 @@
 
 pub mod binding;
 pub mod cdp_ws;
+mod challenge;
 pub mod download;
 pub mod engine;
 mod grant;

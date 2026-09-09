@@ -10,6 +10,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde_json::Value;
 
+use super::challenge::BrowserChallengeLabel;
 use super::store::{BrowserActionKind, BrowserVisibility, FrameRef, RefEntry, SemanticScope};
 
 pub(crate) const SEMANTIC_COMPUTED_STYLES: &[&str] = &[
@@ -184,6 +185,30 @@ impl SemanticDocument {
         } else {
             self.complete && other.complete
         };
+    }
+
+    /// Accessible labels available to page-level classification.
+    ///
+    /// Ordinary copy must be in the viewport. A checkbox can also participate
+    /// when it is actionable and accessibility exposes it without layout
+    /// geometry, as happens for some native browser checkbox renderings.
+    /// Mutable values and known hidden/offscreen state remain excluded.
+    pub(crate) fn visible_challenge_labels(
+        &self,
+    ) -> impl Iterator<Item = BrowserChallengeLabel<'_>> {
+        self.nodes
+            .iter()
+            .filter(|node| {
+                node.visibility == BrowserVisibility::InViewport
+                    || (node.visibility == BrowserVisibility::NoLayout
+                        && node.role.eq_ignore_ascii_case("checkbox")
+                        && node.actions.contains(&BrowserActionKind::Click))
+            })
+            .filter_map(|node| {
+                node.name
+                    .as_deref()
+                    .map(|name| BrowserChallengeLabel::new(&node.role, name))
+            })
     }
 
     pub(crate) fn page(
@@ -1469,6 +1494,73 @@ mod tests {
         assert_eq!(
             clean_semantic_text("\u{e001} Reply\u{00a0}now \u{f8ff}".to_owned()).as_deref(),
             Some("Reply now")
+        );
+    }
+
+    #[test]
+    fn challenge_labels_exclude_control_values_and_nonviewport_state() {
+        let node = |ax_id: &str,
+                    name: Option<&str>,
+                    value: Option<&str>,
+                    visibility: BrowserVisibility| SemanticNode {
+            ax_id: ax_id.to_owned(),
+            parent_ax_id: None,
+            child_ax_ids: Vec::new(),
+            backend_node_id: None,
+            role: "textbox".to_owned(),
+            name: name.map(str::to_owned),
+            value: value.map(str::to_owned),
+            states: BTreeMap::new(),
+            frame: frame(),
+            visibility,
+            actions: Vec::new(),
+            document_order: 0,
+        };
+        let mut actionable_checkbox = node(
+            "checkbox",
+            Some("Verify you are human"),
+            None,
+            BrowserVisibility::NoLayout,
+        );
+        actionable_checkbox.role = "checkbox".to_owned();
+        actionable_checkbox.actions = vec![BrowserActionKind::Click];
+        let document = SemanticDocument {
+            nodes: vec![
+                node(
+                    "visible",
+                    Some("Draft excerpt"),
+                    Some("Verify you are human"),
+                    BrowserVisibility::InViewport,
+                ),
+                node(
+                    "offscreen",
+                    Some("Complete the security check"),
+                    None,
+                    BrowserVisibility::Offscreen,
+                ),
+                node(
+                    "hidden",
+                    Some("I'm not a robot"),
+                    None,
+                    BrowserVisibility::CssHidden,
+                ),
+                node(
+                    "no-layout-copy",
+                    Some("Complete the security check"),
+                    None,
+                    BrowserVisibility::NoLayout,
+                ),
+                actionable_checkbox,
+            ],
+            ..SemanticDocument::default()
+        };
+
+        assert_eq!(
+            document.visible_challenge_labels().collect::<Vec<_>>(),
+            vec![
+                BrowserChallengeLabel::new("textbox", "Draft excerpt"),
+                BrowserChallengeLabel::new("checkbox", "Verify you are human"),
+            ]
         );
     }
 }

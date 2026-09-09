@@ -7,7 +7,7 @@ description: Reference for semantic_v2 browser state, refs, scopes, and continua
 
 | Format | Status | Output |
 | --- | --- | --- |
-| `semantic_v2` | Recommended for new browser workflows | Semantic outline, typed action refs, content refs, visibility, omission counts, and continuation |
+| `semantic_v2` | Recommended for new browser workflows | Semantic outline, typed action refs, content refs, visibility, omission counts, continuation, and an advisory challenge report |
 | `dom_refs_v1` | Compatibility default when `snapshot_format` is omitted | Interactive DOM refs and a `truncated` flag |
 
 Bind a native browser window first. Snapshot mode requires the returned opaque
@@ -68,6 +68,13 @@ Semantic snapshot requests may also contain one of these read scopes:
   "outline": "- heading \"Message\"\n- textbox \"Reply body\"",
   "refs": [],
   "content_refs": [],
+  "challenge": {
+    "status": "not_detected",
+    "kind": null,
+    "origin": "https://example.test",
+    "source": null,
+    "confidence": null
+  },
   "oopif": {
     "status": "attached",
     "frames": 1
@@ -79,6 +86,48 @@ Semantic snapshot requests may also contain one of these read scopes:
 behind the output budget. A non-null continuation identifies that remaining
 state. Known oversized-DOM fallback produces a partial snapshot with
 `complete: false`; unrelated transport failures remain errors.
+
+## Challenge report
+
+`semantic_v2` includes an advisory `challenge` object. It conservatively checks
+the top-level URL and the collected semantic document for common CAPTCHA and
+bot-verification signals. Detection is independent of the requested query,
+scope, or continuation page. It does not use the cached tab title as evidence.
+`dom_refs_v1` is unchanged.
+
+When a likely challenge is present, `status` is `detected` and `kind` is
+`anti_bot_challenge`:
+
+```json
+{
+  "status": "detected",
+  "kind": "anti_bot_challenge",
+  "origin": "https://example.test",
+  "source": "semantic",
+  "confidence": "medium"
+}
+```
+
+`status` is one of `detected`, `not_detected`, or `unknown`. `source` is `url`
+for a known challenge endpoint or `semantic` for a human-verification label
+bound directly to an accessible, actionable checkbox that is not known to be
+hidden or offscreen. `confidence` is `high` for the narrow URL classifications
+and `medium` for the control-bound semantic fallback.
+The remaining fields are `null` when no challenge is detected. `origin` is also
+`null` when the page URL has no web origin, such as `about:blank`.
+
+A report uses `not_detected` only when the underlying semantic document and
+supported frame collection were complete. When collection is incomplete and no
+signal is found, it returns `status: "unknown"`; this does not prove that the
+page has no challenge. A positive signal can still be reported from incomplete
+state.
+
+The report uses fixed labels and returns only the URL origin. It does not copy
+page text, paths, or query strings into the challenge fields. Detection is not
+universal: stock phrases in ordinary page copy—even multiple visible labels—
+offscreen content, or a control's mutable value are not enough to classify a
+page. The report is advisory and does not itself pause actions, provide a resume
+operation, or solve the challenge.
 
 ## Action refs
 

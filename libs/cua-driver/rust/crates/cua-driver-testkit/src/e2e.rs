@@ -136,6 +136,7 @@ pub enum DriverRoute {
     LinuxLibei,
     LinuxWaylandVirtualPointer,
     LinuxCuaCompositorInject,
+    CdpRead,
     Cdp,
     Composite,
 }
@@ -1364,7 +1365,10 @@ impl CatalogPolicy {
 fn case_requires_action_turn(case: &CaseSpec) -> bool {
     !matches!(
         case.driver_route,
-        DriverRoute::CaptureScopeGate | DriverRoute::AxRead | DriverRoute::WindowState
+        DriverRoute::CaptureScopeGate
+            | DriverRoute::AxRead
+            | DriverRoute::WindowState
+            | DriverRoute::CdpRead
     ) && case.action != "screenshot"
 }
 

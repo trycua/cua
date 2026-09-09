@@ -250,10 +250,11 @@ impl GetBrowserStateTool {
                 dom_refs_v1 compatibility format returns composed DOM refs. \
                 semantic_v2 joins accessibility, DOM, layout, and viewport state; \
                 ranks visible content before retained/offscreen state; and returns a \
-                semantic outline, typed action refs, content refs, scoped reads, and \
-                opaque continuation. Never performs setup — a missing \
-                endpoint is a structured browser_requires_setup refusal pointing at \
-                browser_prepare."
+                semantic outline, typed action refs, content refs, scoped reads, an \
+                opaque continuation, and an advisory challenge report when page state \
+                conservatively indicates CAPTCHA or bot verification. Never performs setup — \
+                a missing endpoint is a structured browser_requires_setup refusal \
+                pointing at browser_prepare."
                 .into(),
             input_schema: json!({
                 "type": "object",
@@ -436,6 +437,7 @@ impl Tool for GetBrowserStateTool {
                             "outline": outcome.outline,
                             "refs": refs,
                             "content_refs": content_refs,
+                            "challenge": outcome.challenge,
                             "oopif": {
                                 "status": outcome.oopif.as_str(),
                                 "frames": outcome.oopif.frames(),

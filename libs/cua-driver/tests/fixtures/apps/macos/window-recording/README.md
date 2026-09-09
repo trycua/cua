@@ -68,24 +68,38 @@ explicit `{kind: "window", pid, window_id}` on every start. Fixture stdin is
 only an external control for changing its synthetic native windows; it is not
 a capture implementation or substitute for native video proof.
 
-The green target has a blue center marker and a pulsing white bar. A larger red sibling fully covers
-it before both windows move. Every decoded half-second sample must retain the
-target colors without red contamination, and at least two samples must differ.
-Stream dimensions must match the fixture's native point dimensions and display
-scale. Five recordings cover explicit stop, minimize, close, resize, and owner
-disconnect. Each verifies native finalization,
+The 321-by-241-point green target has a blue center marker and a pulsing white
+bar. A larger red sibling starts visible beside it, then fully covers it before
+both windows move. Every decoded frame must retain the target colors
+without red contamination, and at least two frames must differ. Frame timestamps
+must increase and span at least 1.5 seconds. The fixture acknowledges minimization
+after AppKit completes the asynchronous transition, with a three-second deadline.
+Stream dimensions must match the fixture's native point dimensions and observed
+display scale, rounded up to even physical pixels. Seven recordings cover three
+explicit stops, minimize, close, resize, and owner disconnect. Each verifies native finalization,
 the termination reason, a decoded playable MP4, and exactly `recording.mp4`
 plus `session.json`. The same daemon also rejects wrong-PID and busy starts,
-and starts subsequent recordings after finalization.
+and starts subsequent recordings after finalization. Starting capture and
+explicitly stopping or disconnecting must preserve the foreground process,
+fixture window order, key window, and physical cursor position. The test samples
+the attested daemon's open descriptor count before capture and after each
+finalized recording. The first `stop` case warms the native capture frameworks;
+subsequent cases permit at most two additional descriptors above that warmed
+sample. This detects repeated growth, not a one-time resource retained at warmup.
 
-Artifacts remain in `stop/`, `minimize/`, `close/`, `resize/`, and `disconnect/`; there is no
-bulk cleanup. An existing case path or environment report is rejected before
+Artifacts remain in `stop/`, `repeat_1/`, `repeat_2/`, `minimize/`, `close/`,
+`resize/`, and `disconnect/`; there is no bulk cleanup. The root
+`native-diagnostics.json` records descriptor counts and observed native scales,
+not descriptor paths or other application state. An existing case path or report is rejected before
 connecting, and the environment report is created without overwrite.
 The fixture child is killed and reaped on normal return or Rust assertion
 unwind, including an invalid or missing initial reply. The test does not install software, grant permissions, change desktop
 settings, capture the desktop, or enable legacy trajectory recording.
 
-This lane does not prove display-scale changes, display reconfiguration,
+Only the scales reported in `native-diagnostics.json` are exercised natively;
+a scale-1 run does not certify Retina capture. Shared geometry tests separately
+cover scale arithmetic and scale-change policy. This lane does not prove
+display-scale changes, display reconfiguration,
 cross-process occlusion, session ownership races, permission revocation, or
 encoder failure recovery. Native execution is required before reporting the
 test as passing; successful compilation alone proves no GUI behavior.

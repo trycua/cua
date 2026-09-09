@@ -24,7 +24,7 @@ func reply(_ value: [String: Any]) {
 
 let app = NSApplication.shared
 app.setActivationPolicy(.regular)
-let frame = NSRect(x: 140, y: 180, width: 320, height: 240)
+let frame = NSRect(x: 140, y: 180, width: 321, height: 241)
 let target = NSWindow(contentRect: frame,
                       styleMask: [.borderless, .miniaturizable], backing: .buffered, defer: false)
 target.title = "Cua Recording Target"
@@ -42,8 +42,37 @@ sibling.title = "Cua Recording Red Sibling"
 sibling.isReleasedWhenClosed = false
 sibling.hasShadow = false
 sibling.backgroundColor = NSColor(srgbRed: 1, green: 0, blue: 0, alpha: 1)
+sibling.setFrameOrigin(NSPoint(x: frame.maxX + 20, y: frame.minY))
+sibling.orderFrontRegardless()
 target.orderFrontRegardless()
 app.activate(ignoringOtherApps: true)
+
+func replyState(_ command: String) {
+    let cursor = NSEvent.mouseLocation
+    reply(["command": command, "miniaturized": target.isMiniaturized,
+           "visible": target.isVisible, "x": target.frame.minX,
+           "width": target.frame.width,
+           "sibling_visible": sibling.isVisible,
+           "sibling_adjacent": !sibling.frame.intersects(target.frame),
+           "sibling_covers_target": sibling.frame.contains(target.frame),
+           "sibling_in_front": NSApp.orderedWindows.first === sibling,
+           "ui_state": [
+               "frontmost_pid": NSWorkspace.shared.frontmostApplication?.processIdentifier ?? -1,
+               "key_window": NSApp.keyWindow?.windowNumber ?? -1,
+               "ordered_windows": NSApp.orderedWindows.map { $0.windowNumber },
+               "cursor_x": cursor.x, "cursor_y": cursor.y,
+           ]])
+}
+
+func replyAfterMinimize(until deadline: TimeInterval) {
+    if target.isMiniaturized || ProcessInfo.processInfo.systemUptime >= deadline {
+        replyState("minimize")
+        return
+    }
+    DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+        replyAfterMinimize(until: deadline)
+    }
+}
 
 DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
     reply(["pid": ProcessInfo.processInfo.processIdentifier,
@@ -55,6 +84,7 @@ DispatchQueue.global().async {
     while let command = readLine() {
         DispatchQueue.main.async {
             switch command {
+            case "state": break
             case "occlude":
                 sibling.setFrame(target.frame.insetBy(dx: -20, dy: -20), display: true)
                 sibling.orderFrontRegardless()
@@ -64,18 +94,17 @@ DispatchQueue.global().async {
                 sibling.orderFrontRegardless()
             case "resize":
                 target.setContentSize(NSSize(width: 360, height: 260))
-            case "minimize": target.miniaturize(nil)
+            case "minimize":
+                target.miniaturize(nil)
+                // AppKit completes minimization asynchronously, after this handler.
+                replyAfterMinimize(until: ProcessInfo.processInfo.systemUptime + 3)
+                return
             case "close": target.close()
             default:
                 reply(["error": "unknown command"])
                 return
             }
-            reply(["command": command, "miniaturized": target.isMiniaturized,
-                   "visible": target.isVisible, "x": target.frame.minX,
-                   "width": target.frame.width,
-                   "sibling_visible": sibling.isVisible,
-                   "sibling_covers_target": sibling.frame.contains(target.frame),
-                   "sibling_in_front": NSApp.orderedWindows.first === sibling])
+            replyState(command)
         }
     }
     DispatchQueue.main.async { app.terminate(nil) }

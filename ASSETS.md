@@ -1,19 +1,3 @@
-
-
-https://github.com/user-attachments/assets/89d570f7-e895-4b66-8c20-ded5da2926a4
-
-
-
-https://github.com/user-attachments/assets/5ef3bec8-70a5-45f5-8eb3-930a345b9019
-
-
-
-https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b
-
-
-
-https://github.com/user-attachments/assets/e9344780-e780-46e7-bcce-91f61eda9599
-
 # Assets
 
 This branch exists only to host GitHub user attachments. **Never merge it into
@@ -83,3 +67,7 @@ does not. That is why assets are minted here rather than in the destination page
 | `omarchy-arm64-architecture.png` | [`352315ab…`](https://github.com/user-attachments/assets/352315ab-87d8-4b6c-acfa-dfc2be79b025) | `blog/omarchy-arm64-on-lume-x-thread.md` |
 | `omarchy-arm64-capability-matrix.png` | [`1be4f977…`](https://github.com/user-attachments/assets/1be4f977-9229-455d-b650-a87994a8098b) | `blog/omarchy-arm64-on-lume-x-thread.md` |
 | `omarchy-background-selection-take-4.mp4` | [Video](https://github.com/user-attachments/assets/b4e5517c-d2db-4758-b4cf-07131b0753b2) | `how-to-guides/sandbox/run-omarchy-on-cloud-fleet` |
+| `cursor-highlights.mp4` | [Video](https://github.com/user-attachments/assets/e9344780-e780-46e7-bcce-91f61eda9599) | `index` |
+| `map-cursor.mp4` | [Video](https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b) | `how-to-guides/recipes/build-and-inspect-a-map` |
+| `pdf-cursor.mp4` | [Video](https://github.com/user-attachments/assets/5ef3bec8-70a5-45f5-8eb3-930a345b9019) | `how-to-guides/recipes/redact-and-annotate-a-pdf` |
+| `archive-cursor.mp4` | [Video](https://github.com/user-attachments/assets/89d570f7-e895-4b66-8c20-ded5da2926a4) | `how-to-guides/recipes/prepare-an-exhibition-panel` |

@@ -46,7 +46,8 @@ def main():
             owned_tasks.add(service["task_id"])
         if service.get("status") == "Running" and service.get("current_package"):
             visited_apps.add(service["current_package"])
-        events.append(dict(event=label, t=round(time.monotonic() - started, 3), state=s))
+        events.append(dict(event=label, t=round(time.monotonic() - started, 3),
+                           epoch_s=time.time(), state=s))
         (args.evidence_dir / "events.json").write_text(json.dumps(events, indent=2))
         return s
 

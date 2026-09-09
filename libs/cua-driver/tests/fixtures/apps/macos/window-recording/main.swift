@@ -74,11 +74,30 @@ func replyAfterMinimize(until deadline: TimeInterval) {
     }
 }
 
-DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-    reply(["pid": ProcessInfo.processInfo.processIdentifier,
-           "window_id": target.windowNumber, "sibling_id": sibling.windowNumber,
-           "width": frame.width, "height": frame.height,
-           "scale": target.backingScaleFactor])
+func replyWhenReady(until deadline: TimeInterval, stableSamples: Int = 0) {
+    let windows = CGWindowListCopyWindowInfo(.optionIncludingWindow,
+                                            CGWindowID(target.windowNumber)) as? [[String: Any]]
+    let bounds = windows?.first?[kCGWindowBounds as String] as? [String: Any]
+    let settled = (bounds?["Width"] as? Double) == frame.width
+        && (bounds?["Height"] as? Double) == frame.height
+        && (windows?.first?[kCGWindowIsOnscreen as String] as? Bool) == true
+    let samples = settled ? stableSamples + 1 : 0
+    if samples >= 3 {
+        reply(["pid": ProcessInfo.processInfo.processIdentifier,
+               "window_id": target.windowNumber, "sibling_id": sibling.windowNumber,
+               "width": frame.width, "height": frame.height,
+               "scale": target.backingScaleFactor])
+    } else if ProcessInfo.processInfo.systemUptime >= deadline {
+        reply(["error": "fixture_geometry_unsettled"])
+    } else {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            replyWhenReady(until: deadline, stableSamples: samples)
+        }
+    }
+}
+// WindowServer can briefly expose an expanded launch frame after AppKit returns.
+DispatchQueue.main.async {
+    replyWhenReady(until: ProcessInfo.processInfo.systemUptime + 5)
 }
 DispatchQueue.global().async {
     while let command = readLine() {

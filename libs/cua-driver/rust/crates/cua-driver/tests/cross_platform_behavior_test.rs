@@ -795,19 +795,44 @@ fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
 }
 
 fn sdk_click_token(state: &WindowStateOutput) -> String {
-    let tree = state.tree_markdown.as_deref().expect("typed AX tree");
-    let index = element_index_by_id(tree, "border-click-target")
-        .or_else(|| element_index_by_id(tree, "click-target"))
-        .or_else(|| element_index_containing(tree, "Click target (left / right / double)"))
-        .expect("typed snapshot contains the fixture click target");
-    state
-        .elements
-        .as_ref()
-        .expect("typed AX elements")
-        .iter()
-        .find(|element| element.element_index == index)
-        .and_then(|element| element.element_token.clone())
-        .expect("typed click target has a snapshot-bound token")
+    let elements = state.elements.as_ref().expect("typed AX elements");
+    // The fixture's aria-label is its accessible name. Native adapters need
+    // not preserve the DOM id or visible text in the rendered markdown.
+    [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ]
+    .into_iter()
+    .find_map(|label| {
+        elements
+            .iter()
+            .find(|element| element.label.as_deref() == Some(label))
+            .and_then(|element| element.element_token.clone())
+    })
+    .unwrap_or_else(|| panic!("typed click target has no snapshot-bound token: {elements:?}"))
+}
+
+#[test]
+fn typed_click_target_uses_accessible_label_without_markdown_ids() {
+    for label in [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ] {
+        let state: WindowStateOutput = serde_json::from_value(serde_json::json!({
+            "pid": 42,
+            "window_id": 73,
+            "tree_markdown": "[9] button \"border-click-target\"",
+            "elements": [{
+                "element_index": 9,
+                "role": "button",
+                "depth": 1,
+                "label": label,
+                "element_token": "snapshot-token"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(sdk_click_token(&state), "snapshot-token");
+    }
 }
 
 fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {

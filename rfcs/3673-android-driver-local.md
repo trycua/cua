@@ -3,7 +3,7 @@ title: Local Android backend for Cua Driver
 authors:
   - f-trycua
 created: 2026-09-08
-last_updated: 2026-09-08
+last_updated: 2026-09-09
 status: review
 discussion: https://github.com/trycua/cua/issues/3673
 ---
@@ -54,9 +54,14 @@ Use an expiring session and serialized bounded operations; publish lifecycle
 limits. Native event acceptance is an unverifiable effect until independent
 fixture evidence confirms the result. Raw text, accessibility refs, concurrent
 IME isolation, physical phone support, an autonomous agent loop, and general
-third-party app qualification remain separate acceptance gates. The production
-SDK should use typed operations and an app lifecycle owner; a synchronous local
-IPC client is an initial transport slice, not that complete public SDK.
+third-party app qualification remain separate acceptance gates. The experimental
+SDK uses typed coroutine operations over a synchronous transport. The demo's
+user-started foreground service owns renewal and cleanup across Activity
+recreation and backgrounding. Stop drains pending requests and confirms cleanup
+before honoring a queued Start. Deterministic tests cover the creation and
+cleanup races. Process death relies on runtime lease expiry;
+it never silently adopts or recreates a session. These experimental bindings
+remain separate from stable API adoption and complete SDK qualification.
 
 ## Validation
 

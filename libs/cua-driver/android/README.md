@@ -87,18 +87,49 @@ is not currently admitted. Desktop `--local` and remote `--connection` requests
 refuse instead of accidentally controlling the desktop.
 
 Open the demo app on display 0 and press Start to create an app-owned session.
-It displays read-only downscaled frames and renews its lease on Android without
-a host controller. Stop invokes runtime cleanup. The SDK's current
-`DriverClient.call` is a blocking worker-thread API with JSON results; a complete
-typed coroutine SDK remains follow-up work. Construct `DriverClient(context)`
-inside an app: a signing-identity-checked provider returns the shell runtime's
-Binder, and responses travel through bounded pipes. Shell clients instead use a
-local socket with peer UID checks. Android's SELinux policy remains enforced.
+Its foreground service displays a notification with a Stop action, obtains
+read-only downscaled frames, and renews the lease without a host controller.
+Activity recreation or backgrounding preserves the service, session, and target.
+Stop drains the in-flight request before cleanup. Start during cleanup queues
+one restart after confirmed release; another Stop cancels that restart.
+Cleanup errors remain errors and never trigger an automatic restart. Process death loses the
+controller; the runtime expires the unrenewed lease and destroys the target.
+A fresh process never silently adopts that session or starts another one.
+
+Construct `AndroidDriver(context)` for typed suspend operations and results.
+The SDK dispatches blocking IPC off the UI thread. A signing-identity-checked
+provider returns the shell runtime's Binder, and responses travel through
+bounded pipes. Shell clients instead use a local socket with peer UID checks.
+Android's SELinux policy remains enforced. `DriverClient.call` remains available
+as the lower-level blocking JSON API.
 The runtime admits the demo UID only if its installed signature matches the
 installed runtime APK; it checks session ownership on session operations.
-A session ID alone grants no access. Pass a caller-owned `requestId` to `call`
-when an operation needs a retained identity; transport exceptions expose that ID
-through `UncertainRequestException`. Never blindly retry an uncertain mutation.
+A session ID alone grants no access; using the SDK from another APK does not
+authorize it. Pass a caller-owned `requestId` to a typed operation when it needs
+a retained identity. `DriverRefusedException`, `DriverUncertainException`, and
+`DriverRuntimeException` preserve that ID. `DriverRequestCancelledException`
+also reports whether dispatch may have occurred: cancelling a coroutine does
+not retract native input. No operation automatically retries an uncertain result.
+
+For example, from a coroutine in the admitted demo app:
+
+```kotlin
+val driver = AndroidDriver(context)
+val created = driver.createSession(SessionOptions(allowedApps = listOf("ai.cua.fixture.notes")))
+val sessionId = created.data.sessionId
+try {
+    val target = driver.launchApp(sessionId, "ai.cua.fixture.notes").data
+    val frame = driver.snapshot(sessionId, target.targetId).data
+    // frame.png contains PNG bytes; use its full-resolution geometry for input.
+} finally {
+    withContext(NonCancellable) { driver.stopSession(sessionId) }
+}
+```
+
+The typed API covers doctor/capabilities, session lifecycle, launch, snapshots,
+preview, taps, and swipes. Results retain the request and runtime generation IDs
+and optional action evidence. A native event's accepted transport remains an
+unverifiable application effect.
 
 ## Current constraints
 
@@ -106,8 +137,10 @@ through `UncertainRequestException`. Never blindly retry an uncertain mutation.
   after an interrupted launch. A second launch never adopts an old task.
 - Caller-owned 60-second lease; renew with `session renew`. CLI exit does not
   destroy the session, but no persistent host broker renews it automatically.
-  The demo renews every 10 seconds while its Activity is alive. Activity
-  recreation currently stops the session; a foreground lifecycle owner is pending.
+  The demo's user-started foreground service renews every 10 seconds, including
+  while its Activity is backgrounded or recreated. Grant notification permission
+  to see its notification and Stop action. Force-stopping the app prevents
+  renewal; the runtime lease bounds cleanup after process death.
 - Gestures last at most one second. Stop serializes behind an admitted gesture;
   the proposed 250 ms Stop-admission target is not implemented in this slice.
 - Rotation other than zero refuses input. Snapshot handles expire after five
@@ -135,6 +168,9 @@ through `UncertainRequestException`. Never blindly retry an uncertain mutation.
 ```bash
 python3 scripts/smoke.py --device emulator-5554 \
   --driver ../rust/target/debug/cua-driver --evidence-dir /tmp/android-driver-evidence
+python3 scripts/lifecycle-smoke.py --device emulator-5554 \
+  --driver ../rust/target/debug/cua-driver --evidence-dir /tmp/android-lifecycle-evidence
+./gradlew :sdk:testDebugUnitTest :demo:testDebugUnitTest
 ./gradlew :runtime:lintDebug :sdk:lintDebug :demo:lintDebug :fixture-target:lintDebug
 ```
 
@@ -155,6 +191,21 @@ The synthetic user route is not hardware keyboard,
 software-keyboard composition, physical phone, or complete disconnection proof.
 The fixture providers expose synthetic state for the independent test oracle;
 never put personal data into these apps or ship these providers in production.
+
+The lifecycle harness grants notification permission only to the selected
+guest's synthetic demo. It preserves one session through three real Activity
+recreations, backgrounds the app for 65 seconds without host requests, verifies
+renewal/preview progress, resumes, and stops through the notification action.
+It also force-stops the controller,
+checks expiry-driven task destruction, and requires an explicit fresh start.
+The debug-only `ai.cua.android.demo.RECREATE` Activity action exists for this
+test; it has no effect in a non-debuggable build. The evidence provider marks
+persisted service state as stale after process death.
+
+Deterministic controller tests hold creation, preview, and cleanup in flight to
+exercise Stop/Start races, repeat Start, cancel a queued restart, reject
+unconfirmed cleanup, and stop using a changed runtime. SDK tests cover typed
+responses, request correlation, refusals, uncertain results, and cancellation.
 
 Native Android evidence supplements rather than replaces the repository's
 canonical desktop E2E gates when shared desktop behavior is changed. Keep the

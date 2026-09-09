@@ -14,7 +14,14 @@ class StateProvider : ContentProvider() {
     override fun query(uri: Uri, projection: Array<out String>?, selection: String?, selectionArgs: Array<out String>?, sortOrder: String?): Cursor {
         val state = synchronized(StateProvider::class.java) {
             val file = java.io.File(requireNotNull(context).filesDir, "state.json")
-            if (file.exists()) file.readText() else JSONObject().put("status", "not_started").toString()
+            val result = if (file.exists()) JSONObject(file.readText()) else JSONObject().put("status", "not_started")
+            val ownerFile = java.io.File(requireNotNull(context).filesDir, "service-state.json")
+            if (ownerFile.exists()) {
+                val owner = JSONObject(ownerFile.readText())
+                owner.put("owner_process_alive", owner.optString("process_generation") == DemoProcess.generation)
+                result.put("service", owner)
+            }
+            result.toString()
         }
         return MatrixCursor(arrayOf("json")).apply { addRow(arrayOf(state)) }
     }

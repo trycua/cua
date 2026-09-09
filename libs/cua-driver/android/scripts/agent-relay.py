@@ -235,9 +235,15 @@ def structured_action(value, request):
     return validate_action(value["action"], request)
 
 
-def parse_model_output(output, request):
+def same_operation(first, second):
+    return ({key: value for key, value in first.items() if key != "reason"}
+            == {key: value for key, value in second.items() if key != "reason"})
+
+
+def parse_model_output(output, request, allow_native_repair=True):
     assistant_text, result, model = None, None, None
     model_tools, structured_input = None, None
+    formatter_inputs, formatter_ids, rejected = [], [], []
     for line in output.splitlines():
         if not line.strip():
             continue
@@ -263,9 +269,11 @@ def parse_model_output(output, request):
                     raise InferenceError("Unexpected model content or tool use")
                 if block["type"] == "tool_use":
                     if (model_tools != ["StructuredOutput"] or block.get("name") != "StructuredOutput"
-                            or structured_input is not None):
+                            or len(formatter_inputs) >= 2):
                         raise InferenceError("Unexpected or duplicate model tool use")
                     structured_input = block.get("input")
+                    formatter_inputs.append(structured_input)
+                    formatter_ids.append(block.get("id"))
             assistant_text = "".join(block["text"] for block in content if block.get("type") == "text" and isinstance(block.get("text"), str))
         elif event.get("type") == "result":
             if result is not None or event.get("is_error") or event.get("subtype") != "success":
@@ -288,8 +296,29 @@ def parse_model_output(output, request):
                 raise Invalid("Structured output does not match formatter input")
             # Inspect the entire completed stream for tool/policy errors before
             # classifying a formatting failure as eligible for recovery.
-            structured_action(structured_input, request)
-            action = structured_action(final_value, request)
+            if len(formatter_inputs) == 2:
+                if (not all(isinstance(value, str) and value for value in formatter_ids)
+                        or formatter_ids[0] == formatter_ids[1]):
+                    raise InferenceError("Duplicate formatter call identity")
+                try:
+                    structured_action(formatter_inputs[0], request)
+                except MalformedResponse as error:
+                    original_action = error.action
+                    rejected.append({"attempt": 1, "source": "native_formatter", "validation": str(error),
+                                     "model_response": json.dumps(formatter_inputs[0])[:65536]})
+                else:
+                    raise InferenceError("Unexpected formatter call after valid action")
+                if not allow_native_repair:
+                    raise Invalid("Formatting repair budget exhausted")
+                try:
+                    action = structured_action(final_value, request)
+                except MalformedResponse as error:
+                    raise Invalid("Native formatting repair remained malformed") from error
+                if not same_operation(original_action, action):
+                    raise Invalid("Native formatting repair changed the proposed action")
+            else:
+                structured_action(structured_input, request)
+                action = structured_action(final_value, request)
         else:
             if "structured_output" in result:
                 raise Invalid("Structured result without verified formatter")
@@ -301,8 +330,13 @@ def parse_model_output(output, request):
         # it is never executed or returned as an admitted action.
         diagnostic = result.get("structured_output", final_text)
         error.model_response = (diagnostic if isinstance(diagnostic, str) else json.dumps(diagnostic))[:65536]
+        if rejected:
+            error.rejected_attempts = rejected
         raise
-    return action, {"model": model, "tools": model_tools, "duration_ms": result.get("duration_ms")}
+    metadata = {"model": model, "tools": model_tools, "duration_ms": result.get("duration_ms")}
+    if rejected:
+        metadata.update(rejected_attempts=rejected, formatting_repairs=1)
+    return action, metadata
 
 
 def model_input(request, correction=None):
@@ -311,7 +345,7 @@ def model_input(request, correction=None):
                {"type": "image", "source": {"type": "base64", "media_type": "image/png",
                                                "data": request["image_base64"]}}]
     if correction is not None:
-        content.append({"type": "text", "text": "Previously rejected action data; preserve exactly:\n" + json.dumps(correction)})
+        content.append({"type": "text", "text": "Previously rejected action data; preserve operational fields:\n" + json.dumps(correction)})
     return json.dumps({"type": "user", "message": {"role": "user", "content": content}}) + "\n"
 
 
@@ -338,16 +372,18 @@ def infer(request, claude, timeout=INFERENCE_TIMEOUT, model="sonnet", cancelled=
                 continue
             if time.monotonic() >= deadline:
                 raise TimeoutError("Model inference timed out")
-            if correction is not None and action != correction:
+            if correction is not None and metadata.get("formatting_repairs", 0):
+                raise Invalid("Formatting repair budget exhausted")
+            if correction is not None and not same_operation(action, correction):
                 error = Invalid("Formatting retry changed the proposed action")
                 error.model_response = json.dumps(action)[:65536]
                 raise error
             if rejected:
-                metadata = dict(metadata, rejected_attempts=rejected)
+                metadata = dict(metadata, rejected_attempts=rejected, formatting_repairs=1)
             return action, metadata
     except Exception as error:
         if rejected:
-            error.rejected_attempts = rejected
+            error.rejected_attempts = rejected + getattr(error, "rejected_attempts", [])
         raise
 
 
@@ -379,8 +415,9 @@ def infer_once(request, claude, timeout=INFERENCE_TIMEOUT, model="sonnet", cance
     )
     if correction is not None:
         prompt += (" Formatting correction: the previous output was rejected because reason appeared beside action. "
-                   "Return exactly {\"action\": <previously rejected action data>}. Preserve every field and value "
-                   "of that action unchanged, including its reason. Do not reconsider or execute the action. "
+                   "Return exactly {\"action\": <previously rejected action data>}. Preserve every operational field "
+                   "and value of that action unchanged. Only the explanatory reason may be reworded. "
+                   "Do not reconsider or execute the action. "
                    "Only fix the outer envelope; its sole key is action.")
     argv = [claude, "--print", "--safe-mode", "--strict-mcp-config", "--mcp-config", '{"mcpServers":{}}',
             "--tools", "", "--no-session-persistence", "--model", model, "--effort", "medium",
@@ -411,7 +448,7 @@ def infer_once(request, claude, timeout=INFERENCE_TIMEOUT, model="sonnet", cance
             if len(raw) > MAX_OUTPUT:
                 raise InferenceError("Model output exceeds limit")
             try:
-                return parse_model_output(raw.decode("utf-8"), request)
+                return parse_model_output(raw.decode("utf-8"), request, allow_native_repair=correction is None)
             except InferenceError as error:
                 # Retain only completed protocol events in private diagnostics.
                 events = [decode_json(line) for line in raw.decode("utf-8").splitlines() if line.strip()]

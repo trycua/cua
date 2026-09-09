@@ -15,6 +15,13 @@ superseded_by:
 
 # RFC 2512: Cua Driver convergence across hosts, local sandboxes, Lume, and Fleets
 
+> September 2026 review supplement:
+> [Python and Fleet first delivery slice](2512-python-fleet-first-slice.md)
+> updates the source baseline and proposes a narrower stacked delivery. The
+> Rust remote backend now exists; production carriers and Python composition
+> remain work. The supplement records the accepted narrow implementation slice;
+> this broader RFC remains in review for the additional migrations and parity.
+
 ## Summary
 
 Cua should expose one typed `CuaDriver` application contract regardless of

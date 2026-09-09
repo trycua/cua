@@ -198,15 +198,14 @@ fn hyprland_socket_path(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Opt
     }
     let current = env("XDG_CURRENT_DESKTOP").filter(|v| !v.is_empty());
     let session = env("XDG_SESSION_DESKTOP").filter(|v| !v.is_empty());
-    if current.is_some() || session.is_some() {
-        let mentions_hyprland = |value: Option<&std::ffi::OsString>| {
-            value.and_then(|v| v.to_str()).is_some_and(|desktop| {
-                desktop
-                    .split(':')
-                    .any(|part| part.eq_ignore_ascii_case("Hyprland"))
-            })
-        };
-        if !mentions_hyprland(current.as_ref()) && !mentions_hyprland(session.as_ref()) {
+    // The current desktop can differ from the login session in a nested
+    // compositor. Only fall back to session metadata when it is absent.
+    if let Some(desktop) = current.or(session) {
+        if !desktop
+            .to_str()?
+            .split(':')
+            .any(|part| part.eq_ignore_ascii_case("Hyprland"))
+        {
             return None;
         }
     }
@@ -441,6 +440,30 @@ mod linux_cursor_tests {
     }
 
     #[test]
+    fn current_desktop_overrides_inherited_session_desktop() {
+        for (current, session, supported) in [
+            ("sway", "Hyprland", false),
+            ("GNOME", "Hyprland", false),
+            ("Hyprland:uwsm", "sway", true),
+            ("", "Hyprland", true),
+            ("", "sway", false),
+        ] {
+            let path = environment_path(&[
+                ("HYPRLAND_INSTANCE_SIGNATURE", "instance"),
+                ("XDG_RUNTIME_DIR", "/run/user/123"),
+                ("XDG_SESSION_TYPE", "wayland"),
+                ("XDG_CURRENT_DESKTOP", current),
+                ("XDG_SESSION_DESKTOP", session),
+            ]);
+            assert_eq!(
+                path.is_some(),
+                supported,
+                "current={current}, session={session}"
+            );
+        }
+    }
+
+    #[test]
     fn full_socket_backlog_does_not_block_connect() {
         use std::os::fd::AsRawFd;
         let dir = tempfile::tempdir().unwrap();
@@ -498,23 +521,53 @@ mod linux_cursor_tests {
     }
 
     #[test]
-    fn stop_flag_aborts_a_blocked_read() {
-        let (_dir, path, handle) = server(br#"{"x":1,"y":2}"#, Duration::from_millis(500));
-        let stop = Arc::new(AtomicBool::new(false));
-        let path = path.clone();
-        let stop_for_thread = stop.clone();
-        let query = std::thread::spawn(move || query_hyprland_cursor(&path, &stop_for_thread));
-        std::thread::sleep(Duration::from_millis(20));
-        let start = Instant::now();
-        stop.store(true, Ordering::Relaxed);
-        let result = query.join().unwrap();
-        let elapsed = start.elapsed();
-        handle.join().unwrap();
-        assert_eq!(result, None);
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "stop waited {elapsed:?}"
-        );
+    fn stop_and_drop_abort_a_blocked_socket_sample() {
+        for use_drop in [false, true] {
+            let dir = tempfile::tempdir().unwrap();
+            let path = dir.path().join("stalled.sock");
+            let listener = UnixListener::bind(&path).unwrap();
+            listener.set_nonblocking(true).unwrap();
+            let (started_tx, started_rx) = std::sync::mpsc::channel();
+            let sampler = CursorSampler::start_with_sample(
+                dir.path().join("cursor.jsonl"),
+                Instant::now(),
+                move |stop| {
+                    started_tx.send(Instant::now()).unwrap();
+                    query_hyprland_cursor(&path, stop)
+                },
+            )
+            .unwrap();
+            let query_started = started_rx.recv_timeout(Duration::from_secs(1)).unwrap();
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(query_started.elapsed() < HYPRLAND_QUERY_DEADLINE);
+                        std::thread::sleep(Duration::from_millis(1));
+                    }
+                    Err(error) => panic!("accept failed: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(1)))
+                .unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            assert_eq!(request, HYPRLAND_CURSORPOS_REQUEST);
+            // The peer has received the entire request but sends no reply.
+            // Finish before the query deadline, so a timeout cannot pass as
+            // cancellation. Include handshake time in this bound.
+            if use_drop {
+                drop(sampler);
+            } else {
+                assert_eq!(sampler.stop(), 0);
+            }
+            assert!(
+                query_started.elapsed() < HYPRLAND_QUERY_DEADLINE / 2,
+                "shutdown waited for the query deadline (drop={use_drop}): {:?}",
+                query_started.elapsed()
+            );
+        }
     }
 
     #[test]

@@ -355,6 +355,7 @@ if [[ "${SUITE}" == native || "${SUITE}" == all ]]; then
     harness_appkit_scroll_background \
     harness_appkit_counter \
     harness_appkit_counter_px_background \
+    harness_appkit_foreground_single_click_has_one_ordered_native_pair \
     harness_appkit_right_click_px_foreground \
     harness_appkit_right_click_px_background \
     harness_appkit_double_click_px_foreground \

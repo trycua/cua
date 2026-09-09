@@ -604,6 +604,45 @@ func installMenuBar(target: HarnessWindowController) {
 
 // MARK: - Entry
 
+final class SingleClickReceiver: NSView {
+    let journal: URL
+
+    init(frame: NSRect, journal: URL) {
+        self.journal = journal
+        super.init(frame: frame)
+        wantsLayer = true
+        layer?.backgroundColor = NSColor.systemGreen.cgColor
+    }
+
+    required init?(coder: NSCoder) { fatalError("init(coder:) is unsupported") }
+
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    func append(_ value: [String: Any]) {
+        var data = try! JSONSerialization.data(withJSONObject: value, options: [.sortedKeys])
+        data.append(0x0a)
+        let file = try! FileHandle(forWritingTo: journal)
+        defer { try! file.close() }
+        try! file.seekToEnd()
+        try! file.write(contentsOf: data)
+    }
+
+    func record(_ kind: String, _ event: NSEvent) {
+        guard let window else { fatalError("receiver has no window") }
+        append([
+            "kind": kind,
+            "timestamp": event.timestamp,
+            "window_id": event.windowNumber,
+            "click_count": event.clickCount,
+            "x": event.locationInWindow.x,
+            "y": window.frame.height - event.locationInWindow.y
+        ])
+    }
+
+    override func mouseDown(with event: NSEvent) { record("down", event) }
+    override func mouseUp(with event: NSEvent) { record("up", event) }
+}
+
 @main
 struct CuaAppKitHarness {
     static func main() {
@@ -620,6 +659,19 @@ struct CuaAppKitHarness {
         let controller = HarnessWindowController()
         installMenuBar(target: controller)
         controller.show()
+        if let path = ProcessInfo.processInfo.environment["CUA_APPKIT_POINTER_ORACLE"] {
+            let receiver = SingleClickReceiver(
+                frame: controller.window.contentView!.bounds,
+                journal: URL(fileURLWithPath: path)
+            )
+            controller.window.contentView = receiver
+            receiver.append([
+                "kind": "ready",
+                "window_id": controller.window.windowNumber,
+                "width": controller.window.frame.width,
+                "height": controller.window.frame.height
+            ])
+        }
         var matrixWindows: BringToFrontMatrixWindows?
         if let mode = ProcessInfo.processInfo.environment["CUA_HARNESS_BRING_TO_FRONT_MODE"] {
             matrixWindows = BringToFrontMatrixWindows(parent: controller.window, mode: mode)

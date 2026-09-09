@@ -69,6 +69,10 @@ impl Harness {
     }
 
     fn launch_with_command_oracle(command_oracle: Option<&Path>) -> Self {
+        Self::launch_with_oracles(command_oracle, None)
+    }
+
+    fn launch_with_oracles(command_oracle: Option<&Path>, pointer_oracle: Option<&Path>) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -81,6 +85,9 @@ impl Harness {
         command.stdout(Stdio::null()).stderr(Stdio::null());
         if let Some(path) = command_oracle {
             command.env("CUA_APPKIT_COMMAND_ORACLE", path);
+        }
+        if let Some(path) = pointer_oracle {
+            command.env("CUA_APPKIT_POINTER_ORACLE", path);
         }
         let app = command
             .spawn()
@@ -211,6 +218,105 @@ fn run_background_case_targeting(
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_appkit_foreground_single_click_has_one_ordered_native_pair() {
+    let case = native_foreground_case(
+        "appkit",
+        "single_click_native_pair",
+        Targeting::Px,
+        DriverRoute::MacosCgEventPid,
+    );
+    execute_case(case, |evidence| {
+        let mut driver =
+            McpDriver::spawn_macos_daemon_proxy_named("appkit-single-click-native-pair")
+                .expect("start macOS daemon proxy");
+        *evidence = recording_evidence(driver.recording_dir());
+        let directory = tempfile::tempdir().expect("create native pointer journal directory");
+        let journal = directory.path().join("pointer.jsonl");
+        std::fs::write(&journal, "").expect("initialize native pointer journal");
+        let harness = Harness::launch_with_oracles(None, Some(&journal));
+        let (wid, _) = driver
+            .find_window(harness.pid as i64, "CuaTestHarness AppKit")
+            .expect("find native receiver window");
+        driver.start_behavior_recording();
+        let read_events = || -> Vec<serde_json::Value> {
+            std::fs::read_to_string(&journal)
+                .expect("read native pointer journal")
+                .lines()
+                .map(|line| serde_json::from_str(line).expect("parse native pointer event"))
+                .collect()
+        };
+        let initial = read_events();
+        assert_eq!(
+            initial.len(),
+            1,
+            "receiver must be idle before the request: {initial:?}"
+        );
+        assert_eq!(initial[0]["kind"], "ready");
+        assert_eq!(initial[0]["window_id"].as_u64(), Some(wid));
+        let snapshot = snapshot_elements(&mut driver, harness.pid, wid);
+        assert!(
+            !snapshot.is_error(),
+            "capture receiver: {}",
+            snapshot.text()
+        );
+        let width = snapshot.structured()["screenshot_width"]
+            .as_f64()
+            .expect("screenshot width");
+        let height = snapshot.structured()["screenshot_height"]
+            .as_f64()
+            .expect("screenshot height");
+        assert!(width > 0.0 && height > 0.0);
+        let response = driver.call(
+            "click",
+            serde_json::json!({
+                "pid": harness.pid,
+                "window_id": wid,
+                "x": width / 2.0,
+                "y": height / 2.0,
+                "count": 1,
+                "delivery_mode": "foreground"
+            }),
+        );
+        assert!(
+            !response.is_error(),
+            "single click request failed: {}",
+            response.text()
+        );
+        std::thread::sleep(Duration::from_millis(750));
+        let events = read_events();
+        let received = &events[1..];
+        assert_eq!(
+        received.len(),
+        2,
+        "one request must deliver one native down/up pair: {received:?}; receiver={initial:?}; screenshot={width}x{height}"
+    );
+        assert_eq!(received[0]["kind"], "down");
+        assert_eq!(received[1]["kind"], "up");
+        let expected_x = initial[0]["width"].as_f64().unwrap() / 2.0;
+        let expected_y = initial[0]["height"].as_f64().unwrap() / 2.0;
+        for event in received {
+            assert_eq!(event["window_id"].as_u64(), Some(wid));
+            assert_eq!(event["click_count"], 1);
+            assert!(
+                (event["x"].as_f64().unwrap() - expected_x).abs() <= 1.0,
+                "wrong horizontal target: {event}"
+            );
+            assert!(
+                (event["y"].as_f64().unwrap() - expected_y).abs() <= 1.0,
+                "wrong vertical target: {event}"
+            );
+        }
+        assert!(
+            received[0]["timestamp"].as_f64().unwrap()
+                <= received[1]["timestamp"].as_f64().unwrap()
+        );
+        println!("native pointer events: {received:?}");
+        Observation::delivered_with_fixture_state(vec![])
+    });
+}
 
 #[test]
 #[ignore]
@@ -1164,11 +1270,11 @@ fn harness_appkit_double_click_px_background() {
                 response.text()
             );
             std::thread::sleep(Duration::from_millis(250));
+            let receiver_snapshot = snapshot_elements(driver, pid, wid);
+            let receiver = receiver_snapshot.tree_text();
             assert!(
-                snapshot_elements(driver, pid, wid)
-                    .tree_text()
-                    .contains("last_action=double_click"),
-                "AppKit background double-click handler did not fire"
+                receiver.contains("last_action=double_click") && receiver.contains("clicks=2"),
+                "AppKit background double-click receiver did not record exactly two clicks"
             );
         },
     );

@@ -309,7 +309,7 @@ fi
     def test_release_please_exposes_targeted_bump_dropdowns(self) -> None:
         workflow = self.read(".github/workflows/release-please.yml")
 
-        for option in ("automatic", "cua-driver-rs", "lume"):
+        for option in ("automatic", "cua-driver-rs", "lume", "sandbox"):
             self.assertIn(f"          - {option}\n", workflow)
         for bump in ("patch", "minor", "major"):
             self.assertIn(f"          - {bump}\n", workflow)
@@ -342,7 +342,7 @@ fi
     def test_legacy_release_routes_exclude_driver_and_lume(self) -> None:
         workflow = self.read(".github/workflows/release-bump-version.yml")
         self.assertIn('name: "Legacy packages: Bump Version"', workflow)
-        self.assertIn("Cua Driver and Lume use Release Please", workflow)
+        self.assertIn("Cua Driver, Lume, and Sandbox use Release Please", workflow)
         self.assertNotIn("          - cua-driver-rs\n", workflow)
         self.assertNotIn("          - lume\n", workflow)
         self.assertNotIn("gh api -X DELETE", workflow)

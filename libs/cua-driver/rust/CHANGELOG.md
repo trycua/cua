@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.25.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.24.0...cua-driver-rs-v0.25.0) (2026-09-09)
+
+
+### Features
+
+* **cua-driver:** add bounded typed guest envelope receiver ([#3650](https://github.com/trycua/cua/issues/3650)) ([542c98f](https://github.com/trycua/cua/commit/542c98fafab2a75dfb8147493e0c12e65f8e7580))
+* **cua-driver:** add private loopback envelope HTTP carrier ([#3653](https://github.com/trycua/cua/issues/3653)) ([c5898ef](https://github.com/trycua/cua/commit/c5898ef4bf092f3a47bc80e226a0016923b4739b))
+* **cua-driver:** expose foreign remote envelope channels ([#3651](https://github.com/trycua/cua/issues/3651)) ([04559df](https://github.com/trycua/cua/commit/04559df66c0b9303c559fa575a78f036285bf7e7))
+* **cua-driver:** integrate typed Driver access with Fleet Sandbox ([#3654](https://github.com/trycua/cua/issues/3654)) ([c9c29dc](https://github.com/trycua/cua/commit/c9c29dcffea354e3ae0cf75927845e79c9d38028))
+
+
+### Bug Fixes
+
+* **cua-driver:** correct macos click delivery and recording evidence ([#2907](https://github.com/trycua/cua/issues/2907)) ([467c103](https://github.com/trycua/cua/commit/467c103be28384502cdd77b9edd5ea46da0b8ded))
+* **cua-driver:** leave pacman-managed updates to pacman ([#3636](https://github.com/trycua/cua/issues/3636)) ([00678fa](https://github.com/trycua/cua/commit/00678fa8ec8f0f371716993ae4a207df812ef667))
+* **cua-driver:** preserve unavailable Windows UIA clicks ([#3671](https://github.com/trycua/cua/issues/3671)) ([7b7db5f](https://github.com/trycua/cua/commit/7b7db5f42898ac4f96f49aba1d46016bceeed7af))
+* **cua-driver:** read macOS browser checkbox state ([#3404](https://github.com/trycua/cua/issues/3404)) ([b117093](https://github.com/trycua/cua/commit/b1170930589691fd1101f6943410f32e57bda8b6))
+* **cua-driver:** recover slow Windows UIA health probes ([#3109](https://github.com/trycua/cua/issues/3109)) ([27736b3](https://github.com/trycua/cua/commit/27736b3ab97d9aed8bebaa548c3b08892bcb8ec5))
+
 ## [0.24.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.23.2...cua-driver-rs-v0.24.0) (2026-09-07)
 
 

@@ -16,7 +16,7 @@ Usage::
         await host.mouse.click(100, 200)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.4.3"  # x-release-please-version
 
 from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure

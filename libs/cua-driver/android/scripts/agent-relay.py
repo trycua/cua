@@ -410,7 +410,14 @@ def infer_once(request, claude, timeout=INFERENCE_TIMEOUT, model="sonnet", cance
             raw = output.read(MAX_OUTPUT + 1)
             if len(raw) > MAX_OUTPUT:
                 raise InferenceError("Model output exceeds limit")
-            return parse_model_output(raw.decode("utf-8"), request)
+            try:
+                return parse_model_output(raw.decode("utf-8"), request)
+            except InferenceError as error:
+                # Retain only completed protocol events in private diagnostics.
+                events = [decode_json(line) for line in raw.decode("utf-8").splitlines() if line.strip()]
+                error.model_response = json.dumps([event for event in events
+                    if isinstance(event, dict) and event.get("type") in ("assistant", "result", "error")])[:65536]
+                raise
         finally:
             # Kill only the process group created for this request, including descendants.
             try:
@@ -524,6 +531,7 @@ class RelayHandler(http.server.BaseHTTPRequestHandler):
                 try:
                     write_json(directory / "error.json", {"request_id": request_id, "error": "Inference unavailable",
                         "validation": str(error),
+                        "model_response": getattr(error, "model_response", None),
                         "rejected_attempts": getattr(error, "rejected_attempts", [])})
                 except OSError:
                     pass

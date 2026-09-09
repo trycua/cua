@@ -13,6 +13,17 @@ Install from the Cua wheel index when resolving dependencies with pip:
 pip install --extra-index-url https://wheels.cua.ai/simple cua-sandbox
 ```
 
+For typed desktop control of a Fleet sandbox through `sb.driver.connect()`,
+install the optional Driver SDK:
+
+```bash
+pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
+```
+
+The `driver` extra pins `cua-driver==0.25.0`, which provides the compatible remote
+channel bridge. It requires that version to be published for your platform.
+The sandbox image must also run a compatible Driver service.
+
 ## Ephemeral sandbox
 
 Created on enter, destroyed on exit.

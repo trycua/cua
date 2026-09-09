@@ -130,9 +130,9 @@ The same snapshot returns containment separately:
 ```
 
 `status` is one of `detected`, `not_detected`, or `unknown`. `source` is `url`
-for a known challenge endpoint or `semantic` for a visible challenge label
-bound to a control or corroborating visible semantic labels. `confidence` is
-`high` for the narrow URL classifications and `medium` for the text fallback.
+for a known challenge endpoint or `semantic` for a visible human-verification
+label bound directly to a checkbox. `confidence` is `high` for the narrow URL
+classifications and `medium` for the control-bound semantic fallback.
 The remaining fields are `null` when no challenge is detected. `origin` is also
 `null` when the page URL has no web origin, such as `about:blank`.
 
@@ -144,8 +144,9 @@ state.
 
 The report uses fixed labels and returns only the URL origin. It does not copy
 page text, paths, or query strings into the challenge fields. Detection is not
-universal: a single stock phrase in ordinary page copy, offscreen content, or a
-control's mutable value is not enough to classify a page.
+universal: stock phrases in ordinary page copy—even multiple visible labels—
+offscreen content, or a control's mutable value are not enough to classify a
+page.
 
 The advisory `challenge` object keeps this five-field shape. When its status is
 `detected`, the separate top-level `blocker` object reports the action pause and

@@ -71,6 +71,7 @@ struct FixtureState {
     fail_key_down_after: Option<usize>,
     completed_key_pairs: usize,
     semantic_large_page: bool,
+    oopif_challenge: bool,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
     semantic_truncated_dom: bool,
@@ -123,6 +124,7 @@ impl Default for FixtureState {
             fail_key_down_after: None,
             completed_key_pairs: 0,
             semantic_large_page: false,
+            oopif_challenge: false,
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
             semantic_truncated_dom: false,
@@ -613,15 +615,25 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     MockReply::ok(json!({"nodes": []}))
                 }
             }
-            "Accessibility.getFullAXTree" if is_oopif => MockReply::ok(json!({"nodes": [
-                {"nodeId": "oopif-root", "ignored": false,
-                 "role": {"value": "RootWebArea"}, "childIds": ["oopif-input"]},
-                {"nodeId": "oopif-input", "parentId": "oopif-root", "ignored": false,
-                 "backendDOMNodeId": 100, "role": {"value": "textbox"},
-                 "name": {"value": "Embedded input"},
-                 "properties": [{"name": "editable", "value": {"value": "plaintext"}}],
-                 "childIds": []}
-            ]})),
+            "Accessibility.getFullAXTree" if is_oopif => {
+                let (role, name, properties) = if st.oopif_challenge {
+                    ("checkbox", "Verify you are human", json!([]))
+                } else {
+                    (
+                        "textbox",
+                        "Embedded input",
+                        json!([{"name": "editable", "value": {"value": "plaintext"}}]),
+                    )
+                };
+                MockReply::ok(json!({"nodes": [
+                    {"nodeId": "oopif-root", "ignored": false,
+                     "role": {"value": "RootWebArea"}, "childIds": ["oopif-input"]},
+                    {"nodeId": "oopif-input", "parentId": "oopif-root", "ignored": false,
+                     "backendDOMNodeId": 100, "role": {"value": role},
+                     "name": {"value": name}, "properties": properties,
+                     "childIds": []}
+                ]}))
+            }
             "DOMSnapshot.captureSnapshot" if is_tab => {
                 if st.semantic_large_page {
                     let mut backends = vec![999, 2000, 2003, 2010, 2011];
@@ -2534,7 +2546,11 @@ async fn concurrent_semantic_continuation_has_exactly_one_winner() {
 
 #[tokio::test]
 async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_content() {
-    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.oopif_challenge = true;
+    })
+    .await;
     let (target, tab) = bind(&f).await;
     let first = semantic_snapshot(&f, &target, &tab).await;
     let token = first["snapshot"]["continuation"]
@@ -2546,6 +2562,16 @@ async fn semantic_continuation_is_opaque_single_use_and_reaches_offscreen_conten
     let continued = semantic_snapshot_with(&f, &target, &tab, json!({"continuation": token})).await;
     assert_eq!(continued["status"], "ok", "{continued}");
     assert_eq!(continued["snapshot"]["scope"], "continuation");
+    assert_eq!(
+        continued["challenge"]["status"], "detected",
+        "continuation must retain the whole-document classification: {continued}"
+    );
+    assert!(
+        continued["refs"].as_array().is_some_and(|refs| refs
+            .iter()
+            .all(|entry| entry["name"] != "Verify you are human")),
+        "the positive signal should remain outside the returned continuation page: {continued}"
+    );
     assert!(
         continued["refs"]
             .as_array()
@@ -2596,13 +2622,17 @@ async fn main_frame_navigation_invalidates_semantic_continuations() {
 
 #[tokio::test]
 async fn semantic_query_and_content_scope_are_read_only_and_precise() {
-    let f = fixture_with(|st| st.semantic_large_page = true).await;
+    let f = fixture_with(|st| {
+        st.semantic_large_page = true;
+        st.oopif_challenge = true;
+    })
+    .await;
     let (target, tab) = bind(&f).await;
     let queried =
         semantic_snapshot_with(&f, &target, &tab, json!({"query": "Archive item 304"})).await;
     assert_eq!(queried["snapshot"]["scope"], "query", "{queried}");
     assert_eq!(
-        queried["challenge"]["status"], "not_detected",
+        queried["challenge"]["status"], "detected",
         "querying the returned nodes must not narrow challenge observation: {queried}"
     );
     assert_eq!(queried["refs"].as_array().unwrap().len(), 1, "{queried}");
@@ -2631,7 +2661,7 @@ async fn semantic_query_and_content_scope_are_read_only_and_precise() {
     let scoped = semantic_snapshot_with(&f, &target, &tab, json!({"scope_ref": heading_ref})).await;
     assert_eq!(scoped["snapshot"]["scope"], "subtree", "{scoped}");
     assert_eq!(
-        scoped["challenge"]["status"], "not_detected",
+        scoped["challenge"]["status"], "detected",
         "scoping the returned nodes must not narrow challenge observation: {scoped}"
     );
     assert_eq!(scoped["refs"].as_array().unwrap().len(), 0, "{scoped}");

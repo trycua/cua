@@ -316,6 +316,12 @@ fn launch_host_with_evidence(spec: &HostSpec, scenario: &str, evidence: &mut Evi
         .env("CUA_E2E_FIXTURE_JOURNAL_URL", journal.url())
         .stdout(Stdio::inherit())
         .stderr(Stdio::inherit());
+    #[cfg(target_os = "windows")]
+    if spec.name == "electron" && scenario.ends_with("-typed-sdk") {
+        // Chromium can freeze AX updates while fully occluded. Keep this
+        // observation fixture rendering without changing native z-order/focus.
+        command.arg("--disable-backgrounding-occluded-windows");
+    }
     match spec.name {
         "electron" => {
             command.env(

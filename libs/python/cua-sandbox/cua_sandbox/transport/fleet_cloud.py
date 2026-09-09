@@ -21,6 +21,7 @@ from cua_sandbox._config import (
 )
 from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
+from cua_sandbox.transport.osworld import OSWORLD_SERVER_PORT, OSWorldOverServiceMixin
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import (
     AccessTokenProvider,
@@ -836,3 +837,25 @@ class FleetCloudTransport(FleetTransport):
             raise NotImplementedError(
                 "Fleet cloud supports registry images with optional exposed services only"
             )
+
+
+class OSWorldFleetCloudTransport(OSWorldOverServiceMixin, FleetCloudTransport):
+    """``FleetCloudTransport`` whose guest control server is the OSWorld Flask API."""
+
+
+def fleet_cloud_transport_for(image: Optional[Image]) -> type[FleetCloudTransport]:
+    """Pick the provisioning transport class matching an image's ``agent_type`` hint."""
+    if image is not None and image._agent_type == "osworld":
+        return OSWorldFleetCloudTransport
+    return FleetCloudTransport
+
+
+def default_server_port(image: Optional[Image], server_port: int = 8000) -> int:
+    """Resolve the guest control-server port for an image.
+
+    ``server_port`` wins when the caller changed it from the default; otherwise an
+    OSWorld image (``agent_type="osworld"``) selects the OSWorld server on 5000.
+    """
+    if server_port == 8000 and image is not None and image._agent_type == "osworld":
+        return OSWORLD_SERVER_PORT
+    return server_port

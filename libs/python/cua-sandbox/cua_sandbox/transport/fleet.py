@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 
 import httpx
 from cua_sandbox.transport.base import Transport
+from cua_sandbox.transport.osworld import OSWorldOverServiceMixin
 from cua_sandbox.transport.computer_server import (
     decode_screenshot_response,
     normalize_screen_size,
@@ -232,3 +233,12 @@ class FleetTransport(Transport):
             return None
         response.raise_for_status()
         return response.json()
+
+
+class OSWorldFleetTransport(OSWorldOverServiceMixin, FleetTransport):
+    """``FleetTransport`` for a claim whose ``server`` service is the OSWorld Flask API."""
+
+
+def fleet_transport_for(agent_type: Optional[str]) -> type[FleetTransport]:
+    """Pick the Fleet transport class matching an image's ``agent_type`` hint."""
+    return OSWorldFleetTransport if agent_type == "osworld" else FleetTransport

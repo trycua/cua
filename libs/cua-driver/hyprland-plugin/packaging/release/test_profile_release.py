@@ -316,6 +316,10 @@ class NativeProfileTest(unittest.TestCase):
         self.calls = []
         self.overrides = {}
         self.probe_comment = None
+        self.pkgconfig = {"executable": "/usr/bin/pkgconf", "executable_sha256": "e" * 64,
+                          "pc_path": "/usr/share/pkgconfig/hyprland.pc", "pc_sha256": "f" * 64,
+                          "cflags": ["-I/usr/include/hyprland", "-pthread"],
+                          "include_dirs": ["/usr/include/hyprland"], "cflags_other": ["-pthread"], "ldflags": ["-lhyprutils"]}
 
     def fake_run(self, *args, input=None):
         self.calls.append(args)
@@ -326,7 +330,7 @@ class NativeProfileTest(unittest.TestCase):
             return args[2] + " " + versions[args[2]]
         if args[:2] == ("pacman", "-Qoq"):
             return "gcc-libs"
-        if args[0] == "pkg-config":
+        if args[0] == str(verify.PKGCONF):
             return "0.56.2"
         if args[:3] == ("readelf", "-p", ".comment"):
             if args[-1].endswith("probe.o") and self.probe_comment:
@@ -343,10 +347,15 @@ class NativeProfileTest(unittest.TestCase):
         return ""
 
     def native_context(self):
+        def fake_selection(profile):
+            verify.require(verify.run(str(verify.PKGCONF), "--modversion", "hyprland") == profile["hyprland"]["header_version"], "Hyprland header mismatch")
+            return self.pkgconfig
         patches = [mock.patch.object(verify.platform, "system", return_value="Linux"),
                    mock.patch.object(verify.platform, "machine", return_value="x86_64"),
                    mock.patch.object(verify, "run", side_effect=self.fake_run),
-                   mock.patch.object(verify, "header_inventory_sha256", return_value="d" * 64)]
+                   mock.patch.object(verify, "header_inventory_sha256", return_value="d" * 64),
+                   mock.patch.object(verify, "pkgconfig_selection", side_effect=fake_selection),
+                   mock.patch.dict(verify.os.environ, {}, clear=True)]
         real_digest = verify.digest
         patches.append(mock.patch.object(verify, "digest", side_effect=lambda path: self.profile["hyprland"]["sha256"] if str(path) == "/usr/bin/Hyprland" else real_digest(path)))
         for patch in patches:
@@ -359,7 +368,7 @@ class NativeProfileTest(unittest.TestCase):
         self.assertEqual(native["compiler_runtime_sha256"], self.profile["runtime"]["sha256"])
         for command, output in ((('pacman', '-Q', 'hyprland'), 'hyprland 0.56.2-1'),
                                 (('pacman', '-Q', 'gcc-libs'), 'gcc-libs 0-1'),
-                                (('pkg-config', '--modversion', 'hyprland'), '0.56.3'),
+                                (('/usr/bin/pkgconf', '--modversion', 'hyprland'), '0.56.3'),
                                 ((str(self.cxx), '-dM', '-E', '-x', 'c++', '-'), '#define __VERSION__ "wrong"'),
                                 (('readelf', '-p', '.comment', '/usr/bin/Hyprland'), 'wrong comment'),
                                 (('readelf', '-d', '/usr/bin/Hyprland'), 'static runtime')):
@@ -385,6 +394,24 @@ class NativeProfileTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "runtime mismatch"):
             verify.verify_native(self.cxx, self.profile)
 
+    def test_missing_or_malformed_non_cpp_dependency_refuses(self):
+        self.native_context()
+        valid = f" libstdc++.so.6 => {self.runtime} (0x0)"
+        for other in ("libhyprutils.so.13 => not found", "unexpected loader diagnostic",
+                      "libc.so.6 => relative/path (0x0)"):
+            self.overrides[("ldd", "/usr/bin/Hyprland")] = valid + "\n " + other
+            with self.subTest(other=other), self.assertRaisesRegex(ValueError, "shared dependency"):
+                verify.verify_environment(self.profile)
+        self.overrides[("ldd", "/usr/bin/Hyprland")] = valid
+        self.overrides[("readelf", "-d", "/usr/bin/Hyprland")] = \
+            "Shared library: [libstdc++.so.6]\nShared library: [libhyprutils.so.13]"
+        with self.assertRaisesRegex(ValueError, "missing shared dependency resolution"):
+            verify.verify_environment(self.profile)
+        self.overrides.clear()
+        self.overrides[("ldd", "/usr/bin/Hyprland")] = \
+            "linux-vdso.so.1 (0x7fff)\n" + valid + "\n /lib64/ld-linux-x86-64.so.2 (0x7ff0)"
+        verify.verify_environment(self.profile)
+
     def test_build_configuration_and_shared_runtime_checks(self):
         self.native_context()
         source = self.source()
@@ -393,6 +420,10 @@ class NativeProfileTest(unittest.TestCase):
         (build / "cua-hyprland-plugin.so").write_text("module")
         expected = dict(verify.OPTIONS, BUILD_TESTING="ON", CUA_HYPRLAND_BUILD_PLUGIN="ON", CMAKE_BUILD_TYPE="Release",
                         CMAKE_GENERATOR="Ninja",
+                        PKG_CONFIG_EXECUTABLE="/usr/bin/pkgconf", PKG_CONFIG_ARGN="", PKG_CONFIG_USE_CMAKE_PREFIX_PATH="OFF",
+                        HYPRLAND_VERSION="0.56.2", HYPRLAND_CFLAGS=";".join(self.pkgconfig["cflags"]),
+                        HYPRLAND_INCLUDE_DIRS=";".join(self.pkgconfig["include_dirs"]), HYPRLAND_CFLAGS_OTHER=";".join(self.pkgconfig["cflags_other"]),
+                        HYPRLAND_LDFLAGS=";".join(self.pkgconfig["ldflags"]),
                         CUA_HYPRLAND_EXPECTED_VERSION="0.56.2", CUA_HYPRLAND_TEST_OPERATOR_KEY="",
                         CMAKE_CXX_COMPILER=str(self.cxx), CMAKE_HOME_DIRECTORY=str(source.resolve()))
         cache = build / "CMakeCache.txt"
@@ -403,6 +434,70 @@ class NativeProfileTest(unittest.TestCase):
             cache.write_text("".join(f"{name}:STRING={value}\n" for name, value in changed.items()))
             with self.subTest(key=key), self.assertRaisesRegex(ValueError, "build configuration mismatch"):
                 verify.verify_build(build, source, self.cxx, self.profile)
+        for name, value in (("CMAKE_CXX_FLAGS", "-O2 -I/alternate-same-version"),
+                            ("CMAKE_TOOLCHAIN_FILE", "/alternate/toolchain.cmake"),
+                            ("CMAKE_CXX_COMPILER_LAUNCHER", "/alternate/launcher")):
+            changed = dict(expected, **{name: value})
+            cache.write_text("".join(f"{key}:STRING={setting}\n" for key, setting in changed.items()))
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "override refused"):
+                verify.verify_build(build, source, self.cxx, self.profile)
+
+    def test_header_and_toolchain_environment_overrides_refused(self):
+        for name in ("PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR", "PKG_CONFIG_SYSROOT_DIR", "PKG_CONFIG", "PKGCONF_PKG_PKGF",
+                     "CPATH", "CPLUS_INCLUDE_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH", "LIBRARY_PATH",
+                     "CMAKE_PREFIX_PATH", "CMAKE_TOOLCHAIN_FILE"):
+            with self.subTest(name=name), mock.patch.dict(verify.os.environ, {name: "/alternate-same-version"}, clear=True), self.assertRaisesRegex(ValueError, "routing environment refused"):
+                verify.verify_build_environment()
+        for flags in ("-O2 -I/alternate", "-isystem /alternate", "-include /alternate/header.h", "@/alternate/flags",
+                      "-Wp,-I/alternate", "-B/alternate", "--sysroot=/alternate", "-specs=/alternate/specs",
+                      "-Wl,-rpath,/alternate"):
+            with self.subTest(flags=flags), mock.patch.dict(verify.os.environ, {"CXXFLAGS": flags}, clear=True), self.assertRaisesRegex(ValueError, "flag override refused"):
+                verify.verify_build_environment()
+        with mock.patch.dict(verify.os.environ, {"CXXFLAGS": "-march=x86-64 -O2 -pipe -Wp,-D_FORTIFY_SOURCE=3 -fstack-protector-strong",
+                                               "LDFLAGS": "-Wl,-O1,--sort-common,--as-needed,-z,relro,-z,now"}, clear=True):
+            verify.verify_build_environment()
+
+    def test_canonical_pkgconf_rejects_alternate_same_version_headers(self):
+        root = self.root.resolve()
+        system = root / "usr/include"
+        headers = system / "hyprland"
+        alternate = system / "alternate-same-version"
+        headers.mkdir(parents=True)
+        alternate.mkdir()
+        pc = root / "usr/share/pkgconfig/hyprland.pc"
+        pc.parent.mkdir(parents=True)
+        pc.write_text("canonical metadata fixture")
+        executable = root / "usr/bin/pkgconf"
+        executable.parent.mkdir(parents=True)
+        executable.write_text("pkgconf fixture")
+        include_flags = f"-I{headers}"
+        pc_directory = str(pc.parent)
+
+        def fake_run(*args, **kwargs):
+            if args[:2] == ("pacman", "-Qoq"):
+                return "pkgconf" if args[2] == str(executable) else "hyprland"
+            return {"--variable=pcfiledir": pc_directory, "--modversion": "0.56.2",
+                    "--cflags": include_flags + " -pthread", "--cflags-only-I": include_flags,
+                    "--cflags-only-other": "-pthread", "--libs": "-lhyprutils"}[args[1]]
+
+        with mock.patch.object(verify, "PKGCONF", executable), mock.patch.object(verify, "HYPRLAND_PC", pc), \
+                mock.patch.object(verify, "HEADER_ROOT", headers), mock.patch.object(verify, "SYSTEM_INCLUDE", system), \
+                mock.patch.object(verify, "run", side_effect=fake_run):
+            selected = verify.pkgconfig_selection(self.profile)
+            self.assertEqual(selected["pc_sha256"], verify.digest(pc))
+            self.assertEqual(selected["include_dirs"], [str(headers)])
+            (headers / "protocols").mkdir()
+            (headers / "src").mkdir()
+            include_flags = f"-I{headers}/protocols -I{headers} -I{headers}/src"
+            self.assertEqual(verify.pkgconfig_selection(self.profile)["include_dirs"],
+                             [str(headers / "protocols"), str(headers), str(headers / "src")])
+            include_flags = f"-I{alternate} -I{headers}"
+            with self.assertRaisesRegex(ValueError, "not first"):
+                verify.pkgconfig_selection(self.profile)
+            include_flags = f"-I{headers}"
+            pc_directory = str(root / "alternate-same-version/pkgconfig")
+            with self.assertRaisesRegex(ValueError, "noncanonical Hyprland pkg-config source"):
+                verify.pkgconfig_selection(self.profile)
 
     def test_consumer_does_not_invoke_compiler_or_headers_and_refuses_drift(self):
         self.native_context()

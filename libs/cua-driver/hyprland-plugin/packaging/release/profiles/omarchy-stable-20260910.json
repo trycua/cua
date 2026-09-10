@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "profile_id": "omarchy-stable-20260910",
+  "kit_version": "1.0.0",
+  "package_release": 2,
+  "source": {
+    "revision": "4b3396d9fe4bd3cf723b0eb8db83c18a8764b520",
+    "driver_version": "0.24.0",
+    "archive_sha256": "73b65823b3281c027a31cd8f7d9ca9586fe7386ed1eec74174f2e72cea0af643",
+    "manifest_sha256": "fb5b5710218afecfa54e9803e8e95f4702e8a47ac4108abd06b4f5f3c1032eeb"
+  },
+  "architecture": "x86_64",
+  "hyprland": {
+    "package_version": "0.56.2-2",
+    "header_version": "0.56.2",
+    "headers_sha256": "88a6875af00203627b264a5c1f9908781be4ad8d9cee4e577fef174e72dd0e28",
+    "sha256": "da8fcacf347bcbed83edc40108c6e2298da095e22246bd764e9bb382786cebb2"
+  },
+  "compiler": {
+    "version": "16.2.1 20260810",
+    "comment": "GCC: (GNU) 16.2.1 20260810",
+    "sha256": "f04191f6a7b2cd7d9a62e1745872b8a6088791e5af6955488c69c9b2c4668bc9"
+  },
+  "runtime": {
+    "basename": "libstdc++.so.6.0.36",
+    "sha256": "f5fc7380f2ae46fa4053a64be04e7b98109f1066a4bbfff3c37042488aa0be0e",
+    "packages": {
+      "aquamarine": "0.15.0-2",
+      "glibc": "2.44+r24+g16be1518495f-1",
+      "hyprcursor": "0.1.13-7",
+      "hyprgraphics": "0.5.1-4",
+      "hyprlang": "0.6.8-5",
+      "hyprutils": "0.14.2-1",
+      "libgcc": "16.2.1+r23+gd564253eb6c8-1",
+      "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+      "wayland": "1.26.0-1"
+    }
+  }
+}

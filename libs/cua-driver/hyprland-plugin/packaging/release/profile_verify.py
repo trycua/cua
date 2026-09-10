@@ -8,6 +8,7 @@ import os
 from pathlib import Path, PurePosixPath
 import platform
 import re
+import shlex
 import subprocess
 import tarfile
 import tempfile
@@ -17,6 +18,18 @@ DRIVER_VERSION = "0.24.0"
 STEM = f"cua-hyprland-plugin-{DRIVER_VERSION}-{SOURCE_REVISION}"
 OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "CUA_HYPRLAND_INPUT_TRACE": "OFF"}
 TOOLING = ("profile_bundle.py", "profile_verify.py", "PROFILE-PKGBUILD.in", "PROFILE-USAGE.md", "lifecycle.py")
+PKGCONF = Path("/usr/bin/pkgconf")
+HYPRLAND_PC = Path("/usr/share/pkgconfig/hyprland.pc")
+SYSTEM_INCLUDE = Path("/usr/include")
+HEADER_ROOT = SYSTEM_INCLUDE / "hyprland"
+BUILD_ROUTING_ENV = {"CPATH", "CPLUS_INCLUDE_PATH", "C_INCLUDE_PATH", "OBJC_INCLUDE_PATH",
+                     "GCC_EXEC_PREFIX", "COMPILER_PATH", "LIBRARY_PATH", "SDKROOT", "SYSROOT"}
+EMPTY_CMAKE_ROUTING = ("CMAKE_PREFIX_PATH", "CMAKE_MODULE_PATH", "CMAKE_TOOLCHAIN_FILE", "CMAKE_SYSROOT",
+                       "CMAKE_SYSROOT_COMPILE", "CMAKE_SYSROOT_LINK", "CMAKE_FIND_ROOT_PATH",
+                       "CMAKE_CXX_COMPILER_EXTERNAL_TOOLCHAIN", "CMAKE_CXX_COMPILER_LAUNCHER",
+                       "CMAKE_CXX_LINKER_LAUNCHER", "CMAKE_PROJECT_INCLUDE", "CMAKE_PROJECT_INCLUDE_BEFORE",
+                       "CMAKE_PROJECT_TOP_LEVEL_INCLUDES", "CMAKE_USER_MAKE_RULES_OVERRIDE", "CMAKE_USER_MAKE_RULES_OVERRIDE_CXX",
+                       "CMAKE_CXX_COMPILER_TARGET", "CMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES")
 
 
 def require(condition, message):
@@ -199,9 +212,28 @@ def elf_comment(binary, expected):
 def linked_runtime(binary, profile):
     dynamic = run("readelf", "-d", str(binary))
     require("Shared library: [libstdc++.so.6]" in dynamic and "Shared library: [libc++.so" not in dynamic, "binary must use shared libstdc++")
-    matches = re.findall(r"^\s*libstdc\+\+\.so\.6 => (/\S+) \(", run("ldd", str(binary)), re.MULTILINE)
-    require(len(matches) == 1, "cannot resolve shared libstdc++")
-    runtime = Path(matches[0]).resolve(strict=True)
+    resolved = {}
+    for line in run("ldd", str(binary)).splitlines():
+        # ldd may exit zero even when a different required library is missing.
+        # Reject unresolved dependencies and diagnostics, not just a missing C++ runtime.
+        match = re.fullmatch(r"\s*(\S+) => (/\S+) \(0x[0-9a-fA-F]+\)\s*", line)
+        if match:
+            name, path = match.groups()
+        else:
+            match = re.fullmatch(r"\s*(/\S+) \(0x[0-9a-fA-F]+\)\s*", line)
+            if match:
+                path = match[1]
+                name = Path(path).name
+            else:
+                require(re.fullmatch(r"\s*linux-(?:vdso|gate)\.so\.[0-9]+ \(0x[0-9a-fA-F]+\)\s*", line),
+                        "unresolved or malformed shared dependency: " + line.strip())
+                continue
+        require(name not in resolved, "duplicate shared dependency resolution")
+        resolved[name] = path
+    needed = re.findall(r"Shared library: \[([^]]+)\]", dynamic)
+    require(set(needed) <= set(resolved), "missing shared dependency resolution")
+    require("libstdc++.so.6" in resolved, "cannot resolve shared libstdc++")
+    runtime = Path(resolved["libstdc++.so.6"]).resolve(strict=True)
     require(runtime.name == profile["runtime"]["basename"] and digest(runtime) == profile["runtime"]["sha256"], "loaded shared runtime mismatch")
     require(run("pacman", "-Qoq", str(runtime)) in profile["runtime"]["packages"], "shared runtime owner is not pinned by profile")
     return digest(runtime)
@@ -219,10 +251,11 @@ def verify_environment(profile):
 
 
 def verify_native(cxx, profile):
+    verify_build_environment()
     runtime_sha = verify_environment(profile)
     require(cxx.is_absolute() and cxx.is_file(), "C++ compiler must be an existing absolute path")
     require(digest(cxx) == profile["compiler"]["sha256"], "compiler checksum mismatch")
-    require(run("pkg-config", "--modversion", "hyprland") == profile["hyprland"]["header_version"], "Hyprland header mismatch")
+    pkgconfig = pkgconfig_selection(profile)
     require(header_inventory_sha256() == profile["hyprland"]["headers_sha256"], "Hyprland header inventory mismatch")
     macros = run(str(cxx), "-dM", "-E", "-x", "c++", "-", input="")
     require(f'#define __VERSION__ "{profile["compiler"]["version"]}"' in macros.splitlines() and not re.search(r"^#define __clang__\b", macros, re.MULTILINE), "GCC version/date mismatch")
@@ -234,7 +267,61 @@ def verify_native(cxx, profile):
     require(runtime.name == profile["runtime"]["basename"] and digest(runtime) == runtime_sha, "compiler shared runtime mismatch")
     return {"compiler_sha256": digest(cxx), "compiler_version": profile["compiler"]["version"],
             "compiler_probe_comment": profile["compiler"]["comment"], "compiler_runtime_sha256": runtime_sha,
-            "compositor_sha256": profile["hyprland"]["sha256"], "compositor_runtime_sha256": runtime_sha}
+            "compositor_sha256": profile["hyprland"]["sha256"], "compositor_runtime_sha256": runtime_sha,
+            "pkgconfig": pkgconfig}
+
+
+def verify_flags(flags, label):
+    # Keep normal makepkg optimization/hardening flags, but refuse options that
+    # inject headers, an alternate toolchain, or hidden response-file arguments.
+    routing = ("-I", "-L", "-B", "-isystem", "-iquote", "-idirafter", "-iprefix", "-iwithprefix",
+               "-include", "-imacros", "-isysroot", "--sysroot", "-nostdinc", "-specs", "--specs",
+               "-fplugin", "-wrapper", "-Xpreprocessor", "-Xclang", "-Xlinker", "--library-path",
+               "-rpath", "--rpath", "--gcc-toolchain", "-gcc-toolchain", "-resource-dir")
+    for flag in flags:
+        arguments = flag[4:].split(",") if flag.startswith(("-Wp,", "-Wl,")) else [flag]
+        for argument in arguments:
+            require(not argument.startswith(("@", *routing)), f"header/toolchain flag override refused: {label}")
+
+
+def verify_build_environment():
+    for name, value in os.environ.items():
+        routed = (name in BUILD_ROUTING_ENV or name.startswith(("PKG_CONFIG", "PKGCONF")) or
+                  (name.startswith("CMAKE_") and name != "CMAKE_BUILD_PARALLEL_LEVEL"))
+        require(not value or not routed, f"build routing environment refused: {name}")
+    for name in ("CFLAGS", "CXXFLAGS", "CPPFLAGS", "LDFLAGS"):
+        verify_flags(shlex.split(os.environ.get(name, "")), name)
+
+
+def pkgconfig_selection(profile):
+    require(PKGCONF.is_file(), "canonical /usr/bin/pkgconf is required")
+    require(run("pacman", "-Qoq", str(PKGCONF)) == "pkgconf", "pkgconf executable owner mismatch")
+    require(run(str(PKGCONF), "--variable=pcfiledir", "hyprland") == str(HYPRLAND_PC.parent), "noncanonical Hyprland pkg-config source")
+    require(HYPRLAND_PC.is_file() and not HYPRLAND_PC.is_symlink() and HYPRLAND_PC.resolve() == HYPRLAND_PC,
+            "Hyprland pkg-config source must be canonical")
+    require(run("pacman", "-Qoq", str(HYPRLAND_PC)) == "hyprland", "Hyprland pkg-config owner mismatch")
+    require(run(str(PKGCONF), "--modversion", "hyprland") == profile["hyprland"]["header_version"], "Hyprland header mismatch")
+    cflags = shlex.split(run(str(PKGCONF), "--cflags", "hyprland"))
+    includes = shlex.split(run(str(PKGCONF), "--cflags-only-I", "hyprland"))
+    other = shlex.split(run(str(PKGCONF), "--cflags-only-other", "hyprland"))
+    require(all(flag.startswith("-I") and len(flag) > 2 for flag in includes), "unexpected pkg-config include flags")
+    include_dirs = [flag[2:] for flag in includes]
+    # The source includes <src/...>. Native Hyprland puts its hashed protocols
+    # directory before the root, then src. Require the whole leading selection
+    # through the root to stay inside that hashed tree, before any external root.
+    require(str(HEADER_ROOT) in include_dirs, "canonical Hyprland header root is missing")
+    leading = include_dirs[:include_dirs.index(str(HEADER_ROOT)) + 1]
+    require(all(Path(name).is_relative_to(HEADER_ROOT) for name in leading), "Hyprland headers are not first in pkg-config include selection")
+    for name in include_dirs:
+        path = Path(name)
+        require(path.is_dir() and path.resolve() == path and path.is_relative_to(SYSTEM_INCLUDE), "noncanonical pkg-config include path")
+    require([flag for flag in cflags if flag.startswith("-I")] == includes and
+            [flag for flag in cflags if not flag.startswith("-I")] == other, "inconsistent pkg-config flags")
+    verify_flags(other, "pkg-config CFLAGS_OTHER")
+    libraries = shlex.split(run(str(PKGCONF), "--libs", "hyprland"))
+    return {"executable": str(PKGCONF), "executable_sha256": digest(PKGCONF),
+            "pc_path": str(HYPRLAND_PC), "pc_sha256": digest(HYPRLAND_PC),
+            "cflags": cflags, "include_dirs": include_dirs, "cflags_other": other, "ldflags": libraries}
 
 
 def header_inventory_sha256(root=Path("/usr/include/hyprland")):
@@ -252,6 +339,8 @@ def header_inventory_sha256(root=Path("/usr/include/hyprland")):
 
 
 def verify_build(build, source, cxx, profile):
+    verify_build_environment()
+    pkgconfig = pkgconfig_selection(profile)
     cache = {}
     for line in (build / "CMakeCache.txt").read_text().splitlines():
         match = re.match(r"([^:#/][^:]*):[^=]+=(.*)", line)
@@ -260,11 +349,24 @@ def verify_build(build, source, cxx, profile):
             cache[match[1]] = match[2]
     expected = dict(OPTIONS, BUILD_TESTING="ON", CUA_HYPRLAND_BUILD_PLUGIN="ON", CMAKE_BUILD_TYPE="Release",
                     CMAKE_GENERATOR="Ninja",
+                    PKG_CONFIG_EXECUTABLE=str(PKGCONF), PKG_CONFIG_ARGN="", PKG_CONFIG_USE_CMAKE_PREFIX_PATH="OFF",
+                    HYPRLAND_VERSION=profile["hyprland"]["header_version"],
+                    HYPRLAND_CFLAGS=";".join(pkgconfig["cflags"]),
+                    HYPRLAND_INCLUDE_DIRS=";".join(pkgconfig["include_dirs"]),
+                    HYPRLAND_CFLAGS_OTHER=";".join(pkgconfig["cflags_other"]),
+                    HYPRLAND_LDFLAGS=";".join(pkgconfig["ldflags"]),
                     CUA_HYPRLAND_EXPECTED_VERSION=profile["hyprland"]["header_version"],
                     CUA_HYPRLAND_TEST_OPERATOR_KEY="", CMAKE_CXX_COMPILER=str(cxx),
                     CMAKE_HOME_DIRECTORY=str(source.resolve()))
     for name, value in expected.items():
         require(cache.get(name) == value, f"build configuration mismatch: {name}")
+    for name in EMPTY_CMAKE_ROUTING:
+        require(not cache.get(name), f"CMake routing override refused: {name}")
+    for name, value in cache.items():
+        if name.startswith("CMAKE_PROJECT_") and name.endswith(("_INCLUDE", "_INCLUDE_BEFORE", "_TOP_LEVEL_INCLUDES")):
+            require(not value, f"CMake routing override refused: {name}")
+        if name.startswith(("CMAKE_CXX_FLAGS", "CMAKE_EXE_LINKER_FLAGS", "CMAKE_MODULE_LINKER_FLAGS", "CMAKE_SHARED_LINKER_FLAGS")):
+            verify_flags(shlex.split(value), name)
     module = build / "cua-hyprland-plugin.so"
     elf_comment(module, profile["compiler"]["comment"])
     linked_runtime(module, profile)

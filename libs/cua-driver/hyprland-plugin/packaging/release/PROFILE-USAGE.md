@@ -43,6 +43,20 @@ headers. CMake enables production input, disables experimental input and tracing
 and builds the bundled tests. Packaging runs CTest even with `--nocheck` or
 `--repackage`; skipping makepkg integrity checks does not skip the recipe checks.
 
+Build with the system `/usr/bin/pkgconf` and package-owned
+`/usr/share/pkgconfig/hyprland.pc`. The canonical Hyprland header tree must lead
+pkg-config's include selection: its hashed `protocols` directory may precede
+the root, and the root must precede any external include directory. Other
+include roots must be real paths under `/usr/include`. Clear pkg-config/CMake
+routing overrides, compiler include-path
+variables such as `CPATH` and `CPLUS_INCLUDE_PATH`, and flags that inject include
+paths, headers, sysroots, toolchains or response files. Ordinary makepkg
+optimization and hardening flags remain supported. The verifier refuses these
+overrides instead of silently discarding them. It records the actual pkgconf
+executable, `.pc` file digests and flags in build provenance, and checks CMake's
+cached Hyprland flags against that same canonical selection. These are targeted
+build-selection checks, not a sandbox for arbitrary build environments.
+
 ## Qualify package transactions
 
 In a disposable matching Arch environment, with ordinary-user build tools and

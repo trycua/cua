@@ -228,6 +228,43 @@ class OracleTests(unittest.TestCase):
         with self.assertRaises(AssertionError):
             self.verify(fault=fault)
 
+    def test_two_sample_path_requires_both_exact_observed_movements(self):
+        candidate = plan()
+        candidate['fault']['motion_path'] = 'two_sample'
+        proof.validate_plan(candidate)
+        with self.assertRaises(AssertionError):
+            proof.validate_plan({**candidate, 'fault': {'kind': 'primary_hover', 'motion_path': 'click'}})
+        fault, page = record(), boundary()
+        origin = list(fault['prefix']['events'][-1][3:5])
+        point = [int(origin[0]) + 100, int(origin[1])]
+        midpoint = [int(origin[0]) + 50, int(origin[1])]
+        fault.update(motion_path='two_sample', motion_from=origin, point=point,
+                     intermediate={'event': 'intermediate', 'x': midpoint[0], 'y': midpoint[1], 'observed_ns': 6_500_000})
+        fault['ack'].update(x=point[0], y=point[1])
+        fault['primary_after']['cursor'] = dict(zip(('x', 'y'), point))
+        n = len(fault['prefix']['events'])
+        page['events'][n:n] = [[0, 6_100_000, 'cursor', *midpoint, 0, 0],
+                              [0, 6_600_000, 'cursor', *point, 0, 0]]
+        for index, row in enumerate(page['events'], 1):
+            row[0] = index
+        page['count'] = len(page['events'])
+        self.assertEqual(self.verify(page=page, fault=fault)['result'], 'verified')
+        for mutation in ('missing', 'wrong', 'extra', 'wrong_start', 'wrong_ack'):
+            bad_page, bad_fault = deepcopy(page), deepcopy(fault)
+            if mutation == 'missing':
+                bad_page['events'][n][2] = 'pointer_motion'
+            elif mutation == 'wrong':
+                bad_page['events'][n][3] += 1
+            elif mutation == 'extra':
+                bad_page['events'].append([bad_page['count'] + 1, 12_000_000, 'cursor', *point, 0, 0])
+                bad_page['count'] += 1
+            elif mutation == 'wrong_start':
+                bad_fault['motion_from'][0] += 2
+            else:
+                bad_fault['intermediate']['x'] += 1
+            with self.subTest(mutation=mutation), self.assertRaises(AssertionError):
+                self.verify(page=bad_page, fault=bad_fault)
+
     def test_recovery_chooses_effective_stage_from_current_selection(self):
         before = {'snapshot_id': 'new-after-cancellation'}
         for b2, stage in ((True, 'click_a1'), (False, 'click_b2')):
@@ -408,6 +445,25 @@ class FixtureTests(unittest.TestCase):
         gate.assert_called_once_with(fixture.record)
         self.assertEqual(fixture.child.stdin.getvalue(), b'')
         self.assertFalse(fixture.sent)
+
+    def test_two_sample_command_records_midpoint_and_keeps_exact_focus_check(self):
+        fixture = self.fixture()
+        fixture.desktop.plan['fault']['motion_path'] = 'two_sample'
+        fixture.event.side_effect = [
+            {'event': 'intermediate', 'x': 75, 'y': 100, 'observed_ns': 7_000_000},
+            {'event': 'moved', 'x': 100, 'y': 100, 'observed_ns': 11_000_000}]
+        with patch.object(proof, '_hypr', return_value='{"x":50,"y":100}'), \
+             patch.object(proof.time, 'monotonic_ns', side_effect=[6_000_000, 12_000_000]):
+            fixture.move([100, 100], plan()['agents'][0]['target'], 1)
+        self.assertEqual(fixture.child.stdin.getvalue(), b'MOVE_FROM 50 100 100 100\n')
+        self.assertEqual(fixture.record['motion_from'], [50, 100])
+        fixture.desktop.primary.assert_called_once_with(plan()['agents'][0]['target'])
+        fixture = self.fixture()
+        fixture.desktop.plan['fault']['motion_path'] = 'two_sample'
+        with patch.object(proof, '_hypr', return_value='{"x":100,"y":100}'), self.assertRaises(AssertionError):
+            fixture.move([100, 100], plan()['agents'][0]['target'], 1)
+        self.assertFalse(fixture.sent)
+        self.assertEqual(fixture.child.stdin.getvalue(), b'')
 
     def test_close_checks_graceful_exit_and_finished_ack_without_input(self):
         fixture = self.fixture()

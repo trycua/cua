@@ -20,6 +20,9 @@ Optional fault.min_motion_px requires continuously held surface-local motion
 before takeover. After a partial response, Driver drops its input connection;
 the immediate cancellation sample may precede that EOF, but the settled gate
 requires every reservation released before recovery. Capacity is not authority.
+Optional fault.motion_path=two_sample uses an explicitly recorded midpoint and
+destination. This exercises native follow-mouse after idle without changing
+its threshold, sending a click, or weakening the exact focused-client gate.
 """
 import argparse
 from production_app_smoke import add_provenance_arguments
@@ -82,10 +85,12 @@ def verify_transition_end(boundary, stopped):
 
 def validate_plan(plan):
     assert plan['purpose'] == 'active_primary' and plan['case'] == 'active_drag'
-    assert {'kind'} <= set(plan['fault']) <= {'kind', 'min_motion_px'}
+    assert {'kind'} <= set(plan['fault']) <= {'kind', 'min_motion_px', 'motion_path'}
     assert plan['fault']['kind'] == 'primary_hover'
     if 'min_motion_px' in plan['fault']:
         validate_min_motion(plan['fault']['min_motion_px'])
+    if 'motion_path' in plan['fault']:
+        assert plan['fault']['motion_path'] == 'two_sample'
     stages = ['scroll_down', 'scroll_up'] if plan.get('app_profile') == 'inkscape-only' else ['click_a1', 'click_b2']
     assert plan['recovery'] == {'pointer_stages': stages}
     candidate = {k: v for k, v in plan.items() if k != 'fault'}
@@ -169,6 +174,17 @@ def verify_cancelled(boundary, record, action, target):
     assert record['primary_after']['pid'] == target['pid'] and record['primary_after']['window_id'] == target['window_id']
     assert record['primary_after']['cursor'] == dict(zip(('x', 'y'), record['point']))
     tail = trace_interval(prefix, boundary)
+    if 'motion_path' in record:
+        intermediate = record['intermediate']
+        assert record['motion_path'] == 'two_sample'
+        assert record['motion_from'] == list(prefix['events'][-1][3:5]), 'unobserved starting position'
+        assert intermediate['event'] == 'intermediate'
+        assert requested <= intermediate['observed_ns'] <= record['ack']['observed_ns']
+        midpoint = [(a + b) // 2 for a, b in zip(record['motion_from'], record['point'])]
+        assert [intermediate['x'], intermediate['y']] == midpoint
+        assert midpoint not in (record['motion_from'], record['point'])
+        movements = [list(row[3:5]) for row in tail if row[5] == 0 and row[2] == 'cursor']
+        assert movements == [midpoint, record['point']], 'unexpected primary motion path'
     assert any(row[5] == 0 and row[2] in ('pointer_focus', 'keyboard_focus')
                and requested <= row[1] <= observed for row in tail), 'missing primary focus transition'
     synthetic = [row for row in tail if row[5] in (1, 2)]
@@ -216,7 +232,8 @@ class HoverFixture:
         assert stat.S_ISREG(info.st_mode) and os.access(path, os.X_OK)
         assert [info.st_dev, info.st_ino, info.st_uid] == [expected[k] for k in ('device', 'inode', 'uid')]
         assert hashlib.sha256(path.read_bytes()).hexdigest() == expected['sha256']
-        source = self.args.source / 'libs/cua-driver/hyprland-plugin/tests/primary_hover_fixture.c'
+        source_root = getattr(self.args, 'harness_source', None) or self.args.source
+        source = source_root / 'libs/cua-driver/hyprland-plugin/tests/primary_hover_fixture.c'
         assert source.resolve(strict=True) == source
         assert hashlib.sha256(source.read_bytes()).hexdigest() == expected['source_sha256']
 
@@ -274,6 +291,16 @@ class HoverFixture:
         # Target containment must remain true at the last identity check.
         window = next(w for w in self.desktop.guard() if w['pid'] == target['pid'])
         assert all(start < value < start + size for value, start, size in zip(point, window['at'], window['size']))
+        if self.desktop.plan['fault'].get('motion_path') == 'two_sample':
+            current = json.loads(_hypr(self.desktop.instance, '-j', 'cursorpos'))
+            assert set(current) == {'x', 'y'} and all(type(v) is int for v in current.values())
+            origin = [current['x'], current['y']]
+            assert 0 <= origin[0] < self.mode['width'] and 0 <= origin[1] < self.mode['height']
+            midpoint = [(a + b) // 2 for a, b in zip(origin, point)]
+            assert midpoint not in (origin, point), 'two-sample gesture needs distinct points'
+            self.record.update(motion_path='two_sample', motion_from=origin)
+            if pending is not None:
+                assert origin == list(self.record['prefix']['events'][-1][3:5]), 'primary moved since held gate'
         requested = time.monotonic_ns()
         assert 0 <= requested - prepared_ns <= MAX_GROUNDING_AGE_NS, 'stale hover grounding'
         assert 0 <= requested - self.record['ready']['observed_ns'] < 2_500_000_000, 'ready window expired'
@@ -286,8 +313,14 @@ class HoverFixture:
         if pending is not None and 'min_motion_px' in self.record:
             verify_held_gate(self.record)
         self.sent = True  # Lost ack still means the single command may have landed.
-        self.child.stdin.write(f'MOVE {point[0]} {point[1]}\n'.encode('ascii'))
+        command = f'MOVE {point[0]} {point[1]}\n'
+        if 'motion_path' in self.record:
+            command = f'MOVE_FROM {origin[0]} {origin[1]} {point[0]} {point[1]}\n'
+        self.child.stdin.write(command.encode('ascii'))
         self.child.stdin.flush()
+        if 'motion_path' in self.record:
+            self.record['intermediate'] = self.event('intermediate')
+            assert [self.record['intermediate']['x'], self.record['intermediate']['y']] == midpoint
         self.record['ack'] = self.event('moved')
         assert [self.record['ack']['x'], self.record['ack']['y']] == point
         self.record['primary_after'] = self.desktop.primary(target)

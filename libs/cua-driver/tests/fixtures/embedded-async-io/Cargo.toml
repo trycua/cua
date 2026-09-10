@@ -1,0 +1,10 @@
+[package]
+name = "cua-embedded-async-io-fixture"
+version = "0.0.0"
+edition = "2021"
+publish = false
+workspace = "../../../rust"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+cua-driver-sdk = { path = "../../../rust/crates/cua-driver-sdk" }
+oo7 = { version = "=0.6.0", default-features = false, features = ["async-std", "native_crypto"] }

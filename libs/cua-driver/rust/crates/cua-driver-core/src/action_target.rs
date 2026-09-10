@@ -28,6 +28,9 @@ fn invalid_target(message: impl Into<String>) -> ToolResult {
 /// dispatch boundary before authorization, so policy/resource checks and the
 /// platform worker see the same exact target.
 pub fn normalize_action_target(tool_name: &str, args: &mut Value) -> Result<(), ToolResult> {
+    if tool_name == "start_recording" {
+        return crate::recording_target::parse_window_target(args).map(|_| ());
+    }
     let Some(object) = args.as_object_mut() else {
         return Ok(());
     };
@@ -142,5 +145,17 @@ mod tests {
         ] {
             assert!(normalize_action_target("click", &mut args).is_err());
         }
+    }
+
+    #[test]
+    fn recording_keeps_its_capture_target_instead_of_becoming_an_input_action() {
+        let mut args = json!({"record_video": true,
+            "target": {"kind": "window", "pid": 42, "window_id": 7}});
+        let original = args.clone();
+        normalize_action_target("start_recording", &mut args).unwrap();
+        assert_eq!(args, original);
+        assert!(!supports_typed_target("start_recording"));
+        args["pid"] = json!(42);
+        assert!(normalize_action_target("start_recording", &mut args).is_err());
     }
 }

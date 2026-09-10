@@ -621,7 +621,9 @@ Start trajectory recording. Every subsequent action-tool invocation (click, righ
 
 Turn folders are named `turn-00001/`, `turn-00002/`, etc.  Turn numbering restarts at 1 each time recording is (re-)started.
 
-**Video is off by default.** Pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.
+With `target: {kind: window, pid, window_id}` and `record_video: true`, record only that native window, with video and bounded metadata only. Window mode requires a new or empty output directory, suppresses all trajectories and cursor sampling, and never falls back to display capture. Only macOS 15+ supports window video; other backends return window_recording_unsupported. Starts involving an active window recording return recording_busy. After automatic termination, call stop_recording to release the retained recorder before starting another. Manual stop remains daemon-wide.
+
+**Video is off by default.** Without `target`, pass `record_video: true` to also capture the main display to `<output_dir>/recording.mp4` (H.264 / 30 fps) for the lifetime of the session. The recording is torn down automatically when the MCP client disconnects.
 
 **macOS uses native ScreenCaptureKit** (daemon-owned SCStream + SCRecordingOutput) so video inherits the daemon's Screen Recording grant — no extra TCC prompt, no ffmpeg subprocess. Requires macOS 15.0+.
 
@@ -631,8 +633,9 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 **Arguments:**
 
-- `output_dir` (string, required): Absolute or ~-rooted directory where turn folders and (when enabled) the video file are written.
-- `record_video` (boolean, optional): Capture the main display to &lt;output_dir&gt;/recording.mp4. Default: false. Set to true to also capture the main display to recording.mp4 (otherwise only the per-turn screenshots + JSON are recorded). On macOS this uses native ScreenCaptureKit (no extra TCC prompt, macOS 15.0+); on Windows + Linux it requires ffmpeg on PATH.
+- `output_dir` (string, required): Absolute or ~-rooted output directory. Window mode requires a new or empty directory and writes only video and metadata. Without target, writes trajectory folders and optional display video.
+- `record_video` (boolean, optional): Enable video at &lt;output_dir&gt;/recording.mp4. Default: false. With an exact window target, true is required and only window video plus metadata is recorded (macOS 15+). Without target, adds main-display video to legacy trajectory recording. macOS uses ScreenCaptureKit; Windows and Linux use ffmpeg for legacy display video.
+- `target` (object, optional): Exact native window from list_windows. Requires record_video=true.
 
 ```json
 {"output_dir":"~/cua-trajectories/demo1"}
@@ -640,7 +643,7 @@ State persists for the life of the daemon; a restart resets to disabled with no 
 
 ### `stop_recording`
 
-Stop trajectory recording. Disables further per-turn capture and, when video was enabled, gracefully terminates the ffmpeg subprocess so the mp4's moov atom is finalized (the file is playable). Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
+Stop the active recorder and finalize its video when enabled. Legacy mode also disables further per-turn capture. Window-video mode joins the native backend, including after automatic termination. Finalization failures are reported as errors. Calling stop on an already-stopped session is a no-op. The response carries `last_video_path` pointing at the finalized mp4 (when video was on).
 
 A manual `stop_recording` is **unconditional** — it stops whatever recording is active regardless of which session started it. Ownership-scoped teardown (so one client disconnecting can't stop a recording a later client started) is handled by the registry's `session_end` lifecycle hook, not by this tool.
 

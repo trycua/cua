@@ -150,7 +150,7 @@ Supported clients include claude, codex, cursor, antigravity, openclaw, opencode
 
 ### `cua-driver recording`
 
-Control trajectory recording on a running daemon.
+Control trajectory or explicit window-video recording on a running daemon.
 
 Recording state lives in the required daemon and survives client reconnects.
 
@@ -162,17 +162,34 @@ Recording state lives in the required daemon and survives client reconnects.
 
 #### `cua-driver recording start`
 
-Start trajectory recording to a directory.
+Start recording to a directory.
+
+Defaults to trajectory-only recording. --video adds display video unless both --pid and --window-id select exact window-video mode. Window mode requires --video and a new or empty output directory; it writes MP4 and metadata only. Supported on macOS 15+; other backends refuse without display fallback.
 
 **Arguments:**
 
 | Name | Type | Required | Description |
 | ---- | ---- | -------- | ----------- |
-| `<output-dir>` | String | Yes | Directory to write turn folders into. |
+| `<output-dir>` | String | Yes | Directory to write recording artifacts into. |
+
+**Options:**
+
+| Name | Type | Default | Description |
+| ---- | ---- | ------- | ----------- |
+| `--pid` | Int32 | — | Positive window-owner PID; requires --window-id and --video. |
+| `--window-id` | UInt64 | — | Positive native window ID from list_windows; requires --pid and --video. |
+
+**Flags:**
+
+| Name | Description |
+| ---- | ----------- |
+| `--video` | Enable video. Required for exact window mode. |
 
 #### `cua-driver recording stop`
 
-Stop trajectory recording.
+Stop the active recorder and finalize video.
+
+Manual stop is daemon-wide. After automatic window termination, call stop to release the retained recorder before starting another.
 
 #### `cua-driver recording status`
 

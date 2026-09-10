@@ -18,7 +18,37 @@ use std::time::Instant;
 use serde_json::Value;
 
 use crate::cursor_sampler::CursorSampler;
-use crate::video::{self, VideoBackend, VideoMetadata};
+use crate::video::{
+    self, PreparedWindowVideo, VideoBackend, VideoMetadata, WindowVideoInfo, WindowVideoStatus,
+    WindowVideoTarget,
+};
+
+// Native callbacks never acquire the recorder lock: stop may wait for them.
+struct WindowRecording {
+    status: WindowVideoStatus,
+    metadata: std::fs::File,
+    started_ms: u64,
+}
+
+impl WindowRecording {
+    fn publish(&mut self) -> anyhow::Result<()> {
+        use std::io::{Seek, SeekFrom, Write};
+        let payload = serde_json::json!({
+            "schema_version": 1, "mode": "window_video",
+            "target": self.status.info.target, "info": self.status.info,
+            "status": self.status, "started_at_monotonic_ms": self.started_ms,
+            "video": { "present": self.status.active || self.status.finalized, "path": "recording.mp4",
+                "finalized": self.status.finalized, "duration_ms": self.status.duration_ms,
+                "error": self.status.error, "termination_reason": self.status.termination_reason },
+        });
+        let bytes = serde_json::to_vec_pretty(&payload)?;
+        self.metadata.seek(SeekFrom::Start(0))?;
+        self.metadata.write_all(&bytes)?;
+        self.metadata.set_len(bytes.len() as u64)?;
+        self.metadata.flush()?;
+        Ok(())
+    }
+}
 
 // ── Platform screenshot callback ─────────────────────────────────────────────
 //
@@ -230,6 +260,7 @@ pub struct RecordingSession {
 }
 
 struct RecordingInner {
+    window: Option<Arc<Mutex<WindowRecording>>>,
     enabled: bool,
     generation: u64,
     /// Session that owns the live recording, stamped on every successful
@@ -272,6 +303,10 @@ struct RecordingInner {
 /// Snapshot of the current recording state (cheap to clone).
 #[derive(Debug, Clone)]
 pub struct RecordingState {
+    pub mode: Option<String>,
+    pub target: Option<WindowVideoTarget>,
+    pub info: Option<WindowVideoInfo>,
+    pub status: Option<WindowVideoStatus>,
     pub enabled: bool,
     pub output_dir: Option<String>,
     pub next_turn: u32,
@@ -295,6 +330,7 @@ impl RecordingSession {
         Self {
             pixel_point_fn: OnceLock::new(),
             inner: Mutex::new(RecordingInner {
+                window: None,
                 enabled: false,
                 generation: 0,
                 owner: None,
@@ -347,6 +383,10 @@ impl RecordingSession {
         owner: Option<&str>,
     ) -> anyhow::Result<()> {
         let mut inner = self.inner.lock().unwrap();
+        anyhow::ensure!(
+            !(inner.enabled && inner.window.is_some()),
+            "recording_busy: a window recording is active"
+        );
         // Write-boundary resurrection guard — checked INSIDE the lock so the
         // is_session_ended test is atomic with the enabled/owner write below.
         // An in-flight start_recording that lands after its owning session ended
@@ -442,6 +482,114 @@ impl RecordingSession {
         inner.last_error = video_error;
         inner.last_video = None;
         inner.last_cursor_samples = 0;
+        inner.window = None;
+        Ok(())
+    }
+
+    pub fn start_with_target(
+        &self,
+        output_dir: &str,
+        record_video: bool,
+        owner: Option<&str>,
+        target: Option<WindowVideoTarget>,
+    ) -> anyhow::Result<()> {
+        let Some(target) = target else {
+            return self.start(output_dir, record_video, owner);
+        };
+        target.validate()?;
+        anyhow::ensure!(
+            record_video,
+            "invalid_recording_target: window video requires record_video=true"
+        );
+        let mut inner = self.inner.lock().unwrap();
+        anyhow::ensure!(!inner.enabled, "recording_busy: a recording is active");
+        if let Some(owner) = owner {
+            anyhow::ensure!(
+                !crate::session::is_session_ended(owner),
+                "recording_session_ended: owner session has ended"
+            );
+        }
+        let prepared = video::prepare_window_video(&target)?;
+        Self::start_prepared_window(&mut inner, output_dir, owner, target, prepared)
+    }
+
+    fn start_prepared_window(
+        inner: &mut RecordingInner,
+        output_dir: &str,
+        owner: Option<&str>,
+        target: WindowVideoTarget,
+        prepared: Box<dyn PreparedWindowVideo>,
+    ) -> anyhow::Result<()> {
+        let info = prepared.info();
+        anyhow::ensure!(
+            info.target == target && info.width > 0 && info.height > 0,
+            "invalid_recording_target: backend returned incompatible capture identity"
+        );
+        let dir = expand_tilde(output_dir);
+        if dir.exists() {
+            anyhow::ensure!(
+                std::fs::read_dir(&dir)?.next().is_none(),
+                "recording_output_occupied: window video requires an empty output directory"
+            );
+        }
+        std::fs::create_dir_all(&dir)?;
+        // Claim before encoder creation; never truncate another recording's metadata.
+        let metadata = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(dir.join("session.json"))
+            .map_err(|e| anyhow::anyhow!("recording_output_occupied: cannot claim output: {e}"))?;
+        let state = Arc::new(Mutex::new(WindowRecording {
+            status: WindowVideoStatus {
+                info,
+                active: false,
+                finalized: false,
+                duration_ms: 0,
+                termination_reason: None,
+                error: None,
+            },
+            metadata,
+            started_ms: now_ms(),
+        }));
+        state.lock().unwrap().publish()?;
+        let callback_state = state.clone();
+        let observer = Arc::new(move |status: WindowVideoStatus| {
+            let mut state = callback_state.lock().unwrap();
+            state.status = status;
+            if let Err(error) = state.publish() {
+                state.status.error = Some(format!("recording_metadata_failed: {error}"));
+            }
+        });
+        let backend = match prepared.start(&dir.join("recording.mp4"), observer) {
+            Ok(backend) => backend,
+            Err(error) => {
+                let mut state = state.lock().unwrap();
+                state.status.active = false;
+                state
+                    .status
+                    .termination_reason
+                    .get_or_insert_with(|| "startup_failed".into());
+                state.status.error = Some(error.to_string());
+                let _ = state.publish();
+                return Err(error);
+            }
+        };
+        if let Some(status) = backend.window_status() {
+            let mut state = state.lock().unwrap();
+            state.status = status;
+            let _ = state.publish();
+        }
+        inner.window = Some(state);
+        inner.video = Some(backend);
+        inner.enabled = true;
+        inner.generation = inner.generation.wrapping_add(1);
+        inner.owner = owner.map(str::to_owned);
+        inner.output_dir = Some(dir);
+        inner.next_turn = 1;
+        inner.session_start_ms = now_ms();
+        inner.last_error = None;
+        inner.last_video = None;
+        inner.last_cursor_samples = 0;
         Ok(())
     }
 
@@ -506,7 +654,29 @@ impl RecordingSession {
         // Rewrite session.json with final video metadata + cursor count
         // so the renderer (and any external analysis) sees what actually
         // landed.
-        if let Some(dir) = dir {
+        if let Some(window) = &inner.window {
+            let mut window = window.lock().unwrap();
+            window.status.active = false;
+            if let Some(meta) = &video_meta {
+                window.status.finalized = meta.finalized;
+                window.status.duration_ms = meta.duration_ms;
+            }
+            if let Some(error) = &stop_error {
+                window.status.finalized = false;
+                window.status.error = Some(error.clone());
+            }
+            if window.status.termination_reason.is_none() {
+                window.status.termination_reason = Some(
+                    if stop_error.is_some() {
+                        "finalization_failed"
+                    } else {
+                        "stopped"
+                    }
+                    .into(),
+                );
+            }
+            window.publish()?;
+        } else if let Some(dir) = dir {
             let video_block = if let Some(ref m) = video_meta {
                 video_session_payload(true, None, Some(m))
             } else {
@@ -544,19 +714,50 @@ impl RecordingSession {
     /// Return a snapshot of the current state (non-blocking).
     pub fn current_state(&self) -> RecordingState {
         let inner = self.inner.lock().unwrap();
+        let status = inner
+            .video
+            .as_ref()
+            .and_then(|video| video.window_status())
+            .or_else(|| {
+                inner
+                    .window
+                    .as_ref()
+                    .map(|window| window.lock().unwrap().status.clone())
+            });
+        let last_video_path = inner
+            .last_video
+            .as_ref()
+            .map(|m| m.path.to_string_lossy().into_owned())
+            .or_else(|| {
+                status
+                    .as_ref()
+                    .filter(|s| s.finalized)
+                    .and_then(|_| inner.output_dir.as_ref())
+                    .map(|dir| dir.join("recording.mp4").to_string_lossy().into_owned())
+            });
         RecordingState {
-            enabled: inner.enabled,
+            mode: if status.is_some() {
+                Some("window_video".into())
+            } else if inner.enabled {
+                Some("legacy".into())
+            } else {
+                None
+            },
+            target: status.as_ref().map(|s| s.info.target.clone()),
+            info: status.as_ref().map(|s| s.info.clone()),
+            enabled: inner.enabled && status.as_ref().is_none_or(|s| s.active),
             output_dir: inner
                 .output_dir
                 .as_ref()
                 .map(|p| p.to_string_lossy().into_owned()),
             next_turn: inner.next_turn,
-            last_error: inner.last_error.clone(),
-            video_active: inner.video.is_some(),
-            last_video_path: inner
-                .last_video
+            last_error: status
                 .as_ref()
-                .map(|m| m.path.to_string_lossy().into_owned()),
+                .and_then(|s| s.error.clone())
+                .or_else(|| inner.last_error.clone()),
+            video_active: status.as_ref().map_or(inner.video.is_some(), |s| s.active),
+            status,
+            last_video_path,
             owner: inner.owner.clone(),
         }
     }
@@ -589,7 +790,7 @@ impl RecordingSession {
     ) -> Option<PendingTurn> {
         let (turn_dir, session_start_ms, generation) = {
             let mut inner = self.inner.lock().unwrap();
-            if !inner.enabled {
+            if !inner.enabled || inner.window.is_some() {
                 return None;
             }
             let out = inner.output_dir.clone()?;
@@ -734,6 +935,18 @@ impl RecordingSession {
 impl Default for RecordingSession {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+impl Drop for RecordingSession {
+    fn drop(&mut self) {
+        if self
+            .inner
+            .get_mut()
+            .is_ok_and(|inner| inner.window.is_some())
+        {
+            let _ = self.stop_owner(None);
+        }
     }
 }
 
@@ -1174,6 +1387,226 @@ fn validate_video_metadata(meta: VideoMetadata) -> anyhow::Result<VideoMetadata>
 
 #[cfg(test)]
 mod tests {
+    struct FakeWindow {
+        fail_start: bool,
+        observer: Arc<Mutex<Option<crate::video::WindowVideoObserver>>>,
+        stops: Arc<AtomicUsize>,
+        path: PathBuf,
+    }
+
+    fn window_info() -> WindowVideoInfo {
+        WindowVideoInfo {
+            target: WindowVideoTarget {
+                pid: 123,
+                window_id: 456,
+            },
+            width: 640,
+            height: 480,
+            backend: "fake_window".into(),
+        }
+    }
+
+    fn window_status(active: bool) -> WindowVideoStatus {
+        WindowVideoStatus {
+            info: window_info(),
+            active,
+            finalized: !active,
+            duration_ms: 42,
+            termination_reason: (!active).then(|| "window_closed".into()),
+            error: None,
+        }
+    }
+
+    impl PreparedWindowVideo for FakeWindow {
+        fn info(&self) -> WindowVideoInfo {
+            window_info()
+        }
+        fn start(
+            mut self: Box<Self>,
+            path: &Path,
+            observer: crate::video::WindowVideoObserver,
+        ) -> anyhow::Result<Box<dyn VideoBackend>> {
+            if self.fail_start {
+                anyhow::bail!("window_recording_start_failed: fixture");
+            }
+            self.path = path.to_path_buf();
+            std::fs::write(path, b"fake video")?;
+            observer(window_status(true));
+            *self.observer.lock().unwrap() = Some(observer);
+            Ok(self)
+        }
+    }
+
+    impl VideoBackend for FakeWindow {
+        fn stop(self: Box<Self>) -> anyhow::Result<VideoMetadata> {
+            self.stops.fetch_add(1, Ordering::SeqCst);
+            if let Some(observer) = self.observer.lock().unwrap().as_ref() {
+                observer(window_status(false));
+            }
+            Ok(VideoMetadata {
+                path: self.path.clone(),
+                duration_ms: 42,
+                finalized: true,
+            })
+        }
+    }
+
+    fn start_fake_window(
+        session: &RecordingSession,
+        dir: &Path,
+        fail_start: bool,
+    ) -> (
+        anyhow::Result<()>,
+        Arc<Mutex<Option<crate::video::WindowVideoObserver>>>,
+        Arc<AtomicUsize>,
+    ) {
+        let observer = Arc::new(Mutex::new(None));
+        let stops = Arc::new(AtomicUsize::new(0));
+        let result = RecordingSession::start_prepared_window(
+            &mut session.inner.lock().unwrap(),
+            dir.to_str().unwrap(),
+            Some("window-owner"),
+            window_info().target,
+            Box::new(FakeWindow {
+                fail_start,
+                observer: observer.clone(),
+                stops: stops.clone(),
+                path: PathBuf::new(),
+            }),
+        );
+        (result, observer, stops)
+    }
+
+    #[test]
+    fn window_video_suppresses_turns_and_cursor_and_retains_native_status() {
+        let root = tempfile::tempdir().unwrap();
+        let session = RecordingSession::new();
+        let (result, observer, stops) = start_fake_window(&session, root.path(), false);
+        result.unwrap();
+        assert!(session.current_state().video_active);
+        for owner in ["window-owner", "foreign"] {
+            let args = serde_json::json!({"_session_id": owner, "pid": 123});
+            assert!(session.begin_turn("click", &args, now_ms()).is_none());
+            assert!(session
+                .begin_private_turn("click", &args, now_ms())
+                .is_none());
+        }
+        assert_eq!(session.current_state().next_turn, 1);
+        assert!(!root.path().join("cursor.jsonl").exists());
+        assert!(!root.path().join("turn-00001").exists());
+        session.stop_owner(Some("foreign")).unwrap();
+        assert_eq!(stops.load(Ordering::SeqCst), 0);
+        observer.lock().unwrap().as_ref().unwrap()(window_status(false));
+        let state = session.current_state();
+        assert!(!state.video_active);
+        assert!(!state.enabled);
+        assert_eq!(
+            state.status.unwrap().termination_reason.as_deref(),
+            Some("window_closed")
+        );
+        let payload: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("session.json")).unwrap())
+                .unwrap();
+        assert_eq!(payload["mode"], "window_video");
+        assert_eq!(payload["target"]["kind"], "window");
+        assert_eq!(payload["status"]["active"], false);
+        assert!(payload.get("cursor").is_none());
+        session.stop_owner(Some("window-owner")).unwrap();
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+        assert!(session.current_state().status.unwrap().finalized);
+    }
+
+    #[test]
+    fn window_video_busy_does_not_replace_or_mutate_output() {
+        let root = tempfile::tempdir().unwrap();
+        let session = RecordingSession::new();
+        start_fake_window(&session, root.path(), false).0.unwrap();
+        let second = root.path().join("second");
+        assert!(session
+            .start(second.to_str().unwrap(), false, None)
+            .unwrap_err()
+            .to_string()
+            .contains("recording_busy"));
+        assert!(session
+            .start_with_target(
+                second.to_str().unwrap(),
+                true,
+                None,
+                Some(window_info().target)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("recording_busy"));
+        assert!(!second.exists());
+        assert_eq!(
+            session.current_state().owner.as_deref(),
+            Some("window-owner")
+        );
+    }
+
+    #[test]
+    fn window_video_start_failure_has_no_legacy_fallback() {
+        let root = tempfile::tempdir().unwrap();
+        let session = RecordingSession::new();
+        let (result, _, stops) = start_fake_window(&session, root.path(), true);
+        assert!(result.is_err());
+        assert!(!session.current_state().enabled);
+        assert!(session.inner.lock().unwrap().cursor.is_none());
+        assert_eq!(stops.load(Ordering::SeqCst), 0);
+        let payload: Value =
+            serde_json::from_slice(&std::fs::read(root.path().join("session.json")).unwrap())
+                .unwrap();
+        assert_eq!(payload["status"]["termination_reason"], "startup_failed");
+        assert!(!root.path().join("recording.mp4").exists());
+        assert!(!root.path().join("cursor.jsonl").exists());
+    }
+
+    #[test]
+    fn window_video_preserves_occupied_output_and_legacy_recording() {
+        let root = tempfile::tempdir().unwrap();
+        std::fs::write(root.path().join("recording.mp4"), b"old").unwrap();
+        let session = RecordingSession::new();
+        assert!(start_fake_window(&session, root.path(), false)
+            .0
+            .unwrap_err()
+            .to_string()
+            .contains("recording_output_occupied"));
+        assert_eq!(
+            std::fs::read(root.path().join("recording.mp4")).unwrap(),
+            b"old"
+        );
+        assert!(!root.path().join("session.json").exists());
+        let legacy = tempfile::tempdir().unwrap();
+        session
+            .start(legacy.path().to_str().unwrap(), false, Some("legacy-owner"))
+            .unwrap();
+        assert!(session
+            .start_with_target(
+                root.path().to_str().unwrap(),
+                true,
+                None,
+                Some(window_info().target)
+            )
+            .unwrap_err()
+            .to_string()
+            .contains("recording_busy"));
+        assert_eq!(
+            session.current_state().owner.as_deref(),
+            Some("legacy-owner")
+        );
+        assert!(session.inner.lock().unwrap().cursor.is_some());
+    }
+
+    #[test]
+    fn window_video_drop_finalizes_owned_backend() {
+        let root = tempfile::tempdir().unwrap();
+        let session = RecordingSession::new();
+        let (result, _, stops) = start_fake_window(&session, root.path(), false);
+        result.unwrap();
+        drop(session);
+        assert_eq!(stops.load(Ordering::SeqCst), 1);
+    }
+
     use super::*;
 
     #[test]

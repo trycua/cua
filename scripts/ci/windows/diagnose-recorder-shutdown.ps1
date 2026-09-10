@@ -3,15 +3,26 @@ param([ValidateRange(1, 20)][int]$Rounds = 10)
 $ErrorActionPreference = 'Stop'
 $root = Join-Path $PWD 'artifacts/cua-driver/windows-recorder-diagnostic'
 New-Item -ItemType Directory -Force $root | Out-Null
+Start-Transcript -Path (Join-Path $root 'setup-and-probe-transcript.txt') | Out-Null
 & "$PSScriptRoot/verify-user-session.ps1"
 & "$PSScriptRoot/setup-ffmpeg.ps1"
 $shim = (Get-Command ffmpeg.exe -ErrorAction Stop).Source
 $expectedShim = Join-Path $env:ChocolateyInstall 'bin/ffmpeg.exe'
-if ($shim -ine $expectedShim) { throw "Expected Chocolatey shim, found $shim" }
-$binaries = @(Get-ChildItem (Join-Path $env:ChocolateyInstall 'lib/ffmpeg') -Recurse -Filter ffmpeg.exe -File)
-if ($binaries.Count -ne 1) { throw "Expected one package executable, found $($binaries.Count)" }
-$direct = $binaries[0].FullName
-$ffprobe = Join-Path $binaries[0].DirectoryName 'ffprobe.exe'
+$shimProvenance = 'package-installed Chocolatey shim'
+if ($shim -ieq $expectedShim) {
+    $binaries = @(Get-ChildItem (Join-Path $env:ChocolateyInstall 'lib/ffmpeg') -Recurse -Filter ffmpeg.exe -File)
+    if ($binaries.Count -ne 1) { throw "Expected one package executable, found $($binaries.Count)" }
+    $direct = $binaries[0].FullName
+} else {
+    $direct = $shim
+    $shim = Join-Path $env:RUNNER_TEMP 'cua-recorder-diagnostic-ffmpeg.exe'
+    $shimgen = Join-Path $env:ChocolateyInstall 'tools/shimgen.exe'
+    if (-not (Test-Path $shimgen)) { throw 'Missing official Chocolatey shim generator' }
+    & $shimgen -o $shim -p $direct -i $direct
+    if ($LASTEXITCODE -ne 0 -or -not (Test-Path $shim)) { throw 'Diagnostic shim generation failed' }
+    $shimProvenance = 'official Chocolatey-generated shim around verified fallback; not the historical installed shim'
+}
+$ffprobe = Join-Path (Split-Path $direct) 'ffprobe.exe'
 if (-not (Test-Path $ffprobe)) { throw 'Missing package ffprobe' }
 $shimVersion = (& $shim -version | Out-String)
 if ($LASTEXITCODE -ne 0) { throw 'Shim version probe failed' }
@@ -26,6 +37,8 @@ if ($LASTEXITCODE -ne 0) { throw 'Probe compilation failed' }
     runner_os = $env:RUNNER_OS
     image_version = $env:ImageVersion
     shim = $shim
+    shim_provenance = $shimProvenance
+    chocolatey_version = (& choco --version)
     direct = $direct
     shim_sha256 = (Get-FileHash $shim).Hash
     direct_sha256 = (Get-FileHash $direct).Hash
@@ -87,6 +100,7 @@ foreach ($group in ($results | Group-Object variant)) {
 }
 $summary | Set-Content (Join-Path $root 'summary.md')
 if ($env:GITHUB_STEP_SUMMARY) { $summary | Add-Content $env:GITHUB_STEP_SUMMARY }
+Stop-Transcript | Out-Null
 if (@($results | Where-Object { $_.probe_exit -ne 0 }).Count -gt 0) {
     throw 'Probe execution errors occurred; inspect retained traces'
 }

@@ -1712,7 +1712,8 @@ async fn spawn_blocking_bounded<T: Send + 'static>(
     match tokio::time::timeout(budget, tokio::task::spawn_blocking(f)).await {
         Ok(joined) => joined,
         Err(_elapsed) => Ok(Err(anyhow::anyhow!(
-            "{}: {label} did not complete within {budget:?}; the X server or the target              application may be wedged. Take a screenshot before retrying",
+            "{}: {label} did not complete within {budget:?}; the X server or the target \
+             application may be wedged. Take a screenshot before retrying",
             crate::input::foreground::CODE_TIMEOUT
         ))),
     }
@@ -1754,7 +1755,8 @@ fn foreground_structured(
     if report.focus_after == crate::input::FocusAfter::Elsewhere {
         v["effect"] = json!("suspected_noop");
         v["warning"] = json!(
-            "input focus left the target process before the post-check; the keystrokes              may have reached another window. Verify with a screenshot."
+            "input focus left the target process before the post-check; the keystrokes \
+             may have reached another window. Verify with a screenshot."
         );
     }
     for (k, val) in extra {
@@ -3984,7 +3986,8 @@ impl Tool for ClickTool {
                     structured["foreground"] = report.to_json();
                 }
                 ToolResult::text(format!(
-                    "Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label},                      path={path}); not verified — confirm with a screenshot."
+                    "Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label}, \
+                     path={path}); not verified — confirm with a screenshot."
                 ))
                 .with_structured(structured)
             }

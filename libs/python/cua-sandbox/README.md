@@ -20,13 +20,14 @@ install the optional Driver SDK:
 pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
 ```
 
-The `driver` extra pins `cua-driver==0.25.0`, which provides the compatible remote
-channel bridge. It requires that version to be published for your platform.
+The `driver` extra pins `cua-driver==0.26.0`, which provides the typed-window API
+and compatible remote channel bridge. It requires that version to be published
+for your platform.
 The sandbox image must also run a compatible Driver service.
 
-### Optional MCP envelope carrier (unreleased candidate)
+### Optional MCP envelope carrier
 
-The candidate SDK can carry the same typed Driver interface through a named
+The SDK can carry the same typed Driver interface through a named
 MCP service. This requires the guest's explicit typed-envelope extension, not
 just an ordinary MCP tools endpoint:
 
@@ -59,8 +60,8 @@ deletion.
 See the [candidate wire and launcher contract](../../cua-driver/docs/mcp-envelope-carrier.md)
 for the opt-in and limits. No existing Fleet image is qualified by this example.
 Test the exact image and matching bindings/native library before advertising
-support. The newer typed-window API on this source branch is not in released
-Driver 0.25.0; it requires its matching release independently of this carrier.
+support. Driver 0.25.0 does not provide this typed-window API; use the pinned
+Driver 0.26.0 package and a compatible guest runtime.
 
 ## Ephemeral sandbox
 

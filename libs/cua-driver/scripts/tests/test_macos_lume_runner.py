@@ -22,6 +22,8 @@ REPO_ROOT = Path(__file__).resolve().parents[4]
 RUN_ALL = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/run-all.sh"
 SEED_TCC = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh"
 SEED_TCC_GUEST = REPO_ROOT / "libs/cua-driver/tests/runners/macos-lume/seed-tcc-guest.sh"
+MACOS_SKILL = REPO_ROOT / "libs/cua-driver/rust/Skills/cua-driver/MACOS.md"
+HARNESS_GUIDE = REPO_ROOT / "libs/cua-driver/docs/test-harnesses-guide.md"
 RUN_RUST_E2E = REPO_ROOT / "scripts/ci/macos/run-rust-e2e.sh"
 ELECTRON_BUILD = REPO_ROOT / "libs/cua-driver/tests/fixtures/apps/cross-platform/electron/build.sh"
 ELECTRON_LOCK = (
@@ -315,6 +317,17 @@ def test_tcc_host_seed_accepts_multiple_vms() -> None:
     assert 'for vm in "${VMS[@]}"; do' in text
     assert "seed-tcc-guest.sh" in text
     assert "CUA_TCC_READ_SUDO_PASSWORD=1" in text
+
+
+@pytest.mark.parametrize("document", [MACOS_SKILL, HARNESS_GUIDE], ids=lambda path: path.name)
+def test_lume_docs_route_automated_tcc_through_guarded_helper(document: Path) -> None:
+    text = document.read_text(encoding="utf-8")
+    assert "tests/runners/macos-lume/seed-tcc.sh" in text
+    assert "VirtualMac" in text
+    assert "SIP" in text
+    assert "certificate" in text
+    assert "TCC.db" in text
+    assert "rows alone" in text or "helper exit alone" in text
 
 
 def test_tcc_host_seed_runs_the_guest_helper_once_per_vm(tmp_path: Path) -> None:

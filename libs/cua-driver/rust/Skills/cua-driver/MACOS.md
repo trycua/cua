@@ -243,6 +243,32 @@ editor state.
      the user should click **+**, add `/Applications/CuaDriver.app` (or
      `/Applications/CuaDriverLocal.app`), enable it, and rerun the command.
 
+### Disposable Lume certification workers
+
+The interactive permission flow above remains the contract for normal Macs,
+SIP-on guests, and reusable private seeds. For a disposable SIP-disabled Lume
+worker running this repository's canonical macOS E2E suite, use the checked-in
+host helper after the exact candidate has been installed as a certificate-signed
+`/Applications/CuaDriverLocal.app`:
+
+```bash
+libs/cua-driver/tests/runners/macos-lume/seed-tcc.sh "$WORKER"
+```
+
+This is the only supported automated TCC-seeding path. The helper refuses to
+write unless the guest identifies as `VirtualMac*`, SIP is disabled, the app
+identity is the expected `com.trycua.driver.local`, and the signature has a
+certificate-backed requirement by default. It writes only Accessibility and
+Screen Recording grants, restarts `tccd`, and verifies both rows. Do not copy
+its SQL into another script or edit `TCC.db` manually.
+
+After seeding, restart `CuaDriverLocal.app`, require both permissions from
+`cua-driver-local permissions status --json`, then prove a fresh screenshot
+and a reversible input action through the target-side Driver. Seeded rows or a
+successful helper exit alone are not GUI evidence. Follow
+`tests/runners/macos-lume/README.md` for the complete clone, signing, runner,
+evidence, and cleanup contract.
+
 ## Resolve target pid — always via `launch_app`
 
 **Always start with `launch_app`**, whether or not the target is already

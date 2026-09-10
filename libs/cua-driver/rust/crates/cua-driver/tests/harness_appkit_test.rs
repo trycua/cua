@@ -235,27 +235,55 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
         };
         let observer = NativeObserver::new();
         let before = observer.snapshot(target).expect("observe native desktop");
-        let motion = driver.call(
-            "set_agent_cursor_motion",
-            serde_json::json!({"idle_hide_ms": 0, "glide_duration_ms": 0}),
-        );
-        assert!(!motion.is_error(), "cursor motion: {}", motion.text());
-        let moved = driver.call(
-            "move_cursor",
-            serde_json::json!({
-                "target": {"kind": "window", "pid": pid, "window_id": wid},
-                "x": 120,
-                "y": 100
-            }),
-        );
-        assert!(!moved.is_error(), "agent cursor: {}", moved.text());
-        let cursor = driver.call("get_agent_cursor_state", serde_json::json!({}));
-        assert_eq!(cursor.structured()["enabled"], true);
-        assert!(cursor.structured()["position"].is_object());
-        let activated = driver.call(
-            "bring_to_front",
-            serde_json::json!({"pid": pid, "window_id": wid}),
-        );
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("canonical installed daemon socket");
+        let mut peer = McpDriver::spawn_daemon_proxy_unrecorded(&socket)
+            .expect("start concurrent cursor session");
+        let stopped = std::sync::atomic::AtomicBool::new(false);
+        let (ready, started) = std::sync::mpsc::sync_channel(1);
+        let activated = std::thread::scope(|scope| {
+            let moving = scope.spawn(|| {
+                let snapshot = snapshot_elements(&mut peer, pid, wid);
+                assert!(!snapshot.is_error(), "peer snapshot: {}", snapshot.text());
+                let motion = peer.call(
+                    "set_agent_cursor_motion",
+                    serde_json::json!({"idle_hide_ms": 0, "glide_duration_ms": 0}),
+                );
+                assert!(!motion.is_error(), "cursor motion: {}", motion.text());
+                let deadline = std::time::Instant::now() + Duration::from_secs(12);
+                let mut first = true;
+                let mut x = 120;
+                while !stopped.load(std::sync::atomic::Ordering::Relaxed)
+                    && std::time::Instant::now() < deadline
+                {
+                    let moved = peer.call(
+                        "move_cursor",
+                        serde_json::json!({
+                            "target": {"kind": "window", "pid": pid, "window_id": wid},
+                            "x": x,
+                            "y": 100
+                        }),
+                    );
+                    assert!(!moved.is_error(), "agent cursor: {}", moved.text());
+                    if first {
+                        ready.send(()).expect("cursor readiness");
+                        first = false;
+                    }
+                    x = if x == 120 { 121 } else { 120 };
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+            started
+                .recv_timeout(Duration::from_secs(15))
+                .expect("live cursor ready");
+            let result = driver.call(
+                "bring_to_front",
+                serde_json::json!({"pid": pid, "window_id": wid}),
+            );
+            stopped.store(true, std::sync::atomic::Ordering::Relaxed);
+            moving.join().expect("concurrent cursor transport");
+            result
+        });
         assert!(
             !activated.is_error() && activated.structured()["activated"] == true,
             "active agent cursor must not invalidate exact activation: {}",

@@ -35,9 +35,7 @@ pub fn normalize_action_target(tool_name: &str, args: &mut Value) -> Result<(), 
         if object.get("scope").and_then(Value::as_str) == Some("desktop")
             && (object.contains_key("pid") || object.contains_key("window_id"))
         {
-            return Err(invalid_target(
-                "desktop scope cannot be combined with pid or window_id",
-            ));
+            return normalize_desktop_frame_for_window(object);
         }
         return Ok(());
     };
@@ -102,9 +100,57 @@ pub fn normalize_action_target(tool_name: &str, args: &mut Value) -> Result<(), 
     Ok(())
 }
 
+/// `scope: "desktop"` together with `pid` / `window_id` means "these x/y are
+/// desktop (full-screen) pixels — the ones `get_desktop_state` returns — but
+/// deliver to THIS window". Agents that ground on a desktop screenshot and
+/// then target the window that owns the pixel need exactly this; refusing it
+/// made every such click fail. The Linux adapter translates the point into
+/// the window's local frame (`coordinate_frame: "desktop"`); backends that do
+/// not implement the translation keep the explicit refusal rather than
+/// silently reading desktop pixels as window-local ones.
+fn normalize_desktop_frame_for_window(
+    object: &mut serde_json::Map<String, Value>,
+) -> Result<(), ToolResult> {
+    if !desktop_frame_for_window_supported() {
+        return Err(invalid_target(
+            "desktop scope cannot be combined with pid or window_id",
+        ));
+    }
+    object.remove("scope");
+    object.insert(
+        "coordinate_frame".into(),
+        Value::String("desktop".into()),
+    );
+    Ok(())
+}
+
+/// Which backends translate desktop-frame pixels for a window target.
+pub fn desktop_frame_for_window_supported() -> bool {
+    cfg!(target_os = "linux")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn desktop_scope_with_pid_becomes_a_desktop_coordinate_frame_where_supported() {
+        let mut args = json!({"pid": 7, "x": 100, "y": 200, "scope": "desktop"});
+        let result = normalize_action_target("click", &mut args);
+        if desktop_frame_for_window_supported() {
+            result.unwrap();
+            assert!(args.get("scope").is_none());
+            assert_eq!(args["coordinate_frame"], "desktop");
+            assert_eq!(args["pid"], 7);
+        } else {
+            assert!(result.is_err());
+        }
+        // Windowless desktop scope is untouched.
+        let mut bare = json!({"x": 1, "y": 2, "scope": "desktop"});
+        normalize_action_target("click", &mut bare).unwrap();
+        assert_eq!(bare["scope"], "desktop");
+        assert!(bare.get("coordinate_frame").is_none());
+    }
 
     #[test]
     fn exact_targets_normalize_to_one_unambiguous_legacy_shape() {

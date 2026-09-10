@@ -1755,6 +1755,36 @@ fn element_screen_center(pid: u32, idx: usize, xid: Option<u64>) -> anyhow::Resu
     Ok((bx as f64 + bw as f64 / 2.0, by as f64 + bh as f64 / 2.0))
 }
 
+/// Shared schema for the optional `coordinate_frame` of pointer tools.
+fn coordinate_frame_schema() -> Value {
+    json!({
+        "type": "string",
+        "enum": ["window", "desktop"],
+        "description": "Frame of x/y (and from_x/from_y/to_x/to_y). Default \"window\": \
+            window-local screenshot pixels as returned by get_window_state. \"desktop\": \
+            full-screen pixels as returned by get_desktop_state, translated to the target \
+            window. Passing scope:\"desktop\" together with pid/window_id means the same thing."
+    })
+}
+
+fn coordinate_frame_is_desktop(args: &Value) -> bool {
+    args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
+}
+
+/// Translate a desktop (root-window) pixel into `xid`'s local frame.
+fn screen_to_window_local(xid: u64, sx: f64, sy: f64) -> anyhow::Result<(f64, f64)> {
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::rust_connection::RustConnection;
+
+    let (conn, screen_num) = RustConnection::connect(None)?;
+    let root = conn.setup().roots[screen_num].root;
+    let reply = conn
+        .translate_coordinates(xid as u32, root, 0, 0)?
+        .reply()?;
+    Ok((sx - reply.dst_x as f64, sy - reply.dst_y as f64))
+}
+
 fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::ConnectionExt as _;
@@ -3759,7 +3789,19 @@ impl Tool for ClickTool {
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
-        if from_zoom {
+        if coordinate_frame_is_desktop(&args) {
+            match screen_to_window_local(xid, x, y) {
+                Ok((lx, ly)) => {
+                    x = lx;
+                    y = ly;
+                }
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "could not translate desktop pixel ({x}, {y}) into window {xid}: {error}"
+                    ))
+                }
+            }
+        } else if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(x, y);
@@ -6250,6 +6292,7 @@ impl Tool for DoubleClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
+                "coordinate_frame": coordinate_frame_schema(),
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
@@ -6378,7 +6421,19 @@ impl Tool for DoubleClickTool {
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
-        if from_zoom {
+        if coordinate_frame_is_desktop(&args) {
+            match screen_to_window_local(xid, x, y) {
+                Ok((lx, ly)) => {
+                    x = lx;
+                    y = ly;
+                }
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "could not translate desktop pixel ({x}, {y}) into window {xid}: {error}"
+                    ))
+                }
+            }
+        } else if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(x, y);
@@ -6488,6 +6543,7 @@ impl Tool for RightClickTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
+                "coordinate_frame": coordinate_frame_schema(),
                 "element_index": cua_driver_core::tool_schema::element_index_schema(),
                 "element_token": cua_driver_core::tool_schema::element_token_schema(),
                 "snapshot_id": cua_driver_core::tool_schema::snapshot_id_schema(),
@@ -6617,7 +6673,19 @@ impl Tool for RightClickTool {
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
-        if from_zoom {
+        if coordinate_frame_is_desktop(&args) {
+            match screen_to_window_local(xid, x, y) {
+                Ok((lx, ly)) => {
+                    x = lx;
+                    y = ly;
+                }
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "could not translate desktop pixel ({x}, {y}) into window {xid}: {error}"
+                    ))
+                }
+            }
+        } else if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(x, y);
@@ -6863,7 +6931,24 @@ impl Tool for DragTool {
         let button = parse_mouse_button(button_str.as_str());
         let from_zoom = args.bool_or("from_zoom", false);
 
-        if from_zoom {
+        if coordinate_frame_is_desktop(&args) {
+            match (
+                screen_to_window_local(xid, from_x, from_y),
+                screen_to_window_local(xid, to_x, to_y),
+            ) {
+                (Ok((fx, fy)), Ok((tx, ty))) => {
+                    from_x = fx;
+                    from_y = fy;
+                    to_x = tx;
+                    to_y = ty;
+                }
+                (Err(error), _) | (_, Err(error)) => {
+                    return ToolResult::error(format!(
+                        "could not translate desktop pixels into window {xid}: {error}"
+                    ))
+                }
+            }
+        } else if from_zoom {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(from_x, from_y);
@@ -7294,6 +7379,7 @@ impl Tool for MouseButtonDownTool {
                 "window_id":{"type":"integer"},
                 "x":{"type":"number"},
                 "y":{"type":"number"},
+                "coordinate_frame": coordinate_frame_schema(),
                 "button": cua_driver_core::tool_schema::button_schema(),
                 "from_zoom":{"type":"boolean","description":"Set true after a zoom call to auto-translate zoom-image pixel coordinates back to full-window space."}
             },"additionalProperties":false}),
@@ -7329,7 +7415,19 @@ impl Tool for MouseButtonDownTool {
         let button = parse_mouse_button(button_name.as_str());
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
-        if args.bool_or("from_zoom", false) {
+        if coordinate_frame_is_desktop(&args) {
+            match screen_to_window_local(xid, x, y) {
+                Ok((lx, ly)) => {
+                    x = lx;
+                    y = ly;
+                }
+                Err(error) => {
+                    return ToolResult::error(format!(
+                        "could not translate desktop pixel ({x}, {y}) into window {xid}: {error}"
+                    ))
+                }
+            }
+        } else if args.bool_or("from_zoom", false) {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
                     let (wx, wy) = ctx.zoom_to_window(x, y);

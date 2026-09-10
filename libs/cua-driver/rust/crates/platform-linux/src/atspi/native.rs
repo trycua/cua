@@ -959,12 +959,24 @@ async fn collect_visited_bounded<'a>(
         resolve_window_frame(conn, pid, xid, &seeds).await
     };
 
-    let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = seeds
+    // Walk the caller's window FIRST when it was resolved: under a short
+    // budget an application-wide pre-order (main window, then dialogs) could
+    // exhaust the budget before ever reaching the dialog the caller asked
+    // about. Ordinals stay the application's own, so `render` still scopes
+    // by the same identity; only the visiting order (and thus the index
+    // space of this snapshot) changes.
+    let mut ordered: Vec<(RawObjectRef, usize, bool, usize)> = seeds
         .into_iter()
         .enumerate()
         .map(|(ordinal, r)| (r, 0usize, false, ordinal))
-        .rev()
         .collect();
+    if let Some(scope) = scoped_frame {
+        if let Some(position) = ordered.iter().position(|(_, _, _, ordinal)| *ordinal == scope) {
+            let scoped = ordered.remove(position);
+            ordered.insert(0, scoped);
+        }
+    }
+    let mut stack: Vec<(RawObjectRef, usize, bool, usize)> = ordered.into_iter().rev().collect();
 
     let mut visited: Vec<Visited<'a>> = Vec::new();
     // Guard against pathological/looping trees. Defaults to 5 000 (the

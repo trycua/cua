@@ -189,6 +189,14 @@ impl VideoBackend for FfmpegVideoBackend {
                         "ffmpeg did not finalize cleanly. Last stderr tail:\n{tail}");
                 }
             }
+            if !forced_kill {
+                if let Ok(status) = exit_status {
+                    let cause = status
+                        .code()
+                        .map_or_else(|| status.to_string(), |code| format!("code {code}"));
+                    anyhow::bail!("ffmpeg exited with {cause}");
+                }
+            }
         } else if let Some(handle) = self.stderr_thread.take() {
             let _ = handle.join();
         }

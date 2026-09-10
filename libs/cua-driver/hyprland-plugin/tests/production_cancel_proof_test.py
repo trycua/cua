@@ -498,6 +498,34 @@ class OwnershipTests(unittest.TestCase):
                 self.assertFalse(pair_has_dispatch_budget(prepared))
             self.assertEqual(prepared[stale]['timing']['pair_gate_ns'], now)
 
+    def test_snapshot_freshness_is_relative_to_the_clock_origin(self):
+        limit = MAX_GROUNDING_AGE_NS - GROUNDING_DISPATCH_RESERVE_NS
+        for origin in (0, 10**15):
+            for age in (100_000_000, limit, limit + 1, MAX_GROUNDING_AGE_NS + 1, -1):
+                with self.subTest(origin=origin, age=age):
+                    clients = [client(100), client(101)]
+                    observed_ns = origin + 1
+                    retained = {}
+                    with patch('production_cancel_proof.grounded_snapshot', return_value={
+                            'proof_observation_started_ns': observed_ns}) as snapshot, \
+                         patch('production_cancel_proof.time.monotonic_ns', return_value=observed_ns + age):
+                        if age < 0 or age > limit:
+                            with self.assertRaisesRegex(AssertionError,
+                                    'in the future' if age < 0 else 'insufficient dispatch time; no input sent'):
+                                prepare_drags(clients, plan()['agents'], lambda name, value: retained.update({name: value}))
+                        else:
+                            prepared = prepare_drags(clients, plan()['agents'], lambda name, value: retained.update({name: value}))
+                            self.assertTrue(all(item['prepared_ns'] == observed_ns for item in prepared))
+                    attempts = 2 if age > limit else 1
+                    self.assertEqual(snapshot.call_count, 2 * attempts)
+                    for index in (0, 1):
+                        item = retained[f'agent-{index}-drag-grounding.json']
+                        self.assertEqual(item['timing']['pair_grounding_age_ns'], age)
+                    for owned in clients:
+                        owned.tool.assert_not_called()
+                        owned.process.kill.assert_not_called()
+                        owned.process.terminate.assert_not_called()
+
     def test_failed_parallel_grounding_never_dispatches(self):
         clients = [client(100), client(101)]
         save = Mock()
@@ -892,8 +920,11 @@ class RunnerTests(unittest.TestCase):
                 proof_image = root / 'fresh.png'
                 proof_image.write_bytes(b'synthetic-test-image')
                 snapshot = Mock(return_value={'window_bounds': BOUNDS, 'proof_image': str(proof_image)})
+                preparation_clock_ns = 2 * MAX_GROUNDING_AGE_NS
                 if failure == 'prepare_budget':
-                    snapshot.return_value['proof_observation_started_ns'] = 1
+                    # A monotonic clock has an unspecified origin: timestamp 1
+                    # need not be stale in a short-lived test process.
+                    snapshot.return_value['proof_observation_started_ns'] = preparation_clock_ns - MAX_GROUNDING_AGE_NS - 1
                 if failure == 'snapshot':
                     snapshot.side_effect = AssertionError('stale geometry')
                 if failure == 'primary_after':
@@ -942,6 +973,7 @@ class RunnerTests(unittest.TestCase):
                         return pool if executor_count[0] == 1 else ThreadPoolExecutor(*args, **kwargs)
                     replacements['ThreadPoolExecutor'] = executor
                     replacements['prepare_drag'] = Mock(wraps=prepare_drag)
+                    replacements['time.monotonic_ns'] = Mock(return_value=preparation_clock_ns)
                 else:
                     replacements['prepare_drags'] = observations
                 for name, value in replacements.items():

@@ -297,6 +297,8 @@ jobs:
             python -m pytest \
               libs/python/cua-sandbox/tests/test_typed_driver_native.py \
               libs/python/cua-sandbox/tests/test_typed_driver.py \
+              libs/python/cua-sandbox/tests/test_driver_mcp.py \
+              libs/python/cua-sandbox/tests/test_driver_mcp_native.py \
               libs/python/cua-sandbox/tests/test_pool.py \
               libs/python/cua-sandbox/tests/test_fleet_transport.py \
               libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py \

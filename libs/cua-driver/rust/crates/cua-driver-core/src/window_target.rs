@@ -102,7 +102,11 @@ impl Tool for PidOnlyWindowTargetGuard {
     }
 
     async fn invoke(&self, mut args: Value) -> ToolResult {
-        if args.get("scope").and_then(Value::as_str) == Some("desktop")
+        // A windowless desktop-scope action needs no pid window. A desktop-
+        // scope action that names a pid still resolves that pid's window (the
+        // coordinates are desktop-frame, the target is the window).
+        let has_pid = args.get("pid").is_some_and(|value| !value.is_null());
+        if (args.get("scope").and_then(Value::as_str) == Some("desktop") && !has_pid)
             || args.get("window_id").is_some_and(|value| !value.is_null())
             || args
                 .get("element_token")
@@ -245,6 +249,40 @@ mod tests {
 
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         assert_eq!(result.structured_content.unwrap()["window_id"], 7);
+    }
+
+    #[tokio::test]
+    async fn desktop_scope_with_pid_still_resolves_the_window() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            Arc::new(|_| vec![candidate(7)]),
+        );
+        let result = guard
+            .invoke(serde_json::json!({"pid": 42, "scope": "desktop", "x": 1, "y": 2}))
+            .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let structured = result.structured_content.unwrap();
+        assert_eq!(structured["window_id"], 7);
+        assert_eq!(structured["scope"], "desktop");
+    }
+
+    #[tokio::test]
+    async fn windowless_desktop_scope_passes_through() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            Arc::new(|_| vec![candidate(7), candidate(8)]),
+        );
+        let result = guard
+            .invoke(serde_json::json!({"scope": "desktop", "x": 1, "y": 2}))
+            .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert!(result.structured_content.unwrap().get("window_id").is_none());
     }
 
     #[tokio::test]

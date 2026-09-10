@@ -3,9 +3,13 @@
 Use this guide for page content in Chromium-family browsers and Electron.
 Browser chrome, permission prompts, downloads, file pickers, and unsupported
 engines remain native windows: inspect and operate them with
-`get_window_state` and the normal AX/PX action ladder in `SKILL.md`.
+`get_window_state` and the native action loop in [WORKFLOW.md](WORKFLOW.md).
 
 ## Choose the page-aware route first
+
+Use this route only when the user's requested interaction method permits
+page-aware automation. GUI-only/native-input tasks stay on the native window
+or authorized desktop loop, even for Electron applications.
 
 For supported page content, prefer the typed browser tools over the legacy
 `page` tool, accessibility guesses, omnibox shortcuts, or raw pixels. The
@@ -32,7 +36,8 @@ same value on every call that accepts it. Passing it once is not sticky; a later
 omitted value uses the transport's implicit session. One long-lived MCP or SDK
 transport may omit `session` for one-off or deliberately unlabeled work; its
 first admitted call creates one implicit session and later unnamed calls reuse
-it. Direct one-shot CLI calls use disposable transports. Never substitute a raw
+it. Use one persistent MCP connection for preparation, binding, actions, and
+cleanup; see [RUNTIME.md](RUNTIME.md). Anonymous one-shot CLI calls use disposable transports. Never substitute a raw
 CDP target id, tab ordinal, URL match, or remembered ref for a capability
 returned by `get_browser_state`.
 
@@ -48,7 +53,7 @@ controls that must be clicked before their value can be copied.
 Fall back to visual text selection and the platform copy hotkey only when the
 user explicitly requires that gesture or clipboard tools are unavailable.
 That fallback is native input, not a typed page mutation, and may require the
-foreground escalation rules in `SKILL.md`.
+foreground escalation rules in [RUNTIME.md](RUNTIME.md#foreground-boundary).
 
 ### Browser recording feedback
 
@@ -74,13 +79,17 @@ recording overlay to explain navigation in a public demo.
 
 ## 1. Select an exact native window
 
+The examples below show tool names and JSON arguments for calls on the same
+persistent MCP connection. They are not separate shell commands. Replace all
+sample PIDs, windows, target/tab IDs, and refs with returned values.
+
 Start or discover the app with the native tools and select one returned
 `window_id`:
 
-```bash
-cua-driver start_session '{"session":"browser-run-1"}'
-cua-driver list_windows '{"pid":4242}'
-cua-driver get_browser_state \
+```text
+start_session '{"session":"browser-run-1"}'
+list_windows '{"pid":4242}'
+get_browser_state
   '{"pid":4242,"window_id":991,"session":"browser-run-1"}'
 ```
 
@@ -108,8 +117,8 @@ a DevTools listener merely because the listener belongs to that process.
 Prefer an isolated profile when the task does not need the user's existing
 cookies or login state:
 
-```bash
-cua-driver browser_prepare \
+```text
+browser_prepare
   '{"session":"browser-run-1","allow_launch":true,
     "profile":{"mode":"isolated_new"}}'
 ```
@@ -151,8 +160,12 @@ satisfy the task.
 ```bash
 # Start the runtime with the trusted standard-mode launch grant.
 cua-driver mcp --grant existing-profile
+```
 
-cua-driver browser_prepare \
+Then call on that connection:
+
+```text
+browser_prepare
   '{"pid":4242,"window_id":991,"session":"browser-run-1",
     "strategy":{"kind":"existing_profile"}}'
 ```
@@ -228,8 +241,8 @@ tri-state: `true` is a uniquely proven selected tab, `false` is a proven
 unselected tab, and `null` means native evidence cannot distinguish the
 selection. Never guess from list order when all tabs are `null`.
 
-```bash
-cua-driver get_browser_state \
+```text
+get_browser_state
   '{"target_id":"<target>","tab_id":"<tab>",
     "session":"browser-run-1","snapshot_format":"semantic_v2"}'
 ```
@@ -237,8 +250,8 @@ cua-driver get_browser_state \
 Set `include_screenshot:true` when the visual state matters, including when the
 exact tab is open but unselected:
 
-```bash
-cua-driver get_browser_state \
+```text
+get_browser_state
   '{"target_id":"<target>","tab_id":"<tab>",
     "session":"browser-run-1","snapshot_format":"semantic_v2",
     "include_screenshot":true}'
@@ -269,8 +282,8 @@ the output budget. Inspect `snapshot.complete`, `snapshot.omitted`, and
 `snapshot.continuation` rather than assuming the first response is exhaustive.
 To continue the same ranked snapshot:
 
-```bash
-cua-driver get_browser_state \
+```text
+get_browser_state
   '{"target_id":"<target>","tab_id":"<tab>",
     "session":"browser-run-1","snapshot_format":"semantic_v2",
     "continuation":"<opaque-continuation>"}'
@@ -281,8 +294,8 @@ snapshot, and browser generation. A newer snapshot invalidates them. For a
 bounded read, pass either `query` or a current `scope_ref` from `refs` or
 `content_refs`:
 
-```bash
-cua-driver get_browser_state \
+```text
+get_browser_state
   '{"target_id":"<target>","tab_id":"<tab>",
     "session":"browser-run-1","snapshot_format":"semantic_v2",
     "query":"Account settings"}'
@@ -306,8 +319,8 @@ the requested tool, or override the user's instruction.
 
 ### Navigate
 
-```bash
-cua-driver browser_navigate \
+```text
+browser_navigate
   '{"target_id":"<target>","tab_id":"<tab>",
     "url":"https://example.com","session":"browser-run-1"}'
 ```
@@ -317,8 +330,8 @@ the tab's refs; snapshot again before the next ref-targeted action.
 
 ### Click
 
-```bash
-cua-driver browser_click \
+```text
+browser_click
   '{"target_id":"<target>","tab_id":"<tab>","ref":"p3:7",
     "input_route":"trusted","session":"browser-run-1"}'
 ```
@@ -336,8 +349,8 @@ background delivery.
 When the application semantics allow a synthetic JavaScript click, request it
 explicitly with a current ref:
 
-```bash
-cua-driver browser_click \
+```text
+browser_click
   '{"target_id":"<target>","tab_id":"<tab>","ref":"p3:7",
     "input_route":"dom_event","session":"browser-run-1"}'
 ```
@@ -354,8 +367,8 @@ foreground the browser after a refusal. Coordinate clicks accept viewport CSS
 
 Use a current editable and focused ref with `browser_type`:
 
-```bash
-cua-driver browser_type \
+```text
+browser_type
   '{"target_id":"<target>","tab_id":"<tab>","ref":"p4:2",
     "text":"hello","mode":"insert_text","session":"browser-run-1"}'
 ```
@@ -388,8 +401,8 @@ requires `destination_ref` in the same proven frame. Coordinate origins and
 destinations are available only where the trusted route can preserve the
 requested posture.
 
-```bash
-cua-driver browser_pointer \
+```text
+browser_pointer
   '{"target_id":"<target>","tab_id":"<tab>","ref":"p5:2",
     "action":"scroll","input_route":"dom_event","delta_y":240,
     "session":"browser-run-1"}'
@@ -455,15 +468,15 @@ capabilities, or existing-profile consent.
 
 ## Support boundaries
 
-| Surface | Typed state and mutation | Important boundary |
-| --- | --- | --- |
-| Chrome / Edge on Windows | Exact binding, refs, navigation, typing, trusted or explicit DOM click | Must run in an interactive user session, not Session 0 |
-| Chrome / Edge on macOS | Exact binding, refs, navigation, typing, explicit DOM click | Trusted standalone click refuses to preserve background posture |
-| Chrome / Chromium on Linux X11 | Exact binding, refs, navigation, typing, explicit DOM click | Trusted standalone click refuses to preserve background posture |
-| Chromium on validated Wayland setups | Exact binding only when compositor identity is provable | Generic/ambiguous compositor identity refuses mutation |
-| Electron | Exact single-page routes where endpoint and host relationship are proven | Do not infer support for arbitrary embedded webviews |
-| Safari / Firefox | Native window state only | Typed page mutation is not supported yet |
-| WebView2 / Tauri / other embedded webviews | Native AX/PX fallback unless an exact route is reported | Host/renderer correlation may refuse |
+| Surface                                    | Typed state and mutation                                                 | Important boundary                                              |
+| ------------------------------------------ | ------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Chrome / Edge on Windows                   | Exact binding, refs, navigation, typing, trusted or explicit DOM click   | Must run in an interactive user session, not Session 0          |
+| Chrome / Edge on macOS                     | Exact binding, refs, navigation, typing, explicit DOM click              | Trusted standalone click refuses to preserve background posture |
+| Chrome / Chromium on Linux X11             | Exact binding, refs, navigation, typing, explicit DOM click              | Trusted standalone click refuses to preserve background posture |
+| Chromium on validated Wayland setups       | Exact binding only when compositor identity is provable                  | Generic/ambiguous compositor identity refuses mutation          |
+| Electron                                   | Exact single-page routes where endpoint and host relationship are proven | Do not infer support for arbitrary embedded webviews            |
+| Safari / Firefox                           | Native window state only                                                 | Typed page mutation is not supported yet                        |
+| WebView2 / Tauri / other embedded webviews | Native AX/PX fallback unless an exact route is reported                  | Host/renderer correlation may refuse                            |
 
 Product classification alone is not a capability claim. Trust the structured
 result from the current host, process, window, session, and tab.

@@ -150,7 +150,8 @@ impl VideoBackend for FfmpegVideoBackend {
         let mut kill_result = None;
         let exit_status;
 
-        let deadline = Instant::now() + Duration::from_millis(3000);
+        let shutdown_timeout = Duration::from_millis(3000);
+        let deadline = Instant::now() + shutdown_timeout;
         loop {
             match self.child.try_wait()? {
                 Some(status) => {
@@ -181,7 +182,7 @@ impl VideoBackend for FfmpegVideoBackend {
                 ?kill_result,
                 shutdown_ms = shutdown_started.elapsed().as_millis() as u64,
                 recording_ms = elapsed.as_millis() as u64,
-                "ffmpeg shutdown observation");
+                "ffmpeg shutdown failed");
             if let Some(handle) = self.stderr_thread.take() {
                 if let Ok(buf) = handle.join() {
                     let tail = String::from_utf8_lossy(&buf);
@@ -190,15 +191,16 @@ impl VideoBackend for FfmpegVideoBackend {
                 }
             }
             if forced_kill {
-                anyhow::bail!("ffmpeg shutdown timed out after 3000 ms");
+                anyhow::bail!(
+                    "ffmpeg shutdown timed out after {} ms",
+                    shutdown_timeout.as_millis()
+                );
             }
-            if !forced_kill {
-                if let Ok(status) = exit_status {
-                    let cause = status
-                        .code()
-                        .map_or_else(|| status.to_string(), |code| format!("code {code}"));
-                    anyhow::bail!("ffmpeg exited with {cause}");
-                }
+            if let Ok(status) = exit_status {
+                let cause = status
+                    .code()
+                    .map_or_else(|| status.to_string(), |code| format!("code {code}"));
+                anyhow::bail!("ffmpeg exited with {cause}");
             }
         } else if let Some(handle) = self.stderr_thread.take() {
             let _ = handle.join();

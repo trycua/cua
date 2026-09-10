@@ -353,7 +353,7 @@ struct InputExperiment::Impl {
     }
     void suspend(std::string_view reason = "plugin_disabled") {
         suspended = true;
-        revoke(reason);
+        revoke(reason, reason != "plugin_shutdown");
         reservation = nullptr;
         if (listen_source) wl_event_source_remove(listen_source);
         listen_source = nullptr;
@@ -610,7 +610,10 @@ struct InputExperiment::Impl {
         // unconditionally; an off/on pair between timer ticks must not revive
         // authority. Kill pending connections as well as the active lease so
         // a pre-transition signed grant cannot be approved after unlock.
-        revoke("desktop_changed");
+        // Admission is gone immediately, but an unchanged live target may keep
+        // inert hover just as after normal completion. A leave directly after
+        // the release can interfere with the client's drag-release processing.
+        revoke("desktop_changed", true);
         for (auto& c : clients) {
             // Observers and operator-control connections own no action target.
             // Keep them alive so Stop/status/evidence survives a transition.
@@ -1026,8 +1029,8 @@ struct InputExperiment::Impl {
             const auto requested_cap = kProduction ? number(f[3]) : 0;
             if (kProduction && (!InputGrant::single_operation(requested_cap) ||
                 (requested_cap == 16 && route != InputRoute::primary_foreground))) { invalidate(c); send(c, refusal("unsupported")); return; }
-            if (kProduction && !available()) { invalidate(c); send(c, refusal("session_unavailable")); return; }
-            if (!layout_qualified()) { invalidate(c); send(c, refusal("unsupported_layout")); return; }
+            if (kProduction && !available()) { invalidate(c, false); send(c, refusal("session_unavailable")); return; }
+            if (!layout_qualified()) { invalidate(c, false); send(c, refusal("unsupported_layout")); return; }
             const auto pid = number(f[1]); const auto address = number(f[2], 16);
             PHLWINDOW window;
             for (const auto& w : Desktop::windowState()->windows())
@@ -1086,8 +1089,8 @@ struct InputExperiment::Impl {
         c.sequence = sequence;
         if (c.token.empty() || f[2] != c.token || !refresh(c)) { send(c, refusal("stale_target")); return; }
         if (number(f[3]) != c.revision) { if (kProduction) revoke("stale_geometry"); send(c, refusal("stale_geometry")); return; }
-        if (!available()) { revoke("session_unavailable"); send(c, refusal("session_unavailable")); return; }
-        if (!layout_qualified()) { revoke("unsupported_layout"); send(c, refusal("unsupported_layout")); return; }
+        if (!available()) { revoke("session_unavailable", true); send(c, refusal("session_unavailable")); return; }
+        if (!layout_qualified()) { revoke("unsupported_layout", true); send(c, refusal("unsupported_layout")); return; }
         if (lease && Clock::now() >= expires) revoke("lease_expired");
         if (drag) { send(c, refusal("lease_busy")); return; }
         if (lease != &c || !(capabilities & cap) || (kProduction && !grant.permits(cap, Clock::now()))) {
@@ -1220,13 +1223,12 @@ struct InputExperiment::Impl {
         try { self.step(); } catch (...) { self.revoke("internal_error"); }
         wl_event_source_timer_update(self.timer, self.retired ? 500 : 16); return 0;
     }
-    void step() {
-        if (!retired) sync_keymap();
-        for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
+    void guard_targets() {
         if (lease) {
             if (lease->dead) revoke("disconnected", true);
             else if (Clock::now() >= expires) revoke("lease_expired");
-            else if (!available() || !layout_qualified() || !refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
+            else if (!available() || !layout_qualified()) revoke("cancelled", true);
+            else if (!refresh(*lease) || primary_conflict(*lease) || agent_conflict(*lease) ||
                 (drag && !drag->geometry.matches(lease->revision))) revoke("cancelled");
         }
         if (pointer_target.entered()) {
@@ -1235,9 +1237,16 @@ struct InputExperiment::Impl {
             const bool bound = std::ranges::any_of(pointers, [&](const auto& p) {
                 return !p->dead && p->wl->resource() && surface && p->focus == surface;
             });
-            if (!available() || !layout_qualified() || !geometry || *geometry != pointer_target.geometry() ||
+            // Availability controls admission, not passive pointer presence.
+            // Retention never excuses a changed target, binding, or conflict.
+            if (!geometry || *geometry != pointer_target.geometry() ||
                 !bound || primary_conflict(surface) || agent_conflict(surface)) revoke("cancelled");
         }
+    }
+    void step() {
+        if (!retired) sync_keymap();
+        for (auto& c : clients) if (c->deadline.expired(c->hello, Clock::now())) c->dead = true;
+        guard_targets();
         if (drag) {
             const auto d = *drag;
             const auto elapsed = std::chrono::duration<double, std::milli>(Clock::now() - d.start).count();

@@ -16,7 +16,7 @@ use std::sync::OnceLock;
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
-use atspi::connection::{AccessibilityConnection, P2P};
+use atspi::connection::AccessibilityConnection;
 use atspi::proxy::accessible::AccessibleProxy;
 use atspi::proxy::proxy_ext::ProxyExt;
 use atspi::{CoordType, Interface, State, StateSet};
@@ -455,52 +455,6 @@ fn is_web_process_bus(name: &str) -> bool {
 /// be walked and written without killing the app. Other toolkits are
 /// unaffected (they already tolerate `GetAll`), and the sub-interface proxies
 /// from `proxies()` already use `CacheProperties::No`.
-/// Bus names whose peer-to-peer a11y socket does not answer. LibreOffice's
-/// VCL advertises a private AT-SPI socket but never services it (its main
-/// loop only pumps the session a11y bus), so every P2P call to it hangs for
-/// the full per-call timeout while the same request over the bus answers
-/// instantly. Once a bus name is demoted every proxy for it is built on the
-/// shared bus connection instead.
-fn p2p_demoted() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
-    static SET: OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
-    SET.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
-}
-
-fn p2p_is_demoted(bus: &str) -> bool {
-    p2p_demoted().lock().unwrap().contains(bus)
-}
-
-/// Would `accessible_for` currently take the peer-to-peer route for `bus`?
-fn p2p_in_use(conn: &AccessibilityConnection, bus: &str) -> bool {
-    if !bus.starts_with(':') || p2p_is_demoted(bus) {
-        return false;
-    }
-    let Ok(name) = atspi::zbus::names::UniqueName::try_from(bus.to_owned()) else {
-        return false;
-    };
-    conn.get_peer(&atspi::zbus::names::BusName::Unique(name.as_ref()))
-        .is_some()
-}
-
-/// A P2P call to `bus` timed out while our own deadline still had time left:
-/// the peer socket is dead, not the app. Demote the bus so every later proxy
-/// goes over the shared connection, and return a bus proxy for `oref` so the
-/// caller can retry once. `None` when P2P was not in use (nothing to demote).
-async fn demote_p2p_and_reopen<'a>(
-    conn: &'a AccessibilityConnection,
-    oref: &RawObjectRef,
-) -> Option<AccessibleProxy<'a>> {
-    if deadline_passed() || !p2p_in_use(conn, &oref.name) {
-        return None;
-    }
-    dlog!(
-        "peer-to-peer a11y socket for {} did not answer; falling back to the session bus",
-        oref.name
-    );
-    p2p_demoted().lock().unwrap().insert(oref.name.clone());
-    call(accessible_via_bus(conn, oref)).await?.ok()
-}
-
 /// Build the proxy on the shared bus connection, never the peer socket.
 async fn accessible_via_bus<'a>(
     conn: &'a AccessibilityConnection,
@@ -521,34 +475,10 @@ async fn accessible_for<'a>(
     conn: &'a AccessibilityConnection,
     oref: &RawObjectRef,
 ) -> Result<AccessibleProxy<'a>> {
-    // Keep the atspi crate's peer-to-peer path when this connection actually
-    // knows the peer. Late WebKit WebProcess children are not in the initial
-    // peer snapshot; object_as_accessible's bus fallback omits their destination
-    // and targets the Accessible interface name instead. Build an explicit bus
-    // proxy below for those late peers and for well-known references.
-    if oref.name.starts_with(':') && !p2p_is_demoted(&oref.name) {
-        let name = atspi::zbus::names::UniqueName::try_from(oref.name.clone())
-            .map_err(|e| anyhow!("bad a11y unique name: {e}"))?;
-        let bus_name = atspi::zbus::names::BusName::Unique(name.as_ref());
-        if conn.get_peer(&bus_name).is_some() {
-            let path = atspi::zbus::zvariant::ObjectPath::try_from(oref.path.clone())
-                .map_err(|e| anyhow!("bad a11y path: {e}"))?;
-            let object = atspi::ObjectRef::new_owned(name, path);
-            return conn
-                .object_as_accessible(&object)
-                .await
-                .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"));
-        }
-    }
-    AccessibleProxy::builder(conn.connection())
-        .cache_properties(atspi::zbus::proxy::CacheProperties::No)
-        .destination(oref.name.clone())
-        .map_err(|e| anyhow!("bad a11y destination: {e}"))?
-        .path(oref.path.clone())
-        .map_err(|e| anyhow!("bad a11y path: {e}"))?
-        .build()
-        .await
-        .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"))
+    // Always the session a11y bus. WebKitGTK's late WebProcess children use a
+    // well-known name that only the explicit bus builder can address, and the
+    // crate's peer-to-peer route is disabled (see Cargo.toml).
+    accessible_via_bus(conn, oref).await
 }
 
 /// AT-SPI's `(so)` object references are documented as unique bus names, but
@@ -568,6 +498,32 @@ impl RawObjectRef {
             path: oref.path_as_str().to_owned(),
         })
     }
+}
+
+/// Containers with more children than this are not expanded. LibreOffice
+/// Calc's spreadsheet accessible reports the whole sheet (rows x columns, in
+/// the billions); a `GetChildren` on it makes the application enumerate every
+/// cell, which stalls its accessibility bridge for minutes and wedges every
+/// later call from this connection behind it. pyatspi/Orca never enumerate
+/// such containers wholesale either. A caller-supplied `max_elements` above
+/// this raises the cap (the walk cannot exceed the budget anyway).
+pub(crate) const CHILD_ENUMERATION_CAP: usize = 2048;
+
+/// Accessible.ChildCount: one cheap property read that tells a leaf (skip the
+/// GetChildren round-trip entirely) from a container that must not be expanded.
+async fn raw_child_count(conn: &atspi::zbus::Connection, oref: &RawObjectRef) -> Result<i32> {
+    let proxy = atspi::zbus::Proxy::new(
+        conn,
+        oref.name.as_str(),
+        oref.path.as_str(),
+        "org.a11y.atspi.Accessible",
+    )
+    .await
+    .map_err(|e| anyhow!("Accessible proxy unavailable: {e}"))?;
+    proxy
+        .get_property::<i32>("ChildCount")
+        .await
+        .map_err(|e| anyhow!("Accessible.ChildCount failed: {e}"))
 }
 
 /// Read Accessible.GetChildren without deserializing the bus-name field as a
@@ -737,7 +693,6 @@ async fn resolve_app_for_pid<'a>(
                 continue;
             }
         };
-        let mut app = app;
         let children = match call(app.get_children()).await {
             Some(Ok(children)) => Some(children),
             Some(Err(error)) => {
@@ -746,16 +701,7 @@ async fn resolve_app_for_pid<'a>(
             }
             None => {
                 dlog!("  get_children timed out for pid {pid}");
-                match demote_p2p_and_reopen(conn, &child).await {
-                    Some(bus_app) => {
-                        app = bus_app;
-                        match call(app.get_children()).await {
-                            Some(Ok(children)) => Some(children),
-                            _ => None,
-                        }
-                    }
-                    None => None,
-                }
+                None
             }
         };
         let has_children = children.as_ref().is_some_and(|c| !c.is_empty());
@@ -1047,6 +993,12 @@ async fn collect_visited_bounded<'a>(
     // few seconds rather than ~25s.
     let mut consecutive_timeouts = 0u32;
     let mut truncation: Option<&'static str> = None;
+    // Containers left unexpanded because their child count exceeded the cap:
+    // (child count, position in `visited` of the container).
+    let mut huge_containers: Vec<(usize, usize)> = Vec::new();
+    let child_cap = max_elements
+        .map(|cap| cap.max(CHILD_ENUMERATION_CAP))
+        .unwrap_or(CHILD_ENUMERATION_CAP);
 
     while let Some((oref, depth, inherited_web_doc, frame_ordinal)) = stack.pop() {
         if budget == 0 {
@@ -1080,12 +1032,6 @@ async fn collect_visited_bounded<'a>(
                 dlog!("  accessible_for failed: {error:#}");
                 continue;
             }
-            None if !deadline_passed() && p2p_in_use(conn, &oref.name) => {
-                match demote_p2p_and_reopen(conn, &oref).await {
-                    Some(a) => a,
-                    None => continue,
-                }
-            }
             None => {
                 if tokio::time::Instant::now() >= deadline {
                     truncation = Some("timeout");
@@ -1108,28 +1054,10 @@ async fn collect_visited_bounded<'a>(
 
         // Interfaces gate every other query; if even this times out the node is
         // unreachable, so skip it rather than stall.
-        let mut acc = acc;
         let ifaces = match call(acc.get_interfaces()).await {
             Some(Ok(i)) => {
                 consecutive_timeouts = 0;
                 i
-            }
-            None if !deadline_passed() && p2p_in_use(conn, &oref.name) => {
-                // First sign of a dead peer socket: switch this bus to the
-                // session-bus route and retry the node once.
-                match demote_p2p_and_reopen(conn, &oref).await {
-                    Some(bus_acc) => {
-                        acc = bus_acc;
-                        match call(acc.get_interfaces()).await {
-                            Some(Ok(i)) => {
-                                consecutive_timeouts = 0;
-                                i
-                            }
-                            _ => continue,
-                        }
-                    }
-                    None => continue,
-                }
             }
             // A completed-but-errored call is node-specific; keep walking.
             Some(Err(error)) => {
@@ -1166,12 +1094,27 @@ async fn collect_visited_bounded<'a>(
         // These four are independent — issue them concurrently to cut the
         // per-node round-trip cost (large trees like Chromium's have hundreds
         // of nodes, so sequential reads dominate the walk time).
-        let (role_r, name_r, state_r, children_r) = tokio::join!(
+        let (role_r, name_r, state_r, count_r) = tokio::join!(
             call(acc.get_role_name()),
             call(acc.name()),
             call(acc.get_state()),
-            call(raw_children(zconn, &oref)),
+            call(raw_child_count(zconn, &oref)),
         );
+        // Fetch the child list only for real containers within the cap: leaves
+        // (the majority of nodes) save a round-trip, and a huge container is
+        // never enumerated (see CHILD_ENUMERATION_CAP).
+        let children_r: Option<Result<Vec<RawObjectRef>>> = match count_r {
+            Some(Ok(count)) if count <= 0 => Some(Ok(Vec::new())),
+            Some(Ok(count)) if count as usize > child_cap => {
+                huge_containers.push((count as usize, visited.len()));
+                Some(Ok(Vec::new()))
+            }
+            Some(Ok(_)) => call(raw_children(zconn, &oref)).await,
+            // Count unavailable (older bridges, error): fall back to the
+            // historical unconditional fetch.
+            Some(Err(_)) => call(raw_children(zconn, &oref)).await,
+            None => None,
+        };
         let role = match role_r {
             Some(Ok(r)) => r,
             _ => String::new(),
@@ -1315,6 +1258,15 @@ async fn collect_visited_bounded<'a>(
         });
     }
 
+    if truncation.is_none() && !huge_containers.is_empty() {
+        for (count, at) in &huge_containers {
+            dlog!(
+                "container {:?} at node {at} has {count} children; not expanded",
+                visited.get(*at).map(|v| v.role.as_str()).unwrap_or("?")
+            );
+        }
+        truncation = Some("huge_container");
+    }
     let truncation = truncation.map(|reason| Truncation {
         reason,
         visited: visited.len(),

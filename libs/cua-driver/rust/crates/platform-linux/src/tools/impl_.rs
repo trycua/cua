@@ -1155,6 +1155,9 @@ fn truncation_note(reason: Option<&str>, timeout_ms: u64, visited: usize, pendin
         Some("app_lookup_timeout") => format!(
             "the application did not register with AT-SPI within {timeout_ms} ms"
         ),
+        Some("huge_container") => "a container with more children than can be enumerated \
+            (e.g. a spreadsheet's cell grid) was not expanded"
+            .to_owned(),
         Some(other) => other.to_owned(),
         None => "the walk stopped early".to_owned(),
     };

@@ -1,6 +1,7 @@
 """Portable contracts only: no native VM, compositor, policy or input is touched."""
 from contextlib import ExitStack, nullcontext
 from copy import deepcopy
+from itertools import count
 import json
 import os
 from pathlib import Path
@@ -80,6 +81,103 @@ def keymap_record():
 def keymap_restoration():
     return {**restoration(), 'config': {'sha256': proof.digest(proof.KEYMAP_US.encode())},
             'keymap_options': options(), 'status': keymap_status(3)}
+
+
+def motion_trace(distance=12):
+    page = trace(ACTIVE[:2] + [(2, 'pointer_enter', 1, 0)] + ACTIVE[2:])
+    page['events'][2].extend([20, 30])
+    page['events'][-1].extend([20 + distance, 30])
+    return page
+
+
+class MotionGateTests(unittest.TestCase):
+    def test_plan_optional_positive_finite_threshold_for_both_faults(self):
+        for kind in ('config_disable', 'keymap'):
+            proof.validate_plan(plan(kind))
+            for value in (12, 12.5, 0, -1, True, None, '12', float('nan'), float('inf')):
+                candidate = plan(kind)
+                candidate['fault']['min_motion_px'] = value
+                with self.subTest(kind=kind, value=value):
+                    if type(value) in (int, float) and value in (12, 12.5):
+                        proof.validate_plan(candidate)
+                    else:
+                        with self.assertRaises(AssertionError):
+                            proof.validate_plan(candidate)
+
+    def test_omitted_threshold_preserves_held_only_gate(self):
+        page = trace(ACTIVE[:4])
+        transport = Mock(collect=Mock(return_value=page))
+        self.assertEqual(proof.poll_fault_active(transport, trace(ACTIVE[:1]),
+                         Mock(done=Mock(return_value=False))), (page, {1: 2_000_000}))
+
+    def test_exact_threshold_waits_for_same_lane_surface_motion(self):
+        first = motion_trace(11.999)
+        enough = deepcopy(first)
+        enough['events'].append([7, 4_500_000, 'pointer_motion', 100, 100, 1, 0, 32, 30])
+        enough['count'] += 1
+        transport = Mock(collect=Mock(side_effect=[first, enough]))
+        pending = Mock(done=Mock(return_value=False))
+        with patch.object(proof.time, 'sleep') as sleep:
+            self.assertEqual(proof.poll_fault_active(transport, trace(ACTIVE[:1]), pending, 12),
+                             (enough, {1: 2_000_000}))
+        self.assertEqual(transport.collect.call_count, 2)
+        self.assertEqual(pending.done.call_count, 2)
+        sleep.assert_not_called()
+        diagonal = motion_trace()
+        diagonal['events'][-1][7:9] = [23, 34]
+        self.assertEqual(proof.drag_motion_px(diagonal, 1), 5)
+
+    def test_missing_or_insufficient_post_press_motion_expires_without_replay(self):
+        for page in (motion_trace(11.999), {**motion_trace(), 'events': motion_trace()['events'][:-1], 'count': 5}):
+            with self.subTest(page=page), patch.object(proof.time, 'monotonic', side_effect=lambda: next(ticks) / 1000):
+                ticks = count()
+                transport = Mock(collect=Mock(return_value=page))
+                with self.assertRaisesRegex(AssertionError, 'bounded wait'):
+                    proof.poll_fault_active(transport, trace(ACTIVE[:1]), Mock(done=Mock(return_value=False)), 12, timeout=.02)
+                self.assertGreater(transport.collect.call_count, 1)
+
+    def test_rejects_missing_coordinates_wrong_lane_changed_identity_and_ended_drag(self):
+        for failure in ('coordinates', 'initial', 'foreign_lane', 'wrong_lane', 'leave', 'enter', 'release', 'cancel'):
+            page = motion_trace()
+            if failure == 'coordinates':
+                del page['events'][-1][7:9]
+            elif failure == 'initial':
+                page['events'][2] = [3, 2_000_000, 'cursor', 100, 100, 0, 0]
+            elif failure == 'foreign_lane':
+                page['events'][-1][5] = 2
+            elif failure not in ('wrong_lane',):
+                kind, value = {'leave': ('pointer_leave', 0), 'enter': ('pointer_enter', 0),
+                               'release': ('pointer_button', 0), 'cancel': ('agent_cancel', 0)}[failure]
+                page['events'].append([7, 4_500_000, kind, 100, 100, 1, value] + ([32, 30] if failure == 'enter' else []))
+                page['count'] += 1
+            with self.subTest(failure=failure), self.assertRaises(AssertionError):
+                proof.drag_motion_px(page, 2 if failure == 'wrong_lane' else 1)
+
+    def test_poll_rejects_changed_trace_history_incomplete_and_stale_reads(self):
+        first = motion_trace(1)
+        changed = motion_trace(12)
+        with self.assertRaisesRegex(AssertionError, 'history'):
+            proof.poll_fault_active(Mock(collect=Mock(side_effect=[first, changed])), trace(ACTIVE[:1]),
+                                    Mock(done=Mock(return_value=False)), 12)
+        for field, value in (('overflow', True), ('timed_out', True), ('active', False), ('hook', False), ('count', 0)):
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                proof.poll_fault_active(Mock(collect=Mock(return_value={**motion_trace(), field: value})),
+                                        trace(ACTIVE[:1]), Mock(done=Mock(return_value=False)), 12)
+        with patch.object(proof.time, 'monotonic', side_effect=[0, .01, .02, .03, .04, .30]), \
+             self.assertRaisesRegex(AssertionError, 'stale'):
+            proof.poll_fault_active(Mock(collect=Mock(return_value=motion_trace())), trace(ACTIVE[:1]),
+                                    Mock(done=Mock(return_value=False)), 12)
+
+    def test_saved_fault_gate_rechecks_threshold_from_trace(self):
+        candidate = {**record(), 'prefix': motion_trace(), 'min_motion_px': 12}
+        boundary = motion_trace()
+        boundary['events'] += [[i + 7, ms * 1_000_000, kind, 100, 100, lane, value]
+                               for i, (ms, kind, lane, value) in enumerate(CANCEL[len(ACTIVE):])]
+        boundary['count'] = len(boundary['events'])
+        proof.verify_fault(boundary, candidate, restoration(), action())
+        for threshold in (12.001, True, float('nan')):
+            with self.subTest(threshold=threshold), self.assertRaises(AssertionError):
+                proof.verify_fault(boundary, {**candidate, 'min_motion_px': threshold}, restoration(), action())
 
 
 class KeymapTests(unittest.TestCase):
@@ -467,6 +565,7 @@ class SafetyTests(unittest.TestCase):
             path.write_bytes(proof.ENABLED.encode())
             path.chmod(0o600)
             candidate = plan()
+            candidate['fault']['min_motion_px'] = 12
             candidate['config'] = {'path': str(path), **proof.file_identity(path)}
             candidate['compositor']['uid'] = os.getuid()
             identity = {k: v for k, v in candidate['compositor'].items() if k != 'instance'}
@@ -477,6 +576,8 @@ class SafetyTests(unittest.TestCase):
             stack.enter_context(patch.object(proof, 'production_status', return_value=status()))
             reload = stack.enter_context(patch.object(proof, '_reload'))
             fault = proof.ConfigFault(candidate, directory)
+            self.assertEqual(fault.config['min_motion_px'], 12)
+            self.assertEqual(fault.record['min_motion_px'], 12)
             original = proof.file_identity(path)
             for name, data in (('disabled', proof.DISABLED), ('restored', proof.ENABLED)):
                 staged = Path(fault.config['files'][name]['path'])
@@ -585,6 +686,50 @@ class SafetyTests(unittest.TestCase):
                 self.assertEqual(fault.mutated, failure in (None, 'lost_reply'))
                 if failure == 'lost_reply':
                     self.assertTrue(fault.mutated)
+
+    def test_motion_gate_controls_both_faults_without_replay(self):
+        for kind in ('config_disable', 'keymap'):
+            for failure in (None, 'done', 'done_after_motion', 'coordinates', 'identity', 'insufficient'):
+                with self.subTest(kind=kind, failure=failure), ExitStack() as stack:
+                    fault = self.controller()
+                    fault.config.update(kind=kind, min_motion_px=12, instance='exact')
+                    page = motion_trace(1 if failure == 'insufficient' else 12)
+                    if failure == 'coordinates':
+                        del page['events'][-1][7:9]
+                    if failure == 'identity':
+                        page['events'][-1][5] = 2
+                    ticks = count()
+                    stack.enter_context(patch.object(proof.time, 'monotonic', side_effect=lambda: next(ticks) / 100))
+                    stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[5_000_000, 6_000_000, 10_000_000]))
+                    stack.enter_context(patch.object(proof, '_locked', side_effect=lambda _: nullcontext()))
+                    gate = keymap_status(1)
+                    gate['input']['lanes'][0].update(drag_active=True, lease_active=True, held_button=272)
+                    fault.record['before'] = keymap_status(1)
+                    stack.enter_context(patch.object(proof, 'production_status', return_value=gate))
+                    stack.enter_context(patch.object(proof, 'keymap_options', side_effect=[options(), options(False)]))
+                    stack.enter_context(patch.object(proof, 'file_identity', return_value={}))
+                    # Match _replace's authorization boundary, without touching a file.
+                    atomic = Mock()
+                    def replace(*_args, **kwargs):
+                        kwargs['before_replace']()
+                        atomic()
+                    stack.enter_context(patch.object(proof, '_replace', side_effect=replace))
+                    reload = stack.enter_context(patch.object(proof, '_reload', return_value=keymap_status(2)
+                                                             if kind == 'keymap' else status(False)))
+                    pending = Mock(done=Mock(side_effect=[False, True]) if failure == 'done_after_motion'
+                                   else Mock(return_value=failure == 'done'))
+                    if failure:
+                        with self.assertRaises(AssertionError):
+                            fault.inject(Mock(collect=Mock(return_value=page)), trace(ACTIVE[:1]), pending, Mock())
+                        atomic.assert_not_called()
+                        reload.assert_not_called()
+                        self.assertFalse(fault.mutated)
+                    else:
+                        fault.inject(Mock(collect=Mock(return_value=page)), trace(ACTIVE[:1]), pending, Mock())
+                        atomic.assert_called_once()
+                        reload.assert_called_once()
+                        self.assertTrue(fault.mutated)
+                        self.assertEqual(fault.record['prefix'], page)
 
     def test_keymap_injection_checks_active_native_gate_and_observed_generation(self):
         for failure in (None, 'gate_changed', 'gate_released', 'not_compiled', 'wrong_options'):

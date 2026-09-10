@@ -6,6 +6,9 @@ fault={kind:config_disable|keymap}; vm={machine_id,boot_id}; compositor includes
 pid,instance,uid,starttime,exe; config includes absolute path,device,inode,uid,
 mode,sha256. Config-disable requires the already sourced, exact ENABLED Lua
 include from input_config_toggle. Main configuration and policy are never edited.
+Optional fault.min_motion_px requires that much Euclidean surface-local motion
+from the pre-press pointer position on the same live lane before fault injection.
+Omitting it retains the held-drag gate without a minimum motion requirement.
 
 Config suspension disconnects the trace transport. Restore the fixture, reconnect
 without TRACE_START, and require unchanged trace history with cancellation and
@@ -28,6 +31,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import hashlib
 import json
+import math
 import os
 from pathlib import Path
 import platform
@@ -150,7 +154,9 @@ def file_identity(path):
 
 
 def validate_plan(plan):
-    assert plan['purpose'] == 'desktop_fault' and set(plan['fault']) == {'kind'}
+    assert plan['purpose'] == 'desktop_fault' and {'kind'} <= set(plan['fault']) <= {'kind', 'min_motion_px'}
+    if 'min_motion_px' in plan['fault']:
+        validate_min_motion(plan['fault']['min_motion_px'])
     original, _ = fixed_bytes(plan['fault']['kind'])
     # Reuse the strict existing target/grounding/recovery plan checks unchanged.
     bounds = plan['agents'][0]['bounds']
@@ -170,6 +176,43 @@ def validate_plan(plan):
     assert Path(config['path']).is_absolute()
     assert all(type(config[key]) is int and config[key] >= 0 for key in ('device', 'inode', 'uid', 'mode'))
     assert config['sha256'] == digest(original.encode()), 'only the exact dedicated include is permitted'
+
+
+def validate_min_motion(value):
+    assert type(value) in (int, float) and math.isfinite(value) and value > 0, 'positive finite min_motion_px required'
+
+
+def drag_motion_px(page, lane):
+    """Use protocol coordinates, never the primary cursor or another lane."""
+    assert set(active_drags(page)) == {lane}, 'motion gate requires the same held lane'
+    rows = [row for row in page['events'] if row[5] in (1, 2)]
+    assert all(row[5] == lane for row in rows), 'motion gate crossed lanes'
+    press = next(row for row in rows if row[2] == 'pointer_button')
+    assert not any(row[2] == 'pointer_leave' or
+                   (row[2] == 'pointer_enter' and row[0] > press[0]) for row in rows), 'motion gate pointer identity changed'
+    positions = [row for row in rows if row[2] in ('pointer_enter', 'pointer_motion')]
+    assert all(len(row) == 9 for row in positions), 'motion gate requires surface coordinates'
+    before = [row for row in positions if row[0] < press[0]]
+    assert before, 'motion gate lacks initial pointer position'
+    motion = [row for row in positions if row[2] == 'pointer_motion' and row[0] > press[0]]
+    return math.dist(before[-1][7:9], motion[-1][7:9]) if motion else 0
+
+
+def poll_fault_active(trace, initial, pending, min_motion_px=None, timeout=3):
+    if min_motion_px is None:
+        return poll_active(trace, initial, None, [pending], timeout=timeout)
+    validate_min_motion(min_motion_px)
+    deadline = time.monotonic() + timeout
+    previous, lanes = initial, None
+    while (remaining := deadline - time.monotonic()) > 0:
+        page, active = poll_active(trace, previous, lanes, [pending], timeout=remaining)
+        lane = next(iter(active))
+        displacement = drag_motion_px(page, lane)
+        assert time.monotonic() <= deadline, 'motion gate exceeded bounded wait'
+        if displacement >= min_motion_px:
+            return page, active
+        previous, lanes = page, set(active)
+    raise AssertionError('insufficient drag motion within bounded wait')
 
 
 def _guard(config):
@@ -324,6 +367,8 @@ class ConfigFault:
                        'record': str((evidence / 'config-watchdog.json').resolve()), 'files': {
                            'original': {'path': str(path), 'identity': file_identity(path)}}}
         self.record, self.restoration = {'result': 'unproven', 'kind': kind}, None
+        if 'min_motion_px' in plan['fault']:
+            self.config['min_motion_px'] = self.record['min_motion_px'] = plan['fault']['min_motion_px']
         self.child = self.cancel_fd = None
         self.mutated = False
         _guard(self.config)
@@ -368,7 +413,7 @@ class ConfigFault:
 
     def inject(self, trace, initial, pending, guard):
         assert self.child and self.child.poll() is None, 'live restoration watchdog required'
-        prefix, lanes = poll_active(trace, initial, None, [pending])
+        prefix, lanes = poll_fault_active(trace, initial, pending, self.config.get('min_motion_px'))
         gate_ns = time.monotonic_ns()
         with _locked(self.config):
             if self.config.get('kind') == 'keymap':
@@ -435,6 +480,9 @@ def verify_cancelled(boundary, record, before_restore_ns):
     """Check the live fault before any restoration or new action is attempted."""
     prefix, lane = record['prefix'], record['lane']
     assert set(active_drags(prefix)) == {lane}
+    if 'min_motion_px' in record:
+        validate_min_motion(record['min_motion_px'])
+        assert drag_motion_px(prefix, lane) >= record['min_motion_px'], 'fault preceded required drag motion'
     tail = trace_interval(prefix, boundary)
     assert prefix['events'][-1][1] <= record['gate_ns'] <= record['requested_ns'] <= record['acknowledged_ns']
     assert record['acknowledged_ns'] <= before_restore_ns

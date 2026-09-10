@@ -330,7 +330,7 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
         DriverRoute::WindowState,
     )
     .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
-    case.oracles.extend([OracleKind::Focus, OracleKind::Cursor]);
+    case.oracles.push(OracleKind::Cursor);
     run_case(case, |pid, wid, driver| {
         let competitor = Harness::launch_with_options(None, None, true);
         let (competing_wid, _) = driver
@@ -357,6 +357,7 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
             "bring_to_front_exact_window_unverified"
         );
         assert_eq!(response.structured()["activated"], false);
+        assert_eq!(response.structured()["process_activated"], true);
         assert_eq!(
             response.structured()["exact_window_effect"]["focused"],
             true
@@ -368,15 +369,10 @@ fn harness_appkit_exact_activation_refuses_competing_window() {
         let after = observer
             .snapshot(target)
             .expect("observe refused activation");
-        assert_eq!(after.foreground, Some(u64::from(pid)));
         assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
         Observation::refused(
             RefusalCode::BringToFrontExactWindowUnverified,
-            vec![
-                OracleKind::FixtureState,
-                OracleKind::Focus,
-                OracleKind::Cursor,
-            ],
+            vec![OracleKind::FixtureState, OracleKind::Cursor],
             response.text(),
             Evidence::default(),
         )

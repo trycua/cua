@@ -1,13 +1,13 @@
 {
-  "schema": 1,
+  "schema": 2,
   "profile_id": "omarchy-stable-20260910",
-  "kit_version": "1.0.0",
+  "kit_version": "1.1.0",
   "package_release": 2,
   "source": {
-    "revision": "4b3396d9fe4bd3cf723b0eb8db83c18a8764b520",
-    "driver_version": "0.24.0",
-    "archive_sha256": "73b65823b3281c027a31cd8f7d9ca9586fe7386ed1eec74174f2e72cea0af643",
-    "manifest_sha256": "fb5b5710218afecfa54e9803e8e95f4702e8a47ac4108abd06b4f5f3c1032eeb"
+    "revision": "cc54254464c0c9aebfd6547fe7e4a0ceaf0456d7",
+    "driver_version": "0.26.1",
+    "archive_sha256": "47bca9e018f32f4fcfe683f91c7475c60368f3b65d318cc35c1f2de88a4ee9ab",
+    "manifest_sha256": "54f514664c84e1358a435f29cd6befd5661b0b133d76997191c000b10f021a75"
   },
   "architecture": "x86_64",
   "hyprland": {

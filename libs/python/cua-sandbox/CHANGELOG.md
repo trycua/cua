@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.6.0](https://github.com/trycua/cua/compare/sandbox-v0.5.0...sandbox-v0.6.0) (2026-09-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** ClickInput now requires target, position, and delivery_mode; click returns ActionResult directly and raises typed tool errors for refusals.
+
+### Features
+
+* **cua-driver:** expose typed native-window SDK flow ([#3683](https://github.com/trycua/cua/issues/3683)) ([75b04aa](https://github.com/trycua/cua/commit/75b04aac03ed6cb1e08c41b2384595e5c5ab2d9f))
+* **sandbox:** connect typed Driver through explicit MCP carrier ([#3693](https://github.com/trycua/cua/issues/3693)) ([dc3d35c](https://github.com/trycua/cua/commit/dc3d35cb40cacceb6d9cc08c61940204ca076a3f))
+
+
+### Bug Fixes
+
+* **sandbox:** align optional Driver dependency with 0.26.0 ([#3699](https://github.com/trycua/cua/issues/3699)) ([2b748f6](https://github.com/trycua/cua/commit/2b748f64335cb2bf204e9f96d90346460a4419ab))
+* **sandbox:** drain MCP responses before cancellation teardown ([#3696](https://github.com/trycua/cua/issues/3696)) ([07e36a3](https://github.com/trycua/cua/commit/07e36a3f05d88ca8be3a04454b8738f81c9d92f6))
+
 ## [0.5.0](https://github.com/trycua/cua/compare/sandbox-v0.4.3...sandbox-v0.5.0) (2026-09-09)
 
 

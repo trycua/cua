@@ -182,11 +182,17 @@ mod tests {
                 "scope": "desktop",
                 "target": {"kind": "desktop", "display_id": "primary"}
             }),
-            json!({"scope": "desktop", "pid": 7}),
             json!({"target": {"kind": "desktop", "display_id": "secondary"}}),
             json!({"target": {"kind": "window", "pid": 7, "window_id": 0}}),
         ] {
             assert!(normalize_action_target("click", &mut args).is_err());
         }
+        // desktop scope with a pid is a desktop-frame window target where the
+        // backend translates it, and a refusal everywhere else.
+        let mut args = json!({"scope": "desktop", "pid": 7});
+        assert_eq!(
+            normalize_action_target("click", &mut args).is_ok(),
+            desktop_frame_for_window_supported()
+        );
     }
 }

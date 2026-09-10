@@ -19,6 +19,16 @@ on:
         description: "PyPI package name (e.g. cua-agent)"
         required: true
         type: string
+      source_sha:
+        description: "Optional verified immutable release commit; empty preserves the legacy main flow"
+        required: false
+        type: string
+        default: ""
+      python_version:
+        description: "Build interpreter required by the selected package"
+        required: false
+        type: string
+        default: "3.11"
     secrets:
       PYPI_TOKEN:
         required: true
@@ -37,20 +47,29 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: main
+          ref: ${{ inputs.source_sha || 'main' }}
           fetch-depth: 0 # Full history for release creation
 
       - name: Ensure latest main branch
+        if: inputs.source_sha == ''
         run: |
           git fetch origin main
           git reset --hard origin/main
           echo "Current HEAD commit:"
           git log -1 --oneline
 
+      - name: Verify immutable release checkout
+        if: inputs.source_sha != ''
+        env:
+          RELEASE_SOURCE_SHA: ${{ inputs.source_sha }}
+        run: |
+          [[ "$RELEASE_SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          test "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_SHA"
+
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.11"
+          python-version: ${{ inputs.python_version }}
 
       - name: Create root pdm.lock file
         run: |
@@ -60,7 +79,7 @@ jobs:
       - name: Install PDM
         uses: pdm-project/setup-pdm@v3
         with:
-          python-version: "3.11"
+          python-version: ${{ inputs.python_version }}
           cache: true
 
       - name: Set version

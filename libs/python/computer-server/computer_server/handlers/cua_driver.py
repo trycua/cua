@@ -256,15 +256,20 @@ class CuaDriverAutomationHandler(BaseAutomationHandler):
 
     @classmethod
     def _session_state(cls, state: Any) -> Dict[str, Any]:
-        return {
+        result = {
             "session": state.session,
             "capture_scope": cls._enum_name(state.capture_scope),
             "effective_scope": cls._enum_name(state.effective_scope),
-            "desktop_capture_authorized": state.desktop_capture_authorized,
             "desktop_unlocked": state.desktop_unlocked,
             "escalation_reason": cls._enum_name(state.escalation_reason),
             "escalation_detail": state.escalation_detail,
         }
+        # The supported 0.22.x SDK predates this explicit capture-authority
+        # field. Preserve its response instead of failing or inferring authority
+        # from the legacy desktop_unlocked name.
+        if hasattr(state, "desktop_capture_authorized"):
+            result["desktop_capture_authorized"] = state.desktop_capture_authorized
+        return result
 
     @staticmethod
     def _ok(data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:

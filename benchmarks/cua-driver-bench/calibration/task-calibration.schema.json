@@ -1,0 +1,275 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/calibration/task-calibration.v0.1.schema.json",
+  "title": "Cua Driver Bench task calibration registry",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "registry_version",
+    "portfolio_size",
+    "bands",
+    "pilot_protocol",
+    "candidates"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "0.1.0"
+    },
+    "registry_version": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+    },
+    "portfolio_size": {
+      "const": 10
+    },
+    "bands": {
+      "$ref": "#/$defs/bands"
+    },
+    "pilot_protocol": {
+      "$ref": "#/$defs/pilotProtocol"
+    },
+    "candidates": {
+      "type": "array",
+      "minItems": 10,
+      "maxItems": 10,
+      "items": {
+        "$ref": "#/$defs/candidate"
+      }
+    }
+  },
+  "$defs": {
+    "rateRange": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "minimum",
+        "maximum"
+      ],
+      "properties": {
+        "minimum": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "maximum": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        }
+      }
+    },
+    "bands": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "anchor",
+        "discriminating",
+        "frontier"
+      ],
+      "properties": {
+        "anchor": {
+          "$ref": "#/$defs/band"
+        },
+        "discriminating": {
+          "$ref": "#/$defs/band"
+        },
+        "frontier": {
+          "$ref": "#/$defs/band"
+        }
+      }
+    },
+    "band": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "required_count",
+        "frontier_completion",
+        "mid_level_completion"
+      ],
+      "properties": {
+        "required_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "frontier_completion": {
+          "$ref": "#/$defs/rateRange"
+        },
+        "mid_level_completion": {
+          "$ref": "#/$defs/rateRange"
+        }
+      }
+    },
+    "pilotProtocol": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "attempts_per_system",
+        "system_archetypes",
+        "valid_termination_statuses",
+        "excluded_termination_statuses",
+        "invalid_run_warning_rate",
+        "invalid_run_revision_rate",
+        "extra_attempt_rule"
+      ],
+      "properties": {
+        "attempts_per_system": {
+          "const": 3
+        },
+        "system_archetypes": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "frontier",
+              "mid_level"
+            ]
+          }
+        },
+        "valid_termination_statuses": {
+          "const": [
+            "completed",
+            "agent_stop",
+            "timeout",
+            "cost_limit"
+          ]
+        },
+        "excluded_termination_statuses": {
+          "const": [
+            "infrastructure_error",
+            "reset_failure"
+          ]
+        },
+        "invalid_run_warning_rate": {
+          "const": 0.05
+        },
+        "invalid_run_revision_rate": {
+          "const": 0.1
+        },
+        "extra_attempt_rule": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "controls": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "independently_written",
+        "clean_room_review",
+        "prohibited_source_similarity_review",
+        "canary_id",
+        "hidden_reference_after_completion",
+        "agent_guidance_leakage_audit"
+      ],
+      "properties": {
+        "independently_written": {
+          "const": true
+        },
+        "clean_room_review": {
+          "type": "string",
+          "minLength": 1
+        },
+        "prohibited_source_similarity_review": {
+          "type": "string",
+          "minLength": 1
+        },
+        "canary_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hidden_reference_after_completion": {
+          "const": true
+        },
+        "agent_guidance_leakage_audit": {
+          "const": true
+        }
+      }
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "candidate_version",
+        "portfolio_task_id",
+        "band",
+        "status",
+        "declared_cruxes",
+        "leakage_controls",
+        "decision_rules"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^cdb-(s0[1-4]|m0[1-2]|w0[1-2]|l0[1-2])$"
+        },
+        "candidate_version": {
+          "type": "string",
+          "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"
+        },
+        "portfolio_task_id": {
+          "type": "string",
+          "pattern": "^CDB-(S0[1-4]|M0[1-2]|W0[1-2]|L0[1-2])$"
+        },
+        "band": {
+          "enum": [
+            "anchor",
+            "discriminating",
+            "frontier"
+          ]
+        },
+        "status": {
+          "const": "candidate"
+        },
+        "declared_cruxes": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": [
+              "cross_app_handoff",
+              "evidence_reconciliation",
+              "constraint_resolution",
+              "replanning",
+              "diagnosis",
+              "state_precedence",
+              "permission_scope",
+              "visual_verification",
+              "preservation"
+            ]
+          }
+        },
+        "leakage_controls": {
+          "$ref": "#/$defs/controls"
+        },
+        "decision_rules": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "keep",
+            "revise",
+            "drop"
+          ],
+          "properties": {
+            "keep": {
+              "type": "string",
+              "minLength": 1
+            },
+            "revise": {
+              "type": "string",
+              "minLength": 1
+            },
+            "drop": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}

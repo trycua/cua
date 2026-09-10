@@ -1,0 +1,105 @@
+{
+  "schema_version": "0.1.0",
+  "id": "trial.synthetic.bare-driver.0",
+  "task": {
+    "id": "cua.synthetic.background-note",
+    "version": "1.0.0",
+    "manifest_sha256": "38380f0f9277a6bb5b6ce687a09190485dd7d12dc278dfa93674100097954868"
+  },
+  "dataset": {
+    "id": "cua.synthetic.dataset",
+    "version": "1.0.0",
+    "manifest_sha256": "ed7d09c17b0e756877fb8a1612ae09751a56a7bcd6218de6f0b33641f0ca8b75",
+    "freeze_digest": "bb0cdefaa74107d64526087c1432cd4c0618791cba933664dc55e92f7696e413"
+  },
+  "variant": "fixture.alpha",
+  "profile": { "id": "bare-driver", "version": "1.0.0" },
+  "candidate": {
+    "id": "cua.synthetic.driver",
+    "version": "1.0.0",
+    "manifest_sha256": "6bac21e334ef593c0897506ce84338db9d5869044151bc02b8734165abe40b44"
+  },
+  "pairing_key": "background-note.fixture-alpha.attempt-0",
+  "attempt_index": 0,
+  "model": { "id": "synthetic-model", "version": "1.0" },
+  "provider": { "id": "synthetic-provider", "version": "1.0" },
+  "harness": {
+    "build_id": "synthetic-harness-build",
+    "version": "1.0.0",
+    "build": {
+      "path": "freeze-inputs/harness-build.json",
+      "sha256": "017a335b02f72f243adecf84caff94a82ef264bdae00a84757799acd4767a3a2"
+    },
+    "inventory": {
+      "path": "freeze-inputs/harness-full.json",
+      "sha256": "82f7210b8078069a55c3a6aec178931c8fcbc3785e981ad59c26d690b894f9ef"
+    }
+  },
+  "environment": {
+    "id": "synthetic-macos",
+    "os": "macos",
+    "os_version": "15.6",
+    "architecture": "arm64",
+    "image": {
+      "path": "freeze-inputs/environment-image.json",
+      "sha256": "8faddf0d2883811041a3d8ee9fa4672f509d93108b8c01e6e5bd9859a90505ce"
+    },
+    "observer": {
+      "path": "freeze-inputs/observer.json",
+      "sha256": "fc3de3c8a7372d2c4d1237c459b6ba119b7d522de474dd27ed29940d1fea250d"
+    }
+  },
+  "support_status": "supported",
+  "missing_capabilities": [],
+  "eligibility_status": "eligible",
+  "eligibility_evidence": ["Synthetic macOS fixture is available."],
+  "pre_freeze": false,
+  "bindings": {
+    "dataset_freeze_digest": "bb0cdefaa74107d64526087c1432cd4c0618791cba933664dc55e92f7696e413",
+    "apparatus_digest": "c20b98d398d5432a24646715220773fb2f59c5477cf1943f46c380a16f8f1873"
+  },
+  "resolved_driver": {
+    "tool_schemas_digest": "078b9f5820ea38f63ed11a13916a5a3b4e57a9fae813df06cf29725953478cb9",
+    "tool_names": ["observe", "type_text"],
+    "skill_delivery": {
+      "status": "not-delivered",
+      "reason": "The bare-driver profile removes vendor guidance."
+    }
+  },
+  "execution": {
+    "agent_execution_id": "execution.bare-driver.0",
+    "started_at": "2026-08-15T16:01:00Z",
+    "ended_at": "2026-08-15T16:01:13Z",
+    "event_log": {
+      "path": "freeze-inputs/event-log.jsonl",
+      "sha256": "3900b0674aca1abfea11fa53aeddc3d0521772b98d6ad9d9d5eb62c9eb0092fd"
+    }
+  },
+  "termination_status": "completed",
+  "outcomes": {
+    "completion": true,
+    "forbidden_side_effects": [],
+    "wrong_target_mutations": [],
+    "leaked_input": []
+  },
+  "observables": {
+    "focus_changes": 0,
+    "focus_recovery": true,
+    "cursor_movement": false,
+    "surface_transitions": 1,
+    "wall_time_ms": 13000,
+    "cost_usd": 0.01,
+    "tokens": { "input": 76, "output": 22, "tool_schema": 30, "driver_skill": 0, "neutral_guidance": 0 },
+    "tool_usage": [
+      { "name": "observe", "calls": 2 },
+      { "name": "type_text", "calls": 1 }
+    ]
+  },
+  "truncated": false,
+  "evidence": [
+    {
+      "path": "freeze-inputs/evidence.json",
+      "sha256": "127dfde66f4015cce8f77d1d6cd23875dc8e693ff62947d009f7d6cb08b9ab4d"
+    }
+  ]
+}

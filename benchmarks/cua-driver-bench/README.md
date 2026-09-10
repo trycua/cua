@@ -12,12 +12,11 @@ runtime lives in [`../../libs/cua-bench-runtime`](../../libs/cua-bench-runtime).
 The held-out task pack is intentionally not part of this repository. Supply an
 authorized task root when running the benchmark; see [`tasks/README.md`](tasks/README.md).
 
+Start with the [documentation index](docs/index.md) or the
+[benchmark definition](definition.md).
+
 ## Import status
 
 This is a sanitized snapshot import from Cua Driver Bench. The source revision,
 license review, exclusions, and contributor credit are recorded in
 [`PROVENANCE.md`](PROVENANCE.md).
-
-The initial pull request remains a draft while runtime packaging, automated
-evaluation, documentation links, and CI are adapted to the monorepo.
-

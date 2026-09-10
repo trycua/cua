@@ -1,0 +1,52 @@
+{
+  "schema_version": "0.1.0",
+  "id": "trial.synthetic.ineligible.0",
+  "task": {
+    "id": "cua.synthetic.background-note",
+    "version": "1.0.0",
+    "manifest_sha256": "38380f0f9277a6bb5b6ce687a09190485dd7d12dc278dfa93674100097954868"
+  },
+  "dataset": {
+    "id": "cua.synthetic.dataset",
+    "version": "1.0.0",
+    "manifest_sha256": "ed7d09c17b0e756877fb8a1612ae09751a56a7bcd6218de6f0b33641f0ca8b75"
+  },
+  "variant": "fixture.alpha",
+  "profile": { "id": "harness-native-reference", "version": "1.0.0" },
+  "pairing_key": "background-note.fixture-alpha.attempt-0",
+  "attempt_index": 0,
+  "model": { "id": "synthetic-model", "version": "1.0" },
+  "provider": { "id": "synthetic-provider", "version": "1.0" },
+  "harness": {
+    "build_id": "synthetic-harness-build",
+    "version": "1.0.0",
+    "build": {
+      "path": "freeze-inputs/harness-build.json",
+      "sha256": "017a335b02f72f243adecf84caff94a82ef264bdae00a84757799acd4767a3a2"
+    },
+    "inventory": {
+      "path": "freeze-inputs/harness-full.json",
+      "sha256": "82f7210b8078069a55c3a6aec178931c8fcbc3785e981ad59c26d690b894f9ef"
+    }
+  },
+  "environment": {
+    "id": "unavailable-environment",
+    "os": "macos",
+    "os_version": "15.6",
+    "architecture": "arm64",
+    "image": {
+      "path": "freeze-inputs/environment-image.json",
+      "sha256": "8faddf0d2883811041a3d8ee9fa4672f509d93108b8c01e6e5bd9859a90505ce"
+    },
+    "observer": {
+      "path": "freeze-inputs/observer.json",
+      "sha256": "fc3de3c8a7372d2c4d1237c459b6ba119b7d522de474dd27ed29940d1fea250d"
+    }
+  },
+  "support_status": "supported",
+  "missing_capabilities": [],
+  "eligibility_status": "ineligible",
+  "eligibility_evidence": ["The declared environment image is unavailable."],
+  "pre_freeze": true,
+  "truncated": false
+}

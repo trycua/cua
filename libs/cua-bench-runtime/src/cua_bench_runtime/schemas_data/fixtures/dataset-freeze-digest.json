@@ -1,0 +1,7 @@
+{
+  "dataset": "../examples/dataset.cuabench.json",
+  "changed_input": "neutral_instructions",
+  "changed_bytes_utf8": "Observe the target, act only within its declared scope, and verify completion.\nVerify the target identifier before acting.\n",
+  "expected_input_sha256": "a5e7991a5e75fa389fa000cfbe4cc1c87bef062b167c8fbc4829042a8217d5d0",
+  "expected_freeze_digest": "512c89bb53f0352cf450a13cb64d45fa470c41180d9a2c75269ae2ed0c98a812"
+}

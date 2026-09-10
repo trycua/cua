@@ -1,0 +1,125 @@
+{
+  "cases": [
+    {
+      "name": "missing fresh workspace evidence",
+      "class": "structural",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "remove": ["/execution/observed/fresh_harness_workspace"]
+    },
+    {
+      "name": "missing system digest binding",
+      "class": "structural",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "remove": ["/bindings/system_digest"]
+    },
+    {
+      "name": "undeclared fallback route",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/model_calls/0/route_id": "route.fallback" },
+      "error_contains": "undeclared or mismatched model route"
+    },
+    {
+      "name": "system digest mismatch",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/bindings/system_digest": "1111111111111111111111111111111111111111111111111111111111111111" },
+      "error_contains": "system digest binding mismatch"
+    },
+    {
+      "name": "certification task digest mismatch",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/certification/bindings/task_digest": "1111111111111111111111111111111111111111111111111111111111111111" },
+      "error_contains": "apparatus certification bindings mismatch"
+    },
+    {
+      "name": "certification trial replay binding",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/certification/bindings/trial_id": "trial.synthetic.replayed.0" },
+      "error_contains": "apparatus certification bindings mismatch"
+    },
+    {
+      "name": "certification declaration contradicts attached receipt",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": {
+        "/execution/certification/certifying": false,
+        "/execution/certification/reasons": ["synthetic downgrade"]
+      },
+      "error_contains": "contradicts attached receipt"
+    },
+    {
+      "name": "human intervention contradiction",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/human_interventions": 1 },
+      "error_contains": "human intervention exceeds"
+    },
+    {
+      "name": "approval prompt contradiction",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/approval_prompts": 1 },
+      "error_contains": "approval prompt violates"
+    },
+    {
+      "name": "fresh workspace not observed",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/fresh_harness_workspace/satisfied": false },
+      "error_contains": "fresh harness workspace was not observed"
+    },
+    {
+      "name": "invalid cost basis reference",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/model_price_table_sha256": "2222222222222222222222222222222222222222222222222222222222222222" },
+      "error_contains": "model price table digest mismatch"
+    },
+    {
+      "name": "cost basis differs from policy",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/cost_basis": "provider_billed" },
+      "error_contains": "cost basis differs"
+    },
+    {
+      "name": "route and aggregate token totals disagree",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/tokens/input": 99 },
+      "error_contains": "token totals differ from model routes"
+    },
+    {
+      "name": "persistent cache violates isolation policy",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/cache_state/mode": "persistent" },
+      "error_contains": "cache state violates"
+    },
+    {
+      "name": "persistent state modified",
+      "class": "semantic",
+      "kind": "trial",
+      "base": "../examples/trial.system-track.cuabench.json",
+      "replace": { "/execution/observed/persistent_state/mode": "modified" },
+      "error_contains": "persistent state violates"
+    }
+  ]
+}

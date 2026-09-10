@@ -1,0 +1,488 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/v0.1.0/trial.schema.json",
+  "title": "Cua-Bench Trial Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "task",
+    "dataset",
+    "variant",
+    "profile",
+    "pairing_key",
+    "attempt_index",
+    "model",
+    "provider",
+    "harness",
+    "environment",
+    "support_status",
+    "missing_capabilities",
+    "eligibility_status",
+    "eligibility_evidence",
+    "pre_freeze",
+    "truncated"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "task": { "$ref": "#/$defs/versionedReference" },
+    "dataset": { "$ref": "#/$defs/datasetReference" },
+    "variant": { "$ref": "#/$defs/id" },
+    "profile": { "$ref": "#/$defs/profileReference" },
+    "candidate": { "$ref": "#/$defs/versionedReference" },
+    "pairing_key": { "type": "string", "minLength": 1 },
+    "attempt_index": { "type": "integer", "minimum": 0 },
+    "model": { "$ref": "#/$defs/resolvedComponent" },
+    "provider": { "$ref": "#/$defs/resolvedComponent" },
+    "harness": { "$ref": "#/$defs/resolvedHarness" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "support_status": { "enum": ["supported", "unsupported"] },
+    "missing_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "capability.schema.json" }
+    },
+    "eligibility_status": { "enum": ["eligible", "ineligible"] },
+    "eligibility_evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "pre_freeze": { "type": "boolean" },
+    "bindings": { "$ref": "#/$defs/bindings" },
+    "resolved_driver": { "$ref": "#/$defs/resolvedDriver" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "termination_status": {
+      "enum": [
+        "completed",
+        "agent_stop",
+        "timeout",
+        "cost_limit",
+        "infrastructure_error",
+        "reset_failure"
+      ]
+    },
+    "outcomes": { "$ref": "#/$defs/outcomes" },
+    "observables": { "$ref": "#/$defs/observables" },
+    "truncated": { "type": "boolean" },
+    "evidence": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/artifact" }
+    }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "versionedReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "manifest_sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/semver" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "datasetReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "manifest_sha256"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/semver" },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "freeze_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "profileReference": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": {
+          "enum": [
+            "native-bundle",
+            "bare-driver",
+            "harness-native-reference",
+            "normalized-facade",
+            "driver-only-diagnostic"
+          ]
+        },
+        "version": { "$ref": "#/$defs/semver" }
+      }
+    },
+    "resolvedComponent": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 }
+      }
+    },
+    "resolvedHarness": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["build_id", "version", "build", "inventory"],
+      "properties": {
+        "build_id": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "minLength": 1 },
+        "build": { "$ref": "#/$defs/artifact" },
+        "inventory": { "$ref": "#/$defs/artifact" }
+      }
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "os", "os_version", "architecture", "image", "observer"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "os": { "enum": ["macos", "windows", "linux"] },
+        "os_version": { "type": "string", "minLength": 1 },
+        "architecture": { "type": "string", "minLength": 1 },
+        "image": { "$ref": "#/$defs/artifact" },
+        "observer": { "$ref": "#/$defs/artifact" }
+      }
+    },
+    "bindings": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dataset_freeze_digest", "apparatus_digest"],
+      "properties": {
+        "dataset_freeze_digest": { "$ref": "#/$defs/sha256" },
+        "apparatus_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "delivery": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["delivered", "not-delivered", "not-applicable"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "channel": {
+          "enum": [
+            "harness-injection",
+            "manual-installation",
+            "transport-advertisement",
+            "on-demand",
+            "other"
+          ]
+        },
+        "injection_point": { "type": "string", "minLength": 1 },
+        "bytes": { "type": "integer", "minimum": 1 },
+        "token_count": { "type": "integer", "minimum": 1 },
+        "content_sha256": { "$ref": "#/$defs/sha256" },
+        "source_artifact": { "$ref": "#/$defs/artifact" },
+        "content_artifact": { "$ref": "#/$defs/artifact" },
+        "generator_version": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "delivered" } } },
+          "then": {
+            "required": [
+              "channel",
+              "injection_point",
+              "bytes",
+              "token_count",
+              "content_sha256",
+              "source_artifact",
+              "content_artifact"
+            ],
+            "not": { "required": ["reason"] }
+          },
+          "else": {
+            "required": ["reason"],
+            "not": {
+              "anyOf": [
+                { "required": ["channel"] },
+                { "required": ["injection_point"] },
+                { "required": ["bytes"] },
+                { "required": ["token_count"] },
+                { "required": ["content_sha256"] },
+                { "required": ["source_artifact"] },
+                { "required": ["content_artifact"] },
+                { "required": ["generator_version"] }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "resolvedDriver": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_schemas_digest", "tool_names", "skill_delivery"],
+      "properties": {
+        "tool_schemas_digest": { "$ref": "#/$defs/sha256" },
+        "tool_names": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "skill_delivery": { "$ref": "#/$defs/delivery" },
+        "neutral_guidance_delivery": { "$ref": "#/$defs/delivery" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["agent_execution_id", "started_at", "ended_at", "event_log"],
+      "properties": {
+        "agent_execution_id": { "type": "string", "minLength": 1 },
+        "started_at": { "type": "string", "format": "date-time" },
+        "ended_at": { "type": "string", "format": "date-time" },
+        "event_log": { "$ref": "#/$defs/artifact" }
+      }
+    },
+    "finding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["target", "description"],
+      "properties": {
+        "target": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 }
+      }
+    },
+    "outcomes": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "completion",
+        "forbidden_side_effects",
+        "wrong_target_mutations",
+        "leaked_input"
+      ],
+      "properties": {
+        "completion": { "type": "boolean" },
+        "forbidden_side_effects": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "wrong_target_mutations": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        },
+        "leaked_input": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/finding" }
+        }
+      }
+    },
+    "tokenUsage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["input", "output", "tool_schema", "driver_skill", "neutral_guidance"],
+      "properties": {
+        "input": { "type": "integer", "minimum": 0 },
+        "output": { "type": "integer", "minimum": 0 },
+        "tool_schema": { "type": "integer", "minimum": 0 },
+        "driver_skill": { "type": "integer", "minimum": 0 },
+        "neutral_guidance": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "toolUse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "calls"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "calls": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "observables": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "focus_changes",
+        "focus_recovery",
+        "cursor_movement",
+        "surface_transitions",
+        "wall_time_ms",
+        "cost_usd",
+        "tokens",
+        "tool_usage"
+      ],
+      "properties": {
+        "focus_changes": { "type": "integer", "minimum": 0 },
+        "focus_recovery": { "type": "boolean" },
+        "cursor_movement": { "type": "boolean" },
+        "surface_transitions": { "type": "integer", "minimum": 0 },
+        "wall_time_ms": { "type": "integer", "minimum": 0 },
+        "cost_usd": { "type": "number", "minimum": 0 },
+        "tokens": { "$ref": "#/$defs/tokenUsage" },
+        "tool_usage": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/toolUse" }
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "support_status": { "const": "supported" } } },
+      "then": { "properties": { "missing_capabilities": { "maxItems": 0 } } },
+      "else": { "properties": { "missing_capabilities": { "minItems": 1 } } }
+    },
+    {
+      "if": { "properties": { "pre_freeze": { "const": false } } },
+      "then": {
+        "required": ["bindings"],
+        "properties": {
+          "dataset": { "required": ["freeze_digest"] }
+        }
+      },
+      "else": {
+        "properties": {
+          "dataset": { "not": { "required": ["freeze_digest"] } }
+        },
+        "not": { "required": ["bindings"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "eligibility_status": { "const": "eligible" } }
+      },
+      "then": {
+        "required": [
+          "execution",
+          "termination_status",
+          "outcomes",
+          "observables",
+          "evidence"
+        ]
+      },
+      "else": {
+        "properties": { "truncated": { "const": false } },
+        "not": {
+          "anyOf": [
+            { "required": ["execution"] },
+            { "required": ["termination_status"] },
+            { "required": ["outcomes"] },
+            { "required": ["observables"] },
+            { "required": ["evidence"] }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": {
+            "properties": { "id": { "const": "harness-native-reference" } }
+          }
+        }
+      },
+      "then": {
+        "not": {
+          "anyOf": [
+            { "required": ["candidate"] },
+            { "required": ["resolved_driver"] }
+          ]
+        }
+      },
+      "else": { "required": ["candidate", "resolved_driver"] }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": { "properties": { "id": { "const": "native-bundle" } } }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_driver": {
+            "properties": {
+              "skill_delivery": {
+                "properties": {
+                  "status": { "enum": ["delivered", "not-applicable"] }
+                }
+              }
+            },
+            "not": { "required": ["neutral_guidance_delivery"] }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": {
+            "properties": {
+              "id": { "enum": ["bare-driver", "driver-only-diagnostic"] }
+            }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_driver": {
+            "properties": {
+              "skill_delivery": {
+                "properties": {
+                  "status": { "enum": ["not-delivered", "not-applicable"] }
+                }
+              }
+            },
+            "not": { "required": ["neutral_guidance_delivery"] }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "profile": {
+            "properties": { "id": { "const": "normalized-facade" } }
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "resolved_driver": {
+            "required": ["neutral_guidance_delivery"],
+            "properties": {
+              "skill_delivery": {
+                "properties": {
+                  "status": { "enum": ["not-delivered", "not-applicable"] }
+                }
+              },
+              "neutral_guidance_delivery": {
+                "properties": { "status": { "const": "delivered" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

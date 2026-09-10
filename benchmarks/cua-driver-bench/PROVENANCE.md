@@ -28,15 +28,28 @@ benchmark material, including:
 - datasets, release payloads, results, traces, screenshots, and evidence;
 - validation journals or reports that disclose protected benchmark evidence.
 
-The public tree contains only an empty task-pack interface and synthetic
-conformance fixtures. The held-out task pack remains in its authorized private
-location.
+The public tree contains only the task-pack interface and synthetic conformance
+fixtures. Benchmark task IDs can appear as opaque runner selectors, but no
+target application, target record, success condition, or expected end state is
+embedded in the public runtime or its tests. The held-out task pack remains in
+its authorized location.
+
+Protected macOS execution retains the generic helper and evidence apparatus.
+The authorized task pack or prepared seed must supply the task-specific
+mediator and application. The public import does not contain an implementation
+that translates a held-out task into target-specific driver actions or
+readbacks.
 
 ## Mechanical adaptations
 
-The monorepo import will rename the runtime import package from `cb` to
+The monorepo import renames the runtime import package from `cb` to
 `cua_bench_runtime` and its executable from `cb` to `cdb`. This avoids a
 collision with the existing `cua-bench` package and `cb` executable in this
 repository. Relative paths and documentation links are adjusted for the
-monorepo layout.
+monorepo layout. The automated release-comparison runner requires an explicit
+`--tasks-root` and uses the runtime's public `McpClient` and `merge_app_maps`
+interfaces.
 
+Runtime tests use only synthetic task, application, store, and participation
+contracts. Tests that exercise a held-out task require an explicit authorized
+task root and remain with that task pack.

@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://schemas.cua.ai/cuabench/v0.1.0/driver.schema.json",
+  "title": "Cua-Bench Driver Manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "id",
+    "version",
+    "interface",
+    "provided_capabilities"
+  ],
+  "properties": {
+    "schema_version": { "const": "0.1.0" },
+    "id": { "$ref": "#/$defs/id" },
+    "version": { "$ref": "#/$defs/semver" },
+    "interface": { "$ref": "#/$defs/interface" },
+    "provided_capabilities": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": { "$ref": "capability.schema.json" }
+    },
+    "skill": { "$ref": "#/$defs/skill" }
+  },
+  "$defs": {
+    "id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[._-][a-z0-9]+)+$"
+    },
+    "semver": {
+      "type": "string",
+      "pattern": "^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?(?:\\+[0-9A-Za-z.-]+)?$"
+    },
+    "sha256": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?![A-Za-z]:)(?!.*\\\\)(?!.*(?:^|/)\\.\\.(?:/|$)).+$"
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativePath" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "protocol": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["name", "revision"],
+          "properties": {
+            "name": { "type": "string", "minLength": 1 },
+            "revision": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "description", "input_schema"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "input_schema": { "type": "object" },
+        "output_schema": { "type": "object" }
+      }
+    },
+    "interface": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "protocol",
+        "tools",
+        "tool_schemas_digest_algorithm",
+        "tool_schemas_digest"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "mcp-server",
+            "tool-set",
+            "api",
+            "in-process",
+            "cli",
+            "other"
+          ]
+        },
+        "protocol": { "$ref": "#/$defs/protocol" },
+        "tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/tool" }
+        },
+        "tool_schemas_digest_algorithm": { "const": "sha256-rfc8785" },
+        "tool_schemas_digest": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "uri", "revision"],
+      "properties": {
+        "kind": { "enum": ["repository", "artifact", "generated"] },
+        "uri": { "type": "string", "format": "uri" },
+        "revision": { "type": "string", "minLength": 1 }
+      }
+    },
+    "skill": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "format", "artifact", "source"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "version": { "$ref": "#/$defs/semver" },
+        "format": {
+          "enum": [
+            "agent-skill",
+            "markdown",
+            "transport-instructions",
+            "generated",
+            "other"
+          ]
+        },
+        "artifact": { "$ref": "#/$defs/artifact" },
+        "source": { "$ref": "#/$defs/source" },
+        "generator_version": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "format": { "const": "generated" } } },
+          "then": { "required": ["generator_version"] },
+          "else": { "not": { "required": ["generator_version"] } }
+        }
+      ]
+    }
+  }
+}

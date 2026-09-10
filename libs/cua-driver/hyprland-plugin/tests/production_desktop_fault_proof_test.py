@@ -120,6 +120,11 @@ def retained_evidence(kind='keymap'):
                        after_snapshot=target_snapshot('refusal-after', runtime=101, observed_ns=10_700_000),
                        before=deepcopy(candidate['after']), after=deepcopy(candidate['after']),
                        trace_before=deepcopy(boundary), trace_after=deepcopy(boundary))
+        refused['response']['structuredContent']['lane'] = 0
+        refused['after']['input']['lanes'][0]['reserved'] = True
+        refused['closure'] = {'runtime_pid': refused['runtime_pid'], 'exit_code': 0,
+                              'started_ns': 11_100_000, 'reaped_ns': 11_200_000, 'observed_ns': 11_300_000,
+                              'status': deepcopy(refused['before']), 'trace': deepcopy(boundary)}
     else:
         candidate['after']['configured'] = False
         candidate['after']['transport']['ready'] = False
@@ -172,11 +177,12 @@ class RetainedPointerTests(unittest.TestCase):
                 boundary, candidate, _ = retained_evidence()
                 spec = plan('keymap')['agents'][0]
                 fresh, observer, victim = client(103), client(101), client(100, alive=False)
-                fresh.tool.side_effect = [{}, layout_refusal()['response']]
+                fresh.tool.side_effect = [{}, candidate['wrong_layout']['response']]
                 before = deepcopy(candidate['after'])
                 if missing_focus:
                     before['input']['lanes'][0]['pointer_focus'] = False
-                stack.enter_context(patch.object(proof, 'production_status', side_effect=[before, candidate['after']]))
+                stack.enter_context(patch.object(proof, 'production_status', side_effect=[before, candidate['wrong_layout']['after'], candidate['after']]))
+                stack.enter_context(patch.object(proof, 'close_owned', side_effect=lambda c: setattr(c.process.poll, 'return_value', 0)))
                 stack.enter_context(patch.object(proof, 'app_process_identity'))
                 stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=[
                     {**target_snapshot('refusal-before', runtime=103, observed_ns=10_200_000), 'proof_image': '/synthetic/image'},
@@ -186,7 +192,7 @@ class RetainedPointerTests(unittest.TestCase):
                 stack.enter_context(patch.object(proof, 'keymap_options', return_value=options(False)))
                 stack.enter_context(patch.object(proof, '_guard'))
                 stack.enter_context(patch.object(proof, 'file_identity', return_value={'inode': 20}))
-                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[10_100_000, 10_500_000, 11_000_000]))
+                stack.enter_context(patch.object(proof.time, 'monotonic_ns', side_effect=[10_100_000, 10_500_000, 11_000_000, 11_100_000, 11_200_000, 11_300_000]))
                 config = {'instance': 'exact', 'path': '/unused', 'deadline_ns': 12_000_000_000,
                           'pointer_cleanup': 'retained_inert', 'lane': 1,
                           'files': {'disabled': {'identity': {'inode': 20}}}}
@@ -232,6 +238,8 @@ class RetainedPointerTests(unittest.TestCase):
             stages = ['after', 'restored', 'target_status'] + (['refusal-before', 'refusal-after'] if kind == 'keymap' else [])
             for stage in stages:
                 for key, value in fields:
+                    if stage == 'refusal-after' and key == 'reserved' and value is True:
+                        value = False  # This one fresh CLAIM must exist until EOF.
                     boundary, candidate, restored = retained_evidence(kind)
                     observed = (restored['status'] if stage == 'restored' else
                                 candidate['wrong_layout'][stage.split('-')[1]] if stage.startswith('refusal-') else candidate[stage])
@@ -242,6 +250,46 @@ class RetainedPointerTests(unittest.TestCase):
             candidate['after']['input']['lanes'][1]['pointer_focus'] = True
             with self.assertRaisesRegex(AssertionError, 'presence'):
                 proof.verify_fault(boundary, candidate, restored, action())
+
+    def test_fresh_claim_is_capacity_only_and_must_disappear_on_probe_eof(self):
+        for claimed in (0, 1):
+            _, candidate, _ = retained_evidence()
+            record = candidate['wrong_layout']
+            record['response']['structuredContent']['lane'] = claimed
+            for row in record['after']['input']['lanes']:
+                row['reserved'] = row['lane'] == claimed
+            self.assertEqual(proof.verify_layout_refusal(record)['result'], 'verified')
+            for side, lane, key, value in (
+                ('before', claimed, 'reserved', True), ('after', 1 - claimed, 'reserved', True),
+                ('after', claimed, 'lease_active', True), ('after', claimed, 'held_keys', 1),
+                ('after', claimed, 'held_button', 272), ('after', claimed, 'keyboard_focus', True),
+                ('after', claimed, 'drag_active', True), ('after', claimed, 'dispatches', 99),
+                ('closure', claimed, 'reserved', True), ('closure', 0, 'pointer_focus', False)):
+                bad = deepcopy(record)
+                status = bad['closure']['status'] if side == 'closure' else bad[side]
+                status['input']['lanes'][lane][key] = value
+                with self.subTest(claimed=claimed, side=side, key=key), self.assertRaises(AssertionError):
+                    proof.verify_layout_refusal(bad)
+        _, candidate, _ = retained_evidence()
+        record = candidate['wrong_layout']
+        for bad_lane in (None, True, -1, 2, '0'):
+            bad = deepcopy(record)
+            bad['response']['structuredContent']['lane'] = bad_lane
+            with self.subTest(lane=bad_lane), self.assertRaises(AssertionError):
+                proof.verify_layout_refusal(bad)
+        for key, value in (('runtime_pid', record['runtime_pid'] + 1), ('exit_code', None),
+                           ('reaped_ns', 1), ('observed_ns', 1)):
+            bad = deepcopy(record)
+            bad['closure'][key] = value
+            with self.subTest(key=key), self.assertRaises(AssertionError):
+                proof.verify_layout_refusal(bad)
+        for event in ('pointer_leave', 'pointer_enter', 'pointer_motion', 'agent_admitted', 'pointer_button'):
+            bad = deepcopy(record)
+            page = bad['closure']['trace']
+            page['events'].append([9, 11_250_000, event, 100, 100, 1, 0])
+            page['count'] += 1
+            with self.subTest(event=event), self.assertRaises(AssertionError):
+                proof.verify_layout_refusal(bad)
 
     def test_retained_trace_cannot_hide_leave_retarget_motion_new_input_or_missing_release(self):
         for kind in ('config_disable', 'keymap'):

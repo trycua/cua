@@ -567,7 +567,7 @@ def verify_layout_refusal(record):
     before, after = keymap_lanes(record['before'], cleared=policy == 'cleared'), keymap_lanes(record['after'], cleared=policy == 'cleared')
     if policy == 'retained_inert':
         verify_retained_inert(record['before'], record['before'], record['lane'])
-        verify_retained_inert(record['before'], record['after'], record['lane'])
+        verify_refusal_claim(record['before'], record['after'], record['response'], record['lane'])
         verify_target_snapshots(record['target'], record['bounds'], record['snapshot'], record['after_snapshot'])
     for lane in before:
         assert all(before[lane][key] == after[lane][key] for key in ('epoch', 'desktop_generation', 'dispatches')), \
@@ -576,8 +576,46 @@ def verify_layout_refusal(record):
     tail = trace_interval(record['trace_before'], record['trace_after'])
     assert not any(row[5] in (1, 2) for row in tail), 'refused fresh action dispatched synthetic input'
     assert analyze(stopped_prefix(record['trace_after']))['result'] == 'passed'
+    if policy == 'retained_inert':
+        verify_refusal_closed(record, record['lane'])
     return {'result': 'verified', 'reason': 'unsupported_layout', 'no_dispatch': 'verified',
             'compiled_map_invalidation': 'verified', 'keymap_hash': 'not_exposed'}
+
+
+def verify_refusal_claim(before, after, response, interrupted_lane=None):
+    """A fresh CLAIM reserves capacity, never TARGET authority or inherited hover.
+
+    This exception is only for the fresh refusal probe between its action and
+    EOF. Fault cancellation and post-EOF checks still require no reservation.
+    The response identifies the claimed lane; no status owner PID is exposed.
+    """
+    old, new = idle_lanes(before), keymap_lanes(after)
+    claimed = response['structuredContent'].get('lane')
+    assert type(claimed) is int and claimed in (0, 1), 'refusal has no exact claimed lane'
+    if interrupted_lane is not None:
+        assert type(interrupted_lane) is int and interrupted_lane in (1, 2)
+        assert old[interrupted_lane - 1]['pointer_focus'] is True
+    for lane, row in new.items():
+        assert type(old[lane].get('pointer_focus')) is bool
+        assert row.get('pointer_focus') is old[lane]['pointer_focus'], 'refusal changed pointer presence'
+        assert row.get('reserved') is (lane == claimed), 'unexpected refusal reservation'
+        assert all(type(row.get(k)) is int and row[k] == 0 for k in ('held_button', 'held_keys'))
+        assert all(row.get(k) is False for k in ('lease_active', 'drag_active', 'keyboard_focus')), 'refused CLAIM gained input authority'
+        assert all(row[k] == old[lane][k] for k in ('epoch', 'desktop_generation', 'dispatches')), 'refusal changed desktop or dispatched'
+    return {'claimed_lane': claimed, 'capacity_only': True, 'input_authority': False,
+            'owner_pid_in_status': 'not_exposed'}
+
+
+def verify_refusal_closed(record, interrupted_lane):
+    closed = record['closure']
+    assert closed['runtime_pid'] == record['runtime_pid'] and type(closed['exit_code']) is int
+    assert record['observed_ns'] <= closed['started_ns'] <= closed['reaped_ns'] <= closed['observed_ns']
+    verify_retained_inert(record['before'], closed['status'], interrupted_lane)
+    old, new = keymap_lanes(record['after']), keymap_lanes(closed['status'])
+    for lane in old:
+        assert all(old[lane][k] == new[lane][k] for k in ('epoch', 'desktop_generation', 'dispatches'))
+    assert not any(row[5] in (1, 2) for row in trace_interval(record['trace_after'], closed['trace'])), 'probe EOF changed inert pointer or emitted input'
+    return {'result': 'verified', 'reservation_released': True}
 
 
 def refuse_new_action(client, observer, victim, spec, stage, trace, config, guard, save):
@@ -621,6 +659,14 @@ def refuse_new_action(client, observer, victim, spec, stage, trace, config, guar
         record['observed_ns'] = time.monotonic_ns()
         assert record['observed_ns'] < config['deadline_ns'], 'watchdog restored during refusal probe'
         guard()
+        if policy == 'retained_inert':
+            record['claim'] = verify_refusal_claim(record['before'], record['after'], record['response'], record['lane'])
+            closed = record['closure'] = {'runtime_pid': client.process.pid, 'started_ns': time.monotonic_ns()}
+            close_owned(client)
+            closed.update(reaped_ns=time.monotonic_ns(), exit_code=client.process.poll())
+            closed.update(status=production_status(config['instance'], True), trace=trace.collect(), observed_ns=time.monotonic_ns())
+            assert closed['observed_ns'] < config['deadline_ns'], 'watchdog restored during probe closure'
+            guard()
         record['verification'] = verify_layout_refusal(record)
         return record
     finally:
@@ -667,6 +713,7 @@ def verify_fault(boundary, record, restoration, action):
         if policy == 'retained_inert':
             assert refusal['lane'] == record['lane'] and refusal['target'] == record['target'] and refusal['bounds'] == record['bounds']
             verify_retained_inert(record['after'], refusal['before'], record['lane'])
+            assert refusal['closure']['observed_ns'] < restoration['started_ns'], 'probe not closed before restoration'
         verify_layout_refusal(refusal)
         after, before_refusal = keymap_lanes(record['after']), keymap_lanes(refusal['before'])
         for lane in after:

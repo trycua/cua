@@ -40,6 +40,13 @@ cua_hyprland_harden(cua_hyprland_protocol)
 set_target_properties(cua_hyprland_protocol PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 if(BUILD_TESTING)
+    find_package(Python3 REQUIRED COMPONENTS Interpreter)
+    add_test(NAME cua_hyprland_desktop_fault_policy_test
+        COMMAND ${Python3_EXECUTABLE} -B
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/desktop_fault_policy_test.py)
+    set_tests_properties(cua_hyprland_desktop_fault_policy_test PROPERTIES
+        ENVIRONMENT "CXX=${CMAKE_CXX_COMPILER}")
+
     add_executable(cua_hyprland_foreground_route_test tests/foreground_route_test.cpp)
     target_compile_features(cua_hyprland_foreground_route_test PRIVATE cxx_std_26)
     target_include_directories(cua_hyprland_foreground_route_test PRIVATE src)

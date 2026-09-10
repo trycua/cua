@@ -8,6 +8,7 @@ on:
       - "libs/cua-driver/rust/crates/cua-driver/src/driver_service_http.rs"
       - "libs/cua-driver/rust/crates/cua-driver/src/proxy.rs"
       - "libs/cua-driver/rust/crates/cua-driver/src/serve.rs"
+      - "libs/cua-driver/rust/crates/cua-driver-sdk/src/remote_receiver*.rs"
       - "libs/python/cua-sandbox/cua_sandbox/interfaces/_driver_mcp.py"
       - "libs/python/cua-sandbox/cua_sandbox/interfaces/driver.py"
   workflow_dispatch:
@@ -63,6 +64,7 @@ jobs:
           set -euo pipefail
           cargo test -p cua-driver --bin cua-driver mcp_envelope --locked
           cargo test -p cua-driver --bin cua-driver driver_service_http --locked
+          cargo test -p cua-driver-sdk remote_receiver::tests --locked
       - name: Build disposable-test binaries
         working-directory: libs/cua-driver/rust
         run: |

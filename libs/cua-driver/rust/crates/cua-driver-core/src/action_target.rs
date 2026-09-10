@@ -32,8 +32,14 @@ pub fn normalize_action_target(tool_name: &str, args: &mut Value) -> Result<(), 
         return Ok(());
     };
     let Some(target) = object.remove("target") else {
+        // Legacy `scope:"desktop"` together with a pid/window_id means
+        // "desktop-frame (get_desktop_state) coordinates against this named
+        // window". The Linux adapter maps the point into the window frame and
+        // still activates/targets the window; the other adapters do not model
+        // this combination yet, so it stays rejected there.
         if object.get("scope").and_then(Value::as_str) == Some("desktop")
             && (object.contains_key("pid") || object.contains_key("window_id"))
+            && !cfg!(target_os = "linux")
         {
             return Err(invalid_target(
                 "desktop scope cannot be combined with pid or window_id",
@@ -136,11 +142,23 @@ mod tests {
                 "scope": "desktop",
                 "target": {"kind": "desktop", "display_id": "primary"}
             }),
-            json!({"scope": "desktop", "pid": 7}),
             json!({"target": {"kind": "desktop", "display_id": "secondary"}}),
             json!({"target": {"kind": "window", "pid": 7, "window_id": 0}}),
         ] {
             assert!(normalize_action_target("click", &mut args).is_err());
+        }
+    }
+
+    #[test]
+    fn desktop_scope_with_pid_is_platform_gated() {
+        let mut args = json!({"scope": "desktop", "pid": 7, "x": 1, "y": 2});
+        let result = normalize_action_target("click", &mut args);
+        if cfg!(target_os = "linux") {
+            assert!(result.is_ok(), "Linux maps desktop-frame points into the window");
+            assert_eq!(args["scope"], "desktop");
+            assert_eq!(args["pid"], 7);
+        } else {
+            assert!(result.is_err());
         }
     }
 }

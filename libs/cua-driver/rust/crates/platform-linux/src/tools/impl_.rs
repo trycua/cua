@@ -1681,6 +1681,88 @@ fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)
     Ok((reply.dst_x as f64 + x, reply.dst_y as f64 + y))
 }
 
+/// `scope:"desktop"` alongside a pid/window target: the caller read `x,y` off
+/// `get_desktop_state` (screen pixels) but still names the window to act on.
+fn desktop_frame_requested(args: &Value) -> bool {
+    args.get("scope").and_then(Value::as_str) == Some("desktop")
+}
+
+/// Convert desktop (screen) coordinates to `xid`'s window-local frame so the
+/// rest of the pointer pipeline (which is window-local by contract) is reused.
+fn desktop_to_window_local(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)> {
+    let (ox, oy) = window_local_to_screen(xid, 0.0, 0.0)?;
+    Ok((x - ox, y - oy))
+}
+
+/// Upper bound for one foreground input transaction: focus confirmation plus
+/// the injection itself. Typing sleeps per character, so scale with `chars`.
+fn foreground_budget(chars: usize) -> std::time::Duration {
+    std::time::Duration::from_millis(12_000 + (chars as u64) * 40)
+}
+
+/// `spawn_blocking` with a hard deadline. A wedged X server (or a client
+/// holding a server grab) must surface as a structured `foreground_timeout`
+/// error instead of a tool call that never returns. The blocking task is not
+/// cancellable; it is left to finish (or leak) on the blocking pool.
+async fn spawn_blocking_bounded<T: Send + 'static>(
+    label: &'static str,
+    budget: std::time::Duration,
+    f: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> Result<anyhow::Result<T>, tokio::task::JoinError> {
+    match tokio::time::timeout(budget, tokio::task::spawn_blocking(f)).await {
+        Ok(joined) => joined,
+        Err(_elapsed) => Ok(Err(anyhow::anyhow!(
+            "{}: {label} did not complete within {budget:?}; the X server or the target              application may be wedged. Take a screenshot before retrying",
+            crate::input::foreground::CODE_TIMEOUT
+        ))),
+    }
+}
+
+/// Map an input-path error to a tool error, attaching the structured
+/// foreground `code` (`foreground_unavailable` / `foreground_timeout`) when the
+/// message carries one so the caller can branch instead of parsing prose.
+fn input_error_result(e: anyhow::Error) -> ToolResult {
+    let text = e.to_string();
+    match crate::input::foreground::error_code(&e) {
+        Some(code) => ToolResult::error(text.clone()).with_structured(json!({
+            "code": code,
+            "detail": text,
+            "effect": "none",
+            "suggestion": if code == crate::input::foreground::CODE_TIMEOUT {
+                "Take a screenshot (get_desktop_state) to confirm the desktop is responsive, then retry once."
+            } else {
+                "Call bring_to_front on the window (or its modal dialog), confirm with get_window_state, then retry."
+            },
+        })),
+        None => linux_input_error(e),
+    }
+}
+
+/// Structured payload for a completed foreground transaction.
+fn foreground_structured(
+    path: &str,
+    report: crate::input::ForegroundReport,
+    extra: serde_json::Map<String, Value>,
+) -> Value {
+    let mut v = json!({
+        "path": path,
+        "verified": false,
+        "delivery_mode": "foreground",
+        "effect": "unverifiable",
+        "foreground": report.to_json(),
+    });
+    if report.focus_after == crate::input::FocusAfter::Elsewhere {
+        v["effect"] = json!("suspected_noop");
+        v["warning"] = json!(
+            "input focus left the target process before the post-check; the keystrokes              may have reached another window. Verify with a screenshot."
+        );
+    }
+    for (k, val) in extra {
+        v[k] = val;
+    }
+    v
+}
+
 fn parse_mouse_button(name: &str) -> u8 {
     match name {
         "right" => 3,
@@ -3643,6 +3725,7 @@ impl Tool for ClickTool {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        let desktop_frame = desktop_frame_requested(&args);
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -3659,9 +3742,28 @@ impl Tool for ClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) = self
+            .state
+            .resize_registry
+            .ratio(pid)
+            .filter(|_| !desktop_frame)
+        {
             x *= ratio;
             y *= ratio;
+        }
+        if desktop_frame {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+                Ok(Ok((lx, ly))) => {
+                    x = lx;
+                    y = ly;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                    ))
+                }
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
         }
 
         crate::overlay::send_command_for(
@@ -3749,7 +3851,8 @@ impl Tool for ClickTool {
         // delivery_mode: background (default) = no-focus-steal injection;
         // foreground = activate the target window (EWMH) first, then inject,
         // then restore prior active. Mirrors macOS/Windows.
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
+        let fg_budget = foreground_budget(0);
+        let result = spawn_blocking_bounded("foreground click", fg_budget, move || -> anyhow::Result<(&'static str, Option<crate::input::ForegroundReport>)> {
             if crate::wayland::wayland_input_enabled() {
                 if !modifiers_for_task.is_empty() {
                     anyhow::bail!(
@@ -3768,15 +3871,15 @@ impl Tool for ClickTool {
                     if let Ok(Some(_)) =
                         crate::atspi::perform_action_at_screen_point(pid, xid, output_x, output_y)
                     {
-                        return Ok("wayland_atspi");
+                        return Ok(("wayland_atspi", None));
                     }
                 }
                 if crate::wayland::is_inject_mode() {
                     crate::wayland::inject_click(pid, xid, x, y, count as u32, button)?;
-                    return Ok("wayland_cua_compositor");
+                    return Ok(("wayland_cua_compositor", None));
                 }
                 if !delivery.is_foreground() {
-                    return Ok("background_unavailable");
+                    return Ok(("background_unavailable", None));
                 }
                 // Native Wayland: focus+raise the target toplevel
                 // (foreign-toplevel `activate`), then drive `count` virtual-pointer
@@ -3784,7 +3887,7 @@ impl Tool for ClickTool {
                 crate::wayland::with_target_foreground(pid, xid, || {
                     crate::wayland::click_focused(output_x, output_y, count as u32, button)
                 })?;
-                return Ok("wayland_activate");
+                return Ok(("wayland_activate", None));
             }
             // X11 injection. Tiered no-focus-steal delivery (background):
             //   1. Plain left single-click → AT-SPI doAction at that point.
@@ -3844,9 +3947,14 @@ impl Tool for ClickTool {
                 Ok(if fg { "x11_pixel_fg" } else { "x11_pixel" })
             };
             if delivery.is_foreground() {
-                crate::input::with_x11_foreground(xid, 80, || inject(true))
+                crate::input::with_x11_foreground_opts(
+                    xid,
+                    crate::input::ForegroundOptions::pointer(),
+                    || inject(true),
+                )
+                .map(|(path, report)| (path, Some(report)))
             } else {
-                inject(false)
+                inject(false).map(|path| (path, None))
             }
         })
         .await;
@@ -3856,19 +3964,31 @@ impl Tool for ClickTool {
             "background"
         };
         match result {
-            Ok(Ok("background_unavailable")) => {
+            Ok(Ok(("background_unavailable", _))) => {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                 )
             }
             // A pixel/coordinate click is never driver-verifiable (no read-back) —
             // verified:false, effect:"unverifiable"; the caller confirms via
-            // screenshot. path reports the rung taken.
-            Ok(Ok(path)) => ToolResult::text(format!(
-                "✅ Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label})."
-            ))
-            .with_structured(json!({ "path": path, "verified": false, "effect": "unverifiable" })),
-            Ok(Err(e)) => linux_input_error(e),
+            // screenshot. path reports the rung taken; a foreground click also
+            // reports the activation/focus transaction it confirmed first.
+            Ok(Ok((path, report))) => {
+                let mut structured = json!({
+                    "path": path,
+                    "verified": false,
+                    "effect": "unverifiable",
+                    "delivery_mode": mode_label,
+                });
+                if let Some(report) = report {
+                    structured["foreground"] = report.to_json();
+                }
+                ToolResult::text(format!(
+                    "Clicked at ({x:.1}, {y:.1}) × {count} (delivery_mode={mode_label},                      path={path}); not verified — confirm with a screenshot."
+                ))
+                .with_structured(structured)
+            }
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -4406,36 +4526,51 @@ impl Tool for TypeTextTool {
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
-        // Foreground means the caller explicitly permits activation. Chromium
-        // and WebKitGTK can acknowledge an accessibility write without
-        // producing the renderer input event, so web embedders use real XTest
-        // key events. Native toolkits keep their verifiable AT-SPI path below.
-        if delivery.is_foreground() && (is_chromium_embedder(pid) || is_webkitgtk_embedder(pid)) {
+        // Foreground means the caller explicitly permits activation: behave like
+        // a user. Activate the window and confirm it holds the input focus,
+        // GrabFocus the indexed element when one was given, then type REAL key
+        // events via XTest. The AT-SPI EditableText probes below are skipped on
+        // purpose: on large trees (LibreOffice) they stall for the full bus
+        // timeout, Chromium/WebKitGTK echo them without the renderer seeing the
+        // input, and for a spreadsheet cell / canvas they would target the
+        // wrong widget anyway. The whole transaction is deadline-bounded.
+        if delivery.is_foreground() {
             let text_f = text.clone();
             let idx = resolved_elem_idx;
-            let result = tokio::task::spawn_blocking(move || {
-                crate::input::with_x11_foreground(xid, 80, || {
-                    if let Some(idx) = idx {
-                        if !crate::atspi::focus_element(pid, idx)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {idx}"
-                            );
-                        }
-                    }
-                    crate::input::send_type_text_xtest(&text_f)
-                })
-            })
+            let result = spawn_blocking_bounded(
+                "foreground type_text",
+                foreground_budget(text_len),
+                move || {
+                    crate::input::with_x11_foreground_opts(
+                        xid,
+                        crate::input::ForegroundOptions::keyboard(),
+                        || {
+                            if let Some(idx) = idx {
+                                if !crate::atspi::focus_element(pid, idx)? {
+                                    anyhow::bail!(
+                                        "AT-SPI Component.GrabFocus returned false for element {idx}"
+                                    );
+                                }
+                            }
+                            crate::input::send_type_text_xtest(&text_f)
+                        },
+                    )
+                },
+            )
             .await;
             return match result {
-                Ok(Ok(())) => ToolResult::text(format!(
-                    "Typed {text_len} character(s) (via X11, delivery_mode=foreground)."
-                ))
-                .with_structured(type_text_structured(
-                    "key_events_fg",
-                    text_len,
-                    false,
-                )),
-                Ok(Err(e)) => ToolResult::error(e.to_string()),
+                Ok(Ok(((), report))) => {
+                    let mut extra = serde_json::Map::new();
+                    extra.insert("characters".into(), json!(text_len));
+                    ToolResult::text(format!(
+                        "Typed {text_len} character(s) as real key events \
+                         (delivery_mode=foreground, focus_after={}); not verified — \
+                         confirm with a screenshot.",
+                        report.focus_after.as_str()
+                    ))
+                    .with_structured(foreground_structured("key_events_fg", report, extra))
+                }
+                Ok(Err(e)) => input_error_result(e),
                 Err(e) => ToolResult::error(format!("Task error: {e}")),
             };
         }
@@ -4950,13 +5085,16 @@ impl Tool for PressKeyTool {
         // A preceding PX click establishes internal widget focus, but that
         // click restores the prior top-level before returning.
         let deliver_fg = delivery.is_foreground();
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = spawn_blocking_bounded(
+            "press_key",
+            foreground_budget(1),
+            move || -> anyhow::Result<Option<crate::input::ForegroundReport>> {
             if resolved_element_index.is_none()
                 && mods.is_empty()
                 && key_for_task.eq_ignore_ascii_case("enter")
             {
                 if inject_terminal_input(pid, xid, "\n")? {
-                    return Ok(());
+                    return Ok(None);
                 }
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
@@ -4966,16 +5104,21 @@ impl Tool for PressKeyTool {
             // it delivers to the now-focused window. background = direct
             // XSendEvent (no focus steal) for apps that accept it.
             if deliver_fg {
-                return crate::input::with_x11_foreground(xid, 80, || {
-                    if let Some(element_index) = resolved_element_index {
-                        if !crate::atspi::focus_element(pid, element_index)? {
-                            anyhow::bail!(
-                                "AT-SPI Component.GrabFocus returned false for element {element_index}"
-                            );
+                return crate::input::with_x11_foreground_opts(
+                    xid,
+                    crate::input::ForegroundOptions::keyboard(),
+                    || {
+                        if let Some(element_index) = resolved_element_index {
+                            if !crate::atspi::focus_element(pid, element_index)? {
+                                anyhow::bail!(
+                                    "AT-SPI Component.GrabFocus returned false for element {element_index}"
+                                );
+                            }
                         }
-                    }
-                    crate::input::send_key_xtest(&key_for_task, &m)
-                });
+                        crate::input::send_key_xtest(&key_for_task, &m)
+                    },
+                )
+                .map(|((), report)| Some(report));
             }
             if let Some(element_index) = resolved_element_index {
                 if !crate::atspi::focus_element(pid, element_index)? {
@@ -4989,6 +5132,7 @@ impl Tool for PressKeyTool {
             } else {
                 crate::input::send_key(xid, &key_for_task, &m)
             }
+            .map(|()| None)
         })
         .await;
         let mode_label = if deliver_fg {
@@ -4997,11 +5141,21 @@ impl Tool for PressKeyTool {
             "background"
         };
         match result {
-            Ok(Ok(())) => {
+            Ok(Ok(Some(report))) => ToolResult::text(format!(
+                "Pressed key '{key}' as a real key event (delivery_mode=foreground, \
+                 focus_after={}); not verified — confirm with a screenshot.",
+                report.focus_after.as_str()
+            ))
+            .with_structured(foreground_structured(
+                "key_events_fg",
+                report,
+                serde_json::Map::new(),
+            )),
+            Ok(Ok(None)) => {
                 ToolResult::text(format!("Pressed key '{key}' (delivery_mode={mode_label})."))
                     .with_structured(json!({ "verified": false, "delivery_mode": mode_label }))
             }
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -5370,14 +5524,17 @@ impl Tool for HotkeyTool {
         };
         let deliver_fg = delivery.is_foreground();
 
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let result = spawn_blocking_bounded(
+            "hotkey",
+            foreground_budget(1),
+            move || -> anyhow::Result<Option<crate::input::ForegroundReport>> {
             if crate::wayland::wayland_input_enabled() {
                 // Native Wayland: route the modifier combo through wtype's
                 // -M/-k/-m sequence — the closest equivalent to the X11
                 // state-mask path. window_id is irrelevant once focused.
                 let mut combo: Vec<String> = mods_for_wayland.clone();
                 combo.push(key_for_wayland.clone());
-                return crate::wayland::hotkey(xid, &combo);
+                return crate::wayland::hotkey(xid, &combo).map(|()| None);
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             // foreground: activate the target first, then inject the accelerator
@@ -5385,15 +5542,19 @@ impl Tool for HotkeyTool {
             // (`send_key`) are dropped by GTK/Qt/Chromium/Firefox, so the
             // foreground rung must use XTest, which reaches the focused window.
             if deliver_fg {
-                return crate::input::with_x11_foreground(xid, 80, || {
-                    crate::input::send_key_xtest(&key, &m)
-                });
+                return crate::input::with_x11_foreground_opts(
+                    xid,
+                    crate::input::ForegroundOptions::keyboard(),
+                    || crate::input::send_key_xtest(&key, &m),
+                )
+                .map(|((), report)| Some(report));
             }
             if let Some((x, y)) = px_target {
                 crate::input::send_key_at(xid, x, y, &key, &m)
             } else {
                 crate::input::send_key(xid, &key, &m)
             }
+            .map(|()| None)
         })
         .await;
         let mode_label = if deliver_fg {
@@ -5402,11 +5563,22 @@ impl Tool for HotkeyTool {
             "background"
         };
         match result {
-            Ok(Ok(())) => ToolResult::text(format!(
+            Ok(Ok(Some(report))) => ToolResult::text(format!(
+                "Pressed {key_display} on pid {pid} as real key events \
+                 (delivery_mode=foreground, focus_after={}); not verified — confirm \
+                 with a screenshot.",
+                report.focus_after.as_str()
+            ))
+            .with_structured(foreground_structured(
+                "key_events_fg",
+                report,
+                serde_json::Map::new(),
+            )),
+            Ok(Ok(None)) => ToolResult::text(format!(
                 "Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -5717,6 +5889,21 @@ impl Tool for ScrollTool {
             args.get("x").and_then(|value| value.as_f64()),
             args.get("y").and_then(|value| value.as_f64()),
         ) {
+            (Some(x), Some(y)) if desktop_frame_requested(&args) => {
+                // Desktop-frame pixels (from get_desktop_state) against a named
+                // window: map into the window-local frame the pipeline expects.
+                match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y))
+                    .await
+                {
+                    Ok(Ok(local)) => Some(local),
+                    Ok(Err(e)) => {
+                        return ToolResult::error(format!(
+                            "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                        ))
+                    }
+                    Err(e) => return ToolResult::error(format!("Task error: {e}")),
+                }
+            }
             (Some(x), Some(y)) => {
                 // Pixel targets use the latest screenshot's coordinate frame.
                 // Apply the same buffer-to-window ratio as click/drag before
@@ -6073,7 +6260,7 @@ impl Tool for ScrollTool {
                 "Scrolled {direction} {amount} ticks (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => linux_input_error(e),
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -6232,6 +6419,7 @@ impl Tool for DoubleClickTool {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        let desktop_frame = desktop_frame_requested(&args);
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -6248,9 +6436,28 @@ impl Tool for DoubleClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) = self
+            .state
+            .resize_registry
+            .ratio(pid)
+            .filter(|_| !desktop_frame)
+        {
             x *= ratio;
             y *= ratio;
+        }
+        if desktop_frame {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+                Ok(Ok((lx, ly))) => {
+                    x = lx;
+                    y = ly;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                    ))
+                }
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
         }
         crate::overlay::send_command_for(
             cursor_id.clone(),
@@ -6317,7 +6524,7 @@ impl Tool for DoubleClickTool {
                 "✅ Double-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => linux_input_error(e),
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -6471,6 +6678,7 @@ impl Tool for RightClickTool {
             Some(v) => v,
             None => return ToolResult::error("Provide either element_index or window_id + x/y."),
         };
+        let desktop_frame = desktop_frame_requested(&args);
         let from_zoom = args.bool_or("from_zoom", false);
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
@@ -6487,9 +6695,28 @@ impl Tool for RightClickTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) = self
+            .state
+            .resize_registry
+            .ratio(pid)
+            .filter(|_| !desktop_frame)
+        {
             x *= ratio;
             y *= ratio;
+        }
+        if desktop_frame {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+                Ok(Ok((lx, ly))) => {
+                    x = lx;
+                    y = ly;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                    ))
+                }
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
         }
         crate::overlay::send_command_for(
             cursor_id.clone(),
@@ -6555,7 +6782,7 @@ impl Tool for RightClickTool {
                 "✅ Right-clicked at ({x:.1}, {y:.1}) (delivery_mode={mode_label})."
             ))
             .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
-            Ok(Err(e)) => linux_input_error(e),
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
@@ -6719,6 +6946,7 @@ impl Tool for DragTool {
         let button_str = args.str_or("button", "left");
         let button = parse_mouse_button(button_str.as_str());
         let from_zoom = args.bool_or("from_zoom", false);
+        let desktop_frame = desktop_frame_requested(&args);
 
         if from_zoom {
             match self.state.zoom_registry.get(pid) {
@@ -6736,11 +6964,39 @@ impl Tool for DragTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) = self
+            .state
+            .resize_registry
+            .ratio(pid)
+            .filter(|_| !desktop_frame)
+        {
             from_x *= ratio;
             from_y *= ratio;
             to_x *= ratio;
             to_y *= ratio;
+        }
+        if desktop_frame {
+            let mapped = tokio::task::spawn_blocking(move || {
+                Ok::<_, anyhow::Error>((
+                    desktop_to_window_local(xid, from_x, from_y)?,
+                    desktop_to_window_local(xid, to_x, to_y)?,
+                ))
+            })
+            .await;
+            match mapped {
+                Ok(Ok(((fx, fy), (tx, ty)))) => {
+                    from_x = fx;
+                    from_y = fy;
+                    to_x = tx;
+                    to_y = ty;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                    ))
+                }
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
         }
 
         if hyprland_foreground(delivery) {
@@ -7186,6 +7442,7 @@ impl Tool for MouseButtonDownTool {
         let button = parse_mouse_button(button_name.as_str());
         let mut x = args.f64_or("x", 0.0);
         let mut y = args.f64_or("y", 0.0);
+        let desktop_frame = desktop_frame_requested(&args);
         if args.bool_or("from_zoom", false) {
             match self.state.zoom_registry.get(pid) {
                 Some(ctx) => {
@@ -7199,9 +7456,28 @@ impl Tool for MouseButtonDownTool {
                     ))
                 }
             }
-        } else if let Some(ratio) = self.state.resize_registry.ratio(pid) {
+        } else if let Some(ratio) = self
+            .state
+            .resize_registry
+            .ratio(pid)
+            .filter(|_| !desktop_frame)
+        {
             x *= ratio;
             y *= ratio;
+        }
+        if desktop_frame {
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+                Ok(Ok((lx, ly))) => {
+                    x = lx;
+                    y = ly;
+                }
+                Ok(Err(e)) => {
+                    return ToolResult::error(format!(
+                        "desktop-frame coordinates could not be mapped into window {xid}: {e}"
+                    ))
+                }
+                Err(e) => return ToolResult::error(format!("Task error: {e}")),
+            }
         }
 
         crate::overlay::send_command_for(

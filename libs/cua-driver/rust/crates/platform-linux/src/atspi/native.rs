@@ -4793,3 +4793,68 @@ mod coord_tests {
         assert_eq!(activation_index("button", &sparse), Some(2));
     }
 }
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    #[test]
+    fn focus_log_tracks_latest_focused_object_per_bus_and_clears_on_blur() {
+        let bus = ":9.test-focus-log";
+        note_focus_event(bus, "/a", true);
+        assert_eq!(focus_map().lock().unwrap().get(bus).map(String::as_str), Some("/a"));
+        note_focus_event(bus, "/b", true);
+        assert_eq!(focus_map().lock().unwrap().get(bus).map(String::as_str), Some("/b"));
+        // A blur for a stale object must not erase the newer focus.
+        note_focus_event(bus, "/a", false);
+        assert_eq!(focus_map().lock().unwrap().get(bus).map(String::as_str), Some("/b"));
+        note_focus_event(bus, "/b", false);
+        assert!(focus_map().lock().unwrap().get(bus).is_none());
+    }
+
+    #[test]
+    fn per_call_timeout_clamps_to_operation_deadline() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        rt.block_on(async {
+            // No deadline in scope: the historical per-call timeout applies.
+            assert_eq!(remaining_budget(), CALL_TIMEOUT);
+            assert!(!deadline_passed());
+            let deadline = tokio::time::Instant::now() + Duration::from_millis(200);
+            OP_DEADLINE
+                .scope(deadline, async {
+                    assert!(remaining_budget() <= Duration::from_millis(200));
+                    // A call that would outlive the remaining budget is cut at
+                    // the deadline, not at CALL_TIMEOUT.
+                    let started = std::time::Instant::now();
+                    let got = call(tokio::time::sleep(Duration::from_secs(10))).await;
+                    assert!(got.is_none());
+                    assert!(started.elapsed() < Duration::from_secs(2));
+                    assert!(deadline_passed());
+                    // Once the deadline has passed, calls short-circuit.
+                    let started = std::time::Instant::now();
+                    assert!(call(tokio::time::sleep(Duration::from_secs(10))).await.is_none());
+                    assert!(started.elapsed() < Duration::from_millis(50));
+                })
+                .await;
+        });
+    }
+
+    #[test]
+    fn bounded_for_returns_partial_via_on_timeout_when_work_ignores_deadline() {
+        let started = std::time::Instant::now();
+        let result: Result<&'static str> = bounded_for(
+            Duration::from_millis(100),
+            async {
+                tokio::time::sleep(Duration::from_secs(30)).await;
+                Ok("finished")
+            },
+            || Ok("partial"),
+        );
+        assert_eq!(result.unwrap(), "partial");
+        // deadline + 500 ms backstop, well under the old 25 s.
+        assert!(started.elapsed() < Duration::from_secs(3));
+    }
+}

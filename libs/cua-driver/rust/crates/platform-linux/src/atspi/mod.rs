@@ -599,3 +599,82 @@ fn filter_tree(markdown: &str, query: &str) -> String {
     r.push('\n');
     r
 }
+
+#[cfg(test)]
+mod budget_tests {
+    use super::*;
+
+    fn walked(truncation: Option<native::Truncation>) -> native::WalkedTree {
+        let node = |idx: usize, role: &str, name: &str, depth: usize, actions: Vec<String>| AtspiNode {
+            element_index: Some(idx),
+            role: role.into(),
+            name: Some(name.into()),
+            value: None,
+            checked: None,
+            enabled: Some(true),
+            selected: None,
+            description: None,
+            actions,
+            element_key: idx as u64,
+            depth,
+            parent_element_index: (depth > 0).then_some(0),
+            in_web_content: false,
+            object_ref: None,
+        };
+        native::WalkedTree {
+            markdown: "- [0] frame \"Untitled\"\n  - [1] push button \"OK\"\n".into(),
+            nodes: vec![
+                node(0, "frame", "Untitled", 0, vec![]),
+                node(1, "push button", "OK", 1, vec!["click".into()]),
+            ],
+            bounds: vec![(1, 10, 10, 50, 20)],
+            window_scoped: true,
+            truncation,
+            bounds_complete: false,
+            elapsed: std::time::Duration::from_millis(1234),
+        }
+    }
+
+    #[test]
+    fn complete_walk_reports_no_truncation_and_counts_nodes() {
+        let result = AtspiTreeResult::from_walked(walked(None), None);
+        assert!(result.trusted);
+        assert!(!result.truncated);
+        assert_eq!(result.truncation_reason, None);
+        assert_eq!(result.nodes_visited, 2);
+        assert_eq!(result.nodes_pending, 0);
+        assert!(!result.bounds_complete);
+        assert_eq!(result.elapsed_ms, 1234);
+        assert_eq!(result.bounds, vec![(1, 10, 10, 50, 20)]);
+    }
+
+    #[test]
+    fn truncated_walk_carries_reason_and_pending_count_through_query_projection() {
+        let result = AtspiTreeResult::from_walked(
+            walked(Some(native::Truncation {
+                reason: "timeout",
+                visited: 2,
+                pending: 17,
+            })),
+            Some("ok"),
+        );
+        assert!(result.truncated);
+        assert_eq!(result.truncation_reason.as_deref(), Some("timeout"));
+        assert_eq!(result.nodes_visited, 2);
+        assert_eq!(result.nodes_pending, 17);
+        // The query projection keeps the matching row plus its ancestor.
+        assert!(result.tree_markdown.contains("push button \"OK\""));
+        assert!(result.tree_markdown.contains("frame \"Untitled\""));
+        // Nodes are the unfiltered prefix: indices stay valid for actuation.
+        assert_eq!(result.nodes.len(), 2);
+    }
+
+    #[test]
+    fn x11_fallback_is_never_truncated_or_trusted() {
+        let result = walk_via_x11_properties(0, None);
+        assert!(!result.trusted);
+        assert!(!result.truncated);
+        assert_eq!(result.nodes_visited, 0);
+        assert!(result.bounds_complete);
+    }
+}

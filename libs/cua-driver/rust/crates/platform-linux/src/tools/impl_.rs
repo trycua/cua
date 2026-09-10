@@ -10263,3 +10263,60 @@ mod desktop_capture_frame_tests {
         assert!(error.to_string().contains("cannot be mapped uniformly"));
     }
 }
+
+#[cfg(test)]
+mod background_budget_tests {
+    use super::*;
+
+    #[test]
+    fn synthetic_pointer_drop_detection_covers_gtk_vcl_and_qt() {
+        assert!(maps_indicate_synthetic_pointer_dropped("7f /usr/lib/libgtk-3.so.0\n"));
+        assert!(maps_indicate_synthetic_pointer_dropped("7f /usr/lib/libgtk-4.so.1\n"));
+        assert!(maps_indicate_synthetic_pointer_dropped(
+            "7f /opt/libreoffice/program/libmergedlo.so\n"
+        ));
+        assert!(maps_indicate_synthetic_pointer_dropped("7f /usr/lib/libvcllo.so\n"));
+        assert!(maps_indicate_synthetic_pointer_dropped("7f /usr/lib/libQt5Gui.so.5\n"));
+        assert!(!maps_indicate_synthetic_pointer_dropped("7f /usr/lib/libgtk-x11-2.0.so.0\n"));
+        assert!(!maps_indicate_synthetic_pointer_dropped("7f /usr/lib/libX11.so.6\n"));
+    }
+
+    #[test]
+    fn truncation_note_names_the_budget_and_the_remedy() {
+        let note = truncation_note(Some("timeout"), 1000, 240, 88);
+        assert!(note.contains("PARTIAL TREE"));
+        assert!(note.contains("1000 ms"));
+        assert!(note.contains("240 node(s)"));
+        assert!(note.contains("88 discovered"));
+        assert!(note.contains("timeout_ms"));
+        assert!(note.contains("query"));
+        let note = truncation_note(Some("node_budget"), 1000, 5000, 3);
+        assert!(note.contains("max_elements"));
+        let note = truncation_note(Some("app_unresponsive"), 1000, 3, 0);
+        assert!(note.contains("stopped answering"));
+        let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
+        assert!(note.contains("250 ms"));
+    }
+
+    #[test]
+    fn desktop_window_lines_expose_pid_and_window_id() {
+        let windows = vec![crate::x11::WindowInfo {
+            xid: 0x2e00003,
+            pid: Some(4321),
+            app_name: "libreoffice".into(),
+            title: "Untitled 1 - LibreOffice Calc".into(),
+            is_on_screen: true,
+            z_index: None,
+            x: 0,
+            y: 27,
+            width: 1920,
+            height: 1053,
+        }];
+        let text = desktop_window_lines(&windows);
+        assert!(text.contains("pid=4321 window_id=48234499"));
+        assert!(text.contains("LibreOffice Calc"));
+        assert!(text.contains("app=libreoffice"));
+        assert!(text.contains("get_window_state(pid, window_id)"));
+        assert!(desktop_window_lines(&[]).contains("none"));
+    }
+}

@@ -93,8 +93,21 @@ pub struct GetWindowStateInput {
     /// (default 1000). A walk that runs out returns a partial tree flagged
     /// `truncated` rather than failing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(schema_with = "positive_integer_schema")]
+    #[schemars(schema_with = "timeout_ms_schema")]
     pub timeout_ms: Option<u32>,
+}
+
+/// Bounds of the accessibility-walk budget, shared with every live backend
+/// schema (`cua_driver_core::tool_schema::timeout_ms_schema`).
+pub const TIMEOUT_MS_MIN: u32 = 100;
+pub const TIMEOUT_MS_MAX: u32 = 120_000;
+
+fn timeout_ms_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+    schemars::json_schema!({
+        "type": "integer",
+        "minimum": TIMEOUT_MS_MIN,
+        "maximum": TIMEOUT_MS_MAX
+    })
 }
 
 impl ToolInput for GetWindowStateInput {
@@ -103,10 +116,16 @@ impl ToolInput for GetWindowStateInput {
         if self.pid == 0 || self.window_id == 0 {
             return Err("window observation requires positive process and window IDs".into());
         }
-        if [self.max_elements, self.max_depth, self.max_dimension, self.timeout_ms]
-            .contains(&Some(0))
-        {
+        if [self.max_elements, self.max_depth, self.max_dimension].contains(&Some(0)) {
             return Err("window observation limits must be positive".into());
+        }
+        if self
+            .timeout_ms
+            .is_some_and(|ms| !(TIMEOUT_MS_MIN..=TIMEOUT_MS_MAX).contains(&ms))
+        {
+            return Err(format!(
+                "timeout_ms must be between {TIMEOUT_MS_MIN} and {TIMEOUT_MS_MAX} milliseconds"
+            ));
         }
         if self.include_accessibility_tree == Some(false) && self.include_screenshot == Some(false)
         {

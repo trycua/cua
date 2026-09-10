@@ -316,14 +316,14 @@ async fn track_overlay_drag(
     crate::overlay::send_command(key, cursor_overlay::OverlayCommand::SetPressed(false));
 }
 use cua_driver_contract::{
-    ClickButton, ClickInput, DragInput, GetCursorPositionInput, GetDesktopStateInput,
-    GetScreenSizeInput, HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput,
-    ScrollDirection, ScrollInput, TypeTextInput,
+    ClickButton, DragInput, GetCursorPositionInput, GetDesktopStateInput, GetScreenSizeInput,
+    HotkeyInput, InvokeMenuInput, MoveCursorInput, PressKeyInput, ScrollDirection, ScrollInput,
+    TypeTextInput,
 };
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef, ToolRegistry},
-    tool_args::{parse_typed_input, parse_typed_projection},
+    tool_args::{parse_legacy_click_input, parse_typed_input, parse_typed_projection},
     window_target::{PidOnlyWindowTargetGuard, WindowTargetCandidate, WindowTargetCandidates},
 };
 use serde_json::{json, Value};
@@ -3143,7 +3143,7 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=desktop",
                 }));
             }
-            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+            let input = match parse_legacy_click_input(&args) {
                 Ok(input) => input,
                 Err(result) => return result,
             };

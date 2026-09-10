@@ -153,6 +153,28 @@ class ClickTests(unittest.TestCase):
         self.assertEqual(self.snapshot_mock.call_args_list[0].args[0], self.client)
         self.assertEqual(self.snapshot_mock.call_args_list[1].args[0], self.observer)
 
+    def test_inkscape_scrolls_require_effects_and_use_scroll_trace_contract(self):
+        self.spec.update(app='inkscape', document='/synthetic/cua-smoke-inkscape.svg')
+        for stage, changed in (('scroll_down', True), ('scroll_up', True), ('scroll_down', False)):
+            with self.subTest(stage=stage, changed=changed):
+                self.snapshot_mock.side_effect = [self.snapshot, self.snapshot]
+                self.digest.side_effect = ['before', 'after' if changed else 'before']
+                self.client.tool.reset_mock()
+                self.result.clear()
+                if changed:
+                    proof.click_once(self.client, self.observer, self.spec, stage, runtime(self.client),
+                                     self.identity, self.trace, {}, Mock(), self.result, Mock())
+                    proof.capacity_lane.assert_called_with({}, self.trace.collect.return_value, 'scroll')
+                    proof.verify_recovery_trace.assert_called_with({}, self.trace.collect.return_value, 1, 'scroll')
+                    self.assertTrue(self.result['app_effect']['verified'])
+                else:
+                    with self.assertRaisesRegex(AssertionError, 'pixels did not change'):
+                        proof.click_once(self.client, self.observer, self.spec, stage, runtime(self.client),
+                                         self.identity, self.trace, {}, Mock(), self.result, Mock())
+                self.client.tool.assert_called_once()
+                self.assertEqual(self.client.tool.call_args.args[0], 'scroll')
+                self.assertFalse(self.result['action']['replayed'])
+
     def test_unknown_outcome_is_observed_but_never_replayed(self):
         self.client.tool.side_effect = RuntimeError('closed after possible delivery')
         with self.assertRaisesRegex(AssertionError, 'unknown; no replay'):

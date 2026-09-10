@@ -63,7 +63,7 @@
     "create(cls, options: typing.Optional[DriverOptions]) -> CuaDriver",
     "create_with_client_kind(cls, options: typing.Optional[DriverOptions], client_kind: SdkClientKind) -> CuaDriver",
     "async call_tool(self, name: str, arguments_json: str) -> ToolResult",
-    "async click(self, input: cua_driver._native_contract.ClickInput) -> ToolResult",
+    "async click(self, input: cua_driver._native_contract.ClickInput) -> cua_driver._native_contract.ActionResult",
     "async drag(self, input: cua_driver._native_contract.DragInput) -> ToolResult",
     "async end_session(self, input: cua_driver._native_contract.EndSessionInput) -> cua_driver._native_contract.EndSessionOutput",
     "async escalate_session(self, input: cua_driver._native_contract.EscalateSessionInput) -> cua_driver._native_contract.SessionStateOutput",

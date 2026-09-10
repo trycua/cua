@@ -55,6 +55,29 @@ Computer use is useful when work spans interfaces that were designed for people 
 
 In each case, the agent must connect actions across changing application state. A script or API may still cover part of the work, while computer use covers the boundaries that those interfaces cannot reach.
 
+### Example: lay out a map and inspect the exported PDF
+
+<VideoDemo
+  src="https://github.com/user-attachments/assets/e133cb0a-9b70-4812-9d97-76fadd67317b"
+  poster="/media/workflow-demos/map-poster.jpg"
+  title="Map layout and exported-PDF inspection on macOS"
+  aspectRatio={8 / 5}
+  autoPlay={false}
+  loop={false}
+  preload="metadata"
+>
+  Selected map-layout and PDF-inspection steps show an agent moving between applications. The
+  excerpt does not show every export step.
+</VideoDemo>
+
+Recorded on macOS with GPT-6 Astra + Cua Driver. Selected gestures play at 1x;
+setup, waits, retries and intervening edits are cut. These examples include
+foreground/desktop input and fictional data. Clip duration is not task
+completion time.
+
+Follow [Build and inspect a map](/how-to-guides/recipes/build-and-inspect-a-map)
+for the starter files, prompt, and saved-output checks.
+
 ## Choosing a surface
 
 A capable agent moves between these surfaces during a single task, choosing the one that fits the next piece of work. Code and structured tool calls are usually the right fit when the job is repeatable or text-heavy, especially when the system already exposes a clear interface. UI automation becomes the better choice when the work depends on visual state or when the application is unfamiliar; it is also the fallback when there is no useful API and the path exists only inside the interface.

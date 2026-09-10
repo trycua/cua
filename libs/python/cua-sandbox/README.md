@@ -20,9 +20,48 @@ install the optional Driver SDK:
 pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
 ```
 
-The `driver` extra pins `cua-driver==0.25.0`, which provides the compatible remote
-channel bridge. It requires that version to be published for your platform.
+The `driver` extra pins `cua-driver==0.26.0`, which provides the typed-window API
+and compatible remote channel bridge. It requires that version to be published
+for your platform.
 The sandbox image must also run a compatible Driver service.
+
+### Optional MCP envelope carrier
+
+The SDK can carry the same typed Driver interface through a named
+MCP service. This requires the guest's explicit typed-envelope extension, not
+just an ordinary MCP tools endpoint:
+
+```python
+from cua_driver import GetScreenSizeInput
+
+
+async def observe_guest(pool):
+    async with pool.claim() as sb:
+        async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+            # This is the generated cua_driver.CuaDriver, not an MCP facade.
+            result = await driver.get_screen_size(GetScreenSizeInput(session=None))
+        return result
+```
+
+`sb.driver.connect()` and `sb.driver.connect(service="driver")` keep the existing
+envelope HTTP path. `CuaDriver.connect(socket_path)` is unchanged. Shell, files,
+terminals, existing Sandbox desktop calls, and claim/pool lifecycle still use
+their existing interfaces; this option affects only `sb.driver`.
+
+MCP selection performs initialization and verifies
+`capabilities.experimental["ai.cua.driver.envelopes"].version == 1` before
+opening a receiver. An old tools-only image fails before a desktop action.
+The connection preserves the receiver's generation, host-selected permissions,
+and cancellation. It does not reconnect, replay actions, or fall back to the
+local desktop. On exit, the SDK attempts bounded receiver and MCP-session
+cleanup. An unconfirmed cleanup warns; it is not proof of rollback or guest
+deletion.
+
+See the [candidate wire and launcher contract](../../cua-driver/docs/mcp-envelope-carrier.md)
+for the opt-in and limits. No existing Fleet image is qualified by this example.
+Test the exact image and matching bindings/native library before advertising
+support. Driver 0.25.0 does not provide this typed-window API; use the pinned
+Driver 0.26.0 package and a compatible guest runtime.
 
 ## Ephemeral sandbox
 
@@ -99,7 +138,6 @@ async with Localhost.connect() as host:
     await host.shell.run("echo hello")
     await host.screenshot()
 ```
-
 
 ## Cloud sandbox
 

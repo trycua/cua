@@ -4,7 +4,7 @@ Agents should configure the bundled ``cua-driver mcp`` executable directly
 through their runtime's MCP client instead of importing a language MCP facade.
 """
 
-__version__ = "0.25.0"  # x-release-please-version
+__version__ = "0.26.1"  # x-release-please-version
 
 from ._native import (
     ActionCompletion,
@@ -58,6 +58,21 @@ from ._native import (
     request_mac_os_permissions,
 )
 from ._native_contract import (
+    AppInfo,
+    ClickPosition,
+    ElementFrame,
+    GetWindowStateInput,
+    InputDeliveryMode,
+    ListAppsInput,
+    ListAppsOutput,
+    ListWindowsInput,
+    ListWindowsOutput,
+    SnapshotImage,
+    WindowBounds,
+    WindowElement,
+    WindowInfo,
+    WindowStateOutput,
+
     ActionDelivery,
     ActionDeliveryMode,
     ActionEffect,
@@ -180,6 +195,21 @@ _NativeCuaDriver.create_private_worker = classmethod(_create_private_worker_pyth
 CuaDriver = _NativeCuaDriver
 
 __all__ = [
+    "AppInfo",
+    "ClickPosition",
+    "ElementFrame",
+    "GetWindowStateInput",
+    "InputDeliveryMode",
+    "ListAppsInput",
+    "ListAppsOutput",
+    "ListWindowsInput",
+    "ListWindowsOutput",
+    "SnapshotImage",
+    "WindowBounds",
+    "WindowElement",
+    "WindowInfo",
+    "WindowStateOutput",
+
     "ActionCompletion",
     "ActionDelivery",
     "ActionDeliveryMode",

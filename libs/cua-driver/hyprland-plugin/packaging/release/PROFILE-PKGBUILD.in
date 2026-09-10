@@ -1,0 +1,71 @@
+# Profile kit: original source bytes and separately committed packaging tooling.
+# shellcheck shell=bash disable=SC2034,SC2154
+pkgname=cua-hyprland-plugin
+pkgver=@DRIVER_VERSION@
+pkgrel=@PKGREL@
+pkgdesc='Cua input candidate for reviewed profile @PROFILE_ID@'
+arch=('x86_64')
+url='https://github.com/trycua/cua'
+license=('MIT')
+depends=('hyprland=@HYPRLAND_PACKAGE@' @RUNTIME_DEPENDS@ 'python>=3.11' 'binutils')
+makedepends=('cmake>=3.30' 'ninja' 'pkgconf' 'gcc')
+options=('!strip' '!debug' '!lto')
+_stem='@STEM@'
+_archive_sha256='@ARCHIVE_SHA256@'
+_kit_sha256='@KIT_SHA256@'
+_profile_sha256='@PROFILE_SHA256@'
+_verifier_sha256='@VERIFIER_SHA256@'
+_cxx="${CUA_RELEASE_CXX:-/usr/bin/g++}"
+source=("${_stem}.tar.gz" 'KIT-PROVENANCE.json' 'PROFILE.json' 'profile_verify.py')
+sha256sums=('@ARCHIVE_SHA256@' '@KIT_SHA256@' '@PROFILE_SHA256@' '@VERIFIER_SHA256@')
+
+_verify() {
+  # Explicit checks still apply to --skipinteg, --noextract and --repackage.
+  printf '%s  %s\n' "$_archive_sha256" "$startdir/${_stem}.tar.gz" | sha256sum -c - || return 1
+  printf '%s  %s\n' "$_kit_sha256" "$startdir/KIT-PROVENANCE.json" | sha256sum -c - || return 1
+  printf '%s  %s\n' "$_profile_sha256" "$startdir/PROFILE.json" | sha256sum -c - || return 1
+  printf '%s  %s\n' "$_verifier_sha256" "$startdir/profile_verify.py" | sha256sum -c - || return 1
+  python3 "$startdir/profile_verify.py" --kit "$startdir" --kit-sha256 "$_kit_sha256" \
+    --archive "$startdir/${_stem}.tar.gz" --source "$srcdir/$_stem" --cxx "$_cxx" "$@"
+}
+
+prepare() {
+  _verify
+}
+
+build() {
+  _verify || return 1
+  cmake -S "$srcdir/$_stem" -B "$srcdir/build" -G Ninja \
+    -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER="$_cxx" \
+    -DPKG_CONFIG_EXECUTABLE=/usr/bin/pkgconf -DPKG_CONFIG_ARGN= \
+    -DPKG_CONFIG_USE_CMAKE_PREFIX_PATH=OFF -DCMAKE_PREFIX_PATH= \
+    -DBUILD_TESTING=ON -DCUA_HYPRLAND_BUILD_PLUGIN=ON \
+    -DCUA_HYPRLAND_EXPECTED_VERSION=0.56.2 \
+    -DCUA_HYPRLAND_INPUT=ON -DCUA_HYPRLAND_TEST_INPUT=OFF \
+    -DCUA_HYPRLAND_INPUT_TRACE=OFF -DCUA_HYPRLAND_TEST_OPERATOR_KEY= || return 1
+  cmake --build "$srcdir/build"
+}
+
+check() {
+  _verify || return 1
+  (
+    unset LD_PRELOAD FAKEROOTKEY FAKED_MODE
+    ctest --test-dir "$srcdir/build" --output-on-failure --no-tests=error
+  )
+}
+
+package() {
+  check || return 1
+  _verify --build "$srcdir/build" --output "$srcdir/BUILD-PROVENANCE.json" || return 1
+  install -Dm755 "$srcdir/build/cua-hyprland-plugin.so" \
+    "$pkgdir/usr/lib/cua/hyprland/cua-hyprland-plugin.so" || return 1
+  install -Dm644 "$srcdir/$_stem/LICENSE.md" \
+    "$pkgdir/usr/share/licenses/$pkgname/LICENSE" || return 1
+  install -Dm644 "$srcdir/$_stem/SOURCE-PROVENANCE.json" \
+    "$pkgdir/usr/share/$pkgname/SOURCE-PROVENANCE.json" || return 1
+  local name
+  install -Dm644 "$srcdir/BUILD-PROVENANCE.json" "$pkgdir/usr/share/$pkgname/BUILD-PROVENANCE.json" || return 1
+  for name in KIT-PROVENANCE.json PROFILE.json profile_verify.py; do
+    install -Dm644 "$startdir/$name" "$pkgdir/usr/share/$pkgname/$name" || return 1
+  done
+}

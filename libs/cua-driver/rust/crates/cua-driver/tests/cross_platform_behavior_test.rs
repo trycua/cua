@@ -27,6 +27,11 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cua_driver_contract::{
+    ActionTarget, ClickInput, ClickPosition, GetWindowStateInput, InputDeliveryMode, ListAppsInput,
+    ListWindowsInput, WindowStateOutput,
+};
+use cua_driver_sdk::{CuaDriver, DriverError};
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
 use cua_driver_testkit::e2e::{
     recording_evidence, shared_web_route, write_declaration_from_env, write_result_from_env,
@@ -772,6 +777,222 @@ fn run_pointer_action(
 
 fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+}
+
+fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
+    GetWindowStateInput {
+        pid: fixture.pid,
+        window_id: fixture.wid,
+        session: None,
+        query: None,
+        include_accessibility_tree: Some(true),
+        include_screenshot: Some(false),
+        screenshot_out_file: None,
+        max_elements: None,
+        max_depth: None,
+        max_dimension: None,
+    }
+}
+
+fn sdk_click_token(state: &WindowStateOutput) -> String {
+    let elements = state.elements.as_ref().expect("typed AX elements");
+    // The fixture's aria-label is its accessible name. Native adapters need
+    // not preserve the DOM id or visible text in the rendered markdown.
+    [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ]
+    .into_iter()
+    .find_map(|label| {
+        elements
+            .iter()
+            .find(|element| element.label.as_deref() == Some(label))
+            .and_then(|element| element.element_token.clone())
+    })
+    .unwrap_or_else(|| panic!("typed click target has no snapshot-bound token: {elements:?}"))
+}
+
+#[test]
+fn typed_click_target_uses_accessible_label_without_markdown_ids() {
+    for label in [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ] {
+        let state: WindowStateOutput = serde_json::from_value(serde_json::json!({
+            "pid": 42,
+            "window_id": 73,
+            "tree_markdown": "[9] button \"border-click-target\"",
+            "elements": [{
+                "element_index": 9,
+                "role": "button",
+                "depth": 1,
+                "label": label,
+                "element_token": "snapshot-token"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(sdk_click_token(&state), "snapshot-token");
+    }
+}
+
+fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {
+    ClickInput {
+        target: ActionTarget::Window {
+            pid: fixture.pid,
+            window_id: fixture.wid,
+        },
+        position: ClickPosition::Element {
+            element_token: token,
+        },
+        delivery_mode: InputDeliveryMode::Background,
+        session: None,
+        button: None,
+        count: None,
+    }
+}
+
+fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
+    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+    // The macOS harness authorizes the installed daemon, not cargo's test
+    // executable. Exercise the typed SDK over that verified native backend.
+    #[cfg(target_os = "macos")]
+    let sdk = {
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("canonical macOS harness must specify its authorized daemon socket");
+        CuaDriver::connect(Some(socket)).expect("connect SDK to authorized macOS daemon")
+    };
+    #[cfg(not(target_os = "macos"))]
+    let sdk = {
+        use cua_driver_sdk::{
+            ConfiguredDriverOptions, RuntimeAuthorizationOptions, SessionPermissionMode,
+        };
+
+        // Match the disposable desktop opt-in that McpDriver applies only to
+        // its child process, without changing this test process's environment.
+        if std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some() {
+            CuaDriver::create_configured(ConfiguredDriverOptions {
+                claude_code_compatibility: false,
+                authorization: RuntimeAuthorizationOptions {
+                    allowed_modes: vec![SessionPermissionMode::Unrestricted],
+                    compatibility_mode: SessionPermissionMode::Unrestricted,
+                    compatibility_capability_manifest_path: None,
+                    compatibility_bounded_manifest_path: None,
+                    unrestricted_acknowledged: true,
+                    max_session_ttl_seconds: 300,
+                    max_idle_ttl_seconds: 300,
+                },
+            })
+        } else {
+            CuaDriver::create(None)
+        }
+        .expect("create in-process native SDK runtime")
+    };
+
+    runtime.block_on(async {
+        let apps = sdk
+            .list_apps(ListAppsInput {})
+            .await
+            .expect("typed app discovery");
+        assert!(
+            apps.apps
+                .iter()
+                .any(|app| app.pid == fixture.pid && app.running),
+            "typed app discovery must include the running fixture"
+        );
+        let windows = sdk
+            .list_windows(ListWindowsInput {
+                pid: None,
+                on_screen_only: None,
+            })
+            .await
+            .expect("typed window discovery");
+        assert!(
+            windows
+                .windows
+                .iter()
+                .any(|window| window.window_id == fixture.wid && window.pid == Some(fixture.pid)),
+            "typed window discovery must preserve exact fixture identity"
+        );
+
+        let before = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed initial window state");
+        assert_eq!((before.pid, before.window_id), (fixture.pid, fixture.wid));
+        let stale_token = sdk_click_token(&before);
+        let current = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed fresh window state invalidates previous token");
+        let current_token = sdk_click_token(&current);
+        assert_ne!(
+            stale_token, current_token,
+            "fresh snapshot must mint fresh tokens"
+        );
+        let journal_before = fixture.journal.snapshot();
+        let stale = sdk
+            .click(sdk_background_click(fixture, stale_token))
+            .await
+            .expect_err("stale SDK token must refuse");
+        assert!(
+            matches!(stale, DriverError::Tool { ref tool, ref error_code, .. }
+            if tool == "click" && error_code == "stale_element_token"),
+            "expected typed stale-token refusal, got {stale:?}"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "stale SDK token changed fixture state"
+        );
+
+        let other_window = windows
+            .windows
+            .iter()
+            .find(|window| window.window_id != fixture.wid && window.pid != Some(fixture.pid))
+            .expect("foreground sentinel supplies a different native window");
+        let mut mismatched = sdk_background_click(fixture, current_token.clone());
+        mismatched.target = ActionTarget::Window {
+            pid: fixture.pid,
+            window_id: other_window.window_id,
+        };
+        let mismatch = sdk
+            .click(mismatched)
+            .await
+            .expect_err("SDK token must not address a different window");
+        assert!(
+            matches!(mismatch, DriverError::Tool { ref tool, ref error_code, .. }
+            if tool == "click" && matches!(error_code.as_str(),
+                "conflicting_element_target" | "window_target_not_found" | "window_target_mismatch")),
+            "expected typed window-identity refusal, got {mismatch:?}"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "mismatched SDK window identity changed fixture state"
+        );
+
+        sdk.click(sdk_background_click(fixture, current_token.clone()))
+            .await
+            .expect("typed background element click");
+        assert_fixture_contains(fixture, "last_action=left_click");
+        // Match the fixture's delivery contract: its DOM journal is the effect
+        // oracle because embedded browsers can retain stale accessible text.
+        // A fresh native observation must still preserve identity and tokens.
+        let after = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed post-action window state");
+        assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
+        assert_ne!(
+            sdk_click_token(&after),
+            current_token,
+            "post-action observation must mint a fresh snapshot-bound token"
+        );
+        sdk.shutdown().await.expect("shut down typed SDK client");
+    });
+    delivered_observation()
 }
 
 fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
@@ -1904,6 +2125,15 @@ fn shared_web_action_matrix_is_state_verified() {
     let mut failure = None;
     let mut selected = 0usize;
     for spec in host_specs() {
+        let mut sdk_case = shared_case(&spec, "left_click", "ax", "background");
+        sdk_case.cell_id.push_str("-typed-sdk");
+        if cell_selected(&sdk_case) {
+            selected += 1;
+            let result = run_host_case_with_outcome(sdk_case, &spec, run_typed_sdk_native_window);
+            if failure.is_none() {
+                failure = result;
+            }
+        }
         for (action, tool, marker) in [
             ("left_click", "click", "last_action=left_click"),
             ("right_click", "right_click", "last_action=right_click"),

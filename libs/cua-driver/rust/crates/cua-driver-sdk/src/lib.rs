@@ -8,11 +8,13 @@
 use cua_driver_contract::{
     ActionResult, ClickInput, ClipboardReadInput, ClipboardWriteInput, DragInput, EndSessionInput,
     EndSessionOutput, EscalateSessionInput, GetAgentCursorStateInput, GetCursorPositionInput,
-    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput, HotkeyInput,
-    InvokeMenuInput, ListSessionsInput, ListSessionsOutput, MoveCursorInput, PressKeyInput,
-    ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
-    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, StartSessionInput,
-    StartSessionOutput, ToolInput, TypeTextInput, VerifyStateInput, VerifyStateOutput,
+    GetDesktopStateInput, GetScreenSizeInput, GetSessionInput, GetSessionStateInput,
+    GetWindowStateInput, HotkeyInput, InvokeMenuInput, ListAppsInput, ListAppsOutput,
+    ListSessionsInput, ListSessionsOutput, ListWindowsInput, ListWindowsOutput, MoveCursorInput,
+    PressKeyInput, ScrollInput, SessionOutput, SessionStateOutput, SetAgentCursorEnabledInput,
+    SetAgentCursorMotionInput, SetAgentCursorThemeInput, SetWindowFrameInput, SnapshotImage,
+    StartSessionInput, StartSessionOutput, ToolInput, ToolOutput, TypeTextInput, VerifyStateInput,
+    VerifyStateOutput, WindowStateOutput,
 };
 use cua_driver_core::daemon::{
     is_daemon_listening, request_daemon_metadata, send_request, socket_path_for_namespace,
@@ -637,7 +639,6 @@ macro_rules! desktop_tool_methods {
             move_cursor: MoveCursorInput,
             set_window_frame: SetWindowFrameInput,
             invoke_menu: InvokeMenuInput,
-            click: ClickInput,
             drag: DragInput,
             scroll: ScrollInput,
             clipboard_read: ClipboardReadInput,
@@ -689,12 +690,59 @@ macro_rules! define_exported_tool_names {
             <ListSessionsInput as ToolInput>::TOOL_NAME,
             <GetSessionStateInput as ToolInput>::TOOL_NAME,
             <EndSessionInput as ToolInput>::TOOL_NAME,
+            <ListAppsInput as ToolInput>::TOOL_NAME,
+            <ListWindowsInput as ToolInput>::TOOL_NAME,
+            <GetWindowStateInput as ToolInput>::TOOL_NAME,
+            <ClickInput as ToolInput>::TOOL_NAME,
             $(<$input as ToolInput>::TOOL_NAME,)*
         ];
     };
 }
 
 desktop_tool_methods!(define_exported_tool_names);
+
+macro_rules! define_native_window_methods {
+    ($driver:ty) => {
+        #[uniffi::export(async_runtime = "tokio")]
+        impl $driver {
+            pub async fn list_apps(
+                &self,
+                input: ListAppsInput,
+            ) -> Result<ListAppsOutput, DriverError> {
+                self.invoke_typed(ListAppsInput::TOOL_NAME, input)
+                    .await?
+                    .typed_success(ListAppsInput::TOOL_NAME)
+            }
+
+            pub async fn list_windows(
+                &self,
+                input: ListWindowsInput,
+            ) -> Result<ListWindowsOutput, DriverError> {
+                self.invoke_typed(ListWindowsInput::TOOL_NAME, input)
+                    .await?
+                    .typed_success(ListWindowsInput::TOOL_NAME)
+            }
+
+            pub async fn get_window_state(
+                &self,
+                input: GetWindowStateInput,
+            ) -> Result<WindowStateOutput, DriverError> {
+                self.invoke_typed(GetWindowStateInput::TOOL_NAME, input)
+                    .await?
+                    .window_state_success()
+            }
+
+            pub async fn click(&self, input: ClickInput) -> Result<ActionResult, DriverError> {
+                self.invoke_typed(ClickInput::TOOL_NAME, input)
+                    .await?
+                    .typed_success(ClickInput::TOOL_NAME)
+            }
+        }
+    };
+}
+
+define_native_window_methods!(CuaDriver);
+define_native_window_methods!(CuaDriverSession);
 
 #[uniffi::export]
 impl CuaDriver {
@@ -1542,11 +1590,17 @@ impl CuaDriverSession {
 }
 
 impl CuaDriverSession {
-    async fn invoke_typed<T: Serialize>(
+    async fn invoke_typed<T: ToolInput>(
         &self,
         name: &str,
         input: T,
     ) -> Result<ToolResult, DriverError> {
+        input
+            .validate()
+            .map_err(|reason| DriverError::InvalidArguments {
+                tool: name.into(),
+                reason,
+            })?;
         let arguments =
             serde_json::to_value(input).map_err(|error| DriverError::InvalidArguments {
                 tool: name.into(),
@@ -1619,11 +1673,17 @@ impl CuaDriver {
         self.invoke(name, arguments).await
     }
 
-    async fn invoke_typed<T: Serialize>(
+    async fn invoke_typed<T: ToolInput>(
         &self,
         name: &str,
         input: T,
     ) -> Result<ToolResult, DriverError> {
+        input
+            .validate()
+            .map_err(|reason| DriverError::InvalidArguments {
+                tool: name.into(),
+                reason,
+            })?;
         let arguments =
             serde_json::to_value(input).map_err(|error| DriverError::InvalidArguments {
                 tool: name.into(),
@@ -1698,20 +1758,103 @@ impl ToolResult {
         self.verification.as_ref()
     }
 
-    fn typed_success<T: serde::de::DeserializeOwned>(self, tool: &str) -> Result<T, DriverError> {
+    fn typed_success<T: ToolOutput>(self, tool: &str) -> Result<T, DriverError> {
         if self.is_error {
             return Err(DriverError::Tool {
                 tool: tool.into(),
-                message: self.text,
+                message: self.refusal_message(),
                 error_code: self.error_code.unwrap_or_default(),
             });
         }
         let structured = self.structured_json.ok_or_else(|| DriverError::Protocol {
             reason: format!("{tool} response omitted structuredContent"),
         })?;
-        serde_json::from_str(&structured).map_err(|error| DriverError::Protocol {
-            reason: format!("{tool} returned an invalid typed result: {error}"),
-        })
+        let output: T =
+            serde_json::from_str(&structured).map_err(|error| DriverError::Protocol {
+                reason: format!("{tool} returned an invalid typed result: {error}"),
+            })?;
+        output.validate().map_err(|reason| DriverError::Protocol {
+            reason: format!("{tool} returned an invalid typed result: {reason}"),
+        })?;
+        Ok(output)
+    }
+
+    fn refusal_message(&self) -> String {
+        self.structured_json
+            .as_deref()
+            .and_then(|json| serde_json::from_str::<Value>(json).ok())
+            .and_then(|value| {
+                value
+                    .get("message")
+                    .and_then(Value::as_str)
+                    .or_else(|| value.get("refusal")?.get("message")?.as_str())
+                    .map(str::to_owned)
+            })
+            .unwrap_or_else(|| self.text.clone())
+    }
+
+    fn window_state_success(mut self) -> Result<WindowStateOutput, DriverError> {
+        if !self.is_error {
+            // Normalization preserves open-ended results; this typed boundary must
+            // not silently discard a malformed image part from a snapshot.
+            let raw: Value =
+                serde_json::from_str(&self.raw_json).map_err(|error| DriverError::Protocol {
+                    reason: format!("get_window_state returned an invalid envelope: {error}"),
+                })?;
+            if let Some(content) = raw.get("content") {
+                let content = content.as_array().ok_or_else(|| DriverError::Protocol {
+                    reason: "get_window_state content must be an array".into(),
+                })?;
+                for part in content {
+                    if part.get("type").and_then(Value::as_str) == Some("image") {
+                        let valid = part
+                            .get("mimeType")
+                            .and_then(Value::as_str)
+                            .is_some_and(|mime| mime.starts_with("image/") && mime.len() > 6)
+                            && part
+                                .get("data")
+                                .and_then(Value::as_str)
+                                .is_some_and(|data| !data.is_empty());
+                        if !valid {
+                            return Err(DriverError::Protocol {
+                                reason: "get_window_state returned a malformed image part".into(),
+                            });
+                        }
+                    }
+                }
+            }
+            if !self.images.is_empty() {
+                let metadata = &raw["structuredContent"];
+                for dimension in ["screenshot_width", "screenshot_height"] {
+                    if !metadata[dimension].as_u64().is_some_and(|value| value > 0) {
+                        return Err(DriverError::Protocol {
+                            reason: format!("get_window_state image omitted valid {dimension}"),
+                        });
+                    }
+                }
+                if let Some(mime) = metadata["screenshot_mime_type"].as_str() {
+                    if self.images.iter().any(|image| image.mime_type != mime) {
+                        return Err(DriverError::Protocol {
+                            reason: "get_window_state image MIME type disagrees with metadata"
+                                .into(),
+                        });
+                    }
+                }
+            }
+        }
+        let images = std::mem::take(&mut self.images);
+        let mut output: WindowStateOutput = self.typed_success(GetWindowStateInput::TOOL_NAME)?;
+        output.images = images
+            .into_iter()
+            .map(|image| SnapshotImage {
+                mime_type: image.mime_type,
+                data_base64: image.data_base64,
+            })
+            .collect();
+        output.validate().map_err(|reason| DriverError::Protocol {
+            reason: format!("get_window_state returned an invalid typed result: {reason}"),
+        })?;
+        Ok(output)
     }
 }
 
@@ -1832,6 +1975,7 @@ mod snapshot_lifecycle_tests;
 
 #[cfg(test)]
 mod tests {
+    mod native_windows;
     use super::*;
     #[cfg(unix)]
     use std::io::{BufRead, BufReader, Write};

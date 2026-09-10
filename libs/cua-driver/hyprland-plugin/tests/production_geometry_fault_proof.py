@@ -18,6 +18,7 @@ isolation, and a freshly grounded new-runtime recovery. Portable tests are
 synthetic orchestration evidence, not native or physical-hardware proof.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -32,7 +33,7 @@ from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
 from production_cancel_proof import (GROUNDING_DISPATCH_RESERVE_NS, MAX_GROUNDING_ATTEMPTS,
     MAX_GROUNDING_AGE_NS, POINTER_STAGES, PROFILE,
-    RECOVERY_STAGES, active_drags, call_drag, close_owned, grounded_snapshot,
+    RECOVERY_STAGES, active_drags, call_drag, close_owned, grounded_snapshot, validate_app_profile,
     poll_active, prepare_drag, stopped_prefix, verify_recovery_cleanup, verify_recovery_trace)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
@@ -42,6 +43,7 @@ from realapp_proof import cleanup_all, released_synthetic_input
 
 
 def validate_plan(plan):
+    validate_app_profile(plan)
     assert plan['purpose'] == 'geometry_fault' and plan['disposable'] is True
     assert len(plan['agents']) == 1, 'geometry episode owns one synthetic lane'
     spec = plan['agents'][0]
@@ -429,5 +431,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

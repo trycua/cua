@@ -22,17 +22,22 @@ class SourceContractTests(unittest.TestCase):
         self.assertIn('peer.pid != expected || peer.uid != getuid()', source)
         self.assertIn('SO_PEERCRED', source)
 
-    def test_ready_has_no_input_and_only_one_explicit_motion_is_possible(self):
+    def test_ready_has_no_input_and_only_a_bounded_explicit_gesture_is_possible(self):
         source = self.source
         self.assertNotIn('zwlr_virtual_pointer_v1_button(', source)
         self.assertEqual(source.count('zwlr_virtual_pointer_v1_motion_absolute('), 1)
         self.assertLess(source.index('event("ready",'), source.index('sscanf(command,'))
         self.assertLess(source.index('sscanf(command,'), source.index('zwlr_virtual_pointer_v1_motion_absolute('))
         motion = source.index('zwlr_virtual_pointer_v1_motion_absolute(')
-        ack = source.index('event("moved",')
+        ack = source.index('event(step == 0 ? "intermediate" : "moved",')
         self.assertIn('start_sync(display);', source[motion:ack])
         self.assertIn('if (!synced || stopped) return 1;', source[motion:ack])
         self.assertIn('failed = !closed;', source[ack:])
+        self.assertIn('step = continuous ? 0 : 1; step < 2; ++step', source)
+        self.assertIn('MOVE_FROM %u %u %u %u %c', source)
+        self.assertIn('from_x >= width || from_y >= height', source)
+        self.assertIn('xs[0] == from_x && ys[0] == from_y', source)
+        self.assertIn('xs[0] == x && ys[0] == y', source)
 
     def test_all_waits_are_bounded_and_partial_stdin_never_blocks_a_line_read(self):
         source = self.source
@@ -64,6 +69,10 @@ class BinaryPreflightTests(unittest.TestCase):
             fixture.args = SimpleNamespace(source=root, hover_fixture=binary)
             fixture.expected = expected
             fixture.check_binary()
+            fixture.args.harness_source = root
+            fixture.args.source = root / 'different-product-checkout'
+            fixture.check_binary()  # Test fixture provenance belongs to the harness.
+            fixture.args.source = root
             for field, value in (('path', str(root / 'other')), ('device', info.st_dev + 1),
                                  ('inode', info.st_ino + 1), ('uid', info.st_uid + 1),
                                  ('sha256', '0' * 64), ('source_sha256', '0' * 64)):

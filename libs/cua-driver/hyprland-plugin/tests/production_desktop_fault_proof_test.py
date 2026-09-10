@@ -90,8 +90,10 @@ def motion_trace(distance=12):
     return page
 
 
-def target_snapshot(identity):
-    return {'pid': 20, 'window_id': 200, 'window_bounds': dict(BOUNDS), 'snapshot_id': identity}
+def target_snapshot(identity, *, runtime=100, observed_ns=1_000_000):
+    return {'pid': 20, 'window_id': 200, 'window_bounds': dict(BOUNDS), 'snapshot_id': identity,
+            'proof_runtime': {'pid': runtime, 'directory': f'/synthetic/runtime-{runtime}'},
+            'proof_observation_started_ns': observed_ns, 'proof_observation_finished_ns': observed_ns + 100_000}
 
 
 def retained_evidence(kind='keymap'):
@@ -99,7 +101,7 @@ def retained_evidence(kind='keymap'):
     restored = keymap_restoration() if kind == 'keymap' else restoration()
     candidate.update(pointer_cleanup='retained_inert', prefix=motion_trace(),
                      target={'pid': 20, 'window_id': 200}, bounds=dict(BOUNDS),
-                     target_before=target_snapshot('before'), target_after=target_snapshot('after'),
+                     target_before=target_snapshot('before'), target_after=target_snapshot('after', runtime=101, observed_ns=14_000_000),
                      before=keymap_status(1), gate_status=keymap_status(1), after=keymap_status(2))
     candidate['gate_status']['input']['lanes'][0].update(
         held_button=272, drag_active=True, lease_active=True, pointer_focus=True, reserved=True)
@@ -114,7 +116,8 @@ def retained_evidence(kind='keymap'):
         refused = candidate['wrong_layout']
         refused.update(pointer_cleanup='retained_inert', lane=1,
                        target=dict(candidate['target']), bounds=dict(BOUNDS),
-                       snapshot=target_snapshot('refusal-before'), after_snapshot=target_snapshot('refusal-after'),
+                       snapshot=target_snapshot('refusal-before', runtime=103, observed_ns=10_200_000),
+                       after_snapshot=target_snapshot('refusal-after', runtime=101, observed_ns=10_700_000),
                        before=deepcopy(candidate['after']), after=deepcopy(candidate['after']),
                        trace_before=deepcopy(boundary), trace_after=deepcopy(boundary))
     else:
@@ -176,7 +179,8 @@ class RetainedPointerTests(unittest.TestCase):
                 stack.enter_context(patch.object(proof, 'production_status', side_effect=[before, candidate['after']]))
                 stack.enter_context(patch.object(proof, 'app_process_identity'))
                 stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=[
-                    {**target_snapshot('refusal-before'), 'proof_image': '/synthetic/image'}, target_snapshot('refusal-after')]))
+                    {**target_snapshot('refusal-before', runtime=103, observed_ns=10_200_000), 'proof_image': '/synthetic/image'},
+                    target_snapshot('refusal-after', runtime=101, observed_ns=10_700_000)]))
                 stack.enter_context(patch.object(proof.pointer_grounding, 'read_pixels', return_value=[]))
                 stack.enter_context(patch.object(proof.pointer_grounding, 'action', return_value=({'x': 20, 'y': 20}, {})))
                 stack.enter_context(patch.object(proof, 'keymap_options', return_value=options(False)))
@@ -274,8 +278,44 @@ class RetainedPointerTests(unittest.TestCase):
                         proof.verify_fault(boundary, candidate, restored, action())
             boundary, candidate, restored = retained_evidence(kind)
             candidate['target_after']['snapshot_id'] = candidate['target_before']['snapshot_id']
+            self.assertEqual(proof.verify_fault(boundary, candidate, restored, action())['result'], 'verified')
+            candidate['target_after']['proof_runtime'] = deepcopy(candidate['target_before']['proof_runtime'])
             with self.assertRaisesRegex(AssertionError, 'reused'):
                 proof.verify_fault(boundary, candidate, restored, action())
+
+    def test_refusal_snapshot_ids_are_scoped_to_the_observer_and_require_new_observations(self):
+        for same_runtime in (False, True):
+            for same_id in (False, True):
+                _, candidate, _ = retained_evidence()
+                refusal = candidate['wrong_layout']
+                if same_runtime:
+                    refusal['after_snapshot']['proof_runtime'] = deepcopy(refusal['snapshot']['proof_runtime'])
+                if same_id:
+                    refusal['after_snapshot']['snapshot_id'] = refusal['snapshot']['snapshot_id']
+                with self.subTest(same_runtime=same_runtime, same_id=same_id):
+                    if same_runtime and same_id:
+                        with self.assertRaisesRegex(AssertionError, 'reused'):
+                            proof.verify_layout_refusal(refusal)
+                    else:
+                        self.assertEqual(proof.verify_layout_refusal(refusal)['result'], 'verified')
+
+    def test_cross_runtime_counter_collision_cannot_hide_stale_or_invalid_timing(self):
+        for key, value in (('proof_observation_started_ns', None), ('proof_observation_started_ns', True),
+                           ('proof_observation_started_ns', -1), ('proof_observation_started_ns', 1_000_000),
+                           ('proof_observation_started_ns', 1_050_000),
+                           ('proof_observation_finished_ns', 13_000_000), ('proof_runtime', {}),
+                           ('proof_runtime', {'pid': True}), ('proof_runtime', {'pid': 0})):
+            boundary, candidate, restored = retained_evidence()
+            candidate['target_after']['snapshot_id'] = candidate['target_before']['snapshot_id']
+            candidate['target_after'][key] = value
+            with self.subTest(key=key, value=value), self.assertRaises(AssertionError):
+                proof.verify_fault(boundary, candidate, restored, action())
+        _, candidate, _ = retained_evidence()
+        refusal = candidate['wrong_layout']
+        refusal['after_snapshot']['snapshot_id'] = refusal['snapshot']['snapshot_id']
+        refusal['after_snapshot']['proof_observation_started_ns'] = refusal['snapshot']['proof_observation_started_ns']
+        with self.assertRaisesRegex(AssertionError, 'out-of-order'):
+            proof.verify_layout_refusal(refusal)
 
     def test_refusal_has_no_synthetic_events_even_with_unchanged_status(self):
         for event in ('pointer_enter', 'pointer_leave', 'pointer_motion', 'pointer_button',
@@ -1057,7 +1097,7 @@ class RunnerTests(unittest.TestCase):
                 stack.enter_context(patch.object(proof, 'DirectMCP', side_effect=[agent, observer, refused, fresh] if kind == 'keymap' else [agent, observer, fresh]))
                 def snapshot(*_args, **_kwargs):
                     order.append('snapshot')
-                    return target_snapshot('snapshot-' + str(len(order)))
+                    return target_snapshot('snapshot-' + str(len(order)), runtime=101, observed_ns=14_000_000)
                 stack.enter_context(patch.object(proof, 'grounded_snapshot', side_effect=snapshot))
                 stack.enter_context(patch.object(proof, 'prepare_drag', return_value={'snapshot': target_snapshot('prepared')}))
                 stack.enter_context(patch.object(proof, 'production_status', return_value=restored['status']))

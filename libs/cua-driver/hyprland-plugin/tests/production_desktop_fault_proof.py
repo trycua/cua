@@ -634,7 +634,15 @@ def verify_target_snapshots(target, bounds, before, after):
                    for key in ('pid', 'window_id')), 'retained hover target identity changed or missing'
         assert snapshot['window_bounds'] == bounds, 'retained hover target geometry changed'
         assert isinstance(snapshot.get('snapshot_id'), str) and snapshot['snapshot_id'], 'missing target snapshot identity'
-    assert before['snapshot_id'] != after['snapshot_id'], 'reused target snapshot'
+        runtime = snapshot.get('proof_runtime', {})
+        assert type(runtime.get('pid')) is int and runtime['pid'] > 0, 'missing observation runtime'
+    # Snapshot counters belong to the observing Driver process, not the app.
+    assert (before['proof_runtime']['pid'], before['snapshot_id']) != \
+           (after['proof_runtime']['pid'], after['snapshot_id']), 'reused target snapshot'
+    times = [snapshot.get(key) for snapshot in (before, after)
+             for key in ('proof_observation_started_ns', 'proof_observation_finished_ns')]
+    assert all(type(value) is int and value >= 0 for value in times), 'invalid observation timestamp'
+    assert times == sorted(times) and times[0] < times[2], 'stale or out-of-order observation'
 
 
 def verify_fault(boundary, record, restoration, action):

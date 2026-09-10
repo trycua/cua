@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.26.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.25.0...cua-driver-rs-v0.26.0) (2026-09-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* **cua-driver:** ClickInput now requires target, position, and delivery_mode; click returns ActionResult directly and raises typed tool errors for refusals.
+
+### Features
+
+* **cua-driver:** carry typed envelopes through opt-in MCP streams ([#3692](https://github.com/trycua/cua/issues/3692)) ([1138b9b](https://github.com/trycua/cua/commit/1138b9bd1ed9858d7866259e38451e79af62c8df))
+* **cua-driver:** expose typed native-window SDK flow ([#3683](https://github.com/trycua/cua/issues/3683)) ([75b04aa](https://github.com/trycua/cua/commit/75b04aac03ed6cb1e08c41b2384595e5c5ab2d9f))
+
+
+### Bug Fixes
+
+* **cua-driver:** admit typed remote window observation ([#3695](https://github.com/trycua/cua/issues/3695)) ([e08829b](https://github.com/trycua/cua/commit/e08829b8e5b53c69e83f256541b660024e0e71a9))
+
 ## [0.25.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.24.0...cua-driver-rs-v0.25.0) (2026-09-09)
 
 

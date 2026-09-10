@@ -52,6 +52,24 @@ def observation(events=b''):
 
 
 class ObserverAnalysisTests(unittest.TestCase):
+    def test_discarded_buffer_release_requires_an_exact_observed_lifetime(self):
+        created = wire(' -> wl_shm_pool#58.create_buffer(new id wl_buffer#59, 0, 466, 249, 1864, 0)')
+        destroyed = wire(' -> wl_buffer#59.destroy()')
+        discarded = b'[02:42:17.463629] discarded [unknown]#59.[event 0](0 fd, 8 byte)\n'
+        parsed = wire_rows(created + destroyed + discarded)
+        self.assertEqual(parsed[-1], {'out': False, 'interface': 'wl_buffer', 'object': 59,
+                                     'event': 'discarded_release', 'arguments': '0 fd, 8 byte'})
+        for data in (discarded, created + discarded, destroyed + discarded,
+                     created + destroyed + discarded + discarded,
+                     created + destroyed + wire('wl_display#1.delete_id(59)') + discarded,
+                     created + destroyed + wire(' -> wl_seat#4.get_pointer(new id wl_pointer#59)') + discarded,
+                     created.replace(b'wl_buffer', b'wl_pointer') + destroyed + discarded,
+                     created + destroyed + discarded.replace(b'event 0', b'event 1'),
+                     created + destroyed + discarded.replace(b'0 fd', b'1 fd'),
+                     created + destroyed + discarded.replace(b'8 byte', b'12 byte')):
+            with self.subTest(data=data), self.assertRaisesRegex(AssertionError, 'unparseable'):
+                wire_rows(data)
+
     def test_native_clock_timestamps_preserve_wire_event_fields(self):
         data = (b'[02:42:49.666527] {Default Queue}  -> xdg_wm_base#42.pong(1337)\n'
                 b'[02:42:51.166558] {Default Queue} xdg_wm_base#42.ping(1337)\n')

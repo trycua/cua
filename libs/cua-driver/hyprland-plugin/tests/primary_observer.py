@@ -16,18 +16,43 @@ MAX_BYTES = 32 * 1024 * 1024
 MAX_RECORDS = 100000
 MAX_GAP_NS = 1_000_000_000
 MAX_INTERVAL_NS = 60_000_000_000
-WIRE = re.compile(r'^\[\s*(\d+\.\d+|(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]+)\]'
+TIMESTAMP = r'\d+\.\d+|(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]+'
+WIRE = re.compile(r'^\[\s*(' + TIMESTAMP + r')\]'
                   r'\s*(?:\{[^}]+\}\s*)?(?P<out>->\s*)?'
                   r'(?P<interface>\w+)[#@](?P<object>\d+)\.(?P<event>\w+)\((?P<arguments>.*)\)$')
+DISCARDED_BUFFER = re.compile(r'^\[\s*(?:' + TIMESTAMP + r')\] discarded \[unknown\][#@](\d+)\.\[event 0\]\(0 fd, 8 byte\)$')
 
 
 def wire_rows(data):
     assert len(data) <= MAX_BYTES and (not data or data.endswith(b'\n')), 'incomplete or oversized wire log'
-    rows = []
+    rows, objects, destroyed_buffers = [], {}, set()
     for line in data.decode('utf-8').splitlines():
         match = WIRE.fullmatch(line)
+        if not match:
+            discarded = DISCARDED_BUFFER.fullmatch(line)
+            assert discarded and int(discarded[1]) in destroyed_buffers, 'unparseable Wayland wire record'
+            # libwayland labels a queued release unknown after GTK destroyed
+            # its buffer proxy. Accept only the fully observed buffer lifetime;
+            # an unknown, reused, deleted or input object still fails closed.
+            obj = int(discarded[1])
+            destroyed_buffers.remove(obj)
+            rows.append({'out': False, 'interface': 'wl_buffer', 'object': obj,
+                         'event': 'discarded_release', 'arguments': '0 fd, 8 byte'})
+            continue
         assert match, 'unparseable Wayland wire record'
-        rows.append({**match.groupdict(), 'object': int(match['object']), 'out': match['out'] is not None})
+        row = {**match.groupdict(), 'object': int(match['object']), 'out': match['out'] is not None}
+        for interface, identifier in re.findall(r'new id (\w+)[#@](\d+)', row['arguments']):
+            obj = int(identifier)
+            objects[obj] = interface
+            destroyed_buffers.discard(obj)
+        if row['out'] and row['interface'] == 'wl_buffer' and row['event'] == 'destroy':
+            if objects.get(row['object']) == 'wl_buffer':
+                destroyed_buffers.add(row['object'])
+        if not row['out'] and row['interface'] == 'wl_display' and row['event'] == 'delete_id':
+            obj = int(row['arguments'])
+            objects.pop(obj, None)
+            destroyed_buffers.discard(obj)
+        rows.append(row)
     assert len(rows) <= MAX_RECORDS, 'wire event limit exceeded'
     return rows
 

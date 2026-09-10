@@ -7,42 +7,69 @@ permissions:
   contents: read
 
 jobs:
-  plan:
+  changes:
     name: Select Native Documentation Checks
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      matrix: ${{ steps.scope.outputs.matrix }}
+      targets: ${{ github.event.pull_request.changed_files > 3000 && '["linux","macos","windows","lume"]' || steps.filter.outputs.changes }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad
+        id: filter
         with:
-          fetch-depth: 0
-          persist-credentials: false
-      - uses: actions/setup-node@v4
-        with:
-          node-version: "20"
-      - uses: pnpm/action-setup@v4
-      - name: Install docs dependencies
-        run: pnpm --dir docs install --frozen-lockfile
-      - name: Test generator routing
-        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
-      - name: Select native jobs
-        id: scope
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          git diff --name-only --no-renames -z "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files"
-          MATRIX=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files" --native-matrix)
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          filters: |
+            linux:
+              - &shared
+                - '.github/workflows/ci-check-docs.yml'
+                - '.gitattributes'
+                - 'package.json'
+                - 'pnpm-workspace.yaml'
+                - 'docs/package.json'
+                - 'docs/pnpm-lock.yaml'
+                - 'scripts/docs-generators/runner.ts'
+                - 'scripts/docs-generators/config.json'
+              - &driver
+                - 'libs/cua-driver/rust/crates/!(platform-linux|platform-macos|platform-windows)/**'
+                - 'libs/cua-driver/rust/*.{toml,lock}'
+                - 'libs/cua-driver/rust/.cargo/**'
+                - 'libs/cua-driver/rust/rust-toolchain*'
+                - '.cargo/**'
+                - 'rust-toolchain*'
+                - 'scripts/docs-generators/cua-driver*.ts'
+                - 'docs/content/docs/reference/cua-driver/cli-reference.mdx'
+              - 'libs/cua-driver/rust/crates/platform-linux/**'
+              - 'docs/content/docs/reference/cua-driver/mcp-tools-linux.mdx'
+            macos:
+              - *shared
+              - *driver
+              - 'libs/cua-driver/rust/crates/platform-macos/**'
+              - 'docs/content/docs/reference/cua-driver/mcp-tools.mdx'
+            windows:
+              - *shared
+              - *driver
+              - 'libs/cua-driver/rust/crates/platform-windows/**'
+              - 'docs/content/docs/reference/cua-driver/mcp-tools-windows.mdx'
+            lume:
+              - *shared
+              - 'libs/lume/src/**'
+              - 'libs/lume/Package.swift'
+              - 'libs/lume/Package.resolved'
+              - 'scripts/docs-generators/lume*.ts'
+              - 'docs/content/docs/reference/lume/{cli-reference,http-api}.mdx'
 
   native-reference:
-    name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
-    needs: plan
-    if: needs.plan.outputs.matrix != '[]'
+    name: Reference / ${{ matrix.target == 'lume' && 'lume' || 'cua-driver' }} / ${{ matrix.target == 'lume' && 'macos' || matrix.target }}
+    needs: changes
+    if: needs.changes.outputs.targets != '[]'
     strategy:
       fail-fast: false
       matrix:
-        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
-    runs-on: ${{ matrix.os }}
+        target: ${{ fromJSON(needs.changes.outputs.targets) }}
+    runs-on: ${{ matrix.target == 'linux' && 'ubuntu-latest' || matrix.target == 'windows' && 'windows-latest' || 'macos-latest' }}
+    env:
+      LIBRARY: ${{ matrix.target == 'lume' && 'lume' || 'cua-driver' }}
     defaults:
       run:
         shell: bash
@@ -57,42 +84,44 @@ jobs:
       - uses: pnpm/action-setup@v4
       - name: Install docs dependencies
         run: pnpm --dir docs install --frozen-lockfile
-      - name: Test generator ownership
-        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
+      - name: Test generator routing and ownership
+        run: |
+          node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
+          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
       - name: Install Linux build dependencies
-        if: matrix.platform == 'linux'
+        if: matrix.target == 'linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Check generated reference
-        if: matrix.platform != 'windows'
-        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library ${{ matrix.library }} --check
+        if: matrix.target != 'windows'
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library "$LIBRARY" --check
       - name: Check generated reference in PowerShell
-        if: matrix.platform == 'windows'
+        if: matrix.target == 'windows'
         shell: pwsh
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
       - name: Verify docs extraction preserves policy-filtered discovery
-        if: matrix.library == 'cua-driver'
+        if: matrix.target != 'lume'
         run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts
 
   check-docs-sync:
     name: Check Documentation Sync
     if: always()
-    needs: [plan, native-reference]
+    needs: [changes, native-reference]
     runs-on: ubuntu-latest
     steps:
       - name: Require native checks to pass
         env:
-          PLAN_RESULT: ${{ needs.plan.result }}
-          MATRIX: ${{ needs.plan.outputs.matrix }}
+          FILTER_RESULT: ${{ needs.changes.result }}
+          TARGETS: ${{ needs.changes.outputs.targets }}
           NATIVE_RESULT: ${{ needs.native-reference.result }}
         run: |
-          test "$PLAN_RESULT" = success
-          if [[ "$MATRIX" == '[]' ]]; then
+          test "$FILTER_RESULT" = success
+          if [[ "$TARGETS" == '[]' ]]; then
             test "$NATIVE_RESULT" = skipped
           else
-            test -n "$MATRIX"
+            test -n "$TARGETS"
             test "$NATIVE_RESULT" = success
           fi

@@ -9,10 +9,9 @@
       "docsOutputPath": "docs/content/docs/reference/cua-driver",
       "generatorScript": "scripts/docs-generators/cua-driver.ts",
       "watchPaths": [
-        "libs/cua-driver/rust/**",
-        ".cargo/**",
-        "rust-toolchain*",
-        "scripts/docs-generators/cua-driver*.ts",
+        "libs/cua-driver/rust/crates/**/*.rs",
+        "libs/cua-driver/rust/Cargo.toml",
+        "libs/cua-driver/rust/Cargo.lock",
         "scripts/docs-generators/cua-driver-policy.test.ts"
       ],
       "buildCommand": "cargo build -p cua-driver --release",
@@ -53,8 +52,6 @@
       "docsOutputPath": "docs/content/docs/reference/lume",
       "generatorScript": "scripts/docs-generators/lume.ts",
       "watchPaths": [
-        "libs/lume/Package.swift",
-        "libs/lume/Package.resolved",
         "libs/lume/src/Commands/**/*.swift",
         "libs/lume/src/Server/**/*.swift",
         "libs/lume/src/Utils/CommandDocExtractor.swift",

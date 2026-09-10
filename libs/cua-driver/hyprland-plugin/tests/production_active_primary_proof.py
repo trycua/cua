@@ -15,6 +15,11 @@ Keep the raw transition trace and its canonical isolation failures. Continuous
 isolation across setup/transition is UNPROVEN. Only the distinct settled
 recovery action has a strict isolation claim. No replay of unknown/partial work.
 Portable tests establish preparation only, never native certification.
+
+Optional fault.min_motion_px requires continuously held surface-local motion
+before takeover. After a partial response, Driver drops its input connection;
+the immediate cancellation sample may precede that EOF, but the settled gate
+requires every reservation released before recovery. Capacity is not authority.
 """
 import argparse
 from production_app_smoke import add_provenance_arguments
@@ -40,12 +45,13 @@ from production_cancel_proof import (MAX_GROUNDING_AGE_NS, PROFILE, active_drags
     verify_fresh_observation, verify_recovery_cleanup, verify_recovery_trace)
 from production_lock_refusal_proof import click_once, verify_runtimes
 from production_mcp import DirectMCP, stop_process
+from production_desktop_fault_proof import poll_fault_active, validate_min_motion
 import production_pointer_grounding as pointer_grounding
 from production_primary_conflict_proof import (ExactDesktop, clear_status,
     validate_plan as settled_plan)
 from production_realapp_proof import (app_process_identity, capacity_lane,
     check_response, provenance, trace_interval)
-from production_session_fault_proof import lanes
+from production_session_fault_proof import lanes, verify_held_gate
 from realapp_proof import cleanup_all, released_synthetic_input
 
 
@@ -76,7 +82,10 @@ def verify_transition_end(boundary, stopped):
 
 def validate_plan(plan):
     assert plan['purpose'] == 'active_primary' and plan['case'] == 'active_drag'
-    assert plan['fault'] == {'kind': 'primary_hover'}
+    assert {'kind'} <= set(plan['fault']) <= {'kind', 'min_motion_px'}
+    assert plan['fault']['kind'] == 'primary_hover'
+    if 'min_motion_px' in plan['fault']:
+        validate_min_motion(plan['fault']['min_motion_px'])
     stages = ['scroll_down', 'scroll_up'] if plan.get('app_profile') == 'inkscape-only' else ['click_a1', 'click_b2']
     assert plan['recovery'] == {'pointer_stages': stages}
     candidate = {k: v for k, v in plan.items() if k != 'fault'}
@@ -117,14 +126,34 @@ def cancelled_status(before, after, lane):
         if key != lane - 1:
             assert old[key] == new[key], 'sibling lane changed'
         else:
-            # Unlike lock, primary_changed keeps this runtime's reservation.
-            assert new[key].get('reserved') is True, 'primary cancellation lost its reservation'
+            # Compositor cancellation keeps capacity until Driver consumes the
+            # partial response and drops its connection. Either side of that
+            # EOF is a valid immediate sample, never renewed input authority.
+            assert type(new[key].get('reserved')) is bool, 'invalid cancellation reservation'
+
+
+def verify_terminal_reservation(before, after, lane):
+    cancelled_status(before, after, lane)
+    assert all(row['reserved'] is False for row in lanes(after).values()), 'terminal connection retained capacity'
+    return {'result': 'verified', 'unreserved': True, 'input_authority': False}
+
+
+def await_terminal_reservation(desktop, before, lane):
+    def sample():
+        current = desktop.status()
+        cancelled_status(before, current, lane)
+        return current if all(row['reserved'] is False for row in lanes(current).values()) else None
+    current = wait_for(sample, timeout=1)
+    return {'status': current, 'verification': verify_terminal_reservation(before, current, lane),
+            'observed_ns': time.monotonic_ns()}
 
 
 def verify_cancelled(boundary, record, action, target):
     prefix, lane = record['prefix'], record['lane']
     assert record['result'] == 'observed' and record['target'] == target
     assert set(active_drags(prefix)) == {lane}
+    if 'min_motion_px' in record:
+        verify_held_gate(record)
     assert all(row[5] in (0, lane) for row in prefix['events']), 'unowned synthetic input'
     assert all(row[2] in ('agent_approved', 'agent_admitted', 'agent_drag_start',
                          'pointer_enter', 'pointer_motion', 'pointer_button')
@@ -254,6 +283,8 @@ class HoverFixture:
             assert 0 <= requested - self.record['status_started_ns'] <= 250_000_000, 'stale held status'
         self.record.update(requested_ns=requested, point=point, target=target,
                            prepared_ns=prepared_ns, deadline_ns=requested + HOVER_MS * 1_000_000)
+        if pending is not None and 'min_motion_px' in self.record:
+            verify_held_gate(self.record)
         self.sent = True  # Lost ack still means the single command may have landed.
         self.child.stdin.write(f'MOVE {point[0]} {point[1]}\n'.encode('ascii'))
         self.child.stdin.flush()
@@ -267,14 +298,23 @@ class HoverFixture:
 
     def inject(self, trace, initial, pending, prepared):
         self.guard()
-        first, _ = poll_active(trace, initial, None, [pending], timeout=1)
+        motion = self.desktop.plan['fault'].get('min_motion_px')
+        if motion is None:
+            first, _ = poll_active(trace, initial, None, [pending], timeout=1)
+        else:
+            first, _ = poll_fault_active(trace, initial, pending, motion, timeout=1)
         started = time.monotonic_ns()
         gate = json.loads(_hypr(self.desktop.instance, '-j', 'cua:status'))
-        page, active = poll_active(trace, first, None, [pending], timeout=.25)
+        if motion is None:
+            page, active = poll_active(trace, first, None, [pending], timeout=.25)
+        else:
+            page, active = poll_fault_active(trace, first, pending, motion, timeout=.25)
         lane = next(iter(active))
         held_status(gate, lane)
         assert analyze(stopped_prefix(page))['result'] == 'passed'
-        self.record.update(prefix=page, lane=lane, gate_status=gate, status_started_ns=started)
+        self.record.update(gate_first=first, prefix=page, lane=lane, gate_status=gate, status_started_ns=started)
+        if motion is not None:
+            self.record['min_motion_px'] = motion
         bounds = prepared['snapshot']['window_bounds']
         point = [bounds['x'] + prepared['arguments']['from_x'], bounds['y'] + prepared['arguments']['from_y']]
         self.move(point, prepared['target'], prepared['prepared_ns'], pending=pending)
@@ -346,7 +386,8 @@ def run(args):
         origin = provenance(args, plan)
         for name in (Path(__file__).name, 'production_active_primary_proof_test.py',
                      'primary_hover_fixture.c', 'primary_hover_fixture_test.py',
-                     'production_active_lock_proof.py', 'production_primary_conflict_proof.py'):
+                     'production_active_lock_proof.py', 'production_primary_conflict_proof.py',
+                     'production_desktop_fault_proof.py', 'production_session_fault_proof.py'):
             path = Path(__file__).with_name(name)
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         origin['hover_fixture'] = plan['hover_fixture']
@@ -374,6 +415,8 @@ def run(args):
         future = pool.submit(drag_once, actor, spec, prepared, action, save)
         fixture.inject(trace, initial, future, prepared)
         future.result(timeout=3)
+        report['connection_retirement'] = await_terminal_reservation(desktop, fixture.record['gate_status'], fixture.record['lane'])
+        save('connection-retirement.json', report['connection_retirement'])
         boundary = trace.collect()
         save('cancellation-boundary.json', boundary)
         save('cancellation-transition-analysis.json', transition_evidence(boundary))

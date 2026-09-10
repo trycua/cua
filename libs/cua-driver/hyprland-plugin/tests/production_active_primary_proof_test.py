@@ -170,11 +170,11 @@ class OracleTests(unittest.TestCase):
             with self.subTest(section=section, key=key), self.assertRaises(AssertionError):
                 self.verify(fault=fault)
 
-    def test_primary_cancel_preserves_generation_reservation_and_entire_sibling(self):
+    def test_primary_cancel_preserves_generation_and_entire_sibling(self):
         for section, key, value, lane in (
             ('gate_status', 'held_button', 0, 0), ('gate_status', 'held_keys', 1, 0),
             ('after', 'held_button', 272, 0), ('after', 'held_keys', 1, 0),
-            ('after', 'reserved', False, 0), ('after', 'pointer_focus', True, 0),
+            ('after', 'reserved', None, 0), ('after', 'pointer_focus', True, 0),
             ('after', 'desktop_generation', 2, 0), ('after', 'epoch', 'changed', 0),
             ('after', 'dispatches', 1, 0), ('after', 'reserved', True, 1),
             ('after', 'desktop_generation', 2, 1)):
@@ -182,6 +182,51 @@ class OracleTests(unittest.TestCase):
             fault[section]['input']['lanes'][lane][key] = value
             with self.subTest(section=section, key=key, lane=lane), self.assertRaises(AssertionError):
                 self.verify(fault=fault)
+
+    def test_immediate_cancel_allows_eof_but_terminal_gate_requires_unreserved(self):
+        before = status(1, held=True)
+        for reserved in (True, False):
+            after = after_status()
+            after['input']['lanes'][0]['reserved'] = reserved
+            proof.cancelled_status(before, after, 1)
+            if reserved:
+                with self.assertRaisesRegex(AssertionError, 'retained capacity'):
+                    proof.verify_terminal_reservation(before, after, 1)
+            else:
+                self.assertEqual(proof.verify_terminal_reservation(before, after, 1)['result'], 'verified')
+        for field, value in (('reserved', 0), ('reserved', 1), ('pointer_focus', True),
+                             ('held_button', 272), ('lease_active', True)):
+            after = status(1)
+            after['input']['lanes'][0][field] = value
+            with self.subTest(field=field, value=value), self.assertRaises(AssertionError):
+                proof.verify_terminal_reservation(before, after, 1)
+
+    def test_terminal_wait_is_bounded_and_checks_every_observed_state(self):
+        desktop = Mock()
+        desktop.status.side_effect = [after_status(), status(1)]
+        result = proof.await_terminal_reservation(desktop, status(1, held=True), 1)
+        self.assertTrue(result['verification']['unreserved'])
+        self.assertEqual(desktop.status.call_count, 2)
+        with patch.object(proof, 'wait_for', side_effect=RuntimeError('timeout')) as wait:
+            with self.assertRaisesRegex(RuntimeError, 'timeout'):
+                proof.await_terminal_reservation(Mock(), status(1, held=True), 1)
+            self.assertEqual(wait.call_args.kwargs['timeout'], 1)
+        broken = status(1)
+        broken['input']['lanes'][1]['reserved'] = True
+        with self.assertRaises(AssertionError):
+            proof.await_terminal_reservation(Mock(status=Mock(return_value=broken)), status(1, held=True), 1)
+
+    def test_optional_motion_gate_rejects_invalid_and_unrecorded_displacement(self):
+        candidate = plan()
+        candidate['fault']['min_motion_px'] = 12
+        proof.validate_plan(candidate)
+        for value in (True, 0, -1, float('inf'), float('nan'), '12'):
+            with self.subTest(value=value), self.assertRaises(AssertionError):
+                proof.validate_plan({**candidate, 'fault': {'kind': 'primary_hover', 'min_motion_px': value}})
+        fault = record()
+        fault.update(min_motion_px=12, gate_first=deepcopy(fault['prefix']))
+        with self.assertRaises(AssertionError):
+            self.verify(fault=fault)
 
     def test_recovery_chooses_effective_stage_from_current_selection(self):
         before = {'snapshot_id': 'new-after-cancellation'}
@@ -330,6 +375,39 @@ class FixtureTests(unittest.TestCase):
                     with self.assertRaises(AssertionError):
                         fixture.inject(Mock(), trace([ACTIVE[0]]), pending, prepared)
                     fixture.move.assert_not_called()
+
+    def test_injection_uses_optional_motion_gate_on_both_sides_of_status(self):
+        fixture = self.fixture()
+        fixture.desktop.plan['fault']['min_motion_px'] = 12
+        fixture.move = Mock()
+        prepared = {'snapshot': {'window_bounds': {'x': 10, 'y': 20}},
+                    'arguments': {'from_x': 90, 'from_y': 80},
+                    'target': plan()['agents'][0]['target'], 'prepared_ns': 1}
+        pending = Mock(done=Mock(return_value=False))
+        page = trace(ACTIVE)
+        with patch.object(proof, 'poll_fault_active', return_value=(page, {1: 2_000_000})) as gate, \
+             patch.object(proof, 'poll_active') as legacy, \
+             patch.object(proof, '_hypr', side_effect=[json.dumps(status(1, held=True)), json.dumps(status(1))]), \
+             patch.object(proof.time, 'monotonic_ns', side_effect=[5_000_000, 12_000_000]):
+            fixture.inject(Mock(), trace([ACTIVE[0]]), pending, prepared)
+        self.assertEqual(gate.call_count, 2)
+        self.assertEqual([call.args[3] for call in gate.call_args_list], [12, 12])
+        self.assertEqual([call.kwargs['timeout'] for call in gate.call_args_list], [1, .25])
+        legacy.assert_not_called()
+        self.assertEqual(fixture.record['min_motion_px'], 12)
+        self.assertEqual(fixture.record['gate_first'], page)
+
+    def test_motion_gate_revalidated_before_sending_fixture_move(self):
+        fixture = self.fixture()
+        fixture.record['min_motion_px'] = 12
+        pending = Mock(done=Mock(return_value=False))
+        with patch.object(proof.time, 'monotonic_ns', return_value=6_000_000), \
+             patch.object(proof, 'verify_held_gate', side_effect=AssertionError('motion insufficient')) as gate:
+            with self.assertRaisesRegex(AssertionError, 'motion insufficient'):
+                fixture.move([100, 100], plan()['agents'][0]['target'], 1, pending=pending)
+        gate.assert_called_once_with(fixture.record)
+        self.assertEqual(fixture.child.stdin.getvalue(), b'')
+        self.assertFalse(fixture.sent)
 
     def test_close_checks_graceful_exit_and_finished_ack_without_input(self):
         fixture = self.fixture()

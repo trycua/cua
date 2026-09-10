@@ -2201,6 +2201,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
         };
 
         conn.send_event(false, window, EventMask::KEY_PRESS, &press)?;
+        // Start the hold interval after sending the press, not while it is buffered.
+        conn.flush()?;
         sleep(Duration::from_millis(KEY_DELAY_MS));
         conn.send_event(false, window, EventMask::KEY_RELEASE, &release)?;
         conn.flush()?;
@@ -2208,6 +2210,8 @@ pub fn send_type_text_with_delay(xid: u64, text: &str, inter_char_ms: u64) -> Re
             sleep(Duration::from_millis(inter_char_ms));
         }
     }
+    // Deliver the final release before this short-lived connection closes.
+    conn.get_input_focus()?.reply()?;
     Ok(())
 }
 
@@ -2331,6 +2335,8 @@ pub fn send_key_xtest(key: &str, modifiers: &[&str]) -> Result<()> {
         conn.xtest_fake_input(KEY_PRESS_EVENT, sk, 0, x11rb::NONE, 0, 0, 0)?;
     }
     conn.xtest_fake_input(KEY_PRESS_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
+    // Flush modifiers and key-down before measuring the delivered hold interval.
+    conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     conn.xtest_fake_input(KEY_RELEASE_EVENT, keycode, 0, x11rb::NONE, 0, 0, 0)?;
     if let Some(sk) = auto_shift_kc {
@@ -2633,6 +2639,8 @@ fn send_key_to_target(
     }
     let state = KeyButMask::from(state_bits);
     send_key_event(KEY_PRESS_EVENT, keycode, state, EventMask::KEY_PRESS)?;
+    // Otherwise X11 receives both transitions together after the sleep.
+    conn.flush()?;
     sleep(Duration::from_millis(KEY_DELAY_MS));
     send_key_event(KEY_RELEASE_EVENT, keycode, state, EventMask::KEY_RELEASE)?;
     for &(modifier_keycode, modifier_mask) in modifier_keycodes.iter().rev() {
@@ -2644,7 +2652,8 @@ fn send_key_to_target(
         )?;
         state_bits &= !u16::from(modifier_mask);
     }
-    conn.flush()?;
+    // Deliver releases before closing the connection, even without a key remap.
+    conn.get_input_focus()?.reply()?;
 
     // If we borrowed a spare keycode for this keysym, give the target client a
     // moment to translate the synthetic event under the temporary mapping before
@@ -2653,7 +2662,6 @@ fn send_key_to_target(
     // our queued requests have been processed) plus a short settle keeps that
     // race closed; the guard then reinstates the original keysyms on drop.
     if remap_guard.is_some() || !remap_guards.is_empty() {
-        let _ = conn.get_input_focus()?.reply();
         sleep(Duration::from_millis(KEY_DELAY_MS));
     }
     drop(remap_guard);

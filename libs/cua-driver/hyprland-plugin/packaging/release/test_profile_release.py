@@ -19,6 +19,10 @@ HERE = Path(__file__).resolve().parent
 
 
 class ProfileTest(unittest.TestCase):
+    schema = 1
+    source_revision = verify.SOURCE_REVISION
+    driver_version = verify.DRIVER_VERSION
+
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory(prefix="cua-profile-test-")
         self.addCleanup(self.temporary.cleanup)
@@ -27,17 +31,18 @@ class ProfileTest(unittest.TestCase):
         self.files = {"CMakeLists.txt": b"project(cua_hyprland_plugin VERSION 0.1.0 LANGUAGES CXX)\n",
                       "LICENSE.md": b"Synthetic license\n", "verify.py": b"raise SystemExit('historical verifier must never execute')\n",
                       "src/plugin.cpp": b"// synthetic source\n"}
-        self.manifest = {"schema": 1, "source_revision": verify.SOURCE_REVISION, "driver_version": "0.24.0",
-                         "release_tag": "cua-driver-rs-v0.24.0", "plugin_version": "0.1.0", "architecture": "x86_64",
+        self.stem = f"cua-hyprland-plugin-{self.driver_version}-{self.source_revision}"
+        self.manifest = {"schema": 1, "source_revision": self.source_revision, "driver_version": self.driver_version,
+                         "release_tag": "cua-driver-rs-v" + self.driver_version, "plugin_version": "0.1.0", "architecture": "x86_64",
                          "native_certified": False, "cmake_options": verify.OPTIONS, "hyprland_version": "0.56.2",
                          "hyprland_package": "0.56.2-1", "compiler_version": "16.1.1 20260728",
                          "compiler_comment": "GCC: (GNU) 16.1.1 20260728",
                          "files": {name: verify.sha256(data) for name, data in self.files.items()}}
         self.files["SOURCE-PROVENANCE.json"] = verify.json_bytes(self.manifest)
-        self.archive = self.root / (verify.STEM + ".tar.gz")
-        self.archive.write_bytes(bundle.deterministic_archive({verify.STEM + "/" + name: data for name, data in self.files.items()}))
-        self.profile = {"schema": 1, "profile_id": "synthetic-native", "kit_version": "1.0.0", "package_release": 2,
-                        "architecture": "x86_64", "source": {"revision": verify.SOURCE_REVISION, "driver_version": "0.24.0",
+        self.archive = self.root / (self.stem + ".tar.gz")
+        self.archive.write_bytes(bundle.deterministic_archive({self.stem + "/" + name: data for name, data in self.files.items()}))
+        self.profile = {"schema": self.schema, "profile_id": "synthetic-native", "kit_version": "1.0.0", "package_release": 2,
+                        "architecture": "x86_64", "source": {"revision": self.source_revision, "driver_version": self.driver_version,
                         "archive_sha256": verify.digest(self.archive), "manifest_sha256": verify.sha256(self.files["SOURCE-PROVENANCE.json"])},
                         "hyprland": {"package_version": "0.56.2-2", "header_version": "0.56.2", "headers_sha256": "d" * 64, "sha256": "a" * 64},
                         "compiler": {"version": "16.2.1 20260810", "comment": "GCC: (GNU) 16.2.1 20260810", "sha256": "b" * 64},
@@ -73,7 +78,7 @@ class ProfileTest(unittest.TestCase):
         self.assertEqual((kit / self.archive.name).read_bytes(), self.archive.read_bytes())
         self.assertEqual((kit / "SOURCE-PROVENANCE.json").read_bytes(), self.files["SOURCE-PROVENANCE.json"])
         self.assertFalse(metadata["native_certified"])
-        self.assertEqual(metadata["source"]["revision"], verify.SOURCE_REVISION)
+        self.assertEqual(metadata["source"]["revision"], self.source_revision)
         self.assertNotEqual(metadata["source"]["revision"], metadata["tooling_revision"])
         verify.verify_kit(kit, verify.digest(kit / "KIT-PROVENANCE.json"), complete=True)
         subprocess.run(["bash", "-n", str(kit / "PKGBUILD")], check=True)
@@ -100,7 +105,7 @@ class ProfileTest(unittest.TestCase):
             verify.verify_archive(self.archive, self.profile)
 
     def test_profile_schema_and_no_silent_certification(self):
-        for field, value in (("native_certified", True), ("schema", 2), ("package_release", True), ("profile_id", "a';false"), ("architecture", "aarch64")):
+        for field, value in (("native_certified", True), ("schema", 3), ("package_release", True), ("profile_id", "a';false"), ("architecture", "aarch64")):
             candidate = copy.deepcopy(self.profile)
             candidate[field] = value
             with self.subTest(field=field), self.assertRaises(ValueError):
@@ -137,11 +142,11 @@ class ProfileTest(unittest.TestCase):
                 for name, data in self.files.items():
                     if variant == "missing" and name == "verify.py":
                         continue
-                    info = tarfile.TarInfo(verify.STEM + "/" + name)
+                    info = tarfile.TarInfo(self.stem + "/" + name)
                     info.size = len(data)
                     contents.addfile(info, io.BytesIO(data))
                 if variant != "missing":
-                    info = tarfile.TarInfo(verify.STEM + "/" + {"symlink": "link", "traversal": "../escape", "duplicate": "verify.py"}[variant])
+                    info = tarfile.TarInfo(self.stem + "/" + {"symlink": "link", "traversal": "../escape", "duplicate": "verify.py"}[variant])
                     if variant == "symlink":
                         info.type, info.linkname = tarfile.SYMTYPE, "verify.py"
                     contents.addfile(info)
@@ -189,13 +194,13 @@ exit "$result"
 
     def test_profile_lifecycle_kit_preserves_source_identity(self):
         _, kit, metadata = self.generate()
-        result = lifecycle.verify_profile_kit(kit, verify.SOURCE_REVISION, verify.DRIVER_VERSION, verify.digest(kit / "KIT-PROVENANCE.json"))
+        result = lifecycle.verify_profile_kit(kit, self.source_revision, self.driver_version, verify.digest(kit / "KIT-PROVENANCE.json"))
         self.assertEqual(result[0], self.manifest)
         self.assertEqual(result[2], self.profile)
         self.assertEqual(result[3], metadata)
         (kit / "build").mkdir()
         with self.assertRaisesRegex(ValueError, "fresh complete"):
-            lifecycle.verify_profile_kit(kit, verify.SOURCE_REVISION, verify.DRIVER_VERSION, verify.digest(kit / "KIT-PROVENANCE.json"))
+            lifecycle.verify_profile_kit(kit, self.source_revision, self.driver_version, verify.digest(kit / "KIT-PROVENANCE.json"))
 
     def test_reviewed_recipe_reconstruction_refuses_changed_recipe_and_checksums(self):
         _, kit, _ = self.generate()
@@ -205,7 +210,7 @@ exit "$result"
         sums = kit / "SHA256SUMS"
         sums.write_text(sums.read_text().replace(original, verify.digest(recipe)))
         with self.assertRaisesRegex(ValueError, "recipe differs"):
-            lifecycle.verify_profile_kit(kit, verify.SOURCE_REVISION, verify.DRIVER_VERSION, verify.digest(kit / "KIT-PROVENANCE.json"))
+            lifecycle.verify_profile_kit(kit, self.source_revision, self.driver_version, verify.digest(kit / "KIT-PROVENANCE.json"))
 
     def test_profile_package_payload_and_provenance(self):
         _, _, metadata = self.generate()
@@ -217,7 +222,7 @@ exit "$result"
                 lifecycle.BUILD: verify.json_bytes(build), lifecycle.PROFILE: verify.json_bytes(self.profile),
                 lifecycle.KIT: verify.json_bytes(metadata), lifecycle.VERIFIER: (HERE / "profile_verify.py").read_bytes()}
         names = list(data) + [".PKGINFO", ".BUILDINFO", ".MTREE"]
-        info = "pkgname = cua-hyprland-plugin\npkgver = 0.24.0-2\narch = x86_64\ndepend = hyprland=0.56.2-2\ndepend = gcc-libs=16.2.1-1\ndepend = python>=3.11\ndepend = binutils\n"
+        info = f"pkgname = cua-hyprland-plugin\npkgver = {self.driver_version}-2\narch = x86_64\ndepend = hyprland=0.56.2-2\ndepend = gcc-libs=16.2.1-1\ndepend = python>=3.11\ndepend = binutils\n"
         with mock.patch.object(lifecycle, "run", side_effect=lambda command: subprocess.CompletedProcess(command, 0, "\n".join(names) if "-tf" in command else info, "")), mock.patch.object(lifecycle.subprocess, "check_output", side_effect=lambda command: data[command[-1]]):
             self.assertEqual(lifecycle.package_payload(self.root / "package", self.manifest, self.profile, metadata), {name: verify.sha256(value) for name, value in data.items()})
             for name in (lifecycle.PROFILE, lifecycle.KIT, lifecycle.VERIFIER):
@@ -288,7 +293,7 @@ exit "$result"
                 installed.remove(root)
             elif operation[0] == "-Q":
                 code = 0 if root in installed else 1
-                output = "cua-hyprland-plugin 0.24.0-2" if code == 0 else ""
+                output = f"cua-hyprland-plugin {self.driver_version}-2" if code == 0 else ""
             return subprocess.CompletedProcess(command, code, output, "")
 
         with mock.patch.object(lifecycle, "run", side_effect=fake_pacman):
@@ -301,7 +306,81 @@ exit "$result"
                 self.assertIn(f"pkgver = {version}\n".encode(), archive.extractfile(".PKGINFO").read())
 
 
+class Schema2ProfileTest(ProfileTest):
+    schema = 2
+    source_revision = "c" * 40
+    driver_version = "0.26.0"
+
+    def test_schema1_stays_locked_to_original_source(self):
+        for field, value in (("revision", self.source_revision), ("driver_version", self.driver_version)):
+            profile = copy.deepcopy(self.profile)
+            profile["schema"] = 1
+            profile["source"].update(revision=verify.SOURCE_REVISION, driver_version=verify.DRIVER_VERSION)
+            profile["source"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "original Driver"):
+                verify.validate_profile(profile)
+
+    def test_explicit_source_identity_and_hashes_are_required(self):
+        for field, values in {
+            "revision": ["c" * 39, "C" * 40, "../source", "c" * 40 + "\n", None],
+            "driver_version": ["0.26.0-rc1", "../../other", "0.26.0';false", "0.26.0\n", None],
+            "archive_sha256": ["", "A" * 64, None], "manifest_sha256": ["", "a" * 63, None],
+        }.items():
+            for value in values:
+                profile = copy.deepcopy(self.profile)
+                profile["source"][field] = value
+                with self.subTest(field=field, value=value), self.assertRaises(ValueError):
+                    verify.source_stem(profile)
+        for field in self.profile["source"]:
+            profile = copy.deepcopy(self.profile)
+            del profile["source"][field]
+            with self.subTest(missing=field), self.assertRaises(ValueError):
+                verify.validate_profile(profile)
+
+    def test_manifest_substitution_refused_even_with_selected_digest(self):
+        changes = {"source_revision": "d" * 40, "driver_version": "0.25.0", "release_tag": "cua-driver-rs-v0.25.0",
+                   "schema": 2, "native_certified": True, "cmake_options": {**verify.OPTIONS, "CUA_HYPRLAND_INPUT_TRACE": "ON"},
+                   "plugin_version": "0.2.0", "architecture": "aarch64", "hyprland_version": "0.57.0",
+                   "hyprland_package": "0.56.2-2", "compiler_version": "16.2.1 20260810", "compiler_comment": "other"}
+        for field, value in changes.items():
+            manifest = {**self.manifest, field: value}
+            data = verify.json_bytes(manifest)
+            profile = copy.deepcopy(self.profile)
+            profile["source"]["manifest_sha256"] = verify.sha256(data)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "provenance mismatch"):
+                verify.source_manifest(data, profile)
+        for manifest in ({**self.manifest, "extra": True}, {k: v for k, v in self.manifest.items() if k != "release_tag"}):
+            data = verify.json_bytes(manifest)
+            profile["source"]["manifest_sha256"] = verify.sha256(data)
+            with self.assertRaisesRegex(ValueError, "manifest fields"):
+                verify.source_manifest(data, profile)
+
+    def test_archive_prefix_and_reviewed_digest_prevent_source_substitution(self):
+        original_digest = verify.digest(self.archive)
+        wrong = bundle.deterministic_archive({verify.STEM + "/" + name: data for name, data in self.files.items()})
+        self.archive.write_bytes(wrong)
+        with self.assertRaisesRegex(ValueError, "archive checksum"):
+            verify.verify_archive(self.archive, self.profile)
+        self.profile["source"]["archive_sha256"] = verify.digest(self.archive)
+        with self.assertRaisesRegex(ValueError, "archive member"):
+            verify.verify_archive(self.archive, self.profile)
+        self.assertNotEqual(original_digest, self.profile["source"]["archive_sha256"])
+
+    def test_recipe_and_lifecycle_bind_new_source_identity(self):
+        _, kit, _ = self.generate()
+        recipe = (kit / "PKGBUILD").read_text()
+        self.assertIn("pkgver=" + self.driver_version, recipe)
+        self.assertIn(self.stem, recipe)
+        self.assertNotIn(verify.STEM, recipe)
+        for revision, version in ((verify.SOURCE_REVISION, self.driver_version), (self.source_revision, verify.DRIVER_VERSION)):
+            with self.subTest(revision=revision, version=version), self.assertRaisesRegex(ValueError, "source revision/version"):
+                lifecycle.verify_profile_kit(kit, revision, version, verify.digest(kit / "KIT-PROVENANCE.json"))
+
+
 class NativeProfileTest(unittest.TestCase):
+    schema = ProfileTest.schema
+    source_revision = ProfileTest.source_revision
+    driver_version = ProfileTest.driver_version
     generate = ProfileTest.generate
     source = ProfileTest.source
 

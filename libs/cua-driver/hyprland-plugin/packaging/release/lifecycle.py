@@ -81,7 +81,8 @@ def verify_profile_kit(kit, revision, driver_version, kit_sha256):
     exec(compile(verifier_path.read_bytes(), str(verifier_path), "exec"), verifier.__dict__)
     profile, provenance = verifier.verify_kit(kit, kit_sha256, complete=True)
     require(revision == profile["source"]["revision"] and driver_version == profile["source"]["driver_version"], "kit source revision/version mismatch")
-    expected = set(verifier.TOOLING) | {"PROFILE.json", "KIT-PROVENANCE.json", "SOURCE-PROVENANCE.json", "PKGBUILD", verifier.STEM + ".tar.gz"}
+    stem = verifier.source_stem(profile)
+    expected = set(verifier.TOOLING) | {"PROFILE.json", "KIT-PROVENANCE.json", "SOURCE-PROVENANCE.json", "PKGBUILD", stem + ".tar.gz"}
     checksums = {}
     for line in (kit / "SHA256SUMS").read_text().splitlines():
         checksum, name = line.split("  ")
@@ -92,7 +93,7 @@ def verify_profile_kit(kit, revision, driver_version, kit_sha256):
         path = kit / name
         require(path.is_file() and not path.is_symlink() and digest(path.read_bytes()) == checksum, f"kit checksum mismatch: {name}")
     require(digest(Path(__file__).read_bytes()) == provenance["tooling_files"]["lifecycle.py"], "runner differs from reviewed kit")
-    manifest = verifier.verify_archive(kit / (verifier.STEM + ".tar.gz"), profile)
+    manifest = verifier.verify_archive(kit / (stem + ".tar.gz"), profile)
     require(verifier.source_manifest((kit / "SOURCE-PROVENANCE.json").read_bytes(), profile) == manifest, "kit historical manifest mismatch")
     return manifest, checksums, profile, provenance
 

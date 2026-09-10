@@ -13,8 +13,10 @@ import test_profile_release as fixtures
 
 
 class DownloadRecipeTest(unittest.TestCase):
+    fixture_class = fixtures.ProfileTest
+
     def setUp(self):
-        self.fixture = fixtures.ProfileTest()
+        self.fixture = self.fixture_class()
         self.fixture.setUp()
         self.addCleanup(self.fixture.doCleanups)
         self.root = self.fixture.root
@@ -50,7 +52,7 @@ class DownloadRecipeTest(unittest.TestCase):
         self.generate()
         result = self.shell("_verify_download extract")
         self.assertEqual(result.returncode, 0, result.stderr)
-        return self.srcdir / "cua-profile-kit", self.srcdir / verify.STEM
+        return self.srcdir / "cua-profile-kit", self.srcdir / self.fixture.stem
 
     def test_deterministic_export_and_unchanged_kit(self):
         original_archive = self.archive.read_bytes()
@@ -136,7 +138,7 @@ class DownloadRecipeTest(unittest.TestCase):
 
     def test_internal_hashes_provenance_and_unreviewed_code_refused(self):
         for name in ("SHA256SUMS", "PROFILE.json", "KIT-PROVENANCE.json", "SOURCE-PROVENANCE.json",
-                     "profile_verify.py", "PKGBUILD", verify.STEM + ".tar.gz"):
+                     "profile_verify.py", "PKGBUILD", self.fixture.stem + ".tar.gz"):
             candidate = dict(self.payload)
             candidate[name] += b"\n# tampered\n"
             self.rewrite(candidate, sums=name != "SHA256SUMS")
@@ -149,12 +151,12 @@ class DownloadRecipeTest(unittest.TestCase):
             self.generate()
 
     def test_source_inventory_validated_even_with_consistent_outer_hashes(self):
-        files = {verify.STEM + "/" + name: data for name, data in self.fixture.files.items()}
-        files[verify.STEM + "/extra"] = b"unexpected source"
+        files = {self.fixture.stem + "/" + name: data for name, data in self.fixture.files.items()}
+        files[self.fixture.stem + "/extra"] = b"unexpected source"
         candidate = dict(self.payload)
-        candidate[verify.STEM + ".tar.gz"] = bundle.deterministic_archive(files)
+        candidate[self.fixture.stem + ".tar.gz"] = bundle.deterministic_archive(files)
         profile = verify.read_json(candidate["PROFILE.json"])
-        profile["source"]["archive_sha256"] = verify.sha256(candidate[verify.STEM + ".tar.gz"])
+        profile["source"]["archive_sha256"] = verify.sha256(candidate[self.fixture.stem + ".tar.gz"])
         candidate["PROFILE.json"] = verify.json_bytes(profile)
         provenance = verify.read_json(candidate["KIT-PROVENANCE.json"])
         provenance["source"] = profile["source"]
@@ -169,12 +171,12 @@ class DownloadRecipeTest(unittest.TestCase):
         raw = io.BytesIO()
         with tarfile.open(fileobj=raw, mode="w:gz", format=tarfile.PAX_FORMAT) as archive:
             for name, data in self.fixture.files.items():
-                member = tarfile.TarInfo(verify.STEM + "/" + name)
+                member = tarfile.TarInfo(self.fixture.stem + "/" + name)
                 member.size = len(data)
                 member.pax_headers = {"comment": "unreviewed metadata"}
                 archive.addfile(member, io.BytesIO(data))
         candidate = dict(self.payload)
-        candidate[verify.STEM + ".tar.gz"] = raw.getvalue()
+        candidate[self.fixture.stem + ".tar.gz"] = raw.getvalue()
         profile = verify.read_json(candidate["PROFILE.json"])
         profile["source"]["archive_sha256"] = verify.sha256(raw.getvalue())
         candidate["PROFILE.json"] = verify.json_bytes(profile)
@@ -233,7 +235,7 @@ class DownloadRecipeTest(unittest.TestCase):
 
     def test_prepare_refuses_existing_symlink_destinations_before_writes(self):
         self.generate()
-        for name in ("cua-profile-kit", verify.STEM):
+        for name in ("cua-profile-kit", self.fixture.stem):
             link = self.srcdir / name
             link.symlink_to(self.startdir, target_is_directory=True)
             result = self.shell("prepare")
@@ -245,7 +247,7 @@ class DownloadRecipeTest(unittest.TestCase):
     def test_every_phase_refuses_tampered_outer_kit_and_source(self):
         kit, source = self.extract()
         targets = [self.archive, kit / "PROFILE.json", kit / "profile_verify.py", kit / "KIT-PROVENANCE.json",
-                   kit / (verify.STEM + ".tar.gz"), kit / "PKGBUILD", source / "src/plugin.cpp"]
+                   kit / (self.fixture.stem + ".tar.gz"), kit / "PKGBUILD", source / "src/plugin.cpp"]
         for target in targets:
             original = target.read_bytes()
             target.write_bytes(b"raise SystemExit('UNTRUSTED_CODE_EXECUTED')\n")
@@ -291,6 +293,29 @@ class DownloadRecipeTest(unittest.TestCase):
                             'install() { echo UNEXPECTED_INSTALL >&2; return 0; }; package')
         self.assertEqual(result.returncode, 1)
         self.assertNotIn("UNEXPECTED_INSTALL", result.stderr)
+
+
+class Schema2DownloadRecipeTest(DownloadRecipeTest):
+    fixture_class = fixtures.Schema2ProfileTest
+
+    def test_outer_source_name_must_match_validated_profile(self):
+        for name in (verify.STEM + ".tar.gz", "../" + self.fixture.stem + ".tar.gz",
+                     self.fixture.stem + ".tar.gz/extra", self.fixture.stem.replace("0.26.0", "0.25.0") + ".tar.gz"):
+            candidate = dict(self.payload)
+            candidate[name] = candidate.pop(self.fixture.stem + ".tar.gz")
+            self.rewrite(candidate)
+            with self.subTest(name=name), self.assertRaisesRegex(ValueError, "inventory|path"):
+                self.generate()
+        self.assertFalse(self.output.exists())
+
+    def test_wrapper_binds_candidate_source_and_version(self):
+        kit, source = self.extract()
+        recipe = self.output.read_text()
+        self.assertIn("pkgver=" + self.fixture.driver_version, recipe)
+        self.assertIn("stem = '" + self.fixture.stem + "'", recipe)
+        self.assertNotIn(verify.STEM, recipe)
+        self.assertEqual(source.name, self.fixture.stem)
+        self.assertEqual((kit / (self.fixture.stem + ".tar.gz")).read_bytes(), self.fixture.archive.read_bytes())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Wrap unchanged Driver 0.24.0 source in a separately reviewed native-profile kit."""
+"""Wrap explicitly reviewed source bytes in a native-profile candidate kit."""
 
 import argparse
 import gzip
@@ -45,6 +45,7 @@ def generate(repo, tooling_revision, profile_path, source_archive, output):
     verify.require(profile_path.is_file() and not profile_path.is_symlink(), "profile must be an explicit regular file")
     profile_data = profile_path.read_bytes()
     profile = verify.validate_profile(verify.read_json(profile_data))
+    stem = verify.source_stem(profile)
     manifest = verify.verify_archive(source_archive, profile)
     provenance = {"schema": 1, "tooling_revision": tooling_revision, "profile_sha256": verify.sha256(profile_data),
                   "source": profile["source"], "cmake_options": verify.OPTIONS, "native_certified": False,
@@ -54,14 +55,14 @@ def generate(repo, tooling_revision, profile_path, source_archive, output):
     payload["SOURCE-PROVENANCE.json"] = verify.json_bytes(manifest)
     # Preserve original manifest bytes too, even if its JSON formatting differs.
     with tarfile.open(source_archive, "r:gz") as archive:
-        payload["SOURCE-PROVENANCE.json"] = archive.extractfile(verify.STEM + "/SOURCE-PROVENANCE.json").read()
-    payload[verify.STEM + ".tar.gz"] = source_archive.read_bytes()
-    verify.require(verify.sha256(payload[verify.STEM + ".tar.gz"]) == profile["source"]["archive_sha256"], "source archive changed during generation")
+        payload["SOURCE-PROVENANCE.json"] = archive.extractfile(stem + "/SOURCE-PROVENANCE.json").read()
+    payload[stem + ".tar.gz"] = source_archive.read_bytes()
+    verify.require(verify.sha256(payload[stem + ".tar.gz"]) == profile["source"]["archive_sha256"], "source archive changed during generation")
     verify.source_manifest(payload["SOURCE-PROVENANCE.json"], profile)
     payload["PKGBUILD"] = verify.render_recipe(payload["PROFILE-PKGBUILD.in"].decode(), profile, provenance)
     payload["SHA256SUMS"] = "".join(f"{verify.sha256(data)}  {name}\n" for name, data in sorted(payload.items())).encode()
     # The archive identity binds profile bytes and tooling commit, not just labels.
-    name = (f"{verify.STEM}-profile-{profile['profile_id']}-kit-{profile['kit_version']}"
+    name = (f"{stem}-profile-{profile['profile_id']}-kit-{profile['kit_version']}"
             f"-{provenance['profile_sha256']}-{tooling_revision}.tar.gz")
     archive_data = deterministic_archive(payload)
     output.mkdir(parents=True, exist_ok=False)

@@ -70,14 +70,18 @@ def hash_value(value):
 
 def validate_profile(profile):
     keys(profile, "schema profile_id kit_version package_release source architecture hyprland compiler runtime", "profile")
-    require(type(profile["schema"]) is int and profile["schema"] == 1, "unsupported profile schema")
+    require(type(profile["schema"]) is int and profile["schema"] in (1, 2), "unsupported profile schema")
     require(len(profile["profile_id"]) <= 32 and re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", profile["profile_id"]), "invalid profile ID")
     require(len(profile["kit_version"]) <= 20 and re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", profile["kit_version"]), "invalid kit version")
     require(type(profile["package_release"]) is int and profile["package_release"] >= 2, "profile package release must be >=2")
     require(profile["architecture"] == "x86_64", "only x86_64 is supported")
     source = profile["source"]
     keys(source, "revision driver_version archive_sha256 manifest_sha256", "source")
-    require(source["revision"] == SOURCE_REVISION and source["driver_version"] == DRIVER_VERSION, "requires the original Driver 0.24.0 source")
+    require(isinstance(source["revision"], str) and re.fullmatch(r"[0-9a-f]{40}", source["revision"]), "requires a full source commit SHA")
+    require(isinstance(source["driver_version"], str) and len(source["driver_version"]) <= 20 and
+            re.fullmatch(r"[0-9]+\.[0-9]+\.[0-9]+", source["driver_version"]), "requires a stable Driver version")
+    if profile["schema"] == 1:
+        require(source["revision"] == SOURCE_REVISION and source["driver_version"] == DRIVER_VERSION, "requires the original Driver 0.24.0 source")
     hash_value(source["archive_sha256"])
     hash_value(source["manifest_sha256"])
     hyprland = profile["hyprland"]
@@ -104,17 +108,23 @@ def validate_profile(profile):
     return profile
 
 
+def source_stem(profile):
+    source = validate_profile(profile)["source"]
+    return f"cua-hyprland-plugin-{source['driver_version']}-{source['revision']}"
+
+
 def source_manifest(data, profile):
+    source = validate_profile(profile)["source"]
     require(sha256(data) == profile["source"]["manifest_sha256"], "historical manifest checksum mismatch")
     manifest = read_json(data)
-    expected = {"schema": 1, "source_revision": SOURCE_REVISION, "driver_version": DRIVER_VERSION,
-                "release_tag": "cua-driver-rs-v0.24.0", "plugin_version": "0.1.0",
+    expected = {"schema": 1, "source_revision": source["revision"], "driver_version": source["driver_version"],
+                "release_tag": "cua-driver-rs-v" + source["driver_version"], "plugin_version": "0.1.0",
                 "architecture": "x86_64", "native_certified": False, "cmake_options": OPTIONS,
                 "hyprland_version": "0.56.2", "hyprland_package": "0.56.2-1",
                 "compiler_version": "16.1.1 20260728", "compiler_comment": "GCC: (GNU) 16.1.1 20260728"}
     require(set(manifest) == set(expected) | {"files"}, "invalid historical manifest fields")
     for key, value in expected.items():
-        require(manifest[key] == value, f"historical source provenance mismatch: {key}")
+        require(type(manifest[key]) is type(value) and manifest[key] == value, f"historical source provenance mismatch: {key}")
     require(isinstance(manifest["files"], dict) and {"CMakeLists.txt", "LICENSE.md", "verify.py"} <= set(manifest["files"]), "invalid source inventory")
     for name, checksum in manifest["files"].items():
         path = PurePosixPath(name)
@@ -124,13 +134,14 @@ def source_manifest(data, profile):
 
 
 def verify_archive(archive, profile):
+    stem = source_stem(profile)
     require(archive.is_file() and not archive.is_symlink(), "source archive must be a regular file")
     require(digest(archive) == profile["source"]["archive_sha256"], "source archive checksum mismatch")
     payload = {}
     with tarfile.open(archive, "r:gz") as contents:
         for member in contents:
-            require(member.isfile() and member.name.startswith(STEM + "/"), "invalid source archive member")
-            name = member.name[len(STEM) + 1:]
+            require(member.isfile() and member.name.startswith(stem + "/"), "invalid source archive member")
+            name = member.name[len(stem) + 1:]
             path = PurePosixPath(name)
             require(name and path.as_posix() == name and not path.is_absolute() and ".." not in path.parts and "\\" not in name, "unsafe source archive path")
             require(name not in payload, "duplicate source archive member")
@@ -185,8 +196,9 @@ def verify_kit(kit, expected_sha, *, complete=False):
 
 
 def render_recipe(template, profile, provenance):
-    replacements = {"DRIVER_VERSION": DRIVER_VERSION, "PKGREL": str(profile["package_release"]),
-                    "PROFILE_ID": profile["profile_id"], "STEM": STEM,
+    stem = source_stem(profile)
+    replacements = {"DRIVER_VERSION": profile["source"]["driver_version"], "PKGREL": str(profile["package_release"]),
+                    "PROFILE_ID": profile["profile_id"], "STEM": stem,
                     "HYPRLAND_PACKAGE": profile["hyprland"]["package_version"],
                     "RUNTIME_DEPENDS": " ".join(f"'{name}={version}'" for name, version in sorted(profile["runtime"]["packages"].items())),
                     "ARCHIVE_SHA256": profile["source"]["archive_sha256"],

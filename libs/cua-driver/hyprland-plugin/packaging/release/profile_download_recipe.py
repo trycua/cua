@@ -17,7 +17,7 @@ import profile_verify as verify
 HERE = Path(__file__).resolve().parent
 INVENTORY = set(verify.TOOLING) | {
     "PROFILE.json", "KIT-PROVENANCE.json", "SOURCE-PROVENANCE.json",
-    "PKGBUILD", "SHA256SUMS", verify.STEM + ".tar.gz",
+    "PKGBUILD", "SHA256SUMS",
 }
 
 
@@ -28,10 +28,14 @@ def archive_payload(data):
         for member in archive:
             verify.require(member.isfile() and not member.issparse() and not member.pax_headers,
                            "outer kit contains a nonregular or extended member")
-            verify.require(member.name in INVENTORY, "unsafe or unexpected outer kit path")
+            verify.require(member.name in INVENTORY or re.fullmatch(
+                r"cua-hyprland-plugin-[0-9]+\.[0-9]+\.[0-9]+-[0-9a-f]{40}\.tar\.gz", member.name),
+                "unsafe or unexpected outer kit path")
             verify.require(member.name not in payload, "duplicate outer kit member")
             payload[member.name] = archive.extractfile(member).read()
-    verify.require(set(payload) == INVENTORY, "outer kit inventory mismatch")
+    verify.require("PROFILE.json" in payload, "outer kit inventory mismatch")
+    profile = verify.validate_profile(verify.read_json(payload["PROFILE.json"]))
+    verify.require(set(payload) == INVENTORY | {verify.source_stem(profile) + ".tar.gz"}, "outer kit inventory mismatch")
     expected_sums = "".join(f"{verify.sha256(data)}  {name}\n" for name, data in sorted(payload.items())
                             if name != "SHA256SUMS").encode()
     verify.require(payload["SHA256SUMS"] == expected_sums, "outer kit SHA256SUMS mismatch")
@@ -55,11 +59,12 @@ def reviewed_kit(archive, expected_sha):
         verify.require(payload["KIT-PROVENANCE.json"] == verify.json_bytes(provenance),
                        "kit provenance must match the recipe's canonical checksum")
         verify.source_manifest(payload["SOURCE-PROVENANCE.json"], profile)
-        verify.verify_archive(kit / (verify.STEM + ".tar.gz"), profile)
-        with tarfile.open(fileobj=io.BytesIO(payload[verify.STEM + ".tar.gz"]), mode="r:gz") as source:
+        stem = verify.source_stem(profile)
+        verify.verify_archive(kit / (stem + ".tar.gz"), profile)
+        with tarfile.open(fileobj=io.BytesIO(payload[stem + ".tar.gz"]), mode="r:gz") as source:
             verify.require(all(member.isfile() and not member.issparse() and not member.pax_headers for member in source),
                            "source archive contains a nonregular or extended member")
-    expected_name = (f"{verify.STEM}-profile-{profile['profile_id']}-kit-{profile['kit_version']}"
+    expected_name = (f"{stem}-profile-{profile['profile_id']}-kit-{profile['kit_version']}"
                      f"-{provenance['profile_sha256']}-{provenance['tooling_revision']}.tar.gz")
     verify.require(archive.name == expected_name, "outer archive filename does not match kit identity")
     return payload, profile, provenance
@@ -161,7 +166,7 @@ def adapt_recipe(payload, profile, provenance, archive_name, expected_sha, downl
     recipe = replace_once(recipe, "prepare() {\n  _verify\n}",
                           "prepare() {\n  _verify_download extract || return 1\n  _verify\n}")
     runtime = DOWNLOAD_CHECK.replace("@MEMBER_HASHES@", repr({name: verify.sha256(data) for name, data in sorted(payload.items())}))
-    runtime = runtime.replace("@STEM@", verify.STEM)
+    runtime = runtime.replace("@STEM@", verify.source_stem(profile))
     recipe = replace_once(recipe, "\n_verify() {\n", runtime + "\n_verify() {\n")
     verify.require("$startdir" not in recipe, "unadapted startdir reference")
     # build/check/package retain every original instruction, with only kit paths moved.

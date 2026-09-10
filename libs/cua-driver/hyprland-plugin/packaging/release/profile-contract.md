@@ -20,9 +20,28 @@ qualification evidence. A profile is reviewed data, not an instruction to
 accept whatever environment the builder discovers. Preserve exact compositor,
 headers, compiler, shared-runtime, source-integrity, and production-build checks.
 
+Schema 1 remains restricted to the original Driver 0.24.0 source revision
+`4b3396d9fe4bd3cf723b0eb8db83c18a8764b520`. Schema 2 uses the same profile fields
+but allows an explicitly reviewed full source revision and stable Driver version,
+with separately selected archive and manifest SHA-256 digests. Both schemas
+preserve the selected archive and manifest bytes. The archive stem and package
+version follow that validated source identity throughout generation, download
+recipe export, and lifecycle checks.
+
+The reviewer selects the source digests as trust roots. An archive inventory,
+embedded manifest, or environment measurement cannot authorize its own source.
+The source manifest must match the full declared revision and Driver version,
+including the corresponding component release-tag field, and retain the original
+manifest shape, production build flags, plugin version, architecture, and
+historical build-environment fields. Schema 2 does not relax the profile's exact
+compositor, compiler, header, runtime, mandatory-test, or activation checks.
+
 Changing the native input implementation or Driver's application admission is
-outside a packaging-only rebuild. Such changes need a reviewed source revision
-and their affected native evidence.
+outside a packaging-only rebuild. Such changes need a separately reviewed source
+revision and their affected native evidence. Schema 2 supports packaging that
+candidate; neither generation nor a manifest's release-tag field proves that
+the candidate is released. A local commit with a published version number must
+never be relabeled or published as the existing release when its source differs.
 
 ## Initial qualification
 
@@ -62,7 +81,14 @@ dependency. Retain a matching rollback set.
 Cua owns source tooling and native input qualification. The distribution names
 its package-maintenance and signing owner before rollout. Relevant dependency
 changes trigger a candidate build and requalification, not an automatic
-compatibility claim. Manual publication must use the certified package bytes;
+compatibility claim. Before publication, resolve the exact component tag
+`cua-driver-rs-v<driver_version>` and verify that it identifies the profile's full
+source revision. A mismatched candidate needs the proper component release and
+a profile bound to that exact source. Reuse qualification only for unchanged
+source and package bytes; changed bytes require the affected qualification anew.
+Download recipe generation only prepares a reviewable future URL; it does not
+verify a remote tag or authorize publication.
+Manual publication must use the certified package bytes;
 unattended distribution requires an enforced artifact-to-evidence gate.
 
 The downstream implementation remains

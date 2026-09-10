@@ -1,7 +1,7 @@
 ---
 title: 'RFC 2512: Carry typed Driver envelopes through an existing MCP endpoint'
 created: 2026-09-09
-status: review
+status: accepted
 discussion: https://github.com/trycua/cua/issues/2512
 parent_rfc: 2512-python-fleet-first-slice.md
 ---
@@ -18,8 +18,9 @@ Keep computer-server and every existing Sandbox operation unchanged.
 This is a transport addendum to the [accepted first slice](2512-python-fleet-first-slice.md),
 not a replacement for that decision. The maintainer selected the phased
 existing-route investigation and tested, unmerged implementation proposals.
-The exact extension below still needs its recorded decision in RFC issue 2512
-before production implementation. This document does not mark it accepted.
+The maintainer approved the same-port extension for tested, unmerged stacked
+implementation in the [scoped decision](https://github.com/trycua/cua/issues/2512#issuecomment-5610463938).
+Merge, release, image publication, and production enablement remain separate gates.
 
 The earlier supplement correctly excludes an MCP-only endpoint from typed
 receiver qualification. Reusing MCP as a carrier would not remove that rule:

@@ -1,0 +1,31 @@
+name: "CI: Lume Docs / macOS"
+
+on:
+  pull_request:
+    paths:
+      - "libs/lume/src/**"
+      - "libs/lume/Package.swift"
+      - "libs/lume/Package.resolved"
+      - "scripts/docs-generators/lume*.ts"
+      - "scripts/docs-generators/runner.ts"
+      - "scripts/docs-generators/config.json"
+      - "docs/content/docs/reference/lume/cli-reference.mdx"
+      - "docs/content/docs/reference/lume/http-api.mdx"
+      - "docs/package.json"
+      - "docs/pnpm-lock.yaml"
+      - "package.json"
+      - "pnpm-workspace.yaml"
+      - ".gitattributes"
+      - ".github/workflows/ci-check-docs.yml"
+      - ".github/workflows/ci-check-docs-lume.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  reference:
+    uses: ./.github/workflows/ci-check-docs.yml
+    with:
+      library: lume
+      platform: macos
+      runner: macos-latest

@@ -2251,15 +2251,25 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn unix_retry_escape_descendant() {
+        if std::env::var_os(UNIX_RETRY_ESCAPE_HELPER_ENV).is_some() {
+            std::thread::sleep(Duration::from_secs(60));
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn unix_retry_escape_helper() {
         use std::os::unix::process::CommandExt;
 
         let Some(pid_path) = std::env::var_os(UNIX_RETRY_ESCAPE_HELPER_ENV) else {
             return;
         };
-        let mut command = Command::new("/bin/sleep");
+        // Reuse the test executable: Nix sandboxes do not provide /bin/sleep.
+        let mut command = Command::new(std::env::current_exe().expect("current test executable"));
         command
-            .arg("60")
+            .arg("unix_retry_escape_descendant")
+            .arg("--nocapture")
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());

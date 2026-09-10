@@ -215,7 +215,9 @@ def analyze(before, after, journal, wire, intervals, primary_before, primary_aft
                 continue
         forbidden = ((interface == 'wl_pointer' and event != 'frame') or interface == 'wl_keyboard'
                      or interface == 'zwp_relative_pointer_v1' or interface == 'wl_touch'
-                     or interface == 'wl_seat' or (interface == 'wl_display' and event == 'error'))
+                     or interface == 'wl_seat' or (interface == 'wl_display' and event == 'error')
+                     or (interface == 'wl_display' and event == 'delete_id'
+                         and int(row['arguments']) in (primary['pointer'], primary['keyboard'], primary['surface'])))
         if forbidden:
             violations.append({'kind': 'wire_event', 'interface': interface, 'event': event, 'object': row['object']})
     return {'result': 'failed' if violations else 'passed',

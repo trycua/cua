@@ -184,6 +184,7 @@ class ObserverAnalysisTests(unittest.TestCase):
             'zwp_relative_pointer_v1#8.relative_motion(0, 100, 2.0, 0.0, 2.0, 0.0)',
             'zwp_relative_pointer_v1#8.relative_motion(0, 100, 0.0, 0.0, 0.0, 0.0)',
             'wl_pointer#5.unknown_event()', 'wl_keyboard#6.unknown_event()',
+            'wl_display#1.delete_id(5)', 'wl_display#1.delete_id(6)', 'wl_display#1.delete_id(10)',
         )
         for event in events:
             with self.subTest(event=event):

@@ -68,7 +68,8 @@ def validate_plan(plan):
     geometry_plan({**plan, 'purpose': 'geometry_fault',
                    'compositor': {key: plan['compositor'][key] for key in ('pid', 'instance')},
                    'fault': {'kind': 'move', 'to': [bounds['x'] + 1, bounds['y']]}})
-    assert plan['agents'][0]['app'] == 'calc', 'only the qualified synthetic Calc episode is supported'
+    assert plan['agents'][0]['app'] == ('inkscape' if plan.get('app_profile') == 'inkscape-only' else 'calc'), \
+        'app requires its explicit qualification profile'
     assert set(plan['vm']) == {'machine_id', 'boot_id'}
     assert re.fullmatch(r'[0-9a-f]{32}', plan['vm']['machine_id'])
     assert re.fullmatch(r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}', plan['vm']['boot_id'])
@@ -211,7 +212,7 @@ class SessionFault:
         spec = self.plan['agents'][0]
         for identity in self.plan['identities'].values():
             assert identity['uid'] == os.getuid() and _identity(identity['pid']) == identity, 'process identity changed'
-        app_process_identity('calc', spec['target']['pid'])
+        app_process_identity(spec['app'], spec['target']['pid'])
         fixture = self.args.source / 'libs/cua-driver/tests/fixtures/apps/linux/isolated-input/main.py'
         assert fixture.resolve(strict=True) == fixture, 'canonical source fixture required'
         assert hashlib.sha256(fixture.read_bytes()).hexdigest() == self.plan['foreground_fixture']['sha256']
@@ -229,7 +230,7 @@ class SessionFault:
             assert len(selected) == 1 and selected[0].get('xwayland') is False
             assert int(selected[0]['address'], 16) == target['window_id'], 'target window changed'
             if target == spec['target']:
-                assert 'cua-smoke-calc' in selected[0].get('title', ''), 'wrong synthetic Calc document'
+                assert f'cua-smoke-{spec["app"]}' in selected[0].get('title', ''), 'wrong synthetic document'
                 assert dict(zip(('x', 'y', 'width', 'height'), [*selected[0]['at'], *selected[0]['size']])) == spec['bounds']
 
     def arm(self):
@@ -364,16 +365,16 @@ def prepare_refusal(prepared, spec, stage):
     contention, not newer evidence. The refusal remains bounded by the first
     observation's original timestamp; powered-off capture is unavailable.
     """
-    assert spec['app'] == 'calc' and stage in ('click_a1', 'click_b2')
+    assert stage in ({'click_a1', 'click_b2'} if spec['app'] == 'calc' else {'scroll_down', 'scroll_up'})
     snapshot = prepared['snapshot']
     assert prepared['target'] == spec['target']
     assert {key: snapshot[key] for key in ('pid', 'window_id')} == spec['target']
     assert snapshot['window_bounds'] == spec['bounds']
     assert prepared['prepared_ns'] == snapshot['proof_observation_started_ns']
     arguments, _ = pointer_grounding.action(
-        snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', stage)
+        snapshot, pointer_grounding.read_pixels(snapshot['proof_image']), spec['app'], stage)
     return {'snapshot': snapshot, 'arguments': arguments, 'session': spec['name'] + '-unavailable',
-            'prepared_ns': prepared['prepared_ns']}
+            'prepared_ns': prepared['prepared_ns'], 'tool': pointer_grounding.STAGES[spec['app']][stage]}
 
 
 def prepare_actions(clients, spec, stage, save):
@@ -396,7 +397,7 @@ def refuse(client, spec, prepared, fault, trace, guard, save):
         fault.live_deadline()
         record['dispatch_ns'] = time.monotonic_ns()
         assert 0 <= record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS, 'refusal grounding expired'
-        record['response'] = client.tool('click', {**prepared['arguments'], **spec['target'],
+        record['response'] = client.tool(prepared.get('tool', 'click'), {**prepared['arguments'], **spec['target'],
             'session': prepared['session'], 'delivery_mode': 'background'})
         record['outcome'] = 'response'
         record.update(after=production_status(fault.config), monitors_after=fault.unavailable(),

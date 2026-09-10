@@ -1,6 +1,8 @@
 """Synthetic orchestration/telemetry tests only; no native desktop is exercised."""
 from contextlib import ExitStack
 from concurrent.futures import ThreadPoolExecutor
+from copy import deepcopy
+import importlib
 import json
 from pathlib import Path
 import subprocess
@@ -66,6 +68,120 @@ def recovery_rows(tool='click', lane=1):
     inputs = [(2010, 'pointer_button', lane, 1), (2011, 'pointer_button', lane, 0)] if tool == 'click' else [
         (2010, 'pointer_axis', lane, 0)]
     return FINISH[:-1] + [(2001, 'agent_admitted', lane, 0), *inputs, (2012, 'agent_action_end', lane, 0)]
+
+
+class InkscapeProfileTests(unittest.TestCase):
+    def candidates(self):
+        for name in ('cancel', 'geometry_fault', 'primary_conflict', 'desktop_fault', 'session_fault',
+                     'lock_refusal', 'active_lock', 'active_primary', 'idle_reconnect', 'target_lifetime'):
+            module = importlib.import_module('production_' + name + '_proof')
+            candidate = importlib.import_module('production_' + name + '_proof_test').plan()
+            candidate['app_profile'] = 'inkscape-only'
+            for i, spec in enumerate(candidate['agents']):
+                spec.update(app='inkscape', document=f'/synthetic/agent-{i}/cua-smoke-inkscape.svg')
+                if name != 'idle_reconnect':
+                    spec.update(pointer_stage='move_rectangle', drag={})
+            for key in ('identities', 'processes'):
+                if key in candidate:
+                    candidate[key]['target']['exe'] = '/usr/bin/inkscape'
+            if name in ('active_lock', 'active_primary'):
+                candidate['recovery'] = {'pointer_stages': ['scroll_down', 'scroll_up']}
+            elif name == 'target_lifetime':
+                old, fresh = candidate['agents'][0], candidate['recovery']['agent']
+                fresh.update(app='inkscape', document='/synthetic/replacement/cua-smoke-inkscape.svg',
+                             pointer_stage='click_rectangle')
+                candidate['recovery']['identity']['exe'] = '/usr/bin/inkscape'
+                for i, spec in enumerate((old, fresh)):
+                    spec['app_id_tag'] = f'cua-profile-lane-{i}'
+                    spec['owned'].pop('profile')
+                    spec['owned']['document']['path'] = spec['document']
+            elif name != 'idle_reconnect':
+                candidate['recovery'] = {'pointer_stage': 'scroll_down'}
+            yield name, module, candidate
+
+    def test_all_fault_profiles_accept_only_exact_inkscape_plan_shapes(self):
+        for name, module, candidate in self.candidates():
+            with self.subTest(name=name):
+                module.validate_plan(candidate)
+            mutations = [lambda p: p.update(app_profile='unreviewed'),
+                lambda p: p['agents'][0].update(app='calc'),
+                lambda p: p['agents'][0].update(pointer_stage='click_a1'),
+                lambda p: p['agents'][0].update(document='/synthetic/private.svg'),
+                lambda p: p['agents'][0]['target'].update(window_id=p['foreground']['window_id'])]
+            for key in ('identities', 'processes'):
+                if key in candidate:
+                    mutations.append(lambda p, k=key: p[k]['target'].update(exe='/usr/bin/soffice.bin'))
+                    mutations.append(lambda p, k=key: p[k]['target'].update(pid=999))
+            if name == 'target_lifetime':
+                mutations.extend([lambda p: p['recovery']['agent'].update(pointer_stage='move_rectangle'),
+                    lambda p: p['recovery']['identity'].update(exe='/usr/bin/soffice.bin'),
+                    lambda p: p['recovery']['agent'].update(app_id_tag=p['agents'][0]['app_id_tag']),
+                    lambda p: p['recovery']['agent']['owned']['document'].update(path='/synthetic/wrong.svg')])
+            for mutate in mutations:
+                changed = deepcopy(candidate)
+                mutate(changed)
+                with self.subTest(name=name, changed=changed), self.assertRaises(AssertionError):
+                    module.validate_plan(changed)
+
+    def test_scroll_recovery_uses_existing_pixel_and_semantic_oracle(self):
+        import production_active_lock_proof as active
+        from production_pointer_grounding_test import ink
+        before, pixels = ink()
+        before.update(proof_image='synthetic.png', proof_observation_started_ns=1)
+        spec = {'app': 'inkscape', 'name': 'recovery', 'target': {'pid': 20, 'window_id': 200},
+                'pointer_stage': 'move_rectangle'}
+        with patch.object(active, 'grounded_snapshot', return_value=before), \
+             patch.object(active.pointer_grounding, 'read_pixels', return_value=pixels):
+            prepared = active.prepare_recovery(Mock(), spec, ['scroll_down', 'scroll_up'])
+        self.assertIn(prepared['stage'], ('scroll_down', 'scroll_up'))
+        self.assertEqual(prepared['prepared_ns'], 1)
+        with self.assertRaises(AssertionError):
+            active.pointer_grounding.verify(before, pixels, prepared['oracle'])
+        shift = -10 if prepared['stage'] == 'scroll_down' else 10
+        after, moved = ink(scroll_y=shift)
+        self.assertTrue(active.pointer_grounding.verify(after, moved, prepared['oracle'])['verified'])
+
+    def test_refusal_scroll_keeps_exact_target_and_original_observation(self):
+        import production_session_fault_proof as session
+        from production_pointer_grounding_test import ink
+        before, pixels = ink()
+        target = {'pid': 20, 'window_id': 200}
+        before.update(**target, proof_image='synthetic.png', proof_observation_started_ns=1)
+        spec = {'app': 'inkscape', 'name': 'refusal', 'target': target, 'bounds': before['window_bounds']}
+        prepared = {'snapshot': before, 'target': dict(target), 'prepared_ns': 1}
+        with patch.object(session.pointer_grounding, 'read_pixels', return_value=pixels):
+            probe = session.prepare_refusal(prepared, spec, 'scroll_down')
+            self.assertEqual(probe['tool'], 'scroll')
+            self.assertEqual(probe['prepared_ns'], 1)
+            before['window_id'] += 1
+            with self.assertRaises(AssertionError):
+                session.prepare_refusal(prepared, spec, 'scroll_down')
+
+    def test_new_action_dispatch_uses_scroll_without_drag_or_replay(self):
+        import production_lock_refusal_proof as lock
+        for tool in ('click', 'scroll', 'drag'):
+            actor = Mock()
+            record = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': 1, 'tool': tool}
+            with patch.object(lock.time, 'monotonic_ns', return_value=2):
+                if tool == 'drag':
+                    with self.assertRaises(AssertionError):
+                        lock.click_once(actor, {'x': 1}, record, Mock(), 'action')
+                    actor.tool.assert_not_called()
+                else:
+                    lock.click_once(actor, {'x': 1}, record, Mock(), 'action')
+                    actor.tool.assert_called_once_with(tool, {'x': 1})
+
+    def test_native_document_identity_is_checked_before_driver_observation(self):
+        import production_cancel_proof as cancellation
+        actor = Mock()
+        spec = {'app': 'inkscape', 'document': '/synthetic/cua-smoke-inkscape.svg',
+                'target': {'pid': 20, 'window_id': 200}}
+        with patch.object(cancellation.subprocess, 'check_output', return_value='[]'), \
+             patch.object(cancellation, 'inkscape_client_identity', side_effect=AssertionError('wrong identity')) as identity:
+            with self.assertRaisesRegex(AssertionError, 'wrong identity'):
+                grounded_snapshot(actor, {'pid': 20, 'window_id': 200}, spec)
+        identity.assert_called_once_with(spec, [])
+        actor.tool.assert_not_called()
 
 
 class TelemetryTests(unittest.TestCase):

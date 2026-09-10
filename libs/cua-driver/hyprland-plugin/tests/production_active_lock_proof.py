@@ -45,12 +45,16 @@ from realapp_proof import cleanup_all, released_synthetic_input
 
 def validate_plan(plan):
     assert plan['purpose'] == 'active_lock' and plan['fault'] == {'kind': 'lock'}
-    assert plan['recovery'] == {'pointer_stages': ['click_a1', 'click_b2']}
-    lock_plan({**plan, 'purpose': 'lock_refusal', 'recovery': {'pointer_stage': 'click_b2'}})
+    stages = ['scroll_down', 'scroll_up'] if plan.get('app_profile') == 'inkscape-only' else ['click_a1', 'click_b2']
+    assert plan['recovery'] == {'pointer_stages': stages}
+    lock_plan({**plan, 'purpose': 'lock_refusal', 'recovery': {'pointer_stage': stages[0]}})
 
 
-def recovery_stage(snapshot):
-    """Choose one newly grounded click, never retry a sent action."""
+def recovery_stage(snapshot, app='calc'):
+    """Choose a fresh Calc click or visible Inkscape scroll, never retry input."""
+    if app == 'inkscape':
+        return pointer_grounding.visible_inkscape_scroll_stage(snapshot, pointer_grounding.read_pixels(snapshot['proof_image']))
+    assert app == 'calc'
     return ('click_a1' if pointer_grounding.calc_formula_selection(
         snapshot, pointer_grounding.rows(snapshot), 'B2') else 'click_b2')
 
@@ -59,10 +63,10 @@ def prepare_recovery(client, spec, allowed_stages):
     before = grounded_snapshot(client, spec['target'], spec)
     prepared_ns = before['proof_observation_started_ns']
     assert type(prepared_ns) is int and 0 < prepared_ns <= time.monotonic_ns(), 'invalid observation timestamp'
-    stage = recovery_stage(before)
+    stage = recovery_stage(before, spec['app'])
     assert stage in allowed_stages
     arguments, oracle = pointer_grounding.action(
-        before, pointer_grounding.read_pixels(before['proof_image']), 'calc', stage)
+        before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
     return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
             'stage': stage, 'prepared_ns': prepared_ns}
 
@@ -350,7 +354,8 @@ def run(args):
         recovery['stage'] = spec['pointer_stage'] = grounding['stage']
         save('recovery-grounding.json', grounding)
         require_primary_active(grab, deadline)
-        recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns}
+        recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns,
+                              'tool': pointer_grounding.STAGES[spec['app']][spec['pointer_stage']]}
         response = click_once(fresh, {**arguments, **spec['target'], 'session': spec['name'],
             'delivery_mode': 'background'}, recovery['action'], save, 'recovery-action.json')
         check_response(response, {'kind': 'dispatched'})
@@ -359,7 +364,8 @@ def run(args):
         recovery['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
         prefix = trace.collect()
         save('recovery-trace-prefix.json', prefix)
-        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, 'click'), 'click')
+        tool = recovery['action']['tool']
+        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, tool), tool)
         close_owned(fresh)
         trace.exchange('TRACE_STOP')
         stopped = trace.collect()

@@ -272,7 +272,9 @@ def click_once(client, arguments, record, save, name):
     try:
         record['dispatch_ns'] = time.monotonic_ns()
         assert 0 <= record['dispatch_ns'] - record['prepared_ns'] <= MAX_GROUNDING_AGE_NS, 'grounding expired; no input sent'
-        response = client.tool('click', arguments)
+        tool = record.get('tool', 'click')
+        assert tool in ('click', 'scroll'), 'only a new non-drag action is allowed'
+        response = client.tool(tool, arguments)
         record.update(outcome='response', response=response)
         return response
     except Exception as error:
@@ -289,9 +291,9 @@ def prepare_click(client, spec, *, session=True):
     prepared_ns = snapshot['proof_observation_started_ns']
     assert type(prepared_ns) is int and 0 < prepared_ns <= time.monotonic_ns()
     arguments, oracle = pointer_grounding.action(snapshot,
-        pointer_grounding.read_pixels(snapshot['proof_image']), 'calc', spec['pointer_stage'])
+        pointer_grounding.read_pixels(snapshot['proof_image']), spec['app'], spec['pointer_stage'])
     return {'snapshot': snapshot, 'arguments': arguments, 'oracle': oracle,
-            'prepared_ns': prepared_ns}
+            'prepared_ns': prepared_ns, 'tool': pointer_grounding.STAGES[spec['app']][spec['pointer_stage']]}
 
 
 def prepare_refusal_click(observer, spec, save):
@@ -441,7 +443,7 @@ def run(args):
         dispatched_ns = time.monotonic_ns()
         assert dispatched_ns - prepared_ns <= MAX_GROUNDING_AGE_NS
         recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'dispatch_ns': dispatched_ns,
-                              'prepared_ns': prepared_ns}
+                              'prepared_ns': prepared_ns, 'tool': grounding.get('tool', 'click')}
         response = click_once(fresh, {**arguments, **spec['target'], 'session': name,
             'delivery_mode': 'background'}, recovery['action'], save, 'recovery-action.json')
         check_response(response, {'kind': 'dispatched'})
@@ -450,7 +452,8 @@ def run(args):
         recovery['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
         prefix = trace.collect()
         save('recovery-trace-prefix.json', prefix)
-        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, 'click'), 'click')
+        tool = recovery['action']['tool']
+        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, tool), tool)
         close_owned(fresh)
         trace.exchange('TRACE_STOP')
         tracing = False

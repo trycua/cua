@@ -324,7 +324,7 @@ class GroundingTests(unittest.TestCase):
                 result = proof.prepare_refusal(prepared, spec, 'click_b2')
             self.assertEqual(result, {'snapshot': snapshot, 'arguments': {'x': 1, 'y': 2},
                                      'session': 'session-unavailable',
-                                     'prepared_ns': observed_ns})
+                                     'prepared_ns': observed_ns, 'tool': 'click'})
 
     def test_shared_observation_requires_exact_identity_geometry_and_time(self):
         spec = plan()['agents'][0]

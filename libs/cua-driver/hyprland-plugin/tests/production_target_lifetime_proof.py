@@ -11,6 +11,11 @@ Each document is an existing suite cua-smoke-calc.ods in a private directory;
 each profile is that document's sibling calc-profile. Both processes must have
 the suite's exact launch argv. The controller prepares both before this run.
 
+Opt-in app_profile=inkscape-only uses move_rectangle for the victim and
+click_rectangle on an unselected replacement. Each spec includes document,
+app_id_tag and owned={document:{path,device,inode,uid,sha256}}. Distinct reviewed
+tags bind exact /usr/bin/inkscape --app-id-tag=<tag> <document> launch argv.
+
 Only normal Driver MCP sends application input. This runner sends one SIGKILL
 through a revalidated pidfd, only after held-drag trace AND status gates. Saved
 bytes are archived before injection. A destroyed client cannot acknowledge a
@@ -31,6 +36,7 @@ import json
 import os
 from pathlib import Path
 import platform
+import re
 import select
 import signal
 import stat
@@ -56,16 +62,21 @@ from realapp_proof import cleanup_all
 
 
 def validate_owned(spec):
-    assert spec['app'] == 'calc' and spec['drag'] == {}
+    assert spec['app'] in ('calc', 'inkscape') and spec['drag'] == {}
     owned = spec['owned']
-    assert set(owned) == {'document', 'profile'}
+    assert set(owned) == ({'document'} if spec['app'] == 'inkscape' else {'document', 'profile'})
     document = owned['document']
     assert set(document) == {'path', 'device', 'inode', 'uid', 'sha256'}
     path = Path(document['path'])
-    assert path.is_absolute() and path.name == 'cua-smoke-calc.ods'
+    assert path.is_absolute() and path.name == ('cua-smoke-inkscape.svg' if spec['app'] == 'inkscape' else 'cua-smoke-calc.ods')
     assert all(type(document[k]) is int and document[k] >= 0 for k in ('device', 'inode', 'uid'))
     assert len(document['sha256']) == 64 and all(c in '0123456789abcdef' for c in document['sha256'])
-    assert Path(owned['profile']) == path.parent / 'calc-profile'
+    if spec['app'] == 'inkscape':
+        assert spec['document'] == str(path), 'owned SVG must be the reviewed target document'
+        assert isinstance(spec.get('app_id_tag'), str) and re.fullmatch(r'cua-profile-[A-Za-z0-9-]{1,64}', spec['app_id_tag']), \
+            'reviewed synthetic Inkscape app-id tag required'
+    else:
+        assert Path(owned['profile']) == path.parent / 'calc-profile'
 
 
 def validate_plan(plan):
@@ -75,14 +86,16 @@ def validate_plan(plan):
     assert set(recovery) == {'mode', 'agent', 'identity'}
     assert recovery['mode'] == 'prepared_distinct_process'
     fresh = recovery['agent']
-    assert fresh['pointer_stage'] in ('click_a1', 'click_b2')
+    inkscape = plan.get('app_profile') == 'inkscape-only'
+    assert fresh['pointer_stage'] in (('click_rectangle',) if inkscape else ('click_a1', 'click_b2'))
+    recovery_stage = 'scroll_down' if inkscape else 'click_b2'
     base = {k: v for k, v in plan.items() if k != 'fault'}
     primary_plan({**base, 'purpose': 'primary_conflict', 'case': 'initial_refusal',
-                  'recovery': {'pointer_stage': 'click_b2'}})
+                  'recovery': {'pointer_stage': recovery_stage}})
     primary_plan({**base, 'purpose': 'primary_conflict', 'case': 'initial_refusal',
-                  'agents': [{**fresh, 'pointer_stage': 'select_range'}],
+                  'agents': [{**fresh, 'pointer_stage': 'move_rectangle' if inkscape else 'select_range'}],
                   'processes': {**plan['processes'], 'target': recovery['identity']},
-                  'recovery': {'pointer_stage': 'click_b2'}})
+                  'recovery': {'pointer_stage': recovery_stage}})
     old = plan['agents'][0]
     for spec in (old, fresh):
         validate_owned(spec)
@@ -90,7 +103,11 @@ def validate_plan(plan):
     identities = [*plan['processes'].values(), recovery['identity'], plan['compositor']]
     assert len({p['pid'] for p in identities}) == 4, 'recovery must be a distinct process'
     assert len({s['window_id'] for s in (old['target'], fresh['target'], plan['foreground'])}) == 3
-    assert old['name'] != fresh['name'] and old['owned']['profile'] != fresh['owned']['profile']
+    assert old['name'] != fresh['name']
+    if not inkscape:
+        assert old['owned']['profile'] != fresh['owned']['profile']
+    else:
+        assert old['app_id_tag'] != fresh['app_id_tag'], 'distinct Inkscape application instances required'
     assert old['owned']['document']['path'] != fresh['owned']['document']['path']
 
 
@@ -129,6 +146,17 @@ def check_calc(spec, identity):
     assert [x.decode() for x in argv] == expected, 'not the exact dedicated suite Calc launch'
 
 
+def check_app(spec, identity):
+    if spec['app'] == 'calc':
+        return check_calc(spec, identity)
+    assert spec['app'] == 'inkscape' and identity['exe'] == '/usr/bin/inkscape'
+    assert _identity(identity['pid']) == identity and identity['uid'] == os.getuid(), 'Inkscape process identity changed'
+    saved_document(spec)
+    argv = Path(f'/proc/{identity["pid"]}/cmdline').read_bytes().rstrip(b'\0').split(b'\0')
+    assert [word.decode() for word in argv] == [identity['exe'], '--app-id-tag=' + spec['app_id_tag'], spec['document']], \
+        'not the exact dedicated suite Inkscape launch'
+
+
 class TargetLifetime(ExactDesktop):
     """No PID-name matching, shell signals, fallback kills, relaunch or retries."""
     def __init__(self, plan):
@@ -140,8 +168,8 @@ class TargetLifetime(ExactDesktop):
         assert subprocess.run(['systemd-detect-virt', '--vm', '--quiet'], timeout=2).returncode == 0
         self.guard()
         for spec, identity in ((self.spec, plan['processes']['target']), (self.fresh, plan['recovery']['identity'])):
-            app_process_identity('calc', identity['pid'])
-            check_calc(spec, identity)
+            app_process_identity(spec['app'], identity['pid'])
+            check_app(spec, identity)
             saved_document(spec)
         self.fd = os.pidfd_open(self.spec['target']['pid'])
         try:
@@ -170,8 +198,8 @@ class TargetLifetime(ExactDesktop):
             window = selected[0]
             assert int(window['address'], 16) == target['window_id'] and window.get('xwayland') is False
             if spec:
-                check_calc(spec, identity)
-                assert 'cua-smoke-calc.ods' in window.get('title', '')
+                check_app(spec, identity)
+                assert Path(spec['owned']['document']['path']).name in window.get('title', '')
                 assert window_bounds(window) == spec['bounds'], 'reviewed bounds changed'
         return windows
 
@@ -385,9 +413,9 @@ def run(args):
             origin['files'][name] = {'path': str(path.resolve()), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
         save('provenance.json', origin)
         for name, spec in (('target', fault.spec), ('replacement', fault.fresh)):
-            (args.evidence / (name + '-saved-before.ods')).write_bytes(saved_document(spec))
+            (args.evidence / (name + '-saved-before' + Path(spec['owned']['document']['path']).suffix)).write_bytes(saved_document(spec))
         save('prepared-app-identities.json', {
-            name: app_process_identity('calc', spec['target']['pid'])
+            name: app_process_identity(spec['app'], spec['target']['pid'])
             for name, spec in (('target', fault.spec), ('replacement', fault.fresh))})
         def launch(name):
             directory = args.evidence / name
@@ -436,7 +464,7 @@ def run(args):
         save('fault-prefix.json', boundary)
         report['fault'] = verify_fault(boundary, fault.record, action)
         for name, spec in (('target', fault.spec), ('replacement', fault.fresh)):
-            (args.evidence / (name + '-saved-after.ods')).write_bytes(saved_document(spec))
+            (args.evidence / (name + '-saved-after' + Path(spec['owned']['document']['path']).suffix)).write_bytes(saved_document(spec))
         report['saved_output'] = 'identity_and_bytes_unchanged; archived_before_and_after'
         close_owned(clients[0])
         teardown = trace.collect()

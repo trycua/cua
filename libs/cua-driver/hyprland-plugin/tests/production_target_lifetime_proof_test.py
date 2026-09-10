@@ -59,6 +59,24 @@ def action():
 
 
 class PlanTests(unittest.TestCase):
+    def test_inkscape_requires_exact_reviewed_app_id_tag_argv_and_identity(self):
+        spec = {'app': 'inkscape', 'app_id_tag': 'cua-profile-lane-0',
+                'document': '/synthetic/cua-smoke-inkscape.svg'}
+        expected = {**identity(20), 'exe': '/usr/bin/inkscape', 'uid': os.getuid()}
+        argv = ['/usr/bin/inkscape', '--app-id-tag=cua-profile-lane-0', spec['document']]
+        for words in (argv, [argv[0], '--new-instance', argv[2]],
+                      [argv[0], '--app-id-tag=cua-profile-lane-1', argv[2]], argv + ['/other.svg']):
+            with self.subTest(argv=words), patch.object(proof, '_identity', return_value=expected), \
+                 patch.object(proof, 'saved_document'), \
+                 patch.object(Path, 'read_bytes', return_value=b'\0'.join(x.encode() for x in words) + b'\0'):
+                if words == argv:
+                    proof.check_app(spec, expected)
+                else:
+                    with self.assertRaises(AssertionError):
+                        proof.check_app(spec, expected)
+        with patch.object(proof, '_identity', return_value={}), self.assertRaises(AssertionError):
+            proof.check_app(spec, expected)
+
     def test_exact_disposable_distinct_replacement_only(self):
         proof.validate_plan(plan())
         mutations = [lambda p: p.update(disposable=False),

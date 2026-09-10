@@ -77,11 +77,12 @@ def verify_transition_end(boundary, stopped):
 def validate_plan(plan):
     assert plan['purpose'] == 'active_primary' and plan['case'] == 'active_drag'
     assert plan['fault'] == {'kind': 'primary_hover'}
-    assert plan['recovery'] == {'pointer_stages': ['click_a1', 'click_b2']}
+    stages = ['scroll_down', 'scroll_up'] if plan.get('app_profile') == 'inkscape-only' else ['click_a1', 'click_b2']
+    assert plan['recovery'] == {'pointer_stages': stages}
     candidate = {k: v for k, v in plan.items() if k != 'fault'}
     settled_plan({**candidate, 'purpose': 'primary_conflict', 'case': 'initial_refusal',
-                  'recovery': {'pointer_stage': 'click_b2'}})
-    assert plan['agents'][0]['app'] == 'calc'
+                  'recovery': {'pointer_stage': stages[0]}})
+    assert plan['agents'][0]['app'] == ('inkscape' if plan.get('app_profile') == 'inkscape-only' else 'calc')
     expected = plan['hover_fixture']
     assert set(expected) == {'path', 'device', 'inode', 'uid', 'sha256', 'source_sha256'}
     assert Path(expected['path']).is_absolute() and Path(expected['path']).name == 'primary_hover_fixture'
@@ -298,9 +299,9 @@ def prepare_recovery(client, spec, previous, allowed_stages):
     started_ns = time.monotonic_ns()
     before = grounded_snapshot(client, spec['target'], spec)
     verify_fresh_observation(previous, before, client, after_ns=started_ns)
-    stage = recovery_stage(before)
+    stage = recovery_stage(before, spec['app'])
     assert stage in allowed_stages
-    arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), 'calc', stage)
+    arguments, oracle = pointer_grounding.action(before, pointer_grounding.read_pixels(before['proof_image']), spec['app'], stage)
     return {'snapshot': before, 'arguments': arguments, 'oracle': oracle,
             'stage': stage, 'prepared_ns': before['proof_observation_started_ns']}
 
@@ -341,7 +342,7 @@ def run(args):
         validate_plan(plan)
         desktop = ExactDesktop(plan)
         spec = plan['agents'][0]
-        app_process_identity('calc', spec['target']['pid'])
+        app_process_identity(spec['app'], spec['target']['pid'])
         origin = provenance(args, plan)
         for name in (Path(__file__).name, 'production_active_primary_proof_test.py',
                      'primary_hover_fixture.c', 'primary_hover_fixture_test.py',
@@ -417,7 +418,8 @@ def run(args):
         restored.guard()
         assert desktop.primary(plan['foreground']) == primary
         recovery['action'] = {'outcome': 'unknown', 'replayed': False, 'prepared_ns': prepared_ns,
-                              'runtime_pid': fresh.process.pid}
+                              'runtime_pid': fresh.process.pid,
+                              'tool': pointer_grounding.STAGES[spec['app']][spec['pointer_stage']]}
         response = click_once(fresh, {**arguments, **spec['target'], 'session': spec['name'],
             'delivery_mode': 'background'}, recovery['action'], save, 'recovery-action.json')
         check_response(response, {'kind': 'dispatched'})
@@ -429,7 +431,8 @@ def run(args):
         recovery['app_effect'] = pointer_grounding.verify(after, pointer_grounding.read_pixels(after['proof_image']), oracle)
         prefix = trace.collect()
         save('recovery-prefix.json', prefix)
-        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, 'click'), 'click')
+        tool = recovery['action']['tool']
+        recovery['trace'] = verify_recovery_trace(initial, prefix, capacity_lane(initial, prefix, tool), tool)
         close_owned(fresh)
         trace.exchange('TRACE_STOP')
         stopped = trace.collect()

@@ -156,6 +156,24 @@ pub struct ToolState {
     pub zoom_registry: Arc<ZoomRegistry>,
     pub mouse_hold: std::sync::Mutex<std::collections::HashMap<String, MouseHoldState>>,
     pub config: Arc<RwLock<DriverConfig>>,
+    /// `screen px / screenshot px` of the last `get_desktop_state` capture.
+    /// Desktop-frame coordinates are *screenshot* pixels by contract; when the
+    /// capture was downsized for the model this maps them back to the screen.
+    pub desktop_scale: std::sync::Mutex<f64>,
+}
+
+/// Widest `get_desktop_state` screenshot handed to the model. Vision models
+/// downsize larger images internally (Claude: ~1568 px) and then report
+/// coordinates in the downsized space, so a 1920-wide capture made every
+/// pixel action land ~20 % short. 1280 matches the OSWorld reference agent.
+const DESKTOP_SCREENSHOT_MAX_DIM: u32 = 1280;
+
+impl ToolState {
+    /// Map desktop-frame (screenshot) pixels to real screen pixels.
+    pub fn desktop_to_screen(&self, x: f64, y: f64) -> (f64, f64) {
+        let scale = *self.desktop_scale.lock().unwrap();
+        (x * scale, y * scale)
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -175,6 +193,7 @@ impl ToolState {
             resize_registry: Arc::new(ResizeRegistry::new()),
             zoom_registry: Arc::new(ZoomRegistry::new()),
             mouse_hold: std::sync::Mutex::new(Default::default()),
+            desktop_scale: std::sync::Mutex::new(1.0),
             config: Arc::new(RwLock::new(load_driver_config())),
         })
     }
@@ -3551,8 +3570,9 @@ impl Tool for ClickTool {
                 Err(result) => return result,
             };
             let button = parse_mouse_button(input.button.unwrap_or(ClickButton::Left).as_str());
-            let sx = input.x as i32;
-            let sy = input.y as i32;
+            let (dx, dy) = self.state.desktop_to_screen(input.x, input.y);
+            let sx = dx.round() as i32;
+            let sy = dy.round() as i32;
             let n = input.count.unwrap_or(1) as usize;
             if n == 0 {
                 return ToolResult::error("click.count must be at least 1.")
@@ -3978,7 +3998,8 @@ impl Tool for ClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -6149,6 +6170,7 @@ impl Tool for ScrollTool {
             (Some(x), Some(y)) if desktop_frame_requested(&args) => {
                 // Desktop-frame pixels (from get_desktop_state) against a named
                 // window: map into the window-local frame the pipeline expects.
+                let (x, y) = self.state.desktop_to_screen(x, y);
                 match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y))
                     .await
                 {
@@ -6706,7 +6728,8 @@ impl Tool for DoubleClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -6968,7 +6991,8 @@ impl Tool for RightClickTool {
             y *= ratio;
         }
         if desktop_frame {
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -7241,10 +7265,12 @@ impl Tool for DragTool {
             to_y *= ratio;
         }
         if desktop_frame {
+            let (dfx, dfy) = self.state.desktop_to_screen(from_x, from_y);
+            let (dtx, dty) = self.state.desktop_to_screen(to_x, to_y);
             let mapped = tokio::task::spawn_blocking(move || {
                 Ok::<_, anyhow::Error>((
-                    desktop_to_window_local(xid, from_x, from_y)?,
-                    desktop_to_window_local(xid, to_x, to_y)?,
+                    desktop_to_window_local(xid, dfx, dfy)?,
+                    desktop_to_window_local(xid, dtx, dty)?,
                 ))
             })
             .await;
@@ -7734,7 +7760,8 @@ impl Tool for MouseButtonDownTool {
             y *= ratio;
         }
         if desktop_frame {
-            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, x, y)).await {
+            let (dx, dy) = self.state.desktop_to_screen(x, y);
+            match tokio::task::spawn_blocking(move || desktop_to_window_local(xid, dx, dy)).await {
                 Ok(Ok((lx, ly))) => {
                     x = lx;
                     y = ly;
@@ -8619,7 +8646,9 @@ fn normalize_desktop_capture_for_action_frame(
 
 // ── get_desktop_state ─────────────────────────────────────────────────────────
 
-pub struct GetDesktopStateTool;
+pub struct GetDesktopStateTool {
+    state: Arc<ToolState>,
+}
 static GDS_DEF: std::sync::OnceLock<ToolDef> = std::sync::OnceLock::new();
 
 #[async_trait]
@@ -8667,6 +8696,17 @@ impl Tool for GetDesktopStateTool {
             };
             let (png, shot_w, shot_h, scale_factor) =
                 normalize_desktop_capture_for_action_frame(native_png, screen_w, screen_h)?;
+            // Hand the model a screenshot it will not silently downsize; the
+            // desktop action frame IS this screenshot's pixel grid, and the
+            // pointer tools scale it back to the screen (ToolState::desktop_scale).
+            let (png, shot_w, shot_h) =
+                if shot_w > DESKTOP_SCREENSHOT_MAX_DIM || shot_h > DESKTOP_SCREENSHOT_MAX_DIM {
+                    let png = crate::capture::resize_png_if_needed(&png, DESKTOP_SCREENSHOT_MAX_DIM)?;
+                    let (w, h) = crate::capture::png_dimensions_pub(&png)?;
+                    (png, w, h)
+                } else {
+                    (png, shot_w, shot_h)
+                };
             // Optional: write PNG to disk instead of returning base64.
             let written = if let Some(path) = out_file.as_deref() {
                 std::fs::write(path, &png)?;
@@ -8699,6 +8739,12 @@ impl Tool for GetDesktopStateTool {
 
         match result {
             Ok(Ok((b64_opt, shot_w, shot_h, screen_w, screen_h, scale_factor, written, windows))) => {
+                let frame_scale = if shot_w > 0 {
+                    f64::from(screen_w) / f64::from(shot_w)
+                } else {
+                    1.0
+                };
+                *self.state.desktop_scale.lock().unwrap() = frame_scale;
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
@@ -8708,21 +8754,29 @@ impl Tool for GetDesktopStateTool {
                     "screen_width": screen_w,
                     "screen_height": screen_h,
                     "scale_factor": scale_factor,
+                    "frame_scale": frame_scale,
                     "screenshot_mime_type": "image/png",
                     "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
                 });
                 if let Some(b64) = b64_opt {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                 }
-                let window_lines = desktop_window_lines(&windows);
+                let window_lines = desktop_window_lines(&windows, frame_scale);
+                let frame_note = if (frame_scale - 1.0).abs() > 0.001 {
+                    format!(
+                        "; x/y for scope:\"desktop\" actions are pixels of THIS screenshot                          (scaled ×{frame_scale:.2} to the screen automatically)"
+                    )
+                } else {
+                    String::new()
+                };
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(
-                        "✅ Desktop screenshot {shot_w}x{shot_h} written to {path} (screen {screen_w}x{screen_h}){window_lines}"
+                        "✅ Desktop screenshot {shot_w}x{shot_h} written to {path} (screen {screen_w}x{screen_h}{frame_note}){window_lines}"
                     )));
                 } else {
                     content.push(cua_driver_core::protocol::Content::text(format!(
-                        "✅ Desktop screenshot {shot_w}x{shot_h} (screen {screen_w}x{screen_h}){window_lines}"
+                        "✅ Desktop screenshot {shot_w}x{shot_h} (screen {screen_w}x{screen_h}{frame_note}){window_lines}"
                     )));
                 }
                 ToolResult {
@@ -8741,7 +8795,9 @@ impl Tool for GetDesktopStateTool {
 /// Text block naming every visible window with the `pid` / `window_id` pair
 /// that every other tool takes, so the model's first action targets a real
 /// process instead of guessing.
-fn desktop_window_lines(windows: &[crate::x11::WindowInfo]) -> String {
+fn desktop_window_lines(windows: &[crate::x11::WindowInfo], frame_scale: f64) -> String {
+    let px = |v: i32| (f64::from(v) / frame_scale).round() as i32;
+    let sz = |v: u32| (f64::from(v) / frame_scale).round() as u32;
     if windows.is_empty() {
         return "\nVisible windows: none (use list_windows / launch_app).".to_owned();
     }
@@ -8757,10 +8813,10 @@ fn desktop_window_lines(windows: &[crate::x11::WindowInfo]) -> String {
             w.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
             w.xid,
             title,
-            w.width,
-            w.height,
-            w.x,
-            w.y,
+            sz(w.width),
+            sz(w.height),
+            px(w.x),
+            px(w.y),
             if w.app_name.is_empty() {
                 String::new()
             } else {
@@ -8875,7 +8931,7 @@ impl Tool for MoveCursorTool {
                 Ok(input) => input,
                 Err(result) => return result,
             };
-            let (x, y) = (input.x, input.y);
+            let (x, y) = self.state.desktop_to_screen(input.x, input.y);
             let xi = x.round() as i32;
             let yi = y.round() as i32;
             let wayland = crate::wayland::wayland_input_enabled();
@@ -10390,7 +10446,9 @@ pub fn build_registry_with_provider(
     // screenshot path is `get_window_state` (it always returns a screenshot now).
     let _ = compat;
     r.register(Box::new(GetScreenSizeTool));
-    r.register(Box::new(GetDesktopStateTool));
+    r.register(Box::new(GetDesktopStateTool {
+        state: state.clone(),
+    }));
     r.register(Box::new(GetCursorPositionTool));
     r.register(Box::new(MoveCursorTool {
         state: state.clone(),
@@ -10718,11 +10776,17 @@ mod background_budget_tests {
             width: 1920,
             height: 1053,
         }];
-        let text = desktop_window_lines(&windows);
+        let text = desktop_window_lines(&windows, 1.0);
         assert!(text.contains("pid=4321 window_id=48234499"));
         assert!(text.contains("LibreOffice Calc"));
         assert!(text.contains("app=libreoffice"));
         assert!(text.contains("get_window_state(pid, window_id)"));
-        assert!(desktop_window_lines(&[]).contains("none"));
+        assert!(desktop_window_lines(&[], 1.0).contains("none"));
+        // A downsized desktop screenshot reports window rects in ITS pixels.
+        let scaled = desktop_window_lines(&windows, 1.5);
+        assert!(scaled.contains("1280x702 at (0,18)"), "{scaled}");
+        let state = ToolState::new();
+        *state.desktop_scale.lock().unwrap() = 1.5;
+        assert_eq!(state.desktop_to_screen(281.0, 57.0), (421.5, 85.5));
     }
 }

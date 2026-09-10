@@ -67,7 +67,7 @@ jobs:
           test "$(git rev-parse HEAD)" = "$RELEASE_SOURCE_SHA"
 
       - name: Set up Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ inputs.python_version }}
 

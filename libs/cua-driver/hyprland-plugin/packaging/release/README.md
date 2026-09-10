@@ -1,8 +1,10 @@
 # Pinned source release
 
-For a separately reviewed native profile around the unchanged Driver 0.24.0
-archive, see [profile-based rebuilds](profile-contract.md) and
-[profile kit usage](PROFILE-USAGE.md). This legacy generator remains unchanged.
+For separately reviewed native profiles, see
+[profile-based rebuilds](profile-contract.md) and
+[profile kit usage](PROFILE-USAGE.md). Schema 1 preserves the original Driver
+0.24.0 source archive; schema 2 supports a separately reviewed source revision.
+The source archive generator described below remains separate from profile kits.
 
 Prepare a profile kit only after committing the packaging tooling and reviewing
 the measured profile:

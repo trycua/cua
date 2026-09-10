@@ -1,9 +1,11 @@
 # Build a reviewed native-profile package
 
-This kit rebuilds the unchanged Driver 0.24.0 plugin source for one explicitly
-reviewed native profile. The historical archive and its embedded manifest and
-verifier retain their original bytes. The recipe uses `profile_verify.py` from
-this kit. It does not invoke the historical verifier or rewrite source files.
+This kit builds the plugin source selected in `PROFILE.json` for one explicitly
+reviewed native profile. Schema 1 selects the original Driver 0.24.0 source;
+schema 2 can select a separately reviewed source revision and Driver version.
+The selected archive and its embedded manifest and verifier retain their
+original bytes. The recipe uses `profile_verify.py` from this kit. It does not
+invoke the embedded verifier or rewrite source files.
 
 The kit, source, and native profile have separate identities. `PROFILE.json`
 contains the profile ID, kit version, package release, source checksums, and
@@ -38,7 +40,7 @@ changes runtime search paths or the desktop environment.
 
 The recipe checks exact native package versions, compositor and compiler bytes,
 GCC version/date and emitted ELF comment, the package-owned Hyprland header tree,
-and matching shared-runtime bytes. The unchanged source requires Hyprland 0.56.2
+and matching shared-runtime bytes. These profiles require Hyprland 0.56.2
 headers. CMake enables production input, disables experimental input and tracing,
 and builds the bundled tests. Packaging runs CTest even with `--nocheck` or
 `--repackage`; skipping makepkg integrity checks does not skip the recipe checks.
@@ -65,12 +67,14 @@ build-selection checks, not a sandbox for arbitrary build environments.
 ## Qualify package transactions
 
 In a disposable matching Arch environment, with ordinary-user build tools and
-previously authorized noninteractive sudo for isolated ALPM roots, run:
+previously authorized noninteractive sudo for isolated ALPM roots, run the
+following command. Replace `SOURCE_REVISION` and `DRIVER_VERSION` with the exact
+`source.revision` and `source.driver_version` from the reviewed `PROFILE.json`:
 
 ```sh
 python3 lifecycle.py --kit . \
-  --revision 4b3396d9fe4bd3cf723b0eb8db83c18a8764b520 \
-  --driver-version 0.24.0 --kit-sha256 REVIEWED_KIT_PROVENANCE_SHA256 \
+  --revision SOURCE_REVISION \
+  --driver-version DRIVER_VERSION --kit-sha256 REVIEWED_KIT_PROVENANCE_SHA256 \
   --output NEW_EVIDENCE_DIRECTORY
 ```
 

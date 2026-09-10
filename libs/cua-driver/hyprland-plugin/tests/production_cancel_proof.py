@@ -34,12 +34,12 @@ MAX_GROUNDING_AGE_NS = 5_000_000_000
 GROUNDING_DISPATCH_RESERVE_NS = 250_000_000
 MAX_GROUNDING_ATTEMPTS = 2
 # max_elements counts all visited AT-SPI nodes, not only emitted controls.
-# The native 2,000-node run retained the object row but stopped 14 rendered
-# tree lines before the selection status. Allow 500 more visited nodes while
-# keeping the trailing menu tree bounded; native coverage must verify this.
-# Keep depth uncapped (the object row is deeply nested). Missing oracle
-# evidence still fails closed, as does the unchanged five-second age limit.
-POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 2500}}
+# On the qualified Omarchy profile, even a 2,500-node walk retained the object
+# row but stopped before the selection status. A 3,000-node native observation
+# recovered the status and geometry in about 1.2 seconds per independent app.
+# Keep the walk bounded and depth uncapped (the object row is deeply nested).
+# Missing oracle evidence and the unchanged five-second age limit fail closed.
+POINTER_SNAPSHOT_LIMITS = {'inkscape': {'max_elements': 3000}}
 
 
 def validate_app_profile(plan, *, require_drag=True):

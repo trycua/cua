@@ -250,6 +250,14 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
             .expect("canonical installed daemon socket");
         let mut peer = McpDriver::spawn_daemon_proxy_unrecorded(&socket)
             .expect("start concurrent cursor session");
+        let verifies_target = |response: &ToolResponse| {
+            let state = response.structured();
+            !response.is_error()
+                && state["activated"] == true
+                && state["observed"]["focused_window_id"].as_u64() == Some(wid)
+                && state["observed"]["frontmost_ordinary_window_id"].as_u64() == Some(wid)
+                && state["observed"]["frontmost_pid"].as_u64() == Some(u64::from(pid))
+        };
         let stopped = std::sync::atomic::AtomicBool::new(false);
         let (ready, started) = std::sync::mpsc::sync_channel(1);
         let activated = std::thread::scope(|scope| {
@@ -283,6 +291,10 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
                     x = if x == 120 { 121 } else { 120 };
                     std::thread::sleep(Duration::from_millis(20));
                 }
+                assert!(
+                    stopped.load(std::sync::atomic::Ordering::Relaxed),
+                    "cursor producer expired before the activation interval completed"
+                );
             });
             started
                 .recv_timeout(Duration::from_secs(15))
@@ -292,7 +304,7 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
                 serde_json::json!({"pid": pid, "window_id": wid}),
             );
             for _ in 1..20 {
-                if result.is_error() || result.structured()["activated"] != true {
+                if !verifies_target(&result) {
                     break;
                 }
                 result = driver.call(
@@ -305,13 +317,9 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
             result
         });
         assert!(
-            !activated.is_error() && activated.structured()["activated"] == true,
+            verifies_target(&activated),
             "active agent cursor must not invalidate exact activation: {}",
-            activated.text()
-        );
-        assert_eq!(
-            activated.structured()["observed"]["focused_window_id"].as_u64(),
-            Some(wid)
+            activated.raw
         );
         let after = observer.snapshot(target).expect("observe activated target");
         assert_eq!(after.foreground, Some(u64::from(pid)));

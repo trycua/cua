@@ -25,6 +25,7 @@ from production_mcp import DirectMCP
 
 
 PACKAGES = {'libreoffice-fresh': '26.2.5-3', 'inkscape': '1.4.4-6'}
+APP_PROFILES = {'calc-inkscape': ('calc', 'inkscape'), 'inkscape-only': ('inkscape',)}
 EXECUTABLES = {'calc': Path('/usr/lib/libreoffice/program/soffice.bin'),
                'inkscape': Path('/usr/bin/inkscape')}
 NS = {'office': 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
@@ -59,6 +60,12 @@ def package_owner(path, package):
     assert read(['pacman', '-Qqo', str(path)]) == package, 'noncanonical package owner'
     assert read(['pacman', '-Q', package]) == f'{package} {PACKAGES[package]}'
     return digest(path)
+
+
+def profile_packages(name):
+    assert isinstance(name, str) and name in APP_PROFILES, 'unknown app qualification profile'
+    return {package: PACKAGES[package] for app in APP_PROFILES[name]
+            for package in ('libreoffice-fresh' if app == 'calc' else app,)}
 
 
 def kernel_file_identity(plugin):
@@ -127,20 +134,82 @@ def require_enabled_plugin(option):
         and option.get('bool') is True and 'int' not in option, 'setup has not enabled the plugin'
 
 
-def provenance(args):
-    source = args.source.resolve(strict=True)
+def checkout_identity(source, expected_sha, label):
+    source = source.resolve(strict=True)
     assert Path(read(['git', '-C', str(source), 'rev-parse', '--show-toplevel'])).resolve() == source
     sha = read(['git', '-C', str(source), 'rev-parse', 'HEAD'])
-    assert re.fullmatch(r'[0-9a-f]{40}', args.source_sha) and sha == args.source_sha, 'source SHA mismatch'
+    assert re.fullmatch(r'[0-9a-f]{40}', expected_sha) and sha == expected_sha, f'{label} SHA mismatch'
     dirty = read(['git', '-C', str(source), 'status', '--porcelain'])
-    assert not dirty, 'exact-source smoke requires a clean checkout'
-    assert Path(__file__).resolve().is_relative_to(source), 'runner is outside declared source'
-    assert dict(line.split() for line in read(['pacman', '-Q', *PACKAGES]).splitlines()) == PACKAGES
+    assert not dirty, f'{label} requires a clean checkout'
+    return {'source': str(source), 'source_sha': sha, 'dirty': dirty,
+            'branch': read(['git', '-C', str(source), 'branch', '--show-current'])}
+
+
+def source_identities(args):
+    product = checkout_identity(args.source, args.source_sha, 'source')
+    harness_source = getattr(args, 'harness_source', None)
+    harness_sha = getattr(args, 'harness_sha', None)
+    assert (harness_source is None) == (harness_sha is None), 'harness source and SHA must be supplied together'
+    harness = (checkout_identity(harness_source, harness_sha, 'harness')
+               if harness_source is not None else dict(product))
+    assert Path(__file__).resolve().is_relative_to(Path(harness['source'])), 'runner is outside declared harness source'
+    return product, harness
+
+
+def add_provenance_arguments(parser):
+    parser.add_argument('--source-sha', required=True)
+    parser.add_argument('--harness-source', type=Path)
+    parser.add_argument('--harness-sha')
+    parser.add_argument('--artifact-role', choices=('diagnostic', 'production'))
+    parser.add_argument('--kit-manifest', type=Path)
+    parser.add_argument('--profile-manifest', type=Path)
+    parser.add_argument('--build-provenance', type=Path)
+
+
+def artifact_identity(args, product, plugin, app_profile):
+    """Bind production metadata to the module; diagnostics never borrow its claim."""
+    role = getattr(args, 'artifact_role', None)
+    paths = [getattr(args, name, None) for name in ('kit_manifest', 'profile_manifest', 'build_provenance')]
+    assert all(path is not None for path in paths) or all(path is None for path in paths), \
+        'kit, profile and build provenance must be supplied together'
+    if app_profile == 'inkscape-only':
+        assert role in ('diagnostic', 'production'), 'inkscape-only requires an explicit artifact role'
+    if role == 'diagnostic':
+        assert getattr(args, 'trace_socket', None), 'diagnostic proof requires a trace socket'
+        assert not any(paths), 'diagnostic module cannot claim the trace-disabled production kit'
+    if role == 'production' or any(paths):
+        assert role == 'production' and all(paths), 'production identity requires all package provenance manifests'
+        assert not getattr(args, 'trace_socket', None), 'production package proof cannot use diagnostic trace'
+        kit_path, profile_path, build_path = paths
+        kit, profile, build = [json.loads(path.read_text()) for path in paths]
+        assert kit['schema'] == 1 and re.fullmatch(r'[0-9a-f]{40}', kit['tooling_revision'])
+        assert kit['profile_sha256'] == digest(profile_path)['sha256'], 'kit profile digest mismatch'
+        assert kit['source']['revision'] == product['source_sha'], 'kit product source mismatch'
+        assert profile['source'] == kit['source'], 'profile product source mismatch'
+        assert build['source']['source_revision'] == product['source_sha'], 'build product source mismatch'
+        assert build['source']['driver_version'] == kit['source']['driver_version'], 'build Driver version mismatch'
+        assert build['kit'] == kit and build['profile'] == profile, 'build kit/profile provenance mismatch'
+        assert kit['cmake_options'] == {'CUA_HYPRLAND_INPUT': 'ON', 'CUA_HYPRLAND_TEST_INPUT': 'OFF',
+                                        'CUA_HYPRLAND_INPUT_TRACE': 'OFF'}, 'not a production kit configuration'
+        assert build['module_sha256'] == digest(plugin)['sha256'], 'build module digest mismatch'
+        return {'role': role, 'kit': digest(kit_path), 'profile': digest(profile_path),
+                'build': digest(build_path), 'profile_id': profile['profile_id'],
+                'tooling_revision': kit['tooling_revision'], 'module_sha256': build['module_sha256']}
+    return {'role': role or 'unspecified'}
+
+
+def provenance(args, app_profile=None):
+    app_profile = app_profile if app_profile is not None else getattr(args, 'app_profile', 'calc-inkscape')
+    packages = profile_packages(app_profile)
+    product, harness = source_identities(args)
+    source = Path(product['source'])
+    assert dict(line.split() for line in read(['pacman', '-Q', *packages]).splitlines()) == packages
     app_files = {app: package_owner(path,
                                    'libreoffice-fresh' if app == 'calc' else app)
-                 for app, path in EXECUTABLES.items()}
-    launcher = Path('/usr/bin/libreoffice').resolve(strict=True)
-    app_files['calc_launcher'] = package_owner(launcher, 'libreoffice-fresh')
+                 for app, path in EXECUTABLES.items() if app in APP_PROFILES[app_profile]}
+    if 'calc' in APP_PROFILES[app_profile]:
+        launcher = Path('/usr/bin/libreoffice').resolve(strict=True)
+        app_files['calc_launcher'] = package_owner(launcher, 'libreoffice-fresh')
     signature = os.environ.get('HYPRLAND_INSTANCE_SIGNATURE')
     assert signature, 'missing active Hyprland instance identity'
     instances = json.loads(read(['hyprctl', '-j', 'instances']))
@@ -150,6 +219,7 @@ def provenance(args):
     assert Path(f'/proc/{pid}/exe').resolve(strict=True).name == 'Hyprland'
     plugin = args.plugin.resolve(strict=True)
     maps = mapped_plugin(Path(f'/proc/{pid}/maps').read_text(), plugin)
+    artifact = artifact_identity(args, product, plugin, app_profile)
     plugins = read(['hyprctl', 'plugin', 'list'])
     assert 'cua-hyprland-plugin' in plugins, 'plugin is mapped but not registered'
     enabled = json.loads(read(['hyprctl', '-j', 'getoption', 'plugin:cua:enabled']))
@@ -158,23 +228,20 @@ def provenance(args):
     files = {'driver': args.driver, 'plugin': plugin,
              **{name: Path(__file__).with_name(name) for name in
                 ('production_app_smoke.py', 'production_mcp.py', 'driver_input_live.py')}}
-    return {'source': str(source), 'source_sha': sha,
-            'branch': read(['git', '-C', str(source), 'branch', '--show-current']),
-            'dirty': dirty,
+    return {**product, 'harness': harness, 'artifact': artifact,
             'source_versions': {
                 'driver': re.search(r'(?m)^version = "([^"]+)"',
                                     (source / 'libs/cua-driver/rust/Cargo.toml').read_text())[1],
                 'plugin': re.search(r'project\(cua_hyprland_plugin VERSION ([\d.]+)',
                                     (source / 'libs/cua-driver/hyprland-plugin/CMakeLists.txt').read_text())[1]},
             'driver_version': read([str(args.driver), '--version']),
-            'packages': PACKAGES, 'app_files': app_files,
+            'app_profile': app_profile, 'packages': packages, 'app_files': app_files,
             'files': {name: digest(path) for name, path in files.items()},
             'hyprland_pid': pid, 'hyprland_version': read(['hyprctl', 'version']),
             'loaded_plugins': plugins, 'plugin_maps': maps, 'plugin_enabled': enabled}
 
 
-def create_documents(directory):
-    """Minimal native formats, with one blank A1 and one uniquely named rectangle."""
+def create_calc_document(directory):
     ods = directory / 'cua-smoke-calc.ods'
     content = f'''<?xml version="1.0" encoding="UTF-8"?>
 <office:document-content xmlns:office="{NS['office']}" xmlns:table="{NS['table']}"
@@ -191,12 +258,23 @@ def create_documents(directory):
                          compress_type=zipfile.ZIP_STORED)
         archive.writestr('content.xml', content)
         archive.writestr('META-INF/manifest.xml', manifest)
+    return ods
+
+
+def create_inkscape_document(directory):
     svg = directory / 'cua-smoke-inkscape.svg'
     with svg.open('x') as stream:
         stream.write('''<svg xmlns="http://www.w3.org/2000/svg" width="400" height="300" viewBox="0 0 400 300">
 <rect id="smoke-rectangle" x="40" y="60" width="80" height="50" fill="#336699"/>
 </svg>''')
-    return {'calc': ods, 'inkscape': svg}
+    return svg
+
+
+def create_documents(directory, app_profile='calc-inkscape'):
+    """Minimal native formats, with one blank A1 and one uniquely named rectangle."""
+    profile_packages(app_profile)
+    creators = {'calc': create_calc_document, 'inkscape': create_inkscape_document}
+    return {app: creators[app](directory) for app in APP_PROFILES[app_profile]}
 
 
 def verify_calc(before, after):
@@ -532,7 +610,9 @@ def run(args):
             'source': str(args.source), 'source_sha': args.source_sha,
             'driver': digest(args.driver), 'plugin': digest(args.plugin)})
         save_json(args.evidence, 'provenance.json', provenance(args))
-        documents = create_documents(args.evidence)
+        app_profile = getattr(args, 'app_profile', 'calc-inkscape')
+        result['app_profile'] = app_profile
+        documents = create_documents(args.evidence, app_profile)
         # Inherited by the ordinary Driver launcher; preferences are run-local.
         os.environ.update(GDK_BACKEND='wayland', SAL_USE_VCLPLUGIN='gtk3',
                           XDG_CONFIG_HOME=str(args.evidence / 'config'))
@@ -552,7 +632,7 @@ def run(args):
                 if mcp:
                     mcp.close()
         statuses = [row['result'] for row in result['apps'].values()]
-        result['result'] = ('passed' if statuses == ['passed', 'passed'] else
+        result['result'] = ('passed' if statuses == ['passed'] * len(APP_PROFILES[app_profile]) else
                             'failed' if 'failed' in statuses else 'inspection_only')
     except Exception as error:
         result['error'] = str(error)
@@ -571,5 +651,6 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('source', 'driver', 'plugin', 'evidence'):
         parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
+    parser.add_argument('--app-profile', choices=APP_PROFILES, default='calc-inkscape')
     raise SystemExit(run(parser.parse_args()))

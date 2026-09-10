@@ -213,6 +213,50 @@ class PointerGroundingTests(unittest.TestCase):
         with self.assertRaises(pointer.GroundingUnavailable):
             pointer.action(*ink(), 'inkscape', 'click_rectangle')
 
+    def test_pixel_selection_does_not_require_keyboard_menu_discovery(self):
+        state, image = ink(False)
+        state['elements'] = [row for row in state['elements'] if row['role'] == 'table cell']
+        state['tree_markdown'] = '\n'.join(line for line in state['tree_markdown'].splitlines()
+                                           if 'menu ' not in line and 'menu item ' not in line)
+        args, oracle = pointer.action(state, image, 'inkscape', 'click_rectangle')
+        self.assertEqual(args, {'x': 169, 'y': 179})
+        self.assertTrue(pointer.verify(*ink(), oracle)['verified'])
+        # The separate Ctrl+A grounding contract still needs its actual menu.
+        from production_app_smoke import inkscape_selection_command, rows
+        self.assertFalse(inkscape_selection_command(state, rows(state)))
+
+    def test_pixel_selection_requires_positive_consistent_unselected_evidence(self):
+        for failure in ('missing_status', 'duplicate_status', 'missing_object',
+                        'duplicate_object', 'disabled_object', 'missing_object_line',
+                        'duplicate_object_line', 'wrong_object_index', 'selected_conflict', 'dialog'):
+            with self.subTest(failure=failure):
+                state, image = ink(False)
+                object_row = next(row for row in state['elements'] if row['role'] == 'table cell')
+                lines = state['tree_markdown'].splitlines()
+                if failure == 'missing_status':
+                    lines = [line for line in lines if 'No objects selected.' not in line]
+                elif failure == 'duplicate_status':
+                    lines.append(next(line for line in lines if 'No objects selected.' in line))
+                elif failure == 'missing_object':
+                    state['elements'].remove(object_row)
+                elif failure == 'duplicate_object':
+                    state['elements'].append(copy.deepcopy(object_row))
+                elif failure == 'disabled_object':
+                    object_row['enabled'] = False
+                elif failure == 'missing_object_line':
+                    lines = [line for line in lines if 'table cell' not in line]
+                elif failure == 'duplicate_object_line':
+                    lines.append(next(line for line in lines if 'table cell' in line))
+                elif failure == 'wrong_object_index':
+                    object_row['element_index'] = 999
+                elif failure == 'selected_conflict':
+                    lines.append('- label = "Rectangle  in root. Click selection again to toggle scale/rotation handles."')
+                else:
+                    state['elements'].append({'role': 'dialog'})
+                state['tree_markdown'] = '\n'.join(lines)
+                with self.assertRaises(pointer.GroundingUnavailable):
+                    pointer.action(state, image, 'inkscape', 'click_rectangle')
+
     def test_inkscape_drag_and_scroll_need_pixels_and_semantics_to_agree(self):
         args, oracle = pointer.action(*ink(), 'inkscape', 'move_rectangle')
         self.assertEqual([args['from_x'], args['from_y']], [145, 165])

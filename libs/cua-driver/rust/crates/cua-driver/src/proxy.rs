@@ -42,6 +42,16 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
     cua_driver_core::authorization::validate_startup_authorization()?;
     validate_configured_policy()?;
     let sdk = crate::sdk_adapter::SdkAdapter::load(driver.clone()).await?;
+    if crate::mcp_envelope::configured()? {
+        let result = crate::mcp_envelope::run(
+            sdk.clone(),
+            BufReader::new(tokio::io::stdin()),
+            tokio::io::stdout(),
+        )
+        .await;
+        sdk.shutdown().await.map_err(anyhow::Error::msg)?;
+        return result;
+    }
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
     let mut reader = BufReader::new(stdin);
@@ -131,7 +141,7 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
     sdk.shutdown().await.map_err(anyhow::Error::msg)
 }
 
-fn apply_direct_session_identity(request: &mut Request, transport_session: &str) {
+pub(crate) fn apply_direct_session_identity(request: &mut Request, transport_session: &str) {
     let Some(arguments) = request
         .params
         .as_mut()
@@ -178,6 +188,9 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // binding or forwarding any action.
     let compatibility_client = cua_driver_sdk::CuaDriver::connect(Some(socket_path.clone()))?;
     compatibility_client.metadata().await?;
+    if crate::mcp_envelope::configured()? {
+        return crate::mcp_envelope::proxy(&socket_path).await;
+    }
 
     // Mint this MCP session's identity once at proxy startup. One proxy process
     // == one MCP session; the daemon outlives it. We stamp this id on every

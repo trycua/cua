@@ -382,6 +382,8 @@ fn remote_tool(name: &str) -> bool {
     matches!(
         name,
         "get_desktop_state"
+            | "list_windows"
+            | "get_window_state"
             | "get_screen_size"
             | "get_cursor_position"
             | "click"

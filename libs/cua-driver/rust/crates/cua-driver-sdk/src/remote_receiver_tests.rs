@@ -158,6 +158,82 @@ async fn preserves_native_results_and_arguments_for_each_operation() {
 }
 
 #[tokio::test]
+async fn window_observation_is_advertised_and_dispatches_without_changing_results() {
+    use cua_driver_contract::{GetWindowStateInput, ListWindowsInput, ToolInput};
+
+    let native = json!({
+        "content": [{"type": "image", "data": "synthetic", "mimeType": "image/png"}],
+        "structuredContent": {"snapshot_id": "s1", "elements": []},
+        "isError": false
+    });
+    let executor = FakeExecutor::new(native.clone(), false);
+    let receiver = DriverEnvelopeReceiver::new(executor.clone());
+    let calls = [
+        (
+            ListWindowsInput::TOOL_NAME,
+            json!({"pid": 42, "on_screen_only": true}),
+        ),
+        (
+            GetWindowStateInput::TOOL_NAME,
+            json!({
+                "pid": 42,
+                "window_id": 7,
+                "session": "observation",
+                "include_accessibility_tree": true,
+                "include_screenshot": true,
+                "screenshot_out_file": null,
+                "max_elements": 100
+            }),
+        ),
+    ];
+    for (name, arguments) in &calls {
+        assert!(cua_driver_contract::tool_contract(name).is_some());
+        // NativeExecutor::list_tools uses this same predicate to advertise tools.
+        assert!(
+            remote_tool(name),
+            "{name} must appear in remote tool discovery"
+        );
+        let mut envelope = request(name);
+        envelope.name = Some((*name).into());
+        envelope.arguments = Some(arguments.clone());
+        let response = receiver.exchange(receiver.generation(), envelope).await;
+        assert!(response.ok, "{response:?}");
+        assert!(response.completion_known);
+        assert_eq!(response.result.as_ref(), Some(&native));
+    }
+    assert_eq!(
+        *executor.calls.lock().unwrap(),
+        calls.map(|(name, arguments)| (name.to_string(), arguments))
+    );
+}
+
+#[tokio::test]
+async fn window_observation_rejects_local_paths_and_private_fields_before_dispatch() {
+    let executor = FakeExecutor::new(Value::Null, false);
+    let receiver = DriverEnvelopeReceiver::new(executor.clone());
+    for name in ["list_windows", "get_window_state"] {
+        for (field, value) in [
+            ("screenshot_out_file", json!("/tmp/receiver-test.png")),
+            ("image_path", json!("/tmp/receiver-test.png")),
+            ("file_path", json!("/tmp/receiver-test.txt")),
+            ("_session_id", json!("untrusted")),
+            ("_permission_mode", json!("unrestricted")),
+            ("_private", Value::Null),
+        ] {
+            let mut arguments = json!({"pid": 42, "window_id": 7});
+            arguments[field] = value;
+            let mut envelope = request("rejected-observation");
+            envelope.name = Some(name.into());
+            envelope.arguments = Some(arguments);
+            let response = receiver.exchange(receiver.generation(), envelope).await;
+            assert_refusal(&response, "invalid_request", true);
+        }
+    }
+    assert_eq!(executor.count(), 0);
+    assert!(receiver.state.lock().unwrap().requests.is_empty());
+}
+
+#[tokio::test]
 async fn preserves_native_tool_error_code_and_message() {
     let executor = FakeExecutor::new(Value::Null, false);
     let error = DriverError::Tool {
@@ -209,7 +285,19 @@ async fn invalid_envelopes_never_reach_executor() {
         envelope.arguments = Some(arguments);
         invalid.push(envelope);
     }
-    for name in ["execute_shell", "session_end", "unknown_tool"] {
+    for name in [
+        "execute_shell",
+        "launch_app",
+        "kill_app",
+        "read_file",
+        "write_file",
+        "start_session",
+        "escalate_session",
+        "end_session",
+        "session_end",
+        "unknown_tool",
+    ] {
+        assert!(!remote_tool(name), "{name} must not be advertised remotely");
         let mut envelope = request("unsupported");
         envelope.name = Some(name.into());
         invalid.push(envelope);

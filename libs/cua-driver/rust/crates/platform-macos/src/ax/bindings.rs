@@ -81,6 +81,12 @@ extern "C" {
         element: AXUIElementRef,
         timeout_in_seconds: f32,
     ) -> AXError;
+    pub fn AXUIElementCopyMultipleAttributeValues(
+        element: AXUIElementRef,
+        attributes: CFArrayRef,
+        options: u32,
+        values: *mut CFArrayRef,
+    ) -> AXError;
     pub fn AXUIElementGetTypeID() -> CFTypeID;
     pub fn AXIsProcessTrusted() -> bool;
     /// `AXIsProcessTrustedWithOptions(options)` — when called with
@@ -173,6 +179,89 @@ pub unsafe fn copy_string_attr(element: AXUIElementRef, attr_name: &str) -> Opti
     }
     let s = CFStr::wrap_under_create_rule(value as _);
     Some(s.to_string())
+}
+
+unsafe fn decode_multiple_strings<const N: usize>(
+    values: &CFArray<CFTypeRef>,
+) -> Option<[Option<String>; N]> {
+    if values.len() as usize != N {
+        return None;
+    }
+    Some(std::array::from_fn(|index| {
+        let value = *values.get(index as isize)?;
+        if value.is_null() || core_foundation::base::CFGetTypeID(value) != CFStr::type_id() {
+            return None;
+        }
+        Some(CFStr::wrap_under_get_rule(value as _).to_string())
+    }))
+}
+
+pub unsafe fn copy_multiple_strings<const N: usize>(
+    element: AXUIElementRef,
+    names: [&str; N],
+) -> [Option<String>; N] {
+    if N == 0 {
+        return std::array::from_fn(|_| None);
+    }
+    let names_cf: Vec<_> = names.iter().map(|name| CFStr::new(name)).collect();
+    let attributes = CFArray::from_CFTypes(&names_cf);
+    let mut values: CFArrayRef = std::ptr::null();
+    let error = AXUIElementCopyMultipleAttributeValues(
+        element,
+        attributes.as_concrete_TypeRef(),
+        0,
+        &mut values,
+    );
+    let values = (!values.is_null()).then(|| CFArray::<CFTypeRef>::wrap_under_create_rule(values));
+    if error == kAXErrorSuccess {
+        if let Some(decoded) = values.as_ref().and_then(|v| decode_multiple_strings(v)) {
+            return decoded;
+        }
+    }
+    std::array::from_fn(|index| copy_string_attr(element, names[index]))
+}
+
+#[cfg(test)]
+mod multiple_string_tests {
+    use super::*;
+    use core_foundation::number::CFNumber;
+
+    #[test]
+    fn keeps_positions_empty_strings_and_non_string_absence() {
+        let input = CFArray::from_CFTypes(&[
+            CFStr::new("").as_CFType(),
+            CFNumber::from(42_i32).as_CFType(),
+            CFStr::new("label").as_CFType(),
+        ]);
+        let raw = unsafe { CFArray::<CFTypeRef>::wrap_under_get_rule(input.as_concrete_TypeRef()) };
+        let decoded = unsafe { decode_multiple_strings::<3>(&raw) }.unwrap();
+        assert_eq!(decoded, [Some(String::new()), None, Some("label".into())]);
+        drop(raw);
+        drop(input);
+        assert_eq!(decoded[2].as_deref(), Some("label"));
+    }
+
+    #[test]
+    fn per_attribute_error_does_not_shift_or_abort_following_slots() {
+        let code = kAXErrorAttributeUnsupported;
+        let error = unsafe { AXValueCreate(5, std::ptr::from_ref(&code).cast()) };
+        assert!(!error.is_null());
+        let error = unsafe { core_foundation::base::CFType::wrap_under_create_rule(error.cast()) };
+        let input = CFArray::from_CFTypes(&[error, CFStr::new("after error").as_CFType()]);
+        let raw = unsafe { CFArray::<CFTypeRef>::wrap_under_get_rule(input.as_concrete_TypeRef()) };
+        assert_eq!(
+            unsafe { decode_multiple_strings::<2>(&raw) },
+            Some([None, Some("after error".into())]),
+        );
+    }
+
+    #[test]
+    fn malformed_slot_counts_request_fallback() {
+        let input = CFArray::from_CFTypes(&[CFStr::new("one")]);
+        let raw = unsafe { CFArray::<CFTypeRef>::wrap_under_get_rule(input.as_concrete_TypeRef()) };
+        assert!(unsafe { decode_multiple_strings::<2>(&raw) }.is_none());
+        assert!(unsafe { decode_multiple_strings::<0>(&raw) }.is_none());
+    }
 }
 
 /// Copy a numeric attribute from an AX element as an `f64`. Returns `None` on

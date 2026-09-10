@@ -400,7 +400,10 @@ unsafe fn walk_element(
     // This is critical for Calculator where AXTitle="" but AXDescription="2"
     // (digit buttons). Merging them would produce "2" (quoted) instead of (2)
     // (parens), breaking _find_calc_button which searches for "(2)".
-    let title = copy_string_attr(element, "AXTitle");
+    let [title, description, identifier, help] = copy_multiple_strings(
+        element,
+        ["AXTitle", "AXDescription", "AXIdentifier", "AXHelp"],
+    );
     // Read AXValue once with enough type information to preserve the existing
     // string-only markdown while also exposing numeric/boolean control state.
     let copied_value = copy_stringish_attr(element, "AXValue");
@@ -411,9 +414,7 @@ unsafe fn walk_element(
     let value = value
         .filter(|v| !v.trim().is_empty())
         .or_else(|| copy_string_attr(element, "AXPlaceholderValue"));
-    let description = copy_string_attr(element, "AXDescription");
-    let identifier = copy_string_attr(element, "AXIdentifier");
-    let help = copy_string_attr(element, "AXHelp").filter(|h| !h.trim().is_empty());
+    let help = help.filter(|h| !h.trim().is_empty());
     let actions = copy_action_names(element);
 
     let visible_title = title.as_deref().unwrap_or("").trim().to_owned();

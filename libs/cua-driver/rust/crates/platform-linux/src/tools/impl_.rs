@@ -1683,6 +1683,11 @@ fn window_local_to_screen(xid: u64, x: f64, y: f64) -> anyhow::Result<(f64, f64)
 
 /// `scope:"desktop"` alongside a pid/window target: the caller read `x,y` off
 /// `get_desktop_state` (screen pixels) but still names the window to act on.
+/// Upper bound for one AT-SPI element operation (bounds lookup / action).
+/// The AT-SPI layer bounds single bus calls, but a full tree walk over a large
+/// GTK/VCL window chains many of them; observed stalls ran to minutes.
+const ELEMENT_AX_BUDGET: std::time::Duration = std::time::Duration::from_secs(30);
+
 fn desktop_frame_requested(args: &Value) -> bool {
     args.get("scope").and_then(Value::as_str) == Some("desktop")
 }
@@ -3523,7 +3528,11 @@ impl Tool for ClickTool {
             // matching the coordinate path below and the macOS/Windows backends.
             // Previously perform_action ran inside this spawn_blocking, so the
             // app updated before the cursor visibly arrived.
-            let placement =
+            // Bounded: resolving bounds re-walks the AT-SPI tree, which on a
+            // large GTK/VCL tree can stall for minutes; a missing placement
+            // degrades to the AX action (background) or a refusal (foreground).
+            let placement = tokio::time::timeout(
+                ELEMENT_AX_BUDGET,
                 tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, f64, f64)> {
                     let (cx, cy) = element_screen_center(pid, idx, xid_hint)?;
                     let xid = xid_hint
@@ -3535,10 +3544,75 @@ impl Tool for ClickTool {
                         })
                         .unwrap_or(0);
                     Ok((xid, cx, cy))
-                })
-                .await
-                .ok()
-                .and_then(Result::ok);
+                }),
+            )
+            .await
+            .ok()
+            .and_then(Result::ok)
+            .and_then(Result::ok);
+            // X11 foreground element click: behave like a user — activate the
+            // window and XTest-click the element's screen centre. No AT-SPI
+            // action, no second tree walk. Element bounds come from the
+            // (bounded) placement above.
+            if delivery.is_foreground()
+                && !crate::wayland::wayland_input_enabled()
+                && !hyprland_foreground(delivery)
+            {
+                let Some((xid, sx, sy)) = placement.filter(|(xid, ..)| *xid != 0) else {
+                    return ToolResult::error(format!(
+                        "click: element [{idx}] bounds could not be resolved within \
+                         {ELEMENT_AX_BUDGET:?} (AT-SPI walk stalled or element vanished); \
+                         no input was sent. Re-snapshot with get_window_state or click by \
+                         pixel from a screenshot."
+                    ))
+                    .with_structured(json!({
+                        "code": "element_bounds_unavailable",
+                        "effect": "none",
+                        "suggestion": "re-snapshot with get_window_state, or click by x/y from get_desktop_state with scope:\"desktop\"",
+                    }));
+                };
+                crate::overlay::send_command_for(
+                    cursor_id.clone(),
+                    cursor_overlay::OverlayCommand::PinAbove(xid),
+                );
+                reveal_pointer_action_for(&self.state, &cursor_id, sx, sy, true).await;
+                let modifier_owned = modifiers.clone();
+                let result = spawn_blocking_bounded(
+                    "foreground element click",
+                    foreground_budget(0),
+                    move || {
+                        let modifier_refs: Vec<&str> =
+                            modifier_owned.iter().map(String::as_str).collect();
+                        crate::input::with_x11_foreground_opts(
+                            xid,
+                            crate::input::ForegroundOptions::pointer(),
+                            || {
+                                crate::input::send_click_xtest_desktop_with_modifiers(
+                                    sx.round() as i32,
+                                    sy.round() as i32,
+                                    button,
+                                    count,
+                                    &modifier_refs,
+                                )
+                            },
+                        )
+                    },
+                )
+                .await;
+                return match result {
+                    Ok(Ok(((), report))) => ToolResult::text(format!(
+                        "Clicked element [{idx}] (pid {pid}) with a real pointer click \
+                         (delivery_mode=foreground); not verified — confirm with a screenshot."
+                    ))
+                    .with_structured(foreground_structured(
+                        "x11_xtest_fg",
+                        report,
+                        serde_json::Map::new(),
+                    )),
+                    Ok(Err(e)) => input_error_result(e),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
+            }
             if let Some((xid, sx, sy)) = placement {
                 if xid != 0 {
                     crate::overlay::send_command_for(
@@ -3560,9 +3634,27 @@ impl Tool for ClickTool {
                 );
             }
             if element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty()) {
-                let ax_result =
-                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
-                        .await;
+                let ax_result = match tokio::time::timeout(
+                    ELEMENT_AX_BUDGET,
+                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx)),
+                )
+                .await
+                {
+                    Ok(joined) => joined,
+                    Err(_elapsed) => {
+                        return ToolResult::error(format!(
+                            "click: the AT-SPI action for element [{idx}] did not complete \
+                             within {ELEMENT_AX_BUDGET:?}; its effect is unknown. Take a \
+                             screenshot, then retry by pixel (x/y) or with \
+                             delivery_mode:\"foreground\"."
+                        ))
+                        .with_structured(json!({
+                            "code": "ax_timeout",
+                            "effect": "unknown",
+                            "escalation": non_ax_escalation(),
+                        }));
+                    }
+                };
                 if let Ok(Ok((_action, suspected_noop))) = ax_result {
                     let mut structured = json!({
                         "path": "ax",

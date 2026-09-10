@@ -228,10 +228,16 @@ pub fn walk_tree_bounded_within(
                 fallback.truncated = true;
                 fallback.truncation_reason = result.truncation_reason.take();
                 fallback.elapsed_ms = started.elapsed().as_millis();
-                fallback.degraded_reason = Some(
-                    "atspi_walk_timed_out: the application did not answer AT-SPI within                      timeout_ms; retry with a larger timeout_ms"
+                fallback.degraded_reason = Some(match fallback.truncation_reason.as_deref() {
+                    Some("app_unresponsive") => "atspi_app_unresponsive: the application is \
+                        registered with AT-SPI but did not answer GetChildren; its accessibility \
+                        bridge may still be initialising (LibreOffice does this on first launch) \
+                        - retry after a moment or with a larger timeout_ms"
                         .to_owned(),
-                );
+                    _ => "atspi_walk_timed_out: the application did not answer AT-SPI within \
+                        timeout_ms; retry with a larger timeout_ms"
+                        .to_owned(),
+                });
                 return fallback;
             }
             return result;

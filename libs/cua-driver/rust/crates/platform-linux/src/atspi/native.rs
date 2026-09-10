@@ -455,6 +455,68 @@ fn is_web_process_bus(name: &str) -> bool {
 /// be walked and written without killing the app. Other toolkits are
 /// unaffected (they already tolerate `GetAll`), and the sub-interface proxies
 /// from `proxies()` already use `CacheProperties::No`.
+/// Bus names whose peer-to-peer a11y socket does not answer. LibreOffice's
+/// VCL advertises a private AT-SPI socket but never services it (its main
+/// loop only pumps the session a11y bus), so every P2P call to it hangs for
+/// the full per-call timeout while the same request over the bus answers
+/// instantly. Once a bus name is demoted every proxy for it is built on the
+/// shared bus connection instead.
+fn p2p_demoted() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static SET: OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = OnceLock::new();
+    SET.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+fn p2p_is_demoted(bus: &str) -> bool {
+    p2p_demoted().lock().unwrap().contains(bus)
+}
+
+/// Would `accessible_for` currently take the peer-to-peer route for `bus`?
+fn p2p_in_use(conn: &AccessibilityConnection, bus: &str) -> bool {
+    if !bus.starts_with(':') || p2p_is_demoted(bus) {
+        return false;
+    }
+    let Ok(name) = atspi::zbus::names::UniqueName::try_from(bus.to_owned()) else {
+        return false;
+    };
+    conn.get_peer(&atspi::zbus::names::BusName::Unique(name.as_ref()))
+        .is_some()
+}
+
+/// A P2P call to `bus` timed out while our own deadline still had time left:
+/// the peer socket is dead, not the app. Demote the bus so every later proxy
+/// goes over the shared connection, and return a bus proxy for `oref` so the
+/// caller can retry once. `None` when P2P was not in use (nothing to demote).
+async fn demote_p2p_and_reopen<'a>(
+    conn: &'a AccessibilityConnection,
+    oref: &RawObjectRef,
+) -> Option<AccessibleProxy<'a>> {
+    if deadline_passed() || !p2p_in_use(conn, &oref.name) {
+        return None;
+    }
+    dlog!(
+        "peer-to-peer a11y socket for {} did not answer; falling back to the session bus",
+        oref.name
+    );
+    p2p_demoted().lock().unwrap().insert(oref.name.clone());
+    call(accessible_via_bus(conn, oref)).await?.ok()
+}
+
+/// Build the proxy on the shared bus connection, never the peer socket.
+async fn accessible_via_bus<'a>(
+    conn: &'a AccessibilityConnection,
+    oref: &RawObjectRef,
+) -> Result<AccessibleProxy<'a>> {
+    AccessibleProxy::builder(conn.connection())
+        .cache_properties(atspi::zbus::proxy::CacheProperties::No)
+        .destination(oref.name.clone())
+        .map_err(|e| anyhow!("bad a11y destination: {e}"))?
+        .path(oref.path.clone())
+        .map_err(|e| anyhow!("bad a11y path: {e}"))?
+        .build()
+        .await
+        .map_err(|e| anyhow!("AccessibleProxy build failed: {e}"))
+}
+
 async fn accessible_for<'a>(
     conn: &'a AccessibilityConnection,
     oref: &RawObjectRef,
@@ -464,7 +526,7 @@ async fn accessible_for<'a>(
     // peer snapshot; object_as_accessible's bus fallback omits their destination
     // and targets the Accessible interface name instead. Build an explicit bus
     // proxy below for those late peers and for well-known references.
-    if oref.name.starts_with(':') {
+    if oref.name.starts_with(':') && !p2p_is_demoted(&oref.name) {
         let name = atspi::zbus::names::UniqueName::try_from(oref.name.clone())
             .map_err(|e| anyhow!("bad a11y unique name: {e}"))?;
         let bus_name = atspi::zbus::names::BusName::Unique(name.as_ref());
@@ -590,11 +652,27 @@ impl<T> ApplicationSelection<T> {
     }
 }
 
+/// An application accessible plus the top-level children its selection probe
+/// already fetched (`None` when that probe timed out or failed), so callers do
+/// not pay a second `GetChildren` round-trip — on an application that never
+/// answers it, that was a second full CALL_TIMEOUT.
+struct ResolvedApp<'a> {
+    app: AccessibleProxy<'a>,
+    children: Option<Vec<atspi::ObjectRefOwned>>,
+}
+
 /// Locate the application accessible whose backing process is `pid`.
 async fn app_for_pid<'a>(
     conn: &'a AccessibilityConnection,
     pid: u32,
 ) -> Result<Option<AccessibleProxy<'a>>> {
+    Ok(resolve_app_for_pid(conn, pid).await?.map(|r| r.app))
+}
+
+async fn resolve_app_for_pid<'a>(
+    conn: &'a AccessibilityConnection,
+    pid: u32,
+) -> Result<Option<ResolvedApp<'a>>> {
     let zconn = conn.connection();
     // Every AT-SPI round-trip below can block on an app whose main loop isn't
     // servicing D-Bus — most commonly one holding a modal grab (an "Add/Edit/
@@ -659,19 +737,30 @@ async fn app_for_pid<'a>(
                 continue;
             }
         };
-        let has_children = match call(app.get_children()).await {
-            Some(Ok(children)) => !children.is_empty(),
+        let mut app = app;
+        let children = match call(app.get_children()).await {
+            Some(Ok(children)) => Some(children),
             Some(Err(error)) => {
                 dlog!("  get_children failed for pid {pid}: {error:#}");
-                false
+                None
             }
             None => {
                 dlog!("  get_children timed out for pid {pid}");
-                false
+                match demote_p2p_and_reopen(conn, &child).await {
+                    Some(bus_app) => {
+                        app = bus_app;
+                        match call(app.get_children()).await {
+                            Some(Ok(children)) => Some(children),
+                            _ => None,
+                        }
+                    }
+                    None => None,
+                }
             }
         };
+        let has_children = children.as_ref().is_some_and(|c| !c.is_empty());
         dlog!("  matching app has_children={has_children}");
-        selection.consider_matching(app, has_children);
+        selection.consider_matching(ResolvedApp { app, children }, has_children);
     }
     match selection.into_selected() {
         Ok(Some(app)) => Ok(Some(app)),
@@ -854,7 +943,10 @@ async fn collect_visited_bounded<'a>(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> Result<Option<Collected<'a>>> {
-    let app = match app_for_pid(conn, pid).await? {
+    let ResolvedApp {
+        app,
+        children: probed,
+    } = match resolve_app_for_pid(conn, pid).await? {
         Some(a) => a,
         None => {
             if deadline_passed() {
@@ -875,13 +967,41 @@ async fn collect_visited_bounded<'a>(
     // chrome. `frame_ordinal` is the seed's position in `get_children()` order
     // and is likewise inherited, so every node carries the identity of the
     // top-level window it belongs to.
-    let seeds: Vec<RawObjectRef> = match call(app.get_children()).await {
-        Some(Ok(children)) => children
-            .into_iter()
-            .filter_map(|child| RawObjectRef::from_atspi(&child))
-            .collect(),
-        _ => Vec::new(),
+    let (seeds, app_answered): (Vec<RawObjectRef>, bool) = match probed {
+        Some(children) => (
+            children
+                .iter()
+                .filter_map(RawObjectRef::from_atspi)
+                .collect(),
+            true,
+        ),
+        None => match call(app.get_children()).await {
+            Some(Ok(children)) => (
+                children
+                    .iter()
+                    .filter_map(RawObjectRef::from_atspi)
+                    .collect(),
+                true,
+            ),
+            _ => (Vec::new(), false),
+        },
     };
+    if !app_answered {
+        // The application registered with AT-SPI but never answered
+        // `GetChildren`: LibreOffice with its bridge half-initialised, or a
+        // modal-grabbed app. Report it as unresponsive rather than as an
+        // application without windows — the caller can retry later.
+        dlog!("application for pid {pid} did not answer GetChildren");
+        return Ok(Some(Collected {
+            visited: Vec::new(),
+            scoped_frame: None,
+            truncation: Some(Truncation {
+                reason: "app_unresponsive",
+                visited: 0,
+                pending: 0,
+            }),
+        }));
+    }
 
     // Resolve which seed is the caller's window before walking, from the same
     // child list the walk is about to seed from. Re-reading `get_children()`
@@ -960,6 +1080,12 @@ async fn collect_visited_bounded<'a>(
                 dlog!("  accessible_for failed: {error:#}");
                 continue;
             }
+            None if !deadline_passed() && p2p_in_use(conn, &oref.name) => {
+                match demote_p2p_and_reopen(conn, &oref).await {
+                    Some(a) => a,
+                    None => continue,
+                }
+            }
             None => {
                 if tokio::time::Instant::now() >= deadline {
                     truncation = Some("timeout");
@@ -982,10 +1108,28 @@ async fn collect_visited_bounded<'a>(
 
         // Interfaces gate every other query; if even this times out the node is
         // unreachable, so skip it rather than stall.
+        let mut acc = acc;
         let ifaces = match call(acc.get_interfaces()).await {
             Some(Ok(i)) => {
                 consecutive_timeouts = 0;
                 i
+            }
+            None if !deadline_passed() && p2p_in_use(conn, &oref.name) => {
+                // First sign of a dead peer socket: switch this bus to the
+                // session-bus route and retry the node once.
+                match demote_p2p_and_reopen(conn, &oref).await {
+                    Some(bus_acc) => {
+                        acc = bus_acc;
+                        match call(acc.get_interfaces()).await {
+                            Some(Ok(i)) => {
+                                consecutive_timeouts = 0;
+                                i
+                            }
+                            _ => continue,
+                        }
+                    }
+                    None => continue,
+                }
             }
             // A completed-but-errored call is node-specific; keep walking.
             Some(Err(error)) => {

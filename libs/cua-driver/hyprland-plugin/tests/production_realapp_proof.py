@@ -21,6 +21,7 @@ import zipfile
 
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
+from primary_observer import PrimaryObserver, verify_negative_control as verify_primary_control
 from production_app_smoke import (EXECUTABLES, NS, add_provenance_arguments, digest, ground, package_owner, profile_packages,
                                   provenance as runtime_provenance)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
@@ -564,6 +565,9 @@ def provenance(args, plan):
                                   'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
                             for name, path in files.items()})
     origin['app_processes'] = identities
+    if getattr(args, 'primary_observer', None):
+        for name in ('primary_observer.py', 'primary_observer_fixture.py'):
+            origin['files'][name] = digest(Path(__file__).with_name(name))
     return origin
 
 
@@ -586,6 +590,9 @@ def run(args):
         (args.evidence / name).write_text(json.dumps(value, indent=2))
     save('plan.json', plan)
     clients, recorder, grab, trace = [], None, None, None
+    primary_observer = None
+    observer_started = False
+    control_intervals = []
     primary_deadline_ns = None
     moving = plan.get('moving_primary', False)
     mover = None
@@ -602,6 +609,7 @@ def run(args):
               'app_profile': plan.get('app_profile', 'calc-inkscape'),
               'full_desktop_matrix': False, 'actions': [], 'outputs': [],
               'continuous_isolation': 'unproven', 'synthetic_cleanup': 'unproven',
+              'independent_primary_isolation': {'result': 'unproven'},
               'primary_mode': 'moving' if moving else 'parked'}
     if capacity:
         report['capacity'] = {'result': 'unproven'}
@@ -779,6 +787,14 @@ def run(args):
         assert all(current[key] == baseline[key] for key in ('clicks', 'keys', 'scroll', 'held')), current
         return {'agent': index, 'tool': step['tool'], **result}
     try:
+        observer_path = getattr(args, 'primary_observer', None)
+        if getattr(args, 'artifact_role', None) == 'production':
+            assert observer_path and not args.trace_socket, 'production package proof requires the independent primary observer'
+        if observer_path:
+            assert getattr(args, 'artifact_role', None) == 'production' and not args.trace_socket, \
+                'independent observer is an explicit production no-trace gate'
+            assert not moving and plan['purpose'] in ('apps', 'negative_control'), \
+                'independent observer currently qualifies parked app/control intervals only'
         assert not moving or args.trace_socket, 'moving primary requires continuous trace'
         assert not capacity or args.trace_socket, 'capacity requires continuous trace'
         assert not policy_cache or args.trace_socket, 'policy_cache requires continuous trace'
@@ -816,6 +832,10 @@ def run(args):
             trace = Trace(args.trace_socket)
             assert trace.hello['protocol'] == 3
             trace.exchange('TRACE_START')
+        if observer_path:
+            primary_observer = PrimaryObserver(observer_path, plan['foreground'], args.foreground_journal, args.evidence)
+            primary_observer.start(primary_before)
+            observer_started = True
         if args.record_video:
             video = recorder.tool('start_recording', {'output_dir': str(args.evidence / 'video'), 'record_video': True})
             assert not video.get('isError') and video['structuredContent']['video_active'], video
@@ -834,9 +854,14 @@ def run(args):
         for phase in plan['phases']:
             require_primary_active(grab, primary_deadline_ns)
             if phase.get('negative_control'):
-                assert trace, 'warp-and-return detector requires continuous trace'
+                assert trace or observer_started, 'warp-and-return detector requires continuous evidence'
+                if observer_started:
+                    assert point[0] + 40 < fg['width'] and point[1] + 30 < fg['height'], \
+                        'independent canary must remain inside the primary fixture'
                 snapshot(recorder, plan['foreground'])
+                control_start = time.monotonic_ns()
                 subprocess.run(grab_args + ['100', 'canary'], check=True, timeout=10)
+                control_intervals.append((control_start, time.monotonic_ns()))
                 snapshot(recorder, plan['foreground'])
                 assert wm() == primary_before, 'control failed to return to identical endpoints'
             elif 'parallel' in phase:
@@ -891,6 +916,20 @@ def run(args):
                 assert not result.get('isError') and not result['structuredContent'].get('last_error'), result
             operations.append(('stop_video', stop_video))
         operations.extend((f'close_agent_{i}', mcp.close) for i, mcp in enumerate(clients))
+        if primary_observer:
+            def finish_primary_observer():
+                assert observer_started, 'independent observer baseline failed'
+                require_primary_active(grab, primary_deadline_ns)
+                result = primary_observer.finish(action_intervals + control_intervals, wm())
+                require_primary_active(grab, primary_deadline_ns)
+                report['independent_primary_isolation'] = result
+                if plan['purpose'] == 'negative_control':
+                    report['independent_primary_control'] = verify_primary_control(result)
+                    report['negative_control_detected'] = True
+                else:
+                    assert result['result'] == 'passed', result
+            operations += [('finish_primary_observer', finish_primary_observer),
+                           ('close_primary_observer', primary_observer.close)]
         if trace:
             def finish_trace():
                 focus_after = None
@@ -978,7 +1017,9 @@ def run(args):
             report['result'] = 'failed'
         elif report['result'] == 'passed' and not trace:
             report['scope'] = 'production-package-smoke'
-            if plan['purpose'] != 'apps' or plan.get('require_overlap'):
+            if observer_started and plan['purpose'] == 'negative_control':
+                report['scope'] = 'production-package-primary-control'
+            elif plan['purpose'] != 'apps' or plan.get('require_overlap'):
                 report['result'] = 'inconclusive'
         save('result.json', report)
     print(json.dumps(report), flush=True)
@@ -991,5 +1032,6 @@ if __name__ == '__main__':
         parser.add_argument('--' + name, required=True, type=Path)
     add_provenance_arguments(parser)
     parser.add_argument('--trace-socket', type=Path)
+    parser.add_argument('--primary-observer', type=Path)
     parser.add_argument('--record-video', action='store_true')
     raise SystemExit(run(parser.parse_args()))

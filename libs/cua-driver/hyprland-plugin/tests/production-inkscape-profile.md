@@ -82,8 +82,9 @@ This binding complements the packaging verifier and package integrity checks;
 it is not a package signature, compiler/runtime compatibility check, or native
 certification. Diagnostic attribution cannot certify trace-disabled bytes.
 Production runs retain the existing `production-package-smoke` scope and leave
-continuous trace isolation unproven. Separate fresh-session package lifecycle
-and independent primary-input observations remain required for shipping.
+continuous trace isolation unproven. Explicit production `production_realapp_proof.py`
+runs now require the independent primary observer below. Separate fresh-session
+package lifecycle evidence remains required for shipping.
 
 `production_app_smoke.py --app-profile inkscape-only` runs the existing bounded
 single-app keyboard smoke with only the Inkscape package gate and SVG fixture.
@@ -91,6 +92,96 @@ It uses the production artifact role and the same source/manifest flags. Its lim
 concurrency, complete isolation, or full desktop certification claim.
 Fault/cancellation helper plans may also select `app_profile`; retain their
 existing required scenario fields and supply `document` on native app agents.
+
+## Independent primary gate for trace-disabled bytes
+
+`primary_observer_fixture.py` is a test-only replacement for the generic
+foreground GTK fixture in this explicit gate. It needs native GTK3 PyGObject
+and pycairo; no compilation is needed. It creates no synthetic input. Start it
+from the clean harness checkout in the disposable native Wayland session,
+using fresh paths (the journal, wire file, and control socket must not exist):
+
+```sh
+cd libs/cua-driver/hyprland-plugin/tests
+observer_dir=$(mktemp -d)
+python3 "$(pwd)/primary_observer_fixture.py" \
+  --journal "$observer_dir/foreground.jsonl" \
+  --wire "$observer_dir/foreground.wire" \
+  --control "$observer_dir/control.sock" \
+  --lifetime-ms 600000 >"$observer_dir/fixture.stdout" &
+```
+
+The fixture owns its `WAYLAND_DEBUG=client` capture, enforces the Wayland
+backend, and maps `Cua Isolated Input Foreground`. Bind the plan's exact
+foreground PID and native window ID to this process using fresh snapshots.
+Use the existing independently built `primary_grab` helper to hold its left
+button, as the real-app runner normally does. Add these arguments to the
+production-role real-app proof with its existing source, package manifest,
+app-plan, primary-grab, and evidence arguments:
+
+```sh
+--foreground-journal "$observer_dir/foreground.jsonl" \
+--primary-observer "$observer_dir/control.sock"
+```
+
+This gate is explicitly parked-primary: `purpose: "apps"` and
+`purpose: "negative_control"` are supported. The normal app plan still requires
+two independent runtimes, two exact native app targets, and both saved SVG
+oracles (except the existing intermediate pointer episodes). All Driver input
+uses the ordinary fresh-snapshot route. Moving-primary, compositor lane
+attribution, actual compositor overlap, and no-dispatch capacity remain the
+existing diagnostic trace gates. A pair of overlapping tool calls is not
+proof of overlapping compositor delivery; `require_overlap` cannot pass on
+this no-trace path.
+
+Before the first action and after all actions and agent-runtime cleanup, the
+reader sends a fresh nonce over the fixture's local control socket. It verifies
+the socket's kernel peer PID/UID, exact native foreground window, process
+start identity, and fixture source digest. Each acknowledgement follows two
+`Gdk.Display.sync()` roundtrips with a bounded GTK event drain. The reader also
+requires their matching Wayland `sync`/`callback.done` wire records, so a
+heartbeat or an old file alone cannot satisfy a boundary.
+
+The retained interval must enclose every action's request/response interval.
+It ends before the primary button is released. Log files must retain the same
+device/inode and unchanged prefixes, complete newline-delimited records,
+unbroken journal sequence and monotonic timestamps, matching producer identity,
+and fresh state heartbeats with no gap over one second. The fixture and reader
+enforce 32 MiB/100,000-record limits, two-second sync deadlines, and an action
+interval of at most 60 seconds. A deadline, missing acknowledgement, truncated
+record, changed file, stalled event loop, unknown wire record, or exceeded limit
+fails qualification. Raw begin/end journal and wire evidence are retained.
+
+Baseline wire evidence must show one primary pointer and keyboard on the same
+surface, a held left button, and no held keyboard keys/modifiers. During the
+parked interval, any pointer motion (including return to the original position),
+enter/leave, button, axis, key, keyboard-focus, seat-capability, or corresponding
+journal focus/grab/input transition fails. The foreground client counters and
+held-button state must remain unchanged, and the independent compositor
+cursor/focus/workspace endpoint checks must also match. This establishes
+client-observed primary continuity under the implicit held-button grab; it
+does not expose hidden compositor grab state or provide plugin transport
+attribution. The existing `continuous_isolation` and `synthetic_cleanup`
+trace claims remain `unproven` on this path. The separate
+`independent_primary_isolation` result names its narrower scope.
+
+Run a separate `purpose: "negative_control"` plan with
+`"phases": [{"negative_control": true}]`, the same production artifact role,
+and the same observer interface. Keep the primary point at least 40 pixels
+from the right edge and 30 from the bottom of the fixture. The existing
+`primary_grab ... canary` sends an excursion and return in one roundtrip.
+The same normal detector must return `failed`, even when GTK coalesces motion
+and final cursor positions match. Control acceptance additionally requires
+wire motion away and back on the same primary pointer, with only motion-related
+violations. A detector that reports `passed`, never observes the excursion,
+or fails for another reason cannot pass the control. The enclosing successful
+control run reports `production-package-primary-control`; its isolation result
+deliberately remains `failed`.
+
+These interfaces and portable tests record no new native certification.
+Native normal/control runs must still be performed on the exact mapped
+trace-disabled package. Use fresh sessions for diagnostic versus production
+modules and preserve their separate artifact identities.
 
 Portable regression command (Python 3.10 or newer):
 

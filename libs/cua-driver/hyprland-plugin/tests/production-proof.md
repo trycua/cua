@@ -67,6 +67,40 @@ not native results.
 
 ## Reviewed native plans
 
+### Inkscape-only environment profile
+
+Set `app_profile: "inkscape-only"` when qualifying a packaging environment
+whose Inkscape package matches `1.4.4-6` but whose Calc package is not qualified.
+The default Calc/Inkscape profile is unchanged. This test selection does not
+widen Driver's production application allowlist or certify a package by itself.
+
+Use two distinct native Inkscape processes and separate synthetic SVG documents
+for app proof, and a third process for capacity refusal. Bind each observed
+process, native window, document, and geometry. A shared process with two
+windows is not two independent clients. A verified launch form is
+`/usr/bin/inkscape --app-id-tag=cua-profile-lane-0 /ABSOLUTE/cua-smoke-inkscape.svg`;
+use a different tag and document for each client.
+
+The cancellation, geometry, primary-conflict, desktop, DPMS, lock, active-lock,
+active-primary, idle-reconnect, and target-lifetime helpers accept this profile.
+Fault targets use `pointer_stage: "move_rectangle"` and empty `drag` arguments
+for fresh image grounding. Recovery sends a new `scroll_down` or `scroll_up`
+action, never a replay of a partial or unknown drag. Active-lock/primary plans
+declare both recovery directions; fresh visible-canvas grounding chooses one.
+Idle plans omit target drag/stage fields and use fixed down/up scroll actions
+on either side of the real peer expiry. The target-lifetime helper instead
+requires an independently prepared, unselected replacement rectangle and a
+`click_rectangle` recovery, with exact launch-argument and owned-file checks.
+
+Keep production and diagnostic evidence separate. Production runs require the
+installed kit, profile, and build-provenance manifests and cannot use a trace
+socket. Diagnostic runs require a trace socket and cannot borrow production
+package provenance. The independent primary observer can check production
+cursor/focus/grab isolation, but it does not prove compositor lane attribution,
+overlapping delivery, or synthetic-seat cleanup.
+
+### Plan fields
+
 Run only inside the prepared disposable desktop, after mapping one window per
 app and the independent foreground journal fixture. Ground the exact window
 identities, bounds, and gesture coordinates using fresh Driver snapshots.

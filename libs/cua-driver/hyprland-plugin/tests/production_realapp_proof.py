@@ -9,6 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import io
 import json
+import math
 import os
 from pathlib import Path
 import select
@@ -20,7 +21,8 @@ import zipfile
 
 from driver_input_live import state, wait_for, wm
 from primary_trace import Trace, analyze
-from production_app_smoke import EXECUTABLES, ground, package_owner, provenance as runtime_provenance
+from production_app_smoke import (EXECUTABLES, NS, add_provenance_arguments, digest, ground, package_owner, profile_packages,
+                                  provenance as runtime_provenance)
 from production_mcp import DirectMCP, assert_distinct_runtimes, stop_process
 import production_pointer_grounding as pointer_grounding
 from realapp_proof import cleanup_all, rect_position, released_synthetic_input
@@ -47,6 +49,12 @@ def manifest_tool_messages(tool):
 
 
 def validate_plan(plan):
+    app_profile = plan.get('app_profile', 'calc-inkscape')
+    profile_packages(app_profile)
+    inkscape_only = app_profile == 'inkscape-only'
+    if inkscape_only:
+        assert all(spec['app'] == 'inkscape' for spec in plan['agents']), \
+            'inkscape-only profile requires canonical Inkscape targets'
     assert plan['purpose'] in ('apps', 'policy', 'policy_cache', 'negative_control', 'capacity')
     assert type(plan.get('moving_primary', False)) is bool
     assert not (plan.get('moving_primary') and plan['purpose'] == 'negative_control'), \
@@ -92,7 +100,7 @@ def validate_plan(plan):
     if capacity:
         assert not plan.get('moving_primary'), 'capacity requires a parked primary'
         assert not plan.get('require_overlap'), 'capacity establishes persistent lanes serially'
-        assert {spec['app'] for spec in plan['agents'][:2]} == {'calc', 'inkscape'}
+        assert {spec['app'] for spec in plan['agents'][:2]} == ({'inkscape'} if inkscape_only else {'calc', 'inkscape'})
         assert all(spec['app'] in ('calc', 'inkscape') for spec in plan['agents'])
         assert len(plan['phases']) == 3, 'capacity needs two admissions and one refusal'
         for index, step in enumerate(plan['phases']):
@@ -101,7 +109,7 @@ def validate_plan(plan):
             assert step.get('expect', {'kind': 'dispatched'}) == expected, 'incorrect capacity expectation'
     if plan['purpose'] == 'apps':
         assert len(plan['agents']) == 2
-        assert {spec['app'] for spec in plan['agents']} == {'calc', 'inkscape'}
+        assert {spec['app'] for spec in plan['agents']} == ({'inkscape'} if inkscape_only else {'calc', 'inkscape'})
         if episode and episode['name'] != 'save':
             assert plan.get('outputs', []) == [], 'intermediate pointer episodes do not save outputs'
         else:
@@ -112,8 +120,27 @@ def validate_plan(plan):
     for target in targets:
         assert set(target) == {'pid', 'window_id'}
         assert type(target['pid']) is int and target['pid'] > 0
-        if capacity or policy_cache:
+        if capacity or policy_cache or inkscape_only:
             assert type(target['window_id']) is int and target['window_id'] > 0
+    if inkscape_only:
+        assert len({target['window_id'] for target in targets}) == len(targets), 'apps must be distinct native clients'
+        documents = [Path(spec['document']) for spec in plan['agents']]
+        assert all(path.is_absolute() and path.suffix == '.svg' for path in documents), \
+            'Inkscape targets require absolute synthetic SVG document paths'
+        assert len({path.resolve() for path in documents}) == len(documents), 'each target needs a distinct document'
+        outputs = plan.get('outputs', [])
+        assert len({Path(oracle['path']).resolve() for oracle in outputs}) == len(outputs), \
+            'each Inkscape lane needs its own saved SVG'
+        for oracle in outputs:
+            assert oracle.get('format') == 'svg' and not oracle.get('zip_member'), 'need plain saved SVG oracles'
+            assert Path(oracle['path']).suffix == '.svg' and oracle.get('rect_translation'), \
+                'need a saved SVG rectangle translation oracle per lane'
+            assert all(type(value) in (int, float) and math.isfinite(value)
+                       for bounds in oracle['rect_translation'] for value in bounds), 'invalid SVG translation bounds'
+            assert any(low > 0 or high < 0 for low, high in oracle['rect_translation']), \
+                'saved SVG oracle must require actual rectangle movement'
+            assert Path(oracle['path']).resolve() == documents[oracle['agent']].resolve(), \
+                'saved SVG oracle does not belong to its target lane'
     assert plan['phases'], 'empty plan cannot pass'
     for phase in plan['phases']:
         if phase.get('negative_control'):
@@ -290,6 +317,25 @@ def verify_capacity(actions):
             'refused_agent': 2, 'reason': 'lane_busy'}
 
 
+def capacity_reservations(status, lanes, previous):
+    assert status['state'] == 'input_v3_candidate'
+    assert status['input']['protocol'] == 3 and status['input']['test_only'] is False
+    assert status['input']['transport_ready'] is True
+    values = status['input']['lanes']
+    assert len(values) == 2 and {row['lane'] for row in values} == {0, 1}
+    values = {row['lane'] + 1: row for row in values}
+    retained = {}
+    for lane in lanes:
+        row = values[lane]
+        assert row['reserved'] is True, 'capacity owner lost its lane reservation'
+        assert row['lease_active'] is False and row['drag_active'] is False
+        assert row['held_button'] == 0 and row['held_keys'] == 0
+        retained[lane] = {key: row[key] for key in ('epoch', 'desktop_generation')}
+        if lane in previous:
+            assert retained[lane] == previous[lane], 'capacity lane ownership changed'
+    return retained
+
+
 def check_manifest_refusal(response, expected, tool):
     content = response.get('structuredContent', {})
     assert expected['kind'] == 'refused' and response.get('isError') is True
@@ -408,13 +454,18 @@ def document_root(content, oracle):
     if oracle.get('zip_member'):
         with zipfile.ZipFile(io.BytesIO(content)) as archive:
             content = archive.read(oracle['zip_member'])
-    return ET.fromstring(content)
+    root = ET.fromstring(content)
+    if oracle.get('format') == 'svg':
+        assert root.tag == f"{{{NS['svg']}}}svg", 'saved output is not a native SVG document'
+    return root
 
 
 def verify_output(before, after, oracle):
     assert before != after, 'application did not save a changed file'
     node = document_root(after, oracle).find(oracle['xpath'], oracle.get('namespaces', {}))
     assert node is not None, 'saved document lacks expected node'
+    if oracle.get('format') == 'svg':
+        assert node.tag == f"{{{NS['svg']}}}rect" and node.get('id'), 'saved SVG oracle must identify a rectangle'
     for key, expected in oracle.get('attributes', {}).items():
         assert node.get(key) == expected, (key, node.attrib)
     if 'text' in oracle:
@@ -446,6 +497,22 @@ def app_process_identity(app, pid, proc_root=Path('/proc')):
             'gtk3_maps': gtk_maps}
 
 
+def inkscape_client_identity(spec, windows, proc_root=Path('/proc')):
+    """Bind a prelaunched native client to its reviewed PID, address and SVG."""
+    pid = spec['target']['pid']
+    matches = [window for window in windows if window.get('pid') == pid]
+    assert len(matches) == 1 and matches[0].get('xwayland') is False, 'need one exact native window per app'
+    window = matches[0]
+    assert int(window['address'], 16) == spec['target']['window_id'], 'native client target mismatch'
+    document = Path(spec['document']).resolve(strict=True)
+    assert document.name in window.get('title', ''), 'native client has a different document'
+    assert str(document).encode() in (proc_root / str(pid) / 'cmdline').read_bytes().split(b'\0'), \
+        'native client process is not bound to the reviewed document'
+    assert ET.fromstring(document.read_bytes()).tag == f"{{{NS['svg']}}}svg", 'target document is not SVG'
+    return {**app_process_identity('inkscape', pid, proc_root),
+            'hyprland_window': window, 'document': digest(document)}
+
+
 def parallel_actions(steps, action):
     """Retain every outcome and wake siblings if one fails before the barrier.
 
@@ -475,7 +542,8 @@ def parallel_actions(steps, action):
 def provenance(args, plan):
     # Reuse exact-source, canonical ALPM and active mapped-plugin checks.
     # Hashing a file alone does not prove which module the compositor loaded.
-    origin = runtime_provenance(args)
+    origin = (runtime_provenance(args, app_profile=plan['app_profile'])
+              if 'app_profile' in plan else runtime_provenance(args))
     assert plan['package_versions'] == origin['packages'], 'package qualification mismatch'
     files = {'primary-grab': args.primary_grab}
     for name in ('production_realapp_proof.py', 'production_mcp.py', 'driver_input_live.py',
@@ -488,8 +556,10 @@ def provenance(args, plan):
         pid = spec['target']['pid']
         matches = [window for window in windows if window.get('pid') == pid]
         assert len(matches) == 1 and matches[0].get('xwayland') is False, 'need one exact native window per app'
-        identities[str(index)] = {**app_process_identity(spec.get('app'), pid),
-                                  'hyprland_window': matches[0]}
+        identities[str(index)] = (inkscape_client_identity(spec, windows)
+                                  if plan.get('app_profile') == 'inkscape-only' else
+                                  {**app_process_identity(spec.get('app'), pid),
+                                   'hyprland_window': matches[0]})
     origin['files'].update({name: {'path': str(path.resolve()),
                                   'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
                             for name, path in files.items()})
@@ -522,12 +592,14 @@ def run(args):
     motion_done, motion_ready = threading.Event(), threading.Event()
     commands, motion_errors, action_intervals = [], [], []
     capacity_traces = []
+    capacity_owners = {}
     policy_cache_traces = []
     trajectory = None
     recording = False
     focus_before = None
     baseline_outputs = {}
     report = {'result': 'failed', 'scope': 'native-production-input-proof',
+              'app_profile': plan.get('app_profile', 'calc-inkscape'),
               'full_desktop_matrix': False, 'actions': [], 'outputs': [],
               'continuous_isolation': 'unproven', 'synthetic_cleanup': 'unproven',
               'primary_mode': 'moving' if moving else 'parked'}
@@ -580,6 +652,8 @@ def run(args):
         full = smoke_stage is not None or pointer_stage is not None
         before = snapshot(mcp, spec['target'], spec['name'], full=full, pixels=pointer_stage is not None)
         assert before['window_bounds'] == spec['bounds'], 'reviewed geometry is stale'
+        if plan.get('app_profile') == 'inkscape-only':
+            assert Path(spec['document']).name in before.get('window_title', ''), 'snapshot document mismatch'
         if smoke_stage is not None:
             ground(before, spec['app'], smoke_stage)
         arguments = step['arguments']
@@ -597,6 +671,10 @@ def run(args):
         expected = step.get('expect', {'kind': 'dispatched'})
         if capacity:
             assert_distinct_runtimes(clients)
+            if plan.get('app_profile') == 'inkscape-only' and capacity_owners:
+                status = read_input_status()
+                save(f'capacity-agent-{index}-owners-before.json', status)
+                capacity_reservations(status, capacity_owners, capacity_owners)
         if not policy_cache:
             trace_before = trace.collect() if trace and (capacity or expected['kind'] == 'refused') else None
         if capacity:
@@ -618,6 +696,8 @@ def run(args):
         action_intervals.append((action_start, time.monotonic_ns()))
         mark('action_response', agent=index, response=response.get('structuredContent'), error=response.get('isError', False))
         after = snapshot(mcp, spec['target'], spec['name'], full=full, pixels=pointer_stage is not None)
+        if plan.get('app_profile') == 'inkscape-only':
+            assert Path(spec['document']).name in after.get('window_title', ''), 'snapshot document mismatch'
         require_primary_active(grab, primary_deadline_ns)
         result = (check_manifest_refusal(response, expected, step['tool'])
                   if policy_cache and expected['kind'] == 'refused' else check_response(response, expected))
@@ -685,6 +765,14 @@ def run(args):
                 result['no_dispatch'] = 'verified'
         if capacity:
             assert_distinct_runtimes(clients)
+            if plan.get('app_profile') == 'inkscape-only':
+                status = read_input_status()
+                save(f'capacity-agent-{index}-owners-after.json', status)
+                lanes = set(capacity_owners)
+                if expected['kind'] == 'dispatched':
+                    lanes.add(result['compositor_lane'])
+                capacity_owners.update(capacity_reservations(status, lanes, capacity_owners))
+                result['persistent_owners'] = dict(capacity_owners)
         assert after['window_bounds'] == before['window_bounds']
         assert_primary_state(primary_before, wm(), moving)
         current = state(args.foreground_journal)
@@ -901,7 +989,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     parser.add_argument('--trace-socket', type=Path)
     parser.add_argument('--record-video', action='store_true')
     raise SystemExit(run(parser.parse_args()))

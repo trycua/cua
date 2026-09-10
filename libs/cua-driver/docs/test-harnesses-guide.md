@@ -124,6 +124,14 @@ semantic AT-SPI actions are separate.
 See [production proof preparation](../hyprland-plugin/tests/production-proof.md)
 for the bounded plans and their limits.
 
+The explicit [Inkscape-only qualification profile](../hyprland-plugin/tests/production-inkscape-profile.md)
+supports a bounded packaging candidate using exact Inkscape `1.4.4-6`, with
+independent native clients, two app lanes, separate SVG oracles, and third-owner
+capacity refusal. It preserves the default Calc/Inkscape profile and the native
+all-suite gate. Product, harness, kit, and mapped module identities remain
+separate; adding the profile records no new native passing result and does not
+let diagnostic trace evidence certify trace-disabled package bytes.
+
 Three complete repetitions of the long Python Calc/Inkscape plan, including
 the 34 policy cases across both apps, are no longer a merge requirement.
 Extended Python stress runs remain diagnostics for specific unresolved

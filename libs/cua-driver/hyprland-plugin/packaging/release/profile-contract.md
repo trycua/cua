@@ -39,7 +39,7 @@ unsupported until separately qualified. Do not silently reduce the two-lane
 scope or widen production admission to satisfy a test fixture.
 
 Use the complete native Linux runner selected in the
-[test-harnesses guide](../../../../docs/test-harnesses-guide.md), plus bounded
+[test-harnesses guide](../../../docs/test-harnesses-guide.md), plus bounded
 application, two-lane overlap, third-owner refusal, primary-input isolation,
 conflict, stale-target/geometry, cancellation, and cleanup evidence. Preserve
 the canonical runner's assertions. Instrumented diagnostics and the shipped

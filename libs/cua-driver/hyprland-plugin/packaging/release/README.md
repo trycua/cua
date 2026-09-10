@@ -1,5 +1,59 @@
 # Pinned source release
 
+For a separately reviewed native profile around the unchanged Driver 0.24.0
+archive, see [profile-based rebuilds](profile-contract.md) and
+[profile kit usage](PROFILE-USAGE.md). This legacy generator remains unchanged.
+
+Prepare a profile kit only after committing the packaging tooling and reviewing
+the measured profile:
+
+```sh
+python3 libs/cua-driver/hyprland-plugin/packaging/release/profile_bundle.py \
+  --repo . --tooling-revision FULL_TOOLING_COMMIT_SHA \
+  --profile REVIEWED_PROFILE.json --source-archive ORIGINAL_SOURCE.tar.gz \
+  --output NEW_OUTPUT_DIRECTORY
+```
+
+The executing generator/verifier must match that tooling commit. The generator
+copies the supplied source archive byte-for-byte and emits one deterministic
+kit archive plus its checksum. Its filename includes the original source
+identity, profile ID, numeric kit version, full profile digest and tooling SHA.
+It never publishes assets or overwrites an existing output directory.
+
+Profile schema 1 requires these fields; all digests are lowercase SHA-256:
+
+- `profile_id`: lowercase hyphen-separated identifier; `kit_version`: numeric
+  `major.minor.patch`; `package_release`: integer at least 2; `architecture`:
+  `x86_64`.
+- `source`: `revision` = `4b3396d9fe4bd3cf723b0eb8db83c18a8764b520`,
+  `driver_version` = `0.24.0`, `archive_sha256` and `manifest_sha256` measured
+  from the reviewed original archive and its embedded `SOURCE-PROVENANCE.json`.
+- `hyprland`: exact `package_version`, `header_version` = `0.56.2`, compositor
+  executable `sha256`, and `headers_sha256`.
+- `compiler`: full GCC `version` including date, exact `comment` (the string
+  `GCC: (GNU) ` followed by that version), and executable `sha256`.
+- `runtime`: resolved `basename`, file `sha256`, and `packages`, a mapping of
+  relevant installed ABI package names (for example `gcc-libs`, `libstdc++`,
+  `hyprutils` or `aquamarine`) to exact versions. Include only packages needed
+  by the measured selected ABI contract, including the shared-runtime owner;
+  do not copy an entire OS package list. `hyprland` is modeled separately.
+  Python and binutils are consumer-tool dependencies supplied by the recipe.
+
+`headers_sha256` hashes the canonical JSON mapping of every package-owned file
+under `/usr/include/hyprland/` from relative path to file SHA-256, serialized
+with `json.dumps(mapping, sort_keys=True, indent=2) + "\n"`. The native verifier
+also requires the on-disk header-tree file inventory to match `pacman -Qlq
+hyprland` exactly, including plugin API headers. Symlinks are refused.
+`profile_verify.header_inventory_sha256()` computes this inventory digest; it
+does not accept or update a profile.
+
+Keep the profile bytes immutable once reviewed. Assign a new monotonically
+increasing `package_release` for every distributed rebuild at Driver 0.24.0,
+including a profile or tooling change; a kit label alone cannot enforce ALPM
+ordering. The archive digest and full profile/tooling identifiers distinguish
+candidate artifacts. Distribution owners must enforce unique package revisions
+and bind published package bytes to their native qualification evidence.
+
 This directory prepares a standalone Arch recipe and source archive for the
 production input candidate. It does not certify native behavior or publish
 assets. The existing `../arch/PKGBUILD` remains a discovery-only local recipe.

@@ -17,6 +17,7 @@ recovery action has a strict isolation claim. No replay of unknown/partial work.
 Portable tests establish preparation only, never native certification.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import json
@@ -485,5 +486,5 @@ if __name__ == '__main__':
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'hover-fixture',
                  'plan', 'evidence', 'foreground-journal', 'trace-socket'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

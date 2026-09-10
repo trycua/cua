@@ -24,6 +24,7 @@ need a separately qualified oracle. A lock request fails preflight, never
 becomes a skipped/passing row. Portable tests are not native certification.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 import fcntl
@@ -585,5 +586,5 @@ if __name__ == '__main__':
         parser = argparse.ArgumentParser(description=__doc__)
         for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
             parser.add_argument('--' + name, required=True, type=Path)
-        parser.add_argument('--source-sha', required=True)
+        add_provenance_arguments(parser)
         raise SystemExit(run(parser.parse_args()))

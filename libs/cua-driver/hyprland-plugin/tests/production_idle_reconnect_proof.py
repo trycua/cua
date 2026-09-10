@@ -6,6 +6,7 @@ Neither a primary grab nor a trace spans the real 60-second input-peer expiry.
 No transport reset, test input packet, timeout override, or action retry is used.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 import hashlib
 import json
 import math
@@ -325,5 +326,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('driver', 'plugin', 'source', 'primary-grab', 'plan', 'evidence', 'foreground-journal', 'trace-socket'):
         parser.add_argument('--' + name, required=True, type=Path)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

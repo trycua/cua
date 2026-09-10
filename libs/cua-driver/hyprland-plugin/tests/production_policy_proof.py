@@ -28,6 +28,7 @@ boundary, not cached authorization, concurrency, hostile same-user isolation,
 managed deployment/immutability, or the complete desktop certification matrix.
 """
 import argparse
+from production_app_smoke import add_provenance_arguments
 import base64
 import hashlib
 import json
@@ -298,7 +299,8 @@ def run(args):
         clients.append(value)
         return value
     try:
-        report['provenance'] = provenance(args)
+        report['provenance'] = (provenance(args, app_profile=plan['app_profile'])
+                                if 'app_profile' in plan else provenance(args))
         report['provenance']['policy_runner_sha256'] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         report['provenance']['app_process'] = app_process_identity(plan['app'], plan['target']['pid'])
         windows = json.loads(subprocess.check_output(['hyprctl', '-j', 'clients'], text=True, timeout=10))
@@ -391,5 +393,5 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     for name in ('plan', 'evidence', 'driver', 'plugin', 'source', 'trace-socket'):
         parser.add_argument('--' + name, type=Path, required=True)
-    parser.add_argument('--source-sha', required=True)
+    add_provenance_arguments(parser)
     raise SystemExit(run(parser.parse_args()))

@@ -111,6 +111,8 @@ async def test_actual_native_future_cancellation_reaches_mcp_receiver(sdk):
 
             await asyncio.wait_for(cancellation_received(), 2)
         assert not transport.sessions
+        assert not transport.exchange_aborted
+        assert transport.exchange_finished.is_set()
     finally:
         transport.exchange_wait.set()
         await sb.disconnect()

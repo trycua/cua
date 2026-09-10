@@ -29,14 +29,15 @@ def _consume_result(done: asyncio.Future) -> None:
         done.exception()
 
 
-async def _bounded_cleanup(awaitable: Any) -> bool:
+async def _bounded_cleanup(awaitable: Any, *, cancel_on_timeout: bool = True) -> bool:
     """Bound best-effort cleanup, including callbacks that ignore cancellation."""
     task = asyncio.ensure_future(awaitable)
 
     task.add_done_callback(_consume_result)
     done, _ = await asyncio.wait({task}, timeout=_CLEANUP_TIMEOUT)
     if task not in done:
-        task.cancel()
+        if cancel_on_timeout:
+            task.cancel()
         logger.warning("Driver cleanup timed out; remote session cleanup is unconfirmed")
         return False
     if task.cancelled() or task.exception() is not None:
@@ -209,6 +210,7 @@ def _channel(
             self.cleanup_confirmed = False
             self._close_task = None
             self.cancelled: set[str] = set()
+            self._exchanges: dict[str, asyncio.Task] = {}
             self.carrier = McpCarrier(transport, service) if mode == "mcp" else None
 
         def fail(self, reason: str):
@@ -342,7 +344,15 @@ def _channel(
             timeout = min(deadline - int(time.time() * 1000), 120000) / 1000
             if timeout <= 0:
                 raise self.fail("Driver request deadline has expired")
-            exchange = asyncio.create_task(self.request("POST", "/exchange", body, timeout=timeout))
+            # The caller's deadline still bounds the operation. MCP gets a
+            # small HTTP grace period to receive its cancellation response;
+            # aborting that stream before teardown can strand a stdio bridge.
+            http_timeout = timeout + 2 * _CLEANUP_TIMEOUT if self.carrier else timeout
+            exchange = asyncio.create_task(
+                self.request("POST", "/exchange", body, timeout=http_timeout)
+            )
+            self._exchanges[request.request_id] = exchange
+            exchange.add_done_callback(lambda done: self._exchanges.pop(request.request_id, None))
             exchange.add_done_callback(_consume_result)
             try:
                 done, _ = await asyncio.wait({exchange}, timeout=timeout)
@@ -350,7 +360,8 @@ def _channel(
                     raise TimeoutError("Driver request deadline has expired; completion is unknown")
                 return await self.decode_response(request, exchange.result())
             except BaseException:
-                exchange.cancel()
+                if self.carrier is None:
+                    exchange.cancel()
                 await self.cancel(request.request_id)
                 await self.close()
                 raise
@@ -399,6 +410,11 @@ def _channel(
 
         async def cancel(self, request_id):
             self.cancelled.add(request_id)
+            if self.carrier is not None:
+                # A native future can cancel its callback and invoke cancel()
+                # concurrently. One shielded close task owns wire teardown.
+                await self.close()
+                return
             if not self.closed:
                 self.closed = True
                 try:
@@ -418,11 +434,47 @@ def _channel(
             if self._close_task is None:
 
                 async def cleanup():
+                    if self.carrier is not None:
+                        pending = dict(self._exchanges)
+                        ids = self.cancelled | set(pending)
+                        if ids:
+                            cancellation_finished = await _bounded_cleanup(
+                                asyncio.gather(
+                                    *(
+                                        self.request("POST", "/cancel", {"request_id": request_id})
+                                        for request_id in ids
+                                    ),
+                                    return_exceptions=True,
+                                ),
+                                cancel_on_timeout=False,
+                            )
+                            if not cancellation_finished:
+                                return
+                        if pending:
+                            _, undrained = await asyncio.wait(
+                                set(pending.values()), timeout=_CLEANUP_TIMEOUT
+                            )
+                            if undrained:
+                                # Do not abort a live response or destroy its
+                                # HTTP session. Cleanup remains unconfirmed;
+                                # request timeouts still bound the HTTP work.
+                                logger.warning(
+                                    "Driver response drain timed out; remote session cleanup "
+                                    "is unconfirmed"
+                                )
+                                return
                     receiver_closed = self.connection_id is None
                     if self.connection_id is not None:
-                        receiver_closed = await _bounded_cleanup(self.request("DELETE"))
+                        receiver_close = asyncio.create_task(self.request("DELETE"))
+                        receiver_closed = await _bounded_cleanup(
+                            receiver_close, cancel_on_timeout=self.carrier is None
+                        )
+                        if self.carrier is not None and not receiver_close.done():
+                            return
                     if self.carrier is not None:
-                        session_closed = await _bounded_cleanup(self.carrier.close_session())
+                        session_closed = await _bounded_cleanup(
+                            self.carrier.close_session(), cancel_on_timeout=False
+                        )
                         self.cleanup_confirmed = receiver_closed and session_closed
                     else:
                         self.cleanup_confirmed = receiver_closed

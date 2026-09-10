@@ -1428,6 +1428,7 @@ async fn semantic_snapshot_recovers_promptly_from_deep_replies() {
 async fn default_snapshot_refuses_unrecoverable_document_errors() {
     for (message, expected_calls) in [
         ("document is unavailable", 1),
+        ("CDP DOM.getDocument timed out after 20s", 1),
         ("Object reference chain is too long", 10),
     ] {
         let f = fixture_with(|st| st.document_error = Some(message)).await;

@@ -285,11 +285,11 @@ fn is_semantic_document_size_error(error: &anyhow::Error) -> bool {
     .any(|needle| message.contains(needle))
 }
 
-fn is_semantic_document_fallback_error(error: &anyhow::Error) -> bool {
+fn is_semantic_document_fallback_error(error: &anyhow::Error, retry_timeouts: bool) -> bool {
     if is_semantic_document_size_error(error) {
         return true;
     }
-    is_semantic_document_timeout_error(error)
+    retry_timeouts && is_semantic_document_timeout_error(error)
 }
 
 fn is_semantic_document_timeout_error(error: &anyhow::Error) -> bool {
@@ -2034,7 +2034,9 @@ impl BrowserEngine {
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
 
-        let (doc, mut document_complete) = self.read_snapshot_document(&conn, &cdp_session).await?;
+        let (doc, mut document_complete) = self
+            .read_snapshot_document(&conn, &cdp_session, false)
+            .await?;
         let root = doc.get("root").cloned().unwrap_or(Value::Null);
         let url = root
             .get("documentURL")
@@ -2106,8 +2108,9 @@ impl BrowserEngine {
                         else {
                             continue; // identity unprovable → omit this frame
                         };
-                        let Ok((child_doc, child_complete)) =
-                            self.read_snapshot_document(&conn, &child.session_id).await
+                        let Ok((child_doc, child_complete)) = self
+                            .read_snapshot_document(&conn, &child.session_id, false)
+                            .await
                         else {
                             document_complete = false;
                             continue;
@@ -2314,7 +2317,11 @@ impl BrowserEngine {
         &self,
         conn: &Arc<CdpConnection>,
         cdp_session: &str,
+        retry_timeouts: bool,
     ) -> Result<(Value, bool), BrowserRefusal> {
+        // The compatibility reader must not turn a genuinely unanswered request
+        // into several timeout-length retries. Semantic reads retain their
+        // existing timeout recovery; both formats recover prompt size errors.
         match conn
             .call(
                 Some(cdp_session),
@@ -2324,7 +2331,7 @@ impl BrowserEngine {
             .await
         {
             Ok(document) => Ok((document, true)),
-            Err(error) if is_semantic_document_fallback_error(&error) => {
+            Err(error) if is_semantic_document_fallback_error(&error, retry_timeouts) => {
                 let mut last_size_error = error.to_string();
                 let fallback_depths = if is_semantic_document_timeout_error(&error) {
                     SEMANTIC_DOM_TIMEOUT_FALLBACK_DEPTHS
@@ -2346,7 +2353,9 @@ impl BrowserEngine {
                                 .await?;
                             return Ok((document, false));
                         }
-                        Err(error) if is_semantic_document_fallback_error(&error) => {
+                        Err(error)
+                            if is_semantic_document_fallback_error(&error, retry_timeouts) =>
+                        {
                             last_size_error = error.to_string();
                         }
                         Err(error) => {
@@ -2599,8 +2608,9 @@ impl BrowserEngine {
         })?;
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-        let (document, document_complete) =
-            self.read_snapshot_document(&conn, &cdp_session).await?;
+        let (document, document_complete) = self
+            .read_snapshot_document(&conn, &cdp_session, true)
+            .await?;
         let root = document.get("root").cloned().unwrap_or(Value::Null);
         let url = root
             .get("documentURL")
@@ -2634,15 +2644,17 @@ impl BrowserEngine {
                                 continue;
                             }
                         };
-                        let (child_document, child_complete) =
-                            match self.read_snapshot_document(&conn, &child.session_id).await {
-                                Ok(document) => document,
-                                Err(_) => {
-                                    semantic.unprovable_frame_count += 1;
-                                    semantic.complete = false;
-                                    continue;
-                                }
-                            };
+                        let (child_document, child_complete) = match self
+                            .read_snapshot_document(&conn, &child.session_id, true)
+                            .await
+                        {
+                            Ok(document) => document,
+                            Err(_) => {
+                                semantic.unprovable_frame_count += 1;
+                                semantic.complete = false;
+                                continue;
+                            }
+                        };
                         match self
                             .collect_semantic_session(
                                 &conn,

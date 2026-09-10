@@ -127,16 +127,6 @@ background delivery and attach desktop-side-effect oracles.
 | Installed-app launch/focus | `installed_app_launch_macos_test.rs` | Real Calculator/TextEdit launch and focus behavior in the canonical logged-in lane |
 | Installed-app text | `installed_app_textedit_macos_test.rs` | Real TextEdit AX background write and verification in the canonical logged-in lane |
 
-The experimental AppKit `snapshot_publication` row exercises the built-in
-`get_window_state` and `click` tools while a fixture PNG write is held by FIFO
-backpressure. An opt-in fixture replaces one button at the same AX index and
-journals original/replacement activations independently of driver readback. The
-row requires no wrong-target activation and successful fresh-token recovery.
-It is included in the macOS runner but not yet certified. After base-app permission
-approval, the local installed-binary baseline fails the wrong-target assertion;
-the fixture journal observes replacement activation from the old token. The binary
-hash and source-identity limitation are recorded in the RFC 3473 local review.
-
 macOS uses the installed ScreenCaptureKit/AX permissions for GUI runs. Its
 maintainer acceptance gate runs in a disposable clone of the stopped Lume
 SIP-off golden image described in the [macOS Lume runner

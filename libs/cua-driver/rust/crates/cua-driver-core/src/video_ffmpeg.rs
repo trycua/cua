@@ -189,6 +189,9 @@ impl VideoBackend for FfmpegVideoBackend {
                         "ffmpeg did not finalize cleanly. Last stderr tail:\n{tail}");
                 }
             }
+            if forced_kill {
+                anyhow::bail!("ffmpeg shutdown timed out after 3000 ms");
+            }
             if !forced_kill {
                 if let Ok(status) = exit_status {
                     let cause = status

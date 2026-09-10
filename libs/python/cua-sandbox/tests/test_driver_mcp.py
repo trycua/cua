@@ -27,6 +27,10 @@ class McpTransport(Transport):
         self.fail_exchange = False
         self.exchange_started = asyncio.Event()
         self.exchange_wait = None
+        self.cancel_releases_exchange = True
+        self.exchange_aborted = False
+        self.exchange_finished = asyncio.Event()
+        self.cancel_received = asyncio.Event()
 
     async def request_service(
         self, name, *, method, path, json_body=None, headers=None, timeout=None
@@ -69,13 +73,22 @@ class McpTransport(Transport):
                 if rpc == "cua/driver/v1/exchange":
                     self.exchange_started.set()
                     if self.exchange_wait is not None:
-                        await self.exchange_wait.wait()
+                        try:
+                            await self.exchange_wait.wait()
+                        except asyncio.CancelledError:
+                            self.exchange_aborted = True
+                            raise
                     if self.fail_exchange:
                         raise RuntimeError("sensitive transport diagnostic")
                     request = json_body["params"]["envelope"]
                     result = dict(self.response_data, request_id=request["request_id"])
+                    self.exchange_finished.set()
                 else:
                     assert rpc in ("cua/driver/v1/cancel", "cua/driver/v1/close")
+                    if rpc == "cua/driver/v1/cancel":
+                        self.cancel_received.set()
+                        if self.cancel_releases_exchange and self.exchange_wait is not None:
+                            self.exchange_wait.set()
                     result = {"ok": True}
         response = {"jsonrpc": "2.0", "id": json_body["id"], "result": result}
         if self.mutate:
@@ -216,6 +229,67 @@ async def test_cancel_can_overtake_exchange_and_prevents_late_result(native):
         assert not transport.sessions
     methods = [event[3]["method"] for event in transport.events if event[3]]
     assert methods.index("cua/driver/v1/cancel") < methods.index("cua/driver/v1/close")
+    await sb.disconnect()
+
+
+@pytest.mark.parametrize("finish", ["cancel", "close", "callback-cancel"])
+async def test_mcp_teardown_drains_pending_response_before_closing_session(native, finish):
+    transport = McpTransport()
+    transport.exchange_wait = asyncio.Event()
+    transport.cancel_releases_exchange = False
+    sb = await sandbox(transport)
+    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        channel = driver.channel
+        task = asyncio.create_task(channel.exchange(envelope()))
+        await transport.exchange_started.wait()
+        if finish == "callback-cancel":
+            task.cancel()
+            closing = task
+        else:
+            closing = asyncio.create_task(
+                channel.cancel("request-1") if finish == "cancel" else channel.close()
+            )
+        await asyncio.wait_for(transport.cancel_received.wait(), 1)
+        await asyncio.sleep(0)
+        assert not closing.done()
+        assert not transport.exchange_aborted
+        assert transport.sessions
+        assert not any(
+            (event[3] or {}).get("method") == "cua/driver/v1/close" for event in transport.events
+        )
+        transport.exchange_wait.set()
+        if finish == "callback-cancel":
+            with pytest.raises(asyncio.CancelledError):
+                await closing
+        else:
+            await closing
+            with pytest.raises(ChannelError, match="after close or cancellation"):
+                await task
+        assert transport.exchange_finished.is_set()
+        assert not transport.exchange_aborted
+        assert channel.cleanup_confirmed
+        assert not transport.sessions
+    await sb.disconnect()
+
+
+async def test_mcp_drain_timeout_is_bounded_unconfirmed_and_does_not_abort(native, monkeypatch):
+    monkeypatch.setattr("cua_sandbox.interfaces.driver._CLEANUP_TIMEOUT", 0.02)
+    transport = McpTransport()
+    transport.exchange_wait = asyncio.Event()
+    transport.cancel_releases_exchange = False
+    sb = await sandbox(transport)
+    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        channel = driver.channel
+        task = asyncio.create_task(channel.exchange(envelope()))
+        await transport.exchange_started.wait()
+        await asyncio.wait_for(channel.cancel("request-1"), 0.5)
+        assert channel.closed and not channel.cleanup_confirmed
+        assert not transport.exchange_aborted
+        assert transport.sessions
+        assert transport.events[-1][3]["method"] == "cua/driver/v1/cancel"
+        transport.exchange_wait.set()
+        with pytest.raises(ChannelError, match="after close or cancellation"):
+            await task
     await sb.disconnect()
 
 

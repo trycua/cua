@@ -15,18 +15,19 @@ compose Fleet and Driver directly; this work does not create a TypeScript
 Sandbox SDK.
 
 The maintainer selected this narrow follow-up for implementation and draft PR
-review. The linked issue records the decision. The broader RFC remains separate;
+review in the [scoped decision](https://github.com/trycua/cua/issues/2512#issuecomment-5624093573).
+The broader RFC remains separate;
 this acceptance does not authorize merge, release, image changes, or rollout.
 
 ## Ownership
 
-| Layer | Owns |
-| --- | --- |
-| Fleet | Credentials, authenticated named-service routing, pools, and claims |
-| Driver Rust SDK | MCP initialization, typed-extension negotiation, envelope exchange, strict response parsing, session state, cancellation, and bounded connection cleanup |
-| Generated Python and TypeScript bindings | The canonical Driver object and shared connection API |
-| Thin environment adapters | Forward bounded service requests through an existing Fleet client; bind the connection lifetime to the caller's live claim |
-| Python Sandbox | Existing convenience accessor and cleanup before its Fleet transport closes |
+| Layer                                    | Owns                                                                                                                                                     |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Fleet                                    | Credentials, authenticated named-service routing, pools, and claims                                                                                      |
+| Driver Rust SDK                          | MCP initialization, typed-extension negotiation, envelope exchange, strict response parsing, session state, cancellation, and bounded connection cleanup |
+| Generated Python and TypeScript bindings | The canonical Driver object and shared connection API                                                                                                    |
+| Thin environment adapters                | Forward bounded service requests through an existing Fleet client; bind the connection lifetime to the caller's live claim                               |
+| Python Sandbox                           | Existing convenience accessor and cleanup before its Fleet transport closes                                                                              |
 
 The adapter is not a second MCP implementation. Driver does not acquire Fleet
 credentials, construct a second Fleet lifecycle client, change permissions, or
@@ -72,6 +73,12 @@ entry point must remain independent of native Driver dependencies.
 4. **Reviewable delivery.** Add exact API examples, run affected formatting,
    generation drift and deterministic suites, review the final diff, and keep
    the draft PR's evidence and limitations current.
+
+Deliver the shared Driver connector first and the Sandbox migration as a
+separate stacked draft. Sandbox pins Driver 0.26.0, which lacks the new shared
+client. Do not promote the migration until a containing Driver release exists,
+the exact dependency and lockfile are updated, and installed-package checks pass.
+Do not guess a future version or silently replace the pin with a broad range.
 
 Before promotion beyond draft review, qualify the exact candidate against
 Linux and Windows guests: useful desktop effect, computer-server compatibility,

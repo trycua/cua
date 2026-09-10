@@ -62,7 +62,35 @@ function normalizePython(source) {
     throw new Error("expected one UniFFI Python foreign-future cancellation scheduler")
   }
   // UniFFI 0.31 can drop a foreign future on a Rust worker thread.
-  return normalizePythonRemoteChannels(output.replace(unsafe, safe))
+  return normalizePythonServiceTransport(
+    normalizePythonRemoteChannels(output.replace(unsafe, safe)),
+  )
+}
+
+function normalizePythonServiceTransport(source) {
+  if (!source.includes("class DriverServiceTransport():")) return source
+  const lower = "            return _UniffiFfiConverterTypeDriverServiceTransport._handle_map.insert(value)"
+  if (source.split(lower).length !== 2) {
+    throw new Error("unexpected UniFFI service transport lowering template")
+  }
+  let output = source.replace(lower, `            eventloop = asyncio.get_running_loop()
+            with _UNIFFI_REMOTE_CHANNEL_LOOP_LOCK:
+                owner = getattr(value, "_uniffi_foreign_driver_event_loop", eventloop)
+                if owner is not eventloop:
+                    raise RuntimeError("Driver service transport belongs to a different asyncio event loop")
+                value._uniffi_foreign_driver_event_loop = eventloop
+            return _UniffiFfiConverterTypeDriverServiceTransport._handle_map.insert(value)`)
+  const start = output.indexOf("class _UniffiTraitImplDriverServiceTransportImpl:")
+  const end = output.indexOf("class _UniffiFfiConverterTypeDriverServiceTransport:", start)
+  if (start < 0 || end < 0) throw new Error("missing service transport vtable")
+  const before = "        _uniffi_trait_interface_call_async_with_error(\n            make_call,"
+  const vtable = output.slice(start, end)
+  if (vtable.split(before).length !== 2) {
+    throw new Error("unexpected UniFFI service transport callback template")
+  }
+  output = output.slice(0, start) + vtable.replace(before,
+    "        _uniffi_remote_channel_call_async(\n            uniffi_obj._uniffi_foreign_driver_event_loop,\n            make_call,") + output.slice(end)
+  return output
 }
 
 function normalizePythonRemoteChannels(source) {
@@ -301,5 +329,9 @@ try {
   applyGroup(typescriptRoot, ".cua-driver-uniffi-generated-files", typescriptFiles)
   console.log(check ? "UniFFI bindings are up to date." : "Generated UniFFI bindings.")
 } finally {
-  rmSync(temporaryRoot, { recursive: true, force: true })
+  if (process.argv.includes("--keep-temp")) {
+    console.log(`Retained generator scratch output: ${temporaryRoot}`)
+  } else {
+    rmSync(temporaryRoot, { recursive: true, force: true })
+  }
 }

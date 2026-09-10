@@ -24,6 +24,7 @@ mod cli;
 mod doctor;
 mod driver_service_http;
 mod history_runtime;
+mod mcp_envelope;
 mod mcp_http;
 mod private_worker;
 mod proxy;

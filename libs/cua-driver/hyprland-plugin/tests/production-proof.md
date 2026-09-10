@@ -398,9 +398,29 @@ provenance, and repeat controls. Select these diagnostics for unresolved claims
 under the validation strategy above; the canonical desktop matrix remains
 required. No existing failed row is superseded by these helper tests.
 
+### Same-client passive-hover conflict
+
+`production_agent_conflict_proof.py` checks the distinct `agent_target_busy`
+refusal. Prepare the exact identity fields used by the primary-conflict plan,
+with `purpose:"agent_conflict"`, `case:"passive_hover_refusal"`, and
+`app_profile:"inkscape-only"`. Use one agent with `drag:{}` and
+`pointer_stage:"scroll_down"` or `"scroll_up"`; `refused.pointer_stage` must
+name the opposite direction. Set `recovery.pointer_stage` to `"scroll_visible"`
+or a reviewed fixed direction. The same provenance, trace, primary-grab, plan,
+and evidence arguments apply.
+
+One Driver runtime scrolls and retains passive pointer focus. A second runtime
+must refuse input to that same window without dispatching events or disturbing
+the first owner's focus. The runner closes the refused runtime, then the owner,
+and verifies that a third runtime can use the original lane for a fresh action.
+It checks the application effect and continuous primary isolation throughout.
+This case does not prove active-lease conflicts, same-process sibling windows,
+or recovery on the other lane. Portable orchestration tests are not native
+certification; retain the exact native artifact and result separately.
+
 Focused local verification:
 
 ```text
 cd libs/cua-driver/hyprland-plugin/tests
-python3 -m unittest production_realapp_proof_test realapp_proof_test primary_trace_test
+python3 -m unittest production_realapp_proof_test realapp_proof_test primary_trace_test production_agent_conflict_proof_test
 ```

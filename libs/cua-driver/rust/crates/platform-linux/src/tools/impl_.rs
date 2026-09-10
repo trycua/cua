@@ -42,14 +42,41 @@ fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     window_target_candidates_for_pid(crate::wayland::list_windows_dispatch(Some(pid)), pid)
 }
 
+/// Topmost on-screen window of `pid` covering a desktop-frame point
+/// (get_desktop_state screenshot pixels, scaled back to the screen).
+fn desktop_point_window_resolver(
+    state: Arc<ToolState>,
+) -> cua_driver_core::window_target::DesktopPointWindowResolver {
+    Arc::new(move |pid, x, y| {
+        let pid = u32::try_from(pid).ok()?;
+        let (sx, sy) = state.desktop_to_screen(x, y);
+        crate::wayland::list_windows_dispatch(Some(pid))
+            .into_iter()
+            .filter(|w| w.pid == Some(pid) && w.is_on_screen && w.width > 0 && w.height > 0)
+            .filter(|w| {
+                sx >= f64::from(w.x)
+                    && sy >= f64::from(w.y)
+                    && sx < f64::from(w.x) + f64::from(w.width)
+                    && sy < f64::from(w.y) + f64::from(w.height)
+            })
+            .max_by_key(|w| w.z_index.unwrap_or(0))
+            .map(|w| w.xid)
+    })
+}
+
+type PidWindowGuardParts = (
+    WindowTargetCandidates,
+    cua_driver_core::window_target::DesktopPointWindowResolver,
+);
+
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
-    candidates: &WindowTargetCandidates,
+    (candidates, point_resolver): &PidWindowGuardParts,
 ) -> Box<dyn Tool> {
-    Box::new(PidOnlyWindowTargetGuard::new(
-        Box::new(tool),
-        candidates.clone(),
-    ))
+    Box::new(
+        PidOnlyWindowTargetGuard::new(Box::new(tool), candidates.clone())
+            .with_point_resolver(point_resolver.clone()),
+    )
 }
 
 // ── DriverConfig + ResizeRegistry + ZoomRegistry ─────────────────────────────
@@ -10358,7 +10385,10 @@ pub fn build_registry_with_provider(
     ));
     r.register(Box::new(LaunchAppTool));
     r.register(Box::new(KillAppTool));
-    let pid_window_candidates: WindowTargetCandidates = Arc::new(pid_window_target_candidates);
+    let pid_window_candidates: PidWindowGuardParts = (
+        Arc::new(pid_window_target_candidates),
+        desktop_point_window_resolver(state.clone()),
+    );
     r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
     r.register(Box::new(SetWindowFrameTool));
     r.register(Box::new(InvokeMenuTool));

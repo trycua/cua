@@ -49,16 +49,47 @@ pub fn resolve_pid_window_target(
 pub type WindowTargetCandidates =
     Arc<dyn Fn(i64) -> Vec<WindowTargetCandidate> + Send + Sync + 'static>;
 
+/// `(pid, x, y)` in the desktop action frame (get_desktop_state screenshot
+/// pixels) -> the pid's topmost on-screen window covering that point. Lets a
+/// desktop-grounded pixel action name a multi-window app by pid alone.
+pub type DesktopPointWindowResolver =
+    Arc<dyn Fn(i64, f64, f64) -> Option<u64> + Send + Sync + 'static>;
+
+/// Desktop-frame `x`/`y` of an action, when the call carries them.
+fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
+    let frame_is_desktop = args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
+        || args.get("scope").and_then(Value::as_str) == Some("desktop");
+    if !frame_is_desktop {
+        return None;
+    }
+    Some((
+        args.get("x").and_then(Value::as_f64)?,
+        args.get("y").and_then(Value::as_f64)?,
+    ))
+}
+
 /// Tool decorator that resolves PID-only calls before an action can send input.
 /// Explicit `window_id` and `element_token` targets pass through unchanged.
 pub struct PidOnlyWindowTargetGuard {
     inner: Box<dyn Tool>,
     candidates: WindowTargetCandidates,
+    point_resolver: Option<DesktopPointWindowResolver>,
 }
 
 impl PidOnlyWindowTargetGuard {
     pub fn new(inner: Box<dyn Tool>, candidates: WindowTargetCandidates) -> Self {
-        Self { inner, candidates }
+        Self {
+            inner,
+            candidates,
+            point_resolver: None,
+        }
+    }
+
+    /// Resolve an otherwise ambiguous pid by the desktop-frame point the
+    /// action targets (only for calls that carry desktop-frame `x`/`y`).
+    pub fn with_point_resolver(mut self, resolver: DesktopPointWindowResolver) -> Self {
+        self.point_resolver = Some(resolver);
+        self
     }
 }
 
@@ -148,15 +179,34 @@ impl Tool for PidOnlyWindowTargetGuard {
                 }
                 self.inner.invoke(args).await
             }
-            PidWindowTargetResolution::Ambiguous(candidates) => ToolResult::error(format!(
-                "pid {pid} owns more than one eligible top-level window; provide window_id."
-            ))
-            .with_structured(serde_json::json!({
-                "code": "ambiguous_window_target",
-                "effect": "refused",
-                "pid": pid,
-                "candidates": candidates
-            })),
+            PidWindowTargetResolution::Ambiguous(candidates) => {
+                if let (Some(resolver), Some((x, y))) =
+                    (self.point_resolver.clone(), desktop_frame_point(&args))
+                {
+                    let hit = tokio::task::spawn_blocking(move || resolver(pid, x, y))
+                        .await
+                        .ok()
+                        .flatten();
+                    if let Some(window_id) = hit {
+                        if candidates.iter().any(|c| c.window_id == window_id) {
+                            if let Some(object) = args.as_object_mut() {
+                                object.insert("window_id".to_owned(), window_id.into());
+                            }
+                            return self.inner.invoke(args).await;
+                        }
+                    }
+                }
+                ToolResult::error(format!(
+                    "pid {pid} owns more than one eligible top-level window; provide window_id \
+                     (or pass desktop-frame x/y over the window you mean)."
+                ))
+                .with_structured(serde_json::json!({
+                    "code": "ambiguous_window_target",
+                    "effect": "refused",
+                    "pid": pid,
+                    "candidates": candidates
+                }))
+            }
         }
     }
 }
@@ -303,5 +353,47 @@ mod tests {
             assert_eq!(calls.load(Ordering::SeqCst), 1);
             assert_eq!(result.structured_content.unwrap(), expected);
         }
+    }
+
+    #[tokio::test]
+    async fn ambiguous_pid_is_resolved_by_the_desktop_point_when_the_call_carries_one() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let candidates: WindowTargetCandidates = Arc::new(|_| {
+            vec![
+                WindowTargetCandidate {
+                    window_id: 11,
+                    title: "a".into(),
+                    app_name: None,
+                    is_on_screen: true,
+                },
+                WindowTargetCandidate {
+                    window_id: 22,
+                    title: "b".into(),
+                    app_name: None,
+                    is_on_screen: true,
+                },
+            ]
+        });
+        let resolver: DesktopPointWindowResolver =
+            Arc::new(|_pid, x, _y| if x > 100.0 { Some(22) } else { Some(11) });
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            candidates,
+        )
+        .with_point_resolver(resolver);
+        // Window-frame pixels: still ambiguous.
+        let result = guard
+            .invoke(serde_json::json!({"pid": 7, "x": 150, "y": 5}))
+            .await;
+        assert_eq!(result.is_error, Some(true));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        // Desktop-frame pixels: resolved to the covering window.
+        let result = guard
+            .invoke(serde_json::json!({"pid": 7, "x": 150, "y": 5, "coordinate_frame": "desktop"}))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

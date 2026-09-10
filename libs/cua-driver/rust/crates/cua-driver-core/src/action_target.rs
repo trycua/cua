@@ -32,6 +32,10 @@ pub fn normalize_action_target(tool_name: &str, args: &mut Value) -> Result<(), 
         return Ok(());
     };
     let Some(target) = object.remove("target") else {
+        // Legacy `scope:"desktop"` together with a pid/window_id means
+        // "desktop-frame (get_desktop_state) coordinates against this named
+        // window". It is rewritten to `coordinate_frame:"desktop"` where the
+        // adapter translates the point (Linux) and refused elsewhere.
         if object.get("scope").and_then(Value::as_str) == Some("desktop")
             && (object.contains_key("pid") || object.contains_key("window_id"))
         {
@@ -194,5 +198,19 @@ mod tests {
             normalize_action_target("click", &mut args).is_ok(),
             desktop_frame_for_window_supported()
         );
+    }
+
+    #[test]
+    fn desktop_scope_with_pid_is_platform_gated() {
+        let mut args = json!({"scope": "desktop", "pid": 7, "x": 1, "y": 2});
+        let result = normalize_action_target("click", &mut args);
+        if cfg!(target_os = "linux") {
+            assert!(result.is_ok(), "Linux maps desktop-frame points into the window");
+            assert!(args.get("scope").is_none());
+            assert_eq!(args["coordinate_frame"], "desktop");
+            assert_eq!(args["pid"], 7);
+        } else {
+            assert!(result.is_err());
+        }
     }
 }

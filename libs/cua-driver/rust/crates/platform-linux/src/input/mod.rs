@@ -14,7 +14,10 @@
 /// Shared `delivery_mode` contract (background|foreground) — mirrors macOS
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
+pub mod foreground;
 mod mpx_owner;
+
+pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -1101,144 +1104,19 @@ fn ewmh_activate_window(
     }
 }
 
-/// Foreground rung for X11 (`delivery_mode:"foreground"`): briefly activate
-/// `xid` via EWMH `_NET_ACTIVE_WINDOW`, run `body` (which injects the input
-/// while the window holds focus), then restore the prior active window. The
-/// Linux analogue of macOS `with_foreground_assist` / the Windows foreground
-/// swap, reusing the existing [`ewmh_active_window`] / [`ewmh_activate_window`]
-/// primitives (proper `x_server_time` stamping beats the WM's focus-stealing
-/// prevention).
-///
-/// The transition is confirmed from both EWMH active-window state and the X11
-/// core input-focus tree before `body` runs. A fixed delay or a successful
-/// `XSetInputFocus` return is not evidence that global XTest input is safe.
-/// `settle_ms` is retained as a compatibility hint and folded into the bounded
-/// confirmation timeout; it is no longer an unconditional sleep.
+/// Foreground rung for X11 (`delivery_mode:"foreground"`): activate `xid`
+/// (EWMH `_NET_ACTIVE_WINDOW` + core input focus), confirm the transition
+/// against both the WM's active window and the X input-focus tree, then run
+/// `body` (which injects the input while the window holds focus). The target
+/// is left active afterwards; see [`foreground`] for the rationale and the
+/// deadline/watchdog behaviour. `settle_ms` is a minimum confirmation budget.
 pub fn with_x11_foreground<T>(
     xid: u64,
     settle_ms: u64,
     body: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
-    let display = unsafe { x11::xlib::XOpenDisplay(ptr::null()) };
-    if display.is_null() {
-        bail!("foreground_unavailable: cannot open DISPLAY to verify exact X11 input focus");
-    }
-    let prior = ewmh_active_window(display);
-    let mut prior_core_focus: x11::xlib::Window = 0;
-    let mut prior_revert = 0;
-    unsafe {
-        x11::xlib::XGetInputFocus(display, &mut prior_core_focus, &mut prior_revert);
-    }
-    ewmh_activate_window(display, xid as x11::xlib::Window, prior.unwrap_or(0));
-    unsafe {
-        x11::xlib::XSync(display, 0);
-    }
-    // EWMH `_NET_ACTIVE_WINDOW` is honored as *raise-only* by WMs with
-    // focus-stealing prevention (e.g. KWin): the window reaches the top of the
-    // stack — enough for a coordinate click, which lands by stacking — but the X
-    // *input focus* never transfers, so XTest key events (which the server routes
-    // to the focused window) go to whatever was focused before. Set the input
-    // focus explicitly too, exactly as `xdotool windowactivate` does, so the
-    // foreground key/hotkey rung actually reaches the target. Guarded against
-    // BadMatch on a not-yet-viewable window — Xlib's default handler would exit
-    // the process — reusing the scoped `ignore_x_error` pattern used elsewhere.
-    unsafe {
-        let prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-        x11::xlib::XSetInputFocus(
-            display,
-            xid as x11::xlib::Window,
-            x11::xlib::RevertToParent,
-            x11::xlib::CurrentTime,
-        );
-        x11::xlib::XSync(display, 0);
-        x11::xlib::XSetErrorHandler(prev_handler);
-    }
-    let timeout = std::time::Duration::from_millis(settle_ms.max(400));
-    let deadline = std::time::Instant::now() + timeout;
-    let target = xid as x11::xlib::Window;
-    let focused = loop {
-        let active = ewmh_active_window(display) == Some(target);
-        if active && x11_focus_is_within(display, target) {
-            break true;
-        }
-        if std::time::Instant::now() >= deadline {
-            break false;
-        }
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    };
-    let result = if focused {
-        body()
-    } else {
-        let active = ewmh_active_window(display).unwrap_or(0);
-        Err(anyhow::anyhow!(
-            "foreground_unavailable: X11 did not confirm active window and input focus within \
-             exact target 0x{xid:x} before the {:?} deadline (active=0x{active:x}); no input was sent",
-            timeout
-        ))
-    };
-
-    // Restore both the EWMH active toplevel and the exact prior core focus.
-    if let Some(p) = prior {
-        ewmh_activate_window(display, p, xid as x11::xlib::Window);
-    }
-    if prior_core_focus != 0 {
-        unsafe {
-            let previous_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-            x11::xlib::XSetInputFocus(
-                display,
-                prior_core_focus,
-                prior_revert,
-                x11::xlib::CurrentTime,
-            );
-            x11::xlib::XSync(display, 0);
-            x11::xlib::XSetErrorHandler(previous_handler);
-        }
-    }
-    unsafe {
-        x11::xlib::XCloseDisplay(display);
-    }
-    result
-}
-
-fn x11_focus_is_within(display: *mut x11::xlib::Display, target: x11::xlib::Window) -> bool {
-    let mut focused: x11::xlib::Window = 0;
-    let mut revert_to = 0;
-    unsafe {
-        x11::xlib::XGetInputFocus(display, &mut focused, &mut revert_to);
-    }
-    if focused == target {
-        return true;
-    }
-    let root = unsafe { x11::xlib::XDefaultRootWindow(display) };
-    while focused != 0 && focused != root {
-        let mut query_root = 0;
-        let mut parent = 0;
-        let mut children: *mut x11::xlib::Window = ptr::null_mut();
-        let mut child_count = 0;
-        let status = unsafe {
-            x11::xlib::XQueryTree(
-                display,
-                focused,
-                &mut query_root,
-                &mut parent,
-                &mut children,
-                &mut child_count,
-            )
-        };
-        if !children.is_null() {
-            unsafe {
-                x11::xlib::XFree(children.cast());
-            }
-        }
-        if status == 0 || parent == 0 || parent == focused {
-            return false;
-        }
-        if parent == target {
-            return true;
-        }
-        focused = parent;
-    }
-    false
+    with_x11_foreground_opts(xid, ForegroundOptions::from_settle_hint(settle_ms), body)
+        .map(|(value, _report)| value)
 }
 
 /// Activate `xid` and LEAVE it active (no restore) — the persistent foreground

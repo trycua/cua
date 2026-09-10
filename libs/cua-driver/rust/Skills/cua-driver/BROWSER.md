@@ -277,6 +277,11 @@ tab or foreground the browser window. Capture is opt-in because authenticated
 pages may contain sensitive information, and a requested capture refuses when
 the driver cannot return valid viewport metrics and a valid bounded PNG.
 
+Both snapshot formats use bounded document reads when the full page structure
+exceeds the browser or parser limits. The compatibility `dom_refs_v1` format
+reports `truncated: true` after this fallback; `semantic_v2` reports
+`snapshot.complete: false`. Do not treat either result as complete page coverage.
+
 `semantic_v2` composes the page accessibility tree, pierced DOM, layout, and
 viewport state. Read the compact `outline` for page content, use `refs` only
 for actions declared in each entry's `actions` array, and use `content_refs`

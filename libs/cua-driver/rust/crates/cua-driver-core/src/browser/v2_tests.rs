@@ -58,6 +58,9 @@ struct FixtureState {
     semantic_large_page: bool,
     semantic_full_dom_fails: bool,
     semantic_full_dom_times_out: bool,
+    deeply_nested_dom_reply: bool,
+    deeply_nested_oopif_reply: bool,
+    document_error: Option<&'static str>,
     semantic_truncated_dom: bool,
     screenshot_data: String,
     viewport_css_width: f64,
@@ -84,6 +87,9 @@ impl Default for FixtureState {
             semantic_large_page: false,
             semantic_full_dom_fails: false,
             semantic_full_dom_times_out: false,
+            deeply_nested_dom_reply: false,
+            deeply_nested_oopif_reply: false,
+            document_error: None,
             semantic_truncated_dom: false,
             screenshot_data: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZJrAAAAAASUVORK5CYII=".into(),
             viewport_css_width: 800.0,
@@ -469,7 +475,11 @@ fn fixture_handler(state: SharedState) -> MockHandler {
             })),
             "DOM.getDocument" if is_tab => {
                 let depth = call.params["depth"].as_i64().unwrap_or(-1);
-                if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
+                if let Some(message) = st.document_error {
+                    MockReply::err(-32000, message)
+                } else if st.deeply_nested_dom_reply && (depth == -1 || depth > 8) {
+                    MockReply::ok(deeply_nested_document(main_document()))
+                } else if st.semantic_full_dom_times_out && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "CDP DOM.getDocument timed out after 20s")
                 } else if st.semantic_full_dom_fails && (depth == -1 || depth > 8) {
                     MockReply::err(-32000, "Object reference chain is too long")
@@ -488,7 +498,17 @@ fn fixture_handler(state: SharedState) -> MockHandler {
                     "node": large_semantic_document()["root"]["children"][0].clone()
                 }))
             }
-            "DOM.getDocument" if is_oopif => MockReply::ok(oopif_document()),
+            "DOM.getDocument" if is_oopif => {
+                let depth = call.params["depth"].as_i64().unwrap_or(-1);
+                let document = oopif_document();
+                MockReply::ok(
+                    if st.deeply_nested_oopif_reply && (depth == -1 || depth > 8) {
+                        deeply_nested_document(document)
+                    } else {
+                        document
+                    },
+                )
+            }
             "Accessibility.getFullAXTree" if is_tab => {
                 let frame_id = call.params["frameId"].as_str().unwrap_or("F_MAIN");
                 if st.semantic_large_page {
@@ -1346,6 +1366,80 @@ async fn snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {
         .invoke(json!({ "target_id": target_id, "tab_id": tab_id, "session": SESSION }))
         .await;
     structured(&result).clone()
+}
+
+fn deeply_nested_document(mut document: Value) -> Value {
+    let mut node = json!({});
+    for _ in 0..140 {
+        node = json!({ "children": [node] });
+    }
+    document["root"]["children"]
+        .as_array_mut()
+        .unwrap()
+        .push(node);
+    document
+}
+
+#[tokio::test]
+async fn default_snapshot_recovers_from_deep_replies_and_marks_truncation() {
+    for (main, child) in [(true, false), (false, true)] {
+        let f = fixture_with(|st| {
+            st.deeply_nested_dom_reply = main;
+            st.deeply_nested_oopif_reply = child;
+        })
+        .await;
+        let (target, tab) = bind(&f).await;
+        let snap = tokio::time::timeout(
+            std::time::Duration::from_secs(3),
+            snapshot(&f, &target, &tab),
+        )
+        .await
+        .expect("bounded document recovery must not wait for the request timeout");
+        assert_eq!(snap["status"], "ok", "{snap}");
+        assert_eq!(snap["truncated"], true, "{snap}");
+        assert!(snap.get("snapshot_id").is_some(), "legacy response shape");
+        assert!(
+            snap.get("snapshot").is_none(),
+            "must not switch to semantic format"
+        );
+        assert!(!ref_of(&snap, "main", "").is_empty());
+        assert!(!ref_of(&snap, "oopif", "").is_empty());
+        assert!(recorded_calls(&f, "DOM.getDocument")
+            .iter()
+            .any(|(_, params)| params["depth"] == 8));
+    }
+}
+
+#[tokio::test]
+async fn semantic_snapshot_recovers_promptly_from_deep_replies() {
+    let f = fixture_with(|st| st.deeply_nested_dom_reply = true).await;
+    let (target, tab) = bind(&f).await;
+    let snap = tokio::time::timeout(
+        std::time::Duration::from_secs(3),
+        semantic_snapshot(&f, &target, &tab),
+    )
+    .await
+    .expect("semantic fallback must receive the parser failure promptly");
+    assert_eq!(snap["status"], "ok", "{snap}");
+    assert_eq!(snap["snapshot"]["complete"], false, "{snap}");
+}
+
+#[tokio::test]
+async fn default_snapshot_refuses_unrecoverable_document_errors() {
+    for (message, expected_calls) in [
+        ("document is unavailable", 1),
+        ("Object reference chain is too long", 10),
+    ] {
+        let f = fixture_with(|st| st.document_error = Some(message)).await;
+        let (target, tab) = bind(&f).await;
+        let snap = snapshot(&f, &target, &tab).await;
+        assert_eq!(snap["status"], "refused", "{snap}");
+        assert!(
+            snap.get("refs").is_none(),
+            "must not publish partial success"
+        );
+        assert_eq!(recorded_calls(&f, "DOM.getDocument").len(), expected_calls);
+    }
 }
 
 async fn semantic_snapshot(f: &Fixture, target_id: &str, tab_id: &str) -> Value {

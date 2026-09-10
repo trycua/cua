@@ -2034,14 +2034,7 @@ impl BrowserEngine {
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
 
-        let doc = conn
-            .call(
-                Some(&cdp_session),
-                "DOM.getDocument",
-                json!({ "depth": -1, "pierce": true }),
-            )
-            .await
-            .map_err(|e| route_err("DOM.getDocument failed", e))?;
+        let (doc, mut document_complete) = self.read_snapshot_document(&conn, &cdp_session).await?;
         let root = doc.get("root").cloned().unwrap_or(Value::Null);
         let url = root
             .get("documentURL")
@@ -2113,16 +2106,13 @@ impl BrowserEngine {
                         else {
                             continue; // identity unprovable → omit this frame
                         };
-                        let Ok(child_doc) = conn
-                            .call(
-                                Some(&child.session_id),
-                                "DOM.getDocument",
-                                json!({ "depth": -1, "pierce": true }),
-                            )
-                            .await
+                        let Ok((child_doc, child_complete)) =
+                            self.read_snapshot_document(&conn, &child.session_id).await
                         else {
+                            document_complete = false;
                             continue;
                         };
+                        document_complete &= child_complete;
                         let child_root = child_doc.get("root").cloned().unwrap_or(Value::Null);
                         let child_root_frame = child_root
                             .get("frameId")
@@ -2193,9 +2183,10 @@ impl BrowserEngine {
             OopifStatus::Unsupported
         };
 
-        let truncated = entries.len() > MAX_REFS_PER_SNAPSHOT;
+        let refs_truncated = entries.len() > MAX_REFS_PER_SNAPSHOT;
+        let truncated = !document_complete || refs_truncated;
         entries.truncate(MAX_REFS_PER_SNAPSHOT);
-        if truncated {
+        if refs_truncated {
             tracing::warn!(
                 "browser snapshot truncated to {MAX_REFS_PER_SNAPSHOT} refs for tab {tab_id}"
             );
@@ -2319,7 +2310,7 @@ impl BrowserEngine {
         Ok(result)
     }
 
-    async fn semantic_document(
+    async fn read_snapshot_document(
         &self,
         conn: &Arc<CdpConnection>,
         cdp_session: &str,
@@ -2608,7 +2599,8 @@ impl BrowserEngine {
         })?;
         let conn = self.connection_for_record(session, &record).await?;
         let cdp_session = self.attach(&conn, &tab.cdp_target_id).await?;
-        let (document, document_complete) = self.semantic_document(&conn, &cdp_session).await?;
+        let (document, document_complete) =
+            self.read_snapshot_document(&conn, &cdp_session).await?;
         let root = document.get("root").cloned().unwrap_or(Value::Null);
         let url = root
             .get("documentURL")
@@ -2643,7 +2635,7 @@ impl BrowserEngine {
                             }
                         };
                         let (child_document, child_complete) =
-                            match self.semantic_document(&conn, &child.session_id).await {
+                            match self.read_snapshot_document(&conn, &child.session_id).await {
                                 Ok(document) => document,
                                 Err(_) => {
                                     semantic.unprovable_frame_count += 1;

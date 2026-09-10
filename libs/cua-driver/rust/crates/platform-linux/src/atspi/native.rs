@@ -2485,6 +2485,53 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
     )
 }
 
+/// Screen bounds of a snapshot-cached element identity: one `GetExtents`
+/// round-trip, no tree re-walk. `Err` when the object is gone or does not
+/// answer within [`REF_ACTION_BUDGET`]; the caller decides whether to re-walk.
+/// The X11 origin lookup runs on the caller's (blocking) thread before the
+/// runtime is entered, so no synchronous X11 I/O happens under `block_on`.
+pub fn element_bounds_ref(
+    object_ref: &ObjectRef,
+    pid: u32,
+    xid: u64,
+    in_web_content: bool,
+) -> Result<(i32, i32, u32, u32)> {
+    if in_web_content {
+        return Err(anyhow!("web-content bounds need the document origin; re-walk"));
+    }
+    let offset = window_to_screen_offset(pid, xid, None);
+    let coord = if offset.is_some() {
+        CoordType::Window
+    } else {
+        CoordType::Screen
+    };
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let proxies = match call(acc.proxies()).await {
+                Some(Ok(proxies)) => proxies,
+                Some(Err(e)) => return Err(anyhow!("interface proxies unavailable: {e}")),
+                None => return Err(anyhow!("cached element did not answer in time")),
+            };
+            let component = match call(proxies.component()).await {
+                Some(Ok(component)) => component,
+                Some(Err(e)) => return Err(anyhow!("Component unavailable: {e}")),
+                None => return Err(anyhow!("cached element did not answer in time")),
+            };
+            let extents = match call(component.get_extents(coord)).await {
+                Some(Ok(extents)) => extents,
+                Some(Err(e)) => return Err(anyhow!("getExtents failed: {e}")),
+                None => return Err(anyhow!("getExtents did not answer in time")),
+            };
+            project_screen_extents(extents, offset.unwrap_or((0, 0)), None)
+                .ok_or_else(|| anyhow!("cached element reports no on-screen extents"))
+        },
+        || Err(anyhow!("element_bounds (cached element) timed out")),
+    )
+}
+
 /// [`focus_element`] on a snapshot-cached element identity.
 pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
     bounded_for(
@@ -3591,14 +3638,27 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             .context("Hyprland bounds require an exact window for multi-window apps")?;
         return get_element_bounds_for_window(pid, window.address, idx);
     }
+    element_bounds_by_walk(pid, 0, idx)
+}
+
+/// Resolve element `idx` against a fresh walk and read its screen bounds.
+/// `xid != 0` walks the caller's window FIRST — the same visiting order (and
+/// therefore the same index space) `get_window_state` used for the snapshot
+/// the index came from; an application-wide pre-order would number a
+/// multi-window app (GIMP's docks, LibreOffice dialogs) differently.
+fn element_bounds_by_walk(pid: u32, xid: u64, idx: usize) -> Result<(i32, i32, u32, u32)> {
+    // Synchronous X11 lookups stay on the caller's blocking thread, outside
+    // the AT-SPI runtime.
+    let offset = window_to_screen_offset(pid, xid, None);
     bounded_for(
         INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            let visited = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
-                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            let web_document_origin = web_document_origin_for_visited(&visited, pid, 0, None)
+                .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?
+                .visited;
+            let web_document_origin = web_document_origin_for_visited(&visited, pid, xid, None)
                 .await
                 .unwrap_or((0, 0));
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
@@ -3619,7 +3679,7 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             // Prefer WINDOW coords + a deterministic screen offset — fixes GTK4,
             // whose CoordType::Screen collapses every element to (0,0). Fall back to
             // Screen on Wayland / when no X11 window resolves (offset is None).
-            match window_to_screen_offset(pid, 0, None) {
+            match offset {
                 Some((ox, oy)) => {
                     let (x, y, w, h) = comp
                         .get_extents(CoordType::Window)
@@ -3660,7 +3720,7 @@ pub fn get_element_bounds_for_window(
     idx: usize,
 ) -> Result<(i32, i32, u32, u32)> {
     if !crate::wayland::is_wayland() || !crate::wayland::hyprland::is_session() {
-        return get_element_bounds(pid, idx);
+        return element_bounds_by_walk(pid, xid, idx);
     }
     bounded_for(
         INDEX_RESOLVE_BUDGET,

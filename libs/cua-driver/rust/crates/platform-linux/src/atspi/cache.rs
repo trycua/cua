@@ -31,6 +31,9 @@ pub struct CachedElement {
     pub key: u64,
     pub object_ref: Option<ObjectRef>,
     pub role: String,
+    /// The node lives inside an embedded web document (bounds need the
+    /// document origin, which only a walk resolves).
+    pub in_web_content: bool,
     /// Screen-space frame `(x, y, w, h)` when the snapshot resolved one.
     pub bounds: Option<(i32, i32, u32, u32)>,
 }
@@ -108,6 +111,7 @@ pub(crate) fn update_snapshot(
             key: n.element_key,
             object_ref: n.object_ref.clone(),
             role: n.role.clone(),
+            in_web_content: n.in_web_content,
             bounds: None,
         })
         .collect();

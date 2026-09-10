@@ -412,7 +412,7 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
 }
 
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
-    if let Some(bounds) = cache::cached_element(pid, None, idx).and_then(|e| e.bounds) {
+    if let Some(bounds) = cached_bounds(pid, None, idx) {
         return Ok(bounds);
     }
     native::get_element_bounds(pid, idx)
@@ -423,10 +423,32 @@ pub fn get_element_bounds_for_window(
     xid: u64,
     idx: usize,
 ) -> Result<(i32, i32, u32, u32)> {
-    if let Some(bounds) = cache::cached_element(pid, Some(xid), idx).and_then(|e| e.bounds) {
+    if let Some(bounds) = cached_bounds(pid, Some(xid), idx) {
         return Ok(bounds);
     }
     native::get_element_bounds_for_window(pid, xid, idx)
+}
+
+/// Bounds for element `idx` from the last snapshot of (pid, xid): the frame
+/// the snapshot recorded, or — when the snapshot ran out of bounds budget —
+/// one `GetExtents` on the cached object identity. `None` only when the
+/// snapshot never saw the element (or the object is gone), in which case the
+/// caller re-walks.
+fn cached_bounds(pid: u32, xid: Option<u64>, idx: usize) -> Option<(i32, i32, u32, u32)> {
+    let element = cache::cached_element(pid, xid, idx)?;
+    if let Some(bounds) = element.bounds {
+        return Some(bounds);
+    }
+    let object_ref = element.object_ref.as_ref()?;
+    match native::element_bounds_ref(object_ref, pid, xid.unwrap_or(0), element.in_web_content) {
+        Ok(bounds) => Some(bounds),
+        Err(error) => {
+            tracing::debug!(
+                "cached element {idx} (pid {pid}) bounds lookup failed, re-resolving: {error:#}"
+            );
+            None
+        }
+    }
 }
 
 // ── Internal helpers ─────────────────────────────────────────────────────────

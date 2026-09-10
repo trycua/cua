@@ -82,6 +82,7 @@ fn arrival_fire(key: &CursorKey) {
         if let Some(map) = guard.as_mut() {
             if let Some(tx) = map.remove(key) {
                 let _ = tx.send(());
+                ARRIVAL_DEGRADED.store(false, std::sync::atomic::Ordering::Relaxed);
             }
         }
     }
@@ -581,8 +582,38 @@ pub async fn animate_cursor_to_for(key: CursorKey, x: f64, y: f64) {
         return;
     }
 
-    let _ = rx.await;
+    if ARRIVAL_DEGRADED.load(std::sync::atomic::Ordering::Relaxed) {
+        // The renderer already failed to report one arrival. Keep the glide
+        // fire-and-forget until it proves itself again rather than charging
+        // every action the full cap.
+        arrival_cancel(&key);
+        return;
+    }
+    match tokio::time::timeout(ARRIVAL_WAIT_CAP, rx).await {
+        Ok(_) => {}
+        Err(_elapsed) => {
+            arrival_cancel(&key);
+            ARRIVAL_DEGRADED.store(true, std::sync::atomic::Ordering::Relaxed);
+            tracing::warn!(
+                key = %key,
+                cap_ms = ARRIVAL_WAIT_CAP.as_millis() as u64,
+                "overlay: cursor glide did not report arrival in time;                  continuing without waiting (further glides are fire-and-forget                  until the renderer reports an arrival again)"
+            );
+        }
+    }
 }
+
+/// Upper bound on how long an input action waits for its agent-cursor glide
+/// to land. The glide is cosmetic: a renderer that never reports arrival
+/// (deferred paints, a dropped MoveTo, a stalled X11 overlay thread) must not
+/// hold the tool call — and, since the stdio transport handles requests one
+/// at a time, every later tool call — open indefinitely. Sized above the
+/// longest legal glide (`glide_duration_ms` ≤ 5000; speed-based glides cross
+/// a 4K diagonal in ≈5 s at 900 px/s).
+const ARRIVAL_WAIT_CAP: Duration = Duration::from_millis(5_500);
+
+/// Latched once an arrival wait expired; cleared by the next real arrival.
+static ARRIVAL_DEGRADED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub fn remove_cursor(key: CursorKey) {
     if key.is_empty() {
@@ -3306,6 +3337,52 @@ mod tests {
             arrival_rx.try_recv(),
             Err(tokio::sync::oneshot::error::TryRecvError::Closed)
         ));
+    }
+
+    /// Regression: a MoveTo whose arrival the renderer never reports (the
+    /// GIMP menu-item element click wedged the whole stdio daemon this way)
+    /// must not hold the awaiting tool call open; the wait is capped and the
+    /// registration is dropped.
+    #[tokio::test(start_paused = true)]
+    async fn unreported_arrival_releases_the_waiter_after_the_cap() {
+        init(CursorConfig::default());
+        let key = "arrival-cap-regression".to_owned();
+        {
+            let mut guard = RENDER.lock().unwrap();
+            let map = guard.get_or_insert_with(default_render_map);
+            let template = map.template.clone();
+            let rs = map
+                .cursors
+                .entry(key.clone())
+                .or_insert_with(|| render_state_for_key(&template, &key));
+            rs.core.cfg.enabled = true;
+            rs.core.visible = true;
+            rs.core.pos = (10.0, 10.0);
+        }
+        ARRIVAL_DEGRADED.store(false, std::sync::atomic::Ordering::Relaxed);
+        let started = tokio::time::Instant::now();
+        // Nobody drains CMD_TX here, so no arrival can ever fire.
+        tokio::time::timeout(
+            ARRIVAL_WAIT_CAP + Duration::from_secs(5),
+            animate_cursor_to_for(key.clone(), 60.0, 60.0),
+        )
+        .await
+        .expect("glide wait must be bounded");
+        assert!(started.elapsed() >= ARRIVAL_WAIT_CAP);
+        assert!(ARRIVAL_TX
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_none_or(|map| !map.contains_key(&key)));
+        // Degraded: the next glide returns without waiting at all.
+        let started = tokio::time::Instant::now();
+        animate_cursor_to_for(key.clone(), 20.0, 20.0).await;
+        assert!(started.elapsed() < Duration::from_millis(100));
+        // A real arrival re-arms the wait.
+        let (tx, _rx) = tokio::sync::oneshot::channel();
+        arrival_register(key.clone(), tx);
+        arrival_fire(&key);
+        assert!(!ARRIVAL_DEGRADED.load(std::sync::atomic::Ordering::Relaxed));
     }
 
     #[test]

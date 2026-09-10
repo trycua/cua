@@ -349,6 +349,42 @@ def cleanup_trace(before, after, *, stopped=False):
     return isolation(after, stopped=stopped)
 
 
+def verify_recovery_retirement(before, after, lane, *, retired=True):
+    """EOF releases capacity, preserving only the captured inert recovery hover."""
+    assert type(lane) is int and lane in (1, 2), 'invalid traced recovery lane'
+    old = lanes(before, cleared=True, allow_passive=True)
+    new = lanes(after, cleared=True, allow_passive=True)
+    assert set(old) == set(new) == {0, 1}
+    for key, row in old.items():
+        assert row['reserved'] is (key == lane - 1), 'unexpected recovery reservation'
+        assert all(type(row.get(k)) is int and row[k] >= 0
+                   for k in ('seat_resources', 'pointer_resources', 'keyboard_resources'))
+        assert all(type(new[key].get(k)) is int and new[key][k] >= 0
+                   for k in ('seat_resources', 'pointer_resources', 'keyboard_resources'))
+        if key != lane - 1:
+            assert row['pointer_focus'] is False, 'unexpected recovery pointer lane'
+        assert type(new[key]['reserved']) is bool, 'invalid retirement reservation'
+        expected = dict(row)
+        if key == lane - 1:
+            expected['reserved'] = False if retired else new[key]['reserved']
+        assert new[key] == expected, 'recovery cleanup changed lane state or retained capacity'
+    return {'result': 'verified', 'lane': lane, 'unreserved': retired,
+            'input_authority': False, 'parked_pointer_focus': old[lane - 1]['pointer_focus'],
+            'lane_state': 'unchanged_except_released_recovery_reservation'}
+
+
+def await_recovery_retirement(fault, recovery, runtimes):
+    assert recovery['result'] == 'verified', 'recovery was not verified'
+    assert runtimes and all(c.process.poll() is not None for c in runtimes), 'runtime still alive'
+    def sample():
+        current = fault.status()
+        verify_recovery_retirement(recovery['status'], current, recovery['lane'], retired=False)
+        return current if all(row['reserved'] is False for row in lanes(current).values()) else None
+    current = wait_for(sample, timeout=3)
+    return {'status': current, 'all_runtimes_closed': True, 'observed_ns': time.monotonic_ns(),
+            'verification': verify_recovery_retirement(recovery['status'], current, recovery['lane'])}
+
+
 def recover(client, observer, victim, fault, trace, boundary, lane, guard, save, result):
     assert fault.destroyed and victim.process.poll() is not None
     assert victim.process.pid not in assert_distinct_runtimes([client, observer])
@@ -393,7 +429,8 @@ def recover(client, observer, victim, fault, trace, boundary, lane, guard, save,
     assert all(r[2] in ('agent_admitted', 'agent_approved', 'agent_action_end', 'pointer_enter',
                         'pointer_motion', 'pointer_button', 'pointer_leave', 'keyboard_leave') for r in synthetic)
     assert [r[6] for r in synthetic if r[2] == 'pointer_button'] == [1, 0]
-    recovered = lanes(fault.status())
+    recovery_status = fault.status()
+    recovered = lanes(recovery_status, cleared=True, allow_passive=True)
     for key, row in recovered.items():
         assert row['held_button'] == row['held_keys'] == 0
         assert all(row[k] is False for k in ('drag_active', 'lease_active', 'keyboard_focus'))
@@ -402,6 +439,8 @@ def recover(client, observer, victim, fault, trace, boundary, lane, guard, save,
             assert row['pointer_focus'] is False
     result['continuous_isolation'] = isolation(page)
     guard()
+    result.update(status=recovery_status, lane=lane)
+    save('recovery-status.json', recovery_status)
     result['result'] = 'verified'
     return page
 
@@ -507,12 +546,20 @@ def run(args):
             operations.append(('shutdown_pool', lambda: pool.shutdown(wait=False, cancel_futures=True)))
         if fault:
             operations.append(('preserve_fault', lambda: save('fault.json', fault.record)))
+        if observer:
+            operations.append(('close_observer', lambda: close_owned(observer)))
         if trace:
             def finish():
-                trace.exchange('TRACE_STOP')
-                stopped = trace.collect()
-                save('trace.json', stopped)
-                report['continuous_isolation'] = cleanup_trace(prefix, stopped, stopped=True) if prefix else isolation(stopped, stopped=True)
+                try:
+                    if report['recovery']['result'] == 'verified':
+                        report['recovery_cleanup'] = await_recovery_retirement(fault, report['recovery'],
+                                                                              [*clients, observer])
+                        save('recovery-cleanup.json', report['recovery_cleanup'])
+                finally:
+                    trace.exchange('TRACE_STOP')
+                    stopped = trace.collect()
+                    save('trace.json', stopped)
+                    report['continuous_isolation'] = cleanup_trace(prefix, stopped, stopped=True) if prefix else isolation(stopped, stopped=True)
                 guard()
                 primary_after = wm()
                 assert primary_after == primary_before
@@ -521,7 +568,10 @@ def run(args):
                 save('final-primary.json', {'primary': primary_after, 'foreground': current})
                 final = fault.status()
                 save('final-status.json', final)
-                assert all(r['reserved'] is False for r in lanes(final, cleared=True).values())
+                if report['recovery']['result'] == 'verified':
+                    verify_recovery_retirement(report['recovery']['status'], final, report['recovery']['lane'])
+                else:
+                    assert all(r['reserved'] is False for r in lanes(final, cleared=True).values())
             operations.extend([('finish_trace', finish), ('close_trace', trace.close)])
         if fault:
             operations.append(('close_pidfd', fault.close))
@@ -532,8 +582,6 @@ def run(args):
                 stop_process(grab)
                 wait_for(lambda: not state(args.foreground_journal)['held'], timeout=3)
         operations.append(('release_primary', release))
-        if observer:
-            operations.append(('close_observer', lambda: close_owned(observer)))
         errors = cleanup_all(operations)
         save('cleanup.json', {'errors': errors})
         if errors:

@@ -10299,6 +10299,8 @@ mod background_budget_tests {
         assert!(note.contains("stopped answering"));
         let note = truncation_note(Some("app_lookup_timeout"), 250, 0, 0);
         assert!(note.contains("250 ms"));
+        let note = truncation_note(Some("huge_container"), 1000, 1918, 0);
+        assert!(note.contains("not expanded"));
     }
 
     #[test]

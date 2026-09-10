@@ -4554,48 +4554,51 @@ resources:
     #[tokio::test]
     async fn element_tokens_are_bound_to_the_dispatch_runtime_generation() {
         let pid = 8_675_309;
-        let token = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                let snapshot = crate::element_token::global().register_snapshot(pid, 44, 1);
-                crate::element_token::token_for(snapshot, 0)
+        let (first_cache, token) = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                let cache = crate::snapshot_test_support::cache();
+                let snapshot =
+                    cache.publish(pid, 44, crate::snapshot_test_support::Payload(vec![0]));
+                (cache, crate::element_token::token_for(snapshot, 0))
             })
             .await;
-
-        let cross_runtime = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+        let second_cache = DISPATCH_RUNTIME_SCOPE
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                crate::snapshot_test_support::cache()
             })
             .await;
-        assert_eq!(
-            cross_runtime.unwrap_err(),
-            "element_token belongs to another runtime generation"
-        );
         let structured = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-b".to_owned(), async {
-                crate::element_token::resolve_element_args(
-                    pid,
-                    None,
-                    Some(&token),
-                    None,
-                    None,
-                    "click",
-                )
-                .unwrap_err()
+            .scope("token-dispatch-runtime-b".to_owned(), async {
+                second_cache
+                    .resolve_element_args(pid, None, Some(&token), None, None, "click")
+                    .unwrap_err()
             })
             .await
             .structured_content
             .unwrap();
+        assert_eq!(
+            structured["refusal"]["message"],
+            "element_token belongs to another runtime generation"
+        );
         assert_eq!(
             structured.pointer("/refusal/code"),
             Some(&serde_json::Value::String("generation_mismatch".into()))
         );
 
         let owner = DISPATCH_RUNTIME_SCOPE
-            .scope("runtime-a".to_owned(), async {
-                crate::element_token::global().resolve(pid, &token)
+            .scope("token-dispatch-runtime-a".to_owned(), async {
+                first_cache.resolve_element_args(pid, None, Some(&token), None, None, "click")
             })
             .await;
-        assert_eq!(owner.unwrap(), (44, 0));
+        assert!(matches!(
+            owner.unwrap(),
+            crate::element_token::ResolvedElement::Element {
+                window_id: Some(44),
+                element_index: 0,
+                element: 0,
+                ..
+            }
+        ));
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

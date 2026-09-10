@@ -37,6 +37,9 @@ use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
+#[path = "support/appkit_snapshot_publication.rs"]
+mod snapshot_publication;
+
 // ── paths ────────────────────────────────────────────────────────────────────
 
 fn harness_app() -> PathBuf {
@@ -441,8 +444,16 @@ fn harness_appkit_stale_element_token_fails_closed() {
         ),
         |pid, wid, driver| {
             let first = snapshot_elements(driver, pid, wid);
+            assert!(first.tree_text().contains("counter=0"));
             let token = element_token_by_id(&first, "btn-increment");
-            let _newer = snapshot_elements(driver, pid, wid);
+            let index = element_index_by_id(first.tree_text(), "btn-increment").unwrap();
+            let newer = snapshot_elements(driver, pid, wid);
+            assert!(
+                !newer.is_error(),
+                "replacement read failed: {}",
+                newer.text()
+            );
+            assert_ne!(first.snapshot_id(), newer.snapshot_id());
             let refused = driver.call(
                 "click",
                 serde_json::json!({"pid": pid as i64, "element_token": token}),
@@ -456,11 +467,51 @@ fn harness_appkit_stale_element_token_fails_closed() {
                 refused.structured()["refusal"]["code"].as_str(),
                 Some("stale_element_token")
             );
+            let refused_index = driver.call(
+                "click",
+                serde_json::json!({
+                    "pid": pid as i64,
+                    "window_id": wid,
+                    "snapshot_id": first.snapshot_id(),
+                    "element_index": index
+                }),
+            );
+            assert!(
+                refused_index.is_error(),
+                "stale snapshot/index was accepted"
+            );
+            assert_eq!(
+                refused_index.structured()["refusal"]["code"].as_str(),
+                Some("stale_element_token")
+            );
             let post = snapshot_elements(driver, pid, wid);
             assert!(
                 post.tree_text().contains("counter=0"),
-                "stale click mutated counter"
+                "stale targeting mutated counter"
             );
+            let fresh_token = element_token_by_id(&post, "btn-increment");
+            let delivered = driver.call(
+                "click",
+                serde_json::json!({"pid": pid as i64, "element_token": fresh_token}),
+            );
+            assert!(
+                !delivered.is_error(),
+                "fresh recovery failed: {}",
+                delivered.text()
+            );
+            let deadline = std::time::Instant::now() + Duration::from_secs(5);
+            loop {
+                let recovered = snapshot_elements(driver, pid, wid);
+                if recovered.tree_text().contains("counter=1") {
+                    break;
+                }
+                assert!(
+                    std::time::Instant::now() < deadline,
+                    "fresh recovery did not increment exactly once: {}",
+                    recovered.tree_text()
+                );
+                std::thread::sleep(Duration::from_millis(50));
+            }
             Observation::delivered(vec![OracleKind::AxState], Evidence::default())
         },
     );

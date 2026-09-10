@@ -47,6 +47,27 @@ use std::sync::Arc;
 
 use crate::{ax::cache::ElementCache, cursor::state::CursorRegistry};
 
+fn native_window_id(
+    window_id: Option<u64>,
+) -> Result<Option<u32>, cua_driver_core::protocol::ToolResult> {
+    window_id.map(u32::try_from).transpose().map_err(|_| {
+        cua_driver_core::protocol::ToolResult::error("window_id is out of range for macOS.")
+    })
+}
+
+#[cfg(test)]
+mod snapshot_window_id_tests {
+    #[test]
+    fn native_window_conversion_never_discards_high_bits() {
+        assert_eq!(super::native_window_id(None).unwrap(), None);
+        assert_eq!(
+            super::native_window_id(Some(u32::MAX as u64)).unwrap(),
+            Some(u32::MAX)
+        );
+        assert!(super::native_window_id(Some((1_u64 << 32) | 7)).is_err());
+    }
+}
+
 fn pid_window_target_candidates(pid: i64) -> Vec<WindowTargetCandidate> {
     let Ok(pid) = i32::try_from(pid) else {
         return Vec::new();
@@ -240,7 +261,10 @@ async fn decide_background_window_action(
     use cua_driver_core::background_input::{
         decide_background_input, BackgroundInputDecision, ExactWindowTarget,
     };
+    let element_guard =
+        element_ptr.map(|ptr| unsafe { crate::ax::cache::RetainedElement::retain(ptr) });
     let facts = match tokio::task::spawn_blocking(move || {
+        let element_ptr = element_guard.as_ref().map(|guard| guard.as_ptr());
         crate::ax::exact_target::gather_background_facts(pid, window_id, element_ptr)
     })
     .await

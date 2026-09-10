@@ -70,6 +70,14 @@ impl Harness {
     }
 
     fn launch_with_oracles(command_oracle: Option<&Path>, pointer_oracle: Option<&Path>) -> Self {
+        Self::launch_with_options(command_oracle, pointer_oracle, false)
+    }
+
+    fn launch_with_options(
+        command_oracle: Option<&Path>,
+        pointer_oracle: Option<&Path>,
+        keep_ordered_front: bool,
+    ) -> Self {
         let exe = harness_exe();
         assert!(
             exe.exists(),
@@ -85,6 +93,9 @@ impl Harness {
         }
         if let Some(path) = pointer_oracle {
             command.env("CUA_APPKIT_POINTER_ORACLE", path);
+        }
+        if keep_ordered_front {
+            command.env("CUA_APPKIT_KEEP_ORDERED_FRONT", "1");
         }
         let app = command
             .spawn()
@@ -306,6 +317,69 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
         assert_eq!(after.foreground, Some(u64::from(pid)));
         assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
         Observation::delivered_with_fixture_state(vec![OracleKind::Focus, OracleKind::Cursor])
+    });
+}
+
+#[test]
+#[ignore]
+fn harness_appkit_exact_activation_refuses_competing_window() {
+    let mut case = native_foreground_case(
+        "appkit",
+        "exact_activation_competing_window",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+    )
+    .expecting_refusal(vec![RefusalCode::BringToFrontExactWindowUnverified]);
+    case.oracles.extend([OracleKind::Focus, OracleKind::Cursor]);
+    run_case(case, |pid, wid, driver| {
+        let competitor = Harness::launch_with_options(None, None, true);
+        let (competing_wid, _) = driver
+            .find_window(competitor.pid as i64, "CuaTestHarness AppKit")
+            .expect("find competing ordinary window");
+        let snapshot = snapshot_elements(driver, pid, wid);
+        assert!(!snapshot.is_error(), "target snapshot: {}", snapshot.text());
+        let observer = NativeObserver::new();
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let before = observer.snapshot(target).expect("observe competing window");
+        let response = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid, "window_id": wid}),
+        );
+        assert!(
+            response.is_error(),
+            "competing window must prevent verification"
+        );
+        assert_eq!(
+            response.structured()["code"],
+            "bring_to_front_exact_window_unverified"
+        );
+        assert_eq!(response.structured()["activated"], false);
+        assert_eq!(
+            response.structured()["exact_window_effect"]["focused"],
+            true
+        );
+        assert_eq!(
+            response.structured()["observed"]["frontmost_ordinary_window_id"].as_u64(),
+            Some(competing_wid)
+        );
+        let after = observer
+            .snapshot(target)
+            .expect("observe refused activation");
+        assert_eq!(after.foreground, Some(u64::from(pid)));
+        assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
+        Observation::refused(
+            RefusalCode::BringToFrontExactWindowUnverified,
+            vec![
+                OracleKind::FixtureState,
+                OracleKind::Focus,
+                OracleKind::Cursor,
+            ],
+            response.text(),
+            Evidence::default(),
+        )
     });
 }
 

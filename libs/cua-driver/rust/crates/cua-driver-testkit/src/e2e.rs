@@ -299,6 +299,7 @@ pub enum OracleKind {
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RefusalCode {
+    BringToFrontExactWindowUnverified,
     BackgroundUnavailable,
     BackgroundOccluded,
     BackgroundUipiBlocked,
@@ -321,6 +322,9 @@ pub enum RefusalCode {
 impl RefusalCode {
     pub fn from_driver_code(code: &str) -> Option<Self> {
         match code {
+            "bring_to_front_exact_window_unverified" => {
+                Some(Self::BringToFrontExactWindowUnverified)
+            }
             "background_unavailable" => Some(Self::BackgroundUnavailable),
             "background_occluded" => Some(Self::BackgroundOccluded),
             "background_uipi_blocked" => Some(Self::BackgroundUipiBlocked),

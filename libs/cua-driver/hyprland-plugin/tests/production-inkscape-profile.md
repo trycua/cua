@@ -154,9 +154,16 @@ fails qualification. Raw begin/end journal and wire evidence are retained.
 
 Baseline wire evidence must show one primary pointer and keyboard on the same
 surface, a held left button, and no held keyboard keys/modifiers. During the
-parked interval, any pointer motion (including return to the original position),
-enter/leave, button, axis, key, keyboard-focus, seat-capability, or corresponding
-journal focus/grab/input transition fails. The foreground client counters and
+parked interval, an exact same-position `wl_pointer.motion` notification on the
+same primary object may pass only with unchanged focus, held input, and
+foreground interaction. Retain and count these duplicates; they do not certify
+the negative control. Any displacement, including an excursion and return,
+foreign-pointer motion, enter/leave, button, axis, key, keyboard-focus,
+seat-capability, or corresponding journal focus/grab/input transition fails.
+GTK journal motion events and counter changes still fail because they do not
+independently establish device identity and a baseline. See the
+[duplicate-notification contract](production-proof.md#inkscape-only-environment-profile)
+for the complete constraints. The foreground client counters and
 held-button state must remain unchanged, and the independent compositor
 cursor/focus/workspace endpoint checks must also match. This establishes
 client-observed primary continuity under the implicit held-button grab; it

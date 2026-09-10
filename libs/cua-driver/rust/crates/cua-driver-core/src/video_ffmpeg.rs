@@ -139,26 +139,30 @@ impl VideoBackend for FfmpegVideoBackend {
     fn stop(mut self: Box<Self>) -> anyhow::Result<VideoMetadata> {
         let elapsed = self.started_at.elapsed();
         let finalized;
-
-        if let Some(mut stdin) = self.child.stdin.take() {
-            let _ = stdin.write_all(b"q\n");
-            let _ = stdin.flush();
-        }
+        let shutdown_started = Instant::now();
+        let status_before_stop = self.child.try_wait();
+        let stdin_result = self.child.stdin.take().map(|mut stdin| {
+            let write_result = stdin.write_all(b"q\n");
+            let flush_result = stdin.flush();
+            (write_result, flush_result)
+        });
+        let mut forced_kill = false;
+        let mut kill_result = None;
+        let exit_status;
 
         let deadline = Instant::now() + Duration::from_millis(3000);
         loop {
             match self.child.try_wait()? {
                 Some(status) => {
                     finalized = status.success();
+                    exit_status = Ok(status);
                     break;
                 }
                 None => {
                     if Instant::now() > deadline {
-                        // Polite shutdown stalled — force kill. mp4 will lack
-                        // a moov atom and won't be playable; `finalized:
-                        // false` tells the caller.
-                        let _ = self.child.kill();
-                        let _ = self.child.wait();
+                        forced_kill = true;
+                        kill_result = Some(self.child.kill());
+                        exit_status = self.child.wait();
                         finalized = false;
                         break;
                     }
@@ -168,6 +172,16 @@ impl VideoBackend for FfmpegVideoBackend {
         }
 
         if !finalized {
+            tracing::warn!(target: "recording",
+                child_pid = self.child.id(),
+                ?status_before_stop,
+                ?stdin_result,
+                ?exit_status,
+                forced_kill,
+                ?kill_result,
+                shutdown_ms = shutdown_started.elapsed().as_millis() as u64,
+                recording_ms = elapsed.as_millis() as u64,
+                "ffmpeg shutdown observation");
             if let Some(handle) = self.stderr_thread.take() {
                 if let Ok(buf) = handle.join() {
                     let tail = String::from_utf8_lossy(&buf);

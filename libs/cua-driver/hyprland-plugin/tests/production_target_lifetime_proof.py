@@ -27,6 +27,10 @@ click on the separately prepared process with a new runtime and screenshot.
 Same-client recovery, relaunch, PID/address reuse, active sibling cancellation,
 full desktop certification and physical hardware are explicitly unproven.
 No app launches, signer material, policy changes, production edits or replay.
+Immediate cleanup accepts either boolean capacity-reservation state because
+Driver drops its input connection after partial delivery. A separate bounded
+gate requires all reservations released before recovery; input authority and
+held input must be gone in every cleanup sample.
 """
 import argparse
 from production_app_smoke import add_provenance_arguments
@@ -272,9 +276,25 @@ def verify_cleared(before, after, lane):
             assert {k: v for k, v in old[key].items() if k not in resources} == {
                 k: v for k, v in new[key].items() if k not in resources}, 'idle sibling lane changed'
         else:
-            assert new[key]['reserved'] is True, 'target loss unexpectedly lost runtime reservation'
+            assert type(new[key]['reserved']) is bool, 'invalid target-loss reservation state'
             assert all(type(new[key][k]) is int and new[key][k] < old[key][k]
                        for k in resources), 'destroyed resources not pruned'
+
+
+def verify_terminal_cleared(before, after, lane):
+    verify_cleared(before, after, lane)
+    assert all(row['reserved'] is False for row in lanes(after).values()), 'terminal connection retained capacity'
+    return {'result': 'verified', 'unreserved': True, 'input_authority': False}
+
+
+def await_connection_retirement(fault, before, lane):
+    def sample():
+        current = fault.status()
+        verify_cleared(before, current, lane)
+        return current if all(row['reserved'] is False for row in lanes(current).values()) else None
+    current = wait_for(sample, timeout=3)
+    return {'status': current, 'verification': verify_terminal_cleared(before, current, lane),
+            'observed_ns': time.monotonic_ns()}
 
 
 def isolation(page, *, stopped=False):
@@ -467,6 +487,9 @@ def run(args):
             (args.evidence / (name + '-saved-after' + Path(spec['owned']['document']['path']).suffix)).write_bytes(saved_document(spec))
         report['saved_output'] = 'identity_and_bytes_unchanged; archived_before_and_after'
         close_owned(clients[0])
+        report['connection_retirement'] = await_connection_retirement(fault, fault.record['gate_status'], lane)
+        save('connection-retirement.json', report['connection_retirement'])
+        guard()
         teardown = trace.collect()
         cleanup_trace(boundary, teardown)
         save('pre-recovery-prefix.json', teardown)

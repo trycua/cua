@@ -137,6 +137,47 @@ class PlanTests(unittest.TestCase):
 
 
 class OracleTests(unittest.TestCase):
+    def test_partial_connection_retirement_may_release_capacity_immediately(self):
+        for reserved in (True, False):
+            observed = record()
+            observed['after']['input']['lanes'][0]['reserved'] = reserved
+            self.assertEqual(proof.verify_fault(trace(DESTROYED), observed, action())['result'], 'verified')
+        for reserved in (None, 0, 1, 'false'):
+            observed = record()
+            observed['after']['input']['lanes'][0]['reserved'] = reserved
+            with self.subTest(reserved=reserved), self.assertRaises(AssertionError):
+                proof.verify_fault(trace(DESTROYED), observed, action())
+
+    def test_terminal_gate_requires_released_capacity_and_unchanged_sibling(self):
+        before, after = statuses()
+        with self.assertRaisesRegex(AssertionError, 'retained capacity'):
+            proof.verify_terminal_cleared(before, after, 1)
+        after['input']['lanes'][0]['reserved'] = False
+        self.assertTrue(proof.verify_terminal_cleared(before, after, 1)['unreserved'])
+        for field, value in (('held_button', 272), ('held_keys', 1), ('lease_active', True),
+                             ('drag_active', True), ('pointer_focus', True), ('keyboard_focus', True)):
+            changed = deepcopy(after)
+            changed['input']['lanes'][0][field] = value
+            with self.subTest(field=field), self.assertRaises(AssertionError):
+                proof.verify_terminal_cleared(before, changed, 1)
+        after['input']['lanes'][1]['reserved'] = True
+        with self.assertRaises(AssertionError):
+            proof.verify_terminal_cleared(before, after, 1)
+
+    def test_bounded_terminal_wait_does_not_accept_a_retained_reservation(self):
+        before, pending = statuses()
+        released = deepcopy(pending)
+        released['input']['lanes'][0]['reserved'] = False
+        fault = SimpleNamespace(status=Mock(side_effect=[pending, released]))
+        def wait(sample, timeout):
+            self.assertEqual(timeout, 3)
+            self.assertIsNone(sample())
+            return sample()
+        with patch.object(proof, 'wait_for', side_effect=wait):
+            result = proof.await_connection_retirement(fault, before, 1)
+        self.assertTrue(result['verification']['unreserved'])
+        self.assertEqual(fault.status.call_count, 2)
+
     def test_destroyed_surface_requires_no_invented_release(self):
         result = proof.verify_fault(trace(DESTROYED), record(), action())
         self.assertEqual(result['wire_release_events'], 0)

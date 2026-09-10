@@ -18,7 +18,6 @@ use serde_json::Value;
 use std::sync::Arc;
 
 use super::ToolState;
-use crate::apps;
 use crate::focus_guard;
 use crate::input::mouse::DragButton;
 use crate::window_change_detector::WindowChangeDetector;
@@ -292,7 +291,7 @@ impl Tool for DragTool {
         // windows (drop on Dock, drop on background app icon) and the
         // mouseDown half-event alone can activate the target app on some
         // Chromium builds. Wrap to catch + report both.
-        let prior_front = apps::frontmost_pid();
+        let prior_front = crate::apps::frontmost_pid();
         let snapshot = WindowChangeDetector::snapshot(prior_front);
 
         // Dispatch blocking drag synthesis.
@@ -316,28 +315,27 @@ impl Tool for DragTool {
                     let do_it = move || -> anyhow::Result<()> {
                         let m: Vec<&str> = mods_owned.iter().map(String::as_str).collect();
                         if fg {
-                            // HID delivery is global, so foreground mode must
-                            // establish a real active application before the
-                            // gesture begins. The SkyLight flash can be
-                            // unavailable for Electron child windows; the
-                            // documented Cocoa activation is the fallback.
-                            apps::activate_pid(pid);
-                            std::thread::sleep(std::time::Duration::from_millis(40));
                             let observed_cursor = cursor_for_drag.clone();
-                            return crate::input::mouse::drag_at_xy_foreground_observed(
-                                from_sx,
-                                from_sy,
-                                to_sx,
-                                to_sy,
-                                duration_ms,
-                                steps,
-                                &m,
-                                button,
-                                move |x, y| {
-                                    crate::cursor::overlay::send_command(
-                                        observed_cursor.clone(),
-                                        cursor_overlay::track_pointer_command(x, y),
-                                    );
+                            return crate::input::skylight::with_foreground_hid_activation(
+                                pid as libc::pid_t,
+                                window_id.expect("foreground drag requires a window"),
+                                || {
+                                    crate::input::mouse::drag_at_xy_foreground_observed(
+                                        from_sx,
+                                        from_sy,
+                                        to_sx,
+                                        to_sy,
+                                        duration_ms,
+                                        steps,
+                                        &m,
+                                        button,
+                                        move |x, y| {
+                                            crate::cursor::overlay::send_command(
+                                                observed_cursor.clone(),
+                                                cursor_overlay::track_pointer_command(x, y),
+                                            );
+                                        },
+                                    )
                                 },
                             );
                         }
@@ -363,22 +361,7 @@ impl Tool for DragTool {
                             },
                         )
                     };
-                    // Foreground rung: activate for the complete HID gesture,
-                    // then restore the prior app after pointer capture settles.
-                    match (fg, window_id) {
-                        (true, Some(_wid)) => {
-                            let result = do_it();
-                            std::thread::sleep(std::time::Duration::from_millis(100));
-                            if let Some(previous_pid) = prior_front {
-                                if previous_pid != pid {
-                                    apps::activate_pid(previous_pid);
-                                }
-                            }
-                            result?;
-                            Ok(())
-                        }
-                        _ => do_it(),
-                    }
+                    do_it()
                 })
                 .await
             },

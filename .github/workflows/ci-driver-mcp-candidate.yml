@@ -1,0 +1,120 @@
+name: "CI: Driver MCP candidate"
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/ci-driver-mcp-candidate.yml"
+      - "libs/cua-driver/rust/crates/cua-driver/src/mcp_envelope.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/driver_service_http.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/proxy.rs"
+      - "libs/cua-driver/rust/crates/cua-driver/src/serve.rs"
+      - "libs/python/cua-sandbox/cua_sandbox/interfaces/_driver_mcp.py"
+      - "libs/python/cua-sandbox/cua_sandbox/interfaces/driver.py"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: driver-mcp-candidate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  candidate:
+    name: MCP candidate (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    defaults:
+      run:
+        shell: bash
+    env:
+      EXPECTED_SOURCE_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+      CARGO_PROFILE_DEV_DEBUG: "0"
+      CUA_TELEMETRY_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          persist-credentials: false
+      - name: Verify exact source
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
+          test -z "$(git status --porcelain)"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@9d47c6ad4b02e050fd481d890b2ea34778fd09d6 # v2
+        with:
+          workspaces: "libs/cua-driver/rust -> target"
+          key: mcp-candidate
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
+            libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
+      - name: Run envelope receiver and service tests
+        working-directory: libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          cargo test -p cua-driver --bin cua-driver mcp_envelope --locked
+          cargo test -p cua-driver --bin cua-driver driver_service_http --locked
+      - name: Build disposable-test binaries
+        working-directory: libs/cua-driver/rust
+        run: |
+          set -euo pipefail
+          if [[ "$RUNNER_OS" == Linux ]]; then
+            cargo build --locked -p cua-driver -p cursor-theme-cli --features cua-driver/portal-input
+          else
+            cargo build --locked -p cua-driver -p cursor-theme-cli -p cua-driver-uia
+          fi
+      - name: Bundle exact binaries and provenance
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+          import subprocess
+          import tarfile
+
+          source = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          assert source == os.environ["EXPECTED_SOURCE_SHA"]
+          assert not subprocess.check_output(["git", "status", "--porcelain"], text=True).strip()
+          windows = os.environ["RUNNER_OS"] == "Windows"
+          names = ["cua-driver", "cua-cursor-theme"] + (["cua-driver-uia"] if windows else [])
+          binaries = [Path("libs/cua-driver/rust/target/debug") / (name + (".exe" if windows else "")) for name in names]
+          assert all(path.is_file() and path.stat().st_size > 0 for path in binaries)
+          bundle = Path("mcp-candidate")
+          bundle.mkdir()
+          metadata = {
+              "source_sha": source,
+              "runner_os": os.environ["RUNNER_OS"],
+              "profile": "dev, debug=0",
+              "features": ["cua-driver/portal-input"] if not windows else [],
+              "rustc": subprocess.check_output(["rustc", "--version"], text=True).strip(),
+              "version": subprocess.check_output([str(binaries[0].resolve()), "--version"], text=True).strip(),
+              "files": {path.name: hashlib.file_digest(path.open("rb"), "sha256").hexdigest() for path in binaries},
+              "qualification": "Test-only unsigned candidate; not a release or image qualification.",
+          }
+          provenance = bundle / "provenance.json"
+          provenance.write_text(json.dumps(metadata, indent=2) + "\n")
+          with tarfile.open(bundle / "candidate.tar.gz", "w:gz") as archive:
+              for path in binaries:
+                  archive.add(path, arcname=path.name)
+              archive.add(provenance, arcname=provenance.name)
+          print(json.dumps(metadata, indent=2))
+          PY
+      - name: Upload candidate for separately authorized tests
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
+        with:
+          name: driver-mcp-candidate-${{ runner.os }}-${{ github.event.pull_request.head.sha || github.sha }}
+          if-no-files-found: error
+          retention-days: 7
+          path: |
+            mcp-candidate/candidate.tar.gz
+            mcp-candidate/provenance.json

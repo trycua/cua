@@ -25,6 +25,7 @@ interface GeneratorOutput {
   type: string;
   outputFile: string;
   extractCommand: string | null;
+  platform?: { host: string; name: string };
 }
 
 interface GeneratorConfig {
@@ -59,6 +60,8 @@ const SHARED_GENERATOR_FILES = new Set([
   'scripts/docs-generators/config.json',
   '.github/workflows/ci-check-docs.yml',
   '.gitattributes',
+  'package.json',
+  'pnpm-workspace.yaml',
   'docs/package.json',
   'docs/pnpm-lock.yaml',
 ]);
@@ -99,8 +102,13 @@ async function main() {
       console.error(`Changed-files input not found: ${changedFilesFile}`);
       process.exit(1);
     }
-    const changedFiles = fs.readFileSync(changedFilesFile, 'utf-8').split(/\r?\n/).filter(Boolean);
-    console.log(selectGenerators(config, changedFiles).join(' '));
+    const contents = fs.readFileSync(changedFilesFile, 'utf-8');
+    const changedFiles = contents.split(contents.includes('\0') ? '\0' : /\r?\n/).filter(Boolean);
+    console.log(
+      args.includes('--native-matrix')
+        ? JSON.stringify(selectNativeMatrix(config, changedFiles))
+        : selectGenerators(config, changedFiles).join(' ')
+    );
     return;
   }
 
@@ -262,7 +270,22 @@ function globToRegExp(glob: string): RegExp {
   return new RegExp(`^${pattern}$`);
 }
 
-function selectGenerators(config: Config, changedFiles: readonly string[]): string[] {
+function selectNativeMatrix(config: Config, changedFiles: readonly string[]) {
+  return [
+    { library: 'cua-driver', platform: 'linux', os: 'ubuntu-latest', host: 'linux' },
+    { library: 'cua-driver', platform: 'macos', os: 'macos-latest', host: 'darwin' },
+    { library: 'cua-driver', platform: 'windows', os: 'windows-latest', host: 'win32' },
+    { library: 'lume', platform: 'macos', os: 'macos-latest', host: 'darwin' },
+  ]
+    .filter((row) => selectGenerators(config, changedFiles, row.host).includes(row.library))
+    .map(({ host, ...row }) => row);
+}
+
+function selectGenerators(
+  config: Config,
+  changedFiles: readonly string[],
+  host?: string
+): string[] {
   const enabledGenerators = Object.entries(config.generators).filter(([_, cfg]) => cfg.enabled);
   const normalizedFiles = changedFiles.map((file) => file.replace(/\\/g, '/'));
 
@@ -278,12 +301,23 @@ function selectGenerators(config: Config, changedFiles: readonly string[]): stri
       ),
     ]);
     const watchPatterns = generator.watchPaths.map(globToRegExp);
-    const selected = normalizedFiles.some(
-      (file) =>
+    const selected = normalizedFiles.some((file) => {
+      const adapter = file.match(
+        /^libs\/cua-driver\/rust\/crates\/platform-(linux|macos|windows)\//
+      )?.[1];
+      const adapterHost =
+        adapter === 'macos' ? 'darwin' : adapter === 'windows' ? 'win32' : adapter;
+      const output = generator.outputs.find(
+        (output) => file === path.posix.join(generator.docsOutputPath, output.outputFile)
+      );
+      const owner = adapterHost ?? output?.platform?.host;
+      if (host && owner && owner !== host) return false;
+      return (
         file.startsWith(`${generator.sourcePath}/`) ||
         ownedFiles.has(file) ||
         watchPatterns.some((pattern) => pattern.test(file))
-    );
+      );
+    });
 
     return selected ? [key] : [];
   });
@@ -337,6 +371,42 @@ function testGeneratorRouting(config: Config): void {
   }
   assertSelection(config, ['scripts/docs-generators/runner.ts'], ['cua-driver', 'lume']);
   assertSelection(config, ['scripts/docs-generators/config.json'], ['cua-driver', 'lume']);
+
+  const driver = ['cua-driver/linux', 'cua-driver/macos', 'cua-driver/windows'];
+  const cases: [string[], string[]][] = [
+    [[], []],
+    [['docs/content/docs/reference/cua-driver/macos-permissions.mdx'], []],
+    [['libs/cua-driver/rust/Cargo.lock'], driver],
+    [['libs/cua-driver/rust/crates/cua-driver-core/src/lib.rs'], driver],
+    [['docs/content/docs/reference/cua-driver/cli-reference.mdx'], driver],
+    [['libs/lume/Package.swift'], ['lume/macos']],
+    [['scripts/docs-generators/runner.ts'], [...driver, 'lume/macos']],
+    [
+      [
+        'libs/cua-driver/rust/crates/platform-linux/src/deleted.rs',
+        'libs/cua-driver/rust/crates/platform-macos/src/renamed.rs',
+      ],
+      driver.slice(0, 2),
+    ],
+  ];
+  for (const platform of ['linux', 'macos', 'windows']) {
+    for (const file of ['src/lib.rs', 'Cargo.toml', 'build.rs']) {
+      cases.push([
+        [`libs/cua-driver/rust/crates/platform-${platform}/${file}`],
+        [`cua-driver/${platform}`],
+      ]);
+    }
+    const suffix = platform === 'macos' ? '' : `-${platform}`;
+    cases.push([
+      [`docs/content/docs/reference/cua-driver/mcp-tools${suffix}.mdx`],
+      [`cua-driver/${platform}`],
+    ]);
+  }
+  for (const [files, expected] of cases) {
+    const actual = selectNativeMatrix(config, files).map((row) => `${row.library}/${row.platform}`);
+    if (actual.join() !== expected.join())
+      throw new Error(`Native routing failed for ${files}: ${actual}`);
+  }
 
   console.log(`Generator routing assertions passed with pinned tsx ${tsxVersion}`);
 }

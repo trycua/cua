@@ -12,7 +12,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       matrix: ${{ steps.scope.outputs.matrix }}
-      has_work: ${{ steps.scope.outputs.has_work }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -21,23 +20,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - name: Test native routing
-        run: node --test scripts/docs-generators/native-matrix.test.mjs
+      - uses: pnpm/action-setup@v4
+      - name: Install docs dependencies
+        run: pnpm --dir docs install --frozen-lockfile
+      - name: Test generator routing
+        run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
       - name: Select native jobs
         id: scope
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           git diff --name-only --no-renames -z "$BASE_SHA" HEAD > "$RUNNER_TEMP/docs-changed-files"
-          node scripts/docs-generators/native-matrix.mjs "$RUNNER_TEMP/docs-changed-files" >> "$GITHUB_OUTPUT"
+          MATRIX=$(node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --changed-files-file "$RUNNER_TEMP/docs-changed-files" --native-matrix)
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
 
   native-reference:
     name: Reference / ${{ matrix.library }} / ${{ matrix.platform }}
     needs: plan
-    if: needs.plan.outputs.has_work == 'true'
+    if: needs.plan.outputs.matrix != '[]'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     defaults:
       run:
@@ -53,10 +57,8 @@ jobs:
       - uses: pnpm/action-setup@v4
       - name: Install docs dependencies
         run: pnpm --dir docs install --frozen-lockfile
-      - name: Test generator routing and ownership
-        run: |
-          node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --test-routing
-          node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
+      - name: Test generator ownership
+        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver.test.ts scripts/docs-generators/cua-driver-platform.test.ts
       - name: Install Linux build dependencies
         if: matrix.platform == 'linux'
         run: |
@@ -84,13 +86,13 @@ jobs:
       - name: Require native checks to pass
         env:
           PLAN_RESULT: ${{ needs.plan.result }}
-          HAS_WORK: ${{ needs.plan.outputs.has_work }}
+          MATRIX: ${{ needs.plan.outputs.matrix }}
           NATIVE_RESULT: ${{ needs.native-reference.result }}
         run: |
           test "$PLAN_RESULT" = success
-          if [[ "$HAS_WORK" == true ]]; then
-            test "$NATIVE_RESULT" = success
-          else
-            test "$HAS_WORK" = false
+          if [[ "$MATRIX" == '[]' ]]; then
             test "$NATIVE_RESULT" = skipped
+          else
+            test -n "$MATRIX"
+            test "$NATIVE_RESULT" = success
           fi

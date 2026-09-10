@@ -27,6 +27,14 @@ The sandbox image must also run a compatible Driver service.
 
 ### Optional MCP envelope carrier
 
+This migration branch delegates the typed MCP client to the shared Driver Rust
+implementation in [Driver PR #3715](https://github.com/trycua/cua/pull/3715).
+It requires the matching candidate bindings/native library. The optional extra
+still pins Driver 0.26.0, which does not contain that connector: do not release
+this migration until a containing Driver release is published and the exact
+dependency and lockfile are updated and tested. The existing direct-envelope
+path remains compatible with its pinned Driver dependency.
+
 The SDK can carry the same typed Driver interface through a named
 MCP service. This requires the guest's explicit typed-envelope extension, not
 just an ordinary MCP tools endpoint:

@@ -128,7 +128,12 @@ class Driver:
                     "Fleet sandbox does not expose the requested Driver service"
                 )
             sdk = _sdk()
-            channel = _channel(sdk, self._transport, service, self._principal, mode=transport)
+            if transport == "mcp":
+                from cua_sandbox.interfaces._driver_mcp import shared_channel
+
+                channel = shared_channel(sdk, self._transport, service, self._principal)
+            else:
+                channel = _channel(sdk, self._transport, service, self._principal)
 
             async def open_channel():
                 try:
@@ -147,7 +152,9 @@ class Driver:
             async with self._lock:
                 if self._closed or channel.closed:
                     raise DriverConnectionError("Sandbox Driver accessor is disconnected")
-                driver = sdk.connect_remote_channel(channel)
+                driver = (
+                    channel.driver() if transport == "mcp" else sdk.connect_remote_channel(channel)
+                )
                 self._connections[channel] = driver
             yield driver
         finally:
@@ -163,6 +170,9 @@ class Driver:
                 channel.closed = True
 
                 async def cleanup():
+                    if getattr(channel, "shared_mcp", False):
+                        await channel.close()
+                        return
                     if not opening.done():
                         await _bounded_cleanup(opening)
                     await channel.close()
@@ -195,11 +205,7 @@ class Driver:
         )
 
 
-def _channel(
-    sdk: Any, transport: FleetTransport, service: str, principal: str, *, mode="envelope"
-) -> Any:
-    from cua_sandbox.interfaces._driver_mcp import McpCarrier, McpCarrierError
-
+def _channel(sdk: Any, transport: FleetTransport, service: str, principal: str) -> Any:
     class Channel(sdk.ForeignDriverEnvelopeChannel):
         def __init__(self):
             self.connection_id = None
@@ -211,7 +217,6 @@ def _channel(
             self._close_task = None
             self.cancelled: set[str] = set()
             self._exchanges: dict[str, asyncio.Task] = {}
-            self.carrier = McpCarrier(transport, service) if mode == "mcp" else None
 
         def fail(self, reason: str):
             return sdk.ForeignDriverChannelError.Failed(reason)
@@ -223,22 +228,14 @@ def _channel(
                 path += "/" + self.connection_id + suffix
                 headers = {"X-Cua-Driver-Generation": self.generation}
             try:
-                if self.carrier is not None:
-                    response = await self.carrier.request(
-                        method, suffix, body, self.connection_id, self.generation, timeout=timeout
-                    )
-                else:
-                    response = await transport.request_service(
-                        service,
-                        method=method,
-                        path=path,
-                        json_body=body,
-                        headers=headers,
-                        **({"timeout": timeout} if timeout is not None else {}),
-                    )
-            except McpCarrierError as error:
-                self.closed = True
-                raise self.fail(str(error)) from None
+                response = await transport.request_service(
+                    service,
+                    method=method,
+                    path=path,
+                    json_body=body,
+                    headers=headers,
+                    **({"timeout": timeout} if timeout is not None else {}),
+                )
             except Exception as error:
                 if getattr(error, "status", None) in (401, 403):
                     raise self.fail("Driver service authorization denied") from None
@@ -264,13 +261,6 @@ def _channel(
             return response
 
         async def open(self):
-            if self.carrier is not None:
-                try:
-                    await self.carrier.initialize()
-                except McpCarrierError as error:
-                    raise self.fail(str(error)) from None
-                if self.closed:
-                    raise self.fail("Driver connection was closed during initialization")
             response = await self.request("POST", body={})
             try:
                 data = response.json()
@@ -344,13 +334,7 @@ def _channel(
             timeout = min(deadline - int(time.time() * 1000), 120000) / 1000
             if timeout <= 0:
                 raise self.fail("Driver request deadline has expired")
-            # The caller's deadline still bounds the operation. MCP gets a
-            # small HTTP grace period to receive its cancellation response;
-            # aborting that stream before teardown can strand a stdio bridge.
-            http_timeout = timeout + 2 * _CLEANUP_TIMEOUT if self.carrier else timeout
-            exchange = asyncio.create_task(
-                self.request("POST", "/exchange", body, timeout=http_timeout)
-            )
+            exchange = asyncio.create_task(self.request("POST", "/exchange", body, timeout=timeout))
             self._exchanges[request.request_id] = exchange
             exchange.add_done_callback(lambda done: self._exchanges.pop(request.request_id, None))
             exchange.add_done_callback(_consume_result)
@@ -360,8 +344,7 @@ def _channel(
                     raise TimeoutError("Driver request deadline has expired; completion is unknown")
                 return await self.decode_response(request, exchange.result())
             except BaseException:
-                if self.carrier is None:
-                    exchange.cancel()
+                exchange.cancel()
                 await self.cancel(request.request_id)
                 await self.close()
                 raise
@@ -410,11 +393,6 @@ def _channel(
 
         async def cancel(self, request_id):
             self.cancelled.add(request_id)
-            if self.carrier is not None:
-                # A native future can cancel its callback and invoke cancel()
-                # concurrently. One shielded close task owns wire teardown.
-                await self.close()
-                return
             if not self.closed:
                 self.closed = True
                 try:
@@ -427,57 +405,16 @@ def _channel(
         async def close(self):
             self.closed = True
             # Do not memoize a no-op before an in-flight open reveals its ID.
-            if self.connection_id is None and (
-                self.carrier is None or self.carrier.session is None
-            ):
+            if self.connection_id is None:
                 return
             if self._close_task is None:
 
                 async def cleanup():
-                    if self.carrier is not None:
-                        pending = dict(self._exchanges)
-                        ids = self.cancelled | set(pending)
-                        if ids:
-                            cancellation_finished = await _bounded_cleanup(
-                                asyncio.gather(
-                                    *(
-                                        self.request("POST", "/cancel", {"request_id": request_id})
-                                        for request_id in ids
-                                    ),
-                                    return_exceptions=True,
-                                ),
-                                cancel_on_timeout=False,
-                            )
-                            if not cancellation_finished:
-                                return
-                        if pending:
-                            _, undrained = await asyncio.wait(
-                                set(pending.values()), timeout=_CLEANUP_TIMEOUT
-                            )
-                            if undrained:
-                                # Do not abort a live response or destroy its
-                                # HTTP session. Cleanup remains unconfirmed;
-                                # request timeouts still bound the HTTP work.
-                                logger.warning(
-                                    "Driver response drain timed out; remote session cleanup "
-                                    "is unconfirmed"
-                                )
-                                return
                     receiver_closed = self.connection_id is None
                     if self.connection_id is not None:
                         receiver_close = asyncio.create_task(self.request("DELETE"))
-                        receiver_closed = await _bounded_cleanup(
-                            receiver_close, cancel_on_timeout=self.carrier is None
-                        )
-                        if self.carrier is not None and not receiver_close.done():
-                            return
-                    if self.carrier is not None:
-                        session_closed = await _bounded_cleanup(
-                            self.carrier.close_session(), cancel_on_timeout=False
-                        )
-                        self.cleanup_confirmed = receiver_closed and session_closed
-                    else:
-                        self.cleanup_confirmed = receiver_closed
+                        receiver_closed = await _bounded_cleanup(receiver_close)
+                    self.cleanup_confirmed = receiver_closed
 
                 self._close_task = asyncio.create_task(cleanup())
             await asyncio.shield(self._close_task)

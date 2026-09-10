@@ -5,14 +5,13 @@ import json
 
 import httpx
 import pytest
-from cua_sandbox.interfaces._driver_mcp import McpCarrierError, _response
 from cua_sandbox.interfaces.driver import DriverConnectionError
 from cua_sandbox.sandbox import Sandbox
 
-from .test_typed_driver import ChannelError, Transport, envelope
-from .test_typed_driver import native as _native_fixture
+from .test_typed_driver import Transport
+from .test_typed_driver_native import sdk as _sdk_fixture
 
-native = _native_fixture
+sdk = _sdk_fixture
 
 
 class McpTransport(Transport):
@@ -33,8 +32,11 @@ class McpTransport(Transport):
         self.cancel_received = asyncio.Event()
 
     async def request_service(
-        self, name, *, method, path, json_body=None, headers=None, timeout=None
+        self, name, *, method, path, body=None, json_body=None, headers=None, timeout=None
     ):
+        if body:
+            json_body = json.loads(body)
+        headers = httpx.Headers(headers)
         self.events.append((name, method, path, json_body, headers))
         assert name == "mcp" and path == "/mcp"
         assert headers["Accept"] == "application/json, text/event-stream"
@@ -110,22 +112,15 @@ async def sandbox(transport):
 
 
 @pytest.mark.parametrize("sse", [False, True])
-async def test_explicit_mcp_preserves_canonical_driver_and_computer_server(native, sse):
+async def test_explicit_mcp_preserves_canonical_driver_and_computer_server(sdk, sse):
     transport = McpTransport(sse=sse)
     sb = await sandbox(transport)
     try:
         async with sb.driver.connect(service="mcp", transport="mcp") as driver:
-            assert isinstance(driver, native.CuaDriver)
+            assert type(driver) is sdk.CuaDriver
             assert all(interface._t is transport for interface in (sb.shell, sb.files, sb.mouse))
             assert transport._service_name == "server"
-            channel = driver.channel
-            result = await channel.exchange(envelope())
-            assert json.loads(result.result_json) == {"width": 1280}
-            assert channel.identity().connection_generation == "gen-http-session-1"
-            assert (await channel.negotiate()).supports_cancellation is True
             assert sb.driver.session_name(driver) == "session-1"
-        assert channel.cleanup_confirmed
-        assert driver.shutdowns == 1
         assert not transport.sessions
         assert transport.events[-2][3]["method"] == "cua/driver/v1/close"
         assert transport.events[-1][1] == "DELETE"
@@ -134,10 +129,10 @@ async def test_explicit_mcp_preserves_canonical_driver_and_computer_server(nativ
         await sb.disconnect()
 
 
-async def test_old_tools_only_endpoint_fails_before_open_and_cleans_http_session(native):
+async def test_old_tools_only_endpoint_fails_before_open_and_cleans_http_session(sdk):
     transport = McpTransport(supported=False)
     sb = await sandbox(transport)
-    with pytest.raises(ChannelError, match="does not support typed"):
+    with pytest.raises(sdk.DriverError.Remote):
         async with sb.driver.connect(service="mcp", transport="mcp"):
             pytest.fail("must not yield a facade")
     assert [event[3]["method"] for event in transport.events if event[3]] == ["initialize"]
@@ -145,20 +140,19 @@ async def test_old_tools_only_endpoint_fails_before_open_and_cleans_http_session
     await sb.disconnect()
 
 
-async def test_two_channels_keep_distinct_mcp_sessions_and_close_independently(native):
+async def test_two_channels_keep_distinct_mcp_sessions_and_close_independently(sdk):
     transport = McpTransport()
     sb = await sandbox(transport)
     async with sb.driver.connect(service="mcp", transport="mcp") as first:
         async with sb.driver.connect(service="mcp", transport="mcp") as second:
-            assert first.channel.generation != second.channel.generation
+            assert first is not second
             assert len(transport.sessions) == 2
         assert len(transport.sessions) == 1
-        assert (await first.channel.exchange(envelope())).ok
     assert not transport.sessions
     await sb.disconnect()
 
 
-async def test_unknown_transport_rejected_before_any_service_request(native):
+async def test_unknown_transport_rejected_before_any_service_request(sdk):
     transport = McpTransport()
     sb = await sandbox(transport)
     with pytest.raises(DriverConnectionError, match="transport must"):
@@ -168,17 +162,23 @@ async def test_unknown_transport_rejected_before_any_service_request(native):
     await sb.disconnect()
 
 
-async def test_lost_exchange_never_retries_or_reinitializes(native, caplog):
+async def test_lost_exchange_never_retries_or_reinitializes(sdk, caplog):
     transport = McpTransport()
     sb = await sandbox(transport)
     async with sb.driver.connect(service="mcp", transport="mcp") as driver:
         transport.fail_exchange = True
-        with pytest.raises(ChannelError, match="completion is unknown"):
-            await driver.channel.exchange(envelope())
-        with pytest.raises(ChannelError, match="closed"):
-            await driver.channel.exchange(envelope(request_id="second"))
-        assert driver.channel.closed
-        assert not driver.channel.cleanup_confirmed
+        with pytest.raises(sdk.DriverError.ActionInterrupted) as interrupted:
+            await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
+        assert interrupted.value.completion == sdk.ActionCompletion.UNKNOWN
+        with pytest.raises(sdk.DriverError.Remote, match="closed"):
+            sb.driver.session_name(driver)
+        before = len(transport.events)
+        with pytest.raises(sdk.DriverError.Remote):
+            await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
+        assert not any(
+            (event[3] or {}).get("method") == "cua/driver/v1/exchange"
+            for event in transport.events[before:]
+        )
     methods = [event[3]["method"] for event in transport.events if event[3]]
     assert methods.count("initialize") == 1
     assert methods.count("cua/driver/v1/exchange") == 1
@@ -188,7 +188,7 @@ async def test_lost_exchange_never_retries_or_reinitializes(native, caplog):
 
 
 @pytest.mark.parametrize("mutation", ["wrong-id", "bad-version", "rpc-error", "wrong-inner-id"])
-async def test_malformed_or_failed_response_closes_without_replay(native, mutation):
+async def test_malformed_or_failed_response_closes_without_replay(sdk, mutation):
     transport = McpTransport()
     sb = await sandbox(transport)
 
@@ -208,88 +208,53 @@ async def test_malformed_or_failed_response_closes_without_replay(native, mutati
 
     async with sb.driver.connect(service="mcp", transport="mcp") as driver:
         transport.mutate = mutate
-        with pytest.raises(ChannelError) as error:
-            await driver.channel.exchange(envelope())
+        with pytest.raises(sdk.DriverError.ActionInterrupted) as error:
+            await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
+        assert error.value.completion == sdk.ActionCompletion.UNKNOWN
         assert "private" not in str(error.value)
     assert not transport.sessions
     await sb.disconnect()
 
 
-async def test_cancel_can_overtake_exchange_and_prevents_late_result(native):
+async def test_malformed_initialize_still_deletes_allocated_session(sdk):
     transport = McpTransport()
-    transport.exchange_wait = asyncio.Event()
+    transport.mutate = lambda method, response: dict(response, id="wrong")
     sb = await sandbox(transport)
-    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
-        task = asyncio.create_task(driver.channel.exchange(envelope()))
-        await asyncio.wait_for(transport.exchange_started.wait(), 1)
-        await asyncio.wait_for(driver.channel.cancel("request-1"), 1)
-        transport.exchange_wait.set()
-        with pytest.raises(ChannelError, match="after close or cancellation"):
-            await task
-        assert not transport.sessions
-    methods = [event[3]["method"] for event in transport.events if event[3]]
-    assert methods.index("cua/driver/v1/cancel") < methods.index("cua/driver/v1/close")
+    with pytest.raises(sdk.DriverError.Remote):
+        async with sb.driver.connect(service="mcp", transport="mcp"):
+            pass
+    assert not transport.sessions
+    assert transport.events[-1][1] == "DELETE"
     await sb.disconnect()
 
 
-@pytest.mark.parametrize("finish", ["cancel", "close", "callback-cancel"])
-async def test_mcp_teardown_drains_pending_response_before_closing_session(native, finish):
+async def test_disconnect_during_initialization_cleans_late_session(sdk, monkeypatch):
     transport = McpTransport()
-    transport.exchange_wait = asyncio.Event()
-    transport.cancel_releases_exchange = False
-    sb = await sandbox(transport)
-    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
-        channel = driver.channel
-        task = asyncio.create_task(channel.exchange(envelope()))
-        await transport.exchange_started.wait()
-        if finish == "callback-cancel":
-            task.cancel()
-            closing = task
-        else:
-            closing = asyncio.create_task(
-                channel.cancel("request-1") if finish == "cancel" else channel.close()
-            )
-        await asyncio.wait_for(transport.cancel_received.wait(), 1)
-        await asyncio.sleep(0)
-        assert not closing.done()
-        assert not transport.exchange_aborted
-        assert transport.sessions
-        assert not any(
-            (event[3] or {}).get("method") == "cua/driver/v1/close" for event in transport.events
-        )
-        transport.exchange_wait.set()
-        if finish == "callback-cancel":
-            with pytest.raises(asyncio.CancelledError):
-                await closing
-        else:
-            await closing
-            with pytest.raises(ChannelError, match="after close or cancellation"):
-                await task
-        assert transport.exchange_finished.is_set()
-        assert not transport.exchange_aborted
-        assert channel.cleanup_confirmed
-        assert not transport.sessions
-    await sb.disconnect()
+    entered, released = asyncio.Event(), asyncio.Event()
+    original = transport.request_service
 
+    async def delayed(*args, **kwargs):
+        if json.loads(kwargs.get("body") or b"{}").get("method") == "initialize":
+            entered.set()
+            await released.wait()
+        return await original(*args, **kwargs)
 
-async def test_mcp_drain_timeout_is_bounded_unconfirmed_and_does_not_abort(native, monkeypatch):
-    monkeypatch.setattr("cua_sandbox.interfaces.driver._CLEANUP_TIMEOUT", 0.02)
-    transport = McpTransport()
-    transport.exchange_wait = asyncio.Event()
-    transport.cancel_releases_exchange = False
+    monkeypatch.setattr(transport, "request_service", delayed)
     sb = await sandbox(transport)
-    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
-        channel = driver.channel
-        task = asyncio.create_task(channel.exchange(envelope()))
-        await transport.exchange_started.wait()
-        await asyncio.wait_for(channel.cancel("request-1"), 0.5)
-        assert channel.closed and not channel.cleanup_confirmed
-        assert not transport.exchange_aborted
-        assert transport.sessions
-        assert transport.events[-1][3]["method"] == "cua/driver/v1/cancel"
-        transport.exchange_wait.set()
-        with pytest.raises(ChannelError, match="after close or cancellation"):
-            await task
+
+    async def connect():
+        async with sb.driver.connect(service="mcp", transport="mcp"):
+            pytest.fail("disconnected accessor must not yield")
+
+    opening = asyncio.create_task(connect())
+    await asyncio.wait_for(entered.wait(), 2)
+    closing = asyncio.create_task(sb.driver.close())
+    await asyncio.sleep(0)
+    released.set()
+    await closing
+    with pytest.raises((sdk.DriverError.Remote, DriverConnectionError)):
+        await opening
+    assert not transport.sessions
     await sb.disconnect()
 
 
@@ -307,49 +272,28 @@ async def test_mcp_drain_timeout_is_bounded_unconfirmed_and_does_not_abort(nativ
         ('{"jsonrpc":"2.0","id":true,"result":{}}', "application/json"),
     ],
 )
-def test_decoder_refuses_ambiguous_incomplete_or_non_json_responses(body, media):
-    with pytest.raises(McpCarrierError, match="malformed"):
-        _response(httpx.Response(200, content=body, headers={"Content-Type": media}), "expected")
-
-
-async def test_malformed_initialize_still_deletes_allocated_session(native):
+async def test_shared_decoder_refuses_ambiguous_incomplete_or_non_json_responses(
+    sdk, monkeypatch, body, media
+):
     transport = McpTransport()
-    transport.mutate = lambda method, response: dict(response, id="wrong")
-    sb = await sandbox(transport)
-    with pytest.raises(ChannelError, match="malformed"):
-        async with sb.driver.connect(service="mcp", transport="mcp"):
-            pass
-    assert not transport.sessions
-    assert transport.events[-1][1] == "DELETE"
-    await sb.disconnect()
-
-
-async def test_disconnect_during_initialization_cleans_late_session(native, monkeypatch):
-    transport = McpTransport()
-    entered, released = asyncio.Event(), asyncio.Event()
     original = transport.request_service
 
-    async def delayed(*args, **kwargs):
-        if (kwargs.get("json_body") or {}).get("method") == "initialize":
-            entered.set()
-            await released.wait()
-        return await original(*args, **kwargs)
+    async def malformed(*args, **kwargs):
+        request = json.loads(kwargs.get("body") or b"{}")
+        response = await original(*args, **kwargs)
+        if request.get("method") == "cua/driver/v1/exchange":
+            return httpx.Response(
+                200,
+                content=body.replace("expected", request["id"]),
+                headers={"Content-Type": media},
+            )
+        return response
 
-    monkeypatch.setattr(transport, "request_service", delayed)
+    monkeypatch.setattr(transport, "request_service", malformed)
     sb = await sandbox(transport)
-
-    async def connect():
-        async with sb.driver.connect(service="mcp", transport="mcp"):
-            pytest.fail("disconnected accessor must not yield")
-
-    opening = asyncio.create_task(connect())
-    await entered.wait()
-    closing = asyncio.create_task(sb.driver.close())
-    await asyncio.sleep(0)
-    released.set()
-    await closing
-    with pytest.raises(ChannelError, match="closed during"):
-        await opening
+    async with sb.driver.connect(service="mcp", transport="mcp") as driver:
+        with pytest.raises(sdk.DriverError.ActionInterrupted) as error:
+            await driver.get_screen_size(sdk.GetScreenSizeInput(session=None))
+        assert error.value.completion == sdk.ActionCompletion.UNKNOWN
     assert not transport.sessions
-    assert all((event[3] or {}).get("method") != "cua/driver/v1/open" for event in transport.events)
     await sb.disconnect()

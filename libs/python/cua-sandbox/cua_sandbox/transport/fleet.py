@@ -90,7 +90,8 @@ class FleetTransport(Transport):
         method: str,
         path: str,
         json_body: Any = None,
-        headers: dict[str, str] | None = None,
+        body: bytes | None = None,
+        headers: dict[str, str] | list[tuple[str, str]] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
         if name not in self._bound.services:
@@ -99,6 +100,7 @@ class FleetTransport(Transport):
             method,
             path,
             json_body=json_body,
+            body=body,
             service_name=name,
             extra_headers=headers,
             timeout=timeout,
@@ -133,16 +135,23 @@ class FleetTransport(Transport):
         path: str,
         *,
         json_body: Any = None,
+        body: bytes | None = None,
         service_name: str | None = None,
-        extra_headers: dict[str, str] | None = None,
+        extra_headers: dict[str, str] | list[tuple[str, str]] | None = None,
         timeout: float | None = None,
     ) -> httpx.Response:
         assert self._connected, "Transport not connected"
-        body = None if json_body is None else json.dumps(json_body).encode()
+        if body is not None and json_body is not None:
+            raise ValueError("Specify either body or json_body, not both")
+        if json_body is not None:
+            body = json.dumps(json_body).encode()
         headers = (
-            [] if body is None else [HttpHeader(name="content-type", value="application/json")]
+            [] if json_body is None else [HttpHeader(name="content-type", value="application/json")]
         )
-        for name, value in (extra_headers or {}).items():
+        header_items = (
+            extra_headers.items() if isinstance(extra_headers, dict) else (extra_headers or [])
+        )
+        for name, value in header_items:
             headers.append(HttpHeader(name=name, value=value))
         result = await self._sdk.service_request(
             self._bound,
@@ -159,7 +168,7 @@ class FleetTransport(Transport):
         request = httpx.Request(method, f"https://service.invalid{path}")
         return httpx.Response(
             result.status,
-            headers={header.name: header.value for header in result.headers},
+            headers=[(header.name, header.value) for header in result.headers],
             content=result.body,
             request=request,
         )

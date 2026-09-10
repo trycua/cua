@@ -3,7 +3,7 @@ import json
 
 import pytest
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
-from fleet_sdk import HttpRequest, HttpResponse, Sandbox
+from fleet_sdk import HttpHeader, HttpRequest, HttpResponse, Sandbox
 
 
 class FakeSDK:
@@ -106,3 +106,47 @@ async def test_service_timeout_override_does_not_change_existing_callers(default
 
     assert [call[3].timeout_secs for call in sdk.calls] == [120, default_timeout, default_timeout]
     assert transport._timeout == default_timeout
+
+
+@pytest.mark.asyncio
+async def test_raw_service_bytes_and_duplicate_headers_are_preserved():
+    sdk = FakeSDK(
+        [
+            HttpResponse(
+                status=200,
+                headers=[
+                    HttpHeader(name="mcp-session-id", value="first"),
+                    HttpHeader(name="mcp-session-id", value="second"),
+                ],
+                body=b"raw response",
+            )
+        ]
+    )
+    transport = FleetTransport(sdk=sdk, bound=sandbox())
+    await transport.connect()
+    result = await transport.request_service(
+        "api",
+        method="POST",
+        path="/mcp",
+        body=b"\x00raw bytes",
+        headers=[("content-type", "application/octet-stream"), ("x-test", "a"), ("x-test", "b")],
+    )
+    request = sdk.calls[0][3]
+    assert request.body == b"\x00raw bytes"
+    assert [(h.name, h.value) for h in request.headers] == [
+        ("content-type", "application/octet-stream"),
+        ("x-test", "a"),
+        ("x-test", "b"),
+    ]
+    assert result.content == b"raw response"
+    assert result.headers.get_list("mcp-session-id") == ["first", "second"]
+
+
+@pytest.mark.asyncio
+async def test_raw_body_and_json_are_mutually_exclusive():
+    sdk = FakeSDK([])
+    transport = FleetTransport(sdk=sdk, bound=sandbox())
+    await transport.connect()
+    with pytest.raises(ValueError, match="either body or json_body"):
+        await transport.request_service("api", method="POST", path="/mcp", body=b"", json_body={})
+    assert not sdk.calls

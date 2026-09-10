@@ -1,4 +1,5 @@
 """Independent parked-primary client evidence, never compositor attribution."""
+from decimal import Decimal
 import hashlib
 import json
 import math
@@ -88,8 +89,17 @@ def journal_rows(data):
 
 
 def pointer_position(row):
-    values = row['arguments'].split(',')
-    assert len(values) == 3, 'malformed primary pointer motion'
+    values = [value.strip() for value in row['arguments'].split(',')]
+    assert len(values) == 3 and re.fullmatch(r'[0-9]+', values[0]) \
+        and int(values[0]) <= 0xffffffff, 'malformed primary pointer motion'
+    assert all(re.fullmatch(r'-?[0-9]+(?:\.[0-9]+)?', value) for value in values[1:]), \
+        'malformed primary pointer coordinates'
+    # wl_fixed coordinates are signed 24.8 values. Validate before converting
+    # to float so rounding cannot disguise a differing or malformed position.
+    coordinates = [Decimal(value).as_integer_ratio() for value in values[1:]]
+    assert all(numerator * 256 % denominator == 0
+               and -(1 << 31) * denominator <= numerator * 256 < (1 << 31) * denominator
+               for numerator, denominator in coordinates), 'invalid primary pointer fixed coordinates'
     point = [float(value) for value in values[1:]]
     assert all(math.isfinite(value) for value in point), 'nonfinite primary position'
     return point
@@ -107,7 +117,7 @@ def primary_wire_state(data):
             if event == 'enter':
                 assert len(values) == 4 and re.fullmatch(r'wl_surface[#@]\d+', values[1])
                 state.update(surface=int(re.split('[#@]', values[1])[1]),
-                             position=[float(value) for value in values[2:]])
+                             position=pointer_position({'arguments': ','.join([values[0], *values[2:]])}))
             elif event == 'leave':
                 state['surface'] = None
             elif event == 'motion':
@@ -171,9 +181,14 @@ def analyze(before, after, journal, wire, intervals, primary_before, primary_aft
     primary = primary_wire_state(wire[:start['wire_end']])
     violations = []
     motions = []
+    duplicate_motion_events = 0
+    last_primary_position = primary['position']
     if primary_before != primary_after:
         violations.append({'kind': 'primary_endpoints'})
     for row in rows:
+        # GTK motion coordinates alone do not establish device identity or an
+        # independently captured baseline. Keep journal events and counters
+        # fail-closed even when the wire contains same-position duplicates.
         if row['kind'] in ('state', 'sync'):
             for key in ('clicks', 'keys', 'scroll', 'held', 'buttons', 'keys_down', 'window_active', 'canvas_focus', 'motion'):
                 if row[key] != start[key]:
@@ -186,7 +201,18 @@ def analyze(before, after, journal, wire, intervals, primary_before, primary_aft
             continue
         interface, event = row['interface'], row['event']
         if interface == 'wl_pointer' and event == 'motion':
-            motions.append({'object': row['object'], 'position': pointer_position(row)})
+            position = pointer_position(row)
+            motions.append({'object': row['object'], 'position': position})
+            duplicate = (row['object'] == primary['pointer']
+                         and position == primary['position'] == last_primary_position)
+            if row['object'] == primary['pointer']:
+                last_primary_position = position
+            if duplicate:
+                # Retain every notification; only this exact primary-position
+                # duplicate is exempt. Any excursion still fails the interval,
+                # including an excursion followed by a return to this position.
+                duplicate_motion_events += 1
+                continue
         forbidden = ((interface == 'wl_pointer' and event != 'frame') or interface == 'wl_keyboard'
                      or interface == 'zwp_relative_pointer_v1' or interface == 'wl_touch'
                      or interface == 'wl_seat' or (interface == 'wl_display' and event == 'error'))
@@ -196,7 +222,8 @@ def analyze(before, after, journal, wire, intervals, primary_before, primary_aft
             'scope': 'independent-parked-primary-client', 'compositor_attribution': False,
             'primary': primary, 'start_ns': start['time'], 'end_ns': end['time'],
             'action_intervals': intervals, 'journal_records': len(rows), 'wire_records': len(events),
-            'complete': True, 'violations': violations, 'motions': motions}
+            'complete': True, 'violations': violations, 'motions': motions,
+            'duplicate_motion_events': duplicate_motion_events}
 
 
 def verify_negative_control(result):

@@ -32,6 +32,8 @@ BASE = wire('wl_pointer#5.enter(1, wl_surface#10, 300.00000000, 300.00000000)',
             'wl_keyboard#6.modifiers(3, 0, 0, 0, 0)', 'wl_pointer#5.button(4, 100, 272, 1)')
 CANARY = wire('wl_pointer#5.motion(101, 340.00000000, 330.00000000)',
               'wl_pointer#5.motion(102, 300.00000000, 300.00000000)')
+DUPLICATES = wire('wl_pointer#5.motion(101, 300.00000000, 300.00000000)',
+                  'wl_pointer#5.motion(102, 300, 300.0)')
 
 
 def observation(events=b''):
@@ -114,12 +116,64 @@ class ObserverAnalysisTests(unittest.TestCase):
         # Journal and endpoint counters intentionally remain identical.
         result = analyze(*values)
         self.assertEqual(result['result'], 'failed')
+        self.assertEqual(result['duplicate_motion_events'], 0)
+        self.assertEqual(len(result['violations']), 2)
         self.assertTrue(verify_negative_control(result)['verified'])
         self.assertEqual(result['motions'][-1]['position'], result['primary']['position'])
         with self.assertRaisesRegex(AssertionError, 'did not fail'):
             verify_negative_control(analyze(*observation()))
 
-    def test_focus_grab_keys_buttons_axis_and_any_motion_are_not_endpoint_evidence(self):
+    def test_exact_primary_duplicates_pass_and_are_retained_without_certifying_a_control(self):
+        result = analyze(*observation(DUPLICATES))
+        self.assertEqual(result['result'], 'passed')
+        self.assertEqual(result['violations'], [])
+        self.assertEqual(result['duplicate_motion_events'], 2)
+        self.assertEqual(result['motions'], [{'object': 5, 'position': [300, 300]}] * 2)
+        self.assertEqual(result['wire_records'], len(wire_rows(DUPLICATES + SYNC)))
+        with self.assertRaisesRegex(AssertionError, 'did not fail'):
+            verify_negative_control(result)
+
+    def test_duplicates_cannot_hide_excursions_foreign_pointers_or_endpoint_changes(self):
+        for events in (CANARY, wire('wl_pointer#5.motion(103, 300.00390625, 300)'),
+                       wire('wl_pointer#5.motion(103, 300, 299.99609375)'),
+                       DUPLICATES.replace(b'wl_pointer#5', b'wl_pointer#7')):
+            with self.subTest(events=events):
+                result = analyze(*observation(DUPLICATES + events + DUPLICATES))
+                self.assertEqual(result['result'], 'failed')
+                self.assertEqual(len(result['motions']), 4 + len(wire_rows(events)))
+                self.assertTrue(result['violations'])
+        result = analyze(*observation(DUPLICATES + CANARY + DUPLICATES))
+        self.assertTrue(verify_negative_control(result)['verified'])
+        values = observation(DUPLICATES)
+        values[-1]['cursor'] = [301, 300]
+        self.assertEqual(analyze(*values)['result'], 'failed')
+
+    def test_malformed_motion_cannot_qualify_as_a_duplicate(self):
+        for arguments in ('bad, 300, 300', '-1, 300, 300', '4294967296, 300, 300',
+                          '101, nan, 300', '101, inf, 300', '101, 3_00, 300',
+                          '101, 300, 300, 0', '101, 300', '101, 300.00000000000000000000000000001, 300',
+                          '101, 8388608, 300', '101, -8388608.00390625, 300'):
+            with self.subTest(arguments=arguments), self.assertRaises(AssertionError):
+                analyze(*observation(DUPLICATES + wire(f'wl_pointer#5.motion({arguments})')))
+
+    def test_journal_motion_and_counters_stay_fail_closed_even_with_matching_coordinates(self):
+        for coordinates in ({}, {'x': 300, 'y': 300}, {'x': 301, 'y': 300}):
+            values = observation(DUPLICATES)
+            values[2][2].update(kind='motion-notify', **coordinates)
+            result = analyze(*values)
+            self.assertEqual(result['result'], 'failed')
+            self.assertEqual(result['duplicate_motion_events'], 2)
+        for field, changed in (('motion', 1), ('clicks', 1), ('keys', 'a'), ('scroll', 1),
+                               ('held', False), ('buttons', []), ('keys_down', [30]),
+                               ('window_active', False), ('canvas_focus', False)):
+            with self.subTest(field=field):
+                values = observation(DUPLICATES)
+                values[2][2][field] = changed
+                result = analyze(*values)
+                self.assertEqual(result['result'], 'failed')
+                self.assertIn({'kind': 'journal_state', 'field': field, 'seq': 3}, result['violations'])
+
+    def test_focus_grab_keys_buttons_axis_and_relative_motion_remain_forbidden_with_duplicates(self):
         events = (
             'wl_pointer#5.axis(101, 0, 10.0)', 'wl_pointer#5.axis_discrete(0, 1)',
             'wl_pointer#5.axis_value120(0, 120)', 'wl_pointer#5.axis_source(0)',
@@ -128,15 +182,17 @@ class ObserverAnalysisTests(unittest.TestCase):
             'wl_keyboard#6.key(5, 101, 30, 1)', 'wl_keyboard#6.leave(5, wl_surface#10)',
             'wl_keyboard#6.modifiers(5, 1, 0, 0, 0)', 'wl_seat#4.capabilities(0)',
             'zwp_relative_pointer_v1#8.relative_motion(0, 100, 2.0, 0.0, 2.0, 0.0)',
+            'zwp_relative_pointer_v1#8.relative_motion(0, 100, 0.0, 0.0, 0.0, 0.0)',
+            'wl_pointer#5.unknown_event()', 'wl_keyboard#6.unknown_event()',
         )
         for event in events:
             with self.subTest(event=event):
-                result = analyze(*observation(wire(event)))
+                result = analyze(*observation(DUPLICATES + wire(event) + DUPLICATES))
                 self.assertEqual(result['result'], 'failed')
                 with self.assertRaises(AssertionError):
                     verify_negative_control(result)
-        for kind in ('focus-change', 'grab-broken', 'leave-notify', 'button-release', 'key-release', 'scroll'):
-            values = observation()
+        for kind in ('focus-change', 'grab-broken', 'leave-notify', 'button-release', 'key-release', 'scroll', 'unknown-event'):
+            values = observation(DUPLICATES)
             values[2][2]['kind'] = kind
             self.assertEqual(analyze(*values)['result'], 'failed')
 
@@ -163,7 +219,7 @@ class ObserverAnalysisTests(unittest.TestCase):
             lambda v: v[0]['marker'].update(canvas_focus=False),
             lambda v: v[0]['marker'].update(wire_end=len(BASE)),
         ):
-            values = observation()
+            values = observation(DUPLICATES)
             mutation(values)
             with self.assertRaises(AssertionError):
                 analyze(*values)

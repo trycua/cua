@@ -99,6 +99,18 @@ package provenance. The independent primary observer can check production
 cursor/focus/grab isolation, but it does not prove compositor lane attribution,
 overlapping delivery, or synthetic-seat cleanup.
 
+For a parked primary, an exact same-position `wl_pointer.motion` notification
+from the established primary pointer is not itself cursor theft. The observer
+retains every motion and reports `duplicate_motion_events`. This exception
+requires unchanged exact wire coordinates, primary identity, focus, held input,
+and independent application state throughout the interval. Actual movement,
+including an excursion and return, still fails. Foreign-pointer or relative
+motion, focus/enter/leave changes, and button/key/scroll changes still fail.
+The GTK journal does not independently identify a motion device and baseline,
+so its motion events and counter changes remain failures even when the wire
+contains duplicates. A passing duplicate-only case does not qualify the
+negative control; that control must detect an actual excursion.
+
 ### Plan fields
 
 Run only inside the prepared disposable desktop, after mapping one window per

@@ -16,7 +16,8 @@ MAX_BYTES = 32 * 1024 * 1024
 MAX_RECORDS = 100000
 MAX_GAP_NS = 1_000_000_000
 MAX_INTERVAL_NS = 60_000_000_000
-WIRE = re.compile(r'^\[\s*(\d+\.\d+)\]\s*(?:\{[^}]+\}\s*)?(?P<out>->\s*)?'
+WIRE = re.compile(r'^\[\s*(\d+\.\d+|(?:[01][0-9]|2[0-3]):[0-5][0-9]:[0-5][0-9]\.[0-9]+)\]'
+                  r'\s*(?:\{[^}]+\}\s*)?(?P<out>->\s*)?'
                   r'(?P<interface>\w+)[#@](?P<object>\d+)\.(?P<event>\w+)\((?P<arguments>.*)\)$')
 
 

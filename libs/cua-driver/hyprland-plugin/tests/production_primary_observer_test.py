@@ -52,6 +52,37 @@ def observation(events=b''):
 
 
 class ObserverAnalysisTests(unittest.TestCase):
+    def test_native_clock_timestamps_preserve_wire_event_fields(self):
+        data = (b'[02:42:49.666527] {Default Queue}  -> xdg_wm_base#42.pong(1337)\n'
+                b'[02:42:51.166558] {Default Queue} xdg_wm_base#42.ping(1337)\n')
+        self.assertEqual(wire_rows(data), [
+            {'out': True, 'interface': 'xdg_wm_base', 'object': 42, 'event': 'pong', 'arguments': '1337'},
+            {'out': False, 'interface': 'xdg_wm_base', 'object': 42, 'event': 'ping', 'arguments': '1337'},
+        ])
+
+    def test_native_clock_boundaries_and_legacy_numeric_timestamps(self):
+        for timestamp in (b'00:00:00.0', b'23:59:59.999999', b'19:09:09.123',
+                          b'0.0', b'12345.000', b' 123456789.123456'):
+            with self.subTest(timestamp=timestamp):
+                native_sync = SYNC.replace(b'12345.000', timestamp)
+                self.assertEqual(wire_rows(native_sync), wire_rows(SYNC))
+                sync_barrier(native_sync)
+                self.assertEqual(primary_wire_state(BASE.replace(b'12345.000', timestamp)),
+                                 primary_wire_state(BASE))
+                with self.assertRaisesRegex(AssertionError, 'missing complete'):
+                    sync_barrier(native_sync.replace(b'wl_callback#21.done', b'wl_callback#22.done'))
+
+    def test_malformed_timestamps_fail_without_skipping_records(self):
+        for timestamp in (b'24:00:00.000000', b'99:00:00.000000', b'00:60:00.000000',
+                          b'00:00:60.000000', b'2:42:49.666527', b'02:2:49.666527',
+                          b'02:42:9.666527', b'02:42:49', b'02:42:49.', b'02:42:49.x',
+                          b'02:42:49.123Z', b'-02:42:49.123', b'02:42:49.123 ',
+                          b'12345', b'12345.', b'.000', b'-12345.000'):
+            with self.subTest(timestamp=timestamp):
+                bad = CANARY.replace(b'12345.000', timestamp, 1)
+                with self.assertRaisesRegex(AssertionError, 'unparseable Wayland wire record'):
+                    wire_rows(SYNC + bad + SYNC)
+
     def test_normal_interval_passes_without_claiming_compositor_attribution(self):
         result = analyze(*observation())
         self.assertEqual(result['result'], 'passed')

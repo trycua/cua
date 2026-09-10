@@ -54,7 +54,12 @@ paths, headers, sysroots, toolchains or response files. Ordinary makepkg
 optimization and hardening flags remain supported. The verifier refuses these
 overrides instead of silently discarding them. It records the actual pkgconf
 executable, `.pc` file digests and flags in build provenance, and checks CMake's
-cached Hyprland flags against that same canonical selection. These are targeted
+cached Hyprland flags against that same canonical selection. Queries use CMake's
+fixed `PKG_CONFIG_ALLOW_SYSTEM_CFLAGS=1` and `PKG_CONFIG_ALLOW_SYSTEM_LIBS=1`
+semantics, preserving system `-I/usr/include` and `-L/usr/lib` flags for exact
+cache comparison. Only the exact leading `/usr/include` system root is admitted
+before the hashed Hyprland directories; an alternate `/usr/include/src` tree is
+refused. Caller-supplied pkg-config overrides are still rejected. These are targeted
 build-selection checks, not a sandbox for arbitrary build environments.
 
 ## Qualify package transactions

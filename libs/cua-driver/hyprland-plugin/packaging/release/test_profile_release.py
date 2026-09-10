@@ -318,8 +318,10 @@ class NativeProfileTest(unittest.TestCase):
         self.probe_comment = None
         self.pkgconfig = {"executable": "/usr/bin/pkgconf", "executable_sha256": "e" * 64,
                           "pc_path": "/usr/share/pkgconfig/hyprland.pc", "pc_sha256": "f" * 64,
-                          "cflags": ["-I/usr/include/hyprland", "-pthread"],
-                          "include_dirs": ["/usr/include/hyprland"], "cflags_other": ["-pthread"], "ldflags": ["-lhyprutils"]}
+                          "query_environment": dict(verify.PKGCONF_ENV),
+                          "cflags": ["-I/usr/include", "-I/usr/include/hyprland/protocols", "-I/usr/include/hyprland", "-I/usr/include/hyprland/src"],
+                          "include_dirs": ["/usr/include", "/usr/include/hyprland/protocols", "/usr/include/hyprland", "/usr/include/hyprland/src"],
+                          "cflags_other": [], "ldflags": ["-L/usr/lib", "-lhyprutils"]}
 
     def fake_run(self, *args, input=None):
         self.calls.append(args)
@@ -444,6 +446,7 @@ class NativeProfileTest(unittest.TestCase):
 
     def test_header_and_toolchain_environment_overrides_refused(self):
         for name in ("PKG_CONFIG_PATH", "PKG_CONFIG_LIBDIR", "PKG_CONFIG_SYSROOT_DIR", "PKG_CONFIG", "PKGCONF_PKG_PKGF",
+                     "PKG_CONFIG_ALLOW_SYSTEM_CFLAGS", "PKG_CONFIG_ALLOW_SYSTEM_LIBS",
                      "CPATH", "CPLUS_INCLUDE_PATH", "GCC_EXEC_PREFIX", "COMPILER_PATH", "LIBRARY_PATH",
                      "CMAKE_PREFIX_PATH", "CMAKE_TOOLCHAIN_FILE"):
             with self.subTest(name=name), mock.patch.dict(verify.os.environ, {name: "/alternate-same-version"}, clear=True), self.assertRaisesRegex(ValueError, "routing environment refused"):
@@ -476,9 +479,10 @@ class NativeProfileTest(unittest.TestCase):
         def fake_run(*args, **kwargs):
             if args[:2] == ("pacman", "-Qoq"):
                 return "pkgconf" if args[2] == str(executable) else "hyprland"
+            self.assertEqual(kwargs.get("extra_env"), verify.PKGCONF_ENV)
             return {"--variable=pcfiledir": pc_directory, "--modversion": "0.56.2",
                     "--cflags": include_flags + " -pthread", "--cflags-only-I": include_flags,
-                    "--cflags-only-other": "-pthread", "--libs": "-lhyprutils"}[args[1]]
+                    "--cflags-only-other": "-pthread", "--libs": "-L/usr/lib -lhyprutils"}[args[1]]
 
         with mock.patch.object(verify, "PKGCONF", executable), mock.patch.object(verify, "HYPRLAND_PC", pc), \
                 mock.patch.object(verify, "HEADER_ROOT", headers), mock.patch.object(verify, "SYSTEM_INCLUDE", system), \
@@ -486,11 +490,26 @@ class NativeProfileTest(unittest.TestCase):
             selected = verify.pkgconfig_selection(self.profile)
             self.assertEqual(selected["pc_sha256"], verify.digest(pc))
             self.assertEqual(selected["include_dirs"], [str(headers)])
+            self.assertEqual(selected["query_environment"], verify.PKGCONF_ENV)
+            self.assertEqual(selected["ldflags"], ["-L/usr/lib", "-lhyprutils"])
             (headers / "protocols").mkdir()
             (headers / "src").mkdir()
             include_flags = f"-I{headers}/protocols -I{headers} -I{headers}/src"
             self.assertEqual(verify.pkgconfig_selection(self.profile)["include_dirs"],
                              [str(headers / "protocols"), str(headers), str(headers / "src")])
+            include_flags = f"-I{system} -I{headers}/protocols -I{headers} -I{headers}/src"
+            self.assertEqual(verify.pkgconfig_selection(self.profile)["include_dirs"],
+                             [str(system), str(headers / "protocols"), str(headers), str(headers / "src")])
+            (system / "src").mkdir()
+            with self.assertRaisesRegex(ValueError, "unreviewed system src"):
+                verify.pkgconfig_selection(self.profile)
+            (system / "src").rmdir()
+            include_flags = f"-I{headers} -I{system}"
+            with self.assertRaisesRegex(ValueError, "only as the leading entry"):
+                verify.pkgconfig_selection(self.profile)
+            include_flags = f"-I{system} -I{alternate} -I{headers}"
+            with self.assertRaisesRegex(ValueError, "not first"):
+                verify.pkgconfig_selection(self.profile)
             include_flags = f"-I{alternate} -I{headers}"
             with self.assertRaisesRegex(ValueError, "not first"):
                 verify.pkgconfig_selection(self.profile)
@@ -498,6 +517,13 @@ class NativeProfileTest(unittest.TestCase):
             pc_directory = str(root / "alternate-same-version/pkgconfig")
             with self.assertRaisesRegex(ValueError, "noncanonical Hyprland pkg-config source"):
                 verify.pkgconfig_selection(self.profile)
+
+    def test_pkgconf_fixed_query_environment_does_not_mutate_caller(self):
+        with mock.patch.dict(verify.os.environ, {"LC_ALL": "caller-locale"}, clear=True), \
+                mock.patch.object(verify.subprocess, "check_output", return_value="flags\n") as execute:
+            self.assertEqual(verify.run("/usr/bin/pkgconf", "--cflags", "hyprland", extra_env=verify.PKGCONF_ENV), "flags")
+            self.assertEqual(execute.call_args.kwargs["env"], dict(verify.PKGCONF_ENV, LC_ALL="C"))
+            self.assertEqual(dict(verify.os.environ), {"LC_ALL": "caller-locale"})
 
     def test_consumer_does_not_invoke_compiler_or_headers_and_refuses_drift(self):
         self.native_context()

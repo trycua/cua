@@ -19,6 +19,7 @@ STEM = f"cua-hyprland-plugin-{DRIVER_VERSION}-{SOURCE_REVISION}"
 OPTIONS = {"CUA_HYPRLAND_INPUT": "ON", "CUA_HYPRLAND_TEST_INPUT": "OFF", "CUA_HYPRLAND_INPUT_TRACE": "OFF"}
 TOOLING = ("profile_bundle.py", "profile_verify.py", "PROFILE-PKGBUILD.in", "PROFILE-USAGE.md", "lifecycle.py")
 PKGCONF = Path("/usr/bin/pkgconf")
+PKGCONF_ENV = {"PKG_CONFIG_ALLOW_SYSTEM_CFLAGS": "1", "PKG_CONFIG_ALLOW_SYSTEM_LIBS": "1"}
 HYPRLAND_PC = Path("/usr/share/pkgconfig/hyprland.pc")
 SYSTEM_INCLUDE = Path("/usr/include")
 HEADER_ROOT = SYSTEM_INCLUDE / "hyprland"
@@ -198,9 +199,9 @@ def render_recipe(template, profile, provenance):
     return template.encode()
 
 
-def run(*command, input=None):
+def run(*command, input=None, extra_env=None):
     return subprocess.check_output(command, input=input, text=True, stderr=subprocess.PIPE,
-                                   env={**os.environ, "LC_ALL": "C"}).strip()
+                                   env={**os.environ, **(extra_env or {}), "LC_ALL": "C"}).strip()
 
 
 def elf_comment(binary, expected):
@@ -294,23 +295,36 @@ def verify_build_environment():
 
 
 def pkgconfig_selection(profile):
+    def query(argument):
+        # FindPkgConfig retains system -I/-L flags in its cache. Query with the
+        # same fixed semantics, without accepting caller pkg-config overrides.
+        return run(str(PKGCONF), argument, "hyprland", extra_env=PKGCONF_ENV)
+
     require(PKGCONF.is_file(), "canonical /usr/bin/pkgconf is required")
     require(run("pacman", "-Qoq", str(PKGCONF)) == "pkgconf", "pkgconf executable owner mismatch")
-    require(run(str(PKGCONF), "--variable=pcfiledir", "hyprland") == str(HYPRLAND_PC.parent), "noncanonical Hyprland pkg-config source")
+    require(query("--variable=pcfiledir") == str(HYPRLAND_PC.parent), "noncanonical Hyprland pkg-config source")
     require(HYPRLAND_PC.is_file() and not HYPRLAND_PC.is_symlink() and HYPRLAND_PC.resolve() == HYPRLAND_PC,
             "Hyprland pkg-config source must be canonical")
     require(run("pacman", "-Qoq", str(HYPRLAND_PC)) == "hyprland", "Hyprland pkg-config owner mismatch")
-    require(run(str(PKGCONF), "--modversion", "hyprland") == profile["hyprland"]["header_version"], "Hyprland header mismatch")
-    cflags = shlex.split(run(str(PKGCONF), "--cflags", "hyprland"))
-    includes = shlex.split(run(str(PKGCONF), "--cflags-only-I", "hyprland"))
-    other = shlex.split(run(str(PKGCONF), "--cflags-only-other", "hyprland"))
+    require(query("--modversion") == profile["hyprland"]["header_version"], "Hyprland header mismatch")
+    cflags = shlex.split(query("--cflags"))
+    includes = shlex.split(query("--cflags-only-I"))
+    other = shlex.split(query("--cflags-only-other"))
     require(all(flag.startswith("-I") and len(flag) > 2 for flag in includes), "unexpected pkg-config include flags")
     include_dirs = [flag[2:] for flag in includes]
+    selected = include_dirs
+    if selected and selected[0] == str(SYSTEM_INCLUDE):
+        # GCC keeps its built-in /usr/include in system-search order even when
+        # pkgconf emits -I/usr/include. Admit only this exact leading system root.
+        selected = selected[1:]
+        system_src = SYSTEM_INCLUDE / "src"
+        require(not system_src.exists() and not system_src.is_symlink(), "unreviewed system src header tree")
+    require(str(SYSTEM_INCLUDE) not in selected, "system include root must appear only as the leading entry")
     # The source includes <src/...>. Native Hyprland puts its hashed protocols
     # directory before the root, then src. Require the whole leading selection
     # through the root to stay inside that hashed tree, before any external root.
-    require(str(HEADER_ROOT) in include_dirs, "canonical Hyprland header root is missing")
-    leading = include_dirs[:include_dirs.index(str(HEADER_ROOT)) + 1]
+    require(str(HEADER_ROOT) in selected, "canonical Hyprland header root is missing")
+    leading = selected[:selected.index(str(HEADER_ROOT)) + 1]
     require(all(Path(name).is_relative_to(HEADER_ROOT) for name in leading), "Hyprland headers are not first in pkg-config include selection")
     for name in include_dirs:
         path = Path(name)
@@ -318,9 +332,10 @@ def pkgconfig_selection(profile):
     require([flag for flag in cflags if flag.startswith("-I")] == includes and
             [flag for flag in cflags if not flag.startswith("-I")] == other, "inconsistent pkg-config flags")
     verify_flags(other, "pkg-config CFLAGS_OTHER")
-    libraries = shlex.split(run(str(PKGCONF), "--libs", "hyprland"))
+    libraries = shlex.split(query("--libs"))
     return {"executable": str(PKGCONF), "executable_sha256": digest(PKGCONF),
             "pc_path": str(HYPRLAND_PC), "pc_sha256": digest(HYPRLAND_PC),
+            "query_environment": dict(PKGCONF_ENV),
             "cflags": cflags, "include_dirs": include_dirs, "cflags_other": other, "ldflags": libraries}
 
 

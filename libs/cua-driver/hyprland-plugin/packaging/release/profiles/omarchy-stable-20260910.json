@@ -33,6 +33,7 @@
       "hyprutils": "0.14.2-1",
       "libgcc": "16.2.1+r23+gd564253eb6c8-1",
       "libstdc++": "16.2.1+r23+gd564253eb6c8-1",
+      "libxkbcommon": "1.13.2-1",
       "wayland": "1.26.0-1"
     }
   }

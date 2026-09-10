@@ -33,7 +33,7 @@ use cua_driver_testkit::e2e::{
     execute_case, native_background_case, native_foreground_case, native_readonly_case,
     recording_evidence, DriverRoute, Evidence, Observation, OracleKind, RefusalCode, Targeting,
 };
-use cua_driver_testkit::observer::TargetWindow;
+use cua_driver_testkit::observer::{NativeObserver, ObserverBackend, TargetWindow};
 use cua_driver_testkit::sentinel::run_with_background_oracles;
 use cua_driver_testkit::{Driver, McpDriver, ToolResponse};
 
@@ -215,6 +215,62 @@ fn run_background_case_targeting(
 }
 
 // ── tests ────────────────────────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn harness_appkit_exact_activation_with_agent_cursor() {
+    let mut case = native_foreground_case(
+        "appkit",
+        "exact_activation_with_agent_cursor",
+        Targeting::NotApplicable,
+        DriverRoute::WindowState,
+    );
+    case.oracles.extend([OracleKind::Focus, OracleKind::Cursor]);
+    run_case(case, |pid, wid, driver| {
+        let snapshot = snapshot_elements(driver, pid, wid);
+        assert!(!snapshot.is_error(), "snapshot: {}", snapshot.text());
+        let target = TargetWindow {
+            pid,
+            native_id: wid,
+        };
+        let observer = NativeObserver::new();
+        let before = observer.snapshot(target).expect("observe native desktop");
+        let motion = driver.call(
+            "set_agent_cursor_motion",
+            serde_json::json!({"idle_hide_ms": 0, "glide_duration_ms": 0}),
+        );
+        assert!(!motion.is_error(), "cursor motion: {}", motion.text());
+        let moved = driver.call(
+            "move_cursor",
+            serde_json::json!({
+                "target": {"kind": "window", "pid": pid, "window_id": wid},
+                "x": 120,
+                "y": 100
+            }),
+        );
+        assert!(!moved.is_error(), "agent cursor: {}", moved.text());
+        let cursor = driver.call("get_agent_cursor_state", serde_json::json!({}));
+        assert_eq!(cursor.structured()["enabled"], true);
+        assert!(cursor.structured()["position"].is_object());
+        let activated = driver.call(
+            "bring_to_front",
+            serde_json::json!({"pid": pid, "window_id": wid}),
+        );
+        assert!(
+            !activated.is_error() && activated.structured()["activated"] == true,
+            "active agent cursor must not invalidate exact activation: {}",
+            activated.text()
+        );
+        assert_eq!(
+            activated.structured()["observed"]["focused_window_id"].as_u64(),
+            Some(wid)
+        );
+        let after = observer.snapshot(target).expect("observe activated target");
+        assert_eq!(after.foreground, Some(u64::from(pid)));
+        assert_eq!(after.cursor_pos, before.cursor_pos, "real pointer moved");
+        Observation::delivered_with_fixture_state(vec![OracleKind::Focus, OracleKind::Cursor])
+    });
+}
 
 #[test]
 #[ignore]

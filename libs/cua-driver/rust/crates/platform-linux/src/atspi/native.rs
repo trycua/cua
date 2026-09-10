@@ -35,10 +35,40 @@ const OP_TIMEOUT: Duration = Duration::from_secs(25);
 /// listener.
 const LISTENER_STARTUP_TIMEOUT: Duration = Duration::from_secs(3);
 
-/// Run `fut` with [`CALL_TIMEOUT`]; `None` on timeout so the caller can skip
-/// the node and keep walking rather than blocking forever.
+tokio::task_local! {
+    /// Wall-clock deadline for the AT-SPI operation currently running on the
+    /// runtime. Every [`call`] clamps its per-call timeout to what is left of
+    /// it, so a 1 s tool budget really is 1 s even when a single node would
+    /// otherwise be allowed the full [`CALL_TIMEOUT`]. Set via [`bounded_for`]
+    /// / [`walk_tree_bounded_with_timeout`]; absent for legacy callers.
+    static OP_DEADLINE: tokio::time::Instant;
+}
+
+/// Time left on the current operation's deadline, or [`CALL_TIMEOUT`] when no
+/// deadline is in scope.
+fn remaining_budget() -> Duration {
+    OP_DEADLINE
+        .try_with(|deadline| deadline.saturating_duration_since(tokio::time::Instant::now()))
+        .unwrap_or(CALL_TIMEOUT)
+}
+
+/// True once the current operation's deadline has passed (never for callers
+/// that did not set one).
+fn deadline_passed() -> bool {
+    OP_DEADLINE
+        .try_with(|deadline| tokio::time::Instant::now() >= *deadline)
+        .unwrap_or(false)
+}
+
+/// Run `fut` with [`CALL_TIMEOUT`] (clamped to the operation deadline when one
+/// is in scope); `None` on timeout so the caller can skip the node and keep
+/// walking rather than blocking forever.
 async fn call<T>(fut: impl std::future::Future<Output = T>) -> Option<T> {
-    tokio::time::timeout(CALL_TIMEOUT, fut).await.ok()
+    let budget = remaining_budget().min(CALL_TIMEOUT);
+    if budget.is_zero() {
+        return None;
+    }
+    tokio::time::timeout(budget, fut).await.ok()
 }
 
 async fn before_snapshot_deadline<T>(
@@ -63,13 +93,37 @@ fn bounded<T>(
     work: impl std::future::Future<Output = Result<T>>,
     on_timeout: impl FnOnce() -> Result<T>,
 ) -> Result<T> {
+    bounded_for(OP_TIMEOUT, work, on_timeout)
+}
+
+/// [`bounded`] with an explicit budget. The budget is also installed as the
+/// operation deadline, so every inner [`call`] shortens itself to what is
+/// left and the walk returns *partial* results before the outer timeout fires
+/// (the outer timeout is a backstop for un-wrapped awaits only).
+fn bounded_for<T>(
+    budget: Duration,
+    work: impl std::future::Future<Output = Result<T>>,
+    on_timeout: impl FnOnce() -> Result<T>,
+) -> Result<T> {
     runtime().block_on(async move {
-        match tokio::time::timeout(OP_TIMEOUT, work).await {
+        let deadline = tokio::time::Instant::now() + budget;
+        let backstop = deadline + Duration::from_millis(500);
+        match tokio::time::timeout_at(backstop, OP_DEADLINE.scope(deadline, work)).await {
             Ok(r) => r,
             Err(_) => on_timeout(),
         }
     })
 }
+
+/// Budget for AT-SPI queries that run *inside* an input action (hit-testing a
+/// pixel click, classifying the focused widget, locating an editable). These
+/// must never stall the action on a slow app: a miss simply falls through to
+/// the next delivery rung.
+pub(crate) const INPUT_QUERY_BUDGET: Duration = Duration::from_millis(1500);
+/// Budget for resolving an element index against a fresh walk when no cached
+/// snapshot answers it. Larger than [`INPUT_QUERY_BUDGET`] because the caller
+/// named a specific element and a miss is an error, not a fallback.
+pub(crate) const INDEX_RESOLVE_BUDGET: Duration = Duration::from_secs(6);
 
 /// Emit a one-line diagnostic to stderr when `CUA_ATSPI_DEBUG` is set. The
 /// driver's stderr is surfaced in the test logs, so this is how we see what the
@@ -111,9 +165,88 @@ async fn shared_connection() -> Result<&'static AccessibilityConnection> {
             if let Err(error) = conn.add_registry_event::<atspi::ObjectEvents>().await {
                 dlog!("AT-SPI object-event registration failed: {error}");
             }
+            // Subscribe to focus changes so `focused_is_editable` / typing can
+            // find the focused widget in O(1) instead of walking the tree.
+            if let Err(error) = conn
+                .register_event::<atspi::events::object::StateChangedEvent>()
+                .await
+            {
+                dlog!("AT-SPI state-changed subscription failed: {error}");
+            }
             Ok(conn)
         })
         .await
+        .inspect(|conn| {
+            static TRACKER: OnceLock<()> = OnceLock::new();
+            TRACKER.get_or_init(|| spawn_focus_tracker(conn));
+        })
+}
+
+/// Object path of the accessible that most recently reported `focused=true`,
+/// keyed by the emitting application's bus name. Maintained by
+/// [`spawn_focus_tracker`]; consulted by the focus-aware typing paths.
+fn focus_map() -> &'static std::sync::Mutex<std::collections::HashMap<String, String>> {
+    static MAP: OnceLock<std::sync::Mutex<std::collections::HashMap<String, String>>> =
+        OnceLock::new();
+    MAP.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+/// Record the focused-object path for `bus` from one `object:state-changed:focused` event.
+fn note_focus_event(bus: &str, path: &str, enabled: bool) {
+    let mut map = focus_map().lock().unwrap();
+    if enabled {
+        map.insert(bus.to_owned(), path.to_owned());
+    } else if map.get(bus).is_some_and(|current| current == path) {
+        map.remove(bus);
+    }
+}
+
+/// Consume the shared connection's event stream for the daemon lifetime,
+/// remembering the last focused accessible per application bus.
+fn spawn_focus_tracker(conn: &'static AccessibilityConnection) {
+    runtime().spawn(async move {
+        use futures_util::StreamExt;
+        let stream = conn.event_stream();
+        futures_util::pin_mut!(stream);
+        while let Some(event) = stream.next().await {
+            let Ok(atspi::Event::Object(atspi::ObjectEvents::StateChanged(changed))) = event
+            else {
+                continue;
+            };
+            if changed.state != State::Focused {
+                continue;
+            }
+            let Some(bus) = changed.item.name_as_str() else {
+                continue;
+            };
+            note_focus_event(bus, changed.item.path_as_str(), changed.enabled);
+        }
+        dlog!("AT-SPI focus tracker stream ended");
+    });
+}
+
+/// The accessible that currently holds keyboard focus inside `pid`'s
+/// application, resolved from the focus-event log (no tree walk). `None` when
+/// no focus event was seen for the app or the recorded object no longer
+/// reports `Focused`.
+async fn focused_accessible_via_events<'a>(
+    conn: &'a AccessibilityConnection,
+    pid: u32,
+) -> Option<(AccessibleProxy<'a>, ObjectRef)> {
+    let app = app_for_pid(conn, pid).await.ok()??;
+    let bus = app.inner().destination().to_string();
+    let path = focus_map().lock().unwrap().get(&bus).cloned()?;
+    let oref = RawObjectRef {
+        name: bus.clone(),
+        path: path.clone(),
+    };
+    let acc = call(accessible_for(conn, &oref)).await?.ok()?;
+    let state = call(acc.get_state()).await?.ok()?;
+    if !state.contains(State::Focused) {
+        dlog!("focus log for {bus} is stale ({path} no longer focused)");
+        return None;
+    }
+    Some((acc, ObjectRef { bus, path }))
 }
 
 /// Establish the process-lifetime listener before accessibility-aware apps are
@@ -256,7 +389,38 @@ struct Visited<'a> {
     /// tree; this is what lets a caller that named an exact native window prove
     /// which of those windows a node actually lives in.
     frame_ordinal: usize,
+    /// D-Bus identity (bus name + object path) of this accessible, so a later
+    /// per-index action can re-open it directly from a cached snapshot instead
+    /// of re-walking the application.
+    object_ref: ObjectRef,
     acc: AccessibleProxy<'a>,
+}
+
+/// Owned D-Bus identity of an accessible object: `(bus name, object path)`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ObjectRef {
+    pub bus: String,
+    pub path: String,
+}
+
+/// Why a tree walk stopped before exhausting the application's tree.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Truncation {
+    /// Machine-readable reason: `timeout`, `node_budget`, `app_unresponsive`,
+    /// `app_lookup_timeout`.
+    pub reason: &'static str,
+    /// Nodes fully visited before the walk stopped.
+    pub visited: usize,
+    /// Nodes discovered but not yet visited when the walk stopped (lower bound
+    /// on what is missing — their descendants are unknown).
+    pub pending: usize,
+}
+
+/// Result of one bounded collection pass.
+struct Collected<'a> {
+    visited: Vec<Visited<'a>>,
+    scoped_frame: Option<usize>,
+    truncation: Option<Truncation>,
 }
 
 /// Role names that denote embedded web/document content. An editable beneath
@@ -531,7 +695,7 @@ async fn collect_visited<'a>(
 ) -> Result<Option<Vec<Visited<'a>>>> {
     collect_visited_bounded(conn, pid, 0, None, None)
         .await
-        .map(|walked| walked.map(|(visited, _)| visited))
+        .map(|walked| walked.map(|collected| collected.visited))
 }
 
 /// Screen-space distance between an AT-SPI frame's extents and a native
@@ -689,10 +853,18 @@ async fn collect_visited_bounded<'a>(
     xid: u64,
     max_elements: Option<usize>,
     max_depth: Option<usize>,
-) -> Result<Option<(Vec<Visited<'a>>, Option<usize>)>> {
+) -> Result<Option<Collected<'a>>> {
     let app = match app_for_pid(conn, pid).await? {
         Some(a) => a,
-        None => return Ok(None),
+        None => {
+            if deadline_passed() {
+                // The registry / application did not answer inside the caller's
+                // budget. Distinguish that from "no such application" so the
+                // caller can report a timeout instead of an absent tree.
+                return Err(anyhow!("app_lookup_timeout"));
+            }
+            return Ok(None);
+        }
     };
     let zconn = conn.connection();
 
@@ -740,21 +912,33 @@ async fn collect_visited_bounded<'a>(
     // never happening — bound it here so the walk returns partial within
     // OP_TIMEOUT for every caller, instead of hanging get_window_state/type_text
     // on modal dialogs (#1936).
-    let deadline = std::time::Instant::now() + OP_TIMEOUT;
+    // The caller's operation deadline (when one is in scope) wins over the
+    // historical OP_TIMEOUT so a 1 s tool budget bounds the whole walk.
+    let deadline = {
+        let legacy = tokio::time::Instant::now() + OP_TIMEOUT;
+        OP_DEADLINE
+            .try_with(|d| (*d).min(legacy))
+            .unwrap_or(legacy)
+    };
     // Fast bail for an app that has stopped answering AT-SPI entirely (modal
     // grab): if several consecutive nodes each burn the full CALL_TIMEOUT, the
     // app is unresponsive and the remaining ~OP_TIMEOUT of walking would all
     // time out too. Give up after a few so type_text falls back to XTEST in a
     // few seconds rather than ~25s.
     let mut consecutive_timeouts = 0u32;
+    let mut truncation: Option<&'static str> = None;
 
     while let Some((oref, depth, inherited_web_doc, frame_ordinal)) = stack.pop() {
         if budget == 0 {
             dlog!("node budget exhausted; truncating walk");
+            truncation = Some("node_budget");
+            stack.push((oref, depth, inherited_web_doc, frame_ordinal));
             break;
         }
-        if std::time::Instant::now() >= deadline {
+        if tokio::time::Instant::now() >= deadline {
             dlog!("collect_visited time budget exhausted; returning partial walk");
+            truncation = Some("timeout");
+            stack.push((oref, depth, inherited_web_doc, frame_ordinal));
             break;
         }
         budget -= 1;
@@ -777,12 +961,19 @@ async fn collect_visited_bounded<'a>(
                 continue;
             }
             None => {
+                if tokio::time::Instant::now() >= deadline {
+                    truncation = Some("timeout");
+                    stack.push((oref, depth, inherited_web_doc, frame_ordinal));
+                    break;
+                }
                 consecutive_timeouts += 1;
                 if consecutive_timeouts >= 3 {
                     dlog!(
                         "{} consecutive AT-SPI timeouts (accessible_for); app unresponsive, bailing walk",
                         consecutive_timeouts
                     );
+                    truncation = Some("app_unresponsive");
+                    stack.push((oref, depth, inherited_web_doc, frame_ordinal));
                     break;
                 }
                 continue;
@@ -804,12 +995,19 @@ async fn collect_visited_bounded<'a>(
             // A timeout means the app didn't answer in CALL_TIMEOUT. A run of
             // these means the whole app is wedged — bail so callers fall back.
             None => {
+                if tokio::time::Instant::now() >= deadline {
+                    truncation = Some("timeout");
+                    stack.push((oref, depth, inherited_web_doc, frame_ordinal));
+                    break;
+                }
                 consecutive_timeouts += 1;
                 if consecutive_timeouts >= 3 {
                     dlog!(
                         "{} consecutive AT-SPI timeouts; app unresponsive, bailing walk",
                         consecutive_timeouts
                     );
+                    truncation = Some("app_unresponsive");
+                    stack.push((oref, depth, inherited_web_doc, frame_ordinal));
                     break;
                 }
                 continue;
@@ -965,12 +1163,29 @@ async fn collect_visited_bounded<'a>(
             in_web_doc,
             on_web_process_bus: is_web_process_bus(&oref.name),
             frame_ordinal,
+            object_ref: ObjectRef {
+                bus: oref.name.clone(),
+                path: oref.path.clone(),
+            },
             acc,
         });
     }
 
-    dlog!("walked pid {pid}: {} node(s)", visited.len());
-    Ok(Some((visited, scoped_frame)))
+    let truncation = truncation.map(|reason| Truncation {
+        reason,
+        visited: visited.len(),
+        pending: stack.len(),
+    });
+    dlog!(
+        "walked pid {pid}: {} node(s), truncation={:?}",
+        visited.len(),
+        truncation
+    );
+    Ok(Some(Collected {
+        visited,
+        scoped_frame,
+        truncation,
+    }))
 }
 
 /// Render visited nodes into the markdown + node list `walk_tree` returns.
@@ -1053,6 +1268,7 @@ fn render(visited: &[Visited<'_>], only_frame: Option<usize>) -> (String, Vec<At
                 depth: v.depth,
                 parent_element_index,
                 in_web_content: v.in_web_doc,
+                object_ref: Some(v.object_ref.clone()),
             });
             // Record this actionable index at its depth, and invalidate any
             // deeper entries from a previous subtree.
@@ -1159,6 +1375,13 @@ pub struct WalkedTree {
     /// top-level and the snapshot contains only that window's nodes. False
     /// means the snapshot spans every window the application publishes.
     pub window_scoped: bool,
+    /// Set when the walk stopped before exhausting the tree.
+    pub truncation: Option<Truncation>,
+    /// False when the bounds phase ran out of time; some indexed elements
+    /// then carry no frame even though they exist.
+    pub bounds_complete: bool,
+    /// Wall time of the walk + bounds phases.
+    pub elapsed: Duration,
 }
 
 /// Walk the AT-SPI tree with caller-supplied node + depth caps.
@@ -1183,44 +1406,96 @@ pub(super) fn walk_tree_bounded_with_timeout(
     runtime().block_on(async {
         // Tree traversal and bounds collection form one snapshot. Keep one
         // deadline for both phases so a dead AT-SPI peer cannot outlive the
-        // operation timeout while resolving geometry.
-        let deadline = tokio::time::Instant::now() + timeout;
+        // operation timeout while resolving geometry. The deadline is installed
+        // as the task-local operation deadline so every per-node call clamps
+        // to it and the walk returns *partial* results instead of being
+        // dropped wholesale by the outer timeout.
         let walk_started = std::time::Instant::now();
-        let walk = async {
+        let deadline = tokio::time::Instant::now() + timeout;
+        // Backstop only: the walk observes `deadline` itself and returns its
+        // partial result; this guards the few un-wrapped awaits.
+        let backstop = deadline + Duration::from_millis(500);
+        let walk = OP_DEADLINE.scope(deadline, async {
             let conn = shared_connection().await?;
             collect_visited_bounded(conn, pid, xid, max_elements, max_depth).await
-        };
-        let walked = match before_snapshot_deadline(deadline, walk).await {
-            Ok(result) => result?,
+        });
+        let walked = match before_snapshot_deadline(backstop, walk).await {
+            Ok(Ok(result)) => result,
+            Ok(Err(error)) if error.to_string() == "app_lookup_timeout" => {
+                dlog!("walk_tree: application lookup timed out for pid {pid}");
+                return Ok(Some(WalkedTree {
+                    markdown: String::new(),
+                    nodes: Vec::new(),
+                    bounds: Vec::new(),
+                    window_scoped: false,
+                    truncation: Some(Truncation {
+                        reason: "app_lookup_timeout",
+                        visited: 0,
+                        pending: 0,
+                    }),
+                    bounds_complete: false,
+                    elapsed: walk_started.elapsed(),
+                }));
+            }
+            Ok(Err(error)) => return Err(error),
             Err(_) => {
                 dlog!("walk_tree timed out for pid {pid}");
-                return Ok(None);
+                return Ok(Some(WalkedTree {
+                    markdown: String::new(),
+                    nodes: Vec::new(),
+                    bounds: Vec::new(),
+                    window_scoped: false,
+                    truncation: Some(Truncation {
+                        reason: "timeout",
+                        visited: 0,
+                        pending: 0,
+                    }),
+                    bounds_complete: false,
+                    elapsed: walk_started.elapsed(),
+                }));
             }
         };
-        let Some((visited, scoped_frame)) = walked else {
+        let Some(Collected {
+            visited,
+            scoped_frame,
+            truncation,
+        }) = walked
+        else {
             return Ok(None);
         };
         let walk_elapsed = walk_started.elapsed();
         let (markdown, nodes) = render(&visited, scoped_frame);
         let bounds_started = std::time::Instant::now();
-        let bounds = match before_snapshot_deadline(
-            deadline,
-            element_bounds_for_visited(&visited, pid, xid, scoped_frame),
+        // Bounds resolution shares the deadline, but a walk that consumed the
+        // whole budget must still yield *some* frames (element-index clicks
+        // resolve against them without a re-walk), so grant the bounds phase a
+        // small grace of up to half the budget. The tool documents this.
+        let bounds_deadline = deadline.max(
+            tokio::time::Instant::now() + (timeout / 2).min(Duration::from_millis(1500)),
+        );
+        let bounds_backstop = bounds_deadline + Duration::from_millis(500);
+        let (bounds, bounds_complete) = match before_snapshot_deadline(
+            bounds_backstop,
+            OP_DEADLINE.scope(
+                bounds_deadline,
+                element_bounds_for_visited(&visited, pid, xid, scoped_frame),
+            ),
         )
         .await
         {
-            Ok(bounds) => bounds,
+            Ok((bounds, complete)) => (bounds, complete),
             Err(_) => {
                 dlog!("element bounds timed out for pid {pid}");
-                Vec::new()
+                (Vec::new(), false)
             }
         };
         dlog!(
-            "snapshot phases pid {pid}: walk_ms={} bounds_ms={} visited={} bounds={}",
+            "snapshot phases pid {pid}: walk_ms={} bounds_ms={} visited={} bounds={} complete={}",
             walk_elapsed.as_millis(),
             bounds_started.elapsed().as_millis(),
             visited.len(),
-            bounds.len()
+            bounds.len(),
+            bounds_complete
         );
         // Bounds are keyed by the application-wide element index, so drop the
         // entries for windows this snapshot no longer shows.
@@ -1239,6 +1514,9 @@ pub(super) fn walk_tree_bounded_with_timeout(
             nodes,
             bounds,
             window_scoped: scoped_frame.is_some(),
+            truncation,
+            bounds_complete,
+            elapsed: walk_started.elapsed(),
         }))
     })
 }
@@ -1416,19 +1694,31 @@ fn list_windows_blocking(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo>
 ///      chrome),
 ///   3. the first editable anywhere (covers single-field apps like a GTK dialog
 ///      entry, or a GTK4 GtkEntry).
-fn pick_editable<'v, 'a>(visited: &'v [Visited<'a>]) -> Option<&'v Visited<'a>> {
+/// Choose the editable to write into. `complete` says whether `visited` is the
+/// whole tree: on a *partial* walk the "first editable anywhere" fallback is
+/// withheld, because the field the user means (the focused one) may simply not
+/// have been reached yet and writing into an arbitrary earlier field (a name
+/// box, a search entry) would be a silent misdelivery.
+fn pick_editable<'v, 'a>(
+    visited: &'v [Visited<'a>],
+    complete: bool,
+) -> Option<&'v Visited<'a>> {
     visited
         .iter()
         .find(|v| v.has_editable && v.focused)
         .or_else(|| visited.iter().find(|v| v.has_editable && v.in_web_doc))
-        .or_else(|| visited.iter().find(|v| v.has_editable))
+        .or_else(|| complete.then(|| visited.iter().find(|v| v.has_editable)).flatten())
 }
 
 /// Try to write `text` into the best editable node in `visited` via AT-SPI
 /// EditableText. Returns `Ok(true)` if the write landed,
 /// `Ok(false)` if no editable was found / the EditableText write was rejected.
-async fn write_into_editable(visited: &[Visited<'_>], text: &str) -> Result<bool> {
-    let target = match pick_editable(visited) {
+async fn write_into_editable(
+    visited: &[Visited<'_>],
+    complete: bool,
+    text: &str,
+) -> Result<bool> {
+    let target = match pick_editable(visited, complete) {
         Some(t) => t,
         None => return Ok(false),
     };
@@ -1443,9 +1733,18 @@ async fn write_into_editable_target(target: &Visited<'_>, text: &str) -> Result<
         target.focused,
         target.has_component
     );
+    write_into_editable_acc(&target.acc, target.has_component, text).await
+}
 
-    let proxies = target
-        .acc
+/// EditableText write against a bare accessible (from a cached snapshot ref or
+/// the focus-event log). `has_component` gates the GrabFocus retry.
+async fn write_into_editable_acc(
+    acc: &AccessibleProxy<'_>,
+    has_component: bool,
+    text: &str,
+) -> Result<bool> {
+    let target_has_component = has_component;
+    let proxies = acc
         .proxies()
         .await
         .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
@@ -1461,13 +1760,13 @@ async fn write_into_editable_target(target: &Visited<'_>, text: &str) -> Result<
     // This should give the widget internal keyboard focus without activating
     // the window, allowing GTK4 (and similar toolkits) to expose EditableText
     // on an unfocused window's focused widget.
-    if target.has_component {
+    if target_has_component {
         if let Ok(comp) = proxies.component().await {
             match call(comp.grab_focus()).await {
-                Some(Ok(true)) => dlog!("GrabFocus succeeded on {:?}", target.role),
-                Some(Ok(false)) => dlog!("GrabFocus returned false on {:?}", target.role),
-                Some(Err(e)) => dlog!("GrabFocus failed on {:?}: {}", target.role, e),
-                None => dlog!("GrabFocus timed out on {:?}", target.role),
+                Some(Ok(true)) => dlog!("GrabFocus succeeded"),
+                Some(Ok(false)) => dlog!("GrabFocus returned false"),
+                Some(Err(e)) => dlog!("GrabFocus failed: {}", e),
+                None => dlog!("GrabFocus timed out"),
             }
         } else {
             dlog!("Component interface unavailable despite has_component=true");
@@ -1506,13 +1805,22 @@ async fn write_through_editable_proxies(
 /// Write into the best editable exposed by the current AT-SPI tree without
 /// falling through to synthetic X11 input.
 pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
-    bounded(
+    bounded_for(
+        INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = collect_visited(conn, pid)
+            // Focused editable known from the event log: write there directly.
+            if let Some(true) = write_into_focused_editable(conn, pid, text).await {
+                return Ok(());
+            }
+            let Collected {
+                visited,
+                truncation,
+                ..
+            } = collect_visited_bounded(conn, pid, 0, None, None)
                 .await?
                 .ok_or_else(|| anyhow!("no AT-SPI application for pid {pid}"))?;
-            if write_into_editable(&visited, text).await? {
+            if write_into_editable(&visited, truncation.is_none(), text).await? {
                 Ok(())
             } else {
                 Err(anyhow!("no writable AT-SPI element found for pid {pid}"))
@@ -1524,7 +1832,8 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
 
 /// Write into the exact indexed editable exposed by the caller's snapshot.
 pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
-    bounded(
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -1569,13 +1878,22 @@ pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
 }
 
 pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
-    bounded(
+    bounded_for(
+        INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let visited = match collect_visited(conn, pid).await? {
+            if let Some(true) = write_into_focused_editable(conn, pid, text).await {
+                return Ok(true);
+            }
+            let Collected {
+                visited,
+                truncation,
+                ..
+            } = match collect_visited_bounded(conn, pid, 0, None, None).await? {
                 Some(v) => v,
                 None => return Ok(false),
             };
+            let complete = truncation.is_none();
 
             dlog!(
                 "insert_text: {} node(s), {} editable, {} entry/text-role",
@@ -1592,8 +1910,15 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
             // keyboard focus without activating the window, so toolkits that expose
             // EditableText on an unfocused window (Qt6, and GTK4 with GTK_A11Y=atspi)
             // accept the write here.
-            if write_into_editable(&visited, text).await? {
+            if write_into_editable(&visited, complete, text).await? {
                 return Ok(true);
+            }
+            if !complete {
+                // A partial walk cannot prove there is no better field further
+                // down the tree; the click+type guess below would be a silent
+                // misdelivery. Let the caller refuse honestly instead.
+                dlog!("insert_text: walk incomplete; skipping the entry-guess fallback");
+                return Ok(false);
             }
 
             // GTK3 fallback: the toolkit exposes entry/text nodes in the tree (so
@@ -1681,9 +2006,16 @@ pub fn insert_text(pid: u32, text: &str) -> Result<bool> {
 ///   `None`        — nothing is focused (or the app is unreachable): fall back to
 ///                   the focus-free "first editable" path for background typing.
 pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
-    bounded(
+    bounded_for(
+        INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
+            // O(1) answer from the focus-event log when available.
+            if let Some((acc, _)) = focused_accessible_via_events(conn, pid).await {
+                if let Some(Ok(ifaces)) = call(acc.get_interfaces()).await {
+                    return Ok(Some(ifaces.contains(Interface::EditableText)));
+                }
+            }
             let visited = match collect_visited(conn, pid).await? {
                 Some(v) => v,
                 None => return Ok(None),
@@ -1892,7 +2224,8 @@ pub fn invoke_menu_path(pid: u32, path: &[String]) -> Result<()> {
 }
 
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
-    bounded(
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -1946,6 +2279,337 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 "perform_action timed out for pid {pid} (app unresponsive to AT-SPI)"
             ))
         },
+    )
+}
+
+
+// ── Cached-reference fast paths ──────────────────────────────────────────────
+//
+// Every per-index entry point above re-walks the application to turn an
+// `element_index` back into an accessible. On large trees (LibreOffice, GIMP,
+// Nautilus) that walk is the multi-second stall the agent feels on every
+// click. A `get_window_state` snapshot already knows each indexed node's D-Bus
+// identity ([`AtspiNode::object_ref`]); these entry points act on that identity
+// directly and let the caller fall back to the index walk only when the object
+// is gone.
+
+/// Budget for a single cached-object action: a handful of round-trips to one
+/// live object, never a walk.
+const REF_ACTION_BUDGET: Duration = Duration::from_secs(3);
+
+fn raw_ref(object_ref: &ObjectRef) -> RawObjectRef {
+    RawObjectRef {
+        name: object_ref.bus.clone(),
+        path: object_ref.path.clone(),
+    }
+}
+
+/// Current action names of an Action proxy, index-aligned with `do_action`.
+async fn action_names(ap: &atspi::proxy::action::ActionProxy<'_>) -> Vec<String> {
+    let n = call(ap.n_actions()).await.and_then(|r| r.ok()).unwrap_or(0);
+    let mut names = Vec::with_capacity(n.max(0) as usize);
+    for i in 0..n {
+        names.push(
+            call(ap.get_name(i))
+                .await
+                .and_then(|r| r.ok())
+                .unwrap_or_default(),
+        );
+    }
+    names
+}
+
+/// Open a cached accessible and prove it is still alive (one role read).
+async fn live_accessible<'a>(
+    conn: &'a AccessibilityConnection,
+    object_ref: &ObjectRef,
+) -> Result<(AccessibleProxy<'a>, String)> {
+    let acc = match call(accessible_for(conn, &raw_ref(object_ref))).await {
+        Some(Ok(acc)) => acc,
+        Some(Err(error)) => return Err(anyhow!("cached element unreachable: {error}")),
+        None => return Err(anyhow!("cached element did not answer in time")),
+    };
+    let role = match call(acc.get_role_name()).await {
+        Some(Ok(role)) => role,
+        Some(Err(error)) => return Err(anyhow!("cached element is gone: {error}")),
+        None => return Err(anyhow!("cached element did not answer in time")),
+    };
+    Ok((acc, role))
+}
+
+/// [`perform_action`] on a snapshot-cached element identity. Same contract:
+/// `Ok((action_name, suspected_noop))`. Errors when the object no longer
+/// exists so the caller can fall back to resolving the index afresh.
+pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, role) = live_accessible(conn, object_ref).await?;
+            let proxies = acc
+                .proxies()
+                .await
+                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+            let ap = proxies
+                .action()
+                .await
+                .map_err(|e| anyhow!("Action unavailable: {e}"))?;
+            let actions = action_names(&ap).await;
+            let suspected_noop = actions.is_empty() || is_passive_role(&role);
+            let chosen = activation_index(&role, &actions).ok_or_else(|| {
+                anyhow!("element does not advertise a safe activation action")
+            })?;
+            match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+                None => return Err(anyhow!("doAction did not complete in time")),
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            Ok((actions.get(chosen).cloned().unwrap_or_default(), suspected_noop))
+        },
+        || Err(anyhow!("perform_action (cached element) timed out")),
+    )
+}
+
+/// [`focus_element`] on a snapshot-cached element identity.
+pub fn focus_element_ref(object_ref: &ObjectRef) -> Result<bool> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let proxies = acc
+                .proxies()
+                .await
+                .map_err(|e| anyhow!("interface proxies unavailable: {e}"))?;
+            let component = proxies
+                .component()
+                .await
+                .map_err(|e| anyhow!("Component interface unavailable: {e}"))?;
+            let accepted = match call(component.grab_focus()).await {
+                Some(Ok(focused)) => focused,
+                Some(Err(e)) => return Err(anyhow!("Component.GrabFocus failed: {e}")),
+                None => return Err(anyhow!("Component.GrabFocus timed out")),
+            };
+            if !accepted {
+                return Ok(false);
+            }
+            let settle_deadline = tokio::time::Instant::now() + Duration::from_millis(500);
+            while tokio::time::Instant::now() < settle_deadline {
+                match tokio::time::timeout(Duration::from_millis(100), acc.get_state()).await {
+                    Ok(Ok(state)) if state.contains(State::Focused) => return Ok(true),
+                    _ => tokio::time::sleep(Duration::from_millis(20)).await,
+                }
+            }
+            Ok(false)
+        },
+        || Err(anyhow!("focus_element (cached element) timed out")),
+    )
+}
+
+/// [`type_into_editable_at`] on a snapshot-cached element identity.
+pub fn type_into_editable_ref(object_ref: &ObjectRef, text: &str) -> Result<()> {
+    bounded_for(
+        REF_ACTION_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let (acc, _) = live_accessible(conn, object_ref).await?;
+            let ifaces = match call(acc.get_interfaces()).await {
+                Some(Ok(ifaces)) => ifaces,
+                _ => return Err(anyhow!("cached element interfaces unavailable")),
+            };
+            if !ifaces.contains(Interface::EditableText) {
+                return Err(anyhow!("cached element is not editable"));
+            }
+            if write_into_editable_acc(&acc, ifaces.contains(Interface::Component), text).await? {
+                Ok(())
+            } else {
+                Err(anyhow!("EditableText write was rejected"))
+            }
+        },
+        || Err(anyhow!("type_into_editable (cached element) timed out")),
+    )
+}
+
+/// Write `text` into the focused widget known from the focus-event log, if it
+/// is editable. `Some(true)` = written, `Some(false)` = focused but not
+/// editable (or write rejected), `None` = no usable focus record.
+async fn write_into_focused_editable(
+    conn: &AccessibilityConnection,
+    pid: u32,
+    text: &str,
+) -> Option<bool> {
+    let (acc, oref) = focused_accessible_via_events(conn, pid).await?;
+    let ifaces = call(acc.get_interfaces()).await?.ok()?;
+    if !ifaces.contains(Interface::EditableText) {
+        dlog!("focused object {} is not editable", oref.path);
+        return Some(false);
+    }
+    match write_into_editable_acc(&acc, ifaces.contains(Interface::Component), text).await {
+        Ok(written) => Some(written),
+        Err(error) => {
+            dlog!("focused editable write failed: {error:#}");
+            Some(false)
+        }
+    }
+}
+
+// ── Point hit-testing without a walk ─────────────────────────────────────────
+
+/// One node of a `GetAccessibleAtPoint` descent.
+struct HitNode<'a> {
+    acc: AccessibleProxy<'a>,
+    oref: RawObjectRef,
+}
+
+/// Descend from `start` through `Component.GetAccessibleAtPoint(Window)` until
+/// the toolkit stops returning a deeper child. O(depth) round-trips instead of
+/// a full tree walk — this is how AT-SPI clients are meant to hit-test.
+async fn descend_at_point<'a>(
+    conn: &'a AccessibilityConnection,
+    start: RawObjectRef,
+    x: i32,
+    y: i32,
+) -> Vec<HitNode<'a>> {
+    let mut chain: Vec<HitNode<'a>> = Vec::new();
+    let mut current = start;
+    for _ in 0..64 {
+        let Some(Ok(acc)) = call(accessible_for(conn, &current)).await else {
+            break;
+        };
+        let next = match call(acc.proxies()).await {
+            Some(Ok(proxies)) => match call(proxies.component()).await {
+                Some(Ok(component)) => {
+                    call(component.get_accessible_at_point(x, y, CoordType::Window)).await
+                }
+                _ => None,
+            },
+            _ => None,
+        };
+        chain.push(HitNode {
+            acc,
+            oref: current.clone(),
+        });
+        let Some(Ok(next)) = next else { break };
+        let Some(next) = RawObjectRef::from_atspi(&next) else {
+            break;
+        };
+        if next.path.ends_with("/null") || next == current {
+            break;
+        }
+        current = next;
+    }
+    chain
+}
+
+impl PartialEq for RawObjectRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name && self.path == other.path
+    }
+}
+
+/// Hit-test `(win_x, win_y)` (window-local) inside `pid`'s application via
+/// the toolkit's own `GetAccessibleAtPoint` and actuate the deepest node on
+/// the chain that advertises a safe activation, preferring a real actuator
+/// over a passive label. `xid` (when non-zero and resolvable) restricts the
+/// descent to that window's frame. `Ok(None)` = nothing actionable there.
+pub fn perform_action_at_point_in(
+    pid: u32,
+    xid: u64,
+    win_x: i32,
+    win_y: i32,
+) -> Result<Option<String>> {
+    bounded_for(
+        INPUT_QUERY_BUDGET,
+        async {
+            let conn = shared_connection().await?;
+            let Some(app) = app_for_pid(conn, pid).await? else {
+                return Ok(None);
+            };
+            let seeds: Vec<RawObjectRef> = match call(app.get_children()).await {
+                Some(Ok(children)) => children
+                    .into_iter()
+                    .filter_map(|child| RawObjectRef::from_atspi(&child))
+                    .collect(),
+                _ => Vec::new(),
+            };
+            let scoped = if xid == 0 {
+                None
+            } else {
+                resolve_window_frame(conn, pid, xid, &seeds).await
+            };
+            let ordered: Vec<RawObjectRef> = match scoped {
+                Some(ordinal) => seeds.get(ordinal).cloned().into_iter().collect(),
+                None => seeds,
+            };
+            for seed in ordered {
+                let chain = descend_at_point(conn, seed, win_x, win_y).await;
+                if chain.len() <= 1 {
+                    // The frame itself, or nothing: this top-level does not
+                    // cover the point (or cannot hit-test). Try the next one.
+                    continue;
+                }
+                let mut passive_fallback: Option<(usize, String, Vec<String>)> = None;
+                for (depth, node) in chain.iter().enumerate().rev() {
+                    let Some(Ok(role)) = call(node.acc.get_role_name()).await else {
+                        continue;
+                    };
+                    let Some(Ok(ifaces)) = call(node.acc.get_interfaces()).await else {
+                        continue;
+                    };
+                    if !ifaces.contains(Interface::Action) {
+                        continue;
+                    }
+                    let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
+                        continue;
+                    };
+                    let Some(Ok(ap)) = call(proxies.action()).await else {
+                        continue;
+                    };
+                    let actions = action_names(&ap).await;
+                    let Some(chosen) = activation_index(&role, &actions) else {
+                        continue;
+                    };
+                    if is_passive_role(&role) {
+                        if passive_fallback.is_none() {
+                            passive_fallback = Some((depth, role.clone(), actions.clone()));
+                        }
+                        continue;
+                    }
+                    dlog!(
+                        "hit-test ({win_x},{win_y}) -> depth {depth} role={role:?} path={} action={:?}",
+                        node.oref.path,
+                        actions.get(chosen)
+                    );
+                    match call(ap.do_action(chosen as i32)).await {
+                        Some(Ok(_)) => {
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            return Ok(actions.get(chosen).cloned());
+                        }
+                        Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+                        None => return Err(anyhow!("doAction did not complete in time")),
+                    }
+                }
+                if let Some((depth, role, actions)) = passive_fallback {
+                    let node = &chain[depth];
+                    let Some(chosen) = activation_index(&role, &actions) else {
+                        return Ok(None);
+                    };
+                    let Some(Ok(proxies)) = call(node.acc.proxies()).await else {
+                        return Ok(None);
+                    };
+                    let Some(Ok(ap)) = call(proxies.action()).await else {
+                        return Ok(None);
+                    };
+                    if let Some(Ok(_)) = call(ap.do_action(chosen as i32)).await {
+                        return Ok(actions.get(chosen).cloned());
+                    }
+                }
+                return Ok(None);
+            }
+            Ok(None)
+        },
+        || Ok(None),
     )
 }
 
@@ -2471,7 +3135,8 @@ pub fn scroll_element(
 /// and new controls. Wait for the target's Focused state to become observable;
 /// an acknowledgement without read-back is not sufficient for global input.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
-    bounded(
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -2541,7 +3206,8 @@ pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
 /// when an element was actuated, `Ok(None)` when no actionable element covers the
 /// point (the caller then falls back to the synthetic X11 path).
 pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
-    bounded(
+    bounded_for(
+        INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
             let visited = match collect_visited(conn, pid).await? {
@@ -2642,14 +3308,18 @@ pub fn perform_action_at_screen_point(
     screen_x: i32,
     screen_y: i32,
 ) -> Result<Option<String>> {
-    bounded(
+    bounded_for(
+        INPUT_QUERY_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) =
-                match collect_visited_bounded(conn, pid, xid, None, None).await? {
-                    Some(walked) => walked,
-                    None => return Ok(None),
-                };
+            let Collected {
+                visited,
+                scoped_frame,
+                ..
+            } = match collect_visited_bounded(conn, pid, xid, None, None).await? {
+                Some(walked) => walked,
+                None => return Ok(None),
+            };
 
             // Share snapshot correlation and geometry, including renderer-frame
             // rebasing and embedded WebProcess insets. Bounds retain application-
@@ -2657,6 +3327,7 @@ pub fn perform_action_at_screen_point(
             let action_nodes: Vec<&Visited> = visited.iter().filter(|v| is_indexable(v)).collect();
             let frames: Vec<_> = element_bounds_for_visited(&visited, pid, xid, scoped_frame)
                 .await
+                .0
                 .into_iter()
                 .map(|(idx, x, y, w, h)| {
                     (idx, x, y, w, h, is_passive_role(&action_nodes[idx].role))
@@ -2692,7 +3363,7 @@ pub fn perform_action_at_screen_point(
 /// smaller) frame, so an area-only hit-test lands on the inert label —
 /// `do_action` is a silent no-op (the "false success"). Treat these as
 /// last-resort click targets.
-fn is_passive_role(role: &str) -> bool {
+pub(crate) fn is_passive_role(role: &str) -> bool {
     matches!(
         role,
         "label" | "static" | "static text" | "separator" | "filler" | "image" | "icon"
@@ -2705,7 +3376,7 @@ fn is_passive_role(role: &str) -> bool {
 /// to a passive label if nothing else covers the point. Smallest-area within a
 /// class wins so the click lands on the button, not its enclosing panel.
 /// Right/bottom edges are exclusive (`px < x + w`). `None` if nothing covers it.
-fn select_click_target(
+pub(crate) fn select_click_target(
     frames: &[(usize, i32, i32, u32, u32, bool)],
     px: i32,
     py: i32,
@@ -2730,7 +3401,8 @@ fn select_click_target(
 }
 
 pub fn set_value(pid: u32, idx: usize, value: &str) -> Result<()> {
-    bounded(
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -2800,7 +3472,8 @@ pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> 
             .context("Hyprland bounds require an exact window for multi-window apps")?;
         return get_element_bounds_for_window(pid, window.address, idx);
     }
-    bounded(
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
             let visited = collect_visited(conn, pid)
@@ -2870,10 +3543,15 @@ pub fn get_element_bounds_for_window(
     if !crate::wayland::is_wayland() || !crate::wayland::hyprland::is_session() {
         return get_element_bounds(pid, idx);
     }
-    bounded(
+    bounded_for(
+        INDEX_RESOLVE_BUDGET,
         async {
             let conn = shared_connection().await?;
-            let (visited, scoped_frame) = collect_visited_bounded(conn, pid, xid, None, None)
+            let Collected {
+                visited,
+                scoped_frame,
+                ..
+            } = collect_visited_bounded(conn, pid, xid, None, None)
                 .await?
                 .context("no AT-SPI application")?;
             let scope =
@@ -2888,6 +3566,7 @@ pub fn get_element_bounds_for_window(
             }
             element_bounds_for_visited(&visited, pid, xid, Some(scope))
                 .await
+                .0
                 .into_iter()
                 .find(|(index, ..)| *index == idx)
                 .map(|(_, x, y, w, h)| (x, y, w, h))
@@ -2899,7 +3578,7 @@ pub fn get_element_bounds_for_window(
 
 /// Real on-screen origin (root-relative top-left) of an X11 window, or `None`
 /// if it can't be resolved. Mirrors `list_windows`' geometry path.
-fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
+pub(crate) fn x11_window_origin(xid: u64) -> Option<(i32, i32)> {
     use x11rb::protocol::xproto::*;
     use x11rb::rust_connection::RustConnection;
 
@@ -3283,7 +3962,7 @@ async fn element_bounds_for_visited(
     pid: u32,
     xid: u64,
     scoped_frame: Option<usize>,
-) -> Vec<(usize, i32, i32, u32, u32)> {
+) -> (Vec<(usize, i32, i32, u32, u32)>, bool) {
     // Query WINDOW-relative extents and add a deterministic screen offset
     // (X11 window origin + GTK4 CSD inset). This fixes GTK4 — whose
     // CoordType::Screen reports every element at (0,0) — by using the
@@ -3303,7 +3982,7 @@ async fn element_bounds_for_visited(
         && crate::wayland::hyprland::is_session()
         && (offset.is_none() || scoped_frame.is_none())
     {
-        return Vec::new();
+        return (Vec::new(), true);
     }
     let coord = if offset.is_some() {
         CoordType::Window
@@ -3405,7 +4084,7 @@ async fn element_bounds_for_visited(
     // in time, but do not impose an index-based node cap: a cap silently
     // stripped frames from valid controls later in renderer trees and
     // made PX targeting depend on DOM order.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(20).min(remaining_budget());
     // Bounds are independent read-only queries. Overlap a bounded number of
     // calls instead of serializing thousands of unrealized menu components.
     // Preserve original indices, all extents checks, and per-call timeouts.
@@ -3427,16 +4106,20 @@ async fn element_bounds_for_visited(
         None
     });
     let collected = crate::snapshot_queries::collect_indexed(queries, deadline).await;
-    if tokio::time::Instant::now() >= deadline {
+    let complete = tokio::time::Instant::now() < deadline;
+    if !complete {
         dlog!(
-            "snapshot bounds: 20s budget exhausted; returning {} bound(s)",
+            "snapshot bounds: time budget exhausted; returning {} bound(s)",
             collected.len()
         );
     }
-    collected
-        .into_iter()
-        .map(|(idx, (x, y, w, h))| (idx, x, y, w, h))
-        .collect()
+    (
+        collected
+            .into_iter()
+            .map(|(idx, (x, y, w, h))| (idx, x, y, w, h))
+            .collect(),
+        complete,
+    )
 }
 
 #[cfg(test)]

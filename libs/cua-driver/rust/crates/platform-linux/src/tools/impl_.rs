@@ -454,8 +454,19 @@ impl Tool for ListWindowsTool {
         let mut lines = vec![format!("Found {} windows:", windows.len())];
         for w in &windows {
             lines.push(format!(
-                "  [xid={}] pid={:?} \"{}\" {}x{}+{}+{}",
-                w.xid, w.pid, w.title, w.width, w.height, w.x, w.y
+                "  window_id={} pid={} \"{}\" {}x{}+{}+{}{}",
+                w.xid,
+                w.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+                w.title,
+                w.width,
+                w.height,
+                w.x,
+                w.y,
+                if w.app_name.is_empty() {
+                    String::new()
+                } else {
+                    format!(" app={}", w.app_name)
+                }
             ));
         }
         let structured =
@@ -683,7 +694,15 @@ impl Tool for GetWindowStateTool {
                 mitigate context-window blow-up on Electron / large web apps \
                 that produce 10k+ element trees. When applied, BOTH \
                 the markdown and the structured elements are truncated \
-                identically. Omit both for current default behaviour.".into(),
+                identically. Omit both for current default behaviour.\n\n\
+                TIME BUDGET: `timeout_ms` (default 1000) bounds the whole AT-SPI \
+                walk. Large apps (LibreOffice, GIMP, file managers) can exceed it; \
+                the call then returns the PARTIAL tree with `truncated: true`, \
+                `truncation_reason`, `nodes_visited`/`nodes_pending` and \
+                `elements_complete: false`. Every element listed is real and \
+                clickable; elements after the cut are simply missing. Retry with a \
+                larger `timeout_ms` (e.g. 5000) or narrow with `query`/`max_depth` \
+                when the element you need is absent.".into(),
             input_schema: json!({"type":"object","required":["pid","window_id"],"properties":{
                 "session": cua_driver_core::tool_schema::session_schema(),
                 "pid":{"type":"integer"},
@@ -698,6 +717,7 @@ impl Tool for GetWindowStateTool {
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on total AT-SPI nodes walked. Omit for the default (5 000). Lower for huge web/Electron trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the AT-SPI tree walk depth. Omit for the default (uncapped). Lower for deeply nested apps."},
+                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
             },"additionalProperties":false}),
             read_only: true, destructive: false, idempotent: false, open_world: false,
@@ -764,6 +784,8 @@ impl Tool for GetWindowStateTool {
             .get("max_depth")
             .and_then(|v| v.as_u64())
             .map(|v| v.max(1) as usize);
+        let timeout_ms = cua_driver_core::tool_schema::resolve_timeout_ms(args.get("timeout_ms"));
+        let walk_timeout = std::time::Duration::from_millis(timeout_ms);
 
         let process_is_live = crate::proc_fs::is_process_live(pid);
         // Enumerate the pid's windows ONCE and reuse the result for both the
@@ -810,12 +832,13 @@ impl Tool for GetWindowStateTool {
             // Skip the AT-SPI walk on the capture-only path
             // (include_accessibility_tree:false).
             let tree_result = if want_tree {
-                Some(crate::atspi::walk_tree_bounded(
+                Some(crate::atspi::walk_tree_bounded_within(
                     pid,
                     xid,
                     query_for_walk.as_deref(),
                     max_elements,
                     max_depth,
+                    walk_timeout,
                 ))
             } else {
                 None
@@ -881,17 +904,49 @@ impl Tool for GetWindowStateTool {
                         .iter()
                         .filter(|n| n.element_index.is_some())
                         .count();
-                    let header = format!("window_id={xid} pid={pid} elements={count}\n\n");
+                    let mut header = format!(
+                        "window_id={xid} pid={pid} elements={count} walk_ms={}\n",
+                        tr.elapsed_ms
+                    );
+                    if tr.truncated {
+                        header.push_str(&truncation_note(
+                            tr.truncation_reason.as_deref(),
+                            timeout_ms,
+                            tr.nodes_visited,
+                            tr.nodes_pending,
+                        ));
+                        header.push('\n');
+                    } else if !tr.bounds_complete {
+                        header.push_str(
+                            "⚠️ bounds phase ran out of time: some elements have no frame \
+                             (element_index clicks still work; pixel targeting may not). \
+                             Retry with a larger timeout_ms if you need frames.\n",
+                        );
+                    }
+                    header.push('\n');
                     content.push(cua_driver_core::protocol::Content::text(
                         header + &tr.tree_markdown,
                     ));
                     if !observation_only {
-                        state.element_cache.update(pid, xid, &tr.nodes);
+                        state
+                            .element_cache
+                            .update_with_bounds(pid, xid, &tr.nodes, &tr.bounds);
                     }
                     structured["element_count"] = json!(count);
-                    // AT-SPI's current bounded walker does not surface an
-                    // exhaustive-walk proof. Keep negative existence unknown.
-                    structured["elements_complete"] = json!(false);
+                    // `elements_complete` is a real claim now: a native walk that
+                    // finished without hitting the deadline / node budget saw
+                    // every node the application publishes. Truncated or
+                    // fallback trees keep negative existence unknown.
+                    structured["elements_complete"] = json!(tr.trusted && !tr.truncated);
+                    structured["truncated"] = json!(tr.truncated);
+                    if let Some(reason) = &tr.truncation_reason {
+                        structured["truncation_reason"] = json!(reason);
+                    }
+                    structured["nodes_visited"] = json!(tr.nodes_visited);
+                    structured["nodes_pending"] = json!(tr.nodes_pending);
+                    structured["bounds_complete"] = json!(tr.bounds_complete);
+                    structured["walk_elapsed_ms"] = json!(tr.elapsed_ms as u64);
+                    structured["timeout_ms"] = json!(timeout_ms);
                     structured["tree_markdown"] = json!(tr.tree_markdown);
 
                     // Surface 6: register a snapshot in the global token
@@ -979,6 +1034,14 @@ impl Tool for GetWindowStateTool {
                                  discovery evidence; it cannot prove checked state."
                                     .to_owned()
                             }));
+                    } else if count == 0 && tr.truncated {
+                        structured["degraded"] = json!(true);
+                        structured["degraded_reason"] = json!(truncation_note(
+                            tr.truncation_reason.as_deref(),
+                            timeout_ms,
+                            tr.nodes_visited,
+                            tr.nodes_pending,
+                        ));
                     } else if count == 0 {
                         structured["degraded"] = json!(true);
                         structured["degraded_reason"] = json!(
@@ -1082,6 +1145,26 @@ impl Tool for GetWindowStateTool {
     }
 }
 
+/// One-line, model-facing explanation of a partial tree and what to do about
+/// it. Shared by the text header and the structured `degraded_reason`.
+fn truncation_note(reason: Option<&str>, timeout_ms: u64, visited: usize, pending: usize) -> String {
+    let why = match reason {
+        Some("timeout") => format!("the {timeout_ms} ms timeout_ms budget ran out"),
+        Some("node_budget") => "the max_elements node budget ran out".to_owned(),
+        Some("app_unresponsive") => "the application stopped answering AT-SPI".to_owned(),
+        Some("app_lookup_timeout") => format!(
+            "the application did not register with AT-SPI within {timeout_ms} ms"
+        ),
+        Some(other) => other.to_owned(),
+        None => "the walk stopped early".to_owned(),
+    };
+    format!(
+        "⚠️ PARTIAL TREE: {why} after {visited} node(s) ({pending} discovered but not visited). \
+         Every element listed is real; elements after the cut are missing. If the element you \
+         need is absent, retry with a larger timeout_ms (e.g. 5000) or narrow with query / max_depth."
+    )
+}
+
 fn surface_identity_unproven_error(xid: u64, reason: String) -> Value {
     json!({
         "code": "surface_identity_unproven",
@@ -1132,6 +1215,7 @@ mod get_window_state_actions_tests {
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
+            object_ref: None,
         }
     }
 
@@ -1904,6 +1988,30 @@ fn is_webkitgtk_embedder(pid: u32) -> bool {
 
 fn maps_indicate_gtk(maps: &str) -> bool {
     maps.contains("libgtk-3.so") || maps.contains("libgtk-4.so")
+}
+
+/// Toolkits known to discard synthetic (`send_event`) X11 pointer events:
+/// GTK3/4 (XInput2 only), LibreOffice VCL (all plugins), Qt5/6 (xcb, XI2).
+fn maps_indicate_synthetic_pointer_dropped(maps: &str) -> bool {
+    maps_indicate_gtk(maps)
+        || maps.contains("libvcl")
+        || maps.contains("libmergedlo")
+        || maps.contains("libQt5Gui")
+        || maps.contains("libQt6Gui")
+}
+
+fn synthetic_pointer_is_dropped(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/maps"))
+        .map(|maps| maps_indicate_synthetic_pointer_dropped(&maps))
+        .unwrap_or(false)
+}
+
+/// Qt5 maps its own GUI library; only then is the synthetic-FocusIn bridge
+/// workaround in `type_text` worth two extra AT-SPI walks.
+fn is_qt5_process(pid: u32) -> bool {
+    fs::read_to_string(format!("/proc/{pid}/maps"))
+        .map(|maps| maps.contains("libQt5Gui") || maps.contains("libQt5Widgets"))
+        .unwrap_or(false)
 }
 
 fn is_gtk_process(pid: u32) -> bool {
@@ -3476,9 +3584,11 @@ impl Tool for ClickTool {
                 );
             }
             if element_click_prefers_ax(foreground_hyprland, button, count, !modifiers.is_empty()) {
-                let ax_result =
-                    tokio::task::spawn_blocking(move || crate::atspi::perform_action(pid, idx))
-                        .await;
+                let ax_xid = window_id_resolved;
+                let ax_result = tokio::task::spawn_blocking(move || {
+                    crate::atspi::perform_action_in(pid, ax_xid, idx)
+                })
+                .await;
                 if let Ok(Ok((_action, suspected_noop))) = ax_result {
                     let mut structured = json!({
                         "path": "ax",
@@ -3795,9 +3905,21 @@ impl Tool for ClickTool {
             // click (the agent's escalation when background didn't land).
             let inject = |fg: bool| -> anyhow::Result<&'static str> {
                 if !fg && button == 1 && count == 1 && modifiers_for_task.is_empty() {
-                    if let Ok(Some(_)) = crate::atspi::perform_action_at_point(pid, xi, yi) {
+                    if let Ok(Some(_)) =
+                        crate::atspi::perform_action_at_point_in(pid, xid, xi, yi)
+                    {
                         return Ok("x11_atspi");
                     }
+                }
+                if !fg
+                    && !crate::input::real_pointer_input_available()
+                    && synthetic_pointer_is_dropped(pid)
+                {
+                    // No accessible actuator covers the point and the only
+                    // route left is a synthetic XSendEvent that this toolkit
+                    // (GTK3/4 XInput2, LibreOffice VCL) discards. Say so
+                    // instead of reporting a click that changed nothing.
+                    return Ok("background_unavailable_pointer");
                 }
                 if fg {
                     // Foreground: the window is already activated. Deliver a REAL
@@ -3860,6 +3982,21 @@ impl Tool for ClickTool {
                 crate::input::delivery::background_unavailable_error(
                     crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
                 )
+            }
+            Ok(Ok("background_unavailable_pointer")) => {
+                let mut refusal = crate::input::delivery::background_unavailable_error(
+                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+                );
+                let hint = "No accessible control covers this point and the toolkit drops \
+                     synthetic pointer events, so a background pixel click here would \
+                     change nothing. Use get_window_state and click by element_index \
+                     (AT-SPI action), or retry with delivery_mode='foreground'.";
+                refusal.content.push(cua_driver_core::protocol::Content::text(hint));
+                if let Some(structured) = refusal.structured_content.as_mut() {
+                    structured["hint"] = json!(hint);
+                    structured["path"] = json!("background_unavailable_pointer");
+                }
+                refusal
             }
             // A pixel/coordinate click is never driver-verifiable (no read-back) —
             // verified:false, effect:"unverifiable"; the caller confirms via
@@ -4512,6 +4649,9 @@ impl Tool for TypeTextTool {
         // This doesn't change the X11 active window, so the test's focus check passes.
         let text_clone2 = text.clone();
         let qt5_result = tokio::task::spawn_blocking(move || {
+            if !is_qt5_process(pid) {
+                anyhow::bail!("not a Qt5 process; synthetic-FocusIn bridge workaround skipped");
+            }
             // Send FocusIn to trigger Qt5's bridge
             crate::input::send_focus_in(xid)?;
             std::thread::sleep(std::time::Duration::from_millis(100));
@@ -8136,6 +8276,10 @@ impl Tool for GetDesktopStateTool {
             } else {
                 Some(B64.encode(&png))
             };
+            // Which pid owns which window is what the agent needs before its
+            // first click; without it the first action guesses `pid: 1`.
+            let mut windows = crate::wayland::list_windows_dispatch(None);
+            windows.retain(|w| w.is_on_screen && w.pid.map_or(false, crate::proc_fs::is_process_live));
             Ok((
                 b64,
                 shot_w,
@@ -8144,12 +8288,13 @@ impl Tool for GetDesktopStateTool {
                 screen_h,
                 scale_factor,
                 written,
+                windows,
             ))
         })
         .await;
 
         match result {
-            Ok(Ok((b64_opt, shot_w, shot_h, screen_w, screen_h, scale_factor, written))) => {
+            Ok(Ok((b64_opt, shot_w, shot_h, screen_w, screen_h, scale_factor, written, windows))) => {
                 let mut content = Vec::new();
                 let mut structured = json!({
                     "platform": "linux",
@@ -8160,18 +8305,20 @@ impl Tool for GetDesktopStateTool {
                     "screen_height": screen_h,
                     "scale_factor": scale_factor,
                     "screenshot_mime_type": "image/png",
+                    "windows": windows.iter().map(window_record_json).collect::<Vec<_>>(),
                 });
                 if let Some(b64) = b64_opt {
                     content.push(cua_driver_core::protocol::Content::image_png(b64));
                 }
+                let window_lines = desktop_window_lines(&windows);
                 if let Some(path) = written {
                     structured["screenshot_file_path"] = json!(path);
                     content.push(cua_driver_core::protocol::Content::text(format!(
-                        "✅ Desktop screenshot {shot_w}x{shot_h} written to {path} (screen {screen_w}x{screen_h})"
+                        "✅ Desktop screenshot {shot_w}x{shot_h} written to {path} (screen {screen_w}x{screen_h}){window_lines}"
                     )));
                 } else {
                     content.push(cua_driver_core::protocol::Content::text(format!(
-                        "✅ Desktop screenshot {shot_w}x{shot_h} (screen {screen_w}x{screen_h})"
+                        "✅ Desktop screenshot {shot_w}x{shot_h} (screen {screen_w}x{screen_h}){window_lines}"
                     )));
                 }
                 ToolResult {
@@ -8185,6 +8332,40 @@ impl Tool for GetDesktopStateTool {
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// Text block naming every visible window with the `pid` / `window_id` pair
+/// that every other tool takes, so the model's first action targets a real
+/// process instead of guessing.
+fn desktop_window_lines(windows: &[crate::x11::WindowInfo]) -> String {
+    if windows.is_empty() {
+        return "\nVisible windows: none (use list_windows / launch_app).".to_owned();
+    }
+    let mut out = String::from("\nVisible windows (use these pid + window_id values in every tool call):");
+    for w in windows {
+        let title = if w.title.is_empty() {
+            "(no title)".to_owned()
+        } else {
+            format!("\"{}\"", w.title)
+        };
+        out.push_str(&format!(
+            "\n- pid={} window_id={} {} {}x{} at ({},{}){}",
+            w.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+            w.xid,
+            title,
+            w.width,
+            w.height,
+            w.x,
+            w.y,
+            if w.app_name.is_empty() {
+                String::new()
+            } else {
+                format!(" app={}", w.app_name)
+            }
+        ));
+    }
+    out.push_str("\n→ get_window_state(pid, window_id) lists clickable elements; click/type_text take the same pid (+ window_id for x,y).");
+    out
 }
 
 // ── get_cursor_position ───────────────────────────────────────────────────────
@@ -8884,8 +9065,14 @@ impl Tool for GetAccessibilityTreeTool {
                     format!("\"{}\"", w.title)
                 };
                 lines.push(format!(
-                    "- pid={:?} {} [window_id: {}] {}x{}+{}+{}",
-                    w.pid, title, w.xid, w.width, w.height, w.x, w.y
+                    "- pid={} window_id={} {} {}x{}+{}+{}",
+                    w.pid.map(|p| p.to_string()).unwrap_or_else(|| "?".into()),
+                    w.xid,
+                    title,
+                    w.width,
+                    w.height,
+                    w.x,
+                    w.y
                 ));
             }
             lines.push(

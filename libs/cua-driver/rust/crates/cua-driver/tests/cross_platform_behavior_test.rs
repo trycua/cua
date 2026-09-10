@@ -789,6 +789,7 @@ fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
         include_screenshot: Some(false),
         screenshot_out_file: None,
         max_elements: None,
+        timeout_ms: None,
         max_depth: None,
         max_dimension: None,
     }

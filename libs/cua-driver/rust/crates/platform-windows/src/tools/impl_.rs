@@ -1258,6 +1258,7 @@ impl Tool for GetWindowStateTool {
                 "query":{"type":"string","description":"Optional case-insensitive substring. Projects both tree_markdown and structured elements to matches plus ancestors while preserving original indices. Compare total_element_count with returned_element_count."},
                 "max_elements":{"type":"integer","minimum":1,"description":"Cap on the total number of UIA nodes walked. Truncates depth-first; markdown and structured elements truncate together. Omit for the default (5 000). Lower for Electron / large web apps that produce 10k+ element trees."},
                 "max_depth":{"type":"integer","minimum":1,"description":"Cap on the UIA-tree walk depth. Nodes whose rendered indent would exceed this are omitted. Omit for the default (25). Lower for deep menu / Electron trees."},
+                "timeout_ms": cua_driver_core::tool_schema::timeout_ms_schema(),
                 "max_dimension":{"type":"integer","minimum":1,"description":"Optional cap on the returned screenshot's long edge, in pixels (aspect ratio preserved) — the cheap path for a small preview. Applied on top of the configured max_image_dimension ceiling; the tighter wins. Omit for the configured default."}
             },"additionalProperties":false}),
             // Swift annotation: idempotent: false (each call is a fresh snapshot).

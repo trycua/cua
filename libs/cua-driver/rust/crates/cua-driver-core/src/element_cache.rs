@@ -70,6 +70,15 @@ impl<K: Eq + Hash, S> ElementCacheCore<K, S> {
         inner.get(key).map(f)
     }
 
+    /// Every key currently holding a snapshot.
+    pub fn keys(&self) -> Vec<K>
+    where
+        K: Clone,
+    {
+        let inner = self.inner.lock().unwrap();
+        inner.keys().cloned().collect()
+    }
+
     /// Drop the snapshot for `key` if present.
     #[allow(dead_code)]
     pub fn remove(&self, key: &K) {

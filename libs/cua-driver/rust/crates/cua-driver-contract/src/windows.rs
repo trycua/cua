@@ -89,6 +89,12 @@ pub struct GetWindowStateInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(schema_with = "positive_integer_schema")]
     pub max_dimension: Option<u32>,
+    /// Wall-clock budget for the accessibility walk in milliseconds
+    /// (default 1000). A walk that runs out returns a partial tree flagged
+    /// `truncated` rather than failing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(schema_with = "positive_integer_schema")]
+    pub timeout_ms: Option<u32>,
 }
 
 impl ToolInput for GetWindowStateInput {
@@ -97,7 +103,9 @@ impl ToolInput for GetWindowStateInput {
         if self.pid == 0 || self.window_id == 0 {
             return Err("window observation requires positive process and window IDs".into());
         }
-        if [self.max_elements, self.max_depth, self.max_dimension].contains(&Some(0)) {
+        if [self.max_elements, self.max_depth, self.max_dimension, self.timeout_ms]
+            .contains(&Some(0))
+        {
             return Err("window observation limits must be positive".into());
         }
         if self.include_accessibility_tree == Some(false) && self.include_screenshot == Some(false)

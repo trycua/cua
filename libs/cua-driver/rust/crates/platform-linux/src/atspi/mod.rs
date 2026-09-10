@@ -42,6 +42,10 @@ pub struct AtspiNode {
     /// True when the native AT-SPI walker observed this node below renderer
     /// web content. Browser-owned consent UI must never match such nodes.
     pub in_web_content: bool,
+    /// D-Bus identity of the node (bus name, object path) for a native AT-SPI
+    /// walk; `None` for the X11 property fallback and test fixtures. Lets a
+    /// later per-index action re-open the exact object from a cached snapshot.
+    pub object_ref: Option<native::ObjectRef>,
 }
 
 pub struct AtspiTreeResult {
@@ -60,6 +64,56 @@ pub struct AtspiTreeResult {
     /// snapshot of a multi-window app carries every window's controls; callers
     /// that act on behalf of an exact native window must require this.
     pub window_scoped: bool,
+    /// True when the walk stopped before exhausting the application's tree
+    /// (deadline, node budget, unresponsive app, application lookup timeout).
+    /// `nodes` is then a pre-order *prefix* of the real tree: every index in it
+    /// is valid, but elements after the cut are simply absent.
+    pub truncated: bool,
+    /// Machine-readable reason when `truncated`: `timeout`, `node_budget`,
+    /// `app_unresponsive`, `app_lookup_timeout`.
+    pub truncation_reason: Option<String>,
+    /// Nodes fully visited by the native walk (0 for the fallback tree).
+    pub nodes_visited: usize,
+    /// Nodes discovered but not visited when the walk stopped (lower bound).
+    pub nodes_pending: usize,
+    /// False when the bounds phase ran out of time; some indexed elements then
+    /// carry no frame even though they exist.
+    pub bounds_complete: bool,
+    /// Wall time the native snapshot took (walk + bounds), in milliseconds.
+    pub elapsed_ms: u128,
+}
+
+/// Total budget for callers that did not ask for one (browser flows, the
+/// page tool, `walk_tree`). Bounds the WHOLE operation including retries —
+/// previously the cold-registry retry loop could take 4 × 25 s.
+pub const DEFAULT_WALK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(25);
+
+impl AtspiTreeResult {
+    fn from_walked(walked: native::WalkedTree, query: Option<&str>) -> Self {
+        let md = match query {
+            Some(q) => filter_tree(&walked.markdown, q),
+            None => walked.markdown,
+        };
+        let (truncated, truncation_reason, nodes_visited, nodes_pending) =
+            match &walked.truncation {
+                Some(t) => (true, Some(t.reason.to_owned()), t.visited, t.pending),
+                None => (false, None, walked.nodes.len(), 0),
+            };
+        AtspiTreeResult {
+            tree_markdown: md,
+            nodes: walked.nodes,
+            bounds: walked.bounds,
+            trusted: true,
+            degraded_reason: None,
+            window_scoped: walked.window_scoped,
+            truncated,
+            truncation_reason,
+            nodes_visited,
+            nodes_pending,
+            bounds_complete: walked.bounds_complete,
+            elapsed_ms: walked.elapsed.as_millis(),
+        }
+    }
 }
 
 /// Walk the AT-SPI tree for a window identified by (pid, xid).
@@ -82,14 +136,7 @@ pub(crate) fn walk_tree_for_recording(
     if let Ok(Some(walked)) = native::walk_tree_bounded_with_timeout(pid, xid, None, None, timeout)
     {
         if !walked.markdown.is_empty() {
-            return AtspiTreeResult {
-                tree_markdown: walked.markdown,
-                nodes: walked.nodes,
-                bounds: walked.bounds,
-                trusted: true,
-                degraded_reason: None,
-                window_scoped: walked.window_scoped,
-            };
+            return AtspiTreeResult::from_walked(walked, None);
         }
     }
     walk_via_x11_properties(xid, None)
@@ -106,6 +153,21 @@ pub fn walk_tree_bounded(
     max_elements: Option<usize>,
     max_depth: Option<usize>,
 ) -> AtspiTreeResult {
+    walk_tree_bounded_within(pid, xid, query, max_elements, max_depth, DEFAULT_WALK_TIMEOUT)
+}
+
+/// [`walk_tree_bounded`] with an explicit wall-clock budget for the WHOLE
+/// operation: the cold-registry retry loop, the tree walk and the bounds
+/// phase all share `timeout`. A walk that runs out of budget returns the
+/// partial tree with `truncated = true` rather than nothing.
+pub fn walk_tree_bounded_within(
+    pid: u32,
+    xid: u64,
+    query: Option<&str>,
+    max_elements: Option<usize>,
+    max_depth: Option<usize>,
+    timeout: std::time::Duration,
+) -> AtspiTreeResult {
     // Native AT-SPI (most complete). On a COLD launch the Qt6 (and some GTK)
     // AT-SPI bridge registers lazily — the first walk against a freshly
     // launched app can come back with just the root window (element_count=1,
@@ -113,43 +175,72 @@ pub fn walk_tree_bounded(
     // enumerating the app's tree yet. Retry a few times with a short backoff
     // while the tree is suspiciously root-only, so the first get_window_state
     // after launch returns the real tree instead of an empty one. See #1927.
+    // Every retry runs against what is LEFT of the caller's budget.
     const MAX_ATTEMPTS: usize = 4;
+    const RETRY_BACKOFF: std::time::Duration = std::time::Duration::from_millis(150);
+    let started = std::time::Instant::now();
     let mut native_failure = None;
+    let mut last_partial: Option<native::WalkedTree> = None;
     for attempt in 0..MAX_ATTEMPTS {
-        match native::walk_tree_bounded(pid, xid, max_elements, max_depth) {
+        let remaining = timeout.saturating_sub(started.elapsed());
+        if remaining.is_zero() {
+            break;
+        }
+        match native::walk_tree_bounded_with_timeout(pid, xid, max_elements, max_depth, remaining)
+        {
             Ok(Some(walked)) => {
                 // `nodes.len() <= 1` == only the root window resolved: the
                 // cold-registry symptom. Accept any real tree immediately; only
                 // keep waiting on the degenerate case, and accept it anyway on the
                 // final attempt rather than discarding a (minimal) valid result.
+                // A truncated walk is never the cold-registry symptom — retrying
+                // it would only burn the budget again.
+                let is_last = attempt == MAX_ATTEMPTS - 1
+                    || timeout.saturating_sub(started.elapsed()) <= RETRY_BACKOFF;
                 if !walked.markdown.is_empty()
-                    && (walked.nodes.len() > 1 || attempt == MAX_ATTEMPTS - 1)
+                    && (walked.nodes.len() > 1 || walked.truncation.is_some() || is_last)
                 {
-                    let md = if let Some(q) = query {
-                        filter_tree(&walked.markdown, q)
-                    } else {
-                        walked.markdown
-                    };
-                    return AtspiTreeResult {
-                        tree_markdown: md,
-                        nodes: walked.nodes,
-                        bounds: walked.bounds,
-                        trusted: true,
-                        degraded_reason: None,
-                        window_scoped: walked.window_scoped,
-                    };
+                    return AtspiTreeResult::from_walked(walked, query);
+                }
+                if walked.truncation.is_some() {
+                    // Out of time before the application even answered.
+                    last_partial = Some(walked);
+                    break;
+                }
+                if !walked.markdown.is_empty() {
+                    last_partial = Some(walked);
                 }
             }
             Ok(None) => {}
             Err(error) => native_failure = Some(error.to_string()),
         }
         if attempt < MAX_ATTEMPTS - 1 {
-            std::thread::sleep(std::time::Duration::from_millis(150));
+            std::thread::sleep(RETRY_BACKOFF);
+        }
+    }
+    if let Some(walked) = last_partial {
+        if !walked.markdown.is_empty() || walked.truncation.is_some() {
+            let mut result = AtspiTreeResult::from_walked(walked, query);
+            if result.nodes.is_empty() {
+                // Nothing came back in time: the X11 property tree is the
+                // best discovery aid, but say WHY it is all we have.
+                let mut fallback = walk_via_x11_properties(xid, query);
+                fallback.truncated = true;
+                fallback.truncation_reason = result.truncation_reason.take();
+                fallback.elapsed_ms = started.elapsed().as_millis();
+                fallback.degraded_reason = Some(
+                    "atspi_walk_timed_out: the application did not answer AT-SPI within                      timeout_ms; retry with a larger timeout_ms"
+                        .to_owned(),
+                );
+                return fallback;
+            }
+            return result;
         }
     }
 
     // Fallback: X11 window properties as minimal tree.
     let mut fallback = walk_via_x11_properties(xid, query);
+    fallback.elapsed_ms = started.elapsed().as_millis();
     fallback.degraded_reason = native_failure.map(|error| format!("atspi_walk_failed: {error}"));
     fallback
 }
@@ -160,11 +251,34 @@ pub fn walk_tree_bounded(
 /// display role, or no advertised action), so the caller can surface
 /// `effect: "suspected_noop"`.
 pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
+    perform_action_in(pid, None, idx)
+}
+
+/// [`perform_action`] that first tries the element identity cached by the last
+/// `get_window_state` snapshot of (pid, xid) — no re-walk — and only resolves
+/// the index against a fresh walk when the cached object is gone.
+pub fn perform_action_in(pid: u32, xid: Option<u64>, idx: usize) -> Result<(String, bool)> {
+    if let Some(object_ref) = cache::cached_element(pid, xid, idx).and_then(|e| e.object_ref) {
+        match native::perform_action_ref(&object_ref) {
+            Ok(done) => return Ok(done),
+            Err(error) => tracing::debug!(
+                "cached element {idx} (pid {pid}) action failed, re-resolving: {error:#}"
+            ),
+        }
+    }
     native::perform_action(pid, idx)
 }
 
 /// Give an indexed AT-SPI element keyboard focus without activating its window.
 pub fn focus_element(pid: u32, idx: usize) -> Result<bool> {
+    if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
+        match native::focus_element_ref(&object_ref) {
+            Ok(done) => return Ok(done),
+            Err(error) => tracing::debug!(
+                "cached element {idx} (pid {pid}) focus failed, re-resolving: {error:#}"
+            ),
+        }
+    }
     native::focus_element(pid, idx)
 }
 
@@ -195,6 +309,39 @@ pub fn list_windows(filter_pid: Option<u32>) -> Vec<crate::x11::WindowInfo> {
 /// `Ok(Some(action))` when an element was actuated, `Ok(None)` when no
 /// actionable element covers the point (caller falls back to the X11 path).
 pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Option<String>> {
+    perform_action_at_point_in(pid, 0, win_x, win_y)
+}
+
+/// [`perform_action_at_point`] for a known window, in three rungs that never
+/// re-walk the tree first:
+/// 1. the frames cached by the last `get_window_state` snapshot of (pid, xid);
+/// 2. the toolkit's own `Component.GetAccessibleAtPoint` descent (O(depth));
+/// 3. the historical bounded full-walk hit-test (last resort, short budget).
+pub fn perform_action_at_point_in(
+    pid: u32,
+    xid: u64,
+    win_x: i32,
+    win_y: i32,
+) -> Result<Option<String>> {
+    if xid != 0 {
+        if let Some((ox, oy)) = native::x11_window_origin(xid) {
+            if let Some((idx, element)) = cache::hit_test(pid, xid, win_x + ox, win_y + oy) {
+                if let Some(object_ref) = element.object_ref {
+                    match native::perform_action_ref(&object_ref) {
+                        Ok((action, _)) => return Ok(Some(action)),
+                        Err(error) => tracing::debug!(
+                            "cached hit-test element {idx} (pid {pid}) failed: {error:#}"
+                        ),
+                    }
+                }
+            }
+        }
+    }
+    match native::perform_action_at_point_in(pid, xid, win_x, win_y) {
+        Ok(Some(action)) => return Ok(Some(action)),
+        Ok(None) => {}
+        Err(error) => tracing::debug!("GetAccessibleAtPoint hit-test failed: {error:#}"),
+    }
     native::perform_action_at_point(pid, win_x, win_y)
 }
 
@@ -222,6 +369,14 @@ pub fn type_into_editable(pid: u32, text: &str) -> Result<()> {
 
 /// Type into the exact indexed editable from the caller's accessibility snapshot.
 pub fn type_into_editable_at(pid: u32, idx: usize, text: &str) -> Result<()> {
+    if let Some(object_ref) = cache::cached_element(pid, None, idx).and_then(|e| e.object_ref) {
+        match native::type_into_editable_ref(&object_ref, text) {
+            Ok(()) => return Ok(()),
+            Err(error) => tracing::debug!(
+                "cached element {idx} (pid {pid}) editable write failed, re-resolving: {error:#}"
+            ),
+        }
+    }
     native::type_into_editable_at(pid, idx, text)
 }
 
@@ -251,6 +406,9 @@ pub fn focused_is_editable(pid: u32) -> Result<Option<bool>> {
 }
 
 pub fn get_element_bounds(pid: u32, idx: usize) -> Result<(i32, i32, u32, u32)> {
+    if let Some(bounds) = cache::cached_element(pid, None, idx).and_then(|e| e.bounds) {
+        return Ok(bounds);
+    }
     native::get_element_bounds(pid, idx)
 }
 
@@ -259,6 +417,9 @@ pub fn get_element_bounds_for_window(
     xid: u64,
     idx: usize,
 ) -> Result<(i32, i32, u32, u32)> {
+    if let Some(bounds) = cache::cached_element(pid, Some(xid), idx).and_then(|e| e.bounds) {
+        return Ok(bounds);
+    }
     native::get_element_bounds_for_window(pid, xid, idx)
 }
 
@@ -278,6 +439,12 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
                 trusted: false,
                 degraded_reason: None,
                 window_scoped: false,
+                truncated: false,
+                truncation_reason: None,
+                nodes_visited: 0,
+                nodes_pending: 0,
+                bounds_complete: true,
+                elapsed_ms: 0,
             }
         }
     };
@@ -315,6 +482,7 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         depth: 0,
         parent_element_index: None,
         in_web_content: false,
+        object_ref: None,
     };
     md.push_str(&format!(
         "- [0] window \"{}\" [actions=[activate]]\n",
@@ -339,6 +507,12 @@ fn walk_via_x11_properties(xid: u64, query: Option<&str>) -> AtspiTreeResult {
         // proving anything a caller acts on.
         window_scoped: true,
         degraded_reason: None,
+        truncated: false,
+        truncation_reason: None,
+        nodes_visited: 0,
+        nodes_pending: 0,
+        bounds_complete: true,
+        elapsed_ms: 0,
     }
 }
 

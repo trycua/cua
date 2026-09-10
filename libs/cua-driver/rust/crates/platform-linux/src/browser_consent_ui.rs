@@ -368,6 +368,7 @@ mod tests {
             depth: 0,
             parent_element_index: None,
             in_web_content: false,
+            object_ref: None,
         }
     }
 

@@ -64,18 +64,45 @@ fn desktop_point_window_resolver(
     })
 }
 
+/// The window a pid-only keyboard action means in a multi-window app: the
+/// pid's active window when the WM reports one, else its topmost on-screen
+/// window.
+fn pid_fallback_window_resolver() -> cua_driver_core::window_target::PidFallbackWindowResolver {
+    Arc::new(|pid| {
+        let pid = u32::try_from(pid).ok()?;
+        let windows: Vec<crate::x11::WindowInfo> = crate::wayland::list_windows_dispatch(Some(pid))
+            .into_iter()
+            .filter(|w| w.pid == Some(pid))
+            .collect();
+        if !crate::wayland::is_wayland() {
+            if let Some(active) = crate::x11::active_window() {
+                if windows.iter().any(|w| w.xid == active) {
+                    return Some(active);
+                }
+            }
+        }
+        windows
+            .into_iter()
+            .filter(|w| w.is_on_screen)
+            .max_by_key(|w| w.z_index.unwrap_or(0))
+            .map(|w| w.xid)
+    })
+}
+
 type PidWindowGuardParts = (
     WindowTargetCandidates,
     cua_driver_core::window_target::DesktopPointWindowResolver,
+    cua_driver_core::window_target::PidFallbackWindowResolver,
 );
 
 fn pid_window_guarded<T: Tool + 'static>(
     tool: T,
-    (candidates, point_resolver): &PidWindowGuardParts,
+    (candidates, point_resolver, fallback_resolver): &PidWindowGuardParts,
 ) -> Box<dyn Tool> {
     Box::new(
         PidOnlyWindowTargetGuard::new(Box::new(tool), candidates.clone())
-            .with_point_resolver(point_resolver.clone()),
+            .with_point_resolver(point_resolver.clone())
+            .with_fallback_resolver(fallback_resolver.clone()),
     )
 }
 
@@ -10388,6 +10415,7 @@ pub fn build_registry_with_provider(
     let pid_window_candidates: PidWindowGuardParts = (
         Arc::new(pid_window_target_candidates),
         desktop_point_window_resolver(state.clone()),
+        pid_fallback_window_resolver(),
     );
     r.register(pid_window_guarded(BringToFrontTool, &pid_window_candidates));
     r.register(Box::new(SetWindowFrameTool));

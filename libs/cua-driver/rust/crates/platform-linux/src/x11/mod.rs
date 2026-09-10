@@ -23,6 +23,29 @@ pub struct WindowInfo {
     pub height: u32,
 }
 
+/// The window the window manager reports as active (`_NET_ACTIVE_WINDOW`
+/// on the root), if any.
+pub fn active_window() -> Option<u64> {
+    let (conn, screen_num) = RustConnection::connect(None).ok()?;
+    let root = conn.setup().roots[screen_num].root;
+    let atom = conn
+        .intern_atom(true, b"_NET_ACTIVE_WINDOW")
+        .ok()?
+        .reply()
+        .ok()?
+        .atom;
+    if atom == 0 {
+        return None;
+    }
+    let reply = conn
+        .get_property(false, root, atom, AtomEnum::WINDOW, 0, 1)
+        .ok()?
+        .reply()
+        .ok()?;
+    let id = reply.value32()?.next()?;
+    (id != 0).then_some(u64::from(id))
+}
+
 /// List top-level windows, optionally filtered by pid.
 pub fn list_windows(filter_pid: Option<u32>) -> Vec<WindowInfo> {
     match list_windows_inner(filter_pid) {

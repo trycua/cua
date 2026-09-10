@@ -55,6 +55,12 @@ pub type WindowTargetCandidates =
 pub type DesktopPointWindowResolver =
     Arc<dyn Fn(i64, f64, f64) -> Option<u64> + Send + Sync + 'static>;
 
+/// `pid` -> the window a pid-only action without a point should mean: the
+/// pid's currently active (focused) window, else its topmost on-screen one.
+/// Keyboard actions (`type_text`, `hotkey`, `press_key`) name no point, and a
+/// multi-window app (GIMP + docks) otherwise refused every one of them.
+pub type PidFallbackWindowResolver = Arc<dyn Fn(i64) -> Option<u64> + Send + Sync + 'static>;
+
 /// Desktop-frame `x`/`y` of an action, when the call carries them.
 fn desktop_frame_point(args: &Value) -> Option<(f64, f64)> {
     let frame_is_desktop = args.get("coordinate_frame").and_then(Value::as_str) == Some("desktop")
@@ -74,6 +80,7 @@ pub struct PidOnlyWindowTargetGuard {
     inner: Box<dyn Tool>,
     candidates: WindowTargetCandidates,
     point_resolver: Option<DesktopPointWindowResolver>,
+    fallback_resolver: Option<PidFallbackWindowResolver>,
 }
 
 impl PidOnlyWindowTargetGuard {
@@ -82,7 +89,15 @@ impl PidOnlyWindowTargetGuard {
             inner,
             candidates,
             point_resolver: None,
+            fallback_resolver: None,
         }
+    }
+
+    /// Resolve an otherwise ambiguous pid-only call that carries no point
+    /// (keyboard actions) to the pid's active / topmost window.
+    pub fn with_fallback_resolver(mut self, resolver: PidFallbackWindowResolver) -> Self {
+        self.fallback_resolver = Some(resolver);
+        self
     }
 
     /// Resolve an otherwise ambiguous pid by the desktop-frame point the
@@ -184,6 +199,22 @@ impl Tool for PidOnlyWindowTargetGuard {
                     (self.point_resolver.clone(), desktop_frame_point(&args))
                 {
                     let hit = tokio::task::spawn_blocking(move || resolver(pid, x, y))
+                        .await
+                        .ok()
+                        .flatten();
+                    if let Some(window_id) = hit {
+                        if candidates.iter().any(|c| c.window_id == window_id) {
+                            if let Some(object) = args.as_object_mut() {
+                                object.insert("window_id".to_owned(), window_id.into());
+                            }
+                            return self.inner.invoke(args).await;
+                        }
+                    }
+                }
+                let carries_point = args.get("x").is_some_and(|v| v.is_number())
+                    && args.get("y").is_some_and(|v| v.is_number());
+                if let (Some(resolver), false) = (self.fallback_resolver.clone(), carries_point) {
+                    let hit = tokio::task::spawn_blocking(move || resolver(pid))
                         .await
                         .ok()
                         .flatten();
@@ -394,6 +425,47 @@ mod tests {
             .invoke(serde_json::json!({"pid": 7, "x": 150, "y": 5, "coordinate_frame": "desktop"}))
             .await;
         assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn ambiguous_pid_without_a_point_falls_back_to_the_active_window() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let candidates: WindowTargetCandidates = Arc::new(|_| {
+            vec![
+                WindowTargetCandidate {
+                    window_id: 11,
+                    title: "a".into(),
+                    app_name: None,
+                    is_on_screen: true,
+                },
+                WindowTargetCandidate {
+                    window_id: 22,
+                    title: "b".into(),
+                    app_name: None,
+                    is_on_screen: true,
+                },
+            ]
+        });
+        let fallback: PidFallbackWindowResolver = Arc::new(|_pid| Some(22));
+        let guard = PidOnlyWindowTargetGuard::new(
+            Box::new(EchoTool {
+                calls: calls.clone(),
+            }),
+            candidates,
+        )
+        .with_fallback_resolver(fallback);
+        // Keyboard-style call (no point): resolved to the active window.
+        let result = guard
+            .invoke(serde_json::json!({"pid": 7, "text": "hi"}))
+            .await;
+        assert_ne!(result.is_error, Some(true), "{result:?}");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        // Window-frame pixels stay ambiguous (a point must not be guessed).
+        let result = guard
+            .invoke(serde_json::json!({"pid": 7, "x": 1, "y": 2}))
+            .await;
+        assert_eq!(result.is_error, Some(true));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 }

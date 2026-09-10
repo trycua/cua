@@ -5,12 +5,11 @@ from types import SimpleNamespace
 
 import httpx
 import pytest
-
 from cua_sandbox.interfaces._driver_mcp import shared_channel
 from cua_sandbox.interfaces.driver import DriverConnectionError
 
-from .test_typed_driver import native as _native_fixture
 from .test_driver_mcp import McpTransport, sandbox
+from .test_typed_driver import native as _native_fixture
 
 native = _native_fixture
 

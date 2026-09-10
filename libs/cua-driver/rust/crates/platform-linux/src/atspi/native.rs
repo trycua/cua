@@ -2372,9 +2372,11 @@ pub fn perform_action(pid: u32, idx: usize) -> Result<(String, bool)> {
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
             let action = target.actions.get(chosen).cloned().unwrap_or_default();
-            ap.do_action(chosen as i32)
-                .await
-                .map_err(|e| anyhow!("doAction failed: {e}"))?;
+            match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+                None => dlog!("doAction dispatched but not acknowledged in time"),
+            }
             // AT-SPI's doAction acknowledgement can precede the renderer's
             // queued DOM mutation. Give WebKit/Chromium one short event-loop
             // turn before returning success so a caller's immediate external
@@ -2470,7 +2472,11 @@ pub fn perform_action_ref(object_ref: &ObjectRef) -> Result<(String, bool)> {
             match call(ap.do_action(chosen as i32)).await {
                 Some(Ok(_)) => {}
                 Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
-                None => return Err(anyhow!("doAction did not complete in time")),
+                // The request was delivered; a GTK item whose action opens a
+                // dialog (nested main loop) only replies once that dialog
+                // closes. Treat the timeout as dispatched-but-unconfirmed:
+                // falling back to another route would fire the item twice.
+                None => dlog!("doAction dispatched but not acknowledged in time"),
             }
             tokio::time::sleep(Duration::from_millis(50)).await;
             Ok((actions.get(chosen).cloned().unwrap_or_default(), suspected_noop))
@@ -2695,7 +2701,8 @@ pub fn perform_action_at_point_in(
                             return Ok(actions.get(chosen).cloned());
                         }
                         Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
-                        None => return Err(anyhow!("doAction did not complete in time")),
+                        // Dispatched; the reply waits on a nested main loop.
+                        None => return Ok(actions.get(chosen).cloned()),
                     }
                 }
                 if let Some((depth, role, actions)) = passive_fallback {
@@ -3379,9 +3386,11 @@ pub fn perform_action_at_point(pid: u32, win_x: i32, win_y: i32) -> Result<Optio
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(chosen as i32)
-                .await
-                .map_err(|e| anyhow!("doAction failed: {e}"))?;
+            match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+                None => dlog!("doAction dispatched but not acknowledged in time"),
+            }
             Ok(target.actions.get(chosen).cloned())
         },
         || Ok(None),
@@ -3457,9 +3466,11 @@ pub fn perform_action_at_screen_point(
                 .action()
                 .await
                 .map_err(|e| anyhow!("Action unavailable: {e}"))?;
-            ap.do_action(chosen as i32)
-                .await
-                .map_err(|e| anyhow!("doAction failed: {e}"))?;
+            match call(ap.do_action(chosen as i32)).await {
+                Some(Ok(_)) => {}
+                Some(Err(e)) => return Err(anyhow!("doAction failed: {e}")),
+                None => dlog!("doAction dispatched but not acknowledged in time"),
+            }
             Ok(target.actions.get(chosen).cloned())
         },
         || Ok(None),

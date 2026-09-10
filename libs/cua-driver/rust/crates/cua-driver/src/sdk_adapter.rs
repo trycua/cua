@@ -57,6 +57,35 @@ pub struct SdkAdapter {
 }
 
 impl SdkAdapter {
+    pub fn create_envelope_receiver(
+        &self,
+        mode: cua_driver_sdk::SessionPermissionMode,
+    ) -> Result<
+        (
+            Arc<cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver>,
+            String,
+        ),
+        String,
+    > {
+        // Only the trusted launcher selects this mode. The runtime's immutable
+        // ceiling still rejects incompatible sessions.
+        let public_session = format!("http-{}", uuid::Uuid::new_v4());
+        let options = TrustedSessionOptions {
+            public_session: public_session.clone(),
+            mode,
+            ttl_seconds: 3600,
+            idle_ttl_seconds: 300,
+            capability_manifest_path: None,
+            bounded_manifest_path: None,
+        };
+        cua_driver_sdk::remote_receiver::DriverEnvelopeReceiver::for_driver(
+            self.driver.clone(),
+            options,
+        )
+        .map(|receiver| (receiver, public_session))
+        .map_err(|error| error.to_string())
+    }
+
     pub async fn load(driver: Arc<CuaDriver>) -> anyhow::Result<Arc<Self>> {
         let tools_json = driver
             .list_tools_json()
@@ -104,6 +133,10 @@ impl SdkAdapter {
 
     pub fn tools_list(&self) -> Value {
         self.tools_list.clone()
+    }
+
+    pub fn history(&self) -> Option<Arc<cua_driver_core::history::HistoryManager>> {
+        self.driver.local_history_manager()
     }
 
     pub fn is_known_tool(&self, name: &str) -> bool {

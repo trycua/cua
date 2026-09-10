@@ -521,7 +521,8 @@ fn portal_input_enabled() -> bool {
 
 #[cfg(target_os = "linux")]
 fn target_activation_available() -> bool {
-    crate::wayland::shell_helper::list_windows(None).is_some()
+    crate::wayland::kwin_helper::available()
+        || crate::wayland::shell_helper::list_windows(None).is_some()
 }
 
 #[cfg(not(target_os = "linux"))]

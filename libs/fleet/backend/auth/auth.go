@@ -21,7 +21,7 @@
 //
 // Two conjuncts read something beyond the token. pool_admission.rego reads the
 // request body; authz_ownership.rego — the namespace-tenancy boundary on
-// /api/svc, /api/orch and GET /api/namespaces/{name} — reads a Kubernetes RBAC
+// /api/svc and GET /api/namespaces/{name} — reads a Kubernetes RBAC
 // probe, delivered as input.facts by a FactProvider that handlers registers and
 // main.go binds. Both are separate leaves rather than rules folded into a
 // surface, so the expensive read only happens on the requests a cheap sibling
@@ -38,9 +38,12 @@ package auth
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strings"
@@ -50,6 +53,7 @@ import (
 
 	keyfunc "github.com/MicahParks/keyfunc/v2"
 	jwt "github.com/golang-jwt/jwt/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 var (
@@ -68,6 +72,60 @@ type GitHubTrustPolicy struct {
 
 type GitHubTrustResolver interface {
 	ResolveGitHubTrustPolicies(ctx context.Context, repository string) ([]GitHubTrustPolicy, error)
+}
+
+var ErrDatabaseUnavailable = errors.New("database unavailable")
+
+type databaseContextKey struct{}
+
+const DatabaseRequestTimeout = 15 * time.Second
+
+func DatabaseContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if databaseContext, ok := parent.Value(databaseContextKey{}).(context.Context); ok {
+		return databaseContext, func() {}
+	}
+	if deadline, ok := parent.Deadline(); ok && time.Until(deadline) <= DatabaseRequestTimeout {
+		return context.WithValue(parent, databaseContextKey{}, parent), func() {}
+	}
+	databaseContext, cancel := context.WithTimeout(parent, DatabaseRequestTimeout)
+	return context.WithValue(databaseContext, databaseContextKey{}, databaseContext), cancel
+}
+
+func IsDatabaseUnavailable(err error) bool {
+	return errors.Is(err, ErrDatabaseUnavailable) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+}
+
+func DatabaseUnavailable(err error) error {
+	if errors.Is(err, ErrDatabaseUnavailable) {
+		return err
+	}
+	return errors.Join(ErrDatabaseUnavailable, err)
+}
+
+func ClassifyDatabaseError(err error) error {
+	if err == nil || errors.Is(err, ErrDatabaseUnavailable) {
+		return err
+	}
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+		return errors.Join(DatabaseUnavailable(err), err)
+
+	}
+
+	var postgresError *pgconn.PgError
+	if errors.As(err, &postgresError) {
+		return err
+	}
+	var connectError *pgconn.ConnectError
+	if errors.As(err, &connectError) {
+		return errors.Join(DatabaseUnavailable(err), err)
+
+	}
+	var networkError net.Error
+	if errors.As(err, &networkError) || errors.Is(err, net.ErrClosed) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+		return errors.Join(DatabaseUnavailable(err), err)
+
+	}
+	return err
 }
 
 var githubTrustResolver GitHubTrustResolver
@@ -195,13 +253,20 @@ func validateKeycloak(raw string) (*User, error) {
 		ID:            str(claims, "sub"),
 		Name:          str(claims, "name"),
 		Email:         str(claims, "email"),
+		EmailVerified: boolean(claims, "email_verified"),
 		AZP:           str(claims, "azp"),
 		Namespace:     str(claims, "namespace"),
 		PrincipalType: PrincipalTypeUser,
 		Claims: map[string]string{
+			"sid":                str(claims, "sid"),
+			"session_state":      str(claims, "session_state"),
 			"preferred_username": str(claims, "preferred_username"),
 			"user_sub":           str(claims, "user_sub"),
 			"user_groups":        str(claims, "user_groups"),
+			"user_email":         str(claims, "user_email"),
+			"user_email_verified": fmt.Sprint(
+				boolean(claims, "user_email_verified"),
+			),
 		},
 	}, nil
 }
@@ -286,7 +351,8 @@ func validateGitHub(ctx context.Context, raw string) (*User, error) {
 func validateGitHubAudience(claims jwt.MapClaims, primary string, legacy []string) error {
 	audiences, err := claims.GetAudience()
 	if err != nil || len(audiences) == 0 {
-		return fmt.Errorf("missing or invalid github oidc audience")
+		return errors.Join(fmt.Errorf("missing or invalid github oidc audience"), err)
+
 	}
 	accepted := append([]string{primary}, legacy...)
 	for _, audience := range audiences {
@@ -313,4 +379,13 @@ func str(c jwt.MapClaims, k string) string {
 		}
 	}
 	return ""
+}
+
+func boolean(c jwt.MapClaims, k string) bool {
+	v, ok := c[k]
+	if !ok {
+		return false
+	}
+	value, ok := v.(bool)
+	return ok && value
 }

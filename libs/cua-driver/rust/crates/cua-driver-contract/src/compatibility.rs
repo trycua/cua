@@ -60,7 +60,18 @@ fn compare_schema(path: &str, portable: &Value, live: &Value, violations: &mut V
         return;
     };
 
-    check_keywords(path, "portable", portable_object.keys(), violations);
+    // A proof for the base schema also proves the subset for a conjunction
+    // with extra union constraints. Ignore only portable unions here: the
+    // base must independently imply every live constraint. Never discard a
+    // live union, which would broaden the schema we are proving against.
+    check_keywords(
+        path,
+        "portable",
+        portable_object
+            .keys()
+            .filter(|key| !matches!(key.as_str(), "anyOf" | "oneOf")),
+        violations,
+    );
     check_keywords(path, "live", live_object.keys(), violations);
 
     compare_type(path, portable, live, violations);
@@ -311,6 +322,23 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn portable_union_is_safe_only_when_base_schema_proves_subset() {
+        let portable = json!({"type":"object","properties":{"x":{"type":"number"}},"additionalProperties":false,
+            "anyOf":[{"required":["x"]}]});
+        let live = json!({"type":"object","properties":{"x":{"type":"number"}},"additionalProperties":false});
+        assert!(schema_subset_violations(&portable, &live).is_empty());
+        let mut requiring = live.clone();
+        requiring["required"] = json!(["x"]);
+        assert!(!schema_subset_violations(&portable, &requiring).is_empty());
+        assert!(!schema_subset_violations(&live, &portable).is_empty());
+        assert!(!schema_subset_violations(
+            &json!({"anyOf":[{"type":"number"}]}),
+            &json!({"type":"number"})
+        )
+        .is_empty());
+    }
 
     #[test]
     fn narrower_portable_object_is_accepted() {

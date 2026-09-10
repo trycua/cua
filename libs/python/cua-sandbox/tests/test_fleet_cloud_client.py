@@ -131,6 +131,23 @@ async def test_service_request_delegates_to_generated_client():
 
 
 @pytest.mark.asyncio
+async def test_wait_service_ready_sets_a_native_request_timeout():
+    client = _FleetClient.__new__(_FleetClient)
+    calls = []
+
+    async def service_request(sandbox, service, path, request):
+        calls.append((sandbox, service, path, request))
+        return HttpResponse(status=200, headers=[], body=b"")
+
+    client.service_request = service_request
+
+    await client.wait_service_ready("sandbox", "server")
+
+    _, _, _, request = calls[0]
+    assert request.timeout_secs == 30
+
+
+@pytest.mark.asyncio
 async def test_github_actions_token_provider_refreshes_and_caches_token():
     calls = []
 

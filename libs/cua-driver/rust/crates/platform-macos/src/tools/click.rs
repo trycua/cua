@@ -14,11 +14,11 @@
 //!   to full-window space using the most recent `zoom` context stored per-pid.
 
 use async_trait::async_trait;
-use cua_driver_contract::{ClickButton, ClickInput};
+use cua_driver_contract::ClickButton;
 use cua_driver_core::{
     protocol::ToolResult,
     tool::{Tool, ToolDef},
-    tool_args::parse_typed_projection,
+    tool_args::parse_legacy_click_input,
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -245,7 +245,7 @@ impl Tool for ClickTool {
                     "suggestion": "pass scope=\"desktop\"",
                 }));
             }
-            let input = match parse_typed_projection::<ClickInput>("click", &args) {
+            let input = match parse_legacy_click_input(&args) {
                 Ok(input) => input,
                 Err(result) => return result,
             };
@@ -1084,17 +1084,11 @@ impl Tool for ClickTool {
                                     // and Chromium-specific fields (f40, f51, f58, f91, f92) onto events
                                     // for better backgrounded-target delivery.
                                     if let Some(wid) = window_id {
-                                        if fg {
-                                            return crate::input::mouse::click_at_xy_with_window_local(
-                                                pid, screen_x, screen_y,
-                                                win_local_x, win_local_y,
-                                                wid, count, &m,
-                                            );
-                                        }
-                                        return crate::input::mouse::click_at_xy_chromium(
+                                        return crate::input::mouse::click_at_xy_with_window_local(
                                             pid, screen_x, screen_y,
                                             win_local_x, win_local_y,
                                             wid, count, &m,
+                                            crate::input::mouse::WindowClickDelivery::from_foreground(fg),
                                         );
                                     }
                                     crate::input::mouse::click_at_xy(pid, screen_x, screen_y, count, &m)
@@ -1277,6 +1271,7 @@ fn perform_ax_click(
                     window_id,
                     1,
                     &modifier_refs,
+                    crate::input::mouse::WindowClickDelivery::from_foreground(foreground),
                 )?;
             }
             // AppKit may publish a transient AXSelected transition while the
@@ -1286,8 +1281,10 @@ fn perform_ax_click(
             // every peer that was selected before delivery.
             std::thread::sleep(SELECTION_READBACK_SETTLE);
             let deadline = std::time::Instant::now() + SELECTION_READBACK_TIMEOUT;
+            let mut last_observation = None;
             loop {
                 if let Some((after, peers_preserved)) = selection.observe() {
+                    last_observation = Some((after, peers_preserved));
                     let verified = selection_readback_confirms(
                         before,
                         after,
@@ -1297,6 +1294,7 @@ fn perform_ax_click(
                     if verified {
                         std::thread::sleep(SELECTION_READBACK_STABILITY);
                         if let Some((stable_after, stable_peers_preserved)) = selection.observe() {
+                            last_observation = Some((stable_after, stable_peers_preserved));
                             if stable_after == after
                                 && selection_readback_confirms(
                                     before,
@@ -1329,13 +1327,14 @@ fn perform_ax_click(
             if modifiers.is_empty() {
                 anyhow::bail!(
                     "coordinate click did not produce a stable AXSelected transition; \
-                     retry after a fresh snapshot"
+                     last_readback={last_observation:?}; retry after a fresh snapshot"
                 );
             }
             anyhow::bail!(
                 "foreground modified coordinate click did not produce a stable AXSelected \
-                 transition while preserving the prior selection; take a fresh snapshot \
-                 before retrying"
+                 transition while preserving the prior selection; \
+                 before_selected={before}, last_readback={last_observation:?}; \
+                 take a fresh snapshot before retrying"
             );
         }
     }

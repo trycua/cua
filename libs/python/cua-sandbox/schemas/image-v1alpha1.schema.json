@@ -1,0 +1,478 @@
+{
+  "$id": "https://cua.ai/schemas/images.cua.ai/v1alpha1/image.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": {
+      "const": "images.cua.ai/v1alpha1",
+      "type": "string"
+    },
+    "kind": {
+      "const": "Image",
+      "type": "string"
+    },
+    "metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "annotations": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxProperties": 64,
+          "type": "object"
+        },
+        "labels": {
+          "additionalProperties": {
+            "maxLength": 4096,
+            "type": "string"
+          },
+          "maxProperties": 64,
+          "type": "object"
+        },
+        "name": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "type": "string"
+        },
+        "namespace": {
+          "maxLength": 63,
+          "minLength": 1,
+          "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "namespace"
+      ],
+      "title": "ImageObjectMeta",
+      "type": "object"
+    },
+    "spec": {
+      "additionalProperties": false,
+      "properties": {
+        "build": {
+          "additionalProperties": false,
+          "properties": {
+            "diskSize": {
+              "default": "40Gi",
+              "pattern": "^[1-9][0-9]*(Gi|Ti)$",
+              "type": "string"
+            },
+            "timeoutSeconds": {
+              "default": 7200,
+              "maximum": 86400,
+              "minimum": 60,
+              "type": "integer"
+            }
+          },
+          "title": "ImageBuildOptions",
+          "type": "object"
+        },
+        "metadata": {
+          "additionalProperties": false,
+          "properties": {
+            "tags": {
+              "additionalProperties": {
+                "maxLength": 256,
+                "type": "string"
+              },
+              "maxProperties": 32,
+              "type": "object"
+            }
+          },
+          "title": "ImageUserMetadata",
+          "type": "object"
+        },
+        "recipe": {
+          "additionalProperties": false,
+          "properties": {
+            "distro": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            },
+            "env": {
+              "additionalProperties": {
+                "maxLength": 8192,
+                "type": "string"
+              },
+              "maxProperties": 128,
+              "type": "object"
+            },
+            "files": {
+              "items": {
+                "additionalProperties": false,
+                "properties": {
+                  "destination": {
+                    "maxLength": 4096,
+                    "pattern": "^/.*",
+                    "type": "string"
+                  },
+                  "source": {
+                    "additionalProperties": false,
+                    "properties": {
+                      "digest": {
+                        "pattern": "^sha256:[0-9a-f]{64}$",
+                        "type": "string"
+                      },
+                      "reference": {
+                        "maxLength": 2048,
+                        "minLength": 1,
+                        "pattern": "^uploads/[a-z0-9]([-a-z0-9]*[a-z0-9])?/[A-Za-z0-9_-]+$",
+                        "type": "string"
+                      },
+                      "sizeBytes": {
+                        "format": "int64",
+                        "maximum": 9223372036854775807,
+                        "minimum": 0,
+                        "type": "integer"
+                      }
+                    },
+                    "required": [
+                      "reference",
+                      "digest",
+                      "sizeBytes"
+                    ],
+                    "title": "ImageFileReference",
+                    "type": "object"
+                  }
+                },
+                "required": [
+                  "source",
+                  "destination"
+                ],
+                "title": "ImageFile",
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "kind": {
+              "enum": [
+                "vm"
+              ],
+              "type": "string"
+            },
+            "layers": {
+              "items": {
+                "additionalProperties": false,
+                "oneOf": [
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "appId"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "command"
+                          ]
+                        }
+                      ]
+                    },
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "apt_install",
+                          "pip_install",
+                          "uv_install"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "packages"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "packages"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "command"
+                          ]
+                        }
+                      ]
+                    },
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "app_install"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "appId"
+                    ]
+                  },
+                  {
+                    "not": {
+                      "anyOf": [
+                        {
+                          "required": [
+                            "packages"
+                          ]
+                        },
+                        {
+                          "required": [
+                            "appId"
+                          ]
+                        }
+                      ]
+                    },
+                    "properties": {
+                      "type": {
+                        "enum": [
+                          "run"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "command"
+                    ]
+                  }
+                ],
+                "properties": {
+                  "appId": {
+                    "maxLength": 256,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "command": {
+                    "maxLength": 16384,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "packages": {
+                    "items": {
+                      "maxLength": 256,
+                      "minLength": 1,
+                      "type": "string"
+                    },
+                    "maxItems": 256,
+                    "minItems": 1,
+                    "type": "array"
+                  },
+                  "type": {
+                    "enum": [
+                      "apt_install",
+                      "pip_install",
+                      "uv_install",
+                      "app_install",
+                      "run"
+                    ],
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "type"
+                ],
+                "title": "ImageLayer",
+                "type": "object"
+              },
+              "maxItems": 128,
+              "type": "array"
+            },
+            "osType": {
+              "enum": [
+                "linux"
+              ],
+              "type": "string"
+            },
+            "ports": {
+              "items": {
+                "maximum": 65535,
+                "minimum": 1,
+                "type": "integer"
+              },
+              "maxItems": 32,
+              "type": "array",
+              "uniqueItems": true
+            },
+            "version": {
+              "maxLength": 64,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          "required": [
+            "osType",
+            "distro",
+            "version",
+            "kind",
+            "layers"
+          ],
+          "title": "ImageRecipe",
+          "type": "object"
+        }
+      },
+      "required": [
+        "recipe"
+      ],
+      "title": "ImageSpec",
+      "type": "object"
+    },
+    "status": {
+      "additionalProperties": false,
+      "properties": {
+        "artifacts": {
+          "additionalProperties": false,
+          "properties": {
+            "oci": {
+              "additionalProperties": false,
+              "properties": {
+                "digest": {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                "reference": {
+                  "maxLength": 2048,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reference",
+                "digest"
+              ],
+              "title": "ImageOciArtifact",
+              "type": "object"
+            },
+            "volumeSnapshot": {
+              "additionalProperties": false,
+              "properties": {
+                "name": {
+                  "maxLength": 253,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "namespace": {
+                  "maxLength": 63,
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "namespace",
+                "name"
+              ],
+              "title": "ImageVolumeSnapshotArtifact",
+              "type": "object"
+            }
+          },
+          "title": "ImageArtifacts",
+          "type": "object"
+        },
+        "buildIdentity": {
+          "maxLength": 63,
+          "type": "string"
+        },
+        "conditions": {
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "lastTransitionTime": {
+                "format": "date-time",
+                "type": "string"
+              },
+              "message": {
+                "maxLength": 32768,
+                "type": "string"
+              },
+              "observedGeneration": {
+                "format": "int64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "reason": {
+                "maxLength": 128,
+                "minLength": 1,
+                "type": "string"
+              },
+              "status": {
+                "enum": [
+                  "True",
+                  "False",
+                  "Unknown"
+                ],
+                "type": "string"
+              },
+              "type": {
+                "maxLength": 64,
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "status",
+              "reason",
+              "lastTransitionTime"
+            ],
+            "title": "ImageCondition",
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "logs": {
+          "additionalProperties": false,
+          "properties": {
+            "livePodName": {
+              "maxLength": 253,
+              "type": "string"
+            },
+            "retainedReference": {
+              "maxLength": 2048,
+              "type": "string"
+            }
+          },
+          "title": "ImageLogs",
+          "type": "object"
+        },
+        "observedGeneration": {
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "phase": {
+          "enum": [
+            "Pending",
+            "Validating",
+            "Building",
+            "PushingOCI",
+            "Importing",
+            "Quiescing",
+            "Snapshotting",
+            "Ready",
+            "Failed",
+            "Cancelling"
+          ],
+          "type": "string"
+        },
+        "recipeDigest": {
+          "pattern": "^sha256:[0-9a-f]{64}$",
+          "type": "string"
+        }
+      },
+      "title": "ImageStatus",
+      "type": "object"
+    }
+  },
+  "required": [
+    "spec",
+    "apiVersion",
+    "kind",
+    "metadata"
+  ],
+  "title": "ImageResource",
+  "type": "object"
+}

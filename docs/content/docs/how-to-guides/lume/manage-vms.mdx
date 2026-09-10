@@ -66,6 +66,25 @@ Closing the native window only hides it; it does not stop the guest. Reopen it
 from Lume's Dock icon, **Window → Show VM Window**, or another `lume attach`
 command. The older `--no-display` flag remains an alias for `--display none`.
 
+### Run without a VNC server
+
+`--display` chooses a local viewer, but Lume still starts a VNC server in every
+display mode so automation and `lume attach --display vnc` keep working. Opt out
+of the VNC server entirely with `--vnc disabled`:
+
+```bash
+lume run macos-tahoe --display none --vnc disabled
+```
+
+That run binds no VNC port, writes no VNC password to the guest, and reports
+`"vncUrl": null` in `lume get` and `lume list`. `lume stop`, `lume delete`, and
+running status still work across processes, including for `--detach` runs.
+
+`--vnc disabled` is rejected together with `--display vnc`, `--vnc-port`, or
+`--vnc-password`, since each of those needs a VNC server. Guest clipboard
+shortcuts in the native viewer travel over VNC, so they are unavailable in a
+VNC-disabled run.
+
 ### Copy files into a native guest
 
 Drop one or more files or folders from Finder onto the native VM screen. Lume

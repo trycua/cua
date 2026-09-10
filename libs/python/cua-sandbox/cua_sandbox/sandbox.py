@@ -5,10 +5,12 @@ as interface objects backed by a Transport.
 
 Usage::
 
-    from cua_sandbox import Sandbox, Image
+    from cua_sandbox import Image, Pool, Sandbox
 
-    # Provision a new persistent sandbox
-    sb = await Sandbox.create(Image.desktop("ubuntu"))
+    # Provision a persistent sandbox from an explicitly named pool
+    # (pool names are globally unique across accounts)
+    pool = await Pool.apply(Image.desktop("ubuntu"), name="my-pool")
+    sb = await Sandbox.create(pool=pool, name="my-claim")
     await sb.shell.run("uname -a")
     await sb.disconnect()
 
@@ -29,6 +31,7 @@ from __future__ import annotations
 
 import logging
 import random
+import secrets
 import time
 from collections.abc import Mapping
 from contextlib import asynccontextmanager
@@ -74,6 +77,7 @@ from cua_sandbox.interfaces import (
     Tunnel,
     Window,
 )
+from cua_sandbox.interfaces.driver import Driver
 from cua_sandbox.transport.base import Transport
 from cua_sandbox.transport.cloud import CloudTransport
 from cua_sandbox.transport.fleet_cloud import FleetCloudTransport
@@ -190,6 +194,29 @@ class _ConnectResult:
             await self._instance.disconnect()
 
 
+def _remove_orphan_container(name: str) -> bool:
+    """Remove a container left behind by a launch that never wrote state.
+
+    A local launch that times out during the readiness probe leaves a running
+    container and no state file, which put it beyond the reach of
+    ``Sandbox.delete``. Returns whether a container was actually removed.
+    """
+    import subprocess
+
+    try:
+        exists = subprocess.run(
+            ["docker", "inspect", "--type", "container", name],
+            capture_output=True,
+        )
+        if exists.returncode != 0:
+            return False
+        removed = subprocess.run(["docker", "rm", "-f", name], capture_output=True)
+        return removed.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        # Docker missing or unusable — no orphan we can claim to have removed.
+        return False
+
+
 def _auto_runtime(image: Image) -> "Runtime":
     """Pick a runtime automatically based on image.os_type and image.kind."""
     import platform as _plat
@@ -233,6 +260,24 @@ def _auto_runtime(image: Image) -> "Runtime":
 
     # Linux VM or Windows VM → prefer Docker-wrapped QEMU; fall back to bare-metal
     from cua_sandbox.runtime.qemu import QEMURuntime
+
+    if image.os_type == "linux":
+        # A Linux VM boots the pinned containerDisk under bare-metal QEMU — the
+        # same disk Fleet cloud boots. Docker-wrapped QEMU cannot reach that path
+        # at all: resolve_image() hands it the XFCE *container* image, so asking
+        # for a VM used to quietly get you a container.
+        from cua_sandbox.runtime.compat import _has_qemu
+
+        if not _has_qemu():
+            raise RuntimeError(
+                "Image.linux() is a VM and needs QEMU, which was not found on "
+                "this host. Install it:\n"
+                "  Debian/Ubuntu:  sudo apt install qemu-system-x86\n"
+                "  Fedora/RHEL:    sudo dnf install qemu-system-x86\n"
+                "  macOS:          brew install qemu\n"
+                "Or pass an explicit runtime= if you want a different one."
+            )
+        return QEMURuntime(mode="bare-metal")
 
     if image.os_type == "windows":
         # Windows bare-metal QEMU works on any host with qemu-system-x86_64
@@ -331,6 +376,7 @@ class Sandbox:
         self.mobile = Mobile(transport)
         self.tunnel = Tunnel(transport)
         self.services = Services(transport)
+        self.driver = Driver(transport)
         _os = _runtime_info.environment if _runtime_info and _runtime_info.environment else "linux"
         self.apps = Apps(transport, os_type=_os)
 
@@ -342,7 +388,36 @@ class Sandbox:
 
     async def disconnect(self) -> None:
         """Drop the transport connection. The sandbox keeps running."""
+        await self.driver.close()
         await self._transport.disconnect()
+
+    @property
+    def exposed_ports(self) -> dict:
+        """Map each Image.expose() port to the host port forwarding it.
+
+        Local sandboxes forward exposed ports to free host ports chosen at boot,
+        so the mapping is only knowable at runtime. Reading it from the saved
+        state as well means a reconnecting caller can still find the port rather
+        than it living only on the object create() returned. Empty when the
+        runtime forwards nothing (Fleet publishes services instead — use
+        tunnel.forward()).
+        """
+        info = getattr(self, "_runtime_info", None)
+        ports = getattr(info, "exposed_ports", None) if info else None
+        if ports:
+            return dict(ports)
+        name = getattr(self, "name", None)
+        if name:
+            try:
+                from cua_sandbox import sandbox_state
+
+                saved = sandbox_state.load(name) or {}
+            except Exception:  # noqa: BLE001 - a missing state file is not an error here
+                saved = {}
+            stored = saved.get("exposed_ports") or {}
+            # JSON object keys are strings; callers index by guest port int.
+            return {int(guest): host for guest, host in stored.items()}
+        return {}
 
     @property
     def claim_name(self) -> str | None:
@@ -389,6 +464,7 @@ class Sandbox:
             return
         if self._claim_handle is None:
             raise NotImplementedError("close is only supported for Fleet claims")
+        await self.driver.close()
         claim_name = self.claim_name
         try:
             await self._claim_handle.release()
@@ -454,7 +530,7 @@ class Sandbox:
         # Run each cleanup step independently so a failure in one
         # (e.g. disconnect timeout) doesn't prevent the VM from being deleted.
         try:
-            await self._transport.disconnect()
+            await self.disconnect()
         except Exception:
             logger.warning("Failed to disconnect transport for sandbox %r", self.name)
         if isinstance(self._transport, (CloudTransport, FleetCloudTransport)):
@@ -544,8 +620,9 @@ class Sandbox:
         """Provision or claim a persistent sandbox and return it connected.
 
         Supplying ``pool`` claims from an existing Fleet pool without changing
-        its configuration. Otherwise, registry images are applied as a
-        deterministic reusable pool before a claim is acquired.
+        its configuration. Fleet registry images require an explicitly named
+        pool — apply one with ``Pool.apply(image, name=...)`` and pass it as
+        ``pool=`` — because pool names are globally unique across accounts.
         """
         from cua_sandbox.pool import Pool
 
@@ -592,46 +669,24 @@ class Sandbox:
                 await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
             return sandbox
 
+        from cua_sandbox.image import cloud_registry_image
+
         fleet_image = (
             image is not None
-            and image._registry is not None
+            and cloud_registry_image(image) is not None
             and cls._uses_fleet(api_key)
             and not local
             and runtime is None
         )
         if fleet_image:
-            if disk_gb is not None or region != "us-east-1" or request_timeout is not None:
-                raise NotImplementedError("the requested option is not supported by Fleet")
-            services = {
-                "server": server_port,
-                **{f"port-{port}": port for port in image._ports if port != server_port},
-            }
-            resolved_pool = await Pool.apply(
-                image,
-                replicas=replicas,
-                cpu=cpu,
-                memory_mb=memory_mb,
-                services=services,
+            raise ValueError(
+                "Sandbox.create requires an explicitly named pool for Fleet "
+                "registry images because pool names are globally unique "
+                "across accounts. Apply a pool first, then claim from it:\n"
+                '    pool = await Pool.apply(image, name="my-pool")\n'
+                '    sandbox = await Sandbox.create(pool=pool, name="my-claim")\n'
+                "Or use Sandbox.ephemeral(image, ...) for a disposable sandbox."
             )
-            sandbox = await resolved_pool.claim(
-                name=name, spec=claim_spec, service=service, time_to_start=time_to_start
-            )
-            sandbox_claim_name = getattr(sandbox, "claim_name", None)
-            sandbox_pool_name = getattr(sandbox, "pool_name", None)
-            claim_name = (
-                sandbox_claim_name
-                if isinstance(sandbox_claim_name, str) and sandbox_claim_name
-                else name
-            )
-            pool_name = (
-                sandbox_pool_name
-                if isinstance(sandbox_pool_name, str) and sandbox_pool_name
-                else resolved_pool.name
-            )
-            await _keep_alive_or_close(sandbox, keep_alive_minutes)
-            if claim_name is not None:
-                await _save_fleet_claim_or_close(sandbox, claim_name, pool_name)
-            return sandbox
 
         if image is None:
             raise ValueError("image is required when pool is omitted")
@@ -739,17 +794,23 @@ class Sandbox:
         server_port: int = 8000,
         telemetry_enabled: bool = True,
     ) -> AsyncIterator["Sandbox"]:
+        from cua_sandbox.image import cloud_registry_image
         from cua_sandbox.pool import Pool
 
         fleet_image = (
             image is not None
-            and image._registry is not None
+            and cloud_registry_image(image) is not None
             and cls._uses_fleet(api_key)
             and not local
             and runtime is None
         )
         if keep_pool and not fleet_image:
             raise ValueError("keep_pool is only supported for Fleet registry images")
+        if keep_pool and name is None:
+            raise ValueError(
+                "keep_pool requires name= so later runs can find and reuse the "
+                "kept pool; pool names are globally unique across accounts"
+            )
 
         if pool is not None:
             sandbox = await cls.create(
@@ -795,14 +856,16 @@ class Sandbox:
                 "server": server_port,
                 **{f"port-{port}": port for port in image._ports if port != server_port},
             }
-            pool_options = {"name": name} if name is not None else {}
+            # A random pool name keeps this disposable pool out of foreign
+            # namespaces: pool names are globally unique across accounts.
+            pool_name = name if name is not None else f"cua-eph-{secrets.token_hex(6)}"
             owned_pool = await Pool.apply(
                 image,
+                name=pool_name,
                 replicas=replicas,
                 cpu=cpu,
                 memory_mb=memory_mb,
                 services=services,
-                **pool_options,
             )
             sandbox = None
             try:
@@ -1295,6 +1358,10 @@ class Sandbox:
 
             subprocess.run(["docker", "stop", name], capture_output=True)
             subprocess.run(["docker", "rm", name], capture_output=True)
+        elif not _remove_orphan_container(name):
+            # No state file and no container by that name — deleting nothing at
+            # all used to report success, so a typo looked like a deletion.
+            raise ValueError(f"No local sandbox named {name!r}")
         sandbox_state.delete(name)
 
     # ── Internal factory ─────────────────────────────────────────────────
@@ -1449,6 +1516,7 @@ class Sandbox:
             if not any([ws_url, http_url]):
                 transport = _make_transport(
                     api_key=api_key,
+                    image=image,
                     name=name,
                     cpu=cpu,
                     memory_mb=memory_mb,
@@ -1466,7 +1534,7 @@ class Sandbox:
             runtime = _auto_runtime(image)
         if image and runtime:
             sb_name = name or _random_name()
-            rt_info = await runtime.start(image, sb_name)
+            rt_info = await runtime.start(image, sb_name, ephemeral=bool(ephemeral))
             if rt_info.environment == "android" and not rt_info.qmp_port:
                 if rt_info.grpc_port:
                     from cua_sandbox.transport.grpc_emulator import (
@@ -1834,6 +1902,7 @@ def _make_transport(
     http_url: Optional[str] = None,
     api_key: Optional[str] = None,
     container_name: Optional[str] = None,
+    image: Optional[Image] = None,
     name: Optional[str] = None,
     cpu: Optional[int] = None,
     memory_mb: Optional[int] = None,
@@ -1847,6 +1916,7 @@ def _make_transport(
     return CloudTransport(
         name=name,
         api_key=api_key,
+        image=image,
         cpu=cpu,
         memory_mb=memory_mb,
         disk_gb=disk_gb,

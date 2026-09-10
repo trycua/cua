@@ -27,6 +27,11 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
+use cua_driver_contract::{
+    ActionTarget, ClickInput, ClickPosition, GetWindowStateInput, InputDeliveryMode, ListAppsInput,
+    ListWindowsInput, WindowStateOutput,
+};
+use cua_driver_sdk::{CuaDriver, DriverError};
 use cua_driver_testkit::ax::{element_index_by_id, element_index_containing};
 use cua_driver_testkit::e2e::{
     recording_evidence, shared_web_route, write_declaration_from_env, write_result_from_env,
@@ -622,12 +627,59 @@ fn assert_fixture_text(fixture: &Fixture, id: &str, expected: &str) {
     }
 }
 
-fn fixture_marker_number(fixture: &Fixture, id: &str, prefix: &str) -> Option<u64> {
-    fixture
-        .journal
-        .text(id)
-        .and_then(|text| text.strip_prefix(prefix).map(str::to_owned))
-        .and_then(|value| value.parse().ok())
+fn fixture_scroll_reached_viewport(state: &serde_json::Value) -> bool {
+    let scroll = &state["scroll-tall"];
+    let (Some(offset), Some(page)) = (
+        scroll["scrollTop"].as_f64(),
+        scroll["clientHeight"].as_f64(),
+    ) else {
+        return false;
+    };
+    offset.is_finite() && page.is_finite() && page > 0.0 && offset >= page
+}
+
+#[test]
+fn scroll_oracle_reads_live_geometry_not_event_mirrors() {
+    use serde_json::json;
+    let mut state = json!({
+        "scroll-tall": {"scrollTop": 208, "clientHeight": 128},
+        "lbl-scroll-offset": {"text": "scroll_offset=104"},
+        "lbl-scroll-client-height": {"text": "scroll_client_height=128"}
+    });
+    assert!(fixture_scroll_reached_viewport(&state));
+    state["scroll-tall"]["scrollTop"] = json!(128.25);
+    assert!(fixture_scroll_reached_viewport(&state));
+    state["lbl-scroll-offset"]["text"] = json!("scroll_offset=256");
+    for offset in [0.0, 104.0, 127.99] {
+        state["scroll-tall"]["scrollTop"] = json!(offset);
+        assert!(!fixture_scroll_reached_viewport(&state));
+    }
+}
+
+#[test]
+fn scroll_oracle_rejects_missing_or_invalid_geometry() {
+    use serde_json::{json, Value};
+    for invalid in [Value::Null, json!("128"), json!(true), json!({}), json!([])] {
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": invalid.clone(), "clientHeight": 128}
+        })));
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": 256, "clientHeight": invalid}
+        })));
+    }
+    for height in [0, -1] {
+        assert!(!fixture_scroll_reached_viewport(&json!({
+            "scroll-tall": {"scrollTop": 256, "clientHeight": height}
+        })));
+    }
+    for absent in [
+        json!({}),
+        json!({"scroll-tall": {}}),
+        json!({"scroll-tall": {"scrollTop": 256}}),
+        json!({"scroll-tall": {"clientHeight": 128}}),
+    ] {
+        assert!(!fixture_scroll_reached_viewport(&absent));
+    }
 }
 
 fn action_target_args(
@@ -656,12 +708,25 @@ fn action_target_args(
         let (x, y) = element_center(state, index);
         let local_x = (x - origin.0) * scale;
         let local_y = (y - origin.1) * scale;
-        let width = state.structured()["screenshot_width"]
-            .as_f64()
-            .expect("PX action requires screenshot_width");
-        let height = state.structured()["screenshot_height"]
-            .as_f64()
-            .expect("PX action requires screenshot_height");
+        let width = state.structured()["screenshot_width"].as_f64();
+        let height = state.structured()["screenshot_height"].as_f64();
+        if width.is_none() || height.is_none() {
+            // Native Wayland may intentionally omit a per-window crop size.
+            // Background pixel rows are typed refusals in that environment;
+            // use inert coordinates so the driver can publish that refusal
+            // without requiring an unverifiable screenshot oracle.
+            if delivery == "background"
+                && cua_driver_testkit::e2e::DisplayServer::current()
+                    == cua_driver_testkit::e2e::DisplayServer::Wayland
+            {
+                object.insert("x".to_owned(), serde_json::json!(0.0));
+                object.insert("y".to_owned(), serde_json::json!(0.0));
+                return args;
+            }
+            panic!("PX action requires screenshot dimensions for {delivery} delivery");
+        }
+        let width = width.unwrap();
+        let height = height.unwrap();
         eprintln!(
             "[shared-px] {} target={id} screen=({x:.1},{y:.1}) origin=({:.1},{:.1}) scale={scale:.3} local=({local_x:.1},{local_y:.1}) capture=({width:.1}x{height:.1})",
             fixture.name, origin.0, origin.1
@@ -698,11 +763,236 @@ fn run_pointer_action(
         response.text()
     );
     assert_fixture_contains(fixture, expected_marker);
+    if tool == "click" {
+        assert_native_hyprland_semantic_route(
+            fixture,
+            "left_click",
+            addressing,
+            delivery,
+            &response,
+        );
+    }
     delivered_observation()
 }
 
 fn delivered_observation() -> Observation {
     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
+}
+
+fn sdk_window_input(fixture: &Fixture) -> GetWindowStateInput {
+    GetWindowStateInput {
+        pid: fixture.pid,
+        window_id: fixture.wid,
+        session: None,
+        query: None,
+        include_accessibility_tree: Some(true),
+        include_screenshot: Some(false),
+        screenshot_out_file: None,
+        max_elements: None,
+        max_depth: None,
+        max_dimension: None,
+    }
+}
+
+fn sdk_click_token(state: &WindowStateOutput) -> String {
+    let elements = state.elements.as_ref().expect("typed AX elements");
+    // The fixture's aria-label is its accessible name. Native adapters need
+    // not preserve the DOM id or visible text in the rendered markdown.
+    [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ]
+    .into_iter()
+    .find_map(|label| {
+        elements
+            .iter()
+            .find(|element| element.label.as_deref() == Some(label))
+            .and_then(|element| element.element_token.clone())
+    })
+    .unwrap_or_else(|| panic!("typed click target has no snapshot-bound token: {elements:?}"))
+}
+
+#[test]
+fn typed_click_target_uses_accessible_label_without_markdown_ids() {
+    for label in [
+        "border-click-target",
+        "Click target (left / right / double)",
+    ] {
+        let state: WindowStateOutput = serde_json::from_value(serde_json::json!({
+            "pid": 42,
+            "window_id": 73,
+            "tree_markdown": "[9] button \"border-click-target\"",
+            "elements": [{
+                "element_index": 9,
+                "role": "button",
+                "depth": 1,
+                "label": label,
+                "element_token": "snapshot-token"
+            }]
+        }))
+        .unwrap();
+        assert_eq!(sdk_click_token(&state), "snapshot-token");
+    }
+}
+
+fn sdk_background_click(fixture: &Fixture, token: String) -> ClickInput {
+    ClickInput {
+        target: ActionTarget::Window {
+            pid: fixture.pid,
+            window_id: fixture.wid,
+        },
+        position: ClickPosition::Element {
+            element_token: token,
+        },
+        delivery_mode: InputDeliveryMode::Background,
+        session: None,
+        button: None,
+        count: None,
+    }
+}
+
+fn run_typed_sdk_native_window(fixture: &mut Fixture) -> Observation {
+    let runtime = tokio::runtime::Runtime::new().expect("SDK test runtime");
+    // The macOS harness authorizes the installed daemon, not cargo's test
+    // executable. Exercise the typed SDK over that verified native backend.
+    #[cfg(target_os = "macos")]
+    let sdk = {
+        let socket = std::env::var("CUA_E2E_MACOS_DAEMON_SOCKET")
+            .expect("canonical macOS harness must specify its authorized daemon socket");
+        CuaDriver::connect(Some(socket)).expect("connect SDK to authorized macOS daemon")
+    };
+    #[cfg(not(target_os = "macos"))]
+    let sdk = {
+        use cua_driver_sdk::{
+            ConfiguredDriverOptions, RuntimeAuthorizationOptions, SessionPermissionMode,
+        };
+
+        // Match the disposable desktop opt-in that McpDriver applies only to
+        // its child process, without changing this test process's environment.
+        if std::env::var_os("CUA_E2E_UNRESTRICTED_GUI").is_some() {
+            CuaDriver::create_configured(ConfiguredDriverOptions {
+                claude_code_compatibility: false,
+                authorization: RuntimeAuthorizationOptions {
+                    allowed_modes: vec![SessionPermissionMode::Unrestricted],
+                    compatibility_mode: SessionPermissionMode::Unrestricted,
+                    compatibility_capability_manifest_path: None,
+                    compatibility_bounded_manifest_path: None,
+                    unrestricted_acknowledged: true,
+                    max_session_ttl_seconds: 300,
+                    max_idle_ttl_seconds: 300,
+                },
+            })
+        } else {
+            CuaDriver::create(None)
+        }
+        .expect("create in-process native SDK runtime")
+    };
+
+    runtime.block_on(async {
+        let apps = sdk
+            .list_apps(ListAppsInput {})
+            .await
+            .expect("typed app discovery");
+        assert!(
+            apps.apps
+                .iter()
+                .any(|app| app.pid == fixture.pid && app.running),
+            "typed app discovery must include the running fixture"
+        );
+        let windows = sdk
+            .list_windows(ListWindowsInput {
+                pid: None,
+                on_screen_only: None,
+            })
+            .await
+            .expect("typed window discovery");
+        assert!(
+            windows
+                .windows
+                .iter()
+                .any(|window| window.window_id == fixture.wid && window.pid == Some(fixture.pid)),
+            "typed window discovery must preserve exact fixture identity"
+        );
+
+        let before = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed initial window state");
+        assert_eq!((before.pid, before.window_id), (fixture.pid, fixture.wid));
+        let stale_token = sdk_click_token(&before);
+        let current = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed fresh window state invalidates previous token");
+        let current_token = sdk_click_token(&current);
+        assert_ne!(
+            stale_token, current_token,
+            "fresh snapshot must mint fresh tokens"
+        );
+        let journal_before = fixture.journal.snapshot();
+        let stale = sdk
+            .click(sdk_background_click(fixture, stale_token))
+            .await
+            .expect_err("stale SDK token must refuse");
+        assert!(
+            matches!(stale, DriverError::Tool { ref tool, ref error_code, .. }
+            if tool == "click" && error_code == "stale_element_token"),
+            "expected typed stale-token refusal, got {stale:?}"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "stale SDK token changed fixture state"
+        );
+
+        let other_window = windows
+            .windows
+            .iter()
+            .find(|window| window.window_id != fixture.wid && window.pid != Some(fixture.pid))
+            .expect("foreground sentinel supplies a different native window");
+        let mut mismatched = sdk_background_click(fixture, current_token.clone());
+        mismatched.target = ActionTarget::Window {
+            pid: fixture.pid,
+            window_id: other_window.window_id,
+        };
+        let mismatch = sdk
+            .click(mismatched)
+            .await
+            .expect_err("SDK token must not address a different window");
+        assert!(
+            matches!(mismatch, DriverError::Tool { ref tool, ref error_code, .. }
+            if tool == "click" && matches!(error_code.as_str(),
+                "conflicting_element_target" | "window_target_not_found" | "window_target_mismatch")),
+            "expected typed window-identity refusal, got {mismatch:?}"
+        );
+        thread::sleep(Duration::from_millis(150));
+        assert_eq!(
+            fixture.journal.snapshot(),
+            journal_before,
+            "mismatched SDK window identity changed fixture state"
+        );
+
+        sdk.click(sdk_background_click(fixture, current_token.clone()))
+            .await
+            .expect("typed background element click");
+        assert_fixture_contains(fixture, "last_action=left_click");
+        // Match the fixture's delivery contract: its DOM journal is the effect
+        // oracle because embedded browsers can retain stale accessible text.
+        // A fresh native observation must still preserve identity and tokens.
+        let after = sdk
+            .get_window_state(sdk_window_input(fixture))
+            .await
+            .expect("typed post-action window state");
+        assert_eq!((after.pid, after.window_id), (fixture.pid, fixture.wid));
+        assert_ne!(
+            sdk_click_token(&after),
+            current_token,
+            "post-action observation must mint a fresh snapshot-bound token"
+        );
+        sdk.shutdown().await.expect("shut down typed SDK client");
+    });
+    delivered_observation()
 }
 
 fn browser_ref_by_label(snapshot: &ToolResponse, label_fragment: &str) -> String {
@@ -1022,14 +1312,10 @@ fn run_scroll_action(fixture: &mut Fixture, addressing: &str, delivery: &str) ->
         response.text(),
         response.raw
     );
+    assert_native_hyprland_semantic_route(fixture, "scroll", addressing, delivery, &response);
     let deadline = Instant::now() + Duration::from_secs(2);
     loop {
-        let offset =
-            fixture_marker_number(fixture, "lbl-scroll-offset", "scroll_offset=").unwrap_or(0);
-        let page =
-            fixture_marker_number(fixture, "lbl-scroll-client-height", "scroll_client_height=")
-                .unwrap_or(0);
-        if page > 0 && offset >= page {
+        if fixture_scroll_reached_viewport(&fixture.journal.snapshot()) {
             break;
         }
         assert!(
@@ -1101,6 +1387,7 @@ fn run_child_window_action(fixture: &mut Fixture, addressing: &str, delivery: &s
         response.text()
     );
     assert_fixture_contains(fixture, "child_windows=1");
+    assert_native_hyprland_semantic_route(fixture, "child_window", addressing, delivery, &response);
     delivered_observation()
 }
 
@@ -1165,7 +1452,92 @@ fn linux_real_pointer_input_available() -> bool {
     false
 }
 
+fn native_hyprland_semantic_input_available() -> bool {
+    #[cfg(target_os = "linux")]
+    {
+        // AT-SPI does not need an input-plugin socket. DISPLAY can coexist
+        // with native Wayland for XWayland clients in the same desktop.
+        platform_linux::wayland::wayland_input_enabled()
+            && platform_linux::wayland::hyprland::is_session()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        false
+    }
+}
+
+fn native_hyprland_semantic_case(
+    available: bool,
+    host: &str,
+    action: &str,
+    targeting: Targeting,
+    delivery: Delivery,
+) -> bool {
+    // These fixture controls have proven focus-free AT-SPI actions. Do not
+    // extend this to other PX targets merely because they accept a click.
+    available
+        && delivery == Delivery::Background
+        && matches!(
+            (host, action, targeting),
+            ("electron" | "tauri", "left_click", Targeting::Px)
+                | ("electron" | "tauri", "child_window", Targeting::Px)
+                | ("electron", "scroll", Targeting::Ax)
+        )
+}
+
+fn assert_native_hyprland_semantic_route(
+    fixture: &Fixture,
+    action: &str,
+    addressing: &str,
+    delivery: &str,
+    response: &ToolResponse,
+) {
+    let targeting = match addressing {
+        "ax" => Targeting::Ax,
+        "px" => Targeting::Px,
+        _ => Targeting::NotApplicable,
+    };
+    if delivery == "background"
+        && native_hyprland_semantic_case(
+            native_hyprland_semantic_input_available(),
+            fixture.name,
+            action,
+            targeting,
+            Delivery::Background,
+        )
+    {
+        assert_eq!(
+            response.action_route(),
+            Some("accessibility"),
+            "{}",
+            response.raw
+        );
+        assert_eq!(
+            response.action_delivery_mode(),
+            Some("background"),
+            "{}",
+            response.raw
+        );
+    }
+}
+
 fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) -> CaseSpec {
+    shared_case_with_native_hyprland(
+        spec,
+        action,
+        addressing,
+        delivery,
+        native_hyprland_semantic_input_available(),
+    )
+}
+
+fn shared_case_with_native_hyprland(
+    spec: &HostSpec,
+    action: &str,
+    addressing: &str,
+    delivery: &str,
+    native_hyprland: bool,
+) -> CaseSpec {
     let targeting = match addressing {
         "ax" => Targeting::Ax,
         "px" => Targeting::Px,
@@ -1178,8 +1550,11 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
     };
     let scenario = format!("{action}_{addressing}_{delivery}");
     let cell_id = format!("{}-{}-{scenario}", std::env::consts::OS, spec.name).replace('_', "-");
-    let expected_refusals = if cfg!(target_os = "windows") && delivery_kind == Delivery::Background
-    {
+    let native_semantic =
+        native_hyprland_semantic_case(native_hyprland, spec.name, action, targeting, delivery_kind);
+    let expected_refusals = if native_semantic {
+        Vec::new()
+    } else if cfg!(target_os = "windows") && delivery_kind == Delivery::Background {
         match (spec.name, action, targeting) {
             ("electron", "right_click" | "double_click" | "drag", _) => {
                 vec![RefusalCode::BackgroundOccluded]
@@ -1234,6 +1609,13 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
             | ("press_key" | "hotkey", _) => {
                 vec![RefusalCode::BackgroundUnavailable]
             }
+            ("left_click" | "child_window", Targeting::Px)
+                if cua_driver_testkit::e2e::DisplayServer::current()
+                    == cua_driver_testkit::e2e::DisplayServer::Wayland
+                    && !linux_real_pointer_input_available() =>
+            {
+                vec![RefusalCode::BackgroundUnavailable]
+            }
             ("right_click" | "double_click" | "scroll", _) | ("drag", Targeting::Px)
                 if !linux_real_pointer_input_available() =>
             {
@@ -1273,7 +1655,9 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         delivery_kind,
     )
     .unwrap_or_else(|error| panic!("{error}"));
-    if cfg!(target_os = "windows")
+    if native_semantic {
+        route = cua_driver_testkit::e2e::DriverRoute::LinuxAtSpiAction;
+    } else if cfg!(target_os = "windows")
         && spec.name == "electron"
         && action == "left_click"
         && delivery_kind == Delivery::Background
@@ -1305,6 +1689,90 @@ fn shared_case(spec: &HostSpec, action: &str, addressing: &str, delivery: &str) 
         case.expecting_refusal(expected_refusals)
     } else {
         case
+    }
+}
+
+#[test]
+fn native_hyprland_semantic_expectations_are_limited_to_proven_cells() {
+    for host in ["electron", "tauri", "wkwebview", "webview2"] {
+        for action in [
+            "left_click",
+            "child_window",
+            "right_click",
+            "double_click",
+            "scroll",
+            "drag",
+            "type_text",
+            "type_submit",
+            "press_key",
+            "hotkey",
+            "editor_save",
+        ] {
+            for targeting in [Targeting::Ax, Targeting::Px] {
+                let expected = matches!(
+                    (host, action, targeting),
+                    ("electron" | "tauri", "left_click", Targeting::Px)
+                        | ("electron" | "tauri", "child_window", Targeting::Px)
+                        | ("electron", "scroll", Targeting::Ax)
+                );
+                assert_eq!(
+                    native_hyprland_semantic_case(
+                        true,
+                        host,
+                        action,
+                        targeting,
+                        Delivery::Background
+                    ),
+                    expected,
+                    "{host}/{action}/{targeting:?}",
+                );
+                assert!(!native_hyprland_semantic_case(
+                    false,
+                    host,
+                    action,
+                    targeting,
+                    Delivery::Background
+                ));
+                assert!(!native_hyprland_semantic_case(
+                    true,
+                    host,
+                    action,
+                    targeting,
+                    Delivery::Foreground
+                ));
+            }
+        }
+    }
+}
+
+#[test]
+fn native_hyprland_semantic_declarations_require_delivery_and_all_background_oracles() {
+    use cua_driver_testkit::e2e::{ContractExpectation, DriverRoute};
+
+    for (host, action, addressing) in [
+        ("electron", "left_click", "px"),
+        ("tauri", "left_click", "px"),
+        ("electron", "child_window", "px"),
+        ("tauri", "child_window", "px"),
+        ("electron", "scroll", "ax"),
+    ] {
+        let spec = HostSpec {
+            name: host,
+            path: PathBuf::new(),
+            args: Vec::new(),
+            title: "test",
+        };
+        let case = shared_case_with_native_hyprland(&spec, action, addressing, "background", true);
+        assert_eq!(case.expected_behavior, ContractExpectation::Deliver);
+        assert_eq!(case.driver_route, DriverRoute::LinuxAtSpiAction);
+        for oracle in [
+            OracleKind::FixtureState,
+            OracleKind::Focus,
+            OracleKind::ZOrder,
+            OracleKind::NoLeakedInput,
+        ] {
+            assert!(case.oracles.contains(&oracle), "missing {oracle:?}");
+        }
     }
 }
 
@@ -1657,6 +2125,15 @@ fn shared_web_action_matrix_is_state_verified() {
     let mut failure = None;
     let mut selected = 0usize;
     for spec in host_specs() {
+        let mut sdk_case = shared_case(&spec, "left_click", "ax", "background");
+        sdk_case.cell_id.push_str("-typed-sdk");
+        if cell_selected(&sdk_case) {
+            selected += 1;
+            let result = run_host_case_with_outcome(sdk_case, &spec, run_typed_sdk_native_window);
+            if failure.is_none() {
+                failure = result;
+            }
+        }
         for (action, tool, marker) in [
             ("left_click", "click", "last_action=left_click"),
             ("right_click", "right_click", "last_action=right_click"),

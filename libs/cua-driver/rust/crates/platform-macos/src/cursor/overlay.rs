@@ -598,16 +598,14 @@ unsafe fn run_appkit(_cfg: CursorConfig, rx: std::sync::mpsc::Receiver<OverlayMs
     let win_h = screen_frame.size.height;
     // NSScreen.backingScaleFactor is the most direct source of truth — it's
     // what AppKit will use for the layer's native backing surface anyway.
-    // Fall back to the CG estimator (pixel mode width ÷ logical bounds) when
+    // Fall back to the CG estimator (current-mode pixels ÷ points) when
     // the AppKit call returns a non-positive value, since downstream paint
     // math divides by this and a 0.0 would zero out the cursor.
     let mut backing_scale: f64 = msg_send![main_screen, backingScaleFactor];
     if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
-        use core_graphics::display::{CGDisplayBounds, CGMainDisplayID};
+        use core_graphics::display::CGMainDisplayID;
         let display_id = CGMainDisplayID();
-        let bounds = CGDisplayBounds(display_id);
-        backing_scale =
-            crate::tools::get_screen_size::get_backing_scale(display_id, bounds.size.width as i64);
+        backing_scale = crate::tools::get_screen_size::get_backing_scale(display_id);
         if backing_scale.partial_cmp(&0.0) != Some(std::cmp::Ordering::Greater) {
             backing_scale = 1.0;
         }

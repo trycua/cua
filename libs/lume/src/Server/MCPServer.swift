@@ -319,7 +319,7 @@ final class LumeMCPServer {
         [
             Tool(
                 name: "check_for_update",
-                description: "Check whether a newer Lume release is available on GitHub. Read-only; never installs. Mirrors `lume check-update --json`.",
+                description: "Check the saved stable/nightly Lume channel for a release on GitHub. Returns current and selected channels. Read-only; never installs. Mirrors `lume check-update --json`.",
                 inputSchema: .object([
                     "type": .string("object"),
                     "properties": .object([:])
@@ -373,6 +373,11 @@ final class LumeMCPServer {
                         "no_display": .object([
                             "type": .string("boolean"),
                             "description": .string("Run headless without VNC window (default: true)")
+                        ]),
+                        "vnc": .object([
+                            "type": .string("string"),
+                            "enum": .array([.string("enabled"), .string("disabled")]),
+                            "description": .string("VNC server policy. 'disabled' starts no VNC listener and reports a null vncUrl (default: enabled)")
                         ]),
                         "storage": .object([
                             "type": .string("string"),
@@ -650,6 +655,30 @@ final class LumeMCPServer {
         let noDisplay = args?["no_display"]?.boolValue ?? true
         let clipboard = args?["clipboard"]?.boolValue ?? false
 
+        let vncPolicy: VNCPolicy
+        if let requested = args?["vnc"]?.stringValue {
+            guard let policy = VNCPolicy(rawValue: requested) else {
+                return CallTool.Result(
+                    content: [
+                        .text("Error: 'vnc' must be 'enabled' or 'disabled', got '\(requested)'")
+                    ],
+                    isError: true)
+            }
+            vncPolicy = policy
+        } else {
+            vncPolicy = .enabled
+        }
+        if let option = VNCPolicy.conflictingOption(
+            policy: vncPolicy,
+            displayMode: noDisplay ? .none : .vnc,
+            vncPort: 0,
+            vncPassword: nil
+        ) {
+            return CallTool.Result(
+                content: [.text("Error: \(VMError.vncDisabledConflict(option).localizedDescription)")],
+                isError: true)
+        }
+
         var sharedDirectories: [SharedDirectory] = []
         if let sharedDir = args?["shared_dir"]?.stringValue {
             // Expand ~ to home directory
@@ -667,6 +696,7 @@ final class LumeMCPServer {
                     sharedDirectories: sharedDirectories,
                     storage: storage,
                     clipboard: clipboard,
+                    vncPolicy: vncPolicy,
                     telemetryTransport: .mcpStdio
                 )
             } catch {

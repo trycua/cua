@@ -4,8 +4,8 @@ import re
 from dataclasses import dataclass
 
 from fleet_sdk import (ClaimSpec, CreateClaimRequest, CreatePoolRequest, CyclopsClient,
-    CyclopsConfiguration, CyclopsCredentials, HttpClient, HttpRequest, HttpResponse,
-    OsGymSandboxWarmPoolSpec, Sandbox, SandboxTemplateRef, VmTemplate)
+    CyclopsConfiguration, CyclopsCredentials, HttpClient, HttpRequest, HttpRequestBuilder,
+    HttpResponse, OsGymSandboxWarmPoolSpec, Sandbox, SandboxTemplateRef, VmTemplate)
 
 BASE = 'https://cyclops.invalid'
 TOKEN = 'https://keycloak.invalid/realms/offline/protocol/openid-connect/token'
@@ -69,7 +69,10 @@ def offline_sandbox():
     return Sandbox(namespace='default', claim='default', name='offline-sandbox', services=['mcp'])
 
 def service_request(body):
-    return HttpRequest(method='POST', url='https://ignored.invalid/mcp', headers=[], body=body, timeout_secs=None)
+    builder = HttpRequestBuilder().method('POST').url('https://ignored.invalid/mcp').headers([])
+    if body is not None:
+        builder = builder.body(body)
+    return builder.build()
 
 def pool_spec():
     return OsGymSandboxWarmPoolSpec(replicas=1, sandbox_template_ref=SandboxTemplateRef(name='default'), autoscaling=None)
@@ -91,7 +94,7 @@ def claim_response(bound=False):
 
 def expected_lifecycle():
     pool_body = json.dumps(pool_response(), separators=(',', ':')).encode()
-    claim_body = b'{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"}},"status":null}'
+    claim_body = b'{"apiVersion":"osgym.cua.ai/v1alpha1","kind":"OSGymSandboxClaim","metadata":{"namespace":"default","name":"claim-1","labels":null},"spec":{"sandboxTemplateRef":{"name":"default"},"bindDeadline":900},"status":null}'
     claim_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxclaims/default'
     pool_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxwarmpools/default'
     template_url = f'{BASE}/api/k8s/apis/osgym.cua.ai/v1alpha1/namespaces/default/osgymsandboxtemplates/default'
@@ -115,7 +118,7 @@ def client(transport):
     return CyclopsClient.connect(CyclopsConfiguration(base_url=BASE, token_url=TOKEN, credentials=CyclopsCredentials('client-id', 'client-secret'), pool_poll_interval_ms=1, pool_poll_limit=1, claim_poll_interval_ms=1, claim_poll_limit=2), transport)
 
 async def run_lifecycle(transport):
-    vm = VmTemplate(container_disk_image='registry.example/desktop:offline', command=None, runtime=None, runtime_class_name=None, node_selector=None, tolerations=None, image_pull_policy=None, image_pull_secret=None, cpu_cores=None, memory=None, firmware=None, probes=None, services=None, oidc=None)
+    vm = VmTemplate(container_disk_image='registry.example/desktop:offline', command=None, runtime=None, runtime_class_name=None, node_selector=None, tolerations=None, image_pull_policy=None, image_pull_secret=None, cpu_cores=None, memory=None, firmware=None, nested_virtualization=None, probes=None, services=None, oidc=None)
     assert vm.container_disk_image
     sdk = client(transport)
     namespace = await sdk.create_namespace('default')

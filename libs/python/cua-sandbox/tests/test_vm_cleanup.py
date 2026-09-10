@@ -253,37 +253,18 @@ class TestFleetServerPortForwarding:
     def _select_fleet(self, monkeypatch):
         monkeypatch.setattr(Sandbox, "_uses_fleet", staticmethod(lambda api_key: api_key is None))
 
-    @pytest.mark.parametrize("server_port", [1, 65535])
-    async def test_create_forwards_server_port(self, server_port):
-        claimed = object()
-        pool = MagicMock()
-        pool.claim = AsyncMock(return_value=claimed)
-        apply = AsyncMock(return_value=pool)
+    async def test_create_with_fleet_image_requires_explicit_pool(self):
+        apply = AsyncMock()
 
         with patch("cua_sandbox.pool.Pool.apply", new=apply):
-            result = await Sandbox.create(
-                Image.from_registry("registry.example/workspace:latest"),
-                server_port=server_port,
-                telemetry_enabled=False,
-            )
+            with pytest.raises(ValueError, match="Pool.apply"):
+                await Sandbox.create(
+                    Image.from_registry("registry.example/workspace:latest"),
+                    server_port=5000,
+                    telemetry_enabled=False,
+                )
 
-        assert result is claimed
-        assert apply.await_args.kwargs["services"] == {"server": server_port}
-
-    async def test_create_forwards_default_server_port(self):
-        claimed = object()
-        pool = MagicMock()
-        pool.claim = AsyncMock(return_value=claimed)
-        apply = AsyncMock(return_value=pool)
-
-        with patch("cua_sandbox.pool.Pool.apply", new=apply):
-            result = await Sandbox.create(
-                Image.from_registry("registry.example/workspace:latest"),
-                telemetry_enabled=False,
-            )
-
-        assert result is claimed
-        assert apply.await_args.kwargs["services"] == {"server": 8000}
+        apply.assert_not_awaited()
 
     async def test_ephemeral_forwards_server_port(self):
         claimed = MagicMock()

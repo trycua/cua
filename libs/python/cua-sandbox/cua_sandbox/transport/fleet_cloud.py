@@ -19,9 +19,9 @@ from cua_sandbox._config import (
     get_fleet_token,
     get_token_url,
 )
-from cua_sandbox.image import Image
+from cua_sandbox.image import Image, cloud_registry_image
 from cua_sandbox.transport.cyclops_http_client import CyclopsHttpClient
-from cua_sandbox.transport.fleet import FleetTransport
+from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import (
     AccessTokenProvider,
     AccessTokenProviderError,
@@ -34,14 +34,17 @@ from fleet_sdk import (
     CyclopsConfiguration,
     CyclopsCredentials,
     CyclopsTokenProviderConfiguration,
+    Firmware,
     HttpRequest,
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
     PreservedJson,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
+    SdkError,
     ServiceProtocol,
     VmTemplateBuilder,
+    WarmPoolAutoscaling,
 )
 
 if TYPE_CHECKING:
@@ -51,6 +54,66 @@ logger = logging.getLogger(__name__)
 
 _DNS_LABEL_MAX_LENGTH = 63
 _CLAIM_HASH_LENGTH = 16
+# Bounds each readiness probe so one stalled /status round-trip cannot eat the
+# whole wait_service_ready deadline. Ignored by cua-fleet <= 0.1.8, whose
+# native client applies the same 30-second default.
+_READINESS_PROBE_TIMEOUT_SECS = 30
+
+
+# Newer Fleet SDKs raise SdkError.PoolAccessDenied from the Rust core for 403s
+# on pool-namespace writes, so every language binding shares one message. Use
+# that type when the installed cua-fleet provides it; otherwise map the plain
+# 403 Status errors older SDKs raise into an equivalent local error.
+_UPSTREAM_POOL_ACCESS_DENIED = getattr(SdkError, "PoolAccessDenied", None)
+
+if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+    PoolAccessDeniedError = _UPSTREAM_POOL_ACCESS_DENIED
+else:
+
+    class PoolAccessDeniedError(PermissionError):  # type: ignore[no-redef]
+        """Fleet refused a pool or template operation for this credential."""
+
+
+# Catch tuple for pool-access denials raised natively by newer Fleet SDKs;
+# empty when the installed cua-fleet predates the upstream variant.
+_NATIVE_POOL_ACCESS_DENIED = (
+    () if _UPSTREAM_POOL_ACCESS_DENIED is None else (_UPSTREAM_POOL_ACCESS_DENIED,)
+)
+
+
+def _pool_access_denied_message(operation: str, namespace: str, status: int, body: str) -> str:
+    return (
+        f"Fleet denied {operation} on pool namespace '{namespace}' "
+        f"(HTTP {status}: {body}). Pool names are globally unique "
+        "across accounts, so this name may already be taken — try a new pool "
+        "name. If that does not work, contact support on Discord: "
+        "https://discord.gg/mVnXXpdE85"
+    )
+
+
+def _canonicalize_pool_access_denied(error: Exception) -> Exception:
+    # The uniffi-generated exception renders as a field dump
+    # (operation=..., namespace=..., ...); restore the Rust Display message so
+    # both raise paths read identically.
+    error.args = (
+        _pool_access_denied_message(error.operation, error.namespace, error.status, error.body),
+    )
+    return error
+
+
+def _pool_access_denied(namespace: str, error: SdkError.Status) -> Exception:
+    if _UPSTREAM_POOL_ACCESS_DENIED is not None:
+        return _canonicalize_pool_access_denied(
+            _UPSTREAM_POOL_ACCESS_DENIED(
+                operation=error.operation,
+                namespace=namespace,
+                status=error.status,
+                body=error.body,
+            )
+        )
+    return PoolAccessDeniedError(
+        _pool_access_denied_message(error.operation, namespace, error.status, error.body)
+    )
 
 
 def _claim_name(pool_name: str) -> str:
@@ -274,6 +337,72 @@ class _FleetClient:
     ) -> Any:
         return await self._client.service_request(sandbox, service, path, request)
 
+    async def create_signed_service_url(
+        self,
+        sandbox: Any,
+        service: str,
+        *,
+        label: str | None,
+        expires_in_seconds: int,
+    ) -> Any:
+        try:
+            from fleet_sdk import CreateSignedServiceUrlRequestBuilder
+        except ImportError as error:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            ) from error
+
+        builder = (
+            CreateSignedServiceUrlRequestBuilder()
+            .sandbox(sandbox)
+            .service(service)
+            .expires_in_seconds(expires_in_seconds)
+        )
+        if label is not None:
+            builder = builder.label(label)
+        method = getattr(self._client, "create_signed_service_url", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        return await method(builder.build())
+
+    async def list_signed_service_urls(self, sandbox: Any) -> list[Any]:
+        method = getattr(self._client, "list_signed_service_urls", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        return await method(sandbox)
+
+    async def revoke_signed_service_url(self, signed_service_url: Any) -> None:
+        try:
+            from fleet_sdk import SignedServiceUrl
+        except ImportError as error:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            ) from error
+
+        method = getattr(self._client, "revoke_signed_service_url", None)
+        if method is None:
+            raise RuntimeError(
+                "Signed service URLs require a cua-fleet release with signed URL support"
+            )
+        await method(
+            SignedServiceUrl(
+                id=signed_service_url.id,
+                namespace=signed_service_url.namespace,
+                claim=signed_service_url.claim,
+                sandbox=signed_service_url.sandbox,
+                service=signed_service_url.service,
+                label=signed_service_url.label,
+                url=signed_service_url.url,
+                created_at=signed_service_url.created_at,
+                expires_at=signed_service_url.expires_at,
+                revoked_at=signed_service_url.revoked_at,
+            )
+        )
+
     async def get_pool(self, name: str) -> Any:
         return await self._client.get_pool(name)
 
@@ -306,8 +435,10 @@ class _FleetClient:
                 sandbox,
                 service,
                 "/status",
-                HttpRequest(
-                    method="GET", url="https://service.invalid/status", headers=[], body=None
+                build_http_request(
+                    method="GET",
+                    url="https://service.invalid/status",
+                    timeout_secs=_READINESS_PROBE_TIMEOUT_SECS,
                 ),
             )
             if 200 <= response.status < 500:
@@ -322,6 +453,35 @@ class _FleetClient:
         if service not in sandbox.services:
             raise ValueError(f"Fleet sandbox does not expose service {service!r}")
         return f"{self._base_url}/api/svc/{sandbox.namespace}/{sandbox.name}-{service}/"
+
+
+_ECR_HOST_SUFFIX = ".amazonaws.com"
+_ECR_HOST_MARKER = ".dkr.ecr."
+
+
+def _needs_ecr_pull_secret(image: "str | None") -> bool:
+    """True only for the account's private ECR, which the secret authenticates.
+
+    Public registries (public.ecr.aws, ghcr.io, quay.io, Docker Hub) are pulled
+    anonymously; attaching a credential for them makes the gateway enforce its
+    private-registry allowlist against an image that never needed one.
+    """
+    if not image:
+        return False
+    host = image.split("/", 1)[0]
+    return _ECR_HOST_MARKER in host and host.endswith(_ECR_HOST_SUFFIX)
+
+
+_TTL_SECONDS_MAX = 2**32 - 1
+
+
+def validate_ttl_seconds_after_created(value: "int | None") -> None:
+    if value is not None and (
+        isinstance(value, bool) or not isinstance(value, int) or not 0 <= value <= _TTL_SECONDS_MAX
+    ):
+        raise ValueError(
+            f"ttl_seconds_after_created must be an integer between 0 and {_TTL_SECONDS_MAX}"
+        )
 
 
 class FleetCloudTransport(FleetTransport):
@@ -343,6 +503,8 @@ class FleetCloudTransport(FleetTransport):
         create_claim: bool = False,
         replicas: int = 1,
         services: Mapping[str, int] | None = None,
+        autoscaling: Optional[WarmPoolAutoscaling] = None,
+        ttl_seconds_after_created: Optional[int] = None,
     ) -> None:
         if (
             isinstance(server_port, bool)
@@ -370,6 +532,28 @@ class FleetCloudTransport(FleetTransport):
             )
         ):
             raise ValueError("services must map non-empty names to TCP ports")
+        if autoscaling is not None:
+            if not isinstance(autoscaling, WarmPoolAutoscaling):
+                raise TypeError("autoscaling must be a fleet_sdk.WarmPoolAutoscaling")
+            for field, minimum in (
+                ("min_pool_size", 0),
+                ("initial_pool_size", 0),
+                ("max_pool_size", 1),
+            ):
+                value = getattr(autoscaling, field)
+                if value is not None and (
+                    isinstance(value, bool) or not isinstance(value, int) or value < minimum
+                ):
+                    raise ValueError(f"autoscaling.{field} must be an integer >= {minimum}")
+            if (
+                autoscaling.min_pool_size is not None
+                and autoscaling.max_pool_size is not None
+                and autoscaling.min_pool_size > autoscaling.max_pool_size
+            ):
+                raise ValueError(
+                    "autoscaling.min_pool_size must not exceed autoscaling.max_pool_size"
+                )
+        validate_ttl_seconds_after_created(ttl_seconds_after_created)
         self._image = image
         self._name = name
         self._explicit_pool = pool_name is not None
@@ -383,6 +567,8 @@ class FleetCloudTransport(FleetTransport):
         self._server_port = server_port
         self._replicas = replicas
         self._services = dict(services) if services is not None else None
+        self._autoscaling = autoscaling
+        self._ttl_seconds_after_created = ttl_seconds_after_created
         self._provisioned = False
         self._owns_resources = image is not None or create_claim
         self._template: Any = None
@@ -407,10 +593,17 @@ class FleetCloudTransport(FleetTransport):
                             self._pool = await self._sdk.wait_pool(self._pool)
                     else:
                         self._validate_image(self._image)
-                        self._pool = await self._sdk.reconcile_pool(self._pool_request())
-                        self._template = await self._sdk.reconcile_template(
-                            self._template_request()
-                        )
+                        try:
+                            self._pool = await self._sdk.reconcile_pool(self._pool_request())
+                            self._template = await self._sdk.reconcile_template(
+                                self._template_request()
+                            )
+                        except _NATIVE_POOL_ACCESS_DENIED as error:
+                            raise _canonicalize_pool_access_denied(error)
+                        except SdkError.Status as error:
+                            if error.status == 403:
+                                raise _pool_access_denied(self._pool_name, error) from error
+                            raise
                         self._pool = await self._sdk.wait_pool(self._pool)
                 if self._claim is None:
                     if self._image is None and not self._create_claim:
@@ -563,10 +756,10 @@ class FleetCloudTransport(FleetTransport):
             .build()
             for name, port in service_ports.items()
         ]
+        container_disk_image = cloud_registry_image(self._image)
         vm_template_builder = (
             VmTemplateBuilder()
-            .container_disk_image(self._image._registry)
-            .image_pull_secret("ecr-credentials")
+            .container_disk_image(container_disk_image)
             .probes(
                 PreservedJson.from_json(
                     json.dumps({"readinessProbe": {"tcpSocket": {"port": self._server_port}}})
@@ -574,6 +767,19 @@ class FleetCloudTransport(FleetTransport):
             )
             .services(services)
         )
+        # The pull secret authenticates the account's private ECR and nothing else.
+        # Attaching it to a public image is not merely redundant: the gateway's
+        # admission policy reads its presence as "enforce the ECR allowlist", so a
+        # public image the cluster can pull anonymously was refused outright.
+        if _needs_ecr_pull_secret(container_disk_image):
+            vm_template_builder = vm_template_builder.image_pull_secret("ecr-credentials")
+
+        # Windows guest disks are built UEFI-only (see registry/qemu_builder.py), and the
+        # Fleet schema defaults firmware to BIOS, so a Windows image left at the default
+        # boots SeaBIOS against a GPT/ESP disk and never reaches the readiness probe.
+        # The local QEMU runtime keys off the same os_type check.
+        if self._image.os_type == "windows":
+            vm_template_builder = vm_template_builder.firmware(Firmware.EFI)
         if self._cpu is not None:
             vm_template_builder = vm_template_builder.cpu_cores(self._cpu)
         if self._memory_mb is not None:
@@ -592,13 +798,23 @@ class FleetCloudTransport(FleetTransport):
 
     def _pool_request(self) -> CreatePoolRequest:
         template_ref = SandboxTemplateRefBuilder().name(self._pool_name).build()
-        pool_spec = (
+        pool_spec_builder = (
             OsGymSandboxWarmPoolSpecBuilder()
             .replicas(self._replicas)
             .sandbox_template_ref(template_ref)
+        )
+        if self._autoscaling is not None:
+            pool_spec_builder = pool_spec_builder.autoscaling(self._autoscaling)
+        if self._ttl_seconds_after_created is not None:
+            pool_spec_builder = pool_spec_builder.ttl_seconds_after_created(
+                self._ttl_seconds_after_created
+            )
+        return (
+            CreatePoolRequestBuilder()
+            .namespace(self._pool_name)
+            .spec(pool_spec_builder.build())
             .build()
         )
-        return CreatePoolRequestBuilder().namespace(self._pool_name).spec(pool_spec).build()
 
     @staticmethod
     def _service_names(template: Any) -> list[str]:
@@ -606,8 +822,10 @@ class FleetCloudTransport(FleetTransport):
 
     @staticmethod
     def _validate_image(image: Image) -> None:
-        if not image._registry:
-            raise NotImplementedError("Fleet cloud sandboxes require Image.from_registry(...)")
+        if not cloud_registry_image(image):
+            raise NotImplementedError(
+                "Fleet cloud sandboxes require a supported built-in image or Image.from_registry(...)"
+            )
         if (
             image._layers
             or image._env

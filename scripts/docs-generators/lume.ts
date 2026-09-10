@@ -342,7 +342,7 @@ export function generateCLIReferenceMDX(docs: CLIDocumentation): string {
     { title: 'Guest Access and Security', commands: ['ssh', 'setup', 'sip'] },
     {
       title: 'Configuration and Server',
-      commands: ['config', 'serve', 'logs', 'check-update', 'update'],
+      commands: ['config', 'serve', 'logs', 'check-update', 'update', 'channel'],
     },
     { title: 'Developer Tools', commands: ['dump-docs'] },
   ];

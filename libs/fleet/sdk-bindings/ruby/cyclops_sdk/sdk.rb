@@ -233,6 +233,28 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type CreateSignedServiceUrlRequest.
+
+  def self.check_lower_TypeCreateSignedServiceUrlRequest(v)
+    RustBuffer.check_lower_TypeSandbox(v.sandbox)
+
+    RustBuffer.check_lower_Optionalstring(v.label)
+
+  end
+
+  def self.alloc_from_TypeCreateSignedServiceUrlRequest(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeCreateSignedServiceUrlRequest(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeCreateSignedServiceUrlRequest
+    consumeWithStream do |stream|
+      return stream.readTypeCreateSignedServiceUrlRequest
+    end
+  end
+
   # The Record type CreateTemplateRequest.
 
   def self.check_lower_TypeCreateTemplateRequest(v)
@@ -454,6 +476,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Record type PoolDisplayStatus.
+
+  def self.check_lower_TypePoolDisplayStatus(v)
+    RustBuffer.check_lower_TypePoolDisplayStatusKind(v.kind)
+
+
+  end
+
+  def self.alloc_from_TypePoolDisplayStatus(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypePoolDisplayStatus(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypePoolDisplayStatus
+    consumeWithStream do |stream|
+      return stream.readTypePoolDisplayStatus
+    end
+  end
+
   # The Record type ResourceMetadata.
 
   def self.check_lower_TypeResourceMetadata(v)
@@ -495,6 +538,34 @@ private_constant :UniffiHandleMap
   def consumeIntoTypeSandbox
     consumeWithStream do |stream|
       return stream.readTypeSandbox
+    end
+  end
+
+  # The Record type SignedServiceUrl.
+
+  def self.check_lower_TypeSignedServiceUrl(v)
+
+
+
+
+
+    RustBuffer.check_lower_Optionalstring(v.label)
+
+
+
+    RustBuffer.check_lower_Optionalstring(v.revoked_at)
+  end
+
+  def self.alloc_from_TypeSignedServiceUrl(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypeSignedServiceUrl(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypeSignedServiceUrl
+    consumeWithStream do |stream|
+      return stream.readTypeSignedServiceUrl
     end
   end
 
@@ -544,6 +615,25 @@ private_constant :UniffiHandleMap
 
 
 
+
+
+  # The Enum type PoolDisplayStatusKind.
+
+  def self.check_lower_TypePoolDisplayStatusKind(v)
+  end
+
+  def self.alloc_from_TypePoolDisplayStatusKind(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_TypePoolDisplayStatusKind(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoTypePoolDisplayStatusKind
+    consumeWithStream do |stream|
+      return stream.readTypePoolDisplayStatusKind
+    end
+  end
 
 
 
@@ -802,6 +892,27 @@ private_constant :UniffiHandleMap
     end
   end
 
+  # The Sequence<T> type for TypeSignedServiceUrl.
+
+  def self.check_lower_SequenceTypeSignedServiceUrl(v)
+    v.each do |item|
+      RustBuffer.check_lower_TypeSignedServiceUrl(item)
+    end
+  end
+
+  def self.alloc_from_SequenceTypeSignedServiceUrl(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_SequenceTypeSignedServiceUrl(v)
+      return builder.finalize()
+    end
+  end
+
+  def consumeIntoSequenceTypeSignedServiceUrl
+    consumeWithStream do |stream|
+      return stream.readSequenceTypeSignedServiceUrl
+    end
+  end
+
   # The Sequence<T> type for TypeTemplate.
 
   def self.check_lower_SequenceTypeTemplate(v)
@@ -968,6 +1079,13 @@ class RustBufferStream
     return CreatePoolRequestBuilder.uniffi_allocate(handle)
   end
 
+  # The Object type CreateSignedServiceUrlRequestBuilder.
+
+  def readTypeCreateSignedServiceUrlRequestBuilder
+    handle = unpack_from 8, 'Q>'
+    return CreateSignedServiceUrlRequestBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type CreateTemplateRequestBuilder.
 
   def readTypeCreateTemplateRequestBuilder
@@ -1010,6 +1128,13 @@ class RustBufferStream
     return HttpClient.uniffi_allocate(handle)
   end
 
+  # The Object type HttpRequestBuilder.
+
+  def readTypeHttpRequestBuilder
+    handle = unpack_from 8, 'Q>'
+    return HttpRequestBuilder.uniffi_allocate(handle)
+  end
+
   # The Object type TemplateBuilder.
 
   def readTypeTemplateBuilder
@@ -1045,6 +1170,17 @@ class RustBufferStream
     CreatePoolRequest.new(
       namespace: readString,
       spec: readTypeOSGymSandboxWarmPoolSpec
+    )
+  end
+
+  # The Record type CreateSignedServiceUrlRequest.
+
+  def readTypeCreateSignedServiceUrlRequest
+    CreateSignedServiceUrlRequest.new(
+      sandbox: readTypeSandbox,
+      service: readString,
+      label: readOptionalstring,
+      expires_in_seconds: readU32
     )
   end
 
@@ -1159,6 +1295,16 @@ class RustBufferStream
     )
   end
 
+  # The Record type PoolDisplayStatus.
+
+  def readTypePoolDisplayStatus
+    PoolDisplayStatus.new(
+      kind: readTypePoolDisplayStatusKind,
+      label: readString,
+      indicator: readString
+    )
+  end
+
   # The Record type ResourceMetadata.
 
   def readTypeResourceMetadata
@@ -1178,6 +1324,23 @@ class RustBufferStream
       claim: readString,
       name: readString,
       services: readSequencestring
+    )
+  end
+
+  # The Record type SignedServiceUrl.
+
+  def readTypeSignedServiceUrl
+    SignedServiceUrl.new(
+      id: readString,
+      namespace: readString,
+      claim: readString,
+      sandbox: readString,
+      service: readString,
+      label: readOptionalstring,
+      url: readString,
+      created_at: readString,
+      expires_at: readString,
+      revoked_at: readOptionalstring
     )
   end
 
@@ -1239,6 +1402,34 @@ class RustBufferStream
 
     raise InternalError, 'Unexpected variant tag for TypeHttpError'
   end
+
+
+
+
+  # The Enum type PoolDisplayStatusKind.
+
+  def readTypePoolDisplayStatusKind
+    variant = unpack_from 4, 'l>'
+
+    if variant == 1
+      return PoolDisplayStatusKind::HEALTHY
+    end
+    if variant == 2
+      return PoolDisplayStatusKind::SCALED_TO_ZERO
+    end
+    if variant == 3
+      return PoolDisplayStatusKind::REMOVED
+    end
+    if variant == 4
+      return PoolDisplayStatusKind::TERMINATING
+    end
+    if variant == 5
+      return PoolDisplayStatusKind::UNKNOWN
+    end
+
+    raise InternalError, 'Unexpected variant tag for TypePoolDisplayStatusKind'
+  end
+
 
 
 
@@ -1305,24 +1496,35 @@ class RustBufferStream
         )
     end
     if variant == 7
+        return SdkError::SignedServiceUrlsUnavailable.new
+    end
+    if variant == 8
         return SdkError::UnknownService.new(
             readString(),
             readSequencestring()
         )
     end
-    if variant == 8
+    if variant == 9
         return SdkError::InvalidServicePath.new(
             readString()
         )
     end
-    if variant == 9
+    if variant == 10
         return SdkError::ClaimFailed.new(
             readString(),
             readString()
         )
     end
-    if variant == 10
+    if variant == 11
         return SdkError::ClaimTimeout.new
+    end
+    if variant == 12
+        return SdkError::PoolAccessDenied.new(
+            readString(),
+            readString(),
+            readU16(),
+            readString()
+        )
     end
 
     raise InternalError, 'Unexpected variant tag for TypeSdkError'
@@ -1507,6 +1709,22 @@ class RustBufferStream
     items
   end
 
+  # The Sequence<T> type for TypeSignedServiceUrl.
+
+  def readSequenceTypeSignedServiceUrl
+    count = unpack_from 4, 'l>'
+
+    raise InternalError, 'Unexpected negative sequence length' if count.negative?
+
+    items = []
+
+    count.times do
+      items.append readTypeSignedServiceUrl
+    end
+
+    items
+  end
+
   # The Sequence<T> type for TypeTemplate.
 
   def readSequenceTypeTemplate
@@ -1650,6 +1868,13 @@ class RustBufferBuilder
     pack_into(8, 'Q>', handle)
   end
 
+  # The Object type CreateSignedServiceUrlRequestBuilder.
+
+  def write_TypeCreateSignedServiceUrlRequestBuilder(obj)
+    handle = CreateSignedServiceUrlRequestBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
   # The Object type CreateTemplateRequestBuilder.
 
   def write_TypeCreateTemplateRequestBuilder(obj)
@@ -1692,6 +1917,13 @@ class RustBufferBuilder
     pack_into(8, 'Q>', handle)
   end
 
+  # The Object type HttpRequestBuilder.
+
+  def write_TypeHttpRequestBuilder(obj)
+    handle = HttpRequestBuilder.uniffi_lower obj
+    pack_into(8, 'Q>', handle)
+  end
+
   # The Object type TemplateBuilder.
 
   def write_TypeTemplateBuilder(obj)
@@ -1722,6 +1954,15 @@ class RustBufferBuilder
   def write_TypeCreatePoolRequest(v)
     self.write_String(v.namespace)
     self.write_TypeOSGymSandboxWarmPoolSpec(v.spec)
+  end
+
+  # The Record type CreateSignedServiceUrlRequest.
+
+  def write_TypeCreateSignedServiceUrlRequest(v)
+    self.write_TypeSandbox(v.sandbox)
+    self.write_String(v.service)
+    self.write_Optionalstring(v.label)
+    self.write_U32(v.expires_in_seconds)
   end
 
   # The Record type CreateTemplateRequest.
@@ -1815,6 +2056,14 @@ class RustBufferBuilder
     self.write_OptionalTypeOSGymSandboxWarmPoolStatus(v.status)
   end
 
+  # The Record type PoolDisplayStatus.
+
+  def write_TypePoolDisplayStatus(v)
+    self.write_TypePoolDisplayStatusKind(v.kind)
+    self.write_String(v.label)
+    self.write_String(v.indicator)
+  end
+
   # The Record type ResourceMetadata.
 
   def write_TypeResourceMetadata(v)
@@ -1831,6 +2080,21 @@ class RustBufferBuilder
     self.write_String(v.claim)
     self.write_String(v.name)
     self.write_Sequencestring(v.services)
+  end
+
+  # The Record type SignedServiceUrl.
+
+  def write_TypeSignedServiceUrl(v)
+    self.write_String(v.id)
+    self.write_String(v.namespace)
+    self.write_String(v.claim)
+    self.write_String(v.sandbox)
+    self.write_String(v.service)
+    self.write_Optionalstring(v.label)
+    self.write_String(v.url)
+    self.write_String(v.created_at)
+    self.write_String(v.expires_at)
+    self.write_Optionalstring(v.revoked_at)
   end
 
   # The Record type Template.
@@ -1853,6 +2117,13 @@ class RustBufferBuilder
 
 
 
+
+
+  # The Enum type PoolDisplayStatusKind.
+
+  def write_TypePoolDisplayStatusKind(v)
+    pack_into(4, 'l>', v)
+ end
 
 
 
@@ -1983,6 +2254,16 @@ class RustBufferBuilder
 
     items.each do |item|
       self.write_TypePool(item)
+    end
+  end
+
+  # The Sequence<T> type for TypeSignedServiceUrl.
+
+  def write_SequenceTypeSignedServiceUrl(items)
+    pack_into(4, 'l>', items.size)
+
+    items.each do |item|
+      self.write_TypeSignedServiceUrl(item)
     end
   end
 
@@ -2203,6 +2484,15 @@ module SdkError
      "#{self.class.name}(operation=#{@operation.inspect}, status=#{@status.inspect}, body=#{@body.inspect})"
     end
   end
+  class SignedServiceUrlsUnavailable < StandardError
+    def initialize()
+        super()
+      end
+
+    def to_s
+     "#{self.class.name}()"
+    end
+  end
   class UnknownService < StandardError
     def initialize(requested, available)
         @requested = requested
@@ -2253,8 +2543,25 @@ module SdkError
      "#{self.class.name}()"
     end
   end
+  class PoolAccessDenied < StandardError
+    def initialize(operation, namespace, status, body)
+        @operation = operation
+        @namespace = namespace
+        @status = status
+        @body = body
+        super()
+      end
+
+    attr_reader :operation, :namespace, :status, :body
+
+
+    def to_s
+     "#{self.class.name}(operation=#{@operation.inspect}, namespace=#{@namespace.inspect}, status=#{@status.inspect}, body=#{@body.inspect})"
+    end
+  end
 
 end
+
 
 
 # Map error modules to the RustBuffer method name that reads them
@@ -2270,6 +2577,7 @@ ERROR_MODULE_TO_READER_METHOD = {
 
 
   SdkError => :readTypeSdkError,
+
 
 }
 
@@ -2557,6 +2865,15 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_service_request,
     [:uint64, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopsclient_create_template,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2675,6 +2992,30 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_createpoolrequestbuilder_spec,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds,
+    [:uint64, :uint32, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_createtemplaterequestbuilder,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2750,6 +3091,33 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit,
     [:uint64, :uint32, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_clone_httprequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_free_httprequestbuilder,
+    [:uint64, RustCallStatus.by_ref],
+    :void
+  attach_function :uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_body,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_build,
+    [:uint64, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_method,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs,
+    [:uint64, :uint64, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_fn_method_httprequestbuilder_url,
+    [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_fn_clone_templatebuilder,
     [:uint64, RustCallStatus.by_ref],
     :uint64
@@ -2774,6 +3142,21 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_fn_method_templatebuilder_spec,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_pool_display_status,
+    [RustBuffer.by_value, RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_removed_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_terminating_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_fn_func_unknown_pool_display_status,
+    [RustCallStatus.by_ref],
+    RustBuffer.by_value
   attach_function :ffi_cyclops_sdk_rustbuffer_alloc,
     [:uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
@@ -2786,6 +3169,21 @@ module UniFFILib
   attach_function :ffi_cyclops_sdk_rustbuffer_reserve,
     [RustBuffer.by_value, :uint64, RustCallStatus.by_ref],
     RustBuffer.by_value
+  attach_function :uniffi_cyclops_sdk_checksum_func_healthy_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_removed_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_terminating_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_func_unknown_pool_display_status,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_claim,
     [RustCallStatus.by_ref],
     :uint16
@@ -2835,6 +3233,15 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_service_request,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_signed_service_url,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_list_signed_service_urls,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_revoke_signed_service_url,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopsclient_create_template,
@@ -2891,6 +3298,21 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_method_createpoolrequestbuilder_spec,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_expires_in_seconds,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_label,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_sandbox,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_createsignedserviceurlrequestbuilder_service,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_createtemplaterequestbuilder_build,
     [RustCallStatus.by_ref],
     :uint16
@@ -2928,6 +3350,24 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_body,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_timeout_secs,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_method_httprequestbuilder_url,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_method_templatebuilder_api_version,
@@ -2972,6 +3412,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_checksum_constructor_createpoolrequestbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_createsignedserviceurlrequestbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_createtemplaterequestbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
@@ -2982,6 +3425,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_cyclopstokenproviderconfigurationbuilder_new,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_checksum_constructor_templatebuilder_new,
@@ -2999,6 +3445,45 @@ end
 
 
 
+
+
+
+
+class PoolDisplayStatusKind
+  HEALTHY = 1
+  SCALED_TO_ZERO = 2
+  REMOVED = 3
+  TERMINATING = 4
+  UNKNOWN = 5
+
+end
+
+
+
+  # Record type PoolDisplayStatus
+class PoolDisplayStatus
+  attr_reader :kind, :label, :indicator
+
+  def initialize(kind:, label:, indicator:)
+    @kind = kind
+    @label = label
+    @indicator = indicator
+  end
+
+  def ==(other)
+    if @kind != other.kind
+      return false
+    end
+    if @label != other.label
+      return false
+    end
+    if @indicator != other.indicator
+      return false
+    end
+
+    true
+  end
+end
 
   # Record type Claim
 class Claim
@@ -3072,6 +3557,35 @@ class CreatePoolRequest
       return false
     end
     if @spec != other.spec
+      return false
+    end
+
+    true
+  end
+end
+
+  # Record type CreateSignedServiceUrlRequest
+class CreateSignedServiceUrlRequest
+  attr_reader :sandbox, :service, :label, :expires_in_seconds
+
+  def initialize(sandbox:, service:, label:, expires_in_seconds:)
+    @sandbox = sandbox
+    @service = service
+    @label = label
+    @expires_in_seconds = expires_in_seconds
+  end
+
+  def ==(other)
+    if @sandbox != other.sandbox
+      return false
+    end
+    if @service != other.service
+      return false
+    end
+    if @label != other.label
+      return false
+    end
+    if @expires_in_seconds != other.expires_in_seconds
       return false
     end
 
@@ -3224,7 +3738,7 @@ end
 class HttpRequest
   attr_reader :method, :url, :headers, :body, :timeout_secs
 
-  def initialize(method:, url:, headers:, body:, timeout_secs:)
+  def initialize(method:, url:, headers:, body:, timeout_secs: nil)
     @method = method
     @url = url
     @headers = headers
@@ -3431,6 +3945,59 @@ class Sandbox
   end
 end
 
+  # Record type SignedServiceUrl
+class SignedServiceUrl
+  attr_reader :id, :namespace, :claim, :sandbox, :service, :label, :url, :created_at, :expires_at, :revoked_at
+
+  def initialize(id:, namespace:, claim:, sandbox:, service:, label:, url:, created_at:, expires_at:, revoked_at:)
+    @id = id
+    @namespace = namespace
+    @claim = claim
+    @sandbox = sandbox
+    @service = service
+    @label = label
+    @url = url
+    @created_at = created_at
+    @expires_at = expires_at
+    @revoked_at = revoked_at
+  end
+
+  def ==(other)
+    if @id != other.id
+      return false
+    end
+    if @namespace != other.namespace
+      return false
+    end
+    if @claim != other.claim
+      return false
+    end
+    if @sandbox != other.sandbox
+      return false
+    end
+    if @service != other.service
+      return false
+    end
+    if @label != other.label
+      return false
+    end
+    if @url != other.url
+      return false
+    end
+    if @created_at != other.created_at
+      return false
+    end
+    if @expires_at != other.expires_at
+      return false
+    end
+    if @revoked_at != other.revoked_at
+      return false
+    end
+
+    true
+  end
+end
+
   # Record type Template
 class Template
   attr_reader :api_version, :kind, :metadata, :spec
@@ -3487,6 +4054,54 @@ class UserApiKey
 
     true
   end
+end
+
+
+
+
+
+def self.healthy_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_healthy_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.pool_display_status(pool)
+    pool = pool
+    RustBuffer.check_lower_TypePool(pool)
+
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_pool_display_status,RustBuffer.alloc_from_TypePool(pool))
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.removed_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_removed_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.terminating_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_terminating_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
+end
+
+
+
+
+
+def self.unknown_pool_display_status()
+  result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_func_unknown_pool_display_status,)
+  return result.consumeIntoTypePoolDisplayStatus
 end
 
 
@@ -3790,6 +4405,33 @@ end
     )
     return result.consumeIntoTypeHttpResponse
   end
+  def create_signed_service_url(request)
+        request = request
+        RustBuffer.check_lower_TypeCreateSignedServiceUrlRequest(request)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_create_signed_service_url(uniffi_clone_handle(),RustBuffer.alloc_from_TypeCreateSignedServiceUrlRequest(request),RustCallStatus.new),
+    )
+    return result.consumeIntoTypeSignedServiceUrl
+  end
+  def list_signed_service_urls(sandbox)
+        sandbox = sandbox
+        RustBuffer.check_lower_TypeSandbox(sandbox)
+    result = FleetSdk.uniffi_rust_future_rust_buffer(
+      SdkError,
+      UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_list_signed_service_urls(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(sandbox),RustCallStatus.new),
+    )
+    return result.consumeIntoSequenceTypeSignedServiceUrl
+  end
+  def revoke_signed_service_url(signed_service_url)
+        signed_service_url = signed_service_url
+        RustBuffer.check_lower_TypeSignedServiceUrl(signed_service_url)
+      FleetSdk.uniffi_rust_future_void(
+        SdkError,
+        UniFFILib.uniffi_cyclops_sdk_fn_method_cyclopsclient_revoke_signed_service_url(uniffi_clone_handle(),RustBuffer.alloc_from_TypeSignedServiceUrl(signed_service_url),RustCallStatus.new),
+      )
+  end
+
   def create_template(request)
         request = request
         RustBuffer.check_lower_TypeCreateTemplateRequest(request)
@@ -4151,6 +4793,87 @@ end
 
 end
 
+  class CreateSignedServiceUrlRequestBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      FleetSdk.rust_call(
+        :uniffi_cyclops_sdk_fn_free_createsignedserviceurlrequestbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a CreateSignedServiceUrlRequestBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return FleetSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_createsignedserviceurlrequestbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_createsignedserviceurlrequestbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def build()
+    result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeCreateSignedServiceUrlRequest
+  end
+  def expires_in_seconds(value)
+        value = FleetSdk::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_expires_in_seconds,uniffi_clone_handle(),value)
+    return CreateSignedServiceUrlRequestBuilder.uniffi_allocate(result)
+  end
+  def label(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_label,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateSignedServiceUrlRequestBuilder.uniffi_allocate(result)
+  end
+  def sandbox(value)
+        value = value
+        RustBuffer.check_lower_TypeSandbox(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_sandbox,uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandbox(value))
+    return CreateSignedServiceUrlRequestBuilder.uniffi_allocate(result)
+  end
+  def service(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_createsignedserviceurlrequestbuilder_service,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return CreateSignedServiceUrlRequestBuilder.uniffi_allocate(result)
+  end
+
+end
+
   class CreateTemplateRequestBuilder
 
   # A private helper for initializing instances of the class from a raw handle,
@@ -4469,6 +5192,93 @@ end
 
     result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit,uniffi_clone_handle(),value)
     return CyclopsTokenProviderConfigurationBuilder.uniffi_allocate(result)
+  end
+
+end
+
+  class HttpRequestBuilder
+
+  # A private helper for initializing instances of the class from a raw handle,
+  # bypassing any initialization logic and ensuring they are GC'd properly.
+  def self.uniffi_allocate(handle)
+    inst = allocate
+    inst.instance_variable_set :@handle, handle
+    ObjectSpace.define_finalizer(inst, uniffi_define_finalizer_by_handle(handle, inst.object_id))
+    return inst
+  end
+
+  # A private helper for registering an object finalizer.
+  # N.B. it's important that this does not capture a reference
+  # to the actual instance, only its underlying handle.
+  def self.uniffi_define_finalizer_by_handle(handle, object_id)
+    Proc.new do |_id|
+      FleetSdk.rust_call(
+        :uniffi_cyclops_sdk_fn_free_httprequestbuilder,
+        handle
+      )
+    end
+  end
+
+  # A private helper for lowering instances into a raw handle.
+  # This does an explicit typecheck, because accidentally lowering a different type of
+  # object in a place where this type is expected, could lead to memory unsafety.
+  def self.uniffi_check_lower(inst)
+    if not inst.is_a? self
+      raise TypeError.new "Expected a HttpRequestBuilder instance, got #{inst}"
+    end
+  end
+
+  def uniffi_clone_handle()
+    return FleetSdk.rust_call(
+      :uniffi_cyclops_sdk_fn_clone_httprequestbuilder,
+      @handle
+    )
+  end
+
+  def self.uniffi_lower(inst)
+    return inst.uniffi_clone_handle()
+  end
+  def initialize()
+    handle = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_constructor_httprequestbuilder_new,)
+    @handle = handle
+    ObjectSpace.define_finalizer(self, self.class.uniffi_define_finalizer_by_handle(handle, self.object_id))
+  end
+
+
+
+  def body(value)
+        value = FleetSdk::uniffi_bytes(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_body,uniffi_clone_handle(),RustBuffer.allocFromBytes(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def build()
+    result = FleetSdk.rust_call_with_error(SdkBuildError,:uniffi_cyclops_sdk_fn_method_httprequestbuilder_build,uniffi_clone_handle(),)
+    return result.consumeIntoTypeHttpRequest
+  end
+  def headers(value)
+        value = value
+        RustBuffer.check_lower_SequenceTypeHttpHeader(value)
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,uniffi_clone_handle(),RustBuffer.alloc_from_SequenceTypeHttpHeader(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def method(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_method,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def timeout_secs(value)
+        value = FleetSdk::uniffi_in_range(value, "u64", 0, 2**64)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_timeout_secs,uniffi_clone_handle(),value)
+    return HttpRequestBuilder.uniffi_allocate(result)
+  end
+  def url(value)
+        value = FleetSdk::uniffi_utf8(value)
+
+    result = FleetSdk.rust_call(:uniffi_cyclops_sdk_fn_method_httprequestbuilder_url,uniffi_clone_handle(),RustBuffer.allocFromString(value))
+    return HttpRequestBuilder.uniffi_allocate(result)
   end
 
 end

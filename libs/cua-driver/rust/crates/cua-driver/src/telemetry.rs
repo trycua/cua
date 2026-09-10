@@ -544,6 +544,9 @@ impl AgentSessionState {
         escalation_reason: Option<cua_driver_core::EscalationReason>,
         outcome: &cua_driver_core::server::ToolCompletionObservation,
     ) {
+        if is_history_tool(&outcome.tool_name) {
+            return;
+        }
         self.transport_bits |= transport_bit(transport);
         self.used_window_modality |= matches!(
             capture_modality,
@@ -994,6 +997,9 @@ pub(crate) fn capture_tool_completed(
     outcome: cua_driver_core::server::ToolCompletionObservation,
     transport: Transport,
 ) {
+    if is_history_tool(&outcome.tool_name) {
+        return;
+    }
     let is_first_value_candidate =
         outcome.computer_action && outcome.success && !outcome.refusal_code.is_refusal();
     if !is_enabled() || !should_capture_tool_completion(Instant::now(), is_first_value_candidate) {
@@ -1005,6 +1011,10 @@ pub(crate) fn capture_tool_completed(
         Value::String(execution_mode().into()),
     );
     capture_bounded(event::MCP_TOOL_COMPLETED, properties, transport);
+}
+
+fn is_history_tool(tool_name: &str) -> bool {
+    matches!(tool_name, "history_status" | "history_query")
 }
 
 #[derive(Debug)]
@@ -1778,6 +1788,7 @@ pub(crate) fn capture_cli_completed(
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1932,6 +1943,7 @@ fn fixed_cli_command(command: &str) -> &'static str {
         "stop" => "stop",
         "status" => "status",
         "recording" => "recording",
+        "history" => "history",
         "dump_docs" => "dump_docs",
         "update" => "update",
         "check_update" => "check_update",
@@ -1967,6 +1979,18 @@ fn fixed_cli_operation(command: &str, operation: &str) -> &'static str {
             "stop" => "stop",
             "status" => "status",
             "render" => "render",
+            _ => "other",
+        },
+        "history" => match operation {
+            "enable" => "enable",
+            "disable" => "disable",
+            "pause" => "pause",
+            "resume" => "resume",
+            "status" => "status",
+            "flush" => "flush",
+            "list" => "list",
+            "show" => "show",
+            "delete" => "delete",
             _ => "other",
         },
         "permissions" => match operation {
@@ -3406,6 +3430,42 @@ mod tests {
     }
 
     #[test]
+    fn history_reads_do_not_change_tool_or_agent_session_telemetry() {
+        use cua_driver_core::server::{
+            DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation, ToolErrorClass,
+        };
+        let mut state = AgentSessionState::new(
+            Transport::McpStdio,
+            cua_driver_core::session::SessionClientKind::PythonSdk,
+            cua_driver_core::CaptureScope::Auto,
+        );
+        for tool_name in ["history_status", "history_query"] {
+            assert!(is_history_tool(tool_name));
+            state.observe(
+                Transport::McpHttp,
+                false,
+                Some(cua_driver_core::session::CaptureModality::Desktop),
+                None,
+                &ToolCompletionObservation {
+                    tool_name: tool_name.into(),
+                    operation: cua_driver_core::server::ToolOperation::NotApplicable,
+                    computer_action: false,
+                    success: true,
+                    error_class: ToolErrorClass::None,
+                    refusal_code: cua_driver_core::server::ToolRefusalCode::None,
+                    duration_bucket: DurationBucket::Under10Ms,
+                    output_type: OutputType::Text,
+                    output_size_bucket: OutputSizeBucket::Under1KiB,
+                },
+            );
+        }
+        assert_eq!(state.tool_count, 0);
+        assert_eq!(state.transport_bits, transport_bit(Transport::McpStdio));
+        assert!(!state.used_desktop_modality);
+        assert!(!state.had_successful_tool);
+    }
+
+    #[test]
     fn failed_or_non_auto_escalation_is_not_counted() {
         use cua_driver_core::server::{
             DurationBucket, OutputSizeBucket, OutputType, ToolCompletionObservation,
@@ -3738,6 +3798,9 @@ mod tests {
     fn cli_operations_and_client_kinds_are_revalidated_in_the_worker() {
         assert_eq!(fixed_cli_operation("recording", "start"), "start");
         assert_eq!(fixed_cli_operation("recording", "/private/path"), "other");
+        assert_eq!(fixed_cli_command("history"), "history");
+        assert_eq!(fixed_cli_operation("history", "query-secret"), "other");
+        assert_eq!(fixed_cli_operation("history", "show"), "show");
         assert_eq!(fixed_cli_operation("doctor", "start"), "not_applicable");
         assert_eq!(
             fixed_cli_client_kind("mcp_config", "claude_code"),

@@ -37,6 +37,24 @@ pub fn is_process_live(pid: u32) -> bool {
     is_process_live_state(&status)
 }
 
+fn process_start_time_from_stat(stat: &str) -> Option<u64> {
+    // `comm` is parenthesized and may contain spaces. Fields after its closing
+    // parenthesis begin with state (field 3); starttime is field 22.
+    stat.rsplit_once(") ")?
+        .1
+        .split_whitespace()
+        .nth(19)?
+        .parse()
+        .ok()
+}
+
+/// Kernel start-time token for one PID. Unlike the numeric PID alone, this
+/// distinguishes a live process from a later process that reused its PID.
+pub fn process_instance_id(pid: u32) -> Option<u64> {
+    let stat = fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
+    process_start_time_from_stat(&stat)
+}
+
 /// Return all running processes by reading /proc/<pid>/status.
 pub fn list_processes() -> Vec<ProcessInfo> {
     let mut result = Vec::new();
@@ -93,6 +111,15 @@ pub fn list_processes() -> Vec<ProcessInfo> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn process_start_time_handles_spaces_in_comm() {
+        let mut fields = vec!["S".to_owned()];
+        fields.extend((4..=21).map(|field| field.to_string()));
+        fields.push("987654".to_owned());
+        let stat = format!("42 (fixture with spaces) {}", fields.join(" "));
+        assert_eq!(super::process_start_time_from_stat(&stat), Some(987654));
+    }
+
     #[test]
     fn process_states_fail_closed() {
         assert!(super::is_process_live_state(

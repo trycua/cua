@@ -139,6 +139,7 @@ end
     RustBuffer.check_lower_Optionalstring(v.warmpool)
     RustBuffer.check_lower_Optionalu32(v.bind_deadline)
     RustBuffer.check_lower_OptionalTypeClaimLifecycle(v.lifecycle)
+    RustBuffer.check_lower_Optionalu32(v.ttl_seconds_after_created)
   end
 
   def self.alloc_from_TypeClaimSpec(v)
@@ -288,6 +289,7 @@ end
 
     RustBuffer.check_lower_TypeSandboxTemplateRef(v.sandbox_template_ref)
     RustBuffer.check_lower_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
+    RustBuffer.check_lower_Optionalu32(v.ttl_seconds_after_created)
   end
 
   def self.alloc_from_TypeOSGymSandboxWarmPoolSpec(v)
@@ -401,6 +403,7 @@ end
     RustBuffer.check_lower_Optionalu32(v.cpu_cores)
     RustBuffer.check_lower_Optionalstring(v.memory)
     RustBuffer.check_lower_OptionalTypeFirmware(v.firmware)
+    RustBuffer.check_lower_Optionalbool(v.nested_virtualization)
     RustBuffer.check_lower_OptionalTypePreservedJson(v.probes)
     RustBuffer.check_lower_OptionalSequenceTypeSandboxService(v.services)
     RustBuffer.check_lower_OptionalTypeOidcConfig(v.oidc)
@@ -1118,7 +1121,8 @@ class RustBufferStream
       sandbox_template_ref: readTypeSandboxTemplateRef,
       warmpool: readOptionalstring,
       bind_deadline: readOptionalu32,
-      lifecycle: readOptionalTypeClaimLifecycle
+      lifecycle: readOptionalTypeClaimLifecycle,
+      ttl_seconds_after_created: readOptionalu32
     )
   end
 
@@ -1190,7 +1194,8 @@ class RustBufferStream
     OSGymSandboxWarmPoolSpec.new(
       replicas: readU32,
       sandbox_template_ref: readTypeSandboxTemplateRef,
-      autoscaling: readOptionalTypeWarmPoolAutoscaling
+      autoscaling: readOptionalTypeWarmPoolAutoscaling,
+      ttl_seconds_after_created: readOptionalu32
     )
   end
 
@@ -1249,6 +1254,7 @@ class RustBufferStream
       cpu_cores: readOptionalu32,
       memory: readOptionalstring,
       firmware: readOptionalTypeFirmware,
+      nested_virtualization: readOptionalbool,
       probes: readOptionalTypePreservedJson,
       services: readOptionalSequenceTypeSandboxService,
       oidc: readOptionalTypeOidcConfig
@@ -1831,6 +1837,7 @@ class RustBufferBuilder
     self.write_Optionalstring(v.warmpool)
     self.write_Optionalu32(v.bind_deadline)
     self.write_OptionalTypeClaimLifecycle(v.lifecycle)
+    self.write_Optionalu32(v.ttl_seconds_after_created)
   end
 
   # The Record type OSGymSandboxClaimCondition.
@@ -1889,6 +1896,7 @@ class RustBufferBuilder
     self.write_U32(v.replicas)
     self.write_TypeSandboxTemplateRef(v.sandbox_template_ref)
     self.write_OptionalTypeWarmPoolAutoscaling(v.autoscaling)
+    self.write_Optionalu32(v.ttl_seconds_after_created)
   end
 
   # The Record type OSGymSandboxWarmPoolStatus.
@@ -1937,6 +1945,7 @@ class RustBufferBuilder
     self.write_Optionalu32(v.cpu_cores)
     self.write_Optionalstring(v.memory)
     self.write_OptionalTypeFirmware(v.firmware)
+    self.write_Optionalbool(v.nested_virtualization)
     self.write_OptionalTypePreservedJson(v.probes)
     self.write_OptionalSequenceTypeSandboxService(v.services)
     self.write_OptionalTypeOidcConfig(v.oidc)
@@ -2457,6 +2466,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization,
+    [:uint64, :int8, RustCallStatus.by_ref],
+    :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_node_selector,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
     :uint64
@@ -2525,6 +2537,9 @@ module UniFFILib
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
     [:uint64, RustBuffer.by_value, RustCallStatus.by_ref],
+    :uint64
+  attach_function :uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created,
+    [:uint64, :uint32, RustCallStatus.by_ref],
     :uint64
   attach_function :uniffi_cyclops_sdk_schema_fn_clone_warmpoolautoscalingbuilder,
     [:uint64, RustCallStatus.by_ref],
@@ -2601,6 +2616,9 @@ module UniFFILib
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_memory,
     [RustCallStatus.by_ref],
     :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_nested_virtualization,
+    [RustCallStatus.by_ref],
+    :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_vmtemplatebuilder_node_selector,
     [RustCallStatus.by_ref],
     :uint16
@@ -2641,6 +2659,9 @@ module UniFFILib
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,
+    [RustCallStatus.by_ref],
+    :uint16
+  attach_function :uniffi_cyclops_sdk_schema_checksum_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created,
     [RustCallStatus.by_ref],
     :uint16
   attach_function :uniffi_cyclops_sdk_schema_checksum_method_warmpoolautoscalingbuilder_build,
@@ -2760,13 +2781,14 @@ end
 
   # Record type ClaimSpec
 class ClaimSpec
-  attr_reader :sandbox_template_ref, :warmpool, :bind_deadline, :lifecycle
+  attr_reader :sandbox_template_ref, :warmpool, :bind_deadline, :lifecycle, :ttl_seconds_after_created
 
-  def initialize(sandbox_template_ref:, warmpool:, bind_deadline:, lifecycle:)
+  def initialize(sandbox_template_ref:, warmpool:, bind_deadline:, lifecycle:, ttl_seconds_after_created: nil)
     @sandbox_template_ref = sandbox_template_ref
     @warmpool = warmpool
     @bind_deadline = bind_deadline
     @lifecycle = lifecycle
+    @ttl_seconds_after_created = ttl_seconds_after_created
   end
 
   def ==(other)
@@ -2780,6 +2802,9 @@ class ClaimSpec
       return false
     end
     if @lifecycle != other.lifecycle
+      return false
+    end
+    if @ttl_seconds_after_created != other.ttl_seconds_after_created
       return false
     end
 
@@ -2943,9 +2968,9 @@ end
 
   # Record type VmTemplate
 class VmTemplate
-  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :probes, :services, :oidc
+  attr_reader :container_disk_image, :command, :runtime, :runtime_class_name, :node_selector, :tolerations, :image_pull_policy, :image_pull_secret, :cpu_cores, :memory, :firmware, :nested_virtualization, :probes, :services, :oidc
 
-  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, probes:, services:, oidc:)
+  def initialize(container_disk_image:, command:, runtime:, runtime_class_name:, node_selector:, tolerations:, image_pull_policy:, image_pull_secret:, cpu_cores:, memory:, firmware:, nested_virtualization:, probes:, services:, oidc:)
     @container_disk_image = container_disk_image
     @command = command
     @runtime = runtime
@@ -2957,6 +2982,7 @@ class VmTemplate
     @cpu_cores = cpu_cores
     @memory = memory
     @firmware = firmware
+    @nested_virtualization = nested_virtualization
     @probes = probes
     @services = services
     @oidc = oidc
@@ -2994,6 +3020,9 @@ class VmTemplate
       return false
     end
     if @firmware != other.firmware
+      return false
+    end
+    if @nested_virtualization != other.nested_virtualization
       return false
     end
     if @probes != other.probes
@@ -3091,12 +3120,13 @@ end
 
   # Record type OSGymSandboxWarmPoolSpec
 class OSGymSandboxWarmPoolSpec
-  attr_reader :replicas, :sandbox_template_ref, :autoscaling
+  attr_reader :replicas, :sandbox_template_ref, :autoscaling, :ttl_seconds_after_created
 
-  def initialize(replicas:, sandbox_template_ref:, autoscaling:)
+  def initialize(replicas:, sandbox_template_ref:, autoscaling:, ttl_seconds_after_created: nil)
     @replicas = replicas
     @sandbox_template_ref = sandbox_template_ref
     @autoscaling = autoscaling
+    @ttl_seconds_after_created = ttl_seconds_after_created
   end
 
   def ==(other)
@@ -3107,6 +3137,9 @@ class OSGymSandboxWarmPoolSpec
       return false
     end
     if @autoscaling != other.autoscaling
+      return false
+    end
+    if @ttl_seconds_after_created != other.ttl_seconds_after_created
       return false
     end
 
@@ -3402,6 +3435,12 @@ end
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_memory,uniffi_clone_handle(),RustBuffer.allocFromString(value))
     return VmTemplateBuilder.uniffi_allocate(result)
   end
+  def nested_virtualization(value)
+        value = value ? true : false
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_vmtemplatebuilder_nested_virtualization,uniffi_clone_handle(),(value ? 1 : 0))
+    return VmTemplateBuilder.uniffi_allocate(result)
+  end
   def node_selector(value)
         value = value.each.with_object({}) { |(k, v), res| res[CyclopsSdkSchema::uniffi_utf8(k)] = CyclopsSdkSchema::uniffi_utf8(v) }
         RustBuffer.check_lower_MapStringString(value)
@@ -3640,6 +3679,12 @@ end
         value = value
         RustBuffer.check_lower_TypeSandboxTemplateRef(value)
     result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_sandbox_template_ref,uniffi_clone_handle(),RustBuffer.alloc_from_TypeSandboxTemplateRef(value))
+    return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
+  end
+  def ttl_seconds_after_created(value)
+        value = CyclopsSdkSchema::uniffi_in_range(value, "u32", 0, 2**32)
+
+    result = CyclopsSdkSchema.rust_call(:uniffi_cyclops_sdk_schema_fn_method_osgymsandboxwarmpoolspecbuilder_ttl_seconds_after_created,uniffi_clone_handle(),value)
     return OSGymSandboxWarmPoolSpecBuilder.uniffi_allocate(result)
   end
 

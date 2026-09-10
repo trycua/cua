@@ -78,22 +78,6 @@ jobs:
         with:
           ref: ${{ inputs.source_ref || github.ref }}
 
-      - name: Stage nightly artifact version
-        if: inputs.channel == 'nightly'
-        run: python3 .github/scripts/release_channels.py apply-version --component lume --version "${{ inputs.version }}"
-
-      - name: Select Xcode 16.3
-        run: |
-          sudo xcode-select -s /Applications/Xcode_16.3.app
-          xcodebuild -version
-
-      - name: Install dependencies
-        run: |
-          brew install cpio
-
-      - name: Create .release directory
-        run: mkdir -p .release
-
       - name: Set version
         id: set_version
         run: |
@@ -109,22 +93,38 @@ jobs:
             exit 1
           fi
 
-          SOURCE_VERSION=$(tr -d '[:space:]' < libs/lume/VERSION)
-          if [[ "$SOURCE_VERSION" != "$VERSION" ]]; then
-            echo "Tag/input version $VERSION does not match libs/lume/VERSION ($SOURCE_VERSION)"
-            exit 1
-          fi
           if [[ "${{ inputs.channel }}" == "nightly" ]]; then
             python3 .github/scripts/release_channels.py parse-tag \
               --component lume \
               --channel nightly \
               --tag "nightly-lume-v${VERSION}" >/dev/null
           else
+            SOURCE_VERSION=$(tr -d '[:space:]' < libs/lume/VERSION)
+            if [[ "$SOURCE_VERSION" != "$VERSION" ]]; then
+              echo "Tag/input version $VERSION does not match libs/lume/VERSION ($SOURCE_VERSION)"
+              exit 1
+            fi
             python3 .github/scripts/validate_release_versions.py --product lume
           fi
 
           # Set output for later steps
           echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+      - name: Stage nightly artifact version
+        if: inputs.channel == 'nightly'
+        run: python3 .github/scripts/release_channels.py apply-version --component lume --version "${{ inputs.version }}"
+
+      - name: Select Xcode 16.3
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.3.app
+          xcodebuild -version
+
+      - name: Install dependencies
+        run: |
+          brew install cpio
+
+      - name: Create .release directory
+        run: mkdir -p .release
 
       - name: Import Certificates
         env:

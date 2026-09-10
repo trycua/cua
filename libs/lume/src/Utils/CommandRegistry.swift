@@ -27,6 +27,7 @@ enum CommandRegistry {
             Logs.self,
             CheckUpdate.self,
             Update.self,
+            ReleaseChannelCommand.self,
             Setup.self,
             DumpDocs.self,
         ]

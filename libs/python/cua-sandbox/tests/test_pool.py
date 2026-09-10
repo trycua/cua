@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import fleet_sdk
 import pytest
 from cua_sandbox import (
     ClaimSpec,
@@ -14,6 +15,7 @@ from cua_sandbox import (
     OsGymSandboxTemplateSpecBuilder,
     OsGymSandboxWarmPoolSpecBuilder,
     Pool,
+    PoolAccessDeniedError,
     RuntimeKind,
     SandboxServiceBuilder,
     SandboxTemplateRefBuilder,
@@ -27,7 +29,7 @@ from cua_sandbox.sync import Pool as SyncPool
 from cua_sandbox.sync import Template as SyncTemplate
 from cua_sandbox.transport.fleet_cloud import _FleetClient
 from fleet_sdk import Sandbox as FleetSandbox
-from fleet_sdk import SdkError
+from fleet_sdk import SdkError, WarmPoolAutoscaling
 
 
 def test_public_pool_schema_exports_runtime_kind() -> None:
@@ -151,6 +153,8 @@ class FakeFleetClient:
         self.deleted_templates: list[str] = []
         self.renewed: list[tuple[str, str]] = []
         self.service_requests: list[object] = []
+        self.signed_url_creates: list[tuple[object, str, str | None, int]] = []
+        self.signed_url_revocations: list[object] = []
         self.wait_calls = 0
         self.closed = False
 
@@ -194,6 +198,23 @@ class FakeFleetClient:
         self.service_requests.append((sandbox, service, path, request))
         return SimpleNamespace(status=200, headers=[], body=b'{"result":"ok"}')
 
+    async def create_signed_service_url(
+        self,
+        sandbox,
+        service,
+        *,
+        label=None,
+        expires_in_seconds,
+    ):
+        self.signed_url_creates.append((sandbox, service, label, expires_in_seconds))
+        return signed_service_url()
+
+    async def list_signed_service_urls(self, sandbox):
+        return [signed_service_url()]
+
+    async def revoke_signed_service_url(self, signed_url):
+        self.signed_url_revocations.append(signed_url)
+
     async def delete_claim(self, claim: object) -> None:
         self.released.append(claim.metadata.name)
         if self.release_error:
@@ -207,6 +228,21 @@ class FakeFleetClient:
 
     async def close(self) -> None:
         self.closed = True
+
+
+def signed_service_url() -> SimpleNamespace:
+    return SimpleNamespace(
+        id="31e1c9bb-8cc9-4c50-9cf4-51798b6978e4",
+        namespace="foo",
+        claim="claim-1",
+        sandbox="sandbox-1",
+        service="mcp",
+        label="Customer demo",
+        url="https://signed.example/link",
+        created_at="2026-09-01T12:00:00Z",
+        expires_at="2026-09-01T13:00:00Z",
+        revoked_at=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -257,6 +293,87 @@ async def test_fleet_client_reconcile_template_delegates_to_generated_client() -
     client._client = GeneratedClient()
 
     assert await client.reconcile_template("desired") is expected
+
+
+@pytest.mark.asyncio
+async def test_fleet_client_manages_signed_service_urls(monkeypatch) -> None:
+    calls: list[tuple[str, object]] = []
+
+    class RequestBuilder:
+        def __init__(self):
+            self.values = {}
+
+        def sandbox(self, value):
+            self.values["sandbox"] = value
+            return self
+
+        def service(self, value):
+            self.values["service"] = value
+            return self
+
+        def label(self, value):
+            self.values["label"] = value
+            return self
+
+        def expires_in_seconds(self, value):
+            self.values["expires_in_seconds"] = value
+            return self
+
+        def build(self):
+            return SimpleNamespace(**self.values)
+
+    class GeneratedSignedServiceURL(SimpleNamespace):
+        def __init__(self, **values):
+            super().__init__(**values)
+
+    class GeneratedClient:
+        async def create_signed_service_url(self, request):
+            calls.append(("create", request))
+            return signed_service_url()
+
+        async def list_signed_service_urls(self, sandbox):
+            calls.append(("list", sandbox))
+            return [signed_service_url()]
+
+        async def revoke_signed_service_url(self, signed_url):
+            calls.append(("revoke", signed_url))
+
+    monkeypatch.setattr(
+        fleet_sdk,
+        "CreateSignedServiceUrlRequestBuilder",
+        RequestBuilder,
+        raising=False,
+    )
+    monkeypatch.setattr(fleet_sdk, "SignedServiceUrl", GeneratedSignedServiceURL, raising=False)
+    client = object.__new__(_FleetClient)
+    client._client = GeneratedClient()
+    sandbox = FleetSandbox(
+        namespace="foo",
+        claim="claim-1",
+        name="sandbox-1",
+        services=["mcp"],
+    )
+
+    created = await client.create_signed_service_url(
+        sandbox,
+        "mcp",
+        label="Customer demo",
+        expires_in_seconds=3600,
+    )
+    listed = await client.list_signed_service_urls(sandbox)
+    await client.revoke_signed_service_url(created)
+
+    create_request = calls[0][1]
+    assert create_request.sandbox is sandbox
+    assert (create_request.service, create_request.label, create_request.expires_in_seconds) == (
+        "mcp",
+        "Customer demo",
+        3600,
+    )
+    assert calls[1] == ("list", sandbox)
+    assert listed == [created]
+    assert calls[2][0] == "revoke"
+    assert calls[2][1].id == created.id
 
 
 @pytest.mark.asyncio
@@ -547,6 +664,35 @@ async def test_claim_exposes_named_service_requests(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_claim_manages_signed_service_urls(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim() as sandbox:
+        created = await sandbox.services.create_signed_url(
+            "mcp",
+            label="Customer demo",
+            expires_in_seconds=3600,
+        )
+        listed = await sandbox.services.list_signed_urls()
+        await sandbox.services.revoke_signed_url(created)
+
+    bound, service, label, expires_in_seconds = claim_client.signed_url_creates[0]
+    assert (bound.name, service, label, expires_in_seconds) == (
+        "sandbox-1",
+        "mcp",
+        "Customer demo",
+        3600,
+    )
+    assert created.url == "https://signed.example/link"
+    assert listed == [created]
+    assert claim_client.signed_url_revocations == [created]
+
+
+@pytest.mark.asyncio
 async def test_claim_forwards_native_claim_spec_unchanged(monkeypatch):
     reconcile_client = FakeFleetClient()
     claim_client = FakeFleetClient()
@@ -623,6 +769,51 @@ async def test_create_claim_returns_a_serializable_lease(monkeypatch):
         "service": "server",
     }
     assert _ClaimHandle.from_dict(lease.to_dict()).to_dict() == lease.to_dict()
+
+
+@pytest.mark.asyncio
+async def test_create_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    await pool.create_claim(ttl_seconds_after_created=1800)
+
+    spec = claim_client.claims[0].spec
+    assert spec.ttl_seconds_after_created == 1800
+    assert spec.sandbox_template_ref is pool.resource.spec.sandbox_template_ref
+    assert spec.warmpool is None
+    assert spec.bind_deadline is None
+    assert spec.lifecycle is None
+
+
+@pytest.mark.asyncio
+async def test_create_claim_rejects_ttl_alongside_an_explicit_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    clients = iter([reconcile_client, FakeFleetClient()])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    with pytest.raises(ValueError, match="inside spec"):
+        await pool.create_claim(spec=SimpleNamespace(), ttl_seconds_after_created=1800)
+
+
+@pytest.mark.asyncio
+async def test_pool_claim_forwards_creation_ttl_in_a_derived_spec(monkeypatch):
+    reconcile_client = FakeFleetClient()
+    claim_client = FakeFleetClient()
+    clients = iter([reconcile_client, claim_client])
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(clients))
+    pool = await Pool.reconcile(pool_request())
+
+    async with pool.claim(ttl_seconds_after_created=900):
+        pass
+
+    spec = claim_client.claims[0].spec
+    assert spec.ttl_seconds_after_created == 900
+    assert spec.sandbox_template_ref is pool.resource.spec.sandbox_template_ref
 
 
 @pytest.mark.asyncio
@@ -840,6 +1031,7 @@ async def test_pool_apply_delegates_to_template_and_pool_reconcile(monkeypatch):
 
     pool = await Pool.apply(
         Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
         cpu=4,
         memory_mb=4096,
     )
@@ -887,24 +1079,189 @@ async def test_pool_apply_rolls_back_pool_when_template_reconcile_fails(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_pool_apply_uses_stable_configuration_name(monkeypatch):
-    from cua_sandbox import Image
-
-    clients = [FakeFleetClient() for _ in range(6)]
+async def test_pool_apply_forwards_autoscaling_to_the_pool_request(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
     iterator = iter(clients)
     monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
-    image = Image.from_registry("registry.example/workspace:latest")
+    autoscaling = WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=2, max_pool_size=10)
 
-    first = await Pool.apply(image, replicas=1, cpu=4, memory_mb=4096)
-    second = await Pool.apply(image, replicas=1, cpu=4, memory_mb=4096)
-    explicit_default = await Pool.apply(
-        image, replicas=1, cpu=4, memory_mb=4096, services={"server": 8000}
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        autoscaling=autoscaling,
     )
 
-    assert first.name == second.name == explicit_default.name
-    assert first.name.startswith("cua-")
-    assert clients[0].reconciled[0].namespace == first.name
-    assert clients[1].reconciled_templates[0].name == first.name
+    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_without_autoscaling_leaves_the_pool_spec_static(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+
+    assert clients[0].reconciled[0].spec.autoscaling is None
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_requires_an_explicit_name():
+    image = Image.from_registry("registry.example/workspace:latest")
+
+    with pytest.raises(TypeError):
+        await Pool.apply(image)
+    with pytest.raises(ValueError, match="globally unique"):
+        await Pool.apply(image, name="")
+    with pytest.raises(ValueError, match="globally unique"):
+        await Pool.apply(image, name=None)
+
+
+def test_sync_pool_apply_forwards_autoscaling(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+    autoscaling = WarmPoolAutoscaling(min_pool_size=1, initial_pool_size=1, max_pool_size=5)
+
+    pool = SyncPool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        autoscaling=autoscaling,
+    )
+
+    assert pool.name == "workspace"
+    assert clients[0].reconciled[0].spec.autoscaling == autoscaling
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_forwards_creation_ttl_to_the_pool_request(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+        ttl_seconds_after_created=86400,
+    )
+
+    assert clients[0].reconciled[0].spec.ttl_seconds_after_created == 86400
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_without_creation_ttl_leaves_the_pool_unreaped(monkeypatch):
+    clients = [FakeFleetClient() for _ in range(2)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    await Pool.apply(
+        Image.from_registry("registry.example/workspace:latest"),
+        name="workspace",
+    )
+
+    assert clients[0].reconciled[0].spec.ttl_seconds_after_created is None
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_rejects_invalid_creation_ttl(monkeypatch):
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", FakeFleetClient)
+
+    with pytest.raises(ValueError, match="ttl_seconds_after_created"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+            ttl_seconds_after_created=-1,
+        )
+
+
+def _forbidden(operation: str) -> SdkError.Status:
+    return SdkError.Status(operation=operation, status=403, body="k8s request is not allowed")
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_maps_forbidden_pool_reconcile_to_access_denied(monkeypatch):
+    clients = [FakeFleetClient(reconcile_error=_forbidden("create pool"))]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert "'workspace'" in str(error.value)
+    assert isinstance(error.value.__cause__, SdkError.Status)
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_maps_forbidden_template_reconcile_and_still_rolls_back(monkeypatch):
+    clients = [
+        FakeFleetClient(),
+        FakeFleetClient(reconcile_error=_forbidden("update template")),
+        FakeFleetClient(),
+    ]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert clients[2].deleted_pools == ["workspace"]
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_canonicalizes_native_pool_access_denied(monkeypatch):
+    upstream = getattr(SdkError, "PoolAccessDenied", None)
+    if upstream is None:
+        pytest.skip("installed cua-fleet predates SdkError.PoolAccessDenied")
+
+    native = upstream(
+        operation="create pool",
+        namespace="workspace",
+        status=403,
+        body="k8s request is not allowed",
+    )
+    clients = [FakeFleetClient(reconcile_error=native)]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="globally unique") as error:
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
+
+    assert error.value is native
+    assert "Fleet denied create pool on pool namespace 'workspace'" in str(error.value)
+    assert "https://discord.gg/mVnXXpdE85" in str(error.value)
+
+
+@pytest.mark.asyncio
+async def test_pool_apply_rollback_failure_does_not_mask_template_error(monkeypatch):
+    class DeleteDeniedClient(FakeFleetClient):
+        async def delete_pool(self, pool: object) -> None:
+            raise _forbidden("delete pool")
+
+    clients = [
+        FakeFleetClient(),
+        FakeFleetClient(reconcile_error=_forbidden("update template")),
+        DeleteDeniedClient(),
+    ]
+    iterator = iter(clients)
+    monkeypatch.setattr("cua_sandbox.pool._FleetClient", lambda: next(iterator))
+
+    with pytest.raises(PoolAccessDeniedError, match="update template"):
+        await Pool.apply(
+            Image.from_registry("registry.example/workspace:latest"),
+            name="workspace",
+        )
 
 
 @pytest.mark.asyncio

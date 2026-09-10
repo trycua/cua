@@ -8,6 +8,7 @@ on:
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
+      - "libs/python/cua-sandbox/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/include/**"
@@ -35,6 +36,7 @@ on:
       - "libs/cua-driver/examples/agent-sdks/**"
       - "libs/cua-driver/typescript/**"
       - "libs/cua-driver/python/**"
+      - "libs/python/cua-sandbox/**"
       - "libs/cua-driver/rust/Cargo.toml"
       - "libs/cua-driver/rust/Cargo.lock"
       - "libs/cua-driver/rust/include/**"
@@ -81,8 +83,11 @@ jobs:
           cache-dependency-path: .github/scripts/cua-driver-mcp-compat/package-lock.json
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Build the release-mode MCP server
@@ -124,8 +129,11 @@ jobs:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - name: Prove portable contracts match the live registry
@@ -182,8 +190,11 @@ jobs:
           workspaces: "libs/cua-driver/rust -> target"
       - name: Install Linux build dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
+          if [[ -f /etc/apt/apt-mirrors.txt ]]; then
+            sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
+          fi
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 update
+          sudo apt-get -o Acquire::Retries=3 -o Acquire::http::Timeout=15 -o Acquire::https::Timeout=15 install -y --no-install-recommends \
             clang pkg-config libdbus-1-dev libpipewire-0.3-dev libspa-0.2-dev \
             libei-dev libxkbcommon-dev libx11-dev libxi-dev libxtst-dev libxext-dev
       - uses: actions/setup-python@v5
@@ -270,13 +281,29 @@ jobs:
         working-directory: libs/cua-driver/python
         run: |
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
-            python -m unittest tests/test_uniffi_loader.py -v
+            python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py -v
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
             "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"
 
       - name: Test TypeScript SDK
         working-directory: libs/cua-driver/typescript
         run: npm run typecheck && CUA_DRIVER_REQUIRE_UNIFFI=1 npm test && npm audit --audit-level=high
+
+      - name: Test Sandbox typed Driver against the candidate native bridge
+        run: |
+          python -m pip install --extra-index-url https://wheels.cua.ai/simple './libs/python/cua-sandbox[dev]'
+          CUA_SANDBOX_REQUIRE_NATIVE_DRIVER=1 \
+          PYTHONPATH=libs/python/cua-sandbox:libs/cua-driver/python/src \
+            python -m pytest \
+              libs/python/cua-sandbox/tests/test_typed_driver_native.py \
+              libs/python/cua-sandbox/tests/test_typed_driver.py \
+              libs/python/cua-sandbox/tests/test_driver_mcp.py \
+              libs/python/cua-sandbox/tests/test_driver_mcp_native.py \
+              libs/python/cua-sandbox/tests/test_pool.py \
+              libs/python/cua-sandbox/tests/test_fleet_transport.py \
+              libs/python/cua-sandbox/tests/test_fleet_cloud_transport.py \
+              libs/python/cua-sandbox/tests/test_sandbox_fleet_lifecycle.py \
+              libs/python/cua-sandbox/tests/test_vm_cleanup.py -q
 
       - name: Verify Python native package contents
         working-directory: libs/cua-driver

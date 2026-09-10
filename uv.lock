@@ -1069,7 +1069,7 @@ provides-extras = ["lume", "lumier", "ui", "all"]
 
 [[package]]
 name = "cua-computer-server"
-version = "0.3.42"
+version = "0.3.46"
 source = { editable = "libs/python/computer-server" }
 dependencies = [
     { name = "aiohttp" },
@@ -1119,7 +1119,7 @@ requires-dist = [
     { name = "aiohttp", specifier = ">=3.9.1" },
     { name = "cua-auto", editable = "libs/python/cua-auto" },
     { name = "cua-core", editable = "libs/python/core" },
-    { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.12.2,<0.13.0" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = ">=0.22.2,<0.23.0" },
     { name = "fastapi", specifier = ">=0.111.0" },
     { name = "fastmcp", specifier = ">=3.2.0,<3.3.0" },
     { name = "grpcio", specifier = "==1.78.0" },
@@ -1142,7 +1142,7 @@ requires-dist = [
     { name = "pywin32", marker = "extra == 'windows'", specifier = ">=310" },
     { name = "pywinctl", specifier = ">=0.4.1" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.27.0" },
-    { name = "vncdotool", marker = "extra == 'vnc'", specifier = ">=1.2.0" },
+    { name = "vncdotool", marker = "extra == 'vnc'", specifier = ">=1.3.0" },
     { name = "websockets", specifier = ">=12.0" },
 ]
 provides-extras = ["macos", "linux", "windows", "vnc", "driver"]
@@ -1189,14 +1189,14 @@ dev = [{ name = "pytest", specifier = ">=8.3.5" }]
 
 [[package]]
 name = "cua-driver"
-version = "0.12.2"
+version = "0.22.2"
 source = { registry = "https://pypi.org/simple" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1f/9a/b77097f4dd4ee0f0a6a92ea9fb9bd7acabdeb134fe10a76440ebe3cccb8e/cua_driver-0.12.2-py3-none-macosx_13_0_universal2.whl", hash = "sha256:be45a102f92031b424e84dbfeba7afa3fcc6cd957bee0276f0e3a26f2d3efc58", size = 32083206, upload-time = "2026-07-23T05:33:11.238Z" },
-    { url = "https://files.pythonhosted.org/packages/32/c5/65facce8ae822e9c756a0aa4339496f88bb2a708ce7b40786b4da8673797/cua_driver-0.12.2-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:dc494710c3cf13139d715f3c117be46fabf6a388afdad71cb9a4f08ee8b2b4e5", size = 22983041, upload-time = "2026-07-23T05:33:13.654Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/34/6f4ba52bbc23f114546987c7e59851769af334e6e70975a3616f5c82e017/cua_driver-0.12.2-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:ce58c405f677d73f34f60c5e5f622a4426225517c15e55094f145b1f1e47a7db", size = 22840183, upload-time = "2026-07-23T05:33:16.195Z" },
-    { url = "https://files.pythonhosted.org/packages/2b/9a/f9280da9bbdad5e7596e1ab7e77bcb8f18efe71ee2d33cfe3aa278cfa57a/cua_driver-0.12.2-py3-none-win_amd64.whl", hash = "sha256:f1b5f05174720fd63a8797ab34d4227f1169a59ef1e04c54d1db2596a8e10f55", size = 21756824, upload-time = "2026-07-23T05:33:18.864Z" },
-    { url = "https://files.pythonhosted.org/packages/35/e5/98707a7d45744510c863417d2b859aaab9d35e6bc18e6e4660e52ab2cdee/cua_driver-0.12.2-py3-none-win_arm64.whl", hash = "sha256:69ce4c5c54c54a70e3fb7e8baeb8b476cc151277a6ba6dab0eda052faf2918ff", size = 19943506, upload-time = "2026-07-23T05:33:21.521Z" },
+    { url = "https://files.pythonhosted.org/packages/56/23/e5f4a6d9a799a3fd73c5ff8dd88de377f97864b344493afa5c6c5b409539/cua_driver-0.22.2-py3-none-macosx_13_0_universal2.whl", hash = "sha256:954ad2fc57049abe8117f82ef8f2a7e23aa71f0bf102023c6885baed2468b257", size = 38859550, upload-time = "2026-08-27T18:48:14.272Z" },
+    { url = "https://files.pythonhosted.org/packages/49/86/efc63a991104f051b6b16bcee5c5af169e75b7bb11e2216bfd556ec13e89/cua_driver-0.22.2-py3-none-manylinux_2_31_aarch64.whl", hash = "sha256:aceec765940a4bcfb68891a0642ff8072f5fd220c66fa3fe113a4b1f8c71d1ea", size = 27575564, upload-time = "2026-08-27T18:48:17.136Z" },
+    { url = "https://files.pythonhosted.org/packages/fd/6d/ec8b2dcbd5a59c0597ea4b20c50f63ca96ed6b29e7cf34b16847c244cc23/cua_driver-0.22.2-py3-none-manylinux_2_31_x86_64.whl", hash = "sha256:19f1124ab2670335ca272b66c15c59b12f7579d1e463c422fb2cd5d58c08d0d2", size = 27550099, upload-time = "2026-08-27T18:48:19.729Z" },
+    { url = "https://files.pythonhosted.org/packages/ce/89/97f6bbd9e672c619ef661ac9982f8f46353f877c43df3e8fda4bd63743ce/cua_driver-0.22.2-py3-none-win_amd64.whl", hash = "sha256:93909184d515e3eac9e6a0651731e930b1a9ee6218b6a0aaa8897ea592dee8fa", size = 25363707, upload-time = "2026-08-27T18:48:22.825Z" },
+    { url = "https://files.pythonhosted.org/packages/15/b8/635c087292f33342206276617d3fe4499b27d6ddf171019d6557bc57e5a3/cua_driver-0.22.2-py3-none-win_arm64.whl", hash = "sha256:2a037886a57765c486d4915c28099857bc5b16c0ab09c209068f6bffc69c90fe", size = 23672187, upload-time = "2026-08-27T18:48:25.586Z" },
 ]
 
 [[package]]
@@ -9083,14 +9083,17 @@ wheels = [
 
 [[package]]
 name = "vncdotool"
-version = "1.2.0"
+version = "1.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "cryptography" },
     { name = "pillow" },
-    { name = "pycryptodomex" },
     { name = "twisted" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/68/d43c145f110fbc7da6cbd4082d940fdbc8aaa7d9e8b52f3f574485d49208/vncdotool-1.2.0.tar.gz", hash = "sha256:53408d18ca7f9f21c525fc88189b01ca6594153ec1a9be09f6198306d166ea0d", size = 54809, upload-time = "2023-07-06T18:00:43.146Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/b6/f4/163e50a24b659cbae4250e6d336e8132d386c51c1afeb33541cfb2caf7a5/vncdotool-1.4.2.tar.gz", hash = "sha256:03c46e1a2185485077229ca97752212976bdd64cb36e55e8b47a546148e7e9b0", size = 92188, upload-time = "2026-09-06T20:10:10.984Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/75/c4/abb105cb5d81a67f38ca2d1c7b3fe81119da0fb43e1145dcb7711c380443/vncdotool-1.4.2-py3-none-any.whl", hash = "sha256:6512732fc191aca5c17c731e7a9e7951a36f8d95c7c48c63904eefec1616fc41", size = 51467, upload-time = "2026-09-06T20:10:09.598Z" },
+]
 
 [[package]]
 name = "watchdog"

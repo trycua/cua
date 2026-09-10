@@ -225,6 +225,36 @@ def test_nightly_can_create_a_private_draft_at_the_exact_sha():
     ]
 
 
+def test_nightly_creation_validates_registry_with_stable_authority(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    calls = []
+
+    def fake_registry():
+        calls.append(True)
+        return {
+            "components": {
+                "cua-driver-rs": {
+                    "stableTagPrefix": "cua-driver-rs-v",
+                    "nightlyTagPrefix": "nightly-cua-driver-rs-v",
+                }
+            }
+        }
+
+    monkeypatch.setattr(github_release.release_channels, "load_registry", fake_registry)
+    api = FakeApi("a" * 40)
+    api.release = None
+    ensure_release(
+        api,
+        "trycua/cua",
+        "nightly-cua-driver-rs-v0.19.4-nightly.20260812.42",
+        "a" * 40,
+        channel="nightly",
+        create_if_missing=True,
+    )
+    assert calls == [True]
+
+
 def test_stable_and_unregistered_tags_cannot_create_drafts():
     api = FakeApi("a" * 40)
     api.release = None

@@ -53,6 +53,8 @@ pub struct EmbeddedDriverHostOptions {
     pub dangerously_bypass_approvals: bool,
     pub environment: Vec<EmbeddedEnvironmentVariable>,
     pub inherit_stderr: bool,
+    #[uniffi(default = false)]
+    pub no_overlay: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, uniffi::Record)]
@@ -121,6 +123,7 @@ struct ValidatedOptions {
     dangerously_bypass_approvals: bool,
     environment: Vec<EmbeddedEnvironmentVariable>,
     inherit_stderr: bool,
+    no_overlay: bool,
 }
 
 #[cfg(unix)]
@@ -263,6 +266,7 @@ impl EmbeddedCuaDriverHost {
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: true,
+            no_overlay: false,
         })
     }
 
@@ -648,6 +652,9 @@ impl EmbeddedCuaDriverHost {
         if self.options.dangerously_bypass_approvals {
             args.push("--dangerously-bypass-approvals".into());
         }
+        if self.options.no_overlay {
+            args.push("--no-overlay".into());
+        }
         args
     }
 
@@ -815,6 +822,7 @@ fn validate_options(
         dangerously_bypass_approvals: options.dangerously_bypass_approvals,
         environment: options.environment,
         inherit_stderr: options.inherit_stderr,
+        no_overlay: options.no_overlay,
     })
 }
 
@@ -852,6 +860,8 @@ pub(crate) fn allowed_environment_name(name: &str) -> bool {
                 | "DBUS_SESSION_BUS_ADDRESS"
                 | "XAUTHORITY"
                 | "CUA_LOG"
+                | "CUA_DRIVER_RS_TELEMETRY_ENABLED"
+                | "CUA_TELEMETRY_ENABLED"
         )
 }
 
@@ -861,7 +871,6 @@ pub(crate) fn inherited_managed_environment_name(name: &str) -> bool {
         "CUA_DRIVER_PERMISSION_MODE"
             | "CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS"
             | "CUA_DRIVER_DISABLE_UNRESTRICTED"
-            | "CUA_DRIVER_ALLOW_LEGACY_EXISTING_PROFILE_APPROVAL"
             | "CUA_DRIVER_SESSION_POLICY_FILE"
             | "CUA_DRIVER_SESSION_POLICY_APPROVED"
             | "CUA_DRIVER_CAPABILITY_MANIFEST_FILE"
@@ -1147,6 +1156,7 @@ mod tests {
             dangerously_bypass_approvals: false,
             environment: Vec::new(),
             inherit_stderr: false,
+            no_overlay: false,
         }
     }
 
@@ -1180,6 +1190,22 @@ mod tests {
     }
 
     #[test]
+    fn no_overlay_is_opt_in_on_the_owned_daemon() {
+        let default_host =
+            EmbeddedCuaDriverHost::with_options(options(EmbeddedPermissionMode::Standard)).unwrap();
+        assert!(!default_host
+            .serve_args("/tmp/cua-default.sock")
+            .contains(&"--no-overlay".into()));
+
+        let mut configured = options(EmbeddedPermissionMode::Standard);
+        configured.no_overlay = true;
+        let configured_host = EmbeddedCuaDriverHost::with_options(configured).unwrap();
+        assert!(configured_host
+            .serve_args("/tmp/cua-no-overlay.sock")
+            .contains(&"--no-overlay".into()));
+    }
+
+    #[test]
     fn capability_manifest_aliases_must_not_conflict() {
         let mut options = options(EmbeddedPermissionMode::Standard);
         options.capability_manifest_path = Some("capabilities-v3.yaml".into());
@@ -1195,6 +1221,45 @@ mod tests {
         assert!(!allowed_environment_name("CUA_DRIVER_PERMISSION_MODE"));
         assert!(!allowed_environment_name("LD_PRELOAD"));
         assert!(!allowed_environment_name("NODE_OPTIONS"));
+    }
+
+    #[test]
+    fn telemetry_preferences_are_inherited_and_overridable() {
+        assert!(allowed_environment_name("CUA_DRIVER_RS_TELEMETRY_ENABLED"));
+        assert!(allowed_environment_name("cua_telemetry_enabled"));
+
+        let inherited = [
+            ("CUA_DRIVER_RS_TELEMETRY_ENABLED".into(), "1".into()),
+            ("CUA_TELEMETRY_ENABLED".into(), "true".into()),
+        ];
+        let values = merge_safe_environment(inherited.clone(), &[]);
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "1"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "true"
+        }));
+
+        let values = merge_safe_environment(
+            inherited,
+            &[
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_DRIVER_RS_TELEMETRY_ENABLED".into(),
+                    value: "0".into(),
+                },
+                EmbeddedEnvironmentVariable {
+                    name: "CUA_TELEMETRY_ENABLED".into(),
+                    value: "false".into(),
+                },
+            ],
+        );
+
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_DRIVER_RS_TELEMETRY_ENABLED" && variable.value == "0"
+        }));
+        assert!(values.iter().any(|variable| {
+            variable.name == "CUA_TELEMETRY_ENABLED" && variable.value == "false"
+        }));
     }
 
     #[test]

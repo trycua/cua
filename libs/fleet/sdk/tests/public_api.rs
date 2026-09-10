@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use cyclops_sdk::{
     Claim, CreateClaimRequest, CreatePoolRequest, CyclopsClient, CyclopsConfiguration,
-    CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpResponse, Pool,
-    ResourceMetadata, Sandbox, SdkError,
+    CyclopsCredentials, HttpClient, HttpError, HttpHeader, HttpRequest, HttpRequestBuilder,
+    HttpResponse, Pool, ResourceMetadata, Sandbox, SdkError,
 };
 use cyclops_sdk_schema::{
     ClaimSpec, OSGymSandboxClaimStatus, OSGymSandboxWarmPoolSpec, OSGymSandboxWarmPoolStatus,
@@ -206,6 +206,49 @@ fn http_request_distinguishes_absent_and_empty_bodies() {
     assert_eq!(empty.body, Some(vec![]));
     assert_ne!(absent, timed);
     assert_eq!(timed.timeout_secs, Some(75));
+}
+
+#[test]
+fn http_request_builder_treats_optional_fields_as_skippable() {
+    let request = HttpRequestBuilder::new()
+        .method("GET".into())
+        .url("https://run.cua.ai/v1/pools".into())
+        .headers(vec![])
+        .build()
+        .unwrap();
+
+    assert_eq!(request.body, None);
+    assert_eq!(request.timeout_secs, None);
+
+    let bounded = HttpRequestBuilder::new()
+        .method("GET".into())
+        .url("https://run.cua.ai/v1/pools".into())
+        .headers(vec![])
+        .timeout_secs(30)
+        .build()
+        .unwrap();
+
+    assert_eq!(bounded.timeout_secs, Some(30));
+
+    let missing = HttpRequestBuilder::new()
+        .method("GET".into())
+        .headers(vec![])
+        .build();
+
+    assert!(missing.is_err());
+}
+
+#[test]
+fn http_request_deserializes_without_timeout_secs() {
+    let request: HttpRequest = serde_json::from_value(serde_json::json!({
+        "method": "GET",
+        "url": "https://run.cua.ai/v1/pools",
+        "headers": [],
+        "body": null,
+    }))
+    .unwrap();
+
+    assert_eq!(request.timeout_secs, None);
 }
 
 #[test]

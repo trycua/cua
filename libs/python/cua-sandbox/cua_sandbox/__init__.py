@@ -16,11 +16,13 @@ Usage::
         await host.mouse.click(100, 200)
 """
 
-__version__ = "0.1.0"
+__version__ = "0.6.0"  # x-release-please-version
 
 from cua_sandbox._auth import login, whoami
 from cua_sandbox._config import configure
+from cua_sandbox.generated.image_models import ImageFileReference
 from cua_sandbox.image import Image
+from cua_sandbox.interfaces import SignedServiceURL
 from cua_sandbox.localhost import Localhost, localhost
 from cua_sandbox.pool import Pool, Template
 from cua_sandbox.runtime.compat import (
@@ -30,6 +32,7 @@ from cua_sandbox.runtime.compat import (
 )
 from cua_sandbox.sandbox import Sandbox, SandboxInfo, sandbox
 from cua_sandbox.transport.cloud import CloudTransport
+from cua_sandbox.transport.fleet_cloud import PoolAccessDeniedError
 from fleet_sdk import (
     ClaimSpec,
     CreatePoolRequest,
@@ -52,6 +55,8 @@ from fleet_sdk import Template as TemplateResource
 from fleet_sdk import (
     VmTemplate,
     VmTemplateBuilder,
+    WarmPoolAutoscaling,
+    WarmPoolAutoscalingBuilder,
 )
 
 __all__ = [
@@ -59,7 +64,9 @@ __all__ = [
     "login",
     "whoami",
     "Image",
+    "ImageFileReference",
     "Pool",
+    "PoolAccessDeniedError",
     "Template",
     "TemplateResource",
     "CreatePoolRequest",
@@ -71,6 +78,8 @@ __all__ = [
     "SandboxTemplateRefBuilder",
     "OsGymSandboxWarmPoolSpec",
     "OsGymSandboxWarmPoolSpecBuilder",
+    "WarmPoolAutoscaling",
+    "WarmPoolAutoscalingBuilder",
     "OsGymSandboxTemplateSpec",
     "OsGymSandboxTemplateSpecBuilder",
     "RuntimeKind",
@@ -79,6 +88,7 @@ __all__ = [
     "SandboxService",
     "SandboxServiceBuilder",
     "ServiceProtocol",
+    "SignedServiceURL",
     "Firmware",
     "Sandbox",
     "SandboxInfo",

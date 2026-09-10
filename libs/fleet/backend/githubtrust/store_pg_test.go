@@ -4,18 +4,24 @@ import (
 	"context"
 	"os"
 	"testing"
+
+	"cyclops-cs-backend/database"
 )
 
 // TestPostgresStoreRoundTrip exercises the real Postgres-backed store against
-// a live database. It is skipped unless CYCLOPS_TEST_DATABASE_URL points at a
+// a live database. It is skipped unless CYCLOPS_TEST_RUNTIME_DATABASE_URL points at a
 // throwaway Postgres (e.g. `docker run --rm -e POSTGRES_PASSWORD=pg -p
-// 5432:5432 postgres:16`). The test creates the schema on its own via New.
+// 5432:5432 postgres:16`). The database must already have migration version 1
+// applied by the standalone migrator.
 func TestPostgresStoreRoundTrip(t *testing.T) {
-	url := os.Getenv("CYCLOPS_TEST_DATABASE_URL")
+	url := os.Getenv("CYCLOPS_TEST_RUNTIME_DATABASE_URL")
 	if url == "" {
-		t.Skip("set CYCLOPS_TEST_DATABASE_URL to run the Postgres store test")
+		t.Skip("set CYCLOPS_TEST_RUNTIME_DATABASE_URL to run the Postgres store test")
 	}
 	ctx := context.Background()
+	if err := database.RequireVersion(ctx, url, 1); err != nil {
+		t.Fatalf("database must be migrated to version 1: %v", err)
+	}
 	store, err := New(ctx, url)
 	if err != nil {
 		t.Fatalf("New: %v", err)

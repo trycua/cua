@@ -55,7 +55,9 @@ pub fn advertised_output_schema(success: Value) -> Value {
     serde_json::json!({ "type": "object", "anyOf": [success, refusal_envelope_schema()] })
 }
 
-fn output_schema_with_additional_properties<T: JsonSchema>(additional_properties: bool) -> Value {
+pub(crate) fn output_schema_with_additional_properties<T: JsonSchema>(
+    additional_properties: bool,
+) -> Value {
     let mut settings = SchemaSettings::draft2020_12();
     settings.inline_subschemas = true;
     settings.meta_schema = None;
@@ -110,6 +112,11 @@ pub struct SessionStateOutput {
     pub session: String,
     pub capture_scope: CaptureScope,
     pub effective_scope: EffectiveScope,
+    /// Whether this session is authorized to use desktop-scope capture and
+    /// actions. This does not report the operating system's lock-screen state.
+    pub desktop_capture_authorized: bool,
+    /// Compatibility field: this reports whether this session has unlocked
+    /// desktop capture scope. It is not an operating-system lock-screen probe.
     pub desktop_unlocked: bool,
     #[schemars(required, schema_with = "nullable_escalation_reason_schema")]
     pub escalation_reason: Option<EscalationReason>,

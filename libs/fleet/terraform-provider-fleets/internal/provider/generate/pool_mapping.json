@@ -26,7 +26,7 @@
       "name": "replicas",
       "go_name": "Replicas",
       "value_type": "int64",
-      "mode": "required",
+      "mode": "optional_computed",
       "cr": "warmpool",
       "crd_path": "spec.replicas"
     },
@@ -182,7 +182,7 @@
           "name": "max_pool_size",
           "go_name": "MaxPoolSize",
           "value_type": "int64",
-          "mode": "required",
+          "mode": "optional_computed",
           "crd_path": "maxPoolSize"
         }
       ],

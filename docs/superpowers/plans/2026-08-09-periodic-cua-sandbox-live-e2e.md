@@ -13,7 +13,7 @@
 - Schedule must remain `7/15 * * * *`, running at `:07`, `:22`, `:37`, and `:52` UTC.
 - Scheduled runs execute both `main-source` and `published-package`; relevant pushes to `main` execute only `main-source`.
 - Manual dispatch accepts `both`, `main-source`, or `published-package`; only manual dispatch may set `force_failure=true`.
-- Use image `296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180`.
+- Use image `public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2`.
 - Provision with `cpu=4`, `memory_mb=4096`, `server_port=8000`, `time_to_start=900`, `request_timeout=60`, and `telemetry_enabled=False`.
 - Authenticate only with `CUA_CLIENT_ID`, `CUA_CLIENT_SECRET`, `CUA_FLEET_BASE_URL=https://run.cua.ai`, and the default Cyclops token endpoint.
 - Do not use `CUA_API_KEY`, legacy `/api/keys`, namespace-scoped key creation, repository-private SDK helpers, or mutable image tags.
@@ -386,8 +386,8 @@ from tests.live.fleet_e2e_support import (
 )
 
 IMAGE = (
-    "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo"
-    "@sha256:5b9cb82f482834f7541901b87be956e7544d0db13fabc0b372cbc5eca5a74180"
+    "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04"
+    "@sha256:80fff8a40f217a460cef7a60161adb3899eabd02c3451f18926b84d1f81b8da2"
 )
 
 
@@ -880,14 +880,14 @@ Update the merged PR or implementation issue with workflow run links, observed v
 
 ## Live Evidence Remediation
 
-The monitor uses reusable, dedicated namespaces instead of per-run namespaces.
+The monitor uses reusable namespaces for scheduled and push runs, while manual ephemeral runs use per-run namespaces to avoid stale ownership collisions.
 Each lane has one DNS-safe namespace for each event class:
 
 - `cua-live-<lane>-schedule` for scheduled runs
 - `cua-live-<lane>-push` for pushes
-- `cua-live-<lane>-manual` for `workflow_dispatch`
+- `cua-live-<lane>-<run-id>` for `workflow_dispatch`
 
-The event-and-lane concurrency group serializes use of each deterministic claim;
+The event-and-lane concurrency group serializes reusable scheduled and push claims;
 only scheduled runs cancel an older scheduled run in the same lane. Fleet
 reconciliation preserves the namespace, pool, and template, all named after the
 namespace. `Sandbox.ephemeral()` is verified with claim-only cleanup: after
@@ -898,7 +898,7 @@ that fails before yielding a sandbox. It never explicitly deletes a namespace,
 pool, or template.
 
 
-Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`.
+Workflow namespace expression: `cua-live-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && github.run_id || github.event_name }}`.
 
 persistent reconciled resources are intentionally retained between runs; only deterministic claims are ephemeral.
 
@@ -906,3 +906,39 @@ The workflow uses step-scoped OAuth credentials only for credential preflight an
 live pytest step. After checkout, `git rev-parse HEAD` is exported as
 `CUA_LIVE_E2E_SOURCE_SHA` and is the source SHA recorded by live, controlled-failure,
 and Alertmanager evidence.
+
+## Persistent Pool Suite
+
+The workflow later gained a second suite that claims from persistent,
+pre-provisioned Fleet pools instead of creating and destroying a pool per run.
+The prepare job emits a lane-and-suite matrix: pushes stay on the `ephemeral`
+suite only, while scheduled runs cross both lanes with both suites and manual
+dispatch selects lane and suite combinations. The concurrency group is
+`periodic-cua-sandbox-live-${{ github.event_name }}-${{ matrix.lane }}-${{ matrix.suite }}`,
+so a newer schedule cancels only an older scheduled run of the same lane and
+suite.
+
+The suite's step, `Run live Fleet pool smoke`, executes
+`tests/live/test_fleet_pool_persistent.py` from the same isolated copied suite
+with step-scoped OAuth credentials. Two pool namespaces per lane and event
+class are set by the workflow:
+
+- `cua-live-pool-warm-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`
+- `cua-live-pool-cold-${{ matrix.lane }}-${{ github.event_name == 'workflow_dispatch' && 'manual' || github.event_name }}`
+
+The warm pool keeps `replicas=1` so claims bind to pre-provisioned capacity;
+the cold pool expresses scale-to-zero with
+`WarmPoolAutoscaling(min_pool_size=0, initial_pool_size=0, max_pool_size=1)`
+because pool reconciliation rejects `replicas` below one. Each run records
+`pool_pre_existed` and replica counts from `Pool.get`, treating both 403 and
+404 as not-pre-existed (`is_pool_missing_error`) because Fleet evaluates
+authorization before existence for namespaces that have not been created
+yet, reconciles the pinned configuration idempotently with `Pool.apply`,
+claims through
+`Sandbox.ephemeral(pool=..., name=...)` with the claim name fixed to the
+namespace, and exits with a claim-only release. After release the monitor
+polls until claims are absent and requires the reconciled inventory to contain
+exactly the named pool and template with zero claims; the pool and template
+deliberately persist between runs. The warm mode asserts a claim-acquisition
+bound only when the pool pre-existed with a ready replica. Failure artifacts
+and Alertmanager labels carry the suite alongside the lane.

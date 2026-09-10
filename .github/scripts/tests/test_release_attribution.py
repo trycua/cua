@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator
 from release_attribution import (
     CommitRecord,
     LEGACY_RELEASE_BUMP_RE,
+    PUBLISHED_INSTALLER_BUMP_RE,
     ReleaseError,
     _change_contributors,
     build_manifest,
@@ -333,6 +334,18 @@ def test_legacy_release_bump_subject_is_recognized():
     assert not LEGACY_RELEASE_BUMP_RE.match("feat(driver): bump reconnect retries")
 
 
+def test_published_installer_bump_subject_is_recognized_narrowly():
+    assert PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "chore(cua-driver): advance published installer version to nightly [skip ci]"
+    )
+    assert not PUBLISHED_INSTALLER_BUMP_RE.match(
+        "feat(cua-driver): advance published installer version to 0.19.3 [skip ci]"
+    )
+
+
 def test_changelog_accepts_verified_commit_link_when_pr_suffix_is_missing():
     commit_sha = "2dad3e519e17b27eaa793151b8671957f578072c"
     section = (
@@ -625,3 +638,30 @@ def test_pr_2805_coauthor_resolves_through_trusted_identity_override():
     ]
     assert issues == []
     assert visual_requested is False
+
+
+def test_pr_3266_squash_coauthor_resolves_through_verified_identity_override():
+    config = json.loads((REPO_ROOT / ".github/release-attribution-config.json").read_text())
+    commit = CommitRecord(
+        "2fd8bfc6dd5d7d67d00a4151c1159e665abb9ef0",
+        "test(cua-driver): seed macOS Lume TCC grants (#3266)",
+        "Co-authored-by: jf-mac-mini <jf-mac-mini@jf-mac-mini-4.local>",
+    )
+    pull = {
+        "user": {"login": "0xjohnnydev"},
+        "author_association": "CONTRIBUTOR",
+        "body": "",
+        "labels": [],
+    }
+
+    contributors, _, _ = _change_contributors(
+        pull,
+        commit,
+        FakeGitHub(commit.sha),
+        "trycua/cua",
+        config,
+    )
+    assert contributors == [
+        {"login": "0xjohnnydev", "role": "author", "external": True},
+        {"login": "0xjohnnydev", "role": "coauthor", "external": True},
+    ]

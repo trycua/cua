@@ -31,9 +31,12 @@ on:
         value: ${{ jobs.plan.outputs.attribution_base_tag }}
       reason:
         value: ${{ jobs.plan.outputs.reason }}
+      attribution_issues:
+        value: ${{ jobs.plan.outputs.attribution_issues }}
 
 permissions:
   contents: read
+  issues: write
 
 jobs:
   plan:
@@ -46,6 +49,7 @@ jobs:
       previous_tag: ${{ steps.plan.outputs.previousTag }}
       attribution_base_tag: ${{ steps.plan.outputs.attributionBaseTag }}
       reason: ${{ steps.plan.outputs.reason }}
+      attribution_issues: ${{ steps.plan.outputs.attributionIssues }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,6 +90,7 @@ jobs:
             --date "$(date -u +%Y%m%d)" \
             --run "${{ github.run_id }}" \
             --releases "$RUNNER_TEMP/releases.json" \
+            --attribution-config .github/release-attribution-config.json \
             --output "$RUNNER_TEMP/nightly-plan.json" \
             --github-output "$GITHUB_OUTPUT" \
             "${FORCE[@]}"
@@ -98,3 +103,38 @@ jobs:
           path: ${{ runner.temp }}/nightly-plan.json
           if-no-files-found: error
           retention-days: 30
+
+  report-attribution-hold:
+    needs: plan
+    if: needs.plan.outputs.reason == 'held-attribution'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create or refresh the attribution hold
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COMPONENT: ${{ inputs.component }}
+          SOURCE_SHA: ${{ inputs.source_sha }}
+          ATTRIBUTION_ISSUES: ${{ needs.plan.outputs.attribution_issues }}
+        run: |
+          set -euo pipefail
+          TITLE="Nightly ${COMPONENT} held by unresolved contributor attribution"
+          BODY="$RUNNER_TEMP/nightly-attribution-hold.md"
+          {
+            echo "The nightly planner stopped before the cross-platform build because contributor attribution is unresolved."
+            echo
+            echo "Source commit: \`$SOURCE_SHA\`"
+            echo
+            echo "Unresolved identities:"
+            jq -r '.[] | "- `\(.email)` in commit `\(.sha)` (\(.name))"' <<<"$ATTRIBUTION_ISSUES"
+            echo
+            echo "Resolve each identity by linking the email to GitHub, amending the source commit with a recognized email before merge, or adding a verified \`identityOverrides\` mapping. Do not add wildcard or human-email ignores."
+          } > "$BODY"
+          MATCHES=$(gh issue list --repo "${{ github.repository }}" --state open \
+            --search "\"$TITLE\" in:title" --limit 100 --json number,title)
+          NUMBER=$(jq -r --arg title "$TITLE" \
+            'map(select(.title == $title)) | first | .number // empty' <<<"$MATCHES")
+          if [[ -n "$NUMBER" ]]; then
+            gh issue edit "$NUMBER" --repo "${{ github.repository }}" --body-file "$BODY"
+          else
+            gh issue create --repo "${{ github.repository }}" --title "$TITLE" --body-file "$BODY"
+          fi

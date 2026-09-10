@@ -487,7 +487,7 @@ all = [
 
 [[package]]
 name = "cua-cli"
-version = "0.1.14"
+version = "0.1.15"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -574,19 +574,19 @@ wheels = [
 
 [[package]]
 name = "cua-fleet"
-version = "0.1.8"
+version = "0.1.16"
 source = { registry = "https://wheels.cua.ai/simple" }
 wheels = [
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:20611a14c185157e6f41502e1bbdcc1e98663347e94463ca538755b0efc173bb" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-macosx_11_0_arm64.whl", hash = "sha256:7c21d0a36a8d74bfe0768422e4f3d9367ee51837920e2c22ee57521fc93c4f3b" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:d7604668a7186d06cefb2bd23974b033c0b2cda61ccbe88d944af622b37f58d3" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:0bac329552d351604ad15b7eb4f4f3ed944921083238d74f51277d657d8f0a34" },
-    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.8-py3-none-win_amd64.whl", hash = "sha256:d78fe6934a2f650dcf5b105a08833418245c720765da9c3b40e160b86a3d203d" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.16-py3-none-macosx_10_12_x86_64.whl", hash = "sha256:27a8621170df2a14d4af8912f902266a0cc32c1ed91ebb592f6ddb3bcf600bb1" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.16-py3-none-macosx_11_0_arm64.whl", hash = "sha256:31d0373884f2d04dac8c3a88d06da7669491e5cb0c9d7c47ec839f8e42dc4e76" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.16-py3-none-manylinux_2_34_aarch64.whl", hash = "sha256:d29cc4cc2768ce2e9b48df9180ab1e544c5b659416f9d130af99f002fa9dd2f2" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.16-py3-none-manylinux_2_34_x86_64.whl", hash = "sha256:6d1b2b2095b5cb629a303cdc314b8223c1205a49b0647a0d50a966f9a572131e" },
+    { url = "https://wheels.cua.ai/simple/cua-fleet/cua_fleet-0.1.16-py3-none-win_amd64.whl", hash = "sha256:ccd088f6a3d167a48f106518d24d3c601e3190d946f663f4c4ccec160b33ac8e" },
 ]
 
 [[package]]
 name = "cua-sandbox"
-version = "0.2.0"
+version = "0.6.0"
 source = { editable = "../cua-sandbox" }
 dependencies = [
     { name = "cua-auto" },
@@ -594,10 +594,12 @@ dependencies = [
     { name = "cua-fleet" },
     { name = "grpcio" },
     { name = "httpx" },
+    { name = "jsonschema" },
     { name = "oras" },
     { name = "paramiko" },
     { name = "protobuf" },
     { name = "pycdlib" },
+    { name = "pydantic" },
     { name = "vncdotool" },
     { name = "websockets" },
 ]
@@ -606,13 +608,16 @@ dependencies = [
 requires-dist = [
     { name = "cua-auto", specifier = ">=0.1.2" },
     { name = "cua-core", specifier = ">=0.3.0,<0.4.0" },
-    { name = "cua-fleet", specifier = "==0.1.8" },
+    { name = "cua-driver", marker = "extra == 'driver'", specifier = "==0.26.0" },
+    { name = "cua-fleet", specifier = "==0.1.16" },
     { name = "grpcio", specifier = "==1.78.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "jsonschema", specifier = ">=4.23,<5.0" },
     { name = "oras", specifier = ">=0.2.40" },
     { name = "paramiko", specifier = ">=5.0.0" },
     { name = "protobuf", specifier = "==6.33.6" },
     { name = "pycdlib", specifier = ">=1.14.0" },
+    { name = "pydantic", specifier = ">=2.11,<3.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.1.0" },
@@ -620,13 +625,15 @@ requires-dist = [
     { name = "webbrowser-open", marker = "extra == 'auth'", specifier = ">=0.0.1" },
     { name = "websockets", specifier = ">=12.0" },
 ]
-provides-extras = ["auth", "dev"]
+provides-extras = ["driver", "auth", "dev"]
 
 [package.metadata.requires-dev]
 dev = [
     { name = "cua-agent", editable = "../agent" },
+    { name = "datamodel-code-generator", specifier = "==0.74.0" },
     { name = "pytest", specifier = ">=9.0.2" },
     { name = "pytest-asyncio", specifier = ">=1.3.0" },
+    { name = "pyyaml", specifier = ">=6.0,<7.0" },
 ]
 
 [[package]]

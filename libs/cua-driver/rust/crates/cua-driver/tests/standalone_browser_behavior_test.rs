@@ -24,7 +24,9 @@ use cua_driver_testkit::e2e::{
 };
 use cua_driver_testkit::observer::TargetWindow;
 use cua_driver_testkit::sentinel::ForegroundSentinel;
-use cua_driver_testkit::{spawn_in_job, BrowserFixtureServer, Driver, McpDriver, ToolResponse};
+use cua_driver_testkit::{
+    spawn_in_job, BrowserFixtureServer, Driver, McpDriver, RawDriver, ToolResponse,
+};
 use futures_util::{SinkExt, StreamExt};
 use tokio_tungstenite::tungstenite::Message;
 
@@ -1155,6 +1157,38 @@ fn wait_for_pid_windows_to_close(driver: &mut McpDriver, pid: u32) {
     }
 }
 
+fn devtools_active_port(profile: &Path) -> Option<u16> {
+    std::fs::read_to_string(profile.join("DevToolsActivePort"))
+        .ok()?
+        .lines()
+        .next()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+fn wait_for_devtools_listener_to_close(profile: &Path, port: u16) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let listener_closed = TcpStream::connect_timeout(
+            &format!("127.0.0.1:{port}")
+                .parse()
+                .expect("loopback socket"),
+            Duration::from_millis(100),
+        )
+        .is_err();
+        if listener_closed {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "existing-profile DevTools listener {port} remained reachable after end_session; active-port-file={:?}",
+            devtools_active_port(profile)
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+}
+
 fn spawn_browser_command(
     driver: &mut McpDriver,
     spec: &BrowserSpec,
@@ -1391,9 +1425,20 @@ fn bind(fixture: &mut BrowserFixture, session: &str) -> (String, String, ToolRes
     assert!(!started.is_error(), "start_session failed: {}", started.raw);
     let prepared = fixture.driver.call(
         "browser_prepare",
-        serde_json::json!({ "pid": fixture.pid as i64, "session": session }),
+        serde_json::json!({
+            "pid": fixture.pid as i64,
+            "window_id": fixture.window_id,
+            "session": session,
+            "strategy": {"kind": "existing_profile"},
+        }),
     );
-    assert_eq!(prepared.structured()["prepared"], true, "{}", prepared.raw);
+    assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+    assert_eq!(
+        prepared.structured()["action"],
+        "attached_existing_profile",
+        "{}",
+        prepared.raw
+    );
     // A newly mapped Wayland toplevel can briefly appear with a protocol-local
     // id before the compositor publishes its stable pid/geometry identity.
     // Model the real client preamble: re-list windows and bind only the id the
@@ -1448,6 +1493,18 @@ fn case(browser: &str, action: &str) -> CaseSpec {
         DriverRoute::Cdp,
         oracles,
     )
+}
+
+fn prepare_isolated_case(browser: &str) -> CaseSpec {
+    let case = case(browser, "browser_prepare_isolated_launch");
+    if cfg!(target_os = "windows")
+        && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
+            == Ok("hosted_runner_token")
+    {
+        case.expecting_refusal(vec![RefusalCode::BrowserRouteUnavailable])
+    } else {
+        case
+    }
 }
 
 fn refusal_case(browser: &str, action: &str, code: RefusalCode) -> CaseSpec {
@@ -2192,48 +2249,73 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
         std::env::consts::OS,
         spec.name
     );
-    execute_case(
-        case(&spec.name, "browser_prepare_isolated_launch"),
-        |evidence| {
-            let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
-            let source_profile = tempfile::Builder::new()
-                .prefix("cua-e2e-user-browser-")
-                .tempdir()
-                .expect("create ordinary browser profile");
-            let driver_profiles = driver_profile_root();
-            let profiles_before = profile_entries(&driver_profiles);
-            let mut driver = spawn_driver(&scenario);
-            *evidence = recording_evidence(driver.recording_dir());
+    execute_case(prepare_isolated_case(&spec.name), |evidence| {
+        let target_server = BrowserFixtureServer::start(&standalone_fixture_html());
+        let driver_profiles = driver_profile_root();
+        let profiles_before = profile_entries(&driver_profiles);
+        let mut driver = spawn_driver(&scenario);
+        *evidence = recording_evidence(driver.recording_dir());
 
-            let before = window_ids(&mut driver);
-            let mut source_command = command_for_unprepared_browser(
-                spec,
-                source_profile.path(),
-                "about:blank",
-                TEST_BROWSER_INITIAL_POSITION,
-            );
-            let source_child = spawn_in_job(&mut source_command).expect("launch ordinary browser");
-            let launched_pid = source_child.id();
-            eprintln!(
-                "[standalone-browser] spawned ordinary {} pid={} profile={}",
-                spec.name,
-                source_child.id(),
-                source_profile.path().display()
-            );
-            driver.reaper().push(source_child);
-            let (source_pid, source_window_id) =
-                wait_for_new_browser_window(&mut driver, &before, spec, launched_pid)
-                    .expect("ordinary browser native window");
-            driver.reaper().track_pid(source_pid);
+        let session = format!("standalone-prepare-{}", spec.name);
+        let started = driver.call("start_session", serde_json::json!({ "session": session }));
+        assert!(!started.is_error(), "start_session failed: {}", started.raw);
+        driver.start_behavior_recording();
 
-            let session = format!("standalone-prepare-{source_pid}");
-            let started = driver.call("start_session", serde_json::json!({ "session": session }));
-            assert!(!started.is_error(), "start_session failed: {}", started.raw);
-            driver.start_behavior_recording();
+        if cfg!(target_os = "windows")
+            && std::env::var("CUA_E2E_WINDOWS_BROWSER_LIMITATION").as_deref()
+                == Ok("hosted_runner_token")
+        {
+            let sentinel = ForegroundSentinel::launch(&mut driver);
+            let (prepared, passed) = sentinel
+                .observe_desktop(|| {
+                    driver.call(
+                        "browser_prepare",
+                        serde_json::json!({
+                            "session": session,
+                            "allow_launch": true,
+                            "profile": {"mode": "isolated_new"},
+                        }),
+                    )
+                })
+                .expect("observe hosted Windows browser limitation");
+            assert_eq!(
+                prepared.structured()["status"],
+                "refused",
+                "{}",
+                prepared.raw
+            );
+            assert_eq!(
+                prepared.structured()["refusal"]["code"],
+                "browser_route_unavailable",
+                "{}",
+                prepared.raw
+            );
+            assert!(
+                prepared.structured()["action"].is_null()
+                    && prepared.structured()["prepared_pid"].is_null()
+                    && prepared.structured()["side_effects"].is_null(),
+                "hosted Windows refusal must precede browser setup: {}",
+                prepared.raw
+            );
+            assert_eq!(
+                profile_entries(&driver_profiles),
+                profiles_before,
+                "hosted Windows refusal must not create an isolated profile"
+            );
+            let ended = driver.call("end_session", serde_json::json!({ "session": session }));
+            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+            let mut observation = Observation::refused(
+                RefusalCode::BrowserRouteUnavailable,
+                vec![OracleKind::FixtureState],
+                prepared.text(),
+                Evidence::default(),
+            );
+            observation.passed_oracles.extend(passed);
+            observation
+        } else {
             let prepared = driver.call(
                 "browser_prepare",
                 serde_json::json!({
-                    "pid": source_pid as i64,
                     "session": session,
                     "allow_launch": true,
                     "profile": {"mode": "isolated_new"},
@@ -2260,16 +2342,10 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 "browser_prepare disclosed its private profile path: {}",
                 prepared.raw
             );
-            assert!(
-                !prepared_json.contains("approval_token"),
-                "{}",
-                prepared.raw
-            );
 
             let prepared_pid = prepared.structured()["prepared_pid"]
                 .as_u64()
                 .expect("prepared browser pid") as u32;
-            assert_ne!(prepared_pid, source_pid);
             let (prepared_window_id, state) =
                 wait_for_exact_browser_binding(&mut driver, prepared_pid, &session)
                     .expect("isolated browser did not expose an exactly bindable window");
@@ -2334,17 +2410,6 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                         clicked.raw
                     );
                     wait_for_text(&target_server, "lbl-counter", "counter=1");
-                    let source_windows =
-                        driver.call("list_windows", serde_json::json!({"pid": source_pid}));
-                    assert!(
-                        source_windows.structured()["windows"]
-                            .as_array()
-                            .is_some_and(|windows| windows.iter().any(|window| {
-                                window["window_id"].as_u64() == Some(source_window_id)
-                            })),
-                        "ordinary browser was modified or terminated: {}",
-                        source_windows.raw
-                    );
                     Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
                 })
                 .expect("observe isolated browser desktop effects");
@@ -2365,8 +2430,81 @@ fn run_prepare_isolated_launch(spec: &BrowserSpec) {
                 thread::sleep(Duration::from_millis(100));
             }
             observation
-        },
+        }
+    });
+}
+
+#[test]
+#[ignore = "requires an installed standalone Chromium browser"]
+fn standalone_browser_prepare_isolated_source_smoke() {
+    let _guard = STANDALONE_BROWSER_TEST_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    let driver_profiles = driver_profile_root();
+    let profiles_before = profile_entries(&driver_profiles);
+    let mut driver = RawDriver::spawn_with_env(&[
+        ("CUA_DRIVER_PERMISSION_MODE", "unrestricted"),
+        ("CUA_DRIVER_DANGEROUSLY_BYPASS_APPROVALS", "1"),
+    ])
+    .expect("source-built driver daemon");
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}
+    }));
+    driver.recv();
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 2, "method": "tools/call",
+        "params": {"name": "start_session", "arguments": {"session": "pid-free-source-smoke"}}
+    }));
+    let started = driver.recv();
+    assert_eq!(
+        started["result"]["isError"],
+        serde_json::Value::Null,
+        "{started}"
     );
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 3, "method": "tools/call",
+        "params": {
+            "name": "browser_prepare",
+            "arguments": {
+                "session": "pid-free-source-smoke",
+                "allow_launch": true,
+                "profile": {"mode": "isolated_new"}
+            }
+        }
+    }));
+    let prepared = driver.recv();
+    assert_eq!(
+        prepared["result"]["structuredContent"]["action"], "launched_isolated_browser",
+        "{prepared}"
+    );
+    assert!(
+        prepared["result"]["structuredContent"]["prepared_pid"]
+            .as_i64()
+            .is_some_and(|pid| pid > 0),
+        "{prepared}"
+    );
+
+    driver.send(&serde_json::json!({
+        "jsonrpc": "2.0", "id": 4, "method": "tools/call",
+        "params": {"name": "end_session", "arguments": {"session": "pid-free-source-smoke"}}
+    }));
+    let ended = driver.recv();
+    assert_eq!(
+        ended["result"]["isError"],
+        serde_json::Value::Null,
+        "{ended}"
+    );
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while profile_entries(&driver_profiles) != profiles_before {
+        assert!(
+            Instant::now() < deadline,
+            "isolated_new profile remained after source-daemon end_session"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
@@ -2499,11 +2637,6 @@ fn run_existing_profile_attach(spec: &BrowserSpec) {
                 assert!(!public_result.contains("ws://"), "{}", prepared.raw);
                 assert!(
                     !public_result.contains("webSocketDebuggerUrl"),
-                    "{}",
-                    prepared.raw
-                );
-                assert!(
-                    !public_result.contains("approval_token"),
                     "{}",
                     prepared.raw
                 );
@@ -2652,21 +2785,22 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                 prepared.structured()["side_effects"]["created_profile"],
                 false
             );
+            let setup_port = devtools_active_port(fixture._profile.path()).unwrap_or_else(|| {
+                panic!(
+                    "existing-profile setup exposed no DevToolsActivePort in {}",
+                    fixture._profile.path().display()
+                )
+            });
 
             let public_result = prepared.raw.to_string();
             assert!(!public_result.contains("ws://"), "{}", prepared.raw);
-            assert!(
-                !public_result.contains("approval_token"),
-                "{}",
-                prepared.raw
-            );
             assert!(
                 !public_result.contains(&fixture._profile.path().display().to_string()),
                 "{}",
                 prepared.raw
             );
 
-            run_with_background_oracles(&mut fixture, |fixture| {
+            let observation = run_with_background_oracles(&mut fixture, |fixture| {
                 let state = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({
@@ -2728,25 +2862,52 @@ fn run_existing_profile_setup(spec: &BrowserSpec) {
                     clicked.raw
                 );
                 wait_for_text(&fixture.server, "lbl-counter", "counter=1");
-
-                let ended = fixture
-                    .driver
-                    .call("end_session", serde_json::json!({ "session": session }));
-                assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
-                let windows = fixture
-                    .driver
-                    .call("list_windows", serde_json::json!({"pid": fixture.pid}));
-                assert!(
-                    windows.structured()["windows"]
-                        .as_array()
-                        .is_some_and(|windows| windows.iter().any(|window| {
-                            window["window_id"].as_u64() == Some(fixture.window_id)
-                        })),
-                    "ending the setup grant must not close the user-owned browser: {}",
-                    windows.raw
-                );
                 Observation::delivered(vec![OracleKind::FixtureState], Evidence::default())
-            })
+            });
+
+            // Linux must foreground Chromium briefly to navigate its browser-owned
+            // setup surface: Chromium rejects background XSendEvent keystrokes and
+            // does not expose an AT-SPI editable-text setter for the omnibox. Keep
+            // that bounded native cleanup outside the CDP background-input oracle,
+            // then prove its externally visible result exactly on every platform.
+            let ended = fixture
+                .driver
+                .call("end_session", serde_json::json!({ "session": session }));
+            assert!(!ended.is_error(), "end_session failed: {}", ended.raw);
+            wait_for_devtools_listener_to_close(fixture._profile.path(), setup_port);
+            let native = fixture.driver.call(
+                "get_window_state",
+                serde_json::json!({
+                    "pid": fixture.pid as i64,
+                    "window_id": fixture.window_id,
+                }),
+            );
+            assert!(
+                !native.is_error(),
+                "post-cleanup native state failed: {}",
+                native.raw
+            );
+            assert!(
+                !native
+                    .tree_text()
+                    .to_ascii_lowercase()
+                    .contains("allow remote debugging"),
+                "ending the setup grant left browser-owned consent UI visible: {}",
+                native.raw
+            );
+            let windows = fixture
+                .driver
+                .call("list_windows", serde_json::json!({"pid": fixture.pid}));
+            assert!(
+                windows.structured()["windows"]
+                    .as_array()
+                    .is_some_and(|windows| windows
+                        .iter()
+                        .any(|window| { window["window_id"].as_u64() == Some(fixture.window_id) })),
+                "ending the setup grant must not close the user-owned browser: {}",
+                windows.raw
+            );
+            observation
         },
     );
 }
@@ -4449,10 +4610,18 @@ fn run_two_window_collision(spec: &BrowserSpec) {
                     "browser_prepare",
                     serde_json::json!({
                         "pid": fixture.pid as i64,
+                        "window_id": fixture.window_id,
                         "session": session,
+                        "strategy": {"kind": "existing_profile"},
                     }),
                 );
-                assert_eq!(prepared.structured()["prepared"], true, "{}", prepared.raw);
+                assert_eq!(prepared.structured()["status"], "ok", "{}", prepared.raw);
+                assert_eq!(
+                    prepared.structured()["action"],
+                    "attached_existing_profile",
+                    "{}",
+                    prepared.raw
+                );
                 let refused = fixture.driver.call(
                     "get_browser_state",
                     serde_json::json!({

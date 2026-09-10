@@ -118,6 +118,7 @@ fn policies_are_isolated_immutable_and_enforced_over_mcp() {
             "session": "scope-auto",
             "capture_scope": "auto",
             "effective_scope": "desktop",
+            "desktop_capture_authorized": true,
             "desktop_unlocked": true,
             "escalation_reason": "foreground_ineffective",
             "escalation_detail": "window ladder exhausted",

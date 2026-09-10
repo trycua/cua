@@ -34,8 +34,9 @@ import (
 // belonging in this table — reading input.facts is the point of that option.
 func TestRouteModulesNeverReadInputFacts(t *testing.T) {
 	modules := map[string]string{
-		"authz.rego":          authzPolicy,
-		"pool_admission.rego": poolAdmissionPolicy,
+		"authz.rego":                      authzPolicy,
+		"pool_admission.rego":             poolAdmissionPolicy,
+		"sandbox_services_admission.rego": sandboxServicesAdmissionPolicy,
 	}
 	// Every base and surface module too, read from the same map LoadOpa
 	// registers, so a surface added there is covered without being named here.
@@ -77,6 +78,54 @@ func prepareQuery(t *testing.T, query string, modules map[string]string) rego.Pr
 	return pq
 }
 
+func TestPerKeyClientUsesConfiguredPrefixFromUserInput(t *testing.T) {
+	query := prepareQuery(t, "data.authz.is_per_key_client", map[string]string{"authz.rego": authzPolicy})
+	for _, testCase := range []struct {
+		name string
+		user *User
+		want bool
+	}{
+		{name: "custom prefix client", user: &User{AZP: "poolkey-ns-a", KeyClientPfx: "poolkey-"}, want: true},
+		{name: "legacy prefix client", user: &User{AZP: "key-ns-a", KeyClientPfx: "poolkey-"}, want: false},
+		{name: "default prefix client", user: &User{AZP: "key-ns-a"}, want: true},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			results, err := query.Eval(context.Background(), rego.EvalInput(map[string]any{"user": buildUserInput(testCase.user)}))
+			if err != nil {
+				t.Fatalf("evaluate per-key client policy: %v", err)
+			}
+			got := len(results) > 0 && len(results[0].Expressions) > 0 && results[0].Expressions[0].Value == true
+			if got != testCase.want {
+				t.Fatalf("is_per_key_client = %t, want %t; input = %#v", got, testCase.want, buildUserInput(testCase.user))
+			}
+		})
+	}
+}
+
+func TestSignedServiceURLsCustomPerKeyPrefixIsNamespaceScoped(t *testing.T) {
+	for _, testCase := range []struct {
+		name      string
+		namespace string
+		want      bool
+	}{
+		{name: "matching namespace", namespace: "ns-a", want: true},
+		{name: "other namespace", namespace: "ns-b", want: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			input := map[string]any{
+				"route":  "/api/signed-service-urls/{namespace}",
+				"method": http.MethodGet,
+				"params": map[string]string{"namespace": testCase.namespace},
+				"user":   buildUserInput(&User{ID: "svc-1", AZP: "poolkey-ns-a", KeyClientPfx: "poolkey-", Namespace: "ns-a"}),
+				"flags":  map[string]any{},
+			}
+			if got := evalAllow(t, input); got != testCase.want {
+				t.Fatalf("allow(namespace=%q) = %t, want %t", testCase.namespace, got, testCase.want)
+			}
+		})
+	}
+}
+
 // evalAllow answers what the route's production policy would, over a raw input
 // document. There is no single module to query any more: a route runs
 // All(base, surface), so this resolves the tree main.go dispatches input.route
@@ -95,48 +144,48 @@ func evalAllow(t *testing.T, input map[string]any) bool {
 	if !ok {
 		t.Fatalf("input names route %q, which is bound to no authorization surface", route)
 	}
+	return evalPolicyNode(t, tree, input)
+}
 
-	allowed := true
-	for _, leaf := range conjunctiveLeaves(t, tree) {
-		if leaf.MaxBody > 0 {
-			continue
+func evalPolicyNode(t *testing.T, node Node, input map[string]any) bool {
+	t.Helper()
+	switch policy := node.(type) {
+	case Leaf:
+		if policy.MaxBody > 0 {
+			return true
 		}
-		modules, err := leaf.Source.modules()
+		modules, err := policy.Source.modules()
 		if err != nil {
-			t.Fatalf("load modules for %q: %v", leaf.Query, err)
+			t.Fatalf("load modules for %q: %v", policy.Query, err)
 		}
 		sources := make(map[string]string, len(modules))
 		for _, module := range modules {
 			sources[module.name] = module.source
 		}
-		result, err := prepareQuery(t, leaf.Query, sources).Eval(context.Background(), rego.EvalInput(input))
+		result, err := prepareQuery(t, policy.Query, sources).Eval(context.Background(), rego.EvalInput(input))
 		if err != nil {
-			t.Fatalf("eval %q: %v", leaf.Query, err)
+			t.Fatalf("eval %q: %v", policy.Query, err)
 		}
-		if !result.Allowed() {
-			allowed = false
-		}
-	}
-	return allowed
-}
-
-// conjunctiveLeaves flattens a route tree into its leaves, refusing anything but
-// conjunction. Every route policy is All(...) today; a disjunction would make
-// "AND the leaves" the wrong fold, and silently so.
-func conjunctiveLeaves(t *testing.T, n Node) []Leaf {
-	t.Helper()
-	switch node := n.(type) {
-	case Leaf:
-		return []Leaf{node}
+		return result.Allowed()
 	case AllNode:
-		var leaves []Leaf
-		for _, child := range node.Children {
-			leaves = append(leaves, conjunctiveLeaves(t, child)...)
+		for _, child := range policy.Children {
+			if !evalPolicyNode(t, child, input) {
+				return false
+			}
 		}
-		return leaves
+		return true
+	case BecauseNode:
+		return evalPolicyNode(t, policy.Child, input)
+	case AnyNode:
+		for _, child := range policy.Children {
+			if evalPolicyNode(t, child, input) {
+				return true
+			}
+		}
+		return false
 	default:
-		t.Fatalf("route policy contains a %T; this helper folds conjunctions only", n)
-		return nil
+		t.Fatalf("route policy contains unknown node %T", node)
+		return false
 	}
 }
 
@@ -148,6 +197,37 @@ func evalIsAdmin(t *testing.T, input map[string]any) bool {
 		t.Fatalf("eval is_admin: %v", err)
 	}
 	return rs.Allowed()
+}
+
+func evalChatEnabled(t *testing.T, input map[string]any) bool {
+	t.Helper()
+	pq := prepareQuery(t, "data.authz.chat_enabled", map[string]string{"authz.rego": authzPolicy})
+	rs, err := pq.Eval(context.Background(), rego.EvalInput(input))
+	if err != nil {
+		t.Fatalf("eval chat_enabled: %v", err)
+	}
+	return rs.Allowed()
+}
+
+func TestChatEnabled(t *testing.T) {
+	tests := []struct {
+		name  string
+		input map[string]any
+		want  bool
+	}{
+		{name: "admin", input: map[string]any{"user": spaUser("admin"), "flags": map[string]any{"admin_subs": []any{"admin"}, "chat_subs": []any{}}}, want: true},
+		{name: "allowlisted", input: map[string]any{"user": spaUser("listed"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": []any{"listed"}}}, want: true},
+		{name: "unlisted", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": []any{"listed"}}}, want: false},
+		{name: "missing allowlist", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}}}, want: false},
+		{name: "malformed allowlist", input: map[string]any{"user": spaUser("other"), "flags": map[string]any{"admin_subs": []any{}, "chat_subs": "other"}}, want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := evalChatEnabled(t, test.input); got != test.want {
+				t.Fatalf("chat_enabled = %v, want %v", got, test.want)
+			}
+		})
+	}
 }
 
 func evalPoolAdmission(t *testing.T, input map[string]any) bool {
@@ -164,7 +244,7 @@ func evalPoolAdmission(t *testing.T, input map[string]any) bool {
 }
 
 func TestPoolAdmissionImagePullSecret(t *testing.T) {
-	const allowedImage = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:latest"
+	const allowedImage = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 	cases := []struct {
 		name     string
 		method   string
@@ -177,6 +257,7 @@ func TestPoolAdmissionImagePullSecret(t *testing.T) {
 		{"ecr secret disallowed image", "POST", map[string]any{"containerDiskImage": "evil.example/workspace:latest", "imagePullSecret": "ecr-credentials"}, false},
 		{"repository prefix collision", "POST", map[string]any{"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-evil:latest", "imagePullSecret": "ecr-credentials"}, false},
 		{"allowlisted digest", "POST", map[string]any{"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/osgym-workspace@sha256:abc", "imagePullSecret": "ecr-credentials"}, true},
+		{"omarchy digest", "POST", map[string]any{"containerDiskImage": "296062593712.dkr.ecr.us-west-2.amazonaws.com/omarchy-workspace@sha256:c9cdba09d8cd2f742b9e9fa3818ca29dbcb66ee40edd057621e2987098226950", "imagePullSecret": "ecr-credentials"}, true},
 		{"unrelated patch", "PATCH", map[string]any{"cpuCores": 8}, true},
 		{"image only patch denied", "PATCH", map[string]any{"containerDiskImage": allowedImage}, false},
 		{"secret only patch denied", "PATCH", map[string]any{"imagePullSecret": "ecr-credentials"}, false},
@@ -275,6 +356,8 @@ func TestK8sAllow_AllowlistVerdicts(t *testing.T) {
 		{"namespaced claims / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxclaims", false, true},
 		{"namespaced warm pools / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxwarmpools", false, true},
 		{"namespaced templates / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxtemplates", false, true},
+		{"namespaced sandboxes / non-admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxes", false, true},
+		{"namespaced sandboxes / admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxes", true, true},
 
 		// Unenumerated, and denied for that reason alone -- no exclusion list
 		// mentions any of them. The Secret read is the one a reviewer is most
@@ -283,7 +366,6 @@ func TestK8sAllow_AllowlistVerdicts(t *testing.T) {
 		{"namespaced secrets / non-admin", "api/v1/namespaces/pool-foo/secrets/ecr-credentials", false, false},
 		{"namespaced configmaps / non-admin", "api/v1/namespaces/pool-foo/configmaps", false, false},
 		{"storage classes / non-admin", "apis/storage.k8s.io/v1/storageclasses", false, false},
-		{"sandboxes CRD / admin", "apis/osgym.cua.ai/v1alpha1/namespaces/pool-foo/osgymsandboxes", true, false},
 
 		// Events: denied for everyone, admins included. Unlike every infra path
 		// above, the admin row here is a deny too — that asymmetry is the whole
@@ -431,7 +513,7 @@ func TestK8sAllow_GitHubExactScope(t *testing.T) {
 }
 
 func TestPoolAdmissionRequestPolicy(t *testing.T) {
-	const allowedImage = "296062593712.dkr.ecr.us-west-2.amazonaws.com/desktop-workspace-duo:latest"
+	const allowedImage = "public.ecr.aws/k5j5w0x5/cua-ubuntu-24.04:latest"
 	input := func(method, path, body, sub string, admin bool) map[string]any {
 		return map[string]any{
 			"method": method,
@@ -508,5 +590,19 @@ func TestPoolAdmissionIgnoresLookalikeResourceGroups(t *testing.T) {
 	}
 	if !evalPoolAdmission(t, input) {
 		t.Fatal("lookalike resource group should be outside pool admission policy scope")
+	}
+}
+
+func TestSignedServiceURLsRejectLegacyPerKeyPrefixUnderCustomConfiguration(t *testing.T) {
+	input := map[string]any{
+		"route":  "/api/signed-service-urls/{namespace}",
+		"method": http.MethodGet,
+		"params": map[string]string{"namespace": "ns-a"},
+		"user":   buildUserInput(&User{ID: "svc-1", AZP: "key-ns-a", KeyClientPfx: "poolkey-", Namespace: "ns-a"}),
+		"flags":  map[string]any{},
+		"facts":  map[string]any{"namespace_rbac": map[string]any{"allowed": true}},
+	}
+	if evalAllow(t, input) {
+		t.Fatal("legacy key- client must not regain signed URL access through RBAC under a custom prefix")
 	}
 }

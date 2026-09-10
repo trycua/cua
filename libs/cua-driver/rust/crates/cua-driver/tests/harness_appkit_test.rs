@@ -250,7 +250,7 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
                     serde_json::json!({"idle_hide_ms": 0, "glide_duration_ms": 0}),
                 );
                 assert!(!motion.is_error(), "cursor motion: {}", motion.text());
-                let deadline = std::time::Instant::now() + Duration::from_secs(12);
+                let deadline = std::time::Instant::now() + Duration::from_secs(60);
                 let mut first = true;
                 let mut x = 120;
                 while !stopped.load(std::sync::atomic::Ordering::Relaxed)
@@ -276,10 +276,19 @@ fn harness_appkit_exact_activation_with_agent_cursor() {
             started
                 .recv_timeout(Duration::from_secs(15))
                 .expect("live cursor ready");
-            let result = driver.call(
+            let mut result = driver.call(
                 "bring_to_front",
                 serde_json::json!({"pid": pid, "window_id": wid}),
             );
+            for _ in 1..20 {
+                if result.is_error() || result.structured()["activated"] != true {
+                    break;
+                }
+                result = driver.call(
+                    "bring_to_front",
+                    serde_json::json!({"pid": pid, "window_id": wid}),
+                );
+            }
             stopped.store(true, std::sync::atomic::Ordering::Relaxed);
             moving.join().expect("concurrent cursor transport");
             result

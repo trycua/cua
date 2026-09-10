@@ -65,8 +65,15 @@ impl Tool for ProbeTool {
             }
             let snapshot = self.state.cache.publish(PID, WINDOW, prepared);
             return ToolResult::text("test capture complete").with_structured(json!({
-                "token": token_for(snapshot, 0),
-                "snapshot_id": format!("s{snapshot:08x}")
+                "pid": PID,
+                "window_id": WINDOW,
+                "snapshot_id": format!("s{snapshot:08x}"),
+                "elements": [{
+                    "element_index": 0,
+                    "element_token": token_for(snapshot, 0),
+                    "role": "button",
+                    "depth": 0
+                }]
             }));
         }
         let resolved = match self.state.cache.resolve_element_args(
@@ -183,7 +190,7 @@ impl Drop for Fixture {
 }
 
 fn token(result: &ToolResult) -> String {
-    result.structured_content.as_ref().unwrap()["token"]
+    result.structured_content.as_ref().unwrap()["elements"][0]["element_token"]
         .as_str()
         .unwrap()
         .to_owned()

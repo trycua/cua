@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.26.1](https://github.com/trycua/cua/compare/cua-driver-rs-v0.26.0...cua-driver-rs-v0.26.1) (2026-09-10)
+
+
+### Bug Fixes
+
+* **cua-driver:** retain inert Hyprland pointer on desktop faults ([#3702](https://github.com/trycua/cua/issues/3702)) ([648c251](https://github.com/trycua/cua/commit/648c251400ebb356f6d7dbc3d0c835690b9bb4b4))
+
 ## [0.26.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.25.0...cua-driver-rs-v0.26.0) (2026-09-10)
 
 

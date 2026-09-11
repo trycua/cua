@@ -86,7 +86,7 @@ static HANDLES: Mutex<Option<NativeHandles>> = Mutex::new(None);
 
 // ── libdispatch glue — same shape as cursor::overlay ──────────────────────
 
-#[link(name = "dispatch", kind = "dylib")]
+#[link(name = "System", kind = "framework")]
 extern "C" {
     static _dispatch_main_q: u8;
     fn dispatch_async_f(

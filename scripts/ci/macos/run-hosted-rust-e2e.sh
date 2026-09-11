@@ -12,6 +12,8 @@ LANE="${CUA_E2E_INTERNAL_LANE:-}"
 BOOTSTRAP_DIR="${REPO_ROOT}/artifacts/cua-driver/macos-hosted-bootstrap"
 KEYCHAIN="${RUNNER_TEMP:-}/cua-driver-hosted-signing.keychain-db"
 DAEMON_SOCKET="${HOME}/Library/Caches/cua-driver-local/cua-driver-local.sock"
+SCREEN_CAPTURE_APPROVALS="${HOME}/Library/Group Containers/group.com.apple.replayd/ScreenCaptureApprovals.plist"
+SCREEN_CAPTURE_CLIENT="com.trycua.driver.local"
 KEYCHAIN_PASSWORD=""
 DAEMON_STARTED=0
 TRUSTED_IDENTITY=""
@@ -243,6 +245,26 @@ capture_command_output "${BOOTSTRAP_DIR}/codesign-requirement.txt" \
 grep -Fq "certificate leaf" "${BOOTSTRAP_DIR}/codesign-requirement.txt" \
   || fail "installed app does not have a certificate-backed designated requirement"
 codesign --verify --deep --strict "${LOCAL_APP}"
+
+# macOS 15+ separately reminds each responsible app before direct capture,
+# even when Screen Recording is granted. The hosted image pre-approves its
+# runner agent, but this signed app is the responsible ScreenCaptureKit client.
+echo "[CAPTURE] Suppressing the app-specific private-window-picker reminder"
+mark_phase "screen-capture-approval"
+mkdir -p "$(dirname "${SCREEN_CAPTURE_APPROVALS}")"
+defaults write "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" -dict \
+  kScreenCaptureApprovalLastAlerted -date "3024-01-01 00:00:00 +0000" \
+  kScreenCaptureApprovalLastUsed -date "3024-01-01 00:00:00 +0000"
+killall -HUP replayd >/dev/null 2>&1 || true
+killall -u "${CURRENT_USER}" cfprefsd >/dev/null 2>&1 || true
+defaults read "${SCREEN_CAPTURE_APPROVALS}" "${SCREEN_CAPTURE_CLIENT}" \
+  > "${BOOTSTRAP_DIR}/screen-capture-approval.txt"
+grep -Fq "kScreenCaptureApprovalLastAlerted" \
+  "${BOOTSTRAP_DIR}/screen-capture-approval.txt" \
+  || fail "app-specific screen capture reminder approval was not stored"
+grep -Fq "kScreenCaptureApprovalLastUsed" \
+  "${BOOTSTRAP_DIR}/screen-capture-approval.txt" \
+  || fail "app-specific screen capture last-used approval was not stored"
 
 echo "[TCC] Seeding only Accessibility and Screen Capture for the installed app"
 mark_phase "seed-tcc"

@@ -146,9 +146,13 @@ native, and capture partitions through `macos/run-hosted-rust-e2e.sh`. Each
 runner refuses unexpected hosts or pre-existing app state, creates a temporary
 certificate-backed identity and Keychain, installs the exact source as
 `CuaDriverLocal.app`, seeds only its Accessibility and Screen Capture TCC rows,
+records the app's separate `replayd` approval before its first direct capture,
 verifies the daemon-attributed permission result, and delegates to
-`macos/run-rust-e2e.sh`. The lane uploads bootstrap, structured result, log, and
-video evidence even on failure. Signing and trust operations have hard
+`macos/run-rust-e2e.sh`. GitHub's image-level approval covers the hosted runner
+agent, while the bundled driver is its own responsible ScreenCaptureKit client
+and would otherwise show the private-window-picker reminder over the headed
+test. The lane uploads bootstrap, structured result, log, and video evidence
+even on failure. Signing and trust operations have hard
 deadlines, and a sacrificial binary proves the temporary identity works before
 the release build begins. The certificate is trusted only on that ephemeral
 runner and its removal is attempted with a bounded cleanup. The lane is

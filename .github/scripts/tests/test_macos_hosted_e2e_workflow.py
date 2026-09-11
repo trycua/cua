@@ -130,6 +130,12 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "phase.txt" in runner
     assert "--require-stable-signing" in runner
     assert 'grep -Fq "certificate leaf"' in runner
+    assert "ScreenCaptureApprovals.plist" in runner
+    assert 'SCREEN_CAPTURE_CLIENT="com.trycua.driver.local"' in runner
+    assert "kScreenCaptureApprovalLastAlerted" in runner
+    assert "kScreenCaptureApprovalLastUsed" in runner
+    assert "screen-capture-approval.txt" in runner
+    assert "killall -HUP replayd" in runner
     assert "seed-tcc-guest.sh" in runner
     assert "--expected-client com.trycua.driver.local" in runner
     assert "--dangerously-bypass-approvals" in runner

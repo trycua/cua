@@ -82,3 +82,17 @@ def test_status_does_not_expose_token(capsys, monkeypatch) -> None:
     output = capsys.readouterr().out
     assert "secret-access-token" not in output
     assert "secret-refresh-token" not in output
+
+
+def test_login_does_not_open_browser_without_an_interactive_terminal(monkeypatch) -> None:
+    monkeypatch.setattr(auth, "OidcClient", FakeOidcClient)
+    monkeypatch.setattr(auth, "run_async", run)
+    monkeypatch.setattr(auth, "save_credentials", lambda _credentials: None)
+    monkeypatch.setattr(auth.sys.stdin, "isatty", lambda: False)
+    monkeypatch.setattr(auth.sys.stdout, "isatty", lambda: False)
+
+    with patch.object(auth.webbrowser, "open") as browser_open:
+        result = auth.cmd_login(argparse.Namespace(no_browser=False))
+
+    assert result == 0
+    browser_open.assert_not_called()

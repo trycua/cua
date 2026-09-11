@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from urllib.parse import urlsplit
 
 import aiohttp
 from cua_cli.auth.store import OAuthCredentials, load_credentials, save_credentials
@@ -25,6 +26,24 @@ HttpRequest = Callable[[str, str, Mapping[str, str] | None], Awaitable[tuple[int
 Sleep = Callable[[float], Awaitable[None]]
 
 
+def _require_https_url(value: Any) -> str:
+    if not isinstance(value, str):
+        raise OidcError("OIDC issuer returned an unsafe URL.")
+    try:
+        parsed = urlsplit(value)
+    except ValueError as error:
+        raise OidcError("OIDC issuer returned an unsafe URL.") from error
+    if (
+        parsed.scheme != "https"
+        or not parsed.netloc
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+    ):
+        raise OidcError("OIDC issuer returned an unsafe URL.")
+    return value
+
+
 @dataclass(frozen=True)
 class OidcDiscovery:
     """Relevant endpoints published by OIDC discovery."""
@@ -37,10 +56,14 @@ class OidcDiscovery:
     def from_response(cls, value: Mapping[str, Any]) -> "OidcDiscovery":
         try:
             return cls(
-                token_endpoint=str(value["token_endpoint"]),
-                device_authorization_endpoint=str(value["device_authorization_endpoint"]),
+                token_endpoint=_require_https_url(value["token_endpoint"]),
+                device_authorization_endpoint=_require_https_url(
+                    value["device_authorization_endpoint"]
+                ),
                 revocation_endpoint=(
-                    str(value["revocation_endpoint"]) if value.get("revocation_endpoint") else None
+                    _require_https_url(value["revocation_endpoint"])
+                    if value.get("revocation_endpoint")
+                    else None
                 ),
             )
         except (KeyError, TypeError) as error:
@@ -64,9 +87,9 @@ class DeviceCode:
             return cls(
                 device_code=str(value["device_code"]),
                 user_code=str(value["user_code"]),
-                verification_uri=str(value["verification_uri"]),
+                verification_uri=_require_https_url(value["verification_uri"]),
                 verification_uri_complete=(
-                    str(value["verification_uri_complete"])
+                    _require_https_url(value["verification_uri_complete"])
                     if value.get("verification_uri_complete")
                     else None
                 ),

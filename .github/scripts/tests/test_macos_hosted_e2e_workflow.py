@@ -89,8 +89,8 @@ def test_hosted_macos_probe_proves_textedit_window_content() -> None:
     assert 'result.get("window", {}).get("name") == "probe.txt"' in probe
     assert "textedit-window.png" in probe
     assert "display.png" in probe
-    assert 'tell application "TextEdit" to close every window saving no' in probe
-    assert 'tell application "TextEdit" to quit' in probe
+    assert "run_with_deadline 30 /usr/bin/killall TextEdit" in probe
+    assert 'pgrep -x TextEdit' in probe
 
 
 def test_script_ci_runs_when_hosted_macos_contract_changes() -> None:

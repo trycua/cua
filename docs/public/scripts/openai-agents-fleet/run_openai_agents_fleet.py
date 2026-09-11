@@ -63,7 +63,8 @@ def required_env(name: str) -> str:
 
 def pool_name() -> str:
     # This example deletes its pool. Never reconcile a caller's existing pool.
-    return f"cua-openai-agents-{secrets.token_hex(16)}"
+    # Fleet appends an instance suffix and service name; leave room under 63 bytes.
+    return f"cua-openai-agents-{secrets.token_hex(12)}"
 
 
 def root_turn(event: dict[str, Any]) -> bool:

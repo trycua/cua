@@ -30,8 +30,8 @@ def test_disposable_pool_name_ignores_existing_pool_override() -> None:
         second = namespace["pool_name"]()
     assert first != second
     assert first.startswith("cua-openai-agents-")
-    assert len(first.removeprefix("cua-openai-agents-")) == 32
-    assert len(first) <= 63
+    assert len(first.removeprefix("cua-openai-agents-")) == 24
+    assert len(f"{first}-a84951d4-server".encode()) <= 63
 
 
 def test_controller_is_valid_python() -> None:

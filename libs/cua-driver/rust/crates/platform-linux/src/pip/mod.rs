@@ -9,17 +9,13 @@
 //! can log "PiP unavailable on this platform" and continue without
 //! the window.
 
-use pip_preview::{PipBackend, PipBackendFactory, PipConfig};
+use pip_preview::{PipBackend, PipConfig};
 
-pub struct LinuxPipBackendFactory;
-
-impl PipBackendFactory for LinuxPipBackendFactory {
-    fn start(&self, _cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
-        Err(anyhow::anyhow!(
-            "PiP preview is not yet implemented on Linux — track \
-             trycua/cua follow-up issue for status"
-        ))
-    }
+pub fn start(_cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
+    Err(anyhow::anyhow!(
+        "PiP preview is not yet implemented on Linux — track \
+         trycua/cua follow-up issue for status"
+    ))
 }
 
 #[cfg(test)]
@@ -33,10 +29,7 @@ mod tests {
             ..PipConfig::default()
         };
         for _ in 0..2 {
-            let error = LinuxPipBackendFactory
-                .start(&config)
-                .err()
-                .expect("unsupported PiP");
+            let error = start(&config).err().expect("unsupported PiP");
             assert_eq!(
                 error.to_string(),
                 "PiP preview is not yet implemented on Linux — track trycua/cua follow-up issue for status"

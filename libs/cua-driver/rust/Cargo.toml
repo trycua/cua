@@ -14,7 +14,7 @@ members = [
     "crates/cursor-overlay",
     "crates/cursor-theme-cli",
     "crates/pip-preview",
-    "../tests/fixtures/embedded-async-io",
+    "crates/cua-driver-sdk/tests/fixtures/async-io",
 ]
 
 [workspace.package]

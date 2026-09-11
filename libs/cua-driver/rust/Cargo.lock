@@ -1297,7 +1297,7 @@ dependencies = [
 
 [[package]]
 name = "cua-embedded-async-io-fixture"
-version = "0.0.0"
+version = "0.25.0"
 dependencies = [
  "cua-driver-sdk",
  "oo7",

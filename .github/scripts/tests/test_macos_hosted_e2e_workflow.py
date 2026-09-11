@@ -123,6 +123,9 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "security remove-trusted-cert" in runner
     assert "security delete-certificate" in runner
     assert "security set-key-partition-list" in runner
+    assert "set-keychain-settings -lut 21600" in runner
+    assert "run_bounded 30 codesign" in runner
+    assert "phase.txt" in runner
     assert "--require-stable-signing" in runner
     assert 'grep -Fq "certificate leaf"' in runner
     assert "seed-tcc-guest.sh" in runner

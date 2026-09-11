@@ -18,6 +18,17 @@ TRUSTED_IDENTITY=""
 WATCHDOG_PID=""
 RUN_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
+run_bounded() {
+  local seconds="$1"
+  shift
+  /usr/bin/perl -e 'alarm shift; exec @ARGV' "${seconds}" "$@"
+}
+
+mark_phase() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" \
+    | tee "${BOOTSTRAP_DIR}/phase.txt"
+}
+
 capture_diagnostics() {
   local command_status=$?
   trap - EXIT
@@ -54,13 +65,13 @@ capture_diagnostics() {
       > "${BOOTSTRAP_DIR}/unified-log.txt" 2>&1
   fi
   if [[ "${TRUSTED_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-    sudo -n security remove-trusted-cert -d "${CERTIFICATE_PEM}" \
+    run_bounded 20 sudo -n security remove-trusted-cert -d "${CERTIFICATE_PEM}" \
       >/dev/null 2>&1
-    sudo -n security delete-certificate -Z "${TRUSTED_IDENTITY}" \
+    run_bounded 20 sudo -n security delete-certificate -Z "${TRUSTED_IDENTITY}" \
       /Library/Keychains/System.keychain >/dev/null 2>&1
   fi
   if [[ -n "${KEYCHAIN}" && -f "${KEYCHAIN}" ]]; then
-    security delete-keychain "${KEYCHAIN}" >/dev/null 2>&1
+    run_bounded 20 security delete-keychain "${KEYCHAIN}" >/dev/null 2>&1
   fi
   exit "${command_status}"
 }
@@ -164,13 +175,15 @@ Installer recursive cleanup is limited to source-derived task-owned paths:
 EOF
 
 export CUA_MACOS_HOSTED_PROBE_DIR="${BOOTSTRAP_DIR}/gui-probe"
+mark_phase "gui-probe"
 bash "${SCRIPT_DIR}/probe-hosted-runner.sh"
 
 mkdir -p "${CARGO_TARGET_DIR}"
 KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
-security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
-security set-keychain-settings "${KEYCHAIN}"
-security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+mark_phase "signing-bootstrap"
+run_bounded 30 security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+run_bounded 30 security set-keychain-settings -lut 21600 "${KEYCHAIN}"
+run_bounded 30 security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
 
 export CUA_DRIVER_LOCAL_HOME="${RUNNER_TEMP}/cua-driver-local"
 export CUA_DRIVER_LOCAL_INSTALL_DIR="${RUNNER_TEMP}/cua-driver-bin"
@@ -187,10 +200,10 @@ IDENTITY="$(ensure_local_signing_identity)"
 CERTIFICATE_PEM="${RUNNER_TEMP}/cua-driver-hosted-signing.pem"
 security find-certificate -c "${CUA_LOCAL_SIGN_CN}" -p "${KEYCHAIN}" \
   > "${CERTIFICATE_PEM}"
-sudo -n security add-trusted-cert -d -r trustRoot \
+run_bounded 30 sudo -n security add-trusted-cert -d -r trustRoot \
   -p codeSign -k /Library/Keychains/System.keychain "${CERTIFICATE_PEM}"
 TRUSTED_IDENTITY="${IDENTITY}"
-security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
+run_bounded 30 security set-key-partition-list -S apple-tool:,apple:,codesign: -s \
   -k "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}" >/dev/null
 security find-identity -v -p codesigning "${KEYCHAIN}" \
   | grep -Fq "${IDENTITY}" \
@@ -198,6 +211,17 @@ security find-identity -v -p codesigning "${KEYCHAIN}" \
 export CUA_DRIVER_LOCAL_SIGNING_IDENTITY="${IDENTITY}"
 printf '%s\n' "${IDENTITY}" > "${BOOTSTRAP_DIR}/signing-identity-sha1.txt"
 
+SIGNING_PROBE="${RUNNER_TEMP}/cua-driver-signing-probe"
+cp /bin/echo "${SIGNING_PROBE}"
+run_bounded 30 codesign --force --sign "${IDENTITY}" \
+  --keychain "${KEYCHAIN}" "${SIGNING_PROBE}"
+codesign --verify --strict "${SIGNING_PROBE}"
+codesign -d -r- "${SIGNING_PROBE}" \
+  > "${BOOTSTRAP_DIR}/signing-probe-requirement.txt" 2>&1
+grep -Fq "certificate leaf" "${BOOTSTRAP_DIR}/signing-probe-requirement.txt" \
+  || fail "temporary signing probe is not certificate-backed"
+
+mark_phase "install-local"
 echo "[INSTALL] Building and installing ${SOURCE_SHA} with a temporary certificate identity"
 bash "${DRIVER_ROOT}/scripts/install-local.sh" \
   --release --require-stable-signing \
@@ -210,12 +234,14 @@ grep -Fq "certificate leaf" "${BOOTSTRAP_DIR}/codesign-requirement.txt" \
 codesign --verify --deep --strict "${LOCAL_APP}"
 
 echo "[TCC] Seeding only Accessibility and Screen Capture for the installed app"
+mark_phase "seed-tcc"
 bash "${TCC_SEEDER}" \
   --app "${LOCAL_APP}" \
   --expected-client com.trycua.driver.local \
   2>&1 | tee "${BOOTSTRAP_DIR}/seed-tcc.log"
 
 echo "[DAEMON] Launching the installed app in unrestricted disposable-worker mode"
+mark_phase "daemon-start"
 open -n -g "${LOCAL_APP}" --args \
   --socket "${DAEMON_SOCKET}" \
   serve \
@@ -278,5 +304,6 @@ WATCHDOG_PID=$!
 export CUA_E2E_INSTALLED_DRIVER_BIN="${INSTALLED_BIN}"
 export CUA_E2E_MACOS_DAEMON_SOCKET="${DAEMON_SOCKET}"
 export CUA_E2E_FRESH_FIXTURE_STATE=1
+mark_phase "matrix-${LANE}"
 echo "[E2E] Running hosted macOS ${LANE} lane"
 bash "${SCRIPT_DIR}/run-rust-e2e.sh"

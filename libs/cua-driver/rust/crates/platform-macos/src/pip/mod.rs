@@ -35,7 +35,7 @@
 //! ## Init lifecycle
 //!
 //! Because the cursor overlay already owns the main thread when
-//! enabled, `MacosPipBackend::start` cannot block on it. Instead it
+//! enabled, `start` cannot block on it. Instead it
 //! posts the window-creation block onto the main queue and returns
 //! immediately. The first frame may arrive before the window exists;
 //! that's fine — the push path reads the window pointer from a
@@ -44,7 +44,7 @@
 use std::ffi::c_void;
 use std::sync::Mutex;
 
-use pip_preview::{PipBackend, PipBackendFactory, PipConfig, PipFrame};
+use pip_preview::{PipBackend, PipConfig, PipFrame};
 
 // ── CGColor objc2 encoding shim ────────────────────────────────────────────
 //
@@ -217,20 +217,14 @@ pub fn run_appkit_main_loop() {
     }
 }
 
-// ── Factory ──────────────────────────────────────────────────────────────
-
-pub struct MacosPipBackendFactory;
-
-impl PipBackendFactory for MacosPipBackendFactory {
-    fn start(&self, cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
-        // Window construction must happen on the main thread. We hand
-        // off via dispatch_async_f and return immediately — the first
-        // few frames may be dropped while init races, which is fine
-        // for a live-preview UX.
-        let cfg_clone = cfg.clone();
-        dispatch_to_main(cfg_clone, init_cb);
-        Ok(Box::new(MacosPipBackend))
-    }
+pub fn start(cfg: &PipConfig) -> anyhow::Result<Box<dyn PipBackend>> {
+    // Window construction must happen on the main thread. We hand
+    // off via dispatch_async_f and return immediately — the first
+    // few frames may be dropped while init races, which is fine
+    // for a live-preview UX.
+    let cfg_clone = cfg.clone();
+    dispatch_to_main(cfg_clone, init_cb);
+    Ok(Box::new(MacosPipBackend))
 }
 
 unsafe extern "C" fn init_cb(ctx: *mut c_void) {

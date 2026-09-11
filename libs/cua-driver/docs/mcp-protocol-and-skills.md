@@ -41,7 +41,10 @@ The response reports the supported modern version, tools, resources, and the
 cache hints. Capabilities are per request; successful discovery does not excuse
 missing metadata on subsequent requests.
 
-Legacy clients continue to initialize before making metadata-free requests.
+Legacy clients negotiate `2025-06-18` through
+`initialize.params.protocolVersion`, then make metadata-free requests. The
+namespaced `io.modelcontextprotocol/protocolVersion` key is modern-only; using
+it with `2025-06-18` is rejected as an unsupported per-request version.
 Protocol metadata never grants desktop permissions, changes the runtime mode,
 or transfers another connection's session ownership. Repeat explicit Driver
 session names on calls as usual. When a response is lost, verify state before
@@ -111,5 +114,6 @@ CUA_DRIVER_BINARY=/absolute/path/to/cua-driver \
 The probe uses `@modelcontextprotocol/client` 2.0.0 with the modern version
 pinned. It verifies discovery, a read-only tool call, skill enumeration and
 retrieval, complete resource bytes and hashes, and invalid-request rejection.
-It uses isolated state and makes no model or account calls. This proves
-server/SDK interoperability, not native skill activation in a particular host.
+It uses isolated state and makes no model or account calls. CI runs this probe
+on Linux, macOS, and Windows. This proves server/SDK interoperability, not
+native skill activation in a particular host.

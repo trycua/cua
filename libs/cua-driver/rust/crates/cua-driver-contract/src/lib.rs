@@ -65,7 +65,9 @@ pub const CAPABILITY_VERSION: &str = "1";
 /// Shape version for the checked-in generated client contract.
 pub const CONTRACT_VERSION: &str = "0.8.0";
 
-/// MCP protocol version used by current cua-driver clients.
+/// Legacy version negotiated by `initialize.params.protocolVersion` and served
+/// by the loopback HTTP compatibility endpoint. Modern stdio discovery and
+/// per-request negotiation are defined by the endpoint implementation.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Tools whose successful result is the shared closed [`ActionResult`].
@@ -181,6 +183,8 @@ pub struct ContractManifest {
     pub contract_version: String,
     pub tools_list_schema_version: String,
     pub capability_version: String,
+    /// Legacy initialize/HTTP compatibility version. This field retains its
+    /// historical name so generated SDK manifests remain backward compatible.
     pub mcp_protocol_version: String,
     pub transport: String,
     pub tools: Vec<ToolContract>,

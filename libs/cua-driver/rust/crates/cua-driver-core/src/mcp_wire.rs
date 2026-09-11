@@ -5,7 +5,6 @@ use serde_json::{json, Value};
 use crate::protocol::{initialize_result, Request, Response, ResponseBody};
 
 pub const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
-pub const LEGACY_PROTOCOL_VERSION: &str = "2025-06-18";
 pub const PROTOCOL_VERSION_KEY: &str = "io.modelcontextprotocol/protocolVersion";
 pub const CLIENT_CAPABILITIES_KEY: &str = "io.modelcontextprotocol/clientCapabilities";
 
@@ -245,6 +244,30 @@ mod tests {
                 json!({PROTOCOL_VERSION_KEY: MODERN_PROTOCOL_VERSION})
             ))
             .is_err());
+
+        // Namespaced per-request negotiation belongs only to the modern
+        // protocol. Legacy clients negotiate in initialize params, then omit
+        // this metadata on later requests.
+        let error = serde_json::to_value(
+            session
+                .validate(&request(
+                    "ping",
+                    json!({
+                        PROTOCOL_VERSION_KEY: "2025-06-18",
+                        CLIENT_CAPABILITIES_KEY: {}
+                    }),
+                ))
+                .unwrap_err(),
+        )
+        .unwrap();
+        assert_eq!(error["error"]["code"], -32022);
+        assert_eq!(
+            error["error"]["data"],
+            json!({
+                "supported": [MODERN_PROTOCOL_VERSION],
+                "requested": "2025-06-18"
+            })
+        );
     }
 
     #[test]

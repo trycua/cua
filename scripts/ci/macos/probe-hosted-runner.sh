@@ -6,6 +6,9 @@ ARTIFACT_DIR="${CUA_MACOS_HOSTED_PROBE_DIR:?CUA_MACOS_HOSTED_PROBE_DIR is requir
 SOURCE_SHA="${CUA_E2E_SOURCE_SHA:?CUA_E2E_SOURCE_SHA is required}"
 mkdir -p "${ARTIFACT_DIR}"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+
 PROBE_STATUS=failed
 PROBE_MESSAGE="probe did not complete"
 SWIFT_RESULT="${ARTIFACT_DIR}/window-capture.json"
@@ -52,11 +55,35 @@ Path(__import__("sys").argv[1]).write_text(json.dumps(payload, indent=2) + "\n")
 PY
 }
 trap write_environment EXIT
+write_environment
 
 fail() {
   PROBE_MESSAGE="$1"
   echo "${PROBE_MESSAGE}" >&2
   exit 1
+}
+
+run_with_deadline() {
+  local seconds="$1"
+  shift
+  "$@" &
+  local command_pid=$!
+  (
+    sleep "${seconds}"
+    kill -TERM "${command_pid}" 2>/dev/null || true
+  ) &
+  local watchdog_pid=$!
+  local command_status=0
+  set +e
+  wait "${command_pid}"
+  command_status=$?
+  set -e
+  kill "${watchdog_pid}" 2>/dev/null || true
+  wait "${watchdog_pid}" 2>/dev/null || true
+  if [[ "${command_status}" == 143 ]]; then
+    return 124
+  fi
+  return "${command_status}"
 }
 
 [[ "${GITHUB_ACTIONS:-}" == true ]] || fail "GITHUB_ACTIONS must be true"
@@ -76,7 +103,6 @@ launchctl print "gui/${CURRENT_UID}" >/dev/null 2>&1 || fail "Aqua gui/${CURRENT
 pgrep -x WindowServer >/dev/null || fail "WindowServer is unavailable"
 
 SIP_STATUS="$(csrutil status 2>&1 || true)"
-[[ "${SIP_STATUS}" == *disabled* ]] || fail "System Integrity Protection must be disabled on the disposable hosted runner: ${SIP_STATUS}"
 
 {
   echo "source_sha=${SOURCE_SHA}"
@@ -93,37 +119,56 @@ SIP_STATUS="$(csrutil status 2>&1 || true)"
   echo "memory_bytes=$(sysctl -n hw.memsize)"
   echo "logical_cpus=$(sysctl -n hw.logicalcpu)"
   df -h /
+  system_profiler SPDisplaysDataType -json
   launchctl print "gui/${CURRENT_UID}" | sed -n '1,20p'
-  pgrep -lf WindowServer
+  pgrep -lf WindowServer || true
 } > "${SYSTEM_LOG}"
+write_environment
 
-MARKER="CUA HOSTED MACOS PROBE 3725"
+[[ "${SIP_STATUS}" == *"System Integrity Protection status: disabled"* ]] \
+  || fail "System Integrity Protection must be disabled on the disposable hosted runner: ${SIP_STATUS}"
+
+MARKER="CUA HOSTED MACOS GUI PROBE"
 DOCUMENT="${ARTIFACT_DIR}/probe.txt"
 printf '%s\n\n%s\n\n%s\n' "${MARKER}" "${MARKER}" "${MARKER}" > "${DOCUMENT}"
 
 open -a TextEdit "${DOCUMENT}"
 for _ in {1..30}; do
-  if osascript -e 'tell application "System Events" to tell process "TextEdit" to get frontmost' >/dev/null 2>&1; then
+  FRONTMOST="$(osascript -e 'tell application "System Events" to tell process "TextEdit" to get frontmost' 2>/dev/null || true)"
+  if [[ "${FRONTMOST}" == true ]]; then
     break
   fi
   sleep 1
 done
-osascript <<'APPLESCRIPT'
+[[ "${FRONTMOST:-}" == true ]] || fail "TextEdit did not become frontmost"
+
+if ! run_with_deadline 30 osascript > "${ARTIFACT_DIR}/textedit-automation.log" 2>&1 <<'APPLESCRIPT'
 tell application "TextEdit" to activate
+tell application "Finder" to set desktopBounds to bounds of window of desktop
+set targetWidth to (item 3 of desktopBounds) - 120
+set targetHeight to (item 4 of desktopBounds) - 140
+if targetWidth > 800 then set targetWidth to 800
+if targetHeight > 600 then set targetHeight to 600
 tell application "System Events"
   tell process "TextEdit"
     set frontmost to true
-    set position of front window to {140, 120}
-    set size of front window to {900, 620}
+    set position of front window to {60, 80}
+    set size of front window to {targetWidth, targetHeight}
   end tell
 end tell
 APPLESCRIPT
-sleep 2
+then
+  fail "TextEdit window automation failed or timed out"
+fi
 
-xcrun swift scripts/ci/macos/verify-hosted-window.swift \
+if ! run_with_deadline 180 xcrun swift "${REPO_ROOT}/scripts/ci/macos/verify-hosted-window.swift" \
   --marker "${MARKER}" \
   --output "${ARTIFACT_DIR}/textedit-window.png" \
-  > "${SWIFT_RESULT}"
+  --display-output "${ARTIFACT_DIR}/display.png" \
+  > "${SWIFT_RESULT}" 2> "${ARTIFACT_DIR}/window-capture.stderr.log"
+then
+  fail "ScreenCaptureKit window/display verification failed or timed out"
+fi
 
 python3 - "${SWIFT_RESULT}" <<'PY'
 import json
@@ -135,9 +180,11 @@ required = (
     result.get("accessibility_trusted") is True,
     result.get("screen_capture_preflight") is True,
     result.get("marker_recognized") is True,
+    result.get("display_capture", {}).get("marker_recognized") is True,
     result.get("window", {}).get("owner") == "TextEdit",
-    result.get("window", {}).get("width", 0) >= 600,
-    result.get("window", {}).get("height", 0) >= 400,
+    result.get("window", {}).get("name") == "probe.txt",
+    result.get("window", {}).get("width", 0) >= 400,
+    result.get("window", {}).get("height", 0) >= 250,
 )
 if not all(required):
     raise SystemExit(f"hosted GUI probe failed: {result}")

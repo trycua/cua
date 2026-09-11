@@ -85,6 +85,7 @@ def test_byte_mapping_and_caller_ownership(adapter):
         assert seen[0][:3] == (sandbox, "mcp", "/mcp")
         sent = seen[0][3]
         assert sent.body == b"\xff\x00" and sent.timeout_secs == 2
+        assert sent.max_response_bytes == 16 * 1024 * 1024
         assert sent.url == "https://service.invalid/mcp"
         assert sent.headers[0].value == "c"
         assert result.body == b"\x00\xff" and result.status == 207
@@ -124,6 +125,51 @@ def test_transport_errors_are_sanitized_and_cancellation_propagates(adapter):
         failure = asyncio.CancelledError()
         with pytest.raises(asyncio.CancelledError):
             await channel.transport.send(request)
+
+    asyncio.run(check())
+
+
+def test_oversized_response_is_rejected_without_exposing_contents(adapter):
+    async def check():
+        module, _ = adapter
+        secret = b"private-response-fragment"
+
+        async def oversized(*args):
+            request = args[3]
+            assert request.max_response_bytes == 16 * 1024 * 1024
+            return SimpleNamespace(
+                status=200,
+                headers=[],
+                body=secret + bytes(16 * 1024 * 1024 + 1 - len(secret)),
+            )
+
+        channel = module.open_fleet_mcp_driver_channel(
+            SimpleNamespace(service_request=oversized), SimpleNamespace(services=["mcp"])
+        )
+        request = SimpleNamespace(method="POST", path="/mcp", body=b"", timeout_ms=1, headers=[])
+        with pytest.raises(RuntimeError, match="completion is unknown") as error:
+            await channel.transport.send(request)
+        assert secret.decode() not in str(error.value)
+
+    asyncio.run(check())
+
+
+def test_response_exactly_at_limit_is_accepted(adapter):
+    async def check():
+        module, _ = adapter
+        body = bytes(16 * 1024 * 1024)
+
+        async def exact_limit(*args):
+            request = args[3]
+            assert request.max_response_bytes == len(body)
+            return SimpleNamespace(status=200, headers=[], body=body)
+
+        channel = module.open_fleet_mcp_driver_channel(
+            SimpleNamespace(service_request=exact_limit), SimpleNamespace(services=["mcp"])
+        )
+        request = SimpleNamespace(method="POST", path="/mcp", body=b"", timeout_ms=1, headers=[])
+        response = await channel.transport.send(request)
+        assert response.body is body
 
     asyncio.run(check())
 

@@ -282,7 +282,7 @@ jobs:
         run: |
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src \
             python -m unittest tests/test_uniffi_loader.py tests/test_remote_channel.py -v
-          python -m pip install --extra-index-url https://wheels.cua.ai/simple cua-fleet==0.1.16
+          python -m pip install --extra-index-url https://wheels.cua.ai/simple cua-fleet==0.1.17
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -m pytest tests/test_fleet.py -q
           CUA_DRIVER_REQUIRE_UNIFFI=1 PYTHONPATH=src python -c \
             "import cua_driver; missing = [name for name in cua_driver.__all__ if not hasattr(cua_driver, name)]; assert not missing, f'unresolved package exports: {missing}'"

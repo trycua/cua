@@ -8,6 +8,8 @@ import {
   type DriverServiceResponse,
 } from './index.js';
 
+const FLEET_DRIVER_MAX_RESPONSE_BYTES = 16n * 1024n * 1024n;
+
 /** Structural subset of Fleet's generated Sandbox record. */
 export interface FleetDriverSandbox {
   namespace: string;
@@ -28,6 +30,7 @@ export interface FleetDriverClient {
       headers: { name: string; value: string }[];
       body?: ArrayBuffer;
       timeoutSecs?: bigint;
+      maxResponseBytes?: bigint;
     },
     options?: { signal: AbortSignal }
   ): Promise<{
@@ -96,7 +99,7 @@ export async function connectFleetDriver({
       controller.signal.addEventListener('abort', onAbort, { once: true });
     });
     try {
-      return await Promise.race([
+      const response = await Promise.race([
         serviceRequest(
           { ...target, services: [...target.services] },
           service,
@@ -107,11 +110,16 @@ export async function connectFleetDriver({
             headers: request.headers.map((header) => ({ ...header })),
             body: request.body,
             timeoutSecs: (request.timeoutMs + 999n) / 1000n,
+            maxResponseBytes: FLEET_DRIVER_MAX_RESPONSE_BYTES,
           },
           { signal: controller.signal }
         ),
         aborted,
       ]);
+      if (BigInt(response.body.byteLength) > FLEET_DRIVER_MAX_RESPONSE_BYTES) {
+        throw new Error('Fleet Driver response exceeds the configured size limit');
+      }
+      return response;
     } catch {
       // Native callback errors must not expose Fleet credentials or response bodies.
       throw new DriverServiceTransportError.Failed({

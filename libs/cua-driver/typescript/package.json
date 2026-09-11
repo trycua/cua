@@ -53,7 +53,7 @@
     "stage:uniffi": "node ../scripts/stage-uniffi-library.mjs"
   },
   "devDependencies": {
-    "@trycua/fleet": "0.1.1",
+    "@trycua/fleet": "0.1.2",
     "@types/node": "^22.0.0",
     "electron": "43.2.0",
     "typescript": "^5.7.0",

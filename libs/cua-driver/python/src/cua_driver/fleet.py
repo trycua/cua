@@ -20,6 +20,9 @@ from . import (
 )
 
 
+_FLEET_DRIVER_MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+
+
 def open_fleet_mcp_driver_channel(client, sandbox, *, service="mcp"):
     """Create a shared channel bound to an existing authenticated Fleet target.
 
@@ -54,9 +57,12 @@ def open_fleet_mcp_driver_channel(client, sandbox, *, service="mcp"):
                     )
                     .body(request.body)
                     .timeout_secs(max(1, math.ceil(request.timeout_ms / 1000)))
+                    .max_response_bytes(_FLEET_DRIVER_MAX_RESPONSE_BYTES)
                     .build()
                 )
                 response = await service_request(target, service, request.path, http_request)
+                if len(response.body) > _FLEET_DRIVER_MAX_RESPONSE_BYTES:
+                    raise RuntimeError("Fleet Driver response exceeds the configured size limit")
                 return DriverServiceResponse(
                     status=response.status,
                     headers=[

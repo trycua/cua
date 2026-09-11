@@ -22,3 +22,26 @@ impl PipBackendFactory for WindowsPipBackendFactory {
         ))
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_start_attempts_report_unsupported() {
+        let config = PipConfig {
+            enabled: true,
+            ..PipConfig::default()
+        };
+        for _ in 0..2 {
+            let error = WindowsPipBackendFactory
+                .start(&config)
+                .err()
+                .expect("unsupported PiP");
+            assert_eq!(
+                error.to_string(),
+                "PiP preview is not yet implemented on Windows — track trycua/cua follow-up issue for status"
+            );
+        }
+    }
+}

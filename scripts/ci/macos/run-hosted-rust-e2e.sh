@@ -47,6 +47,24 @@ capture_diagnostics() {
       cleanup_failed=1
     fi
   }
+  record_cleanup_attempt() {
+    local label="$1"
+    shift
+    "$@"
+    printf '%s=%s\n' "${label}" "$?" \
+      >> "${BOOTSTRAP_DIR}/cleanup-attempts.txt"
+  }
+  verify_system_certificate_absent() {
+    local certificates
+    certificates="$(security find-certificate -Z -a \
+      /Library/Keychains/System.keychain 2>/dev/null || true)"
+    [[ "${certificates}" != *"${TRUSTED_IDENTITY}"* ]]
+  }
+  verify_code_signing_trust_absent() {
+    [[ -s "${CERTIFICATE_PEM}" ]] || return 1
+    ! security verify-cert -c "${CERTIFICATE_PEM}" -p codeSign \
+      >/dev/null 2>&1
+  }
   trap - EXIT
   set +e
   mkdir -p "${BOOTSTRAP_DIR}"
@@ -81,7 +99,10 @@ capture_diagnostics() {
       > "${BOOTSTRAP_DIR}/unified-log.txt" 2>&1
   fi
   if [[ "${TRUSTED_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
-    record_cleanup remove_trust run_bounded 20 \
+    # Tahoe's trust-removal helper can be terminated after removing the trust
+    # row. Record that attempt, then judge cleanup from independent absence and
+    # trust-evaluation checks after every certificate copy is gone.
+    record_cleanup_attempt remove_trust run_bounded 20 \
       sudo -n security remove-trusted-cert -d "${CERTIFICATE_PEM}" \
       >/dev/null 2>&1
     record_cleanup delete_system_certificate run_bounded 20 \
@@ -96,6 +117,12 @@ capture_diagnostics() {
   if [[ -n "${KEYCHAIN}" && -f "${KEYCHAIN}" ]]; then
     record_cleanup delete_temporary_keychain run_bounded 20 \
       security delete-keychain "${KEYCHAIN}" >/dev/null 2>&1
+  fi
+  if [[ "${TRUSTED_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
+    record_cleanup verify_system_certificate_absent \
+      verify_system_certificate_absent
+    record_cleanup verify_code_signing_trust_absent \
+      verify_code_signing_trust_absent
   fi
   if [[ "${cleanup_failed}" == 1 && "${command_status}" == 0 ]]; then
     command_status=1

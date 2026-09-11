@@ -131,6 +131,9 @@ def test_hosted_macos_runner_is_strict_and_uses_the_canonical_matrix() -> None:
     assert "-p codeSign" in runner
     assert "security remove-trusted-cert" in runner
     assert "security delete-certificate" in runner
+    assert "cleanup-attempts.txt" in runner
+    assert "verify_system_certificate_absent" in runner
+    assert "verify_code_signing_trust_absent" in runner
     assert "security set-key-partition-list" in runner
     assert "set-keychain-settings -lut 21600" in runner
     assert 'security list-keychains -d user -s' in runner

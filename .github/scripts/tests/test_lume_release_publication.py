@@ -6,8 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 from threading import Thread
-from urllib.parse import parse_qs, urlsplit
-from urllib.request import urlopen
+from urllib.parse import urlsplit
 
 import pytest
 import yaml
@@ -22,10 +21,8 @@ API_PATH = f"/repos/{REPOSITORY}"
 
 @pytest.fixture
 def github_api():
-    previous_latest = {"id": 99, "tag_name": "cua-driver-rs-v9.0.0", "draft": False}
     release = {"id": 7, "tag_name": TAG, "draft": True, "prerelease": False, "body": ""}
-    latest = dict(previous_latest)
-    assets = []
+    publication_requests = []
 
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, *_args):
@@ -44,13 +41,9 @@ def github_api():
             if path == f"{API_PATH}/git/ref/tags/{TAG}":
                 self.respond({"object": {"type": "commit", "sha": SHA}})
             elif path == f"{API_PATH}/releases":
-                self.respond([release, previous_latest])
-            elif path == f"{API_PATH}/releases/latest":
-                self.respond(latest)
-            elif path == f"{API_PATH}/releases/tags/{TAG}":
-                self.respond(release)
+                self.respond([release])
             elif path == f"{API_PATH}/releases/7/assets":
-                self.respond(assets)
+                self.respond([])
             else:
                 self.respond({"message": f"Unexpected GET {self.path}"}, 404)
 
@@ -59,26 +52,16 @@ def github_api():
             if url.path != f"{API_PATH}/releases/7/assets":
                 self.respond({"message": f"Unexpected POST {self.path}"}, 404)
                 return
-            data = self.rfile.read(int(self.headers["Content-Length"]))
-            asset = {
-                "id": len(assets) + 1,
-                "name": parse_qs(url.query)["name"][0],
-                "size": len(data),
-                "state": "uploaded",
-            }
-            assets.append(asset)
-            self.respond(asset, 201)
+            self.rfile.read(int(self.headers["Content-Length"]))
+            self.respond({"id": 1}, 201)
 
         def do_PATCH(self):
             if self.path != f"{API_PATH}/releases/7":
                 self.respond({"message": f"Unexpected PATCH {self.path}"}, 404)
                 return
             payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-            release.update({key: value for key, value in payload.items() if key != "make_latest"})
-            if payload.get("make_latest") == "true":
-                latest.clear()
-                latest.update(release)
-            self.respond(release)
+            publication_requests.append(payload)
+            self.respond({**release, **payload})
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
     base_url = f"http://127.0.0.1:{server.server_port}"
@@ -86,19 +69,15 @@ def github_api():
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
-        yield base_url
+        yield base_url, publication_requests
     finally:
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
 
 
-def get_json(base_url, path):
-    with urlopen(f"{base_url}{API_PATH}{path}", timeout=5) as response:
-        return json.load(response)
-
-
-def test_stable_lume_publication_preserves_repository_latest(tmp_path, github_api):
+def test_stable_lume_publication_explicitly_disables_latest_promotion(tmp_path, github_api):
+    base_url, publication_requests = github_api
     workflow = yaml.safe_load((ROOT / ".github/workflows/cd-swift-lume.yml").read_text())
     commands = [
         step["run"]
@@ -121,7 +100,6 @@ def test_stable_lume_publication_preserves_repository_latest(tmp_path, github_ap
     (tmp_path / "release-metadata/release-body.md").write_text("Lume release with attribution")
     (tmp_path / "release-upload").mkdir()
     (tmp_path / "release-upload/lume.tar.gz").write_bytes(b"fixture archive")
-    before = get_json(github_api, "/releases/latest")
 
     result = subprocess.run(
         ["/bin/bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", command],
@@ -130,7 +108,7 @@ def test_stable_lume_publication_preserves_repository_latest(tmp_path, github_ap
             "PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin",
             "HOME": str(tmp_path),
             "GH_TOKEN": "local-fixture-token",
-            "GITHUB_API_URL": github_api,
+            "GITHUB_API_URL": base_url,
         },
         capture_output=True,
         text=True,
@@ -138,12 +116,11 @@ def test_stable_lume_publication_preserves_repository_latest(tmp_path, github_ap
     )
 
     assert result.returncode == 0, result.stdout + result.stderr
-    published = get_json(github_api, f"/releases/tags/{TAG}")
-    assert published["draft"] is False
-    assert published["prerelease"] is False
-    assert published["body"] == "Lume release with attribution"
-    after = get_json(github_api, "/releases/latest")
-    assert after["id"] == before["id"], (
-        f"Lume publication changed repository Latest from {before['tag_name']} "
-        f"to {after['tag_name']}"
-    )
+    assert publication_requests == [
+        {
+            "body": "Lume release with attribution",
+            "draft": False,
+            "prerelease": False,
+            "make_latest": "false",
+        }
+    ]

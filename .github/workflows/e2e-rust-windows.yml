@@ -119,30 +119,17 @@ jobs:
               $destination = Join-Path $observations ('observation-{0:d2}' -f $attempt)
               $watch = [Diagnostics.Stopwatch]::StartNew()
               $failure = $null
-              $load = @()
-              $underLoad = $false
-              if ($underLoad) {
-                $program = '$watch = [Diagnostics.Stopwatch]::StartNew(); while ($watch.Elapsed.TotalSeconds -lt 120) { for ($i = 0; $i -lt 100000; $i++) { $null = [Math]::Sqrt($i) } }'
-                $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($program))
-                foreach ($cpu in 1..([Environment]::ProcessorCount)) {
-                  $load += Start-Process pwsh -ArgumentList @('-NoProfile', '-NonInteractive', '-EncodedCommand', $encoded) -PassThru -WindowStyle Hidden
-                }
-                Start-Sleep -Seconds 2
-              }
               try {
                 if ($attempt -eq 1) { & $probe -RequireGui } else { & $probe -RequireGui -NoBuild }
               } catch {
                 $failure = $_.ToString()
               } finally {
-                foreach ($process in $load) {
-                  if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue }
-                }
                 if (Test-Path artifacts/cua-driver/windows) {
                   Move-Item artifacts/cua-driver/windows $destination
                 } else {
                   New-Item -ItemType Directory -Force $destination | Out-Null
                 }
-                @{ observation = $attempt; cpu_pressure = $underLoad; load_processes = $load.Count; elapsed_ms = $watch.ElapsedMilliseconds; failure = $failure; source_sha = $env:CUA_E2E_SOURCE_SHA } |
+                @{ observation = $attempt; elapsed_ms = $watch.ElapsedMilliseconds; failure = $failure; source_sha = $env:CUA_E2E_SOURCE_SHA } |
                   ConvertTo-Json | Set-Content (Join-Path $destination 'observation.json')
               }
               if ($null -ne $failure) { throw $failure }

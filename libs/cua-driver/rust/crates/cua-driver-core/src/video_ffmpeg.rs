@@ -139,13 +139,11 @@ impl VideoBackend for FfmpegVideoBackend {
     fn stop(mut self: Box<Self>) -> anyhow::Result<VideoMetadata> {
         let elapsed = self.started_at.elapsed();
         let shutdown_started = Instant::now();
-        let before_stop = self.child.try_wait();
-        tracing::warn!(target: "recording", pid = self.child.id(), ?before_stop, "shutdown diagnostic before stdin");
-        if let Some(mut stdin) = self.child.stdin.take() {
+        let stdin_results = self.child.stdin.take().map(|mut stdin| {
             let write_result = stdin.write_all(b"q\n");
             let flush_result = stdin.flush();
-            tracing::warn!(target: "recording", ?write_result, ?flush_result, "shutdown diagnostic stdin");
-        }
+            (write_result, flush_result)
+        });
 
         let shutdown_timeout = Duration::from_millis(3000);
         let deadline = Instant::now() + shutdown_timeout;
@@ -170,7 +168,7 @@ impl VideoBackend for FfmpegVideoBackend {
                 None => std::thread::sleep(Duration::from_millis(80)),
             }
         };
-        tracing::warn!(target: "recording", elapsed_ms = shutdown_started.elapsed().as_millis() as u64, ?result, "shutdown diagnostic result");
+        tracing::warn!(target: "recording", elapsed_ms = shutdown_started.elapsed().as_millis() as u64, ?stdin_results, ?result, "shutdown diagnostic result");
         if let Some(handle) = self.stderr_thread.take() {
             let stderr = handle.join().unwrap_or_default();
             if let Err(error) = &result {

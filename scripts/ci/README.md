@@ -130,9 +130,16 @@ complete repo-local matrix.
 The maintainer-facing macOS command is
 `libs/cua-driver/tests/runners/macos-lume/run-all.sh`. It verifies the private
 Lume seed, installs the exact committed source, and then delegates to the thin
-`macos/run-rust-e2e.sh` matrix runner above. There is no GitHub-hosted macOS GUI
-job. Pass `--standalone-browser` to run the optional installed Chrome/Edge
-browser matrix after the canonical repo-local harness matrix.
+`macos/run-rust-e2e.sh` matrix runner above. Pass `--standalone-browser` to run
+the optional installed Chrome/Edge browser matrix after the canonical repo-local
+harness matrix.
+
+The manual `.github/workflows/e2e-rust-macos.yml` workflow probes a fresh
+GitHub-hosted macOS 26 runner before hosted matrix support is enabled. It records
+the image, SIP state, desktop session, display geometry, and OCR-verified
+TextEdit window and display captures for one exact source SHA. Permission checks
+describe only the temporary probe process; a green probe process does not
+establish `CuaDriverLocal.app` TCC authorization or replace the Lume gate.
 
 Run the Wayland wrapper through `nix develop .#cua-driver-wayland-e2e`. It
 creates a pure Wayland session with Xwayland disabled and delegates every

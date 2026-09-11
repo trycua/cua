@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.27.0...cua-driver-rs-v0.28.0) (2026-09-11)
+
+
+### Features
+
+* **cua-driver:** support modern stdio MCP and skills resources ([9dd3013](https://github.com/trycua/cua/commit/9dd3013fbdbc5ce403a7b383c4d69c9f4aac1f03))
+
 ## [0.27.0](https://github.com/trycua/cua/compare/cua-driver-rs-v0.26.1...cua-driver-rs-v0.27.0) (2026-09-11)
 
 

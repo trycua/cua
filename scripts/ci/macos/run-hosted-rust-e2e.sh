@@ -17,6 +17,7 @@ DAEMON_STARTED=0
 TRUSTED_IDENTITY=""
 WATCHDOG_PID=""
 RUN_START="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+ORIGINAL_KEYCHAINS=()
 
 run_bounded() {
   local seconds="$1"
@@ -69,6 +70,10 @@ capture_diagnostics() {
       >/dev/null 2>&1
     run_bounded 20 sudo -n security delete-certificate -Z "${TRUSTED_IDENTITY}" \
       /Library/Keychains/System.keychain >/dev/null 2>&1
+  fi
+  if ((${#ORIGINAL_KEYCHAINS[@]})); then
+    run_bounded 20 security list-keychains -d user -s \
+      "${ORIGINAL_KEYCHAINS[@]}" >/dev/null 2>&1
   fi
   if [[ -n "${KEYCHAIN}" && -f "${KEYCHAIN}" ]]; then
     run_bounded 20 security delete-keychain "${KEYCHAIN}" >/dev/null 2>&1
@@ -184,6 +189,12 @@ mark_phase "signing-bootstrap"
 run_bounded 30 security create-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
 run_bounded 30 security set-keychain-settings -lut 21600 "${KEYCHAIN}"
 run_bounded 30 security unlock-keychain -p "${KEYCHAIN_PASSWORD}" "${KEYCHAIN}"
+while IFS= read -r keychain_entry; do
+  [[ -n "${keychain_entry}" ]] && ORIGINAL_KEYCHAINS+=("${keychain_entry}")
+done < <(security list-keychains -d user \
+  | sed -E 's/^[[:space:]]*"//; s/"[[:space:]]*$//')
+run_bounded 30 security list-keychains -d user -s \
+  "${KEYCHAIN}" "${ORIGINAL_KEYCHAINS[@]}"
 
 export CUA_DRIVER_LOCAL_HOME="${RUNNER_TEMP}/cua-driver-local"
 export CUA_DRIVER_LOCAL_INSTALL_DIR="${RUNNER_TEMP}/cua-driver-bin"

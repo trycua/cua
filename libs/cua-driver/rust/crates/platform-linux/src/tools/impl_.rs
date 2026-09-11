@@ -1908,6 +1908,19 @@ async fn spawn_blocking_bounded<T: Send + 'static>(
 /// message carries one so the caller can branch instead of parsing prose.
 fn input_error_result(e: anyhow::Error) -> ToolResult {
     let text = e.to_string();
+    if crate::input::is_uinput_unavailable(&e) {
+        // The focus-free real-input route exists but this process cannot open
+        // /dev/uinput: an honest refusal the operator can act on, not a bare
+        // I/O error.
+        let mut refusal = with_uinput_hint(crate::input::delivery::background_unavailable_error(
+            crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+        ));
+        if let Some(structured) = refusal.structured_content.as_mut() {
+            structured["cause"] = json!(crate::input::UINPUT_UNAVAILABLE_CODE);
+            structured["detail"] = json!(text);
+        }
+        return refusal;
+    }
     match crate::input::foreground::error_code(&e) {
         Some(code) => ToolResult::error(text.clone()).with_structured(json!({
             "code": code,
@@ -2231,17 +2244,132 @@ fn unavailable_webkit_keyboard_background(
         })
 }
 
+/// Operator-facing hint attached to a background keyboard refusal on X11: the
+/// focus-free route exists (XI2 MPX virtual master keyboard) but needs a
+/// writable `/dev/uinput`, which is a one-time host setup step.
+const UINPUT_KEYBOARD_HINT: &str = "Background keyboard delivery on X11 needs a virtual master \
+    keyboard fed by a uinput device. Grant this process access to /dev/uinput \
+    (modprobe uinput; chmod 0666 /dev/uinput, or add the driver's user to the \
+    'input' group and restart it) and retry. Xvfb/Xtigervnc cannot hot-add \
+    input devices, so the route is unavailable there.";
+
+fn with_uinput_hint(mut refusal: ToolResult) -> ToolResult {
+    refusal
+        .content
+        .push(cua_driver_core::protocol::Content::text(UINPUT_KEYBOARD_HINT));
+    if let Some(structured) = refusal.structured_content.as_mut() {
+        structured["hint"] = json!(UINPUT_KEYBOARD_HINT);
+    }
+    refusal
+}
+
+/// Honest refusal for a background keyboard action that has no focus-free
+/// actuator. Carries the uinput hint whenever the MPX route is missing only
+/// because `/dev/uinput` is not writable (the fixable case).
+fn background_keyboard_refusal() -> ToolResult {
+    let refusal = crate::input::delivery::background_unavailable_error(
+        crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
+    );
+    if !crate::wayland::is_wayland() && !crate::input::uinput_accessible() {
+        with_uinput_hint(refusal)
+    } else {
+        refusal
+    }
+}
+
 fn unavailable_gtk_keyboard_background(
     pid: u32,
     delivery: crate::input::delivery::DeliveryMode,
 ) -> Option<ToolResult> {
-    (!delivery.is_foreground() && is_gtk_process(pid) && !crate::wayland::is_inject_mode()).then(
-        || {
-            crate::input::delivery::background_unavailable_error(
-                crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-            )
-        },
-    )
+    (!delivery.is_foreground()
+        && is_gtk_process(pid)
+        && !crate::wayland::is_inject_mode()
+        && !crate::input::real_keyboard_input_available())
+    .then(background_keyboard_refusal)
+}
+
+/// Outcome of one background/foreground keyboard delivery on X11, funnelled
+/// through `spawn_blocking`'s success type so the tool can report the route.
+enum KeyRoute {
+    /// Activated the window and injected via XTest.
+    Foreground(crate::input::ForegroundReport),
+    /// Real key events through the session's XI2 virtual master keyboard.
+    Mpx(crate::input::KeyboardDeliveryReport),
+    /// Legacy synthetic XSendEvent (core-only toolkits, Tk, xterm).
+    Synthetic,
+    /// Written to the terminal's pty master.
+    Terminal,
+}
+
+/// Deliver a background key/chord: prefer the focus-free real-input route
+/// (MPX virtual master keyboard) when the host supports it, otherwise the
+/// legacy synthetic XSendEvent. A uinput permission failure is surfaced as is
+/// (the tool turns it into the refusal + hint); any other MPX failure falls
+/// back to XSendEvent for the toolkits that still accept it, and is reported
+/// as an error for the ones known to drop it.
+fn background_key_route(
+    cursor_id: &str,
+    pid: u32,
+    xid: u64,
+    px_target: Option<(i32, i32)>,
+    key: &str,
+    modifiers: &[&str],
+) -> anyhow::Result<KeyRoute> {
+    if crate::input::real_keyboard_input_available() {
+        match crate::input::send_virtual_keyboard_key(cursor_id, xid, key, modifiers) {
+            Ok(report) => return Ok(KeyRoute::Mpx(report)),
+            Err(error) if crate::input::is_uinput_unavailable(&error) => return Err(error),
+            Err(error) if is_gtk_process(pid) || synthetic_pointer_is_dropped(pid) => {
+                return Err(error.context("virtual master keyboard delivery failed"));
+            }
+            Err(error) => tracing::warn!("MPX keyboard fell back to XSendEvent: {error}"),
+        }
+    }
+    match px_target {
+        Some((x, y)) => crate::input::send_key_at(xid, x, y, key, modifiers),
+        None => crate::input::send_key(xid, key, modifiers),
+    }
+    .map(|()| KeyRoute::Synthetic)
+}
+
+/// Tool result for a completed keyboard route (`press_key` / `hotkey`).
+fn key_route_result(action: &str, route: KeyRoute, mode_label: &str) -> ToolResult {
+    match route {
+        KeyRoute::Foreground(report) => ToolResult::text(format!(
+            "{action} as a real key event (delivery_mode=foreground, focus_after={}); \
+             not verified — confirm with a screenshot.",
+            report.focus_after.as_str()
+        ))
+        .with_structured(foreground_structured(
+            "key_events_fg",
+            report,
+            serde_json::Map::new(),
+        )),
+        KeyRoute::Mpx(report) => {
+            let mut structured = report.to_json();
+            structured["verified"] = json!(false);
+            structured["delivery_mode"] = json!(mode_label);
+            structured["effect"] = json!("unverifiable");
+            let mut text = format!(
+                "{action} as real key events through a virtual master keyboard \
+                 (delivery_mode={mode_label}, path={}, focus untouched); not verified — \
+                 confirm with a screenshot.",
+                crate::input::MPX_UINPUT_PATH
+            );
+            if !report.virtual_focus_held || !report.delivery_confirmed {
+                structured["effect"] = json!("suspected_noop");
+                text.push_str(
+                    " Warning: the target lost the virtual keyboard's focus or the server \
+                     did not confirm the last key; the keys may not have landed.",
+                );
+            }
+            ToolResult::text(text).with_structured(structured)
+        }
+        KeyRoute::Synthetic | KeyRoute::Terminal => {
+            ToolResult::text(format!("{action} (delivery_mode={mode_label})."))
+                .with_structured(json!({ "verified": false, "delivery_mode": mode_label }))
+        }
+    }
 }
 
 fn unavailable_gtk_pointer_background(
@@ -4920,9 +5048,33 @@ impl Tool for TypeTextTool {
         .flatten();
         if focus_kind == Some(false) {
             if !delivery.is_foreground() {
-                return crate::input::delivery::background_unavailable_error(
-                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-                );
+                // A spreadsheet cell / canvas / terminal holds the widget focus:
+                // real key events aimed at this window are the only thing that
+                // types there. The XI2 virtual master keyboard delivers them
+                // without touching the user's focus; terminals take the pty.
+                let text_b = text.clone();
+                let cursor_id = resolve_cursor_key(&args);
+                let result = spawn_blocking_bounded(
+                    "background type_text",
+                    foreground_budget(text_len),
+                    move || -> anyhow::Result<Option<KeyRoute>> {
+                        if inject_terminal_input(pid, xid, &text_b)? {
+                            return Ok(Some(KeyRoute::Terminal));
+                        }
+                        background_text_route(&cursor_id, pid, xid, &text_b)
+                    },
+                )
+                .await;
+                return match result {
+                    Ok(Ok(Some(KeyRoute::Terminal))) => ToolResult::text(format!(
+                        "Typed {text_len} character(s) into the focused terminal (pty)."
+                    ))
+                    .with_structured(type_text_structured("key_events", text_len, false)),
+                    Ok(Ok(Some(KeyRoute::Mpx(report)))) => type_text_mpx_result(text_len, report),
+                    Ok(Ok(_)) => background_keyboard_refusal(),
+                    Ok(Err(e)) => input_error_result(e),
+                    Err(e) => ToolResult::error(format!("Task error: {e}")),
+                };
             }
             let text_f = text.clone();
             let result = tokio::task::spawn_blocking(move || {
@@ -5010,30 +5162,38 @@ impl Tool for TypeTextTool {
         // foreground = activate the window (EWMH), then synthesize REAL key
         // events to it via XTest — the escalation when background didn't land
         // (e.g. a GTK dialog whose widget ignores synthetic XSendEvent keys).
-        let result = tokio::task::spawn_blocking(move || -> anyhow::Result<&'static str> {
+        let cursor_id = resolve_cursor_key(&args);
+        let result = spawn_blocking_bounded(
+            "type_text",
+            foreground_budget(text_len),
+            move || -> anyhow::Result<(&'static str, Option<crate::input::KeyboardDeliveryReport>)> {
             // Terminals: write to the pty master (focus-free, below the toolkit).
             if inject_terminal_input(pid, xid, &text)? {
-                return Ok("key_events");
+                return Ok(("key_events", None));
             }
             // GUI apps: X11 only routes keystrokes to the *focused* toplevel's
             // focused widget, so background XSendEvent typing doesn't land. Fill
             // the editable field via AT-SPI instead — focus-free and toolkit-
             // agnostic. Fall back to Tk send or XSendEvent when no a11y field is exposed.
             if crate::atspi::insert_text(pid, &text).unwrap_or(false) {
-                return Ok("ax");
+                return Ok(("ax", None));
             }
             // Tk apps: use Tk's `send` command (no AT-SPI bridge, so AT-SPI above
             // returned false). This is the Tk-specific override, like CDP for Chromium.
             if crate::input::inject_tk_send(&text).unwrap_or(false) {
-                return Ok("key_events");
+                return Ok(("key_events", None));
             }
             if delivery.is_foreground() {
                 crate::input::with_x11_foreground(xid, 80, || {
                     crate::input::send_type_text_xtest(&text)
                 })?;
-                Ok("key_events_fg")
-            } else {
-                Ok("background_unavailable")
+                return Ok(("key_events_fg", None));
+            }
+            // No a11y editable, no pty: real key events through the XI2 virtual
+            // master keyboard are the last focus-free route.
+            match background_text_route(&cursor_id, pid, xid, &text)? {
+                Some(KeyRoute::Mpx(report)) => Ok((crate::input::MPX_UINPUT_PATH, Some(report))),
+                _ => Ok(("background_unavailable", None)),
             }
         })
         .await;
@@ -5046,24 +5206,76 @@ impl Tool for TypeTextTool {
             // AT-SPI's boolean acknowledges the EditableText call; it is not a
             // fresh value readback. Keep the result unverifiable and apply the
             // stricter Chromium escalation where appropriate.
-            Ok(Ok("ax")) => type_text_ax_result(
+            Ok(Ok(("ax", _))) => type_text_ax_result(
                 pid,
                 text_len,
                 &format!("via X11, delivery_mode={mode_label}"),
             ),
-            Ok(Ok("background_unavailable")) => {
-                crate::input::delivery::background_unavailable_error(
-                    crate::input::delivery::BackgroundUnavailable::FocusedInputOnly,
-                )
-            }
-            Ok(Ok(path)) => ToolResult::text(format!(
+            Ok(Ok(("background_unavailable", _))) => background_keyboard_refusal(),
+            Ok(Ok((_, Some(report)))) => type_text_mpx_result(text_len, report),
+            Ok(Ok((path, None))) => ToolResult::text(format!(
                 "Typed {text_len} character(s) (via X11, delivery_mode={mode_label})."
             ))
             .with_structured(type_text_structured(path, text_len, false)),
-            Ok(Err(e)) => ToolResult::error(e.to_string()),
+            Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
     }
+}
+
+/// Background text delivery through the XI2 virtual master keyboard. `None`
+/// when the host has no such route (Xvfb, no `/dev/uinput`); a uinput
+/// permission error propagates so the tool can attach the operator hint.
+fn background_text_route(
+    cursor_id: &str,
+    pid: u32,
+    xid: u64,
+    text: &str,
+) -> anyhow::Result<Option<KeyRoute>> {
+    if !crate::input::real_keyboard_input_available() {
+        return Ok(None);
+    }
+    match crate::input::send_virtual_keyboard_text(cursor_id, xid, text) {
+        Ok(report) => Ok(Some(KeyRoute::Mpx(report))),
+        Err(error) if crate::input::is_uinput_unavailable(&error) => Err(error),
+        Err(error) => {
+            tracing::warn!(pid, "MPX keyboard text delivery failed: {error}");
+            Err(error.context("virtual master keyboard delivery failed"))
+        }
+    }
+}
+
+/// `type_text` result for a delivery through the virtual master keyboard.
+fn type_text_mpx_result(
+    text_len: usize,
+    report: crate::input::KeyboardDeliveryReport,
+) -> ToolResult {
+    let mut structured = type_text_structured(crate::input::MPX_UINPUT_PATH, text_len, false);
+    for (key, value) in report.to_json().as_object().into_iter().flatten() {
+        structured[key] = value.clone();
+    }
+    structured["delivery_mode"] = json!("background");
+    let mut text = format!(
+        "Typed {text_len} character(s) as real key events through a virtual master \
+         keyboard (delivery_mode=background, path={}, focus untouched); not verified — \
+         confirm with a screenshot.",
+        crate::input::MPX_UINPUT_PATH
+    );
+    if !report.skipped_characters.is_empty() {
+        text.push_str(&format!(
+            " {} character(s) had no keycode in the current keymap and were skipped: {:?}.",
+            report.skipped_characters.len(),
+            report.skipped_characters.iter().collect::<String>()
+        ));
+    }
+    if !report.virtual_focus_held || !report.delivery_confirmed {
+        structured["effect"] = json!("suspected_noop");
+        text.push_str(
+            " Warning: the target lost the virtual keyboard's focus or the server did \
+             not confirm the last key; the text may not have landed.",
+        );
+    }
+    ToolResult::text(text).with_structured(structured)
 }
 
 // ── press_key ─────────────────────────────────────────────────────────────────
@@ -5413,6 +5625,7 @@ impl Tool for PressKeyTool {
         }
 
         let key_for_task = key.clone();
+        let cursor_id = resolve_cursor_key(&args);
         // Foreground delivery is one atomic activate-and-XTest transaction.
         // A preceding PX click establishes internal widget focus, but that
         // click restores the prior top-level before returning.
@@ -5420,21 +5633,22 @@ impl Tool for PressKeyTool {
         let result = spawn_blocking_bounded(
             "press_key",
             foreground_budget(1),
-            move || -> anyhow::Result<Option<crate::input::ForegroundReport>> {
+            move || -> anyhow::Result<KeyRoute> {
             if resolved_element_index.is_none()
                 && mods.is_empty()
                 && key_for_task.eq_ignore_ascii_case("enter")
             {
                 if inject_terminal_input(pid, xid, "\n")? {
-                    return Ok(None);
+                    return Ok(KeyRoute::Terminal);
                 }
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             // foreground: activate the window first, then inject a REAL key via
             // XTest. Synthetic XSendEvent keys (`send_key`) are dropped by
             // GTK/Qt/Chromium/Firefox, so the foreground rung must use XTest —
-            // it delivers to the now-focused window. background = direct
-            // XSendEvent (no focus steal) for apps that accept it.
+            // it delivers to the now-focused window. background = real key
+            // events through the XI2 virtual master keyboard (no focus steal),
+            // else direct XSendEvent for apps that accept it.
             if deliver_fg {
                 return crate::input::with_x11_foreground_opts(
                     xid,
@@ -5450,7 +5664,7 @@ impl Tool for PressKeyTool {
                         crate::input::send_key_xtest(&key_for_task, &m)
                     },
                 )
-                .map(|((), report)| Some(report));
+                .map(|((), report)| KeyRoute::Foreground(report));
             }
             if let Some(element_index) = resolved_element_index {
                 if !crate::atspi::focus_element(pid, element_index)? {
@@ -5459,12 +5673,7 @@ impl Tool for PressKeyTool {
                     );
                 }
             }
-            if let Some((x, y)) = px_target {
-                crate::input::send_key_at(xid, x, y, &key_for_task, &m)
-            } else {
-                crate::input::send_key(xid, &key_for_task, &m)
-            }
-            .map(|()| None)
+            background_key_route(&cursor_id, pid, xid, px_target, &key_for_task, &m)
         })
         .await;
         let mode_label = if deliver_fg {
@@ -5473,20 +5682,7 @@ impl Tool for PressKeyTool {
             "background"
         };
         match result {
-            Ok(Ok(Some(report))) => ToolResult::text(format!(
-                "Pressed key '{key}' as a real key event (delivery_mode=foreground, \
-                 focus_after={}); not verified — confirm with a screenshot.",
-                report.focus_after.as_str()
-            ))
-            .with_structured(foreground_structured(
-                "key_events_fg",
-                report,
-                serde_json::Map::new(),
-            )),
-            Ok(Ok(None)) => {
-                ToolResult::text(format!("Pressed key '{key}' (delivery_mode={mode_label})."))
-                    .with_structured(json!({ "verified": false, "delivery_mode": mode_label }))
-            }
+            Ok(Ok(route)) => key_route_result(&format!("Pressed key '{key}'"), route, mode_label),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }
@@ -5855,18 +6051,19 @@ impl Tool for HotkeyTool {
             }
         };
         let deliver_fg = delivery.is_foreground();
+        let cursor_id = resolve_cursor_key(&args);
 
         let result = spawn_blocking_bounded(
             "hotkey",
             foreground_budget(1),
-            move || -> anyhow::Result<Option<crate::input::ForegroundReport>> {
+            move || -> anyhow::Result<KeyRoute> {
             if crate::wayland::wayland_input_enabled() {
                 // Native Wayland: route the modifier combo through wtype's
                 // -M/-k/-m sequence — the closest equivalent to the X11
                 // state-mask path. window_id is irrelevant once focused.
                 let mut combo: Vec<String> = mods_for_wayland.clone();
                 combo.push(key_for_wayland.clone());
-                return crate::wayland::hotkey(xid, &combo).map(|()| None);
+                return crate::wayland::hotkey(xid, &combo).map(|()| KeyRoute::Synthetic);
             }
             let m: Vec<&str> = mods.iter().map(String::as_str).collect();
             // foreground: activate the target first, then inject the accelerator
@@ -5879,14 +6076,9 @@ impl Tool for HotkeyTool {
                     crate::input::ForegroundOptions::keyboard(),
                     || crate::input::send_key_xtest(&key, &m),
                 )
-                .map(|((), report)| Some(report));
+                .map(|((), report)| KeyRoute::Foreground(report));
             }
-            if let Some((x, y)) = px_target {
-                crate::input::send_key_at(xid, x, y, &key, &m)
-            } else {
-                crate::input::send_key(xid, &key, &m)
-            }
-            .map(|()| None)
+            background_key_route(&cursor_id, pid, xid, px_target, &key, &m)
         })
         .await;
         let mode_label = if deliver_fg {
@@ -5895,21 +6087,11 @@ impl Tool for HotkeyTool {
             "background"
         };
         match result {
-            Ok(Ok(Some(report))) => ToolResult::text(format!(
-                "Pressed {key_display} on pid {pid} as real key events \
-                 (delivery_mode=foreground, focus_after={}); not verified — confirm \
-                 with a screenshot.",
-                report.focus_after.as_str()
-            ))
-            .with_structured(foreground_structured(
-                "key_events_fg",
-                report,
-                serde_json::Map::new(),
-            )),
-            Ok(Ok(None)) => ToolResult::text(format!(
-                "Pressed {key_display} on pid {pid} (delivery_mode={mode_label})."
-            ))
-            .with_structured(json!({ "verified": false, "delivery_mode": mode_label })),
+            Ok(Ok(route)) => key_route_result(
+                &format!("Pressed {key_display} on pid {pid}"),
+                route,
+                mode_label,
+            ),
             Ok(Err(e)) => input_error_result(e),
             Err(e) => ToolResult::error(format!("Task error: {e}")),
         }

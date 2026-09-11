@@ -15,9 +15,14 @@
 /// `tools::DeliveryMode` and Windows `input::delivery`.
 pub mod delivery;
 pub mod foreground;
+mod mpx_keyboard;
 mod mpx_owner;
 
 pub use foreground::{with_x11_foreground_opts, FocusAfter, ForegroundOptions, ForegroundReport};
+pub use mpx_keyboard::{
+    real_keyboard_input_available, send_virtual_keyboard_key, send_virtual_keyboard_text,
+    KeyboardDeliveryReport, MPX_UINPUT_PATH,
+};
 
 use anyhow::{anyhow, bail, Context, Result};
 use evdev::uinput::VirtualDevice;
@@ -119,11 +124,16 @@ fn point_on_path(path: &[(i32, i32)], cum: &[f64], total: f64, t: f64) -> (i32, 
     (x.round() as i32, y.round() as i32)
 }
 
+/// One session's XI2 master pair (XIAddMaster always creates a pointer AND a
+/// keyboard) plus the uinput slaves attached to it. The keyboard slave is
+/// created lazily by `mpx_keyboard::ensure_master_keyboard`, so a pointer-only
+/// click never pays for a second device hotplug.
 #[derive(Clone, Copy, Debug)]
 struct MasterPointerIds {
     pointer_id: i32,
-    _keyboard_id: i32,
+    keyboard_id: i32,
     _slave_pointer_id: i32,
+    slave_keyboard_id: Option<i32>,
 }
 
 static MPX_POINTERS: OnceLock<Mutex<HashMap<String, MasterPointerIds>>> = OnceLock::new();
@@ -138,7 +148,7 @@ const UINPUT_POINTER_SUFFIX: &str = " uinput pointer";
 pub const UINPUT_UNAVAILABLE_CODE: &str = "uinput_unavailable";
 
 #[derive(Debug, thiserror::Error)]
-#[error("Linux uinput pointer unavailable: {reason}")]
+#[error("Linux uinput device unavailable: {reason}")]
 struct UinputUnavailable {
     reason: String,
 }
@@ -472,7 +482,7 @@ fn kde_x11_uinput_hotplug_is_unsafe_from_env() -> bool {
     )
 }
 
-fn uinput_accessible() -> bool {
+pub(crate) fn uinput_accessible() -> bool {
     fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -589,15 +599,31 @@ fn ensure_master_pointer_for_session(
     let keyboard_id = keyboard_id
         .ok_or_else(|| anyhow!("failed to locate created master keyboard for '{cursor_id}'"))?;
 
-    let slave_pointer_id = wait_for_slave_pointer_id(display, &device_name)?;
+    let slave_pointer_id = match wait_for_slave_id(
+        display,
+        &device_name,
+        x11::xinput2::XISlavePointer,
+        Duration::from_secs(5),
+    ) {
+        Ok(id) => id,
+        Err(error) => {
+            // Never leave the fresh master pair behind when the slave never
+            // hotplugs (no udev/libinput on this server): a stray master with
+            // nothing attached is exactly the leak the startup reaper exists for.
+            let _ = remove_master_pointer(display, pointer_id);
+            unsafe { x11::xlib::XCloseDisplay(display) };
+            return Err(error);
+        }
+    };
     attach_slave_to_master(display, slave_pointer_id, pointer_id)?;
     set_flat_pointer_accel(display, slave_pointer_id);
     unsafe { x11::xlib::XCloseDisplay(display) };
 
     let ids = MasterPointerIds {
         pointer_id,
-        _keyboard_id: keyboard_id,
+        keyboard_id,
         _slave_pointer_id: slave_pointer_id,
+        slave_keyboard_id: None,
     };
     mpx_pointers()
         .lock()
@@ -611,7 +637,11 @@ fn ensure_master_pointer_for_session(
 }
 
 pub fn forget_master_pointer(cursor_id: &str) {
+    // Drop the uinput slaves first: closing the fds unplugs them, so the master
+    // removal below never has to hand a live slave back to the user's core
+    // devices (XIAttachToMaster only re-homes slaves that still exist).
     uinput_pointers().lock().unwrap().remove(cursor_id);
+    mpx_keyboard::forget_uinput_keyboard(cursor_id);
     let Some(ids) = mpx_pointers().lock().unwrap().remove(cursor_id) else {
         return;
     };
@@ -677,7 +707,10 @@ pub(crate) fn reap_orphaned_master_pointers() {
     unsafe {
         x11::xlib::XGrabServer(display);
     }
-    let result = (|| -> Result<()> {
+    // A panic while the server is grabbed would freeze every other X client
+    // (the whole desktop) until this process dies. Catch it so the ungrab
+    // below always runs, and report it like any other incomplete recovery.
+    let result = catch_unwind(AssertUnwindSafe(|| -> Result<()> {
         for (id, use_, name) in xi2_query_devices(display)? {
             if use_ != x11::xinput2::XIMasterPointer {
                 continue;
@@ -691,14 +724,19 @@ pub(crate) fn reap_orphaned_master_pointers() {
             }
         }
         Ok(())
-    })();
+    }));
     unsafe {
         x11::xlib::XUngrabServer(display);
         x11::xlib::XSync(display, 0);
         x11::xlib::XCloseDisplay(display);
     }
-    if let Err(error) = result {
-        tracing::warn!("MPX orphan recovery incomplete: {error}");
+    match result {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => tracing::warn!("MPX orphan recovery incomplete: {error}"),
+        Err(payload) => tracing::warn!(
+            "MPX orphan recovery panicked (server grab released): {}",
+            panic_payload_message(payload.as_ref())
+        ),
     }
 }
 
@@ -727,16 +765,25 @@ fn create_uinput_pointer(name: &str) -> Result<VirtualDevice> {
     })
 }
 
-fn wait_for_slave_pointer_id(display: *mut x11::xlib::Display, device_name: &str) -> Result<i32> {
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+/// Poll `XIQueryDevice` until the X server has hot-added the uinput device
+/// named `device_name` as a slave of kind `use_` (`XISlavePointer` /
+/// `XISlaveKeyboard`). udev + xf86-input-libinput do the hotplug on a real
+/// Xorg; Xvfb/Xtigervnc never will, which is what the timeout covers.
+fn wait_for_slave_id(
+    display: *mut x11::xlib::Display,
+    device_name: &str,
+    use_: i32,
+    timeout: Duration,
+) -> Result<i32> {
+    let deadline = std::time::Instant::now() + timeout;
     loop {
-        for (device_id, use_, seen_name) in xi2_query_devices(display)? {
-            if use_ == x11::xinput2::XISlavePointer && seen_name == device_name {
+        for (device_id, seen_use, seen_name) in xi2_query_devices(display)? {
+            if seen_use == use_ && seen_name == device_name {
                 return Ok(device_id);
             }
         }
         if std::time::Instant::now() >= deadline {
-            bail!("timed out waiting for X input slave pointer '{device_name}'");
+            bail!("timed out waiting for X input slave device '{device_name}'");
         }
         sleep(Duration::from_millis(50));
     }
@@ -2935,7 +2982,7 @@ mod path_tests {
         assert!(is_uinput_unavailable(&error));
         assert_eq!(
             error.to_string(),
-            "Linux uinput pointer unavailable: permission denied"
+            "Linux uinput device unavailable: permission denied"
         );
     }
 

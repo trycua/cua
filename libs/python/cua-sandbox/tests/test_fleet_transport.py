@@ -2,8 +2,8 @@ import base64
 import json
 from types import SimpleNamespace
 
-import pytest
 import cua_sandbox.transport.fleet as fleet_transport
+import pytest
 from cua_sandbox.transport.fleet import FleetTransport, build_http_request
 from fleet_sdk import HttpHeader, HttpRequest, HttpResponse, Sandbox
 

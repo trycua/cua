@@ -88,9 +88,20 @@ class Transport(FleetTransport):
         self.status = 200
 
     async def request_service(
-        self, name, *, method, path, json_body=None, headers=None, timeout=None
+        self,
+        name,
+        *,
+        method,
+        path,
+        json_body=None,
+        body=None,
+        headers=None,
+        timeout=None,
+        max_response_bytes=None,
     ):
         assert self._connected
+        assert body is None
+        assert max_response_bytes is None
         self.events.append((name, method, path, json_body, headers))
         data = self.open_data if path == "/v1/connections" else self.response_data
         return httpx.Response(self.status, json=data)

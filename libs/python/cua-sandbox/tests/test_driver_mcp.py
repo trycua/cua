@@ -32,8 +32,18 @@ class McpTransport(Transport):
         self.cancel_received = asyncio.Event()
 
     async def request_service(
-        self, name, *, method, path, body=None, json_body=None, headers=None, timeout=None
+        self,
+        name,
+        *,
+        method,
+        path,
+        body=None,
+        json_body=None,
+        headers=None,
+        timeout=None,
+        max_response_bytes=None,
     ):
+        assert max_response_bytes == 16 * 1024 * 1024
         if body:
             json_body = json.loads(body)
         headers = httpx.Headers(headers)

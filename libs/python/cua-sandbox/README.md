@@ -20,20 +20,12 @@ install the optional Driver SDK:
 pip install --extra-index-url https://wheels.cua.ai/simple 'cua-sandbox[driver]'
 ```
 
-The `driver` extra pins `cua-driver==0.26.0`, which provides the typed-window API
+The `driver` extra pins `cua-driver==0.27.0`, which provides the typed-window API
 and compatible remote channel bridge. It requires that version to be published
 for your platform.
 The sandbox image must also run a compatible Driver service.
 
 ### Optional MCP envelope carrier
-
-This migration branch delegates the typed MCP client to the shared Driver Rust
-implementation in [Driver PR #3715](https://github.com/trycua/cua/pull/3715).
-It requires the matching candidate bindings/native library. The optional extra
-still pins Driver 0.26.0, which does not contain that connector: do not release
-this migration until a containing Driver release is published and the exact
-dependency and lockfile are updated and tested. The existing direct-envelope
-path remains compatible with its pinned Driver dependency.
 
 The SDK can carry the same typed Driver interface through a named
 MCP service. This requires the guest's explicit typed-envelope extension, not
@@ -65,11 +57,10 @@ local desktop. On exit, the SDK attempts bounded receiver and MCP-session
 cleanup. An unconfirmed cleanup warns; it is not proof of rollback or guest
 deletion.
 
-See the [candidate wire and launcher contract](../../cua-driver/docs/mcp-envelope-carrier.md)
-for the opt-in and limits. No existing Fleet image is qualified by this example.
-Test the exact image and matching bindings/native library before advertising
-support. Driver 0.25.0 does not provide this typed-window API; use the pinned
-Driver 0.26.0 package and a compatible guest runtime.
+See the [wire and launcher contract](../../cua-driver/docs/mcp-envelope-carrier.md)
+for the opt-in and limits. Test the exact image and matching bindings/native
+library before advertising support; use the pinned optional extra and a
+compatible guest runtime.
 
 ## Ephemeral sandbox
 

@@ -1,10 +1,24 @@
 """Base interface for computer control."""
 
 from abc import ABC, abstractmethod
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Awaitable, Callable, Dict, List, Optional, Tuple, Union
 
 from ..logger import Logger, LogLevel
 from .models import CommandResult, MouseButton
+
+#: What may be passed as ``api_headers``.
+#:
+#: A plain dict is a fixed credential: sent as-is on every request and every
+#: WebSocket upgrade, for the lifetime of the interface. A callable is a
+#: credential that expires -- it is re-resolved on each connection attempt and
+#: each REST request, so a session outliving its token reconnects with a fresh
+#: one instead of replaying a dead bearer. The callable may be sync or async;
+#: it is never called during construction, which is what allows it to be a
+#: coroutine function.
+ApiHeaders = Union[
+    Dict[str, str],
+    Callable[[], Union[Dict[str, str], Awaitable[Dict[str, str]]]],
+]
 
 
 class BaseComputerInterface(ABC):

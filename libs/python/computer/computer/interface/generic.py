@@ -1,4 +1,5 @@
 import asyncio
+import inspect
 import json
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -16,7 +17,7 @@ from ..utils import (
     encode_base64_image,
     resize_image,
 )
-from .base import BaseComputerInterface
+from .base import ApiHeaders, BaseComputerInterface
 from .models import CommandResult, Key, KeyType, MouseButton
 
 
@@ -33,7 +34,7 @@ class GenericComputerInterface(BaseComputerInterface):
         logger_name: str = "computer.interface.generic",
         api_port: Optional[int] = None,
         api_base_url: Optional[str] = None,
-        api_headers: Optional[Dict[str, str]] = None,
+        api_headers: Optional[ApiHeaders] = None,
     ):
         super().__init__(ip_address, username, password, api_key, vm_name)
         self._ws = None
@@ -60,10 +61,42 @@ class GenericComputerInterface(BaseComputerInterface):
         # (preserving its scheme, host, port and path prefix) instead of being rebuilt
         # from ``ip_address`` + port.
         self._api_base_url = api_base_url.rstrip("/") if api_base_url else None
-        self._api_headers = dict(api_headers) if api_headers else {}
+
+        # ``api_headers`` is either a fixed dict or a callable that produces one.
+        # A callable is kept as the source and resolved per connection attempt and
+        # per REST request, because a bearer with a lifetime (Fleet's Keycloak
+        # tokens last 900 seconds) goes stale inside a long session: the open
+        # socket survives -- the proxy authenticates the upgrade, not each frame --
+        # but the reconnect after a network blip would replay a dead token and be
+        # rejected for good. It is deliberately not called here: construction is
+        # sync, and calling it would force every source to be sync forever.
+        # ``_api_headers`` always holds the last resolved value, so a dict source
+        # is stored exactly as before and read without any indirection.
+        self._api_headers_source = api_headers if callable(api_headers) else None
+        self._api_headers: Dict[str, str] = (
+            dict(api_headers) if api_headers and not callable(api_headers) else {}
+        )
 
         # Optional default delay time between commands (in seconds)
         self.delay = 0.0
+
+    async def _resolve_api_headers(self) -> Dict[str, str]:
+        """Return the extra headers to send right now.
+
+        With a dict source this is the dict it was given -- no work, no change
+        in behaviour for CLOUD/CLOUDV2 or ``use_host_computer_server`` callers.
+        With a callable source the value is re-resolved on every call, which is
+        what lets a reconnect mint a fresh token; the callable may be sync or
+        async, since a credential refresh usually needs I/O.
+        """
+        if self._api_headers_source is None:
+            return self._api_headers
+
+        headers = self._api_headers_source()
+        if inspect.isawaitable(headers):
+            headers = await headers
+        self._api_headers = dict(headers) if headers else {}
+        return self._api_headers
 
     async def _handle_delay(self, delay: Optional[float] = None):
         """Handle delay between commands using async sleep.
@@ -830,8 +863,10 @@ class GenericComputerInterface(BaseComputerInterface):
         if self.vm_name:
             headers["X-Container-Name"] = self.vm_name
         # Merge arbitrary extra headers (e.g. ``Authorization: Bearer ...``) last so
-        # callers can override defaults if needed.
-        headers.update(self._api_headers)
+        # callers can override defaults if needed. Resolved per request for the same
+        # reason the WebSocket upgrade resolves per attempt: an expiring bearer has
+        # to be current at the moment it is sent.
+        headers.update(await self._resolve_api_headers())
 
         try:
             async with aiohttp.ClientSession() as session:
@@ -891,10 +926,14 @@ class GenericComputerInterface(BaseComputerInterface):
                         # on the WebSocket upgrade request so proxies that authenticate the
                         # upgrade can accept the connection. Newer websockets versions use
                         # ``additional_headers``; older ones use ``extra_headers``.
-                        if self._api_headers:
-                            connect_kwargs[self._ws_headers_kwarg()] = list(
-                                self._api_headers.items()
-                            )
+                        #
+                        # Resolved here rather than once at construction: this is the
+                        # reconnect path, and a session that outlives its token has to
+                        # dial back with a current one. For a dict source this is the
+                        # same dict every time.
+                        api_headers = await self._resolve_api_headers()
+                        if api_headers:
+                            connect_kwargs[self._ws_headers_kwarg()] = list(api_headers.items())
                         self._ws = await asyncio.wait_for(
                             websockets.connect(self.ws_uri, **connect_kwargs),
                             timeout=120,
@@ -1081,8 +1120,9 @@ class GenericComputerInterface(BaseComputerInterface):
                     headers["X-API-Key"] = self.api_key
                 if self.vm_name:
                     headers["X-Container-Name"] = self.vm_name
-                # Merge arbitrary extra headers (e.g. ``Authorization: Bearer ...``).
-                headers.update(self._api_headers)
+                # Merge arbitrary extra headers (e.g. ``Authorization: Bearer ...``),
+                # resolved per request so an expiring bearer is current when sent.
+                headers.update(await self._resolve_api_headers())
 
                 # Send the request
                 async with aiohttp.ClientSession() as session:

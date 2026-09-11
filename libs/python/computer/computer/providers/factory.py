@@ -177,5 +177,34 @@ class VMProviderFactory:
                     "Docker is required for DockerProvider. "
                     "Please install Docker and ensure it is running."
                 ) from e
+        elif provider_type == VMProviderType.FLEET:
+            try:
+                from .fleet import FleetProvider
+
+                pool = kwargs.get("pool") or kwargs.get("pool_name")
+                if not pool:
+                    raise ValueError(
+                        "FleetProvider requires a pool. Pass pool=<name>: a sandbox is "
+                        "leased from an existing Fleet pool rather than created here."
+                    )
+                # Fleet authenticates with an OAuth client pair (or a token
+                # minted from one), never with an API key: the control plane
+                # only accepts a realm-issued JWT.
+                return FleetProvider(
+                    pool,
+                    client_id=kwargs.get("client_id"),
+                    client_secret=kwargs.get("client_secret"),
+                    access_token=kwargs.get("access_token"),
+                    token_url=kwargs.get("token_url"),
+                    base_url=kwargs.get("base_url"),
+                    service_name=kwargs.get("service_name", "server"),
+                    verbose=verbose,
+                )
+            except ImportError as e:
+                logger.error(f"Failed to import FleetProvider: {e}")
+                raise ImportError(
+                    "cua-sandbox is required for FleetProvider. "
+                    "Install it with: pip install cua-sandbox"
+                ) from e
         else:
             raise ValueError(f"Unsupported provider type: {provider_type}")

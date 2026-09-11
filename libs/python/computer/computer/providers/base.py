@@ -16,6 +16,7 @@ class VMProviderType(StrEnum):
     CLOUDV2 = "cloudv2"
     WINSANDBOX = "winsandbox"
     DOCKER = "docker"
+    FLEET = "fleet"
     UNKNOWN = "unknown"
 
 

@@ -107,7 +107,7 @@ pub enum BackgroundUnavailable {
 }
 
 impl BackgroundUnavailable {
-    fn code(self) -> &'static str {
+    pub(crate) fn code(self) -> &'static str {
         match self {
             Self::NoLibeiBackend => "background_unavailable",
             Self::ChromiumInput => "background_unavailable",

@@ -83,7 +83,7 @@ jobs:
         run: node docs/node_modules/tsx/dist/cli.mjs scripts/docs-generators/runner.ts --library cua-driver --check
       - name: Verify docs extraction preserves policy-filtered discovery
         if: steps.scope.outputs.selected == 'true' && matrix.library == 'cua-driver'
-        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts
+        run: node docs/node_modules/tsx/dist/cli.mjs --test scripts/docs-generators/cua-driver-policy.test.ts scripts/docs-generators/cua-driver-policy-binary.test.ts
 
   check-docs-sync:
     name: Check Documentation Sync

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import test from 'node:test';
-import { extractDocumentation, type DumpDocsOutput } from './cua-driver';
+import { extractDocumentation, resolveDriverBinary, type DumpDocsOutput } from './cua-driver';
 
 test('native docs are complete while ordinary discovery remains policy-filtered', (t) => {
   const directory = mkdtempSync(join(tmpdir(), 'cua-docs-policy-'));
@@ -12,11 +12,7 @@ test('native docs are complete while ordinary discovery remains policy-filtered'
   const policy = join(directory, 'policy.yaml');
   const content = 'allow:\n  tools: [get_window_state]\n';
   writeFileSync(policy, content);
-  const binary = resolve(
-    __dirname,
-    '../../libs/cua-driver/rust/target/release',
-    process.platform === 'win32' ? 'cua-driver.exe' : 'cua-driver'
-  );
+  const binary = resolveDriverBinary();
   const environment = {
     ...process.env,
     CUA_DRIVER_POLICY_FILE: policy,

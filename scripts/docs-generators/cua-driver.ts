@@ -114,6 +114,10 @@ const CUA_DRIVER_BIN = path.join(
 const DOCS_OUTPUT_DIR = path.join(ROOT_DIR, 'docs', 'content', 'docs', 'reference', 'cua-driver');
 const TAG_PREFIX = 'cua-driver-rs-v';
 
+export function resolveDriverBinary(): string {
+  return process.env.CUA_DRIVER_BINARY || CUA_DRIVER_BIN;
+}
+
 export type GitRunner = (command: string, args: readonly string[]) => string;
 
 // ============================================================================
@@ -226,7 +230,7 @@ async function main() {
 
   // Step 2: Extract all docs in a single invocation
   console.log('\nExtracting documentation...');
-  const binary = process.env.CUA_DRIVER_BINARY || CUA_DRIVER_BIN;
+  const binary = resolveDriverBinary();
   const dumpDocs = extractDocumentation(binary);
   console.log(`   Found ${dumpDocs.cli.commands.length} CLI commands`);
   console.log(`   Found ${dumpDocs.mcp.tools.length} MCP tools`);

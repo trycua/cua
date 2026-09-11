@@ -1155,6 +1155,7 @@ dependencies = [
  "futures-util",
  "httparse",
  "image",
+ "jsonschema",
  "libc",
  "pip-preview",
  "platform-linux",

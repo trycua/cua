@@ -39,15 +39,16 @@ pub use inputs::{
     ToolInput, TypeTextInput, MULTI_CALL_SESSION_DESCRIPTION,
 };
 pub use outputs::{
-    advertised_output_schema, refusal_envelope_schema, ActionDelivery, ActionDeliveryMode,
-    ActionEffect, ActionEscalation, ActionEscalationReason, ActionEscalationTarget, ActionEvidence,
-    ActionEvidenceKind, ActionResult, ActionResultValidationError, ActionRoute,
-    ClipboardReadOutput, ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput,
-    CursorPositionOutput, CursorThemeOutput, CursorVisualOutput, DesktopStateOutput,
-    EffectiveScope, EndSessionOutput, GetAgentCursorStateOutput, ListSessionsOutput,
-    ScreenSizeOutput, SessionClientKindOutput, SessionLifecycleState, SessionOutput,
-    SessionStateOutput, SessionTransportOutput, SetAgentCursorEnabledOutput,
-    SetAgentCursorMotionOutput, SetAgentCursorThemeOutput, StartSessionOutput, ToolOutput,
+    advertised_output_schema, conforming_error_envelope, is_refusal_envelope,
+    refusal_envelope_schema, ActionDelivery, ActionDeliveryMode, ActionEffect, ActionEscalation,
+    ActionEscalationReason, ActionEscalationTarget, ActionEvidence, ActionEvidenceKind,
+    ActionResult, ActionResultValidationError, ActionRoute, ClipboardReadOutput,
+    ClipboardWriteOutput, CursorMotionOutput, CursorPointOutput, CursorPositionOutput,
+    CursorThemeOutput, CursorVisualOutput, DesktopStateOutput, EffectiveScope, EndSessionOutput,
+    GetAgentCursorStateOutput, ListSessionsOutput, ScreenSizeOutput, SessionClientKindOutput,
+    SessionLifecycleState, SessionOutput, SessionStateOutput, SessionTransportOutput,
+    SetAgentCursorEnabledOutput, SetAgentCursorMotionOutput, SetAgentCursorThemeOutput,
+    StartSessionOutput, ToolOutput, TOOL_INVOCATION_FAILED_CODE,
 };
 pub use verification::{
     BoundsExpectation, ElementPredicate, ElementSelector, PredicateOutcome, StatePredicate,
@@ -64,7 +65,9 @@ pub const CAPABILITY_VERSION: &str = "1";
 /// Shape version for the checked-in generated client contract.
 pub const CONTRACT_VERSION: &str = "0.8.0";
 
-/// MCP protocol version used by current cua-driver clients.
+/// Legacy version negotiated by `initialize.params.protocolVersion` and served
+/// by the loopback HTTP compatibility endpoint. Modern stdio discovery and
+/// per-request negotiation are defined by the endpoint implementation.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-06-18";
 
 /// Tools whose successful result is the shared closed [`ActionResult`].
@@ -180,6 +183,8 @@ pub struct ContractManifest {
     pub contract_version: String,
     pub tools_list_schema_version: String,
     pub capability_version: String,
+    /// Legacy initialize/HTTP compatibility version. This field retains its
+    /// historical name so generated SDK manifests remain backward compatible.
     pub mcp_protocol_version: String,
     pub transport: String,
     pub tools: Vec<ToolContract>,
@@ -212,6 +217,7 @@ struct ToolIndexEntry {
     capabilities: Vec<String>,
     input_fields: BTreeSet<String>,
     output_validator: OutputValidator,
+    advertises_output_schema: bool,
 }
 
 fn tool_index() -> &'static BTreeMap<String, ToolIndexEntry> {
@@ -229,12 +235,14 @@ fn tool_index() -> &'static BTreeMap<String, ToolIndexEntry> {
                     .flatten()
                     .map(|(name, _)| name.clone())
                     .collect();
+                let advertises_output_schema = tool.success_output_schema.is_some();
                 (
                     tool.name,
                     ToolIndexEntry {
                         capabilities: tool.capabilities,
                         input_fields,
                         output_validator: tool.output_validator,
+                        advertises_output_schema,
                     },
                 )
             })
@@ -260,6 +268,37 @@ pub fn tool_input_fields(name: &str) -> Option<&'static BTreeSet<String>> {
 /// committing every generated SDK to their broader platform-specific shape.
 pub fn tool_success_output_schema(name: &str) -> Option<Value> {
     tool_contract(name).and_then(|contract| contract.success_output_schema)
+}
+
+/// The `outputSchema` one tool advertises on `tools/list`, or `None` when it
+/// advertises none.
+///
+/// Action tools answer with the shared `ActionResult` shape; everything else
+/// uses its own success schema when it has one. Both are wrapped by
+/// [`advertised_output_schema`] so the refusal arm rides along, because MCP
+/// holds every `structuredContent` a tool emits — refusals included — to this
+/// schema.
+pub fn advertised_tool_output_schema(name: &str) -> Option<Value> {
+    let success = if is_action_result_tool(name) {
+        Some(<ActionResult as ToolOutput>::output_schema())
+    } else {
+        tool_success_output_schema(name)
+    };
+    success.map(advertised_output_schema)
+}
+
+/// Whether [`advertised_tool_output_schema`] would answer with a schema.
+///
+/// The `tools/call` boundary asks this once per call, so it reads the cached
+/// tool index instead of rebuilding the manifest and its schemas.
+/// `advertised_schema_presence_matches_the_cheap_predicate` pins the two
+/// against each other across the whole manifest.
+pub fn advertises_output_schema(name: &str) -> bool {
+    is_action_result_tool(name)
+        || name == "list_windows"
+        || tool_index()
+            .get(name)
+            .is_some_and(|entry| entry.advertises_output_schema)
 }
 
 /// Validate a successful structured payload against the Rust output type that
@@ -294,6 +333,26 @@ mod tests {
         assert_eq!(names, sorted);
         assert_eq!(manifest.contract_version, "0.8.0");
         assert!(manifest.experimental);
+    }
+
+    /// The `tools/call` boundary decides whether a client will validate a
+    /// payload from the cheap predicate, so a tool it disagrees with on would
+    /// be checked against a schema it never advertises, or skipped while a
+    /// client still validates it.
+    #[test]
+    fn advertised_schema_presence_matches_the_cheap_predicate() {
+        let mut names: Vec<String> = manifest().tools.into_iter().map(|tool| tool.name).collect();
+        names.extend(ACTION_RESULT_TOOLS.iter().map(|name| (*name).to_owned()));
+        names.push("list_windows".to_owned());
+        names.push("no_such_tool".to_owned());
+
+        for name in names {
+            assert_eq!(
+                advertised_tool_output_schema(&name).is_some(),
+                advertises_output_schema(&name),
+                "`{name}` disagrees on whether it advertises an output schema"
+            );
+        }
     }
 
     #[test]

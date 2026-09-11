@@ -316,6 +316,15 @@ Hosted results remain supplemental until the image and signing
 identity provide the same release-parity guarantees as the maintained Lume
 seed.
 
+Workers cloned from a granted private seed verify and reuse its app-owned TCC
+identity. A disposable SIP-disabled Lume worker without inherited grants must
+use `tests/runners/macos-lume/seed-tcc.sh` after installing the exact candidate
+as a certificate-signed `CuaDriverLocal.app`. The guarded helper is the only
+supported automated path: it verifies `VirtualMac*`, disabled SIP, the expected
+bundle identity, and the signed requirement before seeding only Accessibility
+and Screen Recording. Never hand-edit `TCC.db`. Restart the app afterward and
+prove live capture and input; database rows alone do not certify the desktop.
+
 ### Linux
 
 Runner: `scripts/ci/linux/run-rust-e2e.sh`

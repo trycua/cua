@@ -67,9 +67,13 @@ concurrency:
 
 jobs:
   mcp-client-discovery:
-    name: MCP discovery in pinned clients
-    runs-on: ubuntu-latest
+    name: MCP discovery in pinned clients (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       - uses: dtolnay/rust-toolchain@stable
@@ -80,8 +84,11 @@ jobs:
         with:
           node-version: "22"
           cache: npm
-          cache-dependency-path: .github/scripts/cua-driver-mcp-compat/package-lock.json
+          cache-dependency-path: |
+            .github/scripts/cua-driver-mcp-compat/package-lock.json
+            .github/scripts/cua-driver-mcp-compat/modern-client/package-lock.json
       - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
         run: |
           if [[ -f /etc/apt/apt-mirrors.txt ]]; then
             sudo sed -i 's#http://azure.archive.ubuntu.com/ubuntu#https://archive.ubuntu.com/ubuntu#g' /etc/apt/apt-mirrors.txt
@@ -98,11 +105,24 @@ jobs:
         run: npm ci --ignore-scripts
       - name: Verify discovery without model or account calls
         working-directory: .github/scripts/cua-driver-mcp-compat
+        shell: bash
+        env:
+          CUA_DRIVER_BINARY: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver${{ runner.os == 'Windows' && '.exe' || '' }}
         run: |
-          VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("../../../libs/cua-driver/rust/Cargo.toml", "rb"))["workspace"]["package"]["version"])')
-          CUA_DRIVER_BINARY="$GITHUB_WORKSPACE/libs/cua-driver/rust/target/release/cua-driver" \
+          VERSION=$(cargo metadata --no-deps --format-version 1 \
+            --manifest-path ../../../libs/cua-driver/rust/Cargo.toml \
+            | node -e 'let s=""; process.stdin.on("data", c => s += c); process.stdin.on("end", () => console.log(JSON.parse(s).packages.find(p => p.name === "cua-driver").version))')
           CUA_DRIVER_EXPECTED_VERSION="$VERSION" \
             npm run verify
+
+      - name: Install the pinned modern MCP client
+        working-directory: .github/scripts/cua-driver-mcp-compat/modern-client
+        run: npm ci --ignore-scripts
+
+      - name: Verify modern MCP and embedded skill resources
+        env:
+          CUA_DRIVER_BINARY: ${{ github.workspace }}/libs/cua-driver/rust/target/release/cua-driver${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: node .github/scripts/cua-driver-mcp-compat/verify-modern.mjs
 
   runtime-parity:
     name: Portable contract parity (${{ matrix.os }})

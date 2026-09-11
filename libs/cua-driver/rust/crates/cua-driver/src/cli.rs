@@ -1726,11 +1726,21 @@ where
         on_startup(daemon, true);
     }
 
+    run_mcp_runtime(crate::proxy::run_proxy(socket_path))
+}
+
+pub(crate) fn run_mcp_runtime<T>(future: impl std::future::Future<Output = T>) -> T {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("tokio runtime");
-    rt.block_on(crate::proxy::run_proxy(socket_path))
+    let result = rt.block_on(future);
+    // Tokio stdin uses an uncancellable blocking read. After control loss the
+    // MCP client can still hold stdin open; waiting for that read during Drop
+    // would keep the failed proxy process alive and prevent client recovery.
+    // run_proxy has already dropped its scoped daemon control connection.
+    rt.shutdown_background();
+    result
 }
 
 /// Emit a stable, machine-readable JSON description of the cua-driver CLI

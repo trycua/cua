@@ -203,6 +203,8 @@ pub enum ResponseBody {
 pub struct RpcError {
     pub code: i64,
     pub message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub data: Option<Value>,
 }
 
 impl Response {
@@ -215,6 +217,15 @@ impl Response {
     }
 
     pub fn error(id: Value, code: i64, message: impl Into<String>) -> Self {
+        Self::error_with_data(id, code, message, None)
+    }
+
+    pub fn error_with_data(
+        id: Value,
+        code: i64,
+        message: impl Into<String>,
+        data: Option<Value>,
+    ) -> Self {
         Self {
             jsonrpc: "2.0",
             id,
@@ -222,6 +233,7 @@ impl Response {
                 error: RpcError {
                     code,
                     message: message.into(),
+                    data,
                 },
             },
         }
@@ -331,7 +343,7 @@ impl ToolResult {
 pub fn initialize_result() -> Value {
     serde_json::json!({
         "protocolVersion": "2025-06-18",
-        "capabilities": { "tools": {} },
+        "capabilities": crate::mcp_wire::server_capabilities(),
         "serverInfo": { "name": "cua-driver", "version": env!("CARGO_PKG_VERSION") },
         "instructions": agent_instructions()
     })
@@ -369,7 +381,7 @@ fn agent_instructions() -> String {
     format!(
         r#"cua-driver: cross-platform background computer-use automation.
 
-Before UI work, classify the desired outcome. For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
+For non-GUI outcomes, prefer a client-provided app API/SDK, headless/background interface, CLI, or filesystem operation and read the result back in that semantic domain. This server has no shell.
 
 On continuation/recent-work, when available, call `history_status`; if ready, make one bounded initial `history_query` before broad discovery; otherwise continue.
 
@@ -381,7 +393,7 @@ Workflow per turn:
 2. Act with the fresh index.
 3. `verify_state(pid, window_id, expect)` checks bounded postconditions. `unknown` is not success; `include_screenshot:true` lets the multimodal agent judge visual evidence.
 
-If the `cua-driver` skill is loaded, follow SKILL.md plus {platform_skill_pointer}."#
+Read `skill://cua-driver/SKILL.md` via `skills/get` or `resources/read`. Hosts control activation/consent. When activated, follow SKILL.md and {platform_skill_pointer}."#
     )
 }
 

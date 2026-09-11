@@ -179,26 +179,18 @@ impl ToolDef {
             "capabilities": caps,
             "risk": risk,
         });
-        let output_schema = if crate::action_record::is_action_tool(&self.name) {
-            Some(
-                <cua_driver_contract::ActionResult as cua_driver_contract::ToolOutput>::output_schema(
-                ),
-            )
-        } else {
-            cua_driver_contract::tool_success_output_schema(&self.name)
-        };
-        if let Some(output_schema) = output_schema {
-            // Advertise the refusal envelope alongside the success shape. MCP
-            // holds every `structuredContent` we emit — refusals included — to
-            // the advertised schema, and a success-only schema made strict
-            // clients discard our refusal message in favour of a schema error.
+        // Advertise the refusal envelope alongside the success shape. MCP
+        // holds every `structuredContent` we emit — refusals included — to
+        // the advertised schema, and a success-only schema made strict
+        // clients discard our refusal message in favour of a schema error.
+        // The `tools/call` boundary answers from the same lookup, so what a
+        // client is promised and what it is held to cannot drift.
+        if let Some(output_schema) = cua_driver_contract::advertised_tool_output_schema(&self.name)
+        {
             entry
                 .as_object_mut()
                 .expect("tool list entry is an object")
-                .insert(
-                    "outputSchema".into(),
-                    cua_driver_contract::advertised_output_schema(output_schema),
-                );
+                .insert("outputSchema".into(), output_schema);
         }
         entry
     }
@@ -1601,10 +1593,11 @@ impl ToolRegistry {
         if result.is_error != Some(true) && crate::action_record::is_action_tool(resolved_name) {
             if let Err(error) = publish_action_result(&mut result) {
                 result = ToolResult::error(format!(
-                    "internal action outcome mismatch for {resolved_name}: {error}"
+                    "internal action outcome mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                 ))
                 .with_structured(serde_json::json!({
                     "code": "action_outcome_mismatch",
+                    "execution_state": "unknown",
                     "tool": resolved_name,
                     "detail": error,
                 }));
@@ -1616,10 +1609,11 @@ impl ToolRegistry {
                     cua_driver_contract::validate_success_output(resolved_name, structured)
                 {
                     result = ToolResult::error(format!(
-                        "internal typed output mismatch for {resolved_name}: {error}"
+                        "internal typed output mismatch for {resolved_name}: {error}; the tool may have executed. Verify state before retrying."
                     ))
                     .with_structured(serde_json::json!({
                         "code": "typed_output_mismatch",
+                        "execution_state": "unknown",
                         "tool": resolved_name,
                         "detail": error,
                     }));

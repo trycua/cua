@@ -18,6 +18,7 @@
 
 use std::sync::Arc;
 
+use cua_driver_core::mcp_wire::{self, ProtocolSession};
 use cua_driver_core::policy::{authorize_tool_call, validate_configured_policy};
 use cua_driver_core::protocol::{initialize_result, Request, Response};
 use cua_driver_core::server::{
@@ -27,7 +28,9 @@ use cua_driver_core::server::{
 use tokio::io::{AsyncBufRead, AsyncBufReadExt, AsyncWrite, AsyncWriteExt, BufReader};
 use tracing::{debug, error, warn};
 
-use crate::serve::{is_daemon_listening, send_request, DaemonRequest, ToolObservationOrigin};
+use crate::serve::{
+    is_daemon_listening, send_request, DaemonRequest, DaemonResponse, ToolObservationOrigin,
+};
 
 /// Run stdio MCP directly over an SDK-owned runtime.
 ///
@@ -58,6 +61,7 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
     let mut writer = tokio::io::BufWriter::new(stdout);
     let mut line = String::new();
     let mut session_observed = false;
+    let mut protocol_session = ProtocolSession::default();
     let transport_session = format!("mcp-{}", uuid::Uuid::new_v4());
     struct DirectTransportCleanup {
         sdk: Arc<crate::sdk_adapter::SdkAdapter>,
@@ -89,6 +93,25 @@ pub async fn run_direct(driver: Arc<cua_driver_sdk::CuaDriver>) -> anyhow::Resul
             }
             Ok(request) if request.is_notification() => continue,
             Ok(mut request) => {
+                let admission = protocol_session.validate(&request).and_then(|era| {
+                    if request.method == "tools/call" {
+                        mcp_wire::validate_tool_call(
+                            &request,
+                            request.id.clone().unwrap_or_default(),
+                            era,
+                            &sdk.tools_list(),
+                        )?;
+                    }
+                    Ok(era)
+                });
+                if let Err(response) = admission {
+                    writer
+                        .write_all(serde_json::to_string(&response)?.as_bytes())
+                        .await?;
+                    writer.write_all(b"\n").await?;
+                    writer.flush().await?;
+                    continue;
+                }
                 apply_direct_session_identity(&mut request, &transport_session);
                 let initialize_metadata = (!session_observed)
                     .then(|| request.initialize_metadata())
@@ -220,17 +243,15 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
     // calls. Besides lifecycle cleanup, that registered control channel is the
     // trust boundary used by destructive `browser_prepare` calls.
     let (control_ready_tx, control_ready_rx) = tokio::sync::oneshot::channel();
-    {
-        let socket = socket_path.clone();
-        let sid = session_id.clone();
-        tokio::spawn(async move {
-            run_control_connection(socket, sid, control_ready_tx).await;
-        });
-    }
-    tokio::time::timeout(std::time::Duration::from_secs(4), control_ready_rx)
-        .await
-        .map_err(|_| anyhow::anyhow!("daemon did not acknowledge the MCP control session"))?
-        .map_err(|_| anyhow::anyhow!("daemon control session closed before acknowledgement"))?;
+    let control = run_control_connection(socket_path.clone(), session_id.clone(), control_ready_tx);
+    tokio::pin!(control);
+    supervise_control_connection(&mut control, async {
+        tokio::time::timeout(std::time::Duration::from_secs(4), control_ready_rx)
+            .await
+            .map_err(|_| anyhow::anyhow!("daemon did not acknowledge the MCP control session"))?
+            .map_err(|_| anyhow::anyhow!("daemon control session closed before acknowledgement"))
+    })
+    .await?;
 
     // Cache the tool list once at startup. The daemon's registry is
     // static for the lifetime of the daemon, so polling on every
@@ -242,15 +263,32 @@ pub async fn run_proxy(socket_path: String) -> anyhow::Result<()> {
 
     let stdin = tokio::io::stdin();
     let stdout = tokio::io::stdout();
-    run_proxy_io(
-        BufReader::new(stdin),
-        tokio::io::BufWriter::new(stdout),
-        &socket_path,
-        &cached_tools_list,
-        &session_id,
-        daemon_observes_tool_calls,
+    supervise_control_connection(
+        &mut control,
+        run_proxy_io(
+            BufReader::new(stdin),
+            tokio::io::BufWriter::new(stdout),
+            &socket_path,
+            &cached_tools_list,
+            &session_id,
+            daemon_observes_tool_calls,
+        ),
     )
     .await
+}
+
+/// Keep the MCP transport alive only while its daemon-owned identity is live.
+/// Dropping the scoped control future also closes its socket on stdin EOF,
+/// startup failure, or cancellation; no detached task can retain the session.
+async fn supervise_control_connection<T>(
+    control: impl std::future::Future<Output = ()>,
+    work: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    tokio::select! {
+        biased;
+        _ = control => anyhow::bail!("daemon control session closed; reconnect the MCP client"),
+        result = work => result,
+    }
 }
 
 /// Run the service-owned stdio loop over caller-provided I/O.
@@ -272,6 +310,7 @@ where
 {
     let mut line = String::new();
     let mut session_observed = false;
+    let mut protocol_session = ProtocolSession::default();
 
     loop {
         line.clear();
@@ -295,6 +334,23 @@ where
                 continue;
             }
             Ok(req) => {
+                let admission = protocol_session.validate(&req).and_then(|era| {
+                    mcp_wire::validate_tool_call(
+                        &req,
+                        req.id.clone().unwrap_or_default(),
+                        era,
+                        cached_tools_list,
+                    )?;
+                    Ok(era)
+                });
+                if let Err(response) = admission {
+                    writer
+                        .write_all(serde_json::to_string(&response)?.as_bytes())
+                        .await?;
+                    writer.write_all(b"\n").await?;
+                    writer.flush().await?;
+                    continue;
+                }
                 let initialize_metadata = (!session_observed)
                     .then(|| req.initialize_metadata())
                     .flatten();
@@ -391,10 +447,9 @@ fn proxy_knows_tool(cached_tools_list: &serde_json::Value, name: &str) -> bool {
 /// `session_begin` and fires `session_end` when this connection EOFs — which
 /// the kernel triggers on proxy exit AND on kill -9.
 ///
-/// On any read result/error (daemon-side close, broken pipe), the loop exits
-/// and the task ends; the proxy keeps running on its per-call connections. A
-/// connect failure (racing daemon startup) is logged and swallowed — it must
-/// not bail the proxy.
+/// On EOF/error (daemon-side close, broken pipe), this future completes and
+/// its supervisor closes the MCP proxy. Per-call connections must never keep
+/// serving the ended identity. Startup connection failures follow the same path.
 async fn run_control_connection(
     socket_path: String,
     session_id: String,
@@ -451,6 +506,10 @@ async fn run_control_connection(
         match reader.read_line(&mut buf).await {
             Ok(0) | Err(_) => return,
             Ok(_) => {
+                if let Err(error) = validate_session_begin_ack(&buf) {
+                    warn!("control connection: {error}");
+                    return;
+                }
                 let _ = control_ready.send(());
             }
         }
@@ -498,6 +557,10 @@ async fn run_control_connection(
         match reader.read_line(&mut buf).await {
             Ok(0) | Err(_) => return,
             Ok(_) => {
+                if let Err(error) = validate_session_begin_ack(&buf) {
+                    warn!("control connection: {error}");
+                    return;
+                }
                 let _ = control_ready.send(());
             }
         }
@@ -515,6 +578,21 @@ async fn run_control_connection(
     {
         let _ = (line, session_id, socket_path, control_ready);
     }
+}
+
+fn validate_session_begin_ack(line: &str) -> Result<(), String> {
+    let response: DaemonResponse = serde_json::from_str(line)
+        .map_err(|_| "malformed session_begin acknowledgement".to_owned())?;
+    if !response.ok
+        || response
+            .result
+            .as_ref()
+            .and_then(|result| result.get("session_begin"))
+            != Some(&serde_json::Value::Bool(true))
+    {
+        return Err("daemon did not acknowledge session_begin".to_owned());
+    }
+    Ok(())
 }
 
 /// Mint a session id unique among the live proxies sharing one daemon, for the
@@ -561,6 +639,8 @@ fn fetch_tools_list_from_daemon(
         .get("tools")
         .and_then(|v| v.as_array())
         .ok_or_else(|| anyhow::anyhow!("daemon list response missing `tools` array"))?;
+
+    validate_daemon_output_schemas(tools_array)?;
 
     // Reshape the daemon's `{name, description, input_schema, output_schema,
     // read_only, ..., capabilities}` envelope into MCP's `{name, description,
@@ -679,6 +759,48 @@ fn fetch_tools_list_from_daemon(
     ))
 }
 
+fn validate_daemon_output_schemas(tools: &[serde_json::Value]) -> anyhow::Result<()> {
+    for tool in tools {
+        let name = tool
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("daemon tool entry missing name"))?;
+        cua_driver_core::mcp_result::validate_proxy_output_schema(name, tool.get("output_schema"))
+            .map_err(anyhow::Error::msg)?;
+    }
+    Ok(())
+}
+
+fn proxy_output_schema<'a>(
+    tools: &'a serde_json::Value,
+    name: &str,
+) -> Option<&'a serde_json::Value> {
+    let tools = tools.get("tools")?.as_array()?;
+    tools
+        .iter()
+        .find(|tool| tool.get("name").and_then(serde_json::Value::as_str) == Some(name))
+        .or_else(|| {
+            (name == "type_text_chars")
+                .then(|| {
+                    tools.iter().find(|tool| {
+                        tool.get("name").and_then(serde_json::Value::as_str) == Some("type_text")
+                    })
+                })
+                .flatten()
+        })?
+        .get("outputSchema")
+}
+
+fn proxy_tool_result_response(
+    id: serde_json::Value,
+    result: Result<serde_json::Value, String>,
+) -> Response {
+    match result {
+        Ok(result) => Response::ok(id, result),
+        Err(error) => Response::error(id, -32603, error),
+    }
+}
+
 fn daemon_owns_tool_observation(result: &serde_json::Value) -> bool {
     result
         .get("tool_observation_owner")
@@ -702,8 +824,44 @@ async fn handle_proxy_request(
     session_id: &str,
     daemon_observes_tool_calls: bool,
 ) -> Response {
+    let era = match mcp_wire::classify_request(&req) {
+        Ok(era) => era,
+        Err(response) => return response,
+    };
+    if let Err(response) = mcp_wire::validate_tool_call(&req, id.clone(), era, cached_tools_list) {
+        return response;
+    }
+    let method = req.method.clone();
+    let response = if let Some(response) = mcp_wire::handle_metadata_request(&req, id.clone()) {
+        response
+    } else {
+        handle_proxy_tool_request(
+            req,
+            id,
+            socket_path,
+            cached_tools_list,
+            session_id,
+            daemon_observes_tool_calls,
+        )
+        .await
+    };
+    mcp_wire::finish_response(era, &method, response)
+}
+
+async fn handle_proxy_tool_request(
+    req: Request,
+    id: serde_json::Value,
+    socket_path: &str,
+    cached_tools_list: &Arc<serde_json::Value>,
+    session_id: &str,
+    daemon_observes_tool_calls: bool,
+) -> Response {
     match req.method.as_str() {
-        "initialize" => Response::ok(id, initialize_result()),
+        "initialize"
+            if mcp_wire::classify_request(&req).ok() == Some(mcp_wire::ProtocolEra::Legacy) =>
+        {
+            Response::ok(id, initialize_result())
+        }
 
         "tools/list" => Response::ok(id, (**cached_tools_list).clone()),
 
@@ -711,15 +869,26 @@ async fn handle_proxy_request(
             Err(e) => Response::error(id, -32602, format!("Invalid params: {e}")),
             Ok(call) => {
                 if let Err(error) = authorize_tool_call(&call.name, &call.args) {
-                    return Response::error(id, -32603, error.to_string());
+                    return proxy_tool_result_response(
+                        id,
+                        cua_driver_core::mcp_result::conforming_proxy_tool_result(
+                            &call.name,
+                            cua_driver_core::mcp_result::tool_error_result(
+                                error.to_string(),
+                                serde_json::json!({"code": "permission_denied"}),
+                            ),
+                            proxy_output_schema(cached_tools_list, &call.name),
+                        ),
+                    );
                 }
                 forward_tool_call(
                     id,
-                    call.name,
+                    call.name.clone(),
                     call.args,
                     socket_path,
                     session_id,
                     daemon_observes_tool_calls,
+                    proxy_output_schema(cached_tools_list, &call.name).cloned(),
                 )
                 .await
             }
@@ -751,6 +920,7 @@ async fn forward_tool_call(
     socket_path: &str,
     session_id: &str,
     daemon_observes_tool_calls: bool,
+    output_schema: Option<serde_json::Value>,
 ) -> Response {
     cua_driver_core::tool_args::sanitize_reserved_args(&mut args);
     let req = DaemonRequest {
@@ -787,40 +957,55 @@ async fn forward_tool_call(
         Ok(Ok(r)) => r,
     };
 
-    if !resp.ok {
-        // MCP separates two failure modes:
-        //   - JSON-RPC errors → `Response::error(...)`, used for
-        //     transport / protocol failures (unknown method, bad
-        //     params shape, server crash).
-        //   - Tool-level errors → `Response::ok(...)` carrying a
-        //     `CallTool.Result` with `isError: true` and the error
-        //     message in `content[]`. The tool ran, returned a
-        //     well-formed result that says "I failed."
-        //
-        // A non-`ok` daemon response means the tool call reached the
-        // daemon and the daemon decided the tool returned an error
-        // (or rejected the call). That's tool-level, not transport-
-        // level, so the core protocol surfaces it as `Response::ok` with
-        // `isError: true`. Mirror that shape here — CodeRabbit #2.
+    proxy_tool_result_response(
+        id,
+        daemon_response_to_tool_result(&name, resp, output_schema.as_ref()),
+    )
+}
+
+/// Translate one `DaemonResponse` into the `CallTool.Result` the MCP client
+/// receives.
+///
+/// MCP separates two failure modes:
+///   - JSON-RPC errors → `Response::error(...)`, used for transport /
+///     protocol failures (unknown method, bad params shape, server crash).
+///     Those are handled by the caller, above.
+///   - Tool-level errors → `Response::ok(...)` carrying a `CallTool.Result`
+///     with `isError: true` and the error message in `content[]`. The tool
+///     ran, returned a well-formed result that says "I failed."
+///
+/// A non-`ok` daemon response means the tool call reached the daemon and the
+/// daemon decided the tool returned an error (or rejected the call). That's
+/// tool-level, not transport-level, so the core protocol surfaces it as
+/// `Response::ok` with `isError: true`. Mirror that shape here — CodeRabbit #2.
+///
+/// Every branch — including the empty result synthesised for an `ok` response
+/// that carries none — leaves through the same boundary the direct dispatch
+/// uses, so a daemon-backed call is held to the tool's advertised
+/// `outputSchema` exactly as a direct one is.
+fn daemon_response_to_tool_result(
+    name: &str,
+    resp: DaemonResponse,
+    output_schema: Option<&serde_json::Value>,
+) -> Result<serde_json::Value, String> {
+    let result = if resp.ok {
+        resp.result.unwrap_or_else(|| {
+            serde_json::json!({
+                "content": [],
+                "isError": false
+            })
+        })
+    } else {
         let msg = resp
             .error
             .unwrap_or_else(|| "daemon reported failure".into());
         let exit_code = resp.exit_code.unwrap_or(1);
-        let result = serde_json::json!({
-            "content": [{ "type": "text", "text": msg }],
-            "isError": true,
-            "structuredContent": { "exit_code": exit_code }
-        });
-        return Response::ok(id, result);
-    }
-
-    let result = resp.result.unwrap_or_else(|| {
-        serde_json::json!({
-            "content": [],
-            "isError": false
-        })
-    });
-    Response::ok(id, result)
+        cua_driver_core::mcp_result::tool_error_result(
+            msg,
+            serde_json::json!({ "exit_code": exit_code }),
+        )
+    };
+    cua_driver_core::mcp_result::conforming_proxy_tool_result(name, result, output_schema)
 }
 
 // ── Tests ────────────────────────────────────────────────────────────────────
@@ -832,7 +1017,274 @@ async fn forward_tool_call(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::serve::DaemonResponse;
+
+    #[tokio::test]
+    async fn modern_proxy_metadata_and_rejections_need_no_daemon_call() {
+        use serde_json::json;
+        let meta = json!({
+            mcp_wire::PROTOCOL_VERSION_KEY: mcp_wire::MODERN_PROTOCOL_VERSION,
+            mcp_wire::CLIENT_CAPABILITIES_KEY: {}
+        });
+        let mut input = Vec::new();
+        for (id, method, mut params) in [
+            (1, "server/discover", json!({})),
+            (2, "skills/list", json!({})),
+            (
+                3,
+                "resources/read",
+                json!({"uri":"skill://cua-driver/SKILL.md"}),
+            ),
+            (4, "tools/call", json!({"name":"get_config","arguments":[]})),
+            (
+                5,
+                "tools/call",
+                json!({"name":"unknown_tool","arguments":{"session":"must-not-start"}}),
+            ),
+        ] {
+            params["_meta"] = meta.clone();
+            serde_json::to_writer(
+                &mut input,
+                &json!({"jsonrpc":"2.0","id":id,"method":method,"params":params}),
+            )
+            .unwrap();
+            input.push(b'\n');
+        }
+        let inventory = Arc::new(json!({"tools":[{"name":"get_config"}]}));
+        let mut output = Vec::new();
+        run_proxy_io(
+            BufReader::new(input.as_slice()),
+            &mut output,
+            "unreachable-test-endpoint",
+            &inventory,
+            "modern-test",
+            false,
+        )
+        .await
+        .unwrap();
+        let replies: Vec<serde_json::Value> = String::from_utf8(output)
+            .unwrap()
+            .lines()
+            .map(|line| serde_json::from_str(line).unwrap())
+            .collect();
+        assert_eq!(replies.len(), 5);
+        assert_eq!(
+            replies[0]["result"]["supportedVersions"],
+            json!(["2026-07-28"])
+        );
+        assert_eq!(
+            replies[1]["result"]["skills"][0]["uri"],
+            "skill://cua-driver/SKILL.md"
+        );
+        assert!(replies[2]["result"]["contents"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("---"));
+        for reply in &replies[..3] {
+            assert_eq!(reply["result"]["resultType"], "complete");
+            assert_eq!(reply["result"]["cacheScope"], "private");
+        }
+        for reply in &replies[3..] {
+            assert_eq!(reply["error"]["code"], -32602);
+        }
+    }
+
+    #[tokio::test]
+    async fn proxy_authorization_refusal_is_a_tool_error_without_forwarding() {
+        const CHILD_ENV: &str = "CUA_DRIVER_PROXY_REFUSAL_TEST_CHILD";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            // Policy configuration is process-wide and immutable; keep this
+            // denial out of other tests without mutating the parent environment.
+            let directory = tempfile::tempdir().expect("temporary policy directory");
+            let policy = directory.path().join("deny.yaml");
+            std::fs::write(&policy, "deny:\n  tools: [click]\n").expect("write policy");
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "proxy::tests::proxy_authorization_refusal_is_a_tool_error_without_forwarding",
+                    "--nocapture",
+                ])
+                .env(CHILD_ENV, "1")
+                .env(cua_driver_core::policy::POLICY_FILE_ENV, &policy)
+                .env_remove(cua_driver_core::policy::MANAGED_POLICY_FILE_ENV)
+                .output()
+                .expect("run isolated refusal test");
+            assert!(
+                output.status.success(),
+                "isolated refusal test failed: {}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+
+        let directory = tempfile::tempdir().expect("temporary socket directory");
+        let socket = directory.path().join("daemon.sock");
+        #[cfg(unix)]
+        let listener = tokio::net::UnixListener::bind(&socket).expect("bind test daemon");
+        let request = serde_json::from_value(serde_json::json!({
+            "jsonrpc": "2.0", "id": 19, "method": "tools/call",
+            "params": {"name": "click", "arguments": {"pid": 42, "x": 10, "y": 20}}
+        }))
+        .expect("valid tool request");
+        let cached_tools = Arc::new(serde_json::json!({"tools": [{"name": "click"}]}));
+        let response = handle_proxy_request(
+            request,
+            serde_json::json!(19),
+            socket.to_str().unwrap(),
+            &cached_tools,
+            "refusal-test-session",
+            false,
+        );
+        #[cfg(unix)]
+        let response = tokio::select! {
+            response = response => response,
+            connection = listener.accept() => {
+                drop(connection);
+                panic!("a locally denied call must never connect to the daemon");
+            }
+        };
+        #[cfg(not(unix))]
+        let response = response.await;
+        let value = serde_json::to_value(response).expect("serialize response");
+        assert_eq!(value["id"], 19);
+        assert!(value.get("error").is_none(), "{value}");
+        let result = &value["result"];
+        assert_eq!(result["isError"], true);
+        assert_eq!(result["structuredContent"]["code"], "permission_denied");
+        assert_eq!(result["content"][0]["type"], "text");
+        assert!(result["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .contains("explicitly denied"));
+    }
+
+    #[test]
+    fn control_disconnect_exits_with_stdin_open() {
+        const CHILD_ENV: &str = "CUA_TEST_MCP_CONTROL_STDIN_CHILD";
+        if std::env::var_os(CHILD_ENV).is_some() {
+            let result = crate::cli::run_mcp_runtime(async {
+                let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+                supervise_control_connection(
+                    // Let run_proxy_io park in the real blocking stdin read.
+                    tokio::time::sleep(std::time::Duration::from_millis(100)),
+                    run_proxy_io(
+                        BufReader::new(tokio::io::stdin()),
+                        tokio::io::sink(),
+                        "unused.sock",
+                        &cached_tools,
+                        "disconnect",
+                        false,
+                    ),
+                )
+                .await
+            });
+            assert!(result.is_err());
+            return;
+        }
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+            .args([
+                "--exact",
+                "proxy::tests::control_disconnect_exits_with_stdin_open",
+                "--nocapture",
+            ])
+            .env(CHILD_ENV, "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if let Some(status) = child.try_wait().unwrap() {
+                assert!(
+                    status.success(),
+                    "MCP runtime subprocess failed: {:?}",
+                    child.wait_with_output().unwrap()
+                );
+                break;
+            }
+            if std::time::Instant::now() >= deadline {
+                child.kill().unwrap();
+                child.wait().unwrap();
+                panic!("control disconnect left the MCP process waiting for client stdin EOF");
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[tokio::test]
+    async fn control_disconnect_ends_idle_proxy() {
+        let (control, daemon) = tokio::io::duplex(64);
+        let control = async move {
+            let mut reader = BufReader::new(control);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+        };
+        let proxy =
+            supervise_control_connection(control, std::future::pending::<anyhow::Result<()>>());
+        tokio::pin!(proxy);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(25), &mut proxy)
+                .await
+                .is_err(),
+            "an idle live control connection must remain usable"
+        );
+        drop(daemon);
+        let error = tokio::time::timeout(std::time::Duration::from_millis(250), proxy)
+            .await
+            .expect("control EOF must end the proxy promptly")
+            .unwrap_err();
+        assert!(error.to_string().contains("reconnect the MCP client"));
+    }
+
+    #[tokio::test]
+    async fn proxy_eof_drops_its_control_connection() {
+        let (control, daemon) = tokio::io::duplex(64);
+        let control = async move {
+            let mut reader = BufReader::new(control);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+        };
+        let cached_tools = Arc::new(serde_json::json!({"tools": []}));
+        let mut writer = Vec::new();
+        supervise_control_connection(
+            control,
+            run_proxy_io(
+                BufReader::new(&b""[..]),
+                &mut writer,
+                "unused.sock",
+                &cached_tools,
+                "eof",
+                false,
+            ),
+        )
+        .await
+        .unwrap();
+        let mut daemon = BufReader::new(daemon);
+        let mut line = String::new();
+        assert_eq!(
+            tokio::time::timeout(
+                std::time::Duration::from_millis(250),
+                daemon.read_line(&mut line)
+            )
+            .await
+            .expect("proxy EOF must release daemon session ownership")
+            .unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn closed_control_prevents_ready_request_dispatch() {
+        let dispatched = std::sync::atomic::AtomicBool::new(false);
+        let result = supervise_control_connection(async {}, async {
+            dispatched.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok(())
+        })
+        .await;
+        assert!(result.is_err());
+        assert!(!dispatched.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     #[tokio::test]
     async fn proxy_loop_returns_promptly_on_clean_eof() {
@@ -889,20 +1341,94 @@ mod tests {
         assert!(response.get("result").is_some());
     }
 
-    /// Reconstruct the `!resp.ok` branch in isolation so we can assert
-    /// on the serialized shape without spinning up a real daemon /
-    /// tokio runtime. Keep this in sync with `forward_tool_call`.
-    fn build_tool_error_response(id: serde_json::Value, resp: DaemonResponse) -> Response {
-        let msg = resp
-            .error
-            .unwrap_or_else(|| "daemon reported failure".into());
-        let exit_code = resp.exit_code.unwrap_or(1);
-        let result = serde_json::json!({
-            "content": [{ "type": "text", "text": msg }],
-            "isError": true,
-            "structuredContent": { "exit_code": exit_code }
-        });
-        Response::ok(id, result)
+    #[test]
+    fn session_begin_requires_a_positive_typed_acknowledgement() {
+        assert!(
+            validate_session_begin_ack(r#"{"ok":true,"result":{"session_begin":true}}"#).is_ok()
+        );
+        for line in [
+            "not JSON",
+            r#"{"ok":false,"error":"denied"}"#,
+            r#"{"ok":false,"result":{"session_begin":true}}"#,
+            r#"{"ok":true}"#,
+            r#"{"ok":true,"result":{"session_begin":false}}"#,
+            r#"{"ok":true,"result":{"session_begin":"true"}}"#,
+            r#"{"ok":true,"result":{"other":true}}"#,
+        ] {
+            assert!(validate_session_begin_ack(line).is_err(), "accepted {line}");
+        }
+    }
+
+    #[test]
+    fn incompatible_daemon_schema_is_rejected_before_advertising() {
+        let schema = serde_json::json!({"type": "object", "required": ["legacy_clicked"]});
+        let tools = vec![serde_json::json!({"name": "click", "output_schema": schema})];
+        let error = validate_daemon_output_schemas(&tools)
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("incompatible daemon output schema for click"));
+        assert!(error.contains("matching proxy and daemon versions"));
+
+        let daemon_resp = DaemonResponse {
+            ok: true,
+            result: Some(serde_json::json!({
+                "content": [], "structuredContent": {"legacy_clicked": true}
+            })),
+            error: None,
+            exit_code: None,
+        };
+        let response = proxy_tool_result_response(
+            serde_json::json!(1),
+            daemon_response_to_tool_result("click", daemon_resp, Some(&schema)),
+        );
+        let response = serde_json::to_value(response).unwrap();
+        assert_eq!(response["error"]["code"], -32603);
+        assert!(response.get("result").is_none());
+    }
+
+    #[test]
+    fn daemon_without_schema_preserves_legacy_success() {
+        let tools = vec![serde_json::json!({"name": "click"})];
+        validate_daemon_output_schemas(&tools).unwrap();
+        for result in [
+            serde_json::json!({"content": [], "isError": false}),
+            serde_json::json!({
+                "content": [], "isError": false,
+                "structuredContent": {"legacy_clicked": true}
+            }),
+        ] {
+            let daemon_resp = DaemonResponse {
+                ok: true,
+                result: Some(result.clone()),
+                error: None,
+                exit_code: None,
+            };
+            assert_eq!(
+                daemon_response_to_tool_result("click", daemon_resp, None).unwrap(),
+                result
+            );
+        }
+    }
+
+    #[test]
+    fn matching_daemon_schema_retains_local_output_validation() {
+        let tools =
+            vec![serde_json::json!({"name": "click", "output_schema": click_output_schema()})];
+        validate_daemon_output_schemas(&tools).unwrap();
+    }
+
+    fn click_output_schema() -> Option<serde_json::Value> {
+        cua_driver_contract::advertised_tool_output_schema("click")
+    }
+
+    /// Serialize the production conversion the way the proxy answers it, so
+    /// these assertions run against `forward_tool_call`'s own branch without
+    /// spinning up a real daemon.
+    fn tool_call_response(id: serde_json::Value, resp: DaemonResponse) -> Response {
+        Response::ok(
+            id,
+            daemon_response_to_tool_result("click", resp, click_output_schema().as_ref()).unwrap(),
+        )
     }
 
     #[test]
@@ -913,7 +1439,7 @@ mod tests {
             error: Some("missing required field `pid`".into()),
             exit_code: Some(64),
         };
-        let resp = build_tool_error_response(serde_json::json!(7), daemon_resp);
+        let resp = tool_call_response(serde_json::json!(7), daemon_resp);
         let value = serde_json::to_value(&resp).expect("serialize");
 
         // Top-level JSON-RPC envelope: success (`result`), not error.
@@ -934,6 +1460,13 @@ mod tests {
         assert_eq!(result["content"][0]["type"], "text");
         assert_eq!(result["content"][0]["text"], "missing required field `pid`");
         assert_eq!(result["structuredContent"]["exit_code"], 64);
+        // Strict MCP clients validate this payload against the tool's
+        // advertised `outputSchema`. The refusal marker is what keeps the
+        // response readable instead of being discarded as `-32602`.
+        assert_eq!(
+            result["structuredContent"]["code"],
+            cua_driver_core::TOOL_INVOCATION_FAILED_CODE
+        );
     }
 
     #[test]
@@ -944,7 +1477,7 @@ mod tests {
             error: None,
             exit_code: None,
         };
-        let resp = build_tool_error_response(serde_json::json!("abc"), daemon_resp);
+        let resp = tool_call_response(serde_json::json!("abc"), daemon_resp);
         let value = serde_json::to_value(&resp).expect("serialize");
         assert_eq!(value["result"]["isError"], serde_json::json!(true));
         assert_eq!(
@@ -952,6 +1485,61 @@ mod tests {
             "daemon reported failure"
         );
         assert_eq!(value["result"]["structuredContent"]["exit_code"], 1);
+        assert_eq!(
+            value["result"]["structuredContent"]["code"],
+            cua_driver_core::TOOL_INVOCATION_FAILED_CODE
+        );
+    }
+
+    /// An `ok` daemon response that carries no result used to be forwarded as
+    /// an empty success. For a tool that declares an `outputSchema` that is a
+    /// response a strict client rejects outright (`-32600`), so the boundary
+    /// converts it into an error the client can actually read.
+    #[test]
+    fn an_ok_daemon_response_with_no_result_becomes_a_conforming_error() {
+        let daemon_resp = DaemonResponse {
+            ok: true,
+            result: None,
+            error: None,
+            exit_code: None,
+        };
+
+        let result =
+            daemon_response_to_tool_result("click", daemon_resp, click_output_schema().as_ref())
+                .unwrap();
+
+        assert_eq!(result["isError"], serde_json::json!(true));
+        assert_eq!(
+            result["structuredContent"]["code"],
+            cua_driver_core::mcp_result::TOOL_OUTPUT_INVALID_CODE
+        );
+    }
+
+    /// A daemon result that already conforms is forwarded untouched.
+    #[test]
+    fn a_conforming_daemon_success_is_forwarded_unchanged() {
+        let result = serde_json::json!({
+            "content": [{ "type": "text", "text": "clicked" }],
+            "isError": false,
+            "structuredContent": {
+                "effect": "confirmed",
+                "route": "accessibility",
+                "delivery": { "mode": "background" },
+                "evidence": [{ "kind": "value_readback" }],
+            },
+        });
+        let daemon_resp = DaemonResponse {
+            ok: true,
+            result: Some(result.clone()),
+            error: None,
+            exit_code: None,
+        };
+
+        assert_eq!(
+            daemon_response_to_tool_result("click", daemon_resp, click_output_schema().as_ref())
+                .unwrap(),
+            result
+        );
     }
 
     #[test]

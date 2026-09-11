@@ -61,9 +61,17 @@ capture_diagnostics() {
     [[ "${certificates}" != *"${TRUSTED_IDENTITY}"* ]]
   }
   verify_code_signing_trust_absent() {
-    [[ -s "${CERTIFICATE_PEM}" ]] || return 1
-    ! security verify-cert -c "${CERTIFICATE_PEM}" -p codeSign \
-      >/dev/null 2>&1
+    local trust_dump
+    local trust_status
+    trust_dump="$(run_bounded 20 sudo -n security dump-trust-settings -d 2>&1)"
+    trust_status=$?
+    printf '%s\n' "${trust_dump}" \
+      > "${BOOTSTRAP_DIR}/cleanup-trust-settings.txt"
+    if [[ "${trust_status}" != 0 \
+        && "${trust_dump}" != *"No Trust Settings were found."* ]]; then
+      return 1
+    fi
+    [[ "${trust_dump}" != *"${CUA_LOCAL_SIGN_CN}"* ]]
   }
   trap - EXIT
   set +e
@@ -100,8 +108,8 @@ capture_diagnostics() {
   fi
   if [[ "${TRUSTED_IDENTITY}" =~ ^[0-9A-Fa-f]{40}$ ]]; then
     # Tahoe's trust-removal helper can be terminated after removing the trust
-    # row. Record that attempt, then judge cleanup from independent absence and
-    # trust-evaluation checks after every certificate copy is gone.
+    # row. Record that attempt, then judge cleanup from independent certificate
+    # and admin Trust Settings checks after every certificate copy is gone.
     record_cleanup_attempt remove_trust run_bounded 20 \
       sudo -n security remove-trusted-cert -d "${CERTIFICATE_PEM}" \
       >/dev/null 2>&1

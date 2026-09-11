@@ -341,6 +341,7 @@ async fn does_not_attach_bearer_to_cross_origin_requests() {
         headers: vec![header("Authorization", "Basic external")],
         body: Some(vec![0, 1, 2]),
         timeout_secs: None,
+        max_response_bytes: None,
     };
 
     let response = client.execute_authenticated(external).await.unwrap();
@@ -432,6 +433,7 @@ fn request(url: &str) -> HttpRequest {
         ],
         body: None,
         timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

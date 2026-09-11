@@ -628,7 +628,7 @@ def _uniffi_check_api_checksums(lib):
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_cyclopstokenproviderconfigurationbuilder_pool_poll_limit() != 6865:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
-    if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 38803:
+    if lib.uniffi_cyclops_sdk_checksum_method_httpclient_execute() != 33213:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_constructor_httprequestbuilder_new() != 25892:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -637,6 +637,8 @@ def _uniffi_check_api_checksums(lib):
     if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build() != 14573:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers() != 19982:
+        raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
+    if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes() != 42011:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
     if lib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method() != 4078:
         raise InternalError("UniFFI API checksum mismatch: try cleaning and rebuilding your project")
@@ -1495,6 +1497,12 @@ _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers.argtypes = (
     ctypes.POINTER(_UniffiRustCallStatus),
 )
 _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers.restype = ctypes.c_uint64
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes.argtypes = (
+    ctypes.c_uint64,
+    ctypes.c_uint64,
+    ctypes.POINTER(_UniffiRustCallStatus),
+)
+_UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes.restype = ctypes.c_uint64
 _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_method.argtypes = (
     ctypes.c_uint64,
     _UniffiRustBuffer,
@@ -1786,6 +1794,9 @@ _UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_build.restype =
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_headers.restype = ctypes.c_uint16
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes.argtypes = (
+)
+_UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_max_response_bytes.restype = ctypes.c_uint16
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method.argtypes = (
 )
 _UniffiLib.uniffi_cyclops_sdk_checksum_method_httprequestbuilder_method.restype = ctypes.c_uint16
@@ -2937,7 +2948,7 @@ class _UniffiFfiConverterOptionalUInt64(_UniffiConverterRustBuffer):
 
 @dataclass
 class HttpRequest:
-    def __init__(self, *, method:str, url:str, headers:typing.List[HttpHeader], body:typing.Optional[bytes], timeout_secs:typing.Optional[int] = _DEFAULT):
+    def __init__(self, *, method:str, url:str, headers:typing.List[HttpHeader], body:typing.Optional[bytes], timeout_secs:typing.Optional[int] = _DEFAULT, max_response_bytes:typing.Optional[int] = _DEFAULT):
         self.method = method
         self.url = url
         self.headers = headers
@@ -2946,12 +2957,16 @@ class HttpRequest:
             self.timeout_secs = None
         else:
             self.timeout_secs = timeout_secs
+        if max_response_bytes is _DEFAULT:
+            self.max_response_bytes = None
+        else:
+            self.max_response_bytes = max_response_bytes
 
 
 
 
     def __str__(self):
-        return "HttpRequest(method={}, url={}, headers={}, body={}, timeout_secs={})".format(self.method, self.url, self.headers, self.body, self.timeout_secs)
+        return "HttpRequest(method={}, url={}, headers={}, body={}, timeout_secs={}, max_response_bytes={})".format(self.method, self.url, self.headers, self.body, self.timeout_secs, self.max_response_bytes)
     def __eq__(self, other):
         if self.method != other.method:
             return False
@@ -2962,6 +2977,8 @@ class HttpRequest:
         if self.body != other.body:
             return False
         if self.timeout_secs != other.timeout_secs:
+            return False
+        if self.max_response_bytes != other.max_response_bytes:
             return False
         return True
 
@@ -2974,6 +2991,7 @@ class _UniffiFfiConverterTypeHttpRequest(_UniffiConverterRustBuffer):
             headers=_UniffiFfiConverterSequenceTypeHttpHeader.read(buf),
             body=_UniffiFfiConverterOptionalBytes.read(buf),
             timeout_secs=_UniffiFfiConverterOptionalUInt64.read(buf),
+            max_response_bytes=_UniffiFfiConverterOptionalUInt64.read(buf),
         )
 
     @staticmethod
@@ -2983,6 +3001,7 @@ class _UniffiFfiConverterTypeHttpRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeHttpHeader.check_lower(value.headers)
         _UniffiFfiConverterOptionalBytes.check_lower(value.body)
         _UniffiFfiConverterOptionalUInt64.check_lower(value.timeout_secs)
+        _UniffiFfiConverterOptionalUInt64.check_lower(value.max_response_bytes)
 
     @staticmethod
     def write(value, buf):
@@ -2991,6 +3010,7 @@ class _UniffiFfiConverterTypeHttpRequest(_UniffiConverterRustBuffer):
         _UniffiFfiConverterSequenceTypeHttpHeader.write(value.headers, buf)
         _UniffiFfiConverterOptionalBytes.write(value.body, buf)
         _UniffiFfiConverterOptionalUInt64.write(value.timeout_secs, buf)
+        _UniffiFfiConverterOptionalUInt64.write(value.max_response_bytes, buf)
 
 class _UniffiFfiConverterUInt16(_UniffiConverterPrimitiveInt):
     CLASS_NAME = "u16"
@@ -5799,6 +5819,10 @@ class _UniffiFfiConverterTypeCyclopsTokenProviderConfigurationBuilder:
 class HttpClient():
 
     async def execute(self, request: HttpRequest) -> HttpResponse:
+        """
+        Executes an HTTP request. Foreign implementations must enforce
+        `request.max_response_bytes` while streaming the response body.
+"""
         raise NotImplementedError
 
 class HttpClientImpl(HttpClient):
@@ -5826,6 +5850,10 @@ class HttpClientImpl(HttpClient):
         inst._handle = handle
         return inst
     async def execute(self, request: HttpRequest) -> HttpResponse:
+        """
+        Executes an HTTP request. Foreign implementations must enforce
+        `request.max_response_bytes` while streaming the response body.
+"""
 
         _UniffiFfiConverterTypeHttpRequest.check_lower(request)
         _uniffi_lowered_args = (
@@ -5954,6 +5982,8 @@ class HttpRequestBuilderProtocol(typing.Protocol):
         raise NotImplementedError
     def headers(self, value: typing.List[HttpHeader]) -> HttpRequestBuilder:
         raise NotImplementedError
+    def max_response_bytes(self, value: int) -> HttpRequestBuilder:
+        raise NotImplementedError
     def method(self, value: str) -> HttpRequestBuilder:
         raise NotImplementedError
     def timeout_secs(self, value: int) -> HttpRequestBuilder:
@@ -6032,6 +6062,21 @@ class HttpRequestBuilder(HttpRequestBuilderProtocol):
         _uniffi_ffi_result = _uniffi_rust_call_with_error(
             _uniffi_error_converter,
             _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_headers,
+            *_uniffi_lowered_args,
+        )
+        return _uniffi_lift_return(_uniffi_ffi_result)
+    def max_response_bytes(self, value: int) -> HttpRequestBuilder:
+
+        _UniffiFfiConverterUInt64.check_lower(value)
+        _uniffi_lowered_args = (
+            self._uniffi_clone_handle(),
+            _UniffiFfiConverterUInt64.lower(value),
+        )
+        _uniffi_lift_return = _UniffiFfiConverterTypeHttpRequestBuilder.lift
+        _uniffi_error_converter = None
+        _uniffi_ffi_result = _uniffi_rust_call_with_error(
+            _uniffi_error_converter,
+            _UniffiLib.uniffi_cyclops_sdk_fn_method_httprequestbuilder_max_response_bytes,
             *_uniffi_lowered_args,
         )
         return _uniffi_lift_return(_uniffi_ffi_result)

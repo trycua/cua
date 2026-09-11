@@ -1,6 +1,6 @@
 {
   "name": "@trycua/fleet",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "packageManager": "pnpm@10.12.3",
   "description": "Browser and WebAssembly SDK for Cua Fleet sandbox lifecycle management",
   "type": "module",
@@ -51,6 +51,7 @@
   },
   "scripts": {
     "build": "node ./scripts/build.mjs",
+    "test": "node --test ./tests/*.test.mjs",
     "pack:check": "pnpm run build && npm pack --dry-run"
   },
   "dependencies": {

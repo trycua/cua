@@ -695,7 +695,7 @@ func uniffiCheckChecksums() {
 		checksum := rustCall(func(_uniffiStatus *C.RustCallStatus) C.uint16_t {
 			return C.uniffi_cyclops_sdk_checksum_method_httpclient_execute()
 		})
-		if checksum != 38803 {
+		if checksum != 33213 {
 			// If this happens try cleaning and rebuilding your project
 			panic("fleet_sdk: uniffi_cyclops_sdk_checksum_method_httpclient_execute: UniFFI API checksum mismatch")
 		}
@@ -3215,6 +3215,9 @@ type HttpRequest struct {
 	// pre-timeout record shape keep constructing requests unchanged; absent
 	// falls back to the native client's 30-second default.
 	TimeoutSecs *uint64
+	// Maximum bytes delivered in the response body. Absent preserves the
+	// historical unbounded response behavior.
+	MaxResponseBytes *uint64
 }
 
 func (r *HttpRequest) Destroy() {
@@ -3223,6 +3226,7 @@ func (r *HttpRequest) Destroy() {
 	FfiDestroyerSequenceHttpHeader{}.Destroy(r.Headers)
 	FfiDestroyerOptionalBytes{}.Destroy(r.Body)
 	FfiDestroyerOptionalUint64{}.Destroy(r.TimeoutSecs)
+	FfiDestroyerOptionalUint64{}.Destroy(r.MaxResponseBytes)
 }
 
 type FfiConverterHttpRequest struct{}
@@ -3239,6 +3243,7 @@ func (c FfiConverterHttpRequest) Read(reader io.Reader) HttpRequest {
 		FfiConverterStringINSTANCE.Read(reader),
 		FfiConverterSequenceHttpHeaderINSTANCE.Read(reader),
 		FfiConverterOptionalBytesINSTANCE.Read(reader),
+		FfiConverterOptionalUint64INSTANCE.Read(reader),
 		FfiConverterOptionalUint64INSTANCE.Read(reader),
 	}
 }
@@ -3257,6 +3262,7 @@ func (c FfiConverterHttpRequest) Write(writer io.Writer, value HttpRequest) {
 	FfiConverterSequenceHttpHeaderINSTANCE.Write(writer, value.Headers)
 	FfiConverterOptionalBytesINSTANCE.Write(writer, value.Body)
 	FfiConverterOptionalUint64INSTANCE.Write(writer, value.TimeoutSecs)
+	FfiConverterOptionalUint64INSTANCE.Write(writer, value.MaxResponseBytes)
 }
 
 type FfiDestroyerHttpRequest struct{}

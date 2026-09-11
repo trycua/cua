@@ -225,6 +225,7 @@ fn json_request(method: &str, url: Url, body: Option<Vec<u8>>) -> HttpRequest {
         ],
         body,
         timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

@@ -185,6 +185,7 @@ async fn filters_hop_by_hop_and_connection_nominated_headers_without_reordering_
         ],
         body: Some(vec![0, 255, 1]),
         timeout_secs: Some(75),
+        max_response_bytes: Some(1024),
     };
 
     client
@@ -208,6 +209,7 @@ async fn filters_hop_by_hop_and_connection_nominated_headers_without_reordering_
     );
     assert_eq!(request.body, Some(vec![0, 255, 1]));
     assert_eq!(request.timeout_secs, Some(75));
+    assert_eq!(request.max_response_bytes, Some(1024));
 }
 
 #[tokio::test]
@@ -298,6 +300,7 @@ async fn returns_service_unauthorized_once_without_refreshing_or_replaying() {
         headers: vec![header("content-type", "application/octet-stream")],
         body: Some(vec![0, 255, 1]),
         timeout_secs: None,
+        max_response_bytes: None,
     };
 
     let response = client
@@ -411,6 +414,7 @@ fn request(body: Option<Vec<u8>>) -> HttpRequest {
         headers: vec![],
         body,
         timeout_secs: None,
+        max_response_bytes: None,
     }
 }
 

@@ -7,13 +7,14 @@ from typing import Any, Callable, Coroutine, Generic, TypeVar, cast
 
 from cua_sandbox.image import Image
 from cua_sandbox.sandbox import Sandbox
-from cua_sandbox.transport.fleet import FleetTransport
+from cua_sandbox.transport.fleet import fleet_transport_for
 from cua_sandbox.transport.fleet_cloud import (
     _NATIVE_POOL_ACCESS_DENIED,
     FleetCloudTransport,
     _canonicalize_pool_access_denied,
     _FleetClient,
     _pool_access_denied,
+    default_server_port,
     validate_ttl_seconds_after_created,
 )
 from fleet_sdk import (
@@ -120,11 +121,13 @@ class _ClaimHandle:
         pool_name: str | None = None,
         service: str = "server",
         client: Any = None,
+        agent_type: str | None = None,
     ) -> None:
         self.namespace = namespace
         self.name = name
         self.pool_name = pool_name or namespace
         self.service = service
+        self.agent_type = agent_type
         self._client = client
 
     def to_dict(self) -> dict[str, Any]:
@@ -135,6 +138,7 @@ class _ClaimHandle:
             "pool": self.pool_name,
             "claim": self.name,
             "service": self.service,
+            "agent_type": self.agent_type,
         }
 
     @classmethod
@@ -146,6 +150,7 @@ class _ClaimHandle:
             pool_name=data["pool"],
             name=data["claim"],
             service=data.get("service", "server"),
+            agent_type=data.get("agent_type"),
         )
 
     def _operation_client(self) -> tuple[Any, bool]:
@@ -170,8 +175,9 @@ class _ClaimHandle:
             if bound.namespace != self.namespace or bound.claim != self.name:
                 raise RuntimeError("Fleet returned a sandbox bound to a different claim")
             await client.wait_service_ready(bound, service, time_to_start)
+            transport_cls = fleet_transport_for(self.agent_type)
             sandbox = Sandbox(
-                FleetTransport(sdk=client, bound=bound, service_name=service, owns_sdk=True),
+                transport_cls(sdk=client, bound=bound, service_name=service, owns_sdk=True),
                 name=bound.name,
             )
             sandbox._claim_handle = self
@@ -208,9 +214,14 @@ class _ClaimHandle:
 class Pool:
     """A Fleet warm pool that can provide durable Sandbox claims."""
 
-    def __init__(self, resource: Any, *, owned_template: Any = None) -> None:
+    def __init__(
+        self, resource: Any, *, owned_template: Any = None, agent_type: str | None = None
+    ) -> None:
         self._resource = resource
         self._owned_template = owned_template
+        # Guest control-server flavour of the pool's image ("osworld" or None).
+        # Claims need it to pick a transport that speaks the guest's API.
+        self._agent_type = agent_type
 
     @property
     def name(self) -> str:
@@ -264,9 +275,10 @@ class Pool:
                 "names are globally unique across accounts"
             )
         FleetCloudTransport._validate_image(image)
+        server_port = default_server_port(image)
         effective_services = services or {
-            "server": 8000,
-            **{f"port-{port}": port for port in image._ports if port != 8000},
+            "server": server_port,
+            **{f"port-{port}": port for port in image._ports if port != server_port},
         }
         transport = FleetCloudTransport(
             image=image,
@@ -277,8 +289,10 @@ class Pool:
             services=effective_services,
             autoscaling=autoscaling,
             ttl_seconds_after_created=ttl_seconds_after_created,
+            server_port=server_port,
         )
         pool = await cls.reconcile(transport._pool_request())
+        pool._agent_type = image._agent_type
         try:
             template = await Template.reconcile(transport._template_request())
         except BaseException:
@@ -337,6 +351,7 @@ class Pool:
                 namespace=claim.metadata.namespace,
                 name=claim.metadata.name,
                 pool_name=self.name,
+                agent_type=self._agent_type,
             )
         finally:
             await client.close()
@@ -349,8 +364,12 @@ class Pool:
         service: str = "server",
         time_to_start: float | None = None,
         ttl_seconds_after_created: int | None = None,
+        agent_type: str | None = None,
     ) -> _ClaimResult[Sandbox]:
+        """Claim a sandbox. ``agent_type="osworld"`` selects the OSWorld transport
+        for pools fetched with ``Pool.get`` (pools from ``Pool.apply`` remember it)."""
         spec = self._claim_spec(spec, ttl_seconds_after_created)
+        claim_agent_type = agent_type or self._agent_type
 
         async def acquire() -> Sandbox:
             client = _FleetClient()
@@ -379,6 +398,7 @@ class Pool:
                     pool_name=self.name,
                     service=service,
                     client=client,
+                    agent_type=claim_agent_type,
                 )
                 return await handle.wait(service=service, time_to_start=time_to_start)
             except BaseException:

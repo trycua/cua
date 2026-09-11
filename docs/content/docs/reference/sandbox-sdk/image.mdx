@@ -98,7 +98,7 @@ Android image specification. This constructor does not establish Fleet support.
 
 ```python
 @classmethod
-def from_registry(cls, ref: str, *, os_type: str = 'linux', kind: Optional[str] = None) -> Image
+def from_registry(cls, ref: str, *, os_type: str = 'linux', kind: Optional[str] = None, agent_type: Optional[str] = None) -> Image
 ```
 
 Image from an OCI registry reference. `os_type` identifies the guest operating
@@ -110,6 +110,7 @@ until image resolution.
 | `ref` | `str` | required | OCI reference for an image appropriate to the selected backend |
 | `os_type` | `str` | `'linux'` | Guest OS; use `'windows'` for a Windows disk |
 | `kind` | `str or None` | `None` | Explicit `'vm'` or `'container'` kind |
+| `agent_type` | `str or None` | `None` | Guest control server the disk already runs; `'osworld'` selects the OSWorld server on port 5000 (local QEMU and Fleet) instead of computer-server on 8000 |
 
 ### Image.from_file
 

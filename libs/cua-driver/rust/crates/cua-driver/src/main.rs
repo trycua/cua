@@ -17,6 +17,7 @@
 //! runs in the background. MCP and CLI client processes never initialize the
 //! platform tool registry.
 
+mod android_bridge;
 mod autostart;
 mod bundle;
 mod check_update_tool;
@@ -460,6 +461,9 @@ mod mcp_runtime_selection_tests {
 
 #[cfg(target_os = "macos")]
 fn main() {
+    if let Some(code) = android_bridge::run_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = platform_macos::permissions::gate::run_permission_probe_if_requested() {
         std::process::exit(code);
     }
@@ -884,6 +888,9 @@ fn main() {
 
 #[cfg(not(target_os = "macos"))]
 fn main() -> anyhow::Result<()> {
+    if let Some(code) = android_bridge::run_if_requested() {
+        std::process::exit(code);
+    }
     if let Some(code) = history_runtime::run_offline_purge_if_requested() {
         std::process::exit(code);
     }
